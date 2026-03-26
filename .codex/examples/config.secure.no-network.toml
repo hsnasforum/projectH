@@ -1,0 +1,15 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
+approval_policy = "never"
+sandbox_mode = "read-only"
+project_root_markers = [".git"]
+project_doc_max_bytes = 32768
+
+developer_instructions = """
+Inspect only. Do not modify files. Do not use network. Produce plans, findings, and review notes only.
+Respond to the user in Korean honorifics.
+"""
+
+[agents]
+max_threads = 2
+max_depth = 1

@@ -1,0 +1,25 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+project_root_markers = [".git"]
+project_doc_max_bytes = 32768
+oss_provider = "ollama"
+
+developer_instructions = """
+Build a local-first AI assistant MVP.
+Keep scope small and provider assumptions isolated.
+Respond to the user in Korean honorifics.
+"""
+
+[agents]
+max_threads = 4
+max_depth = 1
+
+[sandbox_workspace_write]
+writable_roots = []
+network_access = false
+
+[model_providers.ollama]
+name = "Ollama"
+base_url = "http://localhost:11434/v1"

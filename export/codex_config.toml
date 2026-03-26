@@ -1,0 +1,7 @@
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+project_root_markers = [".git", "README.md", "AGENTS.md"]
+developer_instructions = "Follow AGENTS.md. Keep the project local-first, safe, approval-based, and within MVP scope. Prefer small reversible changes."
+
+[sandbox_workspace_write]
+network_access = false

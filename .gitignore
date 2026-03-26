@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local env
+.env
+.env.*
+!.env.example
+
+# Local tool settings
+.codex/config.toml
+.claude/settings.json
+
+# E2E installs / reports
+e2e/node_modules/
+e2e/playwright-report/
+e2e/test-results/
+
+# Local runtime data
+data/*
+!data/.gitkeep
+!data/sessions/
+data/sessions/*
+!data/sessions/.gitkeep
+!data/web-search/
+data/web-search/**
+
+logs/*
+!logs/.gitkeep
+
+# Generated output
+output/*
+!output/playwright/
+output/playwright/*
+!output/playwright/fixtures/
+output/playwright/fixtures/*
+!output/playwright/fixtures/long-summary-fixture.md
+
+# Windows metadata
+*:Zone.Identifier

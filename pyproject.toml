@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "local-ai-assistant-starter"
+version = "0.1.0"
+description = "Starter scaffold for a local-first AI assistant MVP"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pypdf>=4,<7",
+]

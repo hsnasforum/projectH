@@ -1,0 +1,4 @@
+approval_policy = "untrusted"
+sandbox_mode = "read-only"
+project_root_markers = [".git", "README.md", "AGENTS.md"]
+developer_instructions = "Read and review only. Do not modify files. Focus on scope, security, and verification gaps."

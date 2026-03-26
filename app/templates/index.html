@@ -1,0 +1,3105 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>__APP_NAME__ 웹 셸</title>
+  <style>
+    :root {
+      --bg: #f3ede2;
+      --paper: #fffaf2;
+      --panel: #fffdf8;
+      --ink: #1d1b17;
+      --muted: #655d52;
+      --line: #d9ccb7;
+      --accent: #0f6c5c;
+      --accent-2: #d8792f;
+      --danger: #9a3d2f;
+      --shadow: 0 18px 42px rgba(57, 41, 19, 0.12);
+      --radius: 18px;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      --body: "Trebuchet MS", "Segoe UI", sans-serif;
+      --display: Georgia, "Times New Roman", serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top left, rgba(216, 121, 47, 0.18), transparent 28%),
+        radial-gradient(circle at right center, rgba(15, 108, 92, 0.18), transparent 24%),
+        linear-gradient(180deg, #f8f2e8 0%, var(--bg) 100%);
+      color: var(--ink);
+      font-family: var(--body);
+    }
+
+    .shell {
+      max-width: 1380px;
+      margin: 0 auto;
+      padding: 28px 20px 36px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    .hero-card, .grid-card {
+      background: rgba(255, 253, 248, 0.9);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(217, 204, 183, 0.85);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .hero-copy {
+      padding: 26px 28px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(15, 108, 92, 0.08);
+      color: var(--accent);
+      font-size: 13px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 14px 0 12px;
+      font-family: var(--display);
+      font-size: clamp(2rem, 4vw, 3.4rem);
+      line-height: 0.96;
+      font-weight: 600;
+    }
+
+    .hero-copy p {
+      margin: 0;
+      max-width: 70ch;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.6;
+    }
+
+    .hero-meta {
+      padding: 22px 24px;
+      display: grid;
+      gap: 14px;
+      align-content: start;
+      background:
+        linear-gradient(135deg, rgba(15, 108, 92, 0.08), rgba(216, 121, 47, 0.1)),
+        var(--panel);
+    }
+
+    .hero-meta h2 {
+      margin: 0;
+      font-family: var(--display);
+      font-size: 1.2rem;
+    }
+
+    .meta-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .meta-row {
+      display: grid;
+      gap: 4px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.65);
+      border: 1px solid rgba(217, 204, 183, 0.8);
+    }
+
+    .meta-row strong {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .grid-card {
+      padding: 20px;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .card-header h2 {
+      margin: 0;
+      font-size: 1.2rem;
+      font-family: var(--display);
+    }
+
+    .transcript {
+      display: grid;
+      gap: 12px;
+      min-height: 320px;
+      max-height: 56vh;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .session-stack {
+      display: grid;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .session-summary {
+      padding: 14px 16px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.8);
+      display: grid;
+      gap: 6px;
+    }
+
+    .session-summary strong {
+      font-size: 1rem;
+    }
+
+    .session-list {
+      display: grid;
+      gap: 10px;
+      max-height: 200px;
+      overflow: auto;
+    }
+
+    .session-item {
+      width: 100%;
+      text-align: left;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.82);
+      padding: 12px 14px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .session-item.active {
+      border-color: rgba(15, 108, 92, 0.35);
+      background: rgba(15, 108, 92, 0.08);
+    }
+
+    .session-item strong {
+      font-size: 14px;
+    }
+
+    .session-item span {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .history-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .history-item {
+      display: grid;
+      gap: 8px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.76);
+    }
+
+    .history-item-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: flex-start;
+    }
+
+    .history-item-title {
+      display: grid;
+      gap: 4px;
+    }
+
+    .history-item-title strong {
+      font-size: 14px;
+    }
+
+    .history-item-title span {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .history-item-summary {
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--muted);
+    }
+
+    .history-item-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .feedback-bar {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(15, 108, 92, 0.18);
+      background: rgba(15, 108, 92, 0.04);
+    }
+
+    .feedback-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .feedback-button {
+      border-radius: 999px;
+      border: 1px solid rgba(101, 93, 82, 0.18);
+      background: rgba(255, 255, 255, 0.85);
+      color: var(--ink);
+      padding: 8px 12px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .feedback-button.active {
+      border-color: rgba(15, 108, 92, 0.45);
+      background: rgba(15, 108, 92, 0.12);
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .feedback-button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .history-item-detail {
+      display: grid;
+      gap: 8px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px dashed rgba(15, 108, 92, 0.24);
+      background: rgba(15, 108, 92, 0.04);
+    }
+
+    .history-pages {
+      display: grid;
+      gap: 8px;
+    }
+
+    .history-page-preview {
+      display: grid;
+      gap: 6px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.8);
+      border: 1px solid rgba(217, 204, 183, 0.85);
+    }
+
+    .history-page-preview strong {
+      font-size: 13px;
+    }
+
+    .history-page-meta {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .history-page-preview p {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--ink);
+    }
+
+    .message {
+      padding: 14px 16px;
+      border-radius: 16px;
+      border: 1px solid rgba(217, 204, 183, 0.88);
+      background: rgba(255, 255, 255, 0.82);
+      display: grid;
+      gap: 8px;
+    }
+
+    .message-header,
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .message.user {
+      background: rgba(216, 121, 47, 0.11);
+      border-color: rgba(216, 121, 47, 0.28);
+    }
+
+    .message.assistant {
+      background: rgba(15, 108, 92, 0.08);
+      border-color: rgba(15, 108, 92, 0.2);
+    }
+
+    .message .role {
+      display: inline-flex;
+      width: fit-content;
+      padding: 4px 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      background: rgba(29, 27, 23, 0.08);
+      color: var(--muted);
+    }
+
+    .message-header-left,
+    .message-header-right {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      font-weight: 700;
+      background: rgba(29, 27, 23, 0.06);
+      color: var(--muted);
+      border: 1px solid rgba(101, 93, 82, 0.15);
+    }
+
+    .status-pill.needs-approval {
+      background: rgba(216, 121, 47, 0.12);
+      color: #915019;
+      border-color: rgba(216, 121, 47, 0.28);
+    }
+
+    .status-pill.saved {
+      background: rgba(15, 108, 92, 0.12);
+      color: var(--accent);
+      border-color: rgba(15, 108, 92, 0.28);
+    }
+
+    .status-pill.error {
+      background: rgba(154, 61, 47, 0.1);
+      color: var(--danger);
+      border-color: rgba(154, 61, 47, 0.2);
+    }
+
+    .origin-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .origin-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      font-weight: 700;
+      text-transform: uppercase;
+      border: 1px solid transparent;
+    }
+
+    .origin-badge.mock {
+      background: rgba(216, 121, 47, 0.12);
+      color: #915019;
+      border-color: rgba(216, 121, 47, 0.28);
+    }
+
+    .origin-badge.ollama {
+      background: rgba(15, 108, 92, 0.12);
+      color: var(--accent);
+      border-color: rgba(15, 108, 92, 0.28);
+    }
+
+    .origin-badge.system {
+      background: rgba(29, 27, 23, 0.08);
+      color: var(--muted);
+      border-color: rgba(101, 93, 82, 0.2);
+    }
+
+    .origin-badge.web {
+      background: rgba(38, 92, 166, 0.12);
+      color: #1f4c88;
+      border-color: rgba(38, 92, 166, 0.24);
+    }
+
+    .origin-detail {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .message .meta {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .quick-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(217, 204, 183, 0.85);
+      background: rgba(255, 255, 255, 0.76);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .quick-meta-text {
+      flex: 1 1 280px;
+      min-width: 0;
+    }
+
+    .path-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .path-text {
+      padding: 7px 10px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.75);
+      border: 1px solid rgba(217, 204, 183, 0.9);
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--muted);
+      word-break: break-all;
+    }
+
+    .icon-button,
+    .copy-button,
+    .toggle-button {
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 12px;
+      background: rgba(236, 226, 209, 0.92);
+      color: var(--ink);
+    }
+
+    .icon-button.subtle,
+    .copy-button.subtle,
+    .toggle-button.subtle {
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid rgba(217, 204, 183, 0.85);
+    }
+
+    .message pre, .panel pre, .status-box pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: var(--body);
+      line-height: 1.55;
+    }
+
+    .message-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .message-actions button {
+      padding: 9px 14px;
+      font-size: 14px;
+    }
+
+    .sidebar {
+      display: grid;
+      gap: 18px;
+    }
+
+    form {
+      display: grid;
+      gap: 16px;
+    }
+
+    .section-title {
+      margin: 0 0 8px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    .field-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .field-grid.single {
+      grid-template-columns: 1fr;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    input, textarea, select, button {
+      font: inherit;
+    }
+
+    input, textarea, select {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      padding: 11px 12px;
+      background: #fffdf9;
+      color: var(--ink);
+    }
+
+    textarea {
+      min-height: 92px;
+      resize: vertical;
+      font-family: var(--body);
+    }
+
+    .checks {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.78);
+      color: var(--ink);
+    }
+
+    .check input {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+    }
+
+    .actions,
+    .button-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .mode-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .mode-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.85);
+      padding: 10px 14px;
+      color: var(--ink);
+    }
+
+    .mode-pill input {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    details {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.78);
+      padding: 12px 14px;
+    }
+
+    details summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .approval-box {
+      border-color: rgba(15, 108, 92, 0.22);
+      background: rgba(15, 108, 92, 0.07);
+    }
+
+    .approval-meta {
+      display: grid;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .approval-inputs {
+      display: grid;
+      gap: 10px;
+    }
+
+    .approval-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .panel-body {
+      display: grid;
+      gap: 8px;
+    }
+
+    .panel-body.hidden {
+      display: none;
+    }
+
+    .panel-hint {
+      padding: 8px 10px;
+      border-radius: 12px;
+      border: 1px solid rgba(217, 204, 183, 0.82);
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .panel-scroll-region {
+      max-height: 320px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding-right: 6px;
+    }
+
+    .panel-scroll-region::-webkit-scrollbar,
+    .transcript::-webkit-scrollbar,
+    .session-list::-webkit-scrollbar {
+      width: 10px;
+    }
+
+    .panel-scroll-region::-webkit-scrollbar-thumb,
+    .transcript::-webkit-scrollbar-thumb,
+    .session-list::-webkit-scrollbar-thumb {
+      background: rgba(101, 93, 82, 0.32);
+      border-radius: 999px;
+      border: 2px solid transparent;
+      background-clip: padding-box;
+    }
+
+    .panel-scroll-region::-webkit-scrollbar-track,
+    .transcript::-webkit-scrollbar-track,
+    .session-list::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 12px 18px;
+      cursor: pointer;
+      transition: transform 120ms ease, opacity 120ms ease, box-shadow 120ms ease;
+    }
+
+    button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 20px rgba(29, 27, 23, 0.1);
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+      box-shadow: none;
+    }
+
+    .primary {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .secondary {
+      background: #ece2d1;
+      color: var(--ink);
+    }
+
+    .danger {
+      background: rgba(154, 61, 47, 0.12);
+      color: var(--danger);
+    }
+
+    .status-box, .panel {
+      padding: 14px 16px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.8);
+      display: grid;
+      gap: 8px;
+    }
+
+    .progress-box {
+      border-color: rgba(15, 108, 92, 0.24);
+      background:
+        linear-gradient(135deg, rgba(15, 108, 92, 0.08), rgba(216, 121, 47, 0.06)),
+        rgba(255, 255, 255, 0.88);
+    }
+
+    .progress-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .progress-summary {
+      display: grid;
+      gap: 4px;
+    }
+
+    .progress-title {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+
+    .progress-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 0 rgba(15, 108, 92, 0.45);
+      animation: pulse 1.25s ease-in-out infinite;
+    }
+
+    .progress-detail {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .progress-timer {
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.75);
+      border: 1px solid rgba(217, 204, 183, 0.9);
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .busy-note {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .busy-locked {
+      opacity: 0.72;
+      pointer-events: none;
+    }
+
+    @keyframes pulse {
+      0% {
+        transform: scale(0.96);
+        box-shadow: 0 0 0 0 rgba(15, 108, 92, 0.45);
+      }
+      70% {
+        transform: scale(1.02);
+        box-shadow: 0 0 0 8px rgba(15, 108, 92, 0);
+      }
+      100% {
+        transform: scale(0.96);
+        box-shadow: 0 0 0 0 rgba(15, 108, 92, 0);
+      }
+    }
+
+    .status-box strong {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .error {
+      border-color: rgba(154, 61, 47, 0.28);
+      background: rgba(154, 61, 47, 0.08);
+      color: var(--danger);
+    }
+
+    .suggestion-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .suggestion-list button {
+      padding: 10px 14px;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .mono {
+      font-family: var(--mono);
+      font-size: 13px;
+    }
+
+    @media (max-width: 1080px) {
+      .hero,
+      .workspace {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        padding: 18px 14px 28px;
+      }
+
+      .field-grid,
+      .checks {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <article class="hero-card hero-copy">
+        <div class="eyebrow">Local-first Web MVP</div>
+        <h1>읽고, 찾고, 미리 보고, 승인 후 저장합니다</h1>
+        <p>
+          이 웹 셸은 브라우저에서 파일 요약, 문서 검색, 세션 기록, 승인 기반 저장 흐름을 한 번에 확인하는 데모용 MVP입니다.
+          기본값은 읽기 중심이며, 위험한 쓰기 작업은 항상 별도 승인 카드에서 멈춥니다.
+        </p>
+      </article>
+      <aside class="hero-card hero-meta">
+        <h2>현재 기본값</h2>
+        <div class="meta-list">
+          <div class="meta-row">
+            <strong>앱</strong>
+            <span id="meta-app-name">__APP_NAME__</span>
+          </div>
+          <div class="meta-row">
+            <strong>프로바이더</strong>
+            <span id="meta-provider">__DEFAULT_PROVIDER__</span>
+          </div>
+          <div class="meta-row">
+            <strong>모델</strong>
+            <span id="meta-model">__DEFAULT_MODEL_LABEL__</span>
+          </div>
+          <div class="meta-row">
+            <strong>현재 세션</strong>
+            <span id="meta-session">__DEFAULT_SESSION_ID__</span>
+          </div>
+          <div class="meta-row">
+            <strong>웹 검색</strong>
+            <span id="meta-web-search">__DEFAULT_WEB_SEARCH_PERMISSION_LABEL__</span>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="workspace">
+      <article class="grid-card">
+        <div class="card-header">
+          <h2>세션과 대화 기록</h2>
+          <div class="button-row">
+            <button id="new-session" class="secondary" type="button">새 세션</button>
+            <button id="refresh-session" class="secondary" type="button">새로고침</button>
+          </div>
+        </div>
+
+        <div class="session-stack">
+          <div class="session-summary">
+            <strong id="current-session-title">__DEFAULT_SESSION_ID__</strong>
+            <span id="current-session-meta" class="hint">아직 메시지가 없습니다.</span>
+          </div>
+          <div>
+            <p class="section-title">최근 세션</p>
+            <div id="session-list" class="session-list"></div>
+          </div>
+        </div>
+
+        <div id="transcript" class="transcript"></div>
+      </article>
+
+      <aside class="sidebar">
+        <section class="grid-card">
+          <div class="card-header">
+            <h2>요청 보내기</h2>
+            <span class="hint">파일 요약, 문서 검색, 일반 채팅을 한 화면에서 전환할 수 있습니다.</span>
+          </div>
+          <form id="request-form" data-testid="request-form">
+            <div>
+              <p class="section-title">모드</p>
+              <div class="mode-row">
+                <label class="mode-pill">
+                  <input type="radio" name="request_mode" value="file" checked>
+                  <span>파일 요약</span>
+                </label>
+                <label class="mode-pill">
+                  <input type="radio" name="request_mode" value="search">
+                  <span>문서 검색</span>
+                </label>
+                <label class="mode-pill">
+                  <input type="radio" name="request_mode" value="chat">
+                  <span>일반 채팅</span>
+                </label>
+              </div>
+            </div>
+
+            <div id="file-fields" class="field-grid single">
+              <label>
+                파일 경로
+                <input id="source-path" data-testid="source-path" name="source_path" type="text" placeholder="/absolute/or/relative/path/to/file.pdf">
+              </label>
+              <input id="browser-file-input" data-testid="browser-file-input" type="file" class="hidden" accept=".txt,.md,.pdf,.json,.csv,.log,.yaml,.yml,.toml,.ini,.py,.ts,.tsx,.js,.jsx">
+              <div class="button-row">
+                <button id="pick-file-button" data-testid="pick-file-button" class="secondary" type="button">파일 찾기</button>
+                <button id="clear-picked-file" class="secondary hidden" type="button">선택 해제</button>
+              </div>
+              <div id="picked-file-row" class="path-row hidden">
+                <span id="picked-file-name" class="path-text"></span>
+              </div>
+              <p class="hint">브라우저 파일 선택창으로 직접 고른 파일은 로컬 서버로만 전달되며, 절대경로 대신 파일명 기준으로 처리됩니다.</p>
+            </div>
+
+            <div id="search-fields" class="field-grid hidden">
+              <label>
+                검색 루트
+                <input id="search-root" data-testid="search-root" name="search_root" type="text" placeholder="/path/to/folder">
+              </label>
+              <label>
+                검색어
+                <input id="search-query" data-testid="search-query" name="search_query" type="text" placeholder="budget">
+              </label>
+              <input id="browser-folder-input" data-testid="browser-folder-input" type="file" class="hidden" webkitdirectory directory multiple>
+              <div class="button-row">
+                <button id="pick-folder-button" data-testid="pick-folder-button" class="secondary" type="button">폴더 찾기</button>
+                <button id="clear-picked-folder" class="secondary hidden" type="button">선택 해제</button>
+              </div>
+              <div id="picked-folder-row" class="path-row hidden">
+                <span id="picked-folder-name" class="path-text"></span>
+              </div>
+              <p class="hint">브라우저 폴더 선택창으로 직접 고른 파일은 로컬 서버로만 전달되며, search_root 대신 선택 파일 목록 기준으로 검색합니다.</p>
+            </div>
+
+            <div id="chat-fields" class="field-grid single hidden">
+              <label>
+                메시지
+                <textarea id="user-text" name="user_text" placeholder="문서 작업과 관련된 일반 질문이나 메모를 입력해 주세요."></textarea>
+              </label>
+            </div>
+
+            <div class="checks">
+              <label class="check">
+                <input id="save-summary" data-testid="save-summary" name="save_summary" type="checkbox">
+                <span>요약 노트 저장 요청</span>
+              </label>
+              <label id="search-only-check" class="check hidden">
+                <input id="search-only" name="search_only" type="checkbox">
+                <span>검색 결과만 보기</span>
+              </label>
+            </div>
+
+            <details data-testid="advanced-settings">
+              <summary>고급 설정</summary>
+              <div class="field-grid" style="margin-top: 12px;">
+                <label>
+                  세션 ID
+                  <input id="session-id" data-testid="session-id" name="session_id" type="text" value="__DEFAULT_SESSION_ID__">
+                </label>
+                <label>
+                  프로바이더
+                  <select id="provider" name="provider">
+                    <option value="mock">mock</option>
+                    <option value="ollama">ollama</option>
+                  </select>
+                </label>
+                <label>
+                  모델
+                  <input id="model" name="model" type="text" value="__DEFAULT_MODEL__" placeholder="예: llama3.2:latest">
+                </label>
+                <label>
+                  Base URL
+                  <input id="base-url" name="base_url" type="text" value="__DEFAULT_BASE_URL__">
+                </label>
+                <label>
+                  검색 개수 제한
+                  <input id="search-limit" name="search_limit" type="number" min="1" value="3">
+                </label>
+                <label>
+                  외부 웹 검색 권한
+                  <select id="web-search-permission" data-testid="web-search-permission" name="web_search_permission">
+                    <option value="disabled">차단</option>
+                    <option value="approval">승인 후 허용</option>
+                    <option value="enabled">허용</option>
+                  </select>
+                </label>
+                <label>
+                  저장 경로
+                  <input id="note-path" data-testid="note-path" name="note_path" type="text" placeholder="비워두면 notes 디렉터리 기본 경로를 사용합니다.">
+                </label>
+                <label class="field-grid single">
+                  선택 출처 경로
+                  <textarea id="selected-paths" name="selected_paths" placeholder="검색 결과에서 특정 파일만 요약하고 싶으면 경로 또는 고유 suffix를 한 줄에 하나씩 입력해 주세요."></textarea>
+                </label>
+              </div>
+              <div class="checks" style="margin-top: 12px;">
+                <label class="check">
+                  <input id="skip-preflight" name="skip_preflight" type="checkbox">
+                  <span>런타임 사전 확인 건너뛰기</span>
+                </label>
+              </div>
+              <p class="hint" style="margin-top: 12px;">외부 웹 검색은 읽기 전용으로 연결되어 있고, 검색 결과 요약과 링크/스니펫을 세션별 로컬 기록으로 저장합니다. 지금은 차단/승인 필요/허용 상태를 세션별로 나눠 두고 있습니다.</p>
+            </details>
+
+            <div class="actions">
+              <button class="primary" data-testid="submit-request" type="submit">요청 실행</button>
+              <button class="secondary" id="load-session" type="button">세션 불러오기</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="grid-card">
+          <div class="card-header">
+            <h2>최근 결과</h2>
+            <span class="hint">응답 본문, 선택 출처, 노트 미리보기, 런타임 상태를 확인할 수 있습니다.</span>
+          </div>
+          <div id="error-box" class="status-box error hidden"></div>
+          <div id="notice-box" class="status-box hidden"></div>
+          <div id="progress-box" data-testid="progress-box" class="status-box progress-box hidden">
+            <div class="progress-meta">
+              <div class="progress-summary">
+                <div class="progress-title">
+                  <span class="progress-dot"></span>
+                  <span id="progress-title">응답 생성 중</span>
+                </div>
+                <div id="progress-detail" class="progress-detail"></div>
+              </div>
+              <div class="button-row">
+                <div id="progress-elapsed" class="progress-timer">0.0초</div>
+                <button id="cancel-request" data-testid="cancel-request" class="secondary hidden" type="button">응답 취소</button>
+              </div>
+            </div>
+            <div id="progress-note" class="busy-note"></div>
+          </div>
+          <div id="runtime-box" class="status-box hidden"></div>
+          <div id="response-box" data-testid="response-box" class="panel">
+            <div class="panel-header">
+              <strong class="section-title">응답</strong>
+              <div id="response-origin-group" class="origin-group hidden">
+                <span id="response-origin-badge" class="origin-badge">SYSTEM</span>
+                <span id="response-origin-detail" class="origin-detail"></span>
+              </div>
+            </div>
+            <div id="response-quick-meta" class="quick-meta hidden">
+              <div id="response-quick-meta-text" class="quick-meta-text"></div>
+            <div id="response-saved-path-row" class="path-row hidden">
+              <span id="response-saved-path" class="path-text"></span>
+              <button id="response-copy-path" class="copy-button subtle" type="button">경로 복사</button>
+            </div>
+            <div id="response-search-record-row" class="path-row hidden">
+              <span id="response-search-record" class="path-text"></span>
+              <button id="response-copy-search-record" class="copy-button subtle" type="button">검색 기록 복사</button>
+            </div>
+          </div>
+            <pre id="response-text" data-testid="response-text">아직 보낸 요청이 없습니다.</pre>
+            <div id="response-feedback-box" class="feedback-bar hidden">
+              <div id="response-feedback-status" class="hint"></div>
+              <div id="response-feedback-actions" class="feedback-actions">
+                <button class="feedback-button" data-feedback-value="helpful" type="button">도움 됨</button>
+                <button class="feedback-button" data-feedback-value="unclear" type="button">애매함</button>
+                <button class="feedback-button" data-feedback-value="incorrect" type="button">틀림</button>
+              </div>
+            </div>
+            <div id="response-feedback-detail-box" class="feedback-bar hidden">
+              <div id="response-feedback-reason-status" class="hint"></div>
+              <div id="response-feedback-reason-actions" class="feedback-actions">
+                <button class="feedback-button" data-feedback-reason="factual_error" type="button">사실과 다름</button>
+                <button class="feedback-button" data-feedback-reason="irrelevant_result" type="button">검색과 무관</button>
+                <button class="feedback-button" data-feedback-reason="context_miss" type="button">문맥 오해</button>
+                <button class="feedback-button" data-feedback-reason="awkward_tone" type="button">표현 어색함</button>
+              </div>
+              <div class="feedback-actions">
+                <button id="response-feedback-retry" class="secondary" type="button">피드백 반영해 다시 답변</button>
+              </div>
+            </div>
+          </div>
+          <div id="selected-box" class="panel hidden">
+            <strong class="section-title">선택된 출처</strong>
+            <pre id="selected-text"></pre>
+          </div>
+          <div id="evidence-box" data-testid="evidence-box" class="panel hidden">
+            <div class="panel-header">
+              <strong class="section-title">근거와 출처</strong>
+              <button id="toggle-evidence" class="toggle-button subtle" type="button">펼치기</button>
+            </div>
+            <div id="evidence-body" class="panel-body hidden">
+              <div id="evidence-hint" class="panel-hint hidden"></div>
+              <div id="evidence-scroll-region" data-testid="evidence-scroll-region" class="panel-scroll-region">
+                <pre id="evidence-text"></pre>
+              </div>
+            </div>
+          </div>
+          <div id="summary-chunks-box" data-testid="summary-chunks-box" class="panel hidden">
+            <div class="panel-header">
+              <strong class="section-title">요약에 반영한 구간</strong>
+              <button id="toggle-summary-chunks" class="toggle-button subtle" type="button">펼치기</button>
+            </div>
+            <div id="summary-chunks-body" class="panel-body hidden">
+              <div id="summary-chunks-hint" class="panel-hint hidden"></div>
+              <div id="summary-chunks-scroll-region" data-testid="summary-chunks-scroll-region" class="panel-scroll-region">
+                <pre id="summary-chunks-text"></pre>
+              </div>
+            </div>
+          </div>
+          <div id="preview-box" class="panel hidden">
+            <strong class="section-title">노트 미리보기</strong>
+            <pre id="preview-text"></pre>
+          </div>
+          <div id="context-box" class="panel hidden">
+            <strong class="section-title">현재 문서 문맥</strong>
+            <pre id="context-text"></pre>
+          </div>
+          <div id="suggestions-box" class="panel hidden">
+            <strong class="section-title">다음에 이렇게 물어볼 수 있습니다</strong>
+            <div id="suggestions-list" class="suggestion-list"></div>
+          </div>
+          <div id="search-history-box" class="panel hidden">
+            <div class="panel-header">
+              <strong class="section-title">최근 웹 검색 기록</strong>
+              <span id="search-history-meta" class="hint"></span>
+            </div>
+            <div id="search-history-list" class="history-list"></div>
+          </div>
+          <div id="approval-box" data-testid="approval-box" class="panel approval-box hidden">
+            <strong class="section-title">저장 승인</strong>
+            <div id="approval-meta" class="approval-meta"></div>
+            <div class="approval-inputs">
+              <label>
+                저장 경로
+                <input id="approval-path-input" data-testid="approval-path-input" name="approval_path_input" type="text" placeholder="새 저장 경로를 입력해 주세요.">
+              </label>
+              <div class="approval-actions">
+                <button id="reissue-button" data-testid="reissue-button" class="secondary" type="button">새 경로로 승인 다시 만들기</button>
+                <button id="approval-copy-path" class="copy-button subtle" type="button">경로 복사</button>
+              </div>
+            </div>
+            <pre id="approval-preview"></pre>
+            <div class="actions">
+              <button id="approve-button" data-testid="approve-button" class="primary" type="button">저장 승인</button>
+              <button id="reject-button" class="danger" type="button">취소</button>
+            </div>
+          </div>
+        </section>
+      </aside>
+    </section>
+  </div>
+
+  <script>
+    const transcriptEl = document.getElementById("transcript");
+    const requestForm = document.getElementById("request-form");
+    const sessionListEl = document.getElementById("session-list");
+    const errorBox = document.getElementById("error-box");
+    const noticeBox = document.getElementById("notice-box");
+    const progressBox = document.getElementById("progress-box");
+    const progressTitle = document.getElementById("progress-title");
+    const progressDetail = document.getElementById("progress-detail");
+    const progressElapsed = document.getElementById("progress-elapsed");
+    const progressNote = document.getElementById("progress-note");
+    const cancelRequestButton = document.getElementById("cancel-request");
+    const responseText = document.getElementById("response-text");
+    const responseOriginGroup = document.getElementById("response-origin-group");
+    const responseOriginBadge = document.getElementById("response-origin-badge");
+    const responseOriginDetail = document.getElementById("response-origin-detail");
+    const responseQuickMeta = document.getElementById("response-quick-meta");
+    const responseQuickMetaText = document.getElementById("response-quick-meta-text");
+    const responseFeedbackBox = document.getElementById("response-feedback-box");
+    const responseFeedbackStatus = document.getElementById("response-feedback-status");
+    const responseFeedbackButtons = Array.from(document.querySelectorAll("#response-feedback-actions .feedback-button"));
+    const responseFeedbackDetailBox = document.getElementById("response-feedback-detail-box");
+    const responseFeedbackReasonStatus = document.getElementById("response-feedback-reason-status");
+    const responseFeedbackReasonButtons = Array.from(document.querySelectorAll("#response-feedback-reason-actions .feedback-button"));
+    const responseFeedbackRetryButton = document.getElementById("response-feedback-retry");
+    const responseSavedPathRow = document.getElementById("response-saved-path-row");
+    const responseSavedPath = document.getElementById("response-saved-path");
+    const responseCopyPathButton = document.getElementById("response-copy-path");
+    const responseSearchRecordRow = document.getElementById("response-search-record-row");
+    const responseSearchRecord = document.getElementById("response-search-record");
+    const responseCopySearchRecordButton = document.getElementById("response-copy-search-record");
+    const previewBox = document.getElementById("preview-box");
+    const previewText = document.getElementById("preview-text");
+    const contextBox = document.getElementById("context-box");
+    const contextText = document.getElementById("context-text");
+    const suggestionsBox = document.getElementById("suggestions-box");
+    const suggestionsList = document.getElementById("suggestions-list");
+    const searchHistoryBox = document.getElementById("search-history-box");
+    const searchHistoryMeta = document.getElementById("search-history-meta");
+    const searchHistoryList = document.getElementById("search-history-list");
+    const selectedBox = document.getElementById("selected-box");
+    const selectedText = document.getElementById("selected-text");
+    const evidenceBox = document.getElementById("evidence-box");
+    const evidenceBody = document.getElementById("evidence-body");
+    const evidenceHint = document.getElementById("evidence-hint");
+    const evidenceScrollRegion = document.getElementById("evidence-scroll-region");
+    const evidenceText = document.getElementById("evidence-text");
+    const evidenceToggleButton = document.getElementById("toggle-evidence");
+    const summaryChunksBox = document.getElementById("summary-chunks-box");
+    const summaryChunksBody = document.getElementById("summary-chunks-body");
+    const summaryChunksHint = document.getElementById("summary-chunks-hint");
+    const summaryChunksScrollRegion = document.getElementById("summary-chunks-scroll-region");
+    const summaryChunksText = document.getElementById("summary-chunks-text");
+    const summaryChunksToggleButton = document.getElementById("toggle-summary-chunks");
+    const runtimeBox = document.getElementById("runtime-box");
+    const approvalBox = document.getElementById("approval-box");
+    const approvalMeta = document.getElementById("approval-meta");
+    const approvalPathInput = document.getElementById("approval-path-input");
+    const reissueButton = document.getElementById("reissue-button");
+    const approvalCopyPathButton = document.getElementById("approval-copy-path");
+    const approvalPreview = document.getElementById("approval-preview");
+    const approveButton = document.getElementById("approve-button");
+    const rejectButton = document.getElementById("reject-button");
+    const sessionIdInput = document.getElementById("session-id");
+    const sourcePathInput = document.getElementById("source-path");
+    const browserFileInput = document.getElementById("browser-file-input");
+    const pickFileButton = document.getElementById("pick-file-button");
+    const clearPickedFileButton = document.getElementById("clear-picked-file");
+    const pickedFileRow = document.getElementById("picked-file-row");
+    const pickedFileName = document.getElementById("picked-file-name");
+    const searchRootInput = document.getElementById("search-root");
+    const searchQueryInput = document.getElementById("search-query");
+    const browserFolderInput = document.getElementById("browser-folder-input");
+    const pickFolderButton = document.getElementById("pick-folder-button");
+    const clearPickedFolderButton = document.getElementById("clear-picked-folder");
+    const pickedFolderRow = document.getElementById("picked-folder-row");
+    const pickedFolderName = document.getElementById("picked-folder-name");
+    const currentSessionTitleEl = document.getElementById("current-session-title");
+    const currentSessionMetaEl = document.getElementById("current-session-meta");
+    const webSearchPermissionInput = document.getElementById("web-search-permission");
+    const searchOnlyCheck = document.getElementById("search-only-check");
+    const newSessionButton = document.getElementById("new-session");
+    const refreshSessionButton = document.getElementById("refresh-session");
+    const loadSessionButton = document.getElementById("load-session");
+
+    const state = {
+      currentSessionId: "__DEFAULT_SESSION_ID__",
+      defaultWebSearchPermission: "__DEFAULT_WEB_SEARCH_PERMISSION__",
+      webSearchToolConnected: false,
+      currentApproval: null,
+      isBusy: false,
+      busyTimer: null,
+      busyStartedAt: 0,
+      currentRequestId: null,
+      currentRequestSessionId: "",
+      cancelRequested: false,
+      selectedBrowserFile: null,
+      selectedSearchFolderFiles: [],
+      latestAssistantMessageId: null,
+      latestAssistantUserText: "",
+      latestAssistantFeedbackLabel: "",
+      latestAssistantFeedbackReason: ""
+    };
+
+    function setText(id, value) {
+      const element = document.getElementById(id);
+      if (element) element.textContent = value;
+    }
+
+    function showElement(element, visible) {
+      element.classList.toggle("hidden", !visible);
+      if (visible) {
+        element.removeAttribute("hidden");
+      } else {
+        element.setAttribute("hidden", "");
+      }
+    }
+
+    function formatWhen(value) {
+      if (!value) return "시간 정보 없음";
+      try {
+        return new Date(value).toLocaleString("ko-KR");
+      } catch (error) {
+        return value;
+      }
+    }
+
+    function formatOrigin(origin) {
+      if (!origin || typeof origin !== "object") {
+        return null;
+      }
+
+      const provider = String(origin.provider || "system");
+      const badge = String(origin.badge || provider || "SYSTEM");
+      const label = String(origin.label || "시스템 응답");
+      const model = origin.model ? String(origin.model) : "";
+      const kind = String(origin.kind || "assistant");
+
+      const detailParts = [label];
+      if (model) detailParts.push(`모델 ${model}`);
+      if (kind === "approval") detailParts.push("승인/취소 처리");
+      return {
+        provider,
+        badge,
+        detail: detailParts.join(" · "),
+      };
+    }
+
+    function activeMode() {
+      return document.querySelector('input[name="request_mode"]:checked')?.value || "file";
+    }
+
+    function currentProvider() {
+      return document.getElementById("provider").value || "mock";
+    }
+
+    function currentModel() {
+      const explicitModel = document.getElementById("model").value.trim();
+      if (explicitModel) return explicitModel;
+      return currentProvider() === "mock" ? "내장 모의 어댑터" : "선택형 로컬 모델";
+    }
+
+    function normalizeWebSearchPermission(value) {
+      const normalized = String(value || "").trim().toLowerCase();
+      if (normalized === "approval" || normalized === "enabled") return normalized;
+      return "disabled";
+    }
+
+    function formatWebSearchPermissionLabel(permission) {
+      const normalized = normalizeWebSearchPermission(permission);
+      if (normalized === "approval") {
+        return state.webSearchToolConnected ? "승인 필요" : "승인 필요 · 도구 미연결";
+      }
+      if (normalized === "enabled") {
+        return state.webSearchToolConnected ? "허용" : "허용 · 도구 미연결";
+      }
+      return state.webSearchToolConnected ? "차단" : "차단 · 도구 미연결";
+    }
+
+    function updateWebSearchMeta(permission) {
+      setText("meta-web-search", formatWebSearchPermissionLabel(permission));
+    }
+
+    function formatFileSize(bytes) {
+      const size = Number(bytes || 0);
+      if (!Number.isFinite(size) || size <= 0) return "0 B";
+      if (size < 1024) return `${size} B`;
+      if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+      return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    function applyMode(mode) {
+      showElement(document.getElementById("file-fields"), mode === "file");
+      showElement(document.getElementById("search-fields"), mode === "search");
+      showElement(document.getElementById("chat-fields"), mode === "chat");
+      showElement(searchOnlyCheck, mode === "search");
+      if (mode !== "search") {
+        document.getElementById("search-only").checked = false;
+      }
+    }
+
+    function renderSelectedBrowserFile(file) {
+      state.selectedBrowserFile = file || null;
+      showElement(pickedFileRow, Boolean(file));
+      showElement(clearPickedFileButton, Boolean(file));
+      pickedFileName.textContent = file ? `${file.name} · ${formatFileSize(file.size)}` : "";
+    }
+
+    function clearSelectedBrowserFile() {
+      state.selectedBrowserFile = null;
+      browserFileInput.value = "";
+      renderSelectedBrowserFile(null);
+    }
+
+    function deriveFolderLabel(files) {
+      const firstFile = Array.isArray(files) && files.length > 0 ? files[0] : null;
+      if (!firstFile) return "선택 폴더";
+      const relativePath = String(firstFile.webkitRelativePath || "").trim();
+      if (relativePath.includes("/")) {
+        return relativePath.split("/")[0];
+      }
+      return "선택 폴더";
+    }
+
+    function renderSelectedSearchFolder(files) {
+      const normalizedFiles = Array.isArray(files) ? files.filter(Boolean) : [];
+      state.selectedSearchFolderFiles = normalizedFiles;
+      const hasFiles = normalizedFiles.length > 0;
+      showElement(pickedFolderRow, hasFiles);
+      showElement(clearPickedFolderButton, hasFiles);
+      if (!hasFiles) {
+        pickedFolderName.textContent = "";
+        return;
+      }
+
+      const totalBytes = normalizedFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
+      const folderLabel = deriveFolderLabel(normalizedFiles);
+      pickedFolderName.textContent = `${folderLabel} · ${normalizedFiles.length}개 파일 · ${formatFileSize(totalBytes)}`;
+    }
+
+    function clearSelectedSearchFolder() {
+      state.selectedSearchFolderFiles = [];
+      browserFolderInput.value = "";
+      renderSelectedSearchFolder([]);
+    }
+
+    function bytesToBase64(bytes) {
+      let binary = "";
+      const chunkSize = 0x8000;
+      for (let index = 0; index < bytes.length; index += chunkSize) {
+        const chunk = bytes.subarray(index, Math.min(index + chunkSize, bytes.length));
+        binary += String.fromCharCode(...chunk);
+      }
+      return btoa(binary);
+    }
+
+    async function buildUploadedFilePayload() {
+      const file = state.selectedBrowserFile;
+      if (!file) return null;
+      const arrayBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      return {
+        name: file.name,
+        mime_type: file.type || "",
+        size_bytes: bytes.byteLength,
+        content_base64: bytesToBase64(bytes),
+      };
+    }
+
+    async function buildUploadedSearchFilesPayload() {
+      const files = Array.isArray(state.selectedSearchFolderFiles) ? state.selectedSearchFolderFiles : [];
+      if (files.length === 0) return null;
+
+      const folderLabel = deriveFolderLabel(files);
+      return Promise.all(
+        files.map(async (file) => {
+          const arrayBuffer = await file.arrayBuffer();
+          const bytes = new Uint8Array(arrayBuffer);
+          return {
+            name: file.name,
+            relative_path: file.webkitRelativePath || file.name,
+            root_label: folderLabel,
+            mime_type: file.type || "",
+            size_bytes: bytes.byteLength,
+            content_base64: bytesToBase64(bytes),
+          };
+        })
+      );
+    }
+
+    async function collectPayload() {
+      const payload = {
+        session_id: sessionIdInput.value.trim() || state.currentSessionId,
+        provider: document.getElementById("provider").value,
+        model: document.getElementById("model").value.trim(),
+        base_url: document.getElementById("base-url").value.trim(),
+        web_search_permission: normalizeWebSearchPermission(webSearchPermissionInput.value),
+        save_summary: document.getElementById("save-summary").checked,
+        skip_preflight: document.getElementById("skip-preflight").checked,
+        note_path: document.getElementById("note-path").value.trim(),
+        selected_paths: document.getElementById("selected-paths").value.trim()
+      };
+
+      const mode = activeMode();
+      if (mode === "file") {
+        const uploadedFile = await buildUploadedFilePayload();
+        if (uploadedFile) {
+          payload.uploaded_file = uploadedFile;
+        } else {
+          payload.source_path = sourcePathInput.value.trim();
+        }
+      } else if (mode === "search") {
+        const uploadedSearchFiles = await buildUploadedSearchFilesPayload();
+        if (uploadedSearchFiles && uploadedSearchFiles.length > 0) {
+          payload.uploaded_search_files = uploadedSearchFiles;
+        } else {
+          payload.search_root = searchRootInput.value.trim();
+        }
+        payload.search_query = searchQueryInput.value.trim();
+        payload.search_limit = document.getElementById("search-limit").value.trim();
+        payload.search_only = document.getElementById("search-only").checked;
+      } else {
+        payload.user_text = document.getElementById("user-text").value;
+      }
+      return payload;
+    }
+
+    function buildSharedRequestSettings() {
+      return {
+        session_id: sessionIdInput.value.trim() || state.currentSessionId,
+        provider: document.getElementById("provider").value,
+        model: document.getElementById("model").value.trim(),
+        base_url: document.getElementById("base-url").value.trim(),
+        web_search_permission: normalizeWebSearchPermission(webSearchPermissionInput.value),
+        skip_preflight: document.getElementById("skip-preflight").checked,
+      };
+    }
+
+    function createRequestId() {
+      return `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    }
+
+    function providerBadge(provider) {
+      const normalized = String(provider || "system").toUpperCase();
+      if (normalized === "OLLAMA") return "OLLAMA";
+      if (normalized === "MOCK") return "MOCK";
+      return "SYSTEM";
+    }
+
+    function buildProgressMessage(mode, provider, model) {
+      const badge = providerBadge(provider);
+      if (mode === "approve") {
+        return {
+          title: "저장 승인 처리 중",
+          detail: `${badge} · 승인된 노트를 안전하게 저장하는 중입니다.`,
+          note: "파일 쓰기 전용 승인 흐름만 실행합니다.",
+        };
+      }
+      if (mode === "reject") {
+        return {
+          title: "승인 취소 처리 중",
+          detail: `${badge} · 승인 대기 작업을 정리하는 중입니다.`,
+          note: "파일은 저장되지 않습니다.",
+        };
+      }
+      if (mode === "reissue") {
+        return {
+          title: "승인 경로 다시 준비 중",
+          detail: `${badge} · 기존 승인 요청을 새 저장 경로 기준으로 다시 만드는 중입니다.`,
+          note: "파일은 저장하지 않고 승인 객체만 새로 발급합니다.",
+        };
+      }
+      if (mode === "follow_up") {
+        return {
+          title: "후속 응답 생성 중",
+          detail: `${badge} · ${model} 기준으로 현재 문서 문맥을 바탕으로 답변을 생성하는 중입니다.`,
+          note: provider === "ollama"
+            ? "실제 로컬 모델은 첫 응답이나 긴 문맥에서 수 초 이상 걸릴 수 있습니다."
+            : "모의 응답이라 비교적 빠르게 끝납니다.",
+        };
+      }
+      if (mode === "history") {
+        return {
+          title: "검색 기록 불러오는 중",
+          detail: `${badge} · ${model} 기준으로 최근 웹 검색 기록을 다시 여는 중입니다.`,
+          note: "이미 로컬에 저장된 검색 기록만 다시 읽습니다.",
+        };
+      }
+      const requestMode = activeMode();
+      if (requestMode === "search") {
+        return {
+          title: "문서 검색 및 요약 중",
+          detail: `${badge} · ${model} 기준으로 검색 결과를 읽고 응답을 구성하는 중입니다.`,
+          note: provider === "ollama"
+            ? "검색 후 선택된 문서를 다시 읽고 요약하기 때문에 시간이 더 걸릴 수 있습니다."
+            : "검색 결과 기반 모의 응답을 준비하는 중입니다.",
+        };
+      }
+      if (requestMode === "chat") {
+        return {
+          title: "일반 응답 생성 중",
+          detail: `${badge} · ${model} 기준으로 대화 응답을 생성하는 중입니다.`,
+          note: provider === "ollama"
+            ? "실제 로컬 모델 추론이 진행 중입니다."
+            : "모의 응답을 준비하는 중입니다.",
+        };
+      }
+      return {
+        title: "파일 요약 생성 중",
+        detail: `${badge} · ${model} 기준으로 문서를 읽고 요약을 만드는 중입니다.`,
+        note: provider === "ollama"
+          ? "PDF나 긴 문서는 CPU 사용량이 높아지며 더 오래 걸릴 수 있습니다."
+          : "내장 모의 어댑터로 흐름을 빠르게 확인하는 중입니다.",
+      };
+    }
+
+    function setBusyControls(busy) {
+      state.isBusy = busy;
+      requestForm.classList.toggle("busy-locked", busy);
+      transcriptEl.classList.toggle("busy-locked", busy);
+      suggestionsList.classList.toggle("busy-locked", busy);
+      searchHistoryList.classList.toggle("busy-locked", busy);
+      transcriptEl.querySelectorAll("button").forEach((button) => {
+        button.disabled = busy;
+      });
+      requestForm.querySelectorAll("button, input, textarea, select").forEach((element) => {
+        element.disabled = busy;
+      });
+      newSessionButton.disabled = busy;
+      refreshSessionButton.disabled = busy;
+      loadSessionButton.disabled = busy;
+      approveButton.disabled = busy || !state.currentApproval || Boolean(state.currentApproval?.overwrite);
+      reissueButton.disabled = busy || !state.currentApproval || !approvalPathInput.value.trim();
+      rejectButton.disabled = busy || !state.currentApproval;
+      approvalPathInput.disabled = busy || !state.currentApproval;
+      approvalCopyPathButton.disabled = busy || !state.currentApproval || !state.currentApproval?.requested_path;
+      responseCopyPathButton.disabled = !responseCopyPathButton.dataset.path;
+      responseCopySearchRecordButton.disabled = !responseCopySearchRecordButton.dataset.path;
+      suggestionsList.querySelectorAll("button").forEach((button) => {
+        button.disabled = busy;
+      });
+      searchHistoryList.querySelectorAll("button").forEach((button) => {
+        button.disabled = busy;
+      });
+      responseFeedbackButtons.forEach((button) => {
+        button.disabled = busy || !state.latestAssistantMessageId;
+      });
+      responseFeedbackReasonButtons.forEach((button) => {
+        button.disabled = busy || !state.latestAssistantMessageId || !["unclear", "incorrect"].includes(state.latestAssistantFeedbackLabel);
+      });
+      responseFeedbackRetryButton.disabled = busy || !state.latestAssistantMessageId || !["unclear", "incorrect"].includes(state.latestAssistantFeedbackLabel);
+      updateCancelButton();
+    }
+
+    function updateCancelButton() {
+      const visible = state.isBusy;
+      showElement(cancelRequestButton, visible);
+      cancelRequestButton.disabled = !visible || !state.currentRequestId || state.cancelRequested;
+      cancelRequestButton.textContent = state.cancelRequested ? "취소 요청 중" : "응답 취소";
+    }
+
+    function clearBusyTimer() {
+      if (state.busyTimer) {
+        window.clearInterval(state.busyTimer);
+        state.busyTimer = null;
+      }
+    }
+
+    function setProgressElapsed() {
+      const seconds = Math.max(0, (Date.now() - state.busyStartedAt) / 1000);
+      progressElapsed.textContent = `${seconds.toFixed(1)}초`;
+    }
+
+    function startProgress(mode, provider, model) {
+      const progress = buildProgressMessage(mode, provider, model);
+      clearError();
+      clearNotice();
+      state.cancelRequested = false;
+      progressTitle.textContent = progress.title;
+      progressDetail.textContent = progress.detail;
+      progressNote.textContent = progress.note;
+      state.busyStartedAt = Date.now();
+      setProgressElapsed();
+      clearBusyTimer();
+      state.busyTimer = window.setInterval(setProgressElapsed, 100);
+      showElement(progressBox, true);
+      setBusyControls(true);
+    }
+
+    function applyPhaseEvent(event) {
+      if (!event || typeof event !== "object") return;
+      showElement(progressBox, true);
+      if (event.title) progressTitle.textContent = event.title;
+      if (event.detail) progressDetail.textContent = event.detail;
+      if (typeof event.note === "string") progressNote.textContent = event.note;
+    }
+
+    function stopProgress() {
+      clearBusyTimer();
+      state.currentRequestId = null;
+      state.currentRequestSessionId = "";
+      state.cancelRequested = false;
+      showElement(progressBox, false);
+      progressTitle.textContent = "응답 생성 중";
+      progressDetail.textContent = "";
+      progressElapsed.textContent = "0.0초";
+      progressNote.textContent = "";
+      setBusyControls(false);
+    }
+
+    async function fetchJson(url, options) {
+      const response = await fetch(url, options);
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error?.message || "요청을 처리하지 못했습니다.");
+      }
+      return data;
+    }
+
+    async function submitPayload(payload) {
+      return fetchJson("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+    }
+
+    function processStreamEvent(event, finalPayloadRef) {
+      if (!event || typeof event !== "object") return;
+      if (event.event === "phase") {
+        applyPhaseEvent(event);
+        return;
+      }
+      if (event.event === "runtime_status") {
+        renderRuntime(event.runtime_status || null);
+        return;
+      }
+      if (event.event === "response_origin") {
+        renderResponseOrigin(event.response_origin || null);
+        return;
+      }
+      if (event.event === "text_delta") {
+        const current = responseText.textContent === "아직 보낸 요청이 없습니다." ? "" : responseText.textContent;
+        responseText.textContent = `${current}${event.delta || ""}`;
+        return;
+      }
+      if (event.event === "text_replace") {
+        responseText.textContent = event.text || "";
+        return;
+      }
+      if (event.event === "final") {
+        finalPayloadRef.value = event.data || null;
+        return;
+      }
+      if (event.event === "cancelled") {
+        finalPayloadRef.value = {
+          ok: true,
+          cancelled: true,
+          message: event.message || "요청을 취소했습니다.",
+          request_id: event.request_id || null,
+        };
+        return;
+      }
+      if (event.event === "error") {
+        throw new Error(event.error?.message || "요청을 처리하지 못했습니다.");
+      }
+    }
+
+    async function submitStreamPayload(payload) {
+      const sessionId = String(payload.session_id || state.currentSessionId || sessionIdInput.value.trim() || "__DEFAULT_SESSION_ID__");
+      const requestId = String(payload.request_id || createRequestId());
+      const requestPayload = {
+        ...payload,
+        session_id: sessionId,
+        request_id: requestId,
+      };
+
+      state.currentRequestId = requestId;
+      state.currentRequestSessionId = sessionId;
+      state.cancelRequested = false;
+      updateCancelButton();
+
+      const response = await fetch("/api/chat/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestPayload)
+      });
+
+      if (!response.ok) {
+        let message = "요청을 처리하지 못했습니다.";
+        try {
+          const data = await response.json();
+          message = data.error?.message || message;
+        } catch (error) {
+          message = response.statusText || message;
+        }
+        throw new Error(message);
+      }
+
+      if (!response.body) {
+        throw new Error("스트리밍 응답 본문을 읽을 수 없습니다.");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      const finalPayloadRef = { value: null };
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        while (true) {
+          const newlineIndex = buffer.indexOf("\n");
+          if (newlineIndex < 0) break;
+          const line = buffer.slice(0, newlineIndex).trim();
+          buffer = buffer.slice(newlineIndex + 1);
+          if (!line) continue;
+          processStreamEvent(JSON.parse(line), finalPayloadRef);
+        }
+      }
+
+      if (buffer.trim()) {
+        processStreamEvent(JSON.parse(buffer.trim()), finalPayloadRef);
+      }
+
+      if (!finalPayloadRef.value) {
+        throw new Error("스트리밍 응답이 완료되지 않았습니다.");
+      }
+      return finalPayloadRef.value;
+    }
+
+    async function cancelCurrentRequest() {
+      if (!state.isBusy || !state.currentRequestId || state.cancelRequested) return;
+
+      state.cancelRequested = true;
+      updateCancelButton();
+      progressTitle.textContent = "취소 요청 중";
+      progressDetail.textContent = "현재 스트리밍 요청을 안전하게 중단하도록 서버에 전달하는 중입니다.";
+      progressNote.textContent = "이미 화면에 표시된 응답 조각은 유지하고, 이후 생성만 멈춥니다.";
+
+      try {
+        const data = await fetchJson("/api/chat/cancel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: state.currentRequestSessionId || state.currentSessionId,
+            request_id: state.currentRequestId,
+          }),
+        });
+        if (!data.cancelled) {
+          state.cancelRequested = false;
+          updateCancelButton();
+          renderNotice(data.message || "취소할 활성 요청을 찾지 못했습니다.");
+          return;
+        }
+        progressNote.textContent = data.message || "취소 요청을 보냈습니다.";
+      } catch (error) {
+        state.cancelRequested = false;
+        updateCancelButton();
+        throw error;
+      }
+    }
+
+    async function sendFollowUpPrompt(promptText) {
+      if (state.isBusy) return;
+      try {
+        document.querySelector('input[name="request_mode"][value="chat"]').checked = true;
+        applyMode("chat");
+        document.getElementById("user-text").value = promptText;
+        startProgress("follow_up", currentProvider(), currentModel());
+        responseText.textContent = "";
+        renderResponseOrigin(null);
+        const data = await submitStreamPayload({
+          session_id: state.currentSessionId,
+          user_text: promptText,
+          provider: document.getElementById("provider").value,
+          model: document.getElementById("model").value.trim(),
+          base_url: document.getElementById("base-url").value.trim(),
+          skip_preflight: document.getElementById("skip-preflight").checked,
+        });
+        if (data?.cancelled) {
+          renderNotice(data.message || "요청을 취소했습니다.");
+          await fetchSessions();
+          return;
+        }
+        renderResult(data);
+        await fetchSessions();
+      } catch (error) {
+        renderError(error);
+      } finally {
+        stopProgress();
+      }
+    }
+
+    async function sendRequest(extraPayload, progressMode = "follow_up") {
+      if (state.isBusy) return null;
+      try {
+        startProgress(progressMode, currentProvider(), currentModel());
+        responseText.textContent = "";
+        renderResponseOrigin(null);
+        const data = await submitStreamPayload({
+          ...buildSharedRequestSettings(),
+          ...extraPayload,
+        });
+        if (data?.cancelled) {
+          renderNotice(data.message || "요청을 취소했습니다.");
+          await fetchSessions();
+          return data;
+        }
+        renderResult(data);
+        await fetchSessions();
+        return data;
+      } catch (error) {
+        renderError(error);
+        throw error;
+      } finally {
+        stopProgress();
+      }
+    }
+
+    function renderSessionList(sessions) {
+      sessionListEl.innerHTML = "";
+      if (!sessions || sessions.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "session-summary";
+        empty.innerHTML = "<strong>세션이 없습니다.</strong><span class='hint'>첫 요청을 보내면 세션이 생성됩니다.</span>";
+        sessionListEl.appendChild(empty);
+        return;
+      }
+
+      sessions.forEach((session) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `session-item ${session.session_id === state.currentSessionId ? "active" : ""}`;
+        button.innerHTML = `
+          <strong>${session.title || session.session_id}</strong>
+          <span>업데이트 ${formatWhen(session.updated_at)} · 승인 대기 ${session.pending_approval_count || 0}건</span>
+          <span>${session.last_message_preview || "아직 메시지가 없습니다."}</span>
+        `;
+        button.addEventListener("click", () => loadSession(session.session_id).catch(renderError));
+        sessionListEl.appendChild(button);
+      });
+    }
+
+    function findLatestAssistantContext(messages) {
+      const items = Array.isArray(messages) ? messages : [];
+      let latestAssistant = null;
+      let latestUserText = "";
+      let lastUserText = "";
+
+      items.forEach((message) => {
+        if (!message || typeof message !== "object") return;
+        if (message.role === "user") {
+          lastUserText = String(message.text || "").trim();
+          return;
+        }
+        if (message.role === "assistant") {
+          latestAssistant = message;
+          latestUserText = lastUserText;
+        }
+      });
+
+      return {
+        assistant: latestAssistant,
+        userText: latestUserText,
+      };
+    }
+
+    function renderTranscript(messages) {
+      transcriptEl.innerHTML = "";
+      if (!messages || messages.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "message assistant";
+        empty.innerHTML = '<span class="role">비서</span><pre>세션이 비어 있습니다. 첫 요청을 보내 보세요.</pre>';
+        transcriptEl.appendChild(empty);
+        return;
+      }
+
+      messages.forEach((message) => {
+        const card = document.createElement("article");
+        card.className = `message ${message.role || "assistant"}`;
+
+        const header = document.createElement("div");
+        header.className = "message-header";
+
+        const left = document.createElement("div");
+        left.className = "message-header-left";
+        const role = document.createElement("span");
+        role.className = "role";
+        role.textContent = message.role === "user" ? "사용자" : "비서";
+        left.appendChild(role);
+
+        if (message.role !== "user" && message.status) {
+          const statusBadge = document.createElement("span");
+          applyStatusBadge(statusBadge, message.status);
+          left.appendChild(statusBadge);
+        }
+        header.appendChild(left);
+
+        if (message.role !== "user") {
+          const formattedOrigin = formatOrigin(message.response_origin);
+          if (formattedOrigin) {
+            const originGroup = document.createElement("div");
+            originGroup.className = "origin-group";
+
+            const badge = document.createElement("span");
+            badge.className = `origin-badge ${formattedOrigin.provider}`;
+            badge.textContent = formattedOrigin.badge;
+            originGroup.appendChild(badge);
+
+            const detail = document.createElement("span");
+            detail.className = "origin-detail";
+            detail.textContent = formattedOrigin.detail;
+            originGroup.appendChild(detail);
+
+            header.appendChild(originGroup);
+          }
+        }
+
+        card.appendChild(header);
+
+        const body = document.createElement("pre");
+        body.textContent = message.text || "";
+        card.appendChild(body);
+
+        const metaLines = [];
+        if (message.status) metaLines.push(`상태 ${compactStatusLabel(message.status)}`);
+        if (Array.isArray(message.selected_source_paths) && message.selected_source_paths.length > 0) {
+          metaLines.push(`출처 ${message.selected_source_paths.length}개`);
+        }
+        if (Array.isArray(message.evidence) && message.evidence.length > 0) {
+          metaLines.push(`근거 ${message.evidence.length}개`);
+        }
+        if (Array.isArray(message.summary_chunks) && message.summary_chunks.length > 0) {
+          metaLines.push(`요약 구간 ${message.summary_chunks.length}개`);
+        }
+        if (message.feedback?.label) {
+          const feedbackLabel = formatFeedbackLabel(message.feedback.label);
+          const feedbackReason = formatFeedbackReasonLabel(message.feedback.reason || "");
+          metaLines.push(`피드백 ${feedbackLabel}${feedbackReason ? ` · ${feedbackReason}` : ""}`);
+        }
+        if (message.saved_note_path) {
+          metaLines.push(`저장 경로 ${compactDisplayPath(message.saved_note_path)}`);
+        } else if (message.web_search_record_path) {
+          metaLines.push(`검색 기록 ${compactDisplayPath(message.web_search_record_path)}`);
+        } else if (message.proposed_note_path) {
+          metaLines.push(`제안 경로 ${compactDisplayPath(message.proposed_note_path)}`);
+        }
+        if (metaLines.length > 0) {
+          const meta = document.createElement("div");
+          meta.className = "meta";
+          meta.textContent = metaLines.join(" · ");
+          card.appendChild(meta);
+        }
+
+        if (message.saved_note_path) {
+          const actions = document.createElement("div");
+          actions.className = "message-actions";
+          const copyButton = document.createElement("button");
+          copyButton.type = "button";
+          copyButton.className = "copy-button subtle";
+          copyButton.textContent = "저장 경로 복사";
+          copyButton.addEventListener("click", () => {
+            copyTextValue(message.saved_note_path, "저장 경로를 복사했습니다.").catch(renderError);
+          });
+          actions.appendChild(copyButton);
+          card.appendChild(actions);
+        }
+        if (message.web_search_record_path) {
+          const actions = document.createElement("div");
+          actions.className = "message-actions";
+          const copyButton = document.createElement("button");
+          copyButton.type = "button";
+          copyButton.className = "copy-button subtle";
+          copyButton.textContent = "검색 기록 복사";
+          copyButton.addEventListener("click", () => {
+            copyTextValue(message.web_search_record_path, "검색 기록 경로를 복사했습니다.").catch(renderError);
+          });
+          actions.appendChild(copyButton);
+          card.appendChild(actions);
+        }
+
+        if (message.role !== "user" && message.message_id) {
+          const feedbackControls = buildFeedbackControls(message);
+          if (feedbackControls) {
+            card.appendChild(feedbackControls);
+          }
+        }
+
+        transcriptEl.appendChild(card);
+      });
+    }
+
+    function renderRuntime(runtime) {
+      if (!runtime) {
+        showElement(runtimeBox, false);
+        runtimeBox.innerHTML = "";
+        return;
+      }
+
+      showElement(runtimeBox, true);
+      runtimeBox.innerHTML = "";
+      const title = document.createElement("strong");
+      title.textContent = "런타임 상태";
+      runtimeBox.appendChild(title);
+
+      const body = document.createElement("pre");
+      const lines = [
+        `프로바이더: ${runtime.provider}`,
+        `설정된 모델: ${runtime.configured_model || "선택형 로컬 모델"}`,
+        `접속 가능: ${runtime.reachable}`,
+        `모델 사용 가능: ${runtime.configured_model_available}`
+      ];
+      if (runtime.detail) lines.push(`상세: ${runtime.detail}`);
+      if (runtime.version) lines.push(`버전: ${runtime.version}`);
+      body.textContent = lines.join("\n");
+      runtimeBox.appendChild(body);
+    }
+
+    function renderResponseOrigin(origin) {
+      const formattedOrigin = formatOrigin(origin);
+      showElement(responseOriginGroup, Boolean(formattedOrigin));
+      if (!formattedOrigin) {
+        responseOriginBadge.className = "origin-badge system";
+        responseOriginBadge.textContent = "SYSTEM";
+        responseOriginDetail.textContent = "";
+        return;
+      }
+
+      responseOriginBadge.className = `origin-badge ${formattedOrigin.provider}`;
+      responseOriginBadge.textContent = formattedOrigin.badge;
+      responseOriginDetail.textContent = formattedOrigin.detail;
+    }
+
+    function renderSelected(selected) {
+      const items = Array.isArray(selected) ? selected : [];
+      showElement(selectedBox, items.length > 0);
+      selectedText.textContent = items.join("\n");
+    }
+
+    function renderPreview(preview) {
+      showElement(previewBox, Boolean(preview));
+      previewText.textContent = preview || "";
+    }
+
+    function truncateDisplayText(text, maxChars = 150) {
+      const normalized = String(text || "").replace(/\s+/g, " ").trim();
+      if (!normalized) return "";
+      if (normalized.length <= maxChars) return normalized;
+      return `${normalized.slice(0, maxChars - 1)}…`;
+    }
+
+    function compactDisplayPath(path) {
+      const normalized = String(path || "").trim();
+      if (!normalized) return "";
+
+      const parts = normalized.split(/[\\/]/).filter(Boolean);
+      if (parts.length <= 4) return normalized;
+      return `.../${parts.slice(-4).join("/")}`;
+    }
+
+    function sourceNameCounts(items) {
+      const counts = {};
+      items.forEach((item) => {
+        const sourceName = item.source_name || "(출처 없음)";
+        counts[sourceName] = (counts[sourceName] || 0) + 1;
+      });
+      return counts;
+    }
+
+    function compactStatusLabel(status) {
+      const normalized = String(status || "").trim();
+      if (!normalized) return "응답";
+      if (normalized === "needs_approval") return "승인 요청";
+      if (normalized === "saved") return "저장 완료";
+      if (normalized === "error") return "오류";
+      return normalized;
+    }
+
+    function formatFeedbackLabel(label) {
+      const normalized = String(label || "").trim().toLowerCase();
+      if (normalized === "helpful") return "도움 됨";
+      if (normalized === "unclear") return "애매함";
+      if (normalized === "incorrect") return "틀림";
+      return "";
+    }
+
+    function formatFeedbackReasonLabel(reason) {
+      const normalized = String(reason || "").trim().toLowerCase();
+      if (normalized === "factual_error") return "사실과 다름";
+      if (normalized === "irrelevant_result") return "검색과 무관";
+      if (normalized === "context_miss") return "문맥 오해";
+      if (normalized === "awkward_tone") return "표현 어색함";
+      return "";
+    }
+
+    function setFeedbackButtonsState(container, selectedLabel, disabled) {
+      const buttons = Array.from(container.querySelectorAll(".feedback-button"));
+      buttons.forEach((button) => {
+        const value = String(button.dataset.feedbackValue || "");
+        button.classList.toggle("active", Boolean(selectedLabel) && value === selectedLabel);
+        button.disabled = Boolean(disabled);
+      });
+    }
+
+    function buildFeedbackControls(message) {
+      if (!message || message.role === "user" || !message.message_id) return null;
+
+      const wrapper = document.createElement("div");
+      wrapper.className = "feedback-bar";
+
+      const status = document.createElement("div");
+      status.className = "hint";
+      const currentLabel = formatFeedbackLabel(message.feedback?.label || "");
+      const currentReason = formatFeedbackReasonLabel(message.feedback?.reason || "");
+      status.textContent = currentLabel
+        ? `현재 피드백: ${currentLabel}${currentReason ? ` · ${currentReason}` : ""}`
+        : "이 응답이 실제로 도움이 되었는지 표시해 두면 나중에 품질을 다듬는 데 쓸 수 있습니다.";
+      wrapper.appendChild(status);
+
+      const actions = document.createElement("div");
+      actions.className = "feedback-actions";
+      [
+        ["helpful", "도움 됨"],
+        ["unclear", "애매함"],
+        ["incorrect", "틀림"],
+      ].forEach(([value, label]) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "feedback-button";
+        button.dataset.feedbackValue = value;
+        button.textContent = label;
+        button.disabled = state.isBusy;
+        if (message.feedback?.label === value) {
+          button.classList.add("active");
+        }
+        button.addEventListener("click", () => {
+          submitFeedback(message.message_id, value, message.feedback?.reason || "").catch(renderError);
+        });
+        actions.appendChild(button);
+      });
+      wrapper.appendChild(actions);
+      return wrapper;
+    }
+
+    function applyStatusBadge(element, status) {
+      if (!element) return;
+      const normalized = String(status || "answer").trim() || "answer";
+      element.className = `status-pill ${normalized.replace(/_/g, "-")}`;
+      element.textContent = compactStatusLabel(normalized);
+    }
+
+    function setCollapsiblePanel(panel, body, toggleButton, visible, labelText) {
+      showElement(panel, visible);
+      if (!visible) {
+        body.classList.add("hidden");
+        if (toggleButton) toggleButton.textContent = "펼치기";
+        return;
+      }
+      body.classList.add("hidden");
+      if (toggleButton) {
+        toggleButton.textContent = labelText ? `${labelText} 펼치기` : "펼치기";
+      }
+    }
+
+    function togglePanelBody(body, toggleButton, collapsedLabel, expandedLabel) {
+      const hidden = body.classList.toggle("hidden");
+      if (toggleButton) {
+        toggleButton.textContent = hidden ? collapsedLabel : expandedLabel;
+      }
+    }
+
+    function renderPanelHint(element, message) {
+      if (!element) return;
+      const text = String(message || "").trim();
+      showElement(element, Boolean(text));
+      element.textContent = text;
+    }
+
+    async function copyTextValue(text, successMessage = "경로를 복사했습니다.") {
+      const value = String(text || "").trim();
+      if (!value) return;
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        renderNotice(successMessage);
+        return;
+      }
+
+      const helper = document.createElement("textarea");
+      helper.value = value;
+      helper.style.position = "fixed";
+      helper.style.opacity = "0";
+      document.body.appendChild(helper);
+      helper.select();
+      document.execCommand("copy");
+      document.body.removeChild(helper);
+      renderNotice(successMessage);
+    }
+
+    function renderResponseSummary(response, runtime) {
+      const responseStatus = response?.status || "";
+      const parts = [];
+      if (responseStatus) parts.push(`상태 ${compactStatusLabel(responseStatus)}`);
+      if (response?.selected_source_paths?.length) parts.push(`출처 ${response.selected_source_paths.length}개`);
+      if (response?.evidence?.length) parts.push(`근거 ${response.evidence.length}개`);
+      if (response?.summary_chunks?.length) parts.push(`요약 구간 ${response.summary_chunks.length}개`);
+      if (runtime?.provider) parts.push(`런타임 ${runtime.provider}`);
+      if (response?.requires_approval) parts.push("승인 대기");
+      if (response?.feedback?.label) {
+        const feedbackLabel = formatFeedbackLabel(response.feedback.label);
+        const feedbackReason = formatFeedbackReasonLabel(response.feedback.reason || "");
+        parts.push(`피드백 ${feedbackLabel}${feedbackReason ? ` · ${feedbackReason}` : ""}`);
+      }
+      showElement(responseQuickMeta, parts.length > 0 || Boolean(response?.saved_note_path) || Boolean(response?.web_search_record_path));
+      responseQuickMetaText.textContent = parts.join(" · ");
+
+      const savedPath = response?.saved_note_path || "";
+      showElement(responseSavedPathRow, Boolean(savedPath));
+      responseSavedPath.textContent = savedPath ? compactDisplayPath(savedPath) : "";
+      responseCopyPathButton.dataset.path = savedPath;
+
+      const searchRecordPath = response?.web_search_record_path || "";
+      showElement(responseSearchRecordRow, Boolean(searchRecordPath));
+      responseSearchRecord.textContent = searchRecordPath ? compactDisplayPath(searchRecordPath) : "";
+      responseCopySearchRecordButton.dataset.path = searchRecordPath;
+    }
+
+    function renderResponseFeedback(message, userText = "") {
+      state.latestAssistantMessageId = message?.message_id || null;
+      state.latestAssistantUserText = String(userText || "").trim();
+      state.latestAssistantFeedbackLabel = String(message?.feedback?.label || "");
+      state.latestAssistantFeedbackReason = String(message?.feedback?.reason || "");
+      showElement(responseFeedbackBox, Boolean(message && message.message_id));
+      if (!message || !message.message_id) {
+        responseFeedbackStatus.textContent = "";
+        responseFeedbackReasonStatus.textContent = "";
+        setFeedbackButtonsState(responseFeedbackBox, "", true);
+        showElement(responseFeedbackDetailBox, false);
+        setFeedbackButtonsState(responseFeedbackDetailBox, "", true);
+        responseFeedbackRetryButton.disabled = true;
+        return;
+      }
+
+      const currentLabel = formatFeedbackLabel(message.feedback?.label || "");
+      const currentReason = formatFeedbackReasonLabel(message.feedback?.reason || "");
+      responseFeedbackStatus.textContent = currentLabel
+        ? `현재 선택된 피드백: ${currentLabel}${currentReason ? ` · ${currentReason}` : ""}`
+        : "방금 응답이 실제로 도움이 되었는지 표시해 두시면, 나중에 어떤 답변이 애매했는지 추적할 수 있습니다.";
+      setFeedbackButtonsState(responseFeedbackBox, String(message.feedback?.label || ""), state.isBusy);
+
+      const needsReason = ["unclear", "incorrect"].includes(String(message.feedback?.label || ""));
+      showElement(responseFeedbackDetailBox, needsReason);
+      if (!needsReason) {
+        responseFeedbackReasonStatus.textContent = "";
+        setFeedbackButtonsState(responseFeedbackDetailBox, "", true);
+        responseFeedbackRetryButton.disabled = true;
+        return;
+      }
+
+      responseFeedbackReasonStatus.textContent = currentReason
+        ? `현재 문제 유형: ${currentReason}`
+        : "어떤 점이 문제였는지 고르면, 같은 세션 문맥에서 다시 답변할 때 더 명확하게 반영할 수 있습니다.";
+      setFeedbackButtonsState(responseFeedbackDetailBox, String(message.feedback?.reason || ""), state.isBusy);
+      responseFeedbackRetryButton.disabled = state.isBusy;
+    }
+
+    async function submitFeedback(messageId, feedbackLabel, feedbackReason = "") {
+      if (!messageId || state.isBusy) return;
+      const data = await fetchJson("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: state.currentSessionId,
+          message_id: messageId,
+          feedback_label: feedbackLabel,
+          feedback_reason: feedbackReason || undefined,
+        }),
+      });
+      if (data.session) {
+        renderSession(data.session);
+        renderApproval((data.session.pending_approvals || []).slice(-1)[0] || null);
+      }
+      await fetchSessions();
+      const reasonText = formatFeedbackReasonLabel(feedbackReason);
+      renderNotice(
+        `피드백을 '${formatFeedbackLabel(feedbackLabel)}'${reasonText ? ` · '${reasonText}'` : ""}으로 기록했습니다.`
+      );
+    }
+
+    async function retryLatestAssistantWithFeedback() {
+      if (state.isBusy || !state.latestAssistantMessageId || !state.latestAssistantFeedbackLabel) return;
+      const feedbackLabel = formatFeedbackLabel(state.latestAssistantFeedbackLabel);
+      const feedbackReason = formatFeedbackReasonLabel(state.latestAssistantFeedbackReason);
+      const basePrompt = state.latestAssistantUserText || "방금 답변";
+      const guidance = feedbackReason
+        ? `${feedbackLabel} 이유는 '${feedbackReason}'입니다.`
+        : `${feedbackLabel} 피드백이 있었습니다.`;
+      const retryPrompt = `${basePrompt}\n\n방금 답변은 ${guidance} 같은 세션 문맥과 근거를 기준으로 더 정확하고 관련성 높게 다시 답변해 주세요. 불필요한 잡정보는 줄이고 수정된 최종 답만 간결하게 보여 주세요.`;
+      await sendRequest(
+        {
+          user_text: retryPrompt,
+          retry_feedback_label: state.latestAssistantFeedbackLabel,
+          retry_feedback_reason: state.latestAssistantFeedbackReason || undefined,
+          retry_target_message_id: state.latestAssistantMessageId,
+        },
+        "follow_up"
+      );
+    }
+
+    function renderEvidence(evidence) {
+      const items = Array.isArray(evidence) ? evidence.filter((item) => item && typeof item === "object") : [];
+      setCollapsiblePanel(evidenceBox, evidenceBody, evidenceToggleButton, items.length > 0, `근거 ${items.length}개`);
+      if (items.length === 0) {
+        renderPanelHint(evidenceHint, "");
+        evidenceText.textContent = "";
+        return;
+      }
+
+      const uniquePaths = [...new Set(items.map((item) => String(item.source_path || "").trim()).filter(Boolean))];
+      const sharedPath = uniquePaths.length === 1 ? uniquePaths[0] : "";
+      const sharedSourceName = sharedPath ? (items[0]?.source_name || "(출처 없음)") : "";
+      const counts = sourceNameCounts(items);
+      const lines = [];
+      if (sharedPath) {
+        lines.push(`공통 출처: ${sharedSourceName}`);
+        lines.push(`경로: ${compactDisplayPath(sharedPath)}`);
+        lines.push("");
+      }
+
+      items.forEach((item, index) => {
+        const label = item.label || "문서 근거";
+        const sourceName = item.source_name || "(출처 없음)";
+        const sourcePath = item.source_path || "";
+        const snippet = truncateDisplayText(item.snippet || "");
+        const duplicateName = counts[sourceName] > 1;
+        const titleSuffix = sharedPath ? "" : ` · ${sourceName}`;
+        lines.push(`${index + 1}. ${label}${titleSuffix}`);
+        if (!sharedPath && duplicateName && sourcePath) {
+          lines.push(`   경로: ${compactDisplayPath(sourcePath)}`);
+        }
+        lines.push(`   근거: ${snippet}`);
+      });
+      renderPanelHint(
+        evidenceHint,
+        items.length > 3 ? "근거가 많으면 이 패널 안에서 스크롤해 이어서 확인하실 수 있습니다." : ""
+      );
+      if (evidenceScrollRegion) evidenceScrollRegion.scrollTop = 0;
+      evidenceText.textContent = lines.join("\n");
+    }
+
+    function renderSummaryChunks(summaryChunks) {
+      const items = Array.isArray(summaryChunks) ? summaryChunks.filter((item) => item && typeof item === "object") : [];
+      setCollapsiblePanel(summaryChunksBox, summaryChunksBody, summaryChunksToggleButton, items.length > 0, `구간 ${items.length}개`);
+      if (items.length === 0) {
+        renderPanelHint(summaryChunksHint, "");
+        summaryChunksText.textContent = "";
+        return;
+      }
+
+      const uniquePaths = [...new Set(items.map((item) => String(item.source_path || "").trim()).filter(Boolean))];
+      const sharedPath = uniquePaths.length === 1 ? uniquePaths[0] : "";
+      const sharedSourceName = sharedPath ? (items[0]?.source_name || "(출처 없음)") : "";
+      const counts = sourceNameCounts(items);
+      const totalChunkCounts = items
+        .map((item) => Number(item.total_chunks || 0))
+        .filter((value) => Number.isFinite(value) && value > 0);
+      const maxTotalChunks = totalChunkCounts.length > 0 ? Math.max(...totalChunkCounts) : 0;
+      const lines = [];
+      if (sharedPath) {
+        lines.push(`공통 출처: ${sharedSourceName}`);
+        lines.push(`경로: ${compactDisplayPath(sharedPath)}`);
+        lines.push("");
+      }
+
+      items.forEach((item, index) => {
+        const sourceName = item.source_name || "(출처 없음)";
+        const sourcePath = item.source_path || "";
+        const chunkIndex = Number(item.chunk_index || 0);
+        const totalChunks = Number(item.total_chunks || 0);
+        const selectedLine = truncateDisplayText(item.selected_line || "");
+        const chunkLocation = chunkIndex > 0 && totalChunks > 0
+          ? `전체 ${totalChunks}개 중 ${chunkIndex}번째`
+          : (item.chunk_id || `chunk-${index + 1}`);
+
+        const duplicateName = counts[sourceName] > 1;
+        const titleSuffix = sharedPath ? "" : ` · ${sourceName}`;
+        lines.push(`${index + 1}. 대표 구간${titleSuffix}`);
+        lines.push(`   위치: ${chunkLocation}`);
+        if (!sharedPath && duplicateName && sourcePath) {
+          lines.push(`   경로: ${compactDisplayPath(sourcePath)}`);
+        }
+        lines.push(`   반영 내용: ${selectedLine}`);
+      });
+      renderPanelHint(
+        summaryChunksHint,
+        maxTotalChunks > items.length
+          ? `여기에는 전체 ${maxTotalChunks}개 구간을 모두 나열하지 않고, 최종 요약에 실제 반영된 대표 구간 ${items.length}개만 보여줍니다. 항목이 많으면 이 패널 안에서 스크롤해 이어서 확인하실 수 있습니다.`
+          : (items.length > 3 ? "대표 구간이 많으면 이 패널 안에서 스크롤해 이어서 확인하실 수 있습니다." : "")
+      );
+      if (summaryChunksScrollRegion) summaryChunksScrollRegion.scrollTop = 0;
+      summaryChunksText.textContent = lines.join("\n");
+    }
+
+    function renderContext(context) {
+      showElement(contextBox, Boolean(context));
+      if (!context) {
+        contextText.textContent = "";
+        return;
+      }
+
+      const lines = [
+        `문맥 종류: ${context.kind || "document"}`,
+        `현재 문서: ${context.label || "(이름 없음)"}`,
+      ];
+      if (Array.isArray(context.source_paths) && context.source_paths.length > 0) {
+        lines.push(`출처: ${context.source_paths.join(", ")}`);
+      }
+      if (context.record_path) {
+        lines.push(`검색 기록: ${compactDisplayPath(context.record_path)}`);
+      }
+      if (context.summary_hint) {
+        lines.push("");
+        lines.push(context.summary_hint);
+      }
+      contextText.textContent = lines.join("\n");
+    }
+
+    function renderSuggestions(suggestions) {
+      const items = Array.isArray(suggestions) ? suggestions.filter(Boolean) : [];
+      showElement(suggestionsBox, items.length > 0);
+      suggestionsList.innerHTML = "";
+      items.forEach((promptText) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "secondary";
+        button.textContent = promptText;
+        button.addEventListener("click", () => {
+          sendFollowUpPrompt(promptText);
+        });
+        suggestionsList.appendChild(button);
+      });
+    }
+
+    function renderSearchHistory(historyItems) {
+      const items = Array.isArray(historyItems) ? historyItems.filter((item) => item && typeof item === "object") : [];
+      showElement(searchHistoryBox, items.length > 0);
+      searchHistoryList.innerHTML = "";
+      searchHistoryMeta.textContent = items.length > 0 ? `최근 ${items.length}건` : "";
+      if (items.length === 0) {
+        return;
+      }
+
+      items.forEach((item) => {
+        const card = document.createElement("article");
+        card.className = "history-item";
+
+        const header = document.createElement("div");
+        header.className = "history-item-header";
+
+        const titleWrap = document.createElement("div");
+        titleWrap.className = "history-item-title";
+        const title = document.createElement("strong");
+        title.textContent = item.query || "검색 기록";
+        titleWrap.appendChild(title);
+        const meta = document.createElement("span");
+        const resultCount = Number(item.result_count || 0);
+        const pageCount = Number(item.page_count || 0);
+        meta.textContent = `${formatWhen(item.created_at)} · 결과 ${resultCount}개${pageCount > 0 ? ` · 원문 ${pageCount}건` : ""}`;
+        titleWrap.appendChild(meta);
+        header.appendChild(titleWrap);
+        card.appendChild(header);
+
+        if (item.summary_head) {
+          const summary = document.createElement("div");
+          summary.className = "history-item-summary";
+          summary.textContent = item.summary_head;
+          card.appendChild(summary);
+        }
+
+        const pagePreviews = Array.isArray(item.pages_preview)
+          ? item.pages_preview.filter((page) => page && typeof page === "object")
+          : [];
+        if (pagePreviews.length > 0) {
+          const detailWrap = document.createElement("div");
+          detailWrap.className = "history-item-detail";
+
+          const toggleButton = document.createElement("button");
+          toggleButton.type = "button";
+          toggleButton.className = "secondary";
+          toggleButton.textContent = `원문 미리보기 ${pagePreviews.length}건 펼치기`;
+          detailWrap.appendChild(toggleButton);
+
+          const hint = document.createElement("div");
+          hint.className = "hint";
+          hint.textContent = "검색 결과 링크에서 실제로 저장한 원문 발췌와 짧은 본문 미리보기입니다.";
+          detailWrap.appendChild(hint);
+
+          const pagesBody = document.createElement("div");
+          pagesBody.className = "history-pages hidden";
+
+          pagePreviews.forEach((page, index) => {
+            const pageCard = document.createElement("article");
+            pageCard.className = "history-page-preview";
+
+            const pageTitle = document.createElement("strong");
+            pageTitle.textContent = `${index + 1}. ${page.title || "원문 페이지"}`;
+            pageCard.appendChild(pageTitle);
+
+            const pageMeta = document.createElement("div");
+            pageMeta.className = "history-page-meta";
+            const metaLines = [];
+            if (page.url) metaLines.push(`링크: ${page.url}`);
+            if (page.char_count) metaLines.push(`저장 길이: ${page.char_count}자`);
+            pageMeta.textContent = metaLines.join(" · ");
+            pageCard.appendChild(pageMeta);
+
+            if (page.excerpt) {
+              const excerpt = document.createElement("p");
+              excerpt.textContent = `발췌: ${page.excerpt}`;
+              pageCard.appendChild(excerpt);
+            }
+
+            if (page.text_preview) {
+              const textPreview = document.createElement("p");
+              textPreview.textContent = `본문 미리보기: ${page.text_preview}`;
+              pageCard.appendChild(textPreview);
+            }
+
+            pagesBody.appendChild(pageCard);
+          });
+
+          toggleButton.addEventListener("click", () => {
+            const hidden = pagesBody.classList.toggle("hidden");
+            toggleButton.textContent = hidden
+              ? `원문 미리보기 ${pagePreviews.length}건 펼치기`
+              : `원문 미리보기 ${pagePreviews.length}건 접기`;
+          });
+
+          detailWrap.appendChild(pagesBody);
+          card.appendChild(detailWrap);
+        }
+
+        const actions = document.createElement("div");
+        actions.className = "history-item-actions";
+
+        const loadButton = document.createElement("button");
+        loadButton.type = "button";
+        loadButton.className = "secondary";
+        loadButton.textContent = "다시 불러오기";
+        loadButton.disabled = state.isBusy;
+        loadButton.addEventListener("click", () => {
+          loadWebSearchRecord(item.record_id).catch(renderError);
+        });
+        actions.appendChild(loadButton);
+
+        const copyButton = document.createElement("button");
+        copyButton.type = "button";
+        copyButton.className = "copy-button subtle";
+        copyButton.textContent = "경로 복사";
+        copyButton.disabled = !item.record_path;
+        copyButton.addEventListener("click", () => {
+          copyTextValue(item.record_path || "", "검색 기록 경로를 복사했습니다.").catch(renderError);
+        });
+        actions.appendChild(copyButton);
+
+        card.appendChild(actions);
+        searchHistoryList.appendChild(card);
+      });
+    }
+
+    async function loadWebSearchRecord(recordId) {
+      if (!recordId || state.isBusy) return;
+      await sendRequest({
+        user_text: "",
+        load_web_search_record_id: recordId,
+      }, "history");
+    }
+
+    function renderApproval(approval) {
+      state.currentApproval = approval || null;
+      showElement(approvalBox, Boolean(approval));
+      approvalMeta.innerHTML = "";
+      approvalPathInput.value = "";
+      approvalPreview.textContent = "";
+      approveButton.disabled = true;
+      reissueButton.disabled = true;
+      rejectButton.disabled = !approval;
+      approvalCopyPathButton.disabled = !approval;
+
+      if (!approval) return;
+
+      const lines = [
+        `작업: ${approval.kind}`,
+        `approval_id: ${approval.approval_id}`,
+        `요청 경로: ${approval.requested_path}`,
+        `덮어쓰기 필요: ${approval.overwrite ? "예" : "아니오"}`,
+        `생성 시각: ${formatWhen(approval.created_at)}`
+      ];
+      if (Array.isArray(approval.source_paths) && approval.source_paths.length > 0) {
+        lines.push(`출처: ${approval.source_paths.join(", ")}`);
+      }
+      if (approval.overwrite) {
+        lines.push("현재 MVP에서는 기존 파일 덮어쓰기를 지원하지 않습니다. 다른 저장 경로로 다시 요청해 주세요.");
+      }
+
+      approvalMeta.innerHTML = lines.map((line) => `<span>${line}</span>`).join("");
+      approvalPathInput.value = approval.requested_path || "";
+      approvalPreview.textContent = approval.preview_markdown || "";
+      approveButton.disabled = state.isBusy || Boolean(approval.overwrite);
+      reissueButton.disabled = state.isBusy || !approvalPathInput.value.trim();
+      approvalCopyPathButton.disabled = !approval.requested_path;
+    }
+
+    function renderSession(session) {
+      state.currentSessionId = session.session_id;
+      sessionIdInput.value = state.currentSessionId;
+      setText("meta-session", state.currentSessionId);
+      const sessionWebSearchPermission = normalizeWebSearchPermission(session.permissions?.web_search || state.defaultWebSearchPermission);
+      webSearchPermissionInput.value = sessionWebSearchPermission;
+      updateWebSearchMeta(sessionWebSearchPermission);
+      currentSessionTitleEl.textContent = session.title || session.session_id;
+      currentSessionMetaEl.textContent = `메시지 ${session.messages?.length || 0}개 · 승인 대기 ${session.pending_approvals?.length || 0}건 · 웹 검색 ${formatWebSearchPermissionLabel(sessionWebSearchPermission)} · 마지막 업데이트 ${formatWhen(session.updated_at)}`;
+      renderTranscript(session.messages || []);
+      const latestAssistantContext = findLatestAssistantContext(session.messages || []);
+      const latestAssistantMessage = latestAssistantContext.assistant;
+      if (latestAssistantMessage) {
+        responseText.textContent = latestAssistantMessage.text || "응답 본문이 없습니다.";
+        renderResponseOrigin(latestAssistantMessage.response_origin || null);
+        renderResponseSummary(latestAssistantMessage, null);
+        renderResponseFeedback(latestAssistantMessage, latestAssistantContext.userText);
+        renderEvidence(latestAssistantMessage.evidence || []);
+        renderSummaryChunks(latestAssistantMessage.summary_chunks || []);
+      } else {
+        responseText.textContent = "아직 보낸 요청이 없습니다.";
+        renderResponseOrigin(null);
+        renderResponseSummary(null, null);
+        renderResponseFeedback(null);
+        renderEvidence([]);
+        renderSummaryChunks([]);
+      }
+      renderContext(session.active_context || null);
+      const sessionSuggestions = latestAssistantMessage?.follow_up_suggestions || session.active_context?.suggested_prompts || [];
+      renderSuggestions(sessionSuggestions);
+      renderSearchHistory(session.web_search_history || []);
+    }
+
+    function renderResult(data) {
+      clearError();
+      clearNotice();
+      if (data.session) {
+        renderSession(data.session);
+      }
+      responseText.textContent = data.response?.text || "응답 본문이 없습니다.";
+      renderResponseOrigin(data.response?.response_origin || null);
+      renderResponseSummary(data.response || null, data.runtime_status || null);
+      const latestAssistantContext = findLatestAssistantContext(data.session?.messages || []);
+      renderResponseFeedback(latestAssistantContext.assistant, latestAssistantContext.userText);
+      renderSelected(data.response?.selected_source_paths || []);
+      renderEvidence(data.response?.evidence || []);
+      renderSummaryChunks(data.response?.summary_chunks || []);
+      renderPreview(data.response?.note_preview || "");
+      renderContext(data.response?.active_context || data.session?.active_context || null);
+      renderSuggestions(data.response?.follow_up_suggestions || data.session?.active_context?.suggested_prompts || []);
+      renderSearchHistory(data.session?.web_search_history || []);
+      renderRuntime(data.runtime_status || null);
+      if (data.session) {
+        const pending = data.session.pending_approvals || [];
+        renderApproval(data.response?.approval || pending[pending.length - 1] || null);
+      } else {
+        renderApproval(data.response?.approval || null);
+      }
+    }
+
+    function renderError(error) {
+      clearNotice();
+      const message = error instanceof Error ? error.message : String(error);
+      showElement(errorBox, true);
+      errorBox.textContent = message;
+    }
+
+    function clearError() {
+      showElement(errorBox, false);
+      errorBox.textContent = "";
+    }
+
+    function renderNotice(message) {
+      if (!message) {
+        clearNotice();
+        return;
+      }
+      showElement(noticeBox, true);
+      noticeBox.textContent = message;
+    }
+
+    function clearNotice() {
+      showElement(noticeBox, false);
+      noticeBox.textContent = "";
+    }
+
+    async function fetchConfig() {
+      const data = await fetchJson("/api/config");
+      document.getElementById("provider").value = data.default_provider;
+      document.getElementById("model").value = data.default_model || "";
+      document.getElementById("base-url").value = data.default_base_url || "";
+      state.defaultWebSearchPermission = normalizeWebSearchPermission(data.default_web_search_permission || "__DEFAULT_WEB_SEARCH_PERMISSION__");
+      state.webSearchToolConnected = Boolean(data.web_search_tool_connected);
+      webSearchPermissionInput.value = state.defaultWebSearchPermission;
+      setText("meta-app-name", data.app_name);
+      setText("meta-provider", data.default_provider);
+      setText("meta-model", data.default_model_label || "선택형 로컬 모델");
+      setText("meta-session", data.default_session_id);
+      updateWebSearchMeta(state.defaultWebSearchPermission);
+    }
+
+    async function fetchSessions() {
+      const data = await fetchJson("/api/sessions");
+      renderSessionList(data.sessions || []);
+    }
+
+    async function loadSession(sessionId) {
+      const targetSessionId = sessionId || sessionIdInput.value.trim() || state.currentSessionId;
+      const data = await fetchJson(`/api/session?session_id=${encodeURIComponent(targetSessionId)}`);
+      renderSession(data.session);
+      const pending = data.session?.pending_approvals || [];
+      renderApproval(pending[pending.length - 1] || null);
+      await fetchSessions();
+    }
+
+    async function approveCurrentApproval() {
+      if (!state.currentApproval || state.isBusy) return;
+      try {
+        startProgress("approve", "system", "승인 워크플로");
+        responseText.textContent = "";
+        renderResponseOrigin({ provider: "system", badge: "SYSTEM", label: "시스템 응답", kind: "approval" });
+        const data = await submitStreamPayload({
+          session_id: state.currentSessionId,
+          approved_approval_id: state.currentApproval.approval_id
+        });
+        if (data?.cancelled) {
+          renderNotice(data.message || "요청을 취소했습니다.");
+          await fetchSessions();
+          return;
+        }
+        renderResult(data);
+        await fetchSessions();
+      } finally {
+        stopProgress();
+      }
+    }
+
+    async function reissueCurrentApproval() {
+      if (!state.currentApproval || state.isBusy) return;
+      const requestedPath = approvalPathInput.value.trim();
+      if (!requestedPath) {
+        renderError(new Error("새 저장 경로를 입력해 주세요."));
+        return;
+      }
+
+      try {
+        startProgress("reissue", "system", "승인 워크플로");
+        responseText.textContent = "";
+        renderResponseOrigin({ provider: "system", badge: "SYSTEM", label: "시스템 응답", kind: "approval" });
+        const data = await submitStreamPayload({
+          session_id: state.currentSessionId,
+          reissue_approval_id: state.currentApproval.approval_id,
+          note_path: requestedPath,
+        });
+        if (data?.cancelled) {
+          renderNotice(data.message || "요청을 취소했습니다.");
+          await fetchSessions();
+          return;
+        }
+        renderResult(data);
+        await fetchSessions();
+      } finally {
+        stopProgress();
+      }
+    }
+
+    async function rejectCurrentApproval() {
+      if (!state.currentApproval || state.isBusy) return;
+      try {
+        startProgress("reject", "system", "승인 워크플로");
+        responseText.textContent = "";
+        renderResponseOrigin({ provider: "system", badge: "SYSTEM", label: "시스템 응답", kind: "approval" });
+        const data = await submitStreamPayload({
+          session_id: state.currentSessionId,
+          rejected_approval_id: state.currentApproval.approval_id
+        });
+        if (data?.cancelled) {
+          renderNotice(data.message || "요청을 취소했습니다.");
+          await fetchSessions();
+          return;
+        }
+        renderResult(data);
+        await fetchSessions();
+      } finally {
+        stopProgress();
+      }
+    }
+
+    function createSessionId() {
+      return `session-${Date.now().toString(36)}`;
+    }
+
+      requestForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (state.isBusy) return;
+      try {
+        startProgress("request", currentProvider(), currentModel());
+        responseText.textContent = "";
+        renderResponseOrigin(null);
+        const data = await submitStreamPayload(await collectPayload());
+        if (data?.cancelled) {
+          renderNotice(data.message || "요청을 취소했습니다.");
+          await fetchSessions();
+          return;
+        }
+        renderResult(data);
+        await fetchSessions();
+      } catch (error) {
+        renderError(error);
+      } finally {
+        stopProgress();
+      }
+    });
+
+    document.querySelectorAll('input[name="request_mode"]').forEach((input) => {
+      input.addEventListener("change", () => applyMode(activeMode()));
+    });
+
+    pickFileButton.addEventListener("click", () => {
+      browserFileInput.click();
+    });
+    pickFolderButton.addEventListener("click", () => {
+      browserFolderInput.click();
+    });
+    clearPickedFileButton.addEventListener("click", () => {
+      clearSelectedBrowserFile();
+    });
+    clearPickedFolderButton.addEventListener("click", () => {
+      clearSelectedSearchFolder();
+    });
+    browserFileInput.addEventListener("change", () => {
+      const file = browserFileInput.files && browserFileInput.files[0] ? browserFileInput.files[0] : null;
+      if (file) {
+        sourcePathInput.value = "";
+      }
+      renderSelectedBrowserFile(file);
+    });
+    browserFolderInput.addEventListener("change", () => {
+      const files = browserFolderInput.files ? Array.from(browserFolderInput.files) : [];
+      if (files.length > 0) {
+        searchRootInput.value = "";
+      }
+      renderSelectedSearchFolder(files);
+    });
+    sourcePathInput.addEventListener("input", () => {
+      if (sourcePathInput.value.trim() && state.selectedBrowserFile) {
+        clearSelectedBrowserFile();
+      }
+    });
+    searchRootInput.addEventListener("input", () => {
+      if (searchRootInput.value.trim() && state.selectedSearchFolderFiles.length > 0) {
+        clearSelectedSearchFolder();
+      }
+    });
+
+    document.getElementById("load-session").addEventListener("click", () => loadSession().catch(renderError));
+    document.getElementById("refresh-session").addEventListener("click", () => loadSession(state.currentSessionId).catch(renderError));
+    document.getElementById("new-session").addEventListener("click", async () => {
+      state.currentSessionId = createSessionId();
+      sessionIdInput.value = state.currentSessionId;
+      setText("meta-session", state.currentSessionId);
+      webSearchPermissionInput.value = state.defaultWebSearchPermission;
+      updateWebSearchMeta(state.defaultWebSearchPermission);
+      renderSession({
+        session_id: state.currentSessionId,
+        title: state.currentSessionId,
+        updated_at: new Date().toISOString(),
+        messages: [],
+        pending_approvals: [],
+        web_search_history: [],
+        permissions: {
+          web_search: state.defaultWebSearchPermission,
+          web_search_label: formatWebSearchPermissionLabel(state.defaultWebSearchPermission),
+        }
+      });
+      renderApproval(null);
+      await fetchSessions();
+    });
+    webSearchPermissionInput.addEventListener("change", () => {
+      updateWebSearchMeta(webSearchPermissionInput.value);
+    });
+    approveButton.addEventListener("click", () => approveCurrentApproval().catch(renderError));
+    reissueButton.addEventListener("click", () => reissueCurrentApproval().catch(renderError));
+    rejectButton.addEventListener("click", () => rejectCurrentApproval().catch(renderError));
+    cancelRequestButton.addEventListener("click", () => cancelCurrentRequest().catch(renderError));
+    approvalPathInput.addEventListener("input", () => {
+      reissueButton.disabled = state.isBusy || !state.currentApproval || !approvalPathInput.value.trim();
+    });
+    approvalCopyPathButton.addEventListener("click", () => {
+      copyTextValue(approvalPathInput.value || state.currentApproval?.requested_path || "", "승인 경로를 복사했습니다.").catch(renderError);
+    });
+    responseCopyPathButton.addEventListener("click", () => {
+      copyTextValue(responseCopyPathButton.dataset.path || "", "저장 경로를 복사했습니다.").catch(renderError);
+    });
+    responseCopySearchRecordButton.addEventListener("click", () => {
+      copyTextValue(responseCopySearchRecordButton.dataset.path || "", "검색 기록 경로를 복사했습니다.").catch(renderError);
+    });
+    responseFeedbackButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        if (!state.latestAssistantMessageId) return;
+        submitFeedback(
+          state.latestAssistantMessageId,
+          button.dataset.feedbackValue || "",
+          ["unclear", "incorrect"].includes(button.dataset.feedbackValue || "")
+            ? (
+              state.latestAssistantFeedbackLabel === (button.dataset.feedbackValue || "")
+                ? state.latestAssistantFeedbackReason
+                : ""
+            )
+            : ""
+        ).catch(renderError);
+      });
+    });
+    responseFeedbackReasonButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        if (!state.latestAssistantMessageId || !state.latestAssistantFeedbackLabel) return;
+        submitFeedback(
+          state.latestAssistantMessageId,
+          state.latestAssistantFeedbackLabel,
+          button.dataset.feedbackReason || ""
+        ).catch(renderError);
+      });
+    });
+    responseFeedbackRetryButton.addEventListener("click", () => {
+      retryLatestAssistantWithFeedback().catch(renderError);
+    });
+    evidenceToggleButton.addEventListener("click", () => {
+      togglePanelBody(evidenceBody, evidenceToggleButton, `근거 ${evidenceText.textContent ? evidenceText.textContent.split("\n").filter((line) => /^\d+\./.test(line)).length : 0}개 펼치기`, "접기");
+    });
+    summaryChunksToggleButton.addEventListener("click", () => {
+      togglePanelBody(summaryChunksBody, summaryChunksToggleButton, `구간 ${summaryChunksText.textContent ? summaryChunksText.textContent.split("\n").filter((line) => /^\d+\./.test(line)).length : 0}개 펼치기`, "접기");
+    });
+
+    Promise.resolve()
+      .then(fetchConfig)
+      .then(fetchSessions)
+      .then(() => loadSession("__DEFAULT_SESSION_ID__"))
+      .then(() => applyMode("file"))
+      .catch(renderError);
+  </script>
+</body>
+</html>

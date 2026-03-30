@@ -1,37 +1,1348 @@
 # Acceptance Criteria
 
-## Current Web MVP Slice
-Done when:
-- 웹 첫 화면에서 최근 세션 목록과 현재 세션 제목이 보입니다.
-- 파일 요약, 문서 검색, 일반 채팅 3가지 모드가 한 화면에서 전환됩니다.
-- 저장 요청 시 응답이 `needs_approval` 상태와 `approval` 객체를 반환합니다.
-- 실제 저장은 `approved_approval_id`를 보낸 뒤에만 실행됩니다.
-- 승인 카드에서 저장 경로를 바꾸면 `reissue_approval_id` 기반으로 새 approval이 발급됩니다.
-- 세션 JSON에 승인 대기 항목이 남고, 승인 또는 취소 후 제거됩니다.
-- 최근 결과에 근거 패널과 요약 구간 패널이 표시되고, 기본값은 접힌 상태입니다.
-- 세션 타임라인에서 비서 응답마다 상태, 출처 수, 근거 수, 저장 경로가 요약됩니다.
-- 로그만 보면 어떤 요청이 어떤 `approval_id`를 거쳐 저장됐는지 추적할 수 있습니다.
+## Status
 
-## Safety Gates
-Done when:
-- 승인 없이 파일 쓰기가 실행되지 않습니다.
-- 기본 동작은 새 파일 생성만 허용하고 기존 파일 덮어쓰기를 거부합니다.
-- 허용 루트 밖 저장 요청은 실패합니다.
-- 기존 파일과 충돌하는 경로로 approval을 재발급해도 즉시 저장되지 않고 overwrite 경고만 표시됩니다.
-- 스캔본 PDF는 OCR 미지원 안내를 반환하고 조용히 실패하지 않습니다.
+- This document separates the current shipped contract from next-phase design placeholders.
+- Placeholder items below are **not** current shipped acceptance gates unless explicitly marked as current.
 
-## Quality Gates
-Done when:
-- 단위 테스트로 승인 객체, 세션 스키마, 경로 정책이 검증됩니다.
-- 통합 테스트로 파일 읽기 → 요약 → 승인 요청 → 승인 후 저장 흐름이 검증됩니다.
-- 통합 테스트로 approval 재발급 → 새 approval 생성 → overwrite 경고 흐름이 검증됩니다.
-- 웹 서비스 테스트로 첫 화면 렌더링, 세션 조회, 승인 카드 반환, 승인 후 저장이 검증됩니다.
-- 브라우저 스모크로 파일 요약, 승인 재발급, 승인 후 저장, 스트리밍 취소 4개 시나리오가 통과합니다.
-- 문서의 현재 상태 설명과 실제 구현이 서로 모순되지 않습니다.
+## Current Web MVP Contract
 
-## Out of Scope for This Milestone
-- Next.js 전환
-- SQLite 영속화
-- OCR 구현
-- 독자 모델 개발
-- 파일 overwrite 승인 허용
+### Implemented
+- The local web shell loads on `127.0.0.1`.
+- The home screen shows recent sessions and the current conversation timeline.
+- Users can switch between file summary, document search, and general chat.
+- Save requests return an approval object and do not write immediately.
+- Reissuing an approval with a new path creates a new approval instead of writing immediately.
+- Recent results can show:
+  - evidence/source panel
+  - summary-range panel
+  - response origin badge
+  - claim coverage or verification state where applicable
+- Long summaries can keep `summary_chunks` visible while still reducing chunk notes into one final Korean summary.
+- Narrative or fiction-like text should be summarized by prioritizing characters, key events, conflict changes, and ending state over isolated memorable lines.
+- The current short-summary, per-chunk chunk-note, and final reduce prompts, plus the internal `summary_chunks` selection heuristic, may split truthfully by existing source boundary only: local file or uploaded-document summaries keep the narrative-friendly document-flow guidance, while selected local search-result summaries keep search-synthesis guidance focused on shared facts, differences, actions, and conclusion.
+- Streaming requests show progress and can be cancelled.
+- PDF files with a text layer can be read.
+- Image-only/scanned PDFs return OCR-not-supported guidance instead of silently failing.
+- Web investigation history is saved locally and can be reloaded in-session.
+- Assistant responses can store a feedback label and optional reason.
+- Grounded-brief summary responses can persist one stable `artifact_id` plus `artifact_kind = grounded_brief`.
+- Save approvals and relevant approval / write / feedback traces can carry the same `artifact_id` when applicable.
+- Reject / reissue approval traces can persist one normalized `approval_reason_record` without changing the current approval UI.
+- Current save-note approvals and related save/write traces can persist one explicit `source_message_id` anchor plus `save_content_source = original_draft | corrected_text` without changing the current save UI.
+- Grounded-brief response cards can expose one small candidate-linked explicit confirmation action when the current source message already emits `session_local_candidate`, and that action stays outside the approval surface.
+- Serialized grounded-brief source messages can now also expose one optional source-message-anchored read-only `candidate_recurrence_key` draft derived only from the explicit original-vs-corrected pair when the same current source message still exposes a matching current `session_local_candidate`.
+- Serialized grounded-brief source messages can now also expose one optional source-message-anchored read-only `durable_candidate` projection when the same current source message still exposes both a matching `session_local_candidate` and `candidate_confirmation_record`.
+- Current session payloads can now also expose one optional top-level read-only `recurrence_aggregate_candidates` projection derived only from current same-session serialized source-message `candidate_recurrence_key` records when at least two distinct grounded-brief anchors share the same exact recurrence identity.
+- Current session payloads and the existing shell can now also expose one local `review_queue_items` / `검토 후보` surface fed only by current `durable_candidate` items with `promotion_eligibility = eligible_for_review`, plus one `accept`-only reviewed-but-not-applied action that records source-message `candidate_review_record`.
+
+### In Progress
+- Entity-card web investigation should prioritize agreement-backed facts over noisy snippets.
+- Reinvestigation should improve weak slots before weak facts are shown as stable facts.
+- Latest-update responses should remain clearly separated from entity-card responses.
+
+### Not Implemented
+- OCR execution
+- overwrite approval execution
+- SQLite persistence
+- autonomous background behavior
+- correction / approval / preference memory
+
+## Approval And Safety Gates
+
+### Implemented
+- Approval is required before file write.
+- Save path reissue does not silently overwrite.
+- Writes outside approved roots fail.
+- Risky actions remain auditable through local logs.
+
+### Open Questions
+- Should some save targets require stronger path validation UX?
+- Should overwrite ever become an explicit future approval path?
+- Richer reject / reissue labels should stay future until the UI has an explicit input surface that can truthfully distinguish them.
+
+## Session And Trace Gates
+
+### Implemented
+- Session JSON keeps:
+  - `schema_version`
+  - `session_id`
+  - `title`
+  - `messages`
+  - `pending_approvals`
+  - `permissions`
+  - `active_context`
+  - timestamps
+- Approval state is removed after approval or rejection.
+- Response metadata for evidence, summary spans, origin, claim coverage, feedback, grounded-brief artifact fields, `corrected_text`, `corrected_outcome`, `content_reason_record`, and `approval_reason_record` is serializable back into the session.
+- Response/session payloads can also serialize one optional source-message `candidate_confirmation_record` and one optional sibling `durable_candidate`, both separate from `session_local_candidate`.
+- Response/session payloads can also serialize one optional source-message `candidate_recurrence_key`, kept separate from `session_local_candidate`, `durable_candidate`, and `candidate_review_record`.
+- Session payloads can also serialize one computed top-level `recurrence_aggregate_candidates` list, separate from source-message fields and not persisted as its own store.
+- Each current `recurrence_aggregate_candidates` item may also serialize one read-only `aggregate_promotion_marker`, one read-only `reviewed_memory_precondition_status`, one read-only `reviewed_memory_boundary_draft`, one read-only `reviewed_memory_rollback_contract`, one read-only `reviewed_memory_disable_contract`, one read-only `reviewed_memory_conflict_contract`, one read-only `reviewed_memory_transition_audit_contract`, one read-only `reviewed_memory_unblock_contract`, one read-only `reviewed_memory_capability_status`, one additive read-only `reviewed_memory_planning_target_ref`, and one optional read-only `reviewed_memory_conflict_visibility_record`.
+- Session payloads can also serialize one computed top-level `review_queue_items` list, separate from source-message fields and not persisted as its own store.
+- Approval and pending-approval payloads can serialize `source_message_id` plus `save_content_source = original_draft | corrected_text` for the current shipped save-note path.
+- Task logs can capture request, approval, write, cancel, feedback, approval-reason, and candidate-confirmation events, including additive `artifact_id`, `source_message_id`, and `save_content_source` detail where the grounded-brief save trace exists.
+  - current candidate-confirmation event: `candidate_confirmation_recorded`
+
+### Open Questions
+- When session schema changes, should lightweight migrations remain in-place or move to explicit migration scripts?
+- Should future memory records live in session JSON first or in a separate local store from the start?
+
+## Next-Phase Design Placeholder
+
+These are placeholders for the next phase design target and its immediate follow-up review surface. They are not implemented today.
+
+### Chosen Official Artifact
+- The first official artifact is the `grounded brief`.
+- The brief should become the single unit that binds:
+  - original response
+  - evidence / source trace
+  - approval outcome
+  - corrected outcome
+  - preference signal candidates
+
+### Minimum Memory Contract Placeholder
+- Grounded-brief responses now have a base `artifact_id`, but a separate artifact record is still future work.
+- The artifact should keep a snapshot of:
+  - original assistant response
+  - evidence and summary chunks
+  - source paths
+  - approval trail when present
+- The artifact outcome should distinguish:
+  - accepted as-is
+  - corrected
+  - rejected
+- Reason records should use shared fields:
+  - `reason_scope`
+  - `reason_label`
+  - `reason_note`
+- Correction reasons should remain closest to the current feedback reasons.
+- Reject and reissue reasons should use distinct label sets instead of reusing correction labels.
+- The current first content-verdict slice keeps the reject label set intentionally narrow:
+  - `content_reject -> explicit_content_rejection`
+- `corrected` and `rejected` content outcomes require explicit content-level user surfaces; they must not be inferred from approval or retry flows.
+- Preference signals should start as:
+  - `session_local`
+  - `durable_candidate`
+- `session_local` should remain the default for one-off, ambiguous, or trace-incomplete signals.
+- choose `Option A` for the current shipped `session_local_candidate` layer:
+  - current shipped drafts remain promotion-ineligible
+  - `session_local_candidate` itself should not serialize `promotion_basis`, `promotion_eligibility`, or `has_explicit_confirmation`
+- current explicit-confirmation projection eligibility should begin only after:
+  - one current source message still exposes both a valid `session_local_candidate` and a matching `candidate_confirmation_record`
+  - or one later same-session repeated-signal aggregation candidate reaches threshold from at least 2 distinct grounded briefs with the same recurrence key
+- the first shipped `durable_candidate` projection should stay source-message-anchored:
+  - the current optional `durable_candidate` lives on serialized grounded-brief source messages first, not in a new review queue item first
+  - canonical source remains current persisted session state on that same source message
+  - task-log remains audit-only and must not become the canonical projection source
+  - the current read-only review queue may consume that current source-message projection, but it must not replace it as the canonical source
+- Approval trace should be linked when present, but it should not be the sole promotion gate because not every brief enters the save path.
+- Promotion from `durable_candidate` to future user-level memory should remain out of scope.
+
+### Implemented Next-Phase Entry Slice
+- The first implementation slice is `artifact_id` linkage, not review queue or user-level memory.
+- A grounded-brief response now gains:
+  - `artifact_id`
+  - `artifact_kind = grounded_brief`
+- The next additive trace slice is also implemented on the same message/session surface:
+  - `original_response_snapshot`
+  - `draft_text`
+  - `source_paths`
+  - `response_origin`
+  - `summary_chunks_snapshot`
+  - `evidence_snapshot`
+- The same `artifact_id` is now visible across:
+  - the persisted assistant message
+  - the approval request when save approval is involved
+  - approval outcome or write-note task-log detail when those events occur
+- The normalized snapshot is currently exposed on:
+  - the grounded-brief response payload
+  - the persisted assistant message in session payloads
+- Minimum corrected-outcome capture is now implemented for the three truthful cases currently supported:
+  - `corrected_outcome.outcome = accepted_as_is | corrected | rejected`
+  - `recorded_at`
+  - `artifact_id`
+  - `source_message_id`
+  - optional `approval_id`
+  - optional `saved_note_path`
+- The first explicit reject slice also persists one separate `content_reason_record` on that same source message when the latest outcome is `rejected`.
+- Current session payloads and response payloads can serialize that same `content_reason_record`, while approval-linked traces keep using separate `approval_reason_record`.
+- Explicit correction submit is now implemented on the grounded-brief response surface:
+  - one multiline correction editor seeded with the current grounded-brief draft text
+  - explicit submit persists `corrected_text` on the original grounded-brief source message
+  - the same submit persists `corrected_outcome.outcome = corrected` on that same source message
+  - unchanged submit must fail validation instead of becoming `accepted_as_is`
+- The corrected-outcome source of truth is the original grounded-brief assistant message.
+  - direct approved save responses may expose the same object because the response is that same source message
+  - correction-submit responses and session payloads expose the updated `corrected_text` / `corrected_outcome` from that same source message
+  - approval-execute system responses stay linkage-oriented and do not copy the corrected-outcome blob
+  - an already-issued pending approval keeps its original draft preview and is not rewritten by later correction submit
+- Minimum approval-friction reason capture is now implemented for reject / reissue traces only:
+  - nested `approval_reason_record`
+  - `reason_scope`
+  - `reason_label`
+  - optional `reason_note`
+  - `recorded_at`
+  - `artifact_id`
+  - `artifact_kind`
+  - `source_message_id`
+  - `approval_id`
+- The approval-reason source of truth is approval-linked trace, not the original content outcome:
+  - reject / reissue assistant system messages persist the record in session payloads
+  - reissued pending approvals may expose the same record on the live approval object
+  - task-log entries mirror the same object for audit
+  - the original grounded-brief assistant message does not map approval friction into `corrected_outcome`
+- Current truthful labels are intentionally minimal:
+  - `approval_reject -> explicit_rejection`
+  - `approval_reissue -> path_change`
+- Approval and task-log traces still keep anchor linkage only and do not copy the full snapshot blob into every downstream record.
+- Feedback submission continues to target `message_id`, while `response_feedback_recorded` now logs the resolved `artifact_id` for lower-cost audit reconstruction.
+- This additive trace foundation is implemented, including the first explicit content-level `rejected` capture and the first read-only review queue surface, but it does not imply review actions, eval-ready completeness, or user-level memory.
+
+### Truthful Content Surface Placeholder
+- Current truthful boundary:
+  - `accepted_as_is`, `corrected`, and `rejected` are implemented for content outcome
+  - `corrected` is recorded only through explicit edited-text submit on the grounded-brief response
+  - `rejected` is recorded only through the explicit `내용 거절` action on that same grounded-brief response
+  - correction submit and save approval remain separate actions
+  - approval reject / reissue traces remain approval-friction only
+  - approval reject, save omission, retry, or feedback `incorrect` must not be upgraded into content-level `rejected`
+- Reconciliation policy fixed for next scope planning:
+  - choose `Option B`
+  - current original-draft save approvals remain valid as-is
+  - current original-draft save approvals now expose `source_message_id` plus `save_content_source = original_draft` on approval/write trace surfaces
+  - current corrected-save bridge approvals now expose `source_message_id` plus `save_content_source = corrected_text` on the same approval/write trace surfaces
+  - automatic rebasing of an already-issued pending approval is forbidden
+- Response-card action contract:
+  - correction submit belongs to the response card's content-edit area
+  - the corrected-save request action is presented as a distinct bridge action from that same response card area
+  - that bridge action stays always visible inside the correction area
+  - when no recorded `corrected_text` exists, the bridge action stays disabled and helper copy explains that `수정본 기록` must happen first
+  - the bridge action should use save-request language such as `이 수정본으로 저장 요청`
+  - the bridge action should only consume recorded `corrected_text`; unsaved editor state must not be turned into an approval snapshot implicitly
+  - if the editor is dirty beyond the last recorded correction, helper/status copy must explain that the button still uses the last recorded correction until the user records again
+  - approval preview, approve, reject, and reissue controls remain in the approval surface
+  - users may submit a correction without saving anything
+  - users may submit a correction and request save later through a separate action
+  - approval preview must always reflect the save target that was explicitly chosen at approval-request time
+- Current corrected-save snapshot rule:
+  - bridge action time fixes the corrected-save approval snapshot
+  - the resulting approval preview and write body must both come from that same request-time corrected-text snapshot
+  - later correction submits must not rewrite an already-issued corrected-save approval
+  - a changed corrected text requires a new bridge action and a new approval object
+  - approval-card helper copy and corrected-save save-result wording should explicitly describe that frozen body as the request-time snapshot
+  - corrected-save approval execution preserves `corrected_outcome.outcome = corrected` on the source message while adding optional `approval_id` / `saved_note_path` linkage there
+- Current `rejected` surface:
+  - requires one explicit content-level reject action on the grounded-brief response
+  - the current truthful control is the dedicated response-card content-verdict action `내용 거절`
+  - that action remains separate from `수정본 기록`, `이 수정본으로 저장 요청`, and approval-surface approve / reject / reissue controls
+  - that action records verdict immediately on the content trace path; it does not create, cancel, or reinterpret a save approval
+  - the original grounded-brief source message remains the source of truth by extending the existing content-outcome envelope:
+    - `corrected_outcome.outcome = rejected`
+    - `recorded_at`
+    - `artifact_id`
+    - `source_message_id`
+    - no `approval_id` / `saved_note_path` requirement on the reject-only path
+  - the same current reject slice keeps a minimal shared-field reason contract:
+    - `reason_scope = content_reject`
+    - `reason_label = explicit_content_rejection`
+    - optional `reason_note` can stay absent, or be recorded only through the same response-card note surface
+  - the same source message also carries one `content_reason_record` with `reason_scope`, `reason_label`, `recorded_at`, `artifact_id`, `artifact_kind`, `source_message_id`, and optional `reason_note`
+  - fixed-label baseline rule:
+    - `내용 거절`만 눌러도 현재처럼 즉시 truthful reject verdict가 기록됩니다
+    - optional note는 그 baseline을 대체하지 않고 보강만 해야 합니다
+    - note가 없다고 reject verdict가 불완전해지면 안 됩니다
+  - the shipped optional reject-note surface:
+    - appears only while the latest outcome on that same source message is still `rejected`
+    - lives in the same response-card content-verdict box, not in the approval surface
+    - uses one short inline textarea plus one explicit secondary note-submit action
+    - keeps blank note submit disabled in the shipped slice and must not reinterpret blank submit as manual clear
+    - stays separate from correction submit and corrected-save actions
+  - when a reject note is recorded:
+    - update the existing `content_reason_record` on that same source message instead of creating a second reject store
+    - set or replace `content_reason_record.reason_note`
+    - refresh `content_reason_record.recorded_at` while leaving `corrected_outcome.recorded_at` as the reject-verdict timestamp
+    - append one separate content-linked task-log event, currently `content_reason_note_recorded`, rather than replaying approval-reject semantics
+  - deferred manual clear contract:
+    - current MVP recommendation remains `Option B`: keep the shipped disabled-blank-submit behavior and do not add manual clear in the next refinement slice yet
+    - if a later manual clear is introduced, it must stay inside the same response-card content-verdict box as a tiny secondary action that appears only when a non-empty note already exists
+    - that future clear must remove only `content_reason_record.reason_note`; it must not revoke `corrected_outcome.outcome = rejected` or the fixed-label `explicit_content_rejection` baseline
+    - the same `content_reason_record` should stay present on the source message with `reason_scope`, `reason_label`, and trace anchors intact while only the optional note field is removed
+    - `content_reason_record.recorded_at` should refresh to the clear time while `corrected_outcome.recorded_at` keeps the original reject-verdict timestamp
+    - that future clear should append a separate content-linked task-log event such as `content_reason_note_cleared`
+  - later explicit correction submit or explicit save may replace the latest reject verdict on that same source message; when that happens, stale `content_reason_record` including any `reason_note` should clear from the source message while task-log history preserves the earlier reject trace
+  - approval-reject labels must not be reused because approval friction and content verdict are separate axes
+- Recommended order:
+  - keep the shipped `corrected` surface, corrected-save bridge, and `rejected` control stable
+  - keep the shipped optional reject-note surface stable and keep manual clear deferred until there is repeated evidence that note-only removal is worth a second micro-action
+  - keep broader reject taxonomy for later slices
+
+### First Session-Local Memory Signal Placeholder
+- The first `session_local` memory signal should be one read-only working summary for one grounded-brief artifact inside the current session.
+- That first signal should be keyed by:
+  - `artifact_id`
+  - `source_message_id`
+- It should summarize only explicit user-authored traces that are still recoverable from current persisted session state:
+  - latest `corrected_outcome`
+  - whether current `corrected_text` exists on the source message
+  - current `content_reason_record` when latest outcome is still `rejected`
+  - latest approval-linked `approval_reason_record` tied to the same anchor when present
+  - latest save linkage when present:
+    - `approval_id`
+    - `saved_note_path`
+    - `save_content_source`
+- It should keep content verdict, approval friction, and save history as separate axes rather than flattening them into one preference label.
+- It should not:
+  - infer a reusable preference statement
+  - promote itself to `durable_candidate`
+  - reinterpret approval reject, no-save, retry, or feedback `incorrect` as content verdict
+  - require task-log replay as the canonical source in the first slice
+- Current truthful limitation:
+  - if later correction or explicit save clears `rejected` from the source message, a superseded reject or reject-note may stay only in audit log and fall out of the first signal summary
+- Current implementation should stay additive:
+  - serialized grounded-brief source messages should expose one computed optional `session_local_memory_signal`
+  - the signal should stay read-only and source-message-anchored
+  - the signal should keep `content_signal`, `approval_signal`, and `save_signal` separate
+  - no new UI should be required for this slice
+  - no separate memory store should be required for this slice
+- Recommended next refinement:
+  - choose `Option B`
+  - keep the shipped current-state `session_local_memory_signal` intact
+  - add one separate optional historical adjunct only for the latest superseded reject / reject-note on the same anchor
+  - do not replay saved body copy, approval preview body copy, approval-friction relabeling, inferred preference statements, or cross-artifact aggregates
+  - keep task-log replay as a helper-only path, not as the canonical current-state source
+
+### Review Surface
+- Current shipped first slice:
+  - only current `durable_candidate` items with `promotion_eligibility = eligible_for_review` may enter the local read-only review queue
+  - queue items are read-only inspection projections, not new canonical durable records
+  - one `accept` action is available in the current slice
+  - that action records reviewed-but-not-applied state only
+- Only `durable_candidate` items with trace-complete support and no final review outcome should enter a later action-capable local review queue.
+- `session_local` items should not become future user-level memory without first becoming `durable_candidate`.
+- First review-action trace contract should stay source-message-anchored:
+  - one optional sibling `candidate_review_record` on the same grounded-brief source message
+  - canonical source remains current persisted session state
+  - task-log remains audit-only
+- Minimum shipped `candidate_review_record` fields should include:
+  - `candidate_id`
+  - `candidate_updated_at`
+  - `artifact_id`
+  - `source_message_id`
+  - `review_scope = source_message_candidate_review`
+  - `review_action = accept`
+  - `review_status = accepted`
+  - `recorded_at`
+  - optional `reviewed_statement` only when a later `edit` action lands
+- Minimum review actions should still be defined as:
+  - `accept`
+  - `edit`
+  - `reject`
+  - `defer`
+- Current pending queue rule should stay narrow even after actions exist:
+  - `review_queue_items` should continue to include only current `durable_candidate` items with `promotion_eligibility = eligible_for_review`
+  - a queue item should appear only when no matching current `candidate_review_record` exists on the same `artifact_id`, `source_message_id`, `candidate_id`, and `candidate_updated_at`
+  - after one matching `accept` record is present for that candidate version, the item should leave the pending queue
+  - accepted / edited / rejected / deferred items should not automatically open a second queue section, dashboard, or user-level memory surface in the same slice
+  - aggregate-level reviewed-memory transition initiation must stay outside this queue:
+    - `review_queue_items` must not host `future_reviewed_memory_apply`
+    - source-message `accept` must not be reinterpreted as reviewed-memory apply trigger
+    - `candidate_review_record` must not become canonical transition identity, `operator_reason_or_note`, or `emitted_at` basis
+- Action meaning should stay distinct:
+  - `accept` reviews the current `durable_candidate` as reusable, but does not apply user-level memory
+  - `edit` records a reviewed reusable statement, but does not rewrite source-message `corrected_text`
+  - `reject` dismisses the current `durable_candidate` as a review candidate, but is not content reject or approval reject
+  - `defer` records later revisit, but does not invalidate the underlying explicit corrected pair or explicit confirmation
+- The baseline reviewer assumption should remain the same local user on the same machine.
+- The first review-action contract should not open scope suggestion yet:
+  - `review_scope` stays fixed at `source_message_candidate_review`
+  - `proposed_scope`, `scope_candidates_considered`, and `scope_suggestion_reason` remain later reviewed-memory planning fields
+- Later broader scope suggestion should require a traceable justification and should not bypass review.
+- Approval-backed save without explicit confirmation may count as supporting evidence only:
+  - weak for content acceptability
+  - medium for save-path acceptability
+- Approval-backed save should not be the sole reason a candidate becomes reviewed memory or receives a broader suggested scope.
+- This review surface is now a current acceptance gate for the narrow first slice.
+- Current shipped action-capable slice:
+  - `accept` only
+  - record one source-message `candidate_review_record` with `review_action = accept` and `review_status = accepted`
+  - remove the matching item from pending `review_queue_items`
+  - do not add edit / reject / defer controls, reviewed-memory application, or user-level memory in the same slice
+
+### Acceptance Placeholder For Memory
+- The current implementation should keep the first source-message-anchored `session_local_memory_signal` projection stable before any review queue or durable-candidate surface is attempted.
+- Focused regression should verify at least:
+  - a grounded-brief source message exposes `session_local_memory_signal` even when no correction, reject, or save has happened yet
+  - `content_signal`, `approval_signal`, and `save_signal` remain separate instead of collapsing into one label
+  - later correction or explicit save can clear stale reject state from `content_signal` while earlier save linkage may still remain in `save_signal`
+- Focused regression should now also verify at least:
+  - `superseded_reject_signal` appears only when the current source message no longer shows `rejected` but same-anchor audit history still contains a superseded reject
+  - the helper replays only one latest superseded reject verdict plus optional reject-note
+  - the helper does not overwrite `session_local_memory_signal.content_signal`
+  - the helper does not replay approval friction or saved-body content
+  - the helper remains source-message-anchored and read-only
+  - if same-anchor note association is ambiguous, the helper omits the replayed note instead of guessing
+- The current `save_signal` acceptance should remain unchanged:
+  - it stays a current-state-only summary
+  - it may still omit `latest_approval_id` after later explicit actions clear the source-message save linkage
+- Focused regression should now also verify at least:
+  - one optional source-message-anchored `historical_save_identity_signal` appears only when the current `save_signal` no longer exposes `latest_approval_id` but same-anchor audit still preserves one approval-backed save identity
+  - the adjunct replays at most one latest historical save identity instead of building a save-history list
+  - the adjunct does not overwrite or relabel the current `save_signal`
+  - the adjunct does not replay saved body text, approval preview text, content verdict state, or approval-friction labels
+  - the adjunct remains audit-derived and read-only
+  - the first shipped slice uses same-anchor `write_note` with non-empty `approval_id` rather than `approval_granted` alone
+  - `approval_granted` without matching `write_note` does not produce the adjunct
+  - the current MVP keeps `write_note`-only replay as sufficient until a concrete insufficiency appears
+  - if a later corroboration refinement is opened, it must stay additive:
+    - same-anchor and same-`approval_id` only
+    - corroboration-only for an existing `write_note` candidate
+    - no adjunct from `approval_granted` alone
+    - no pending-approval replay or broader save-history list
+- The current implementation should now expose one optional normalized `session_local_candidate` on serialized grounded-brief source messages only when:
+  - the same source message still keeps `original_response_snapshot`
+  - the same source message still keeps non-empty `corrected_text`
+  - `session_local_memory_signal.content_signal.latest_corrected_outcome.outcome = corrected`
+  - the normalized original draft and normalized corrected text are not identical
+- The current `session_local_candidate` must remain distinct from:
+  - `session_local_memory_signal`
+  - `superseded_reject_signal`
+  - `historical_save_identity_signal`
+- The minimum shipped envelope should include:
+  - `candidate_id`
+  - `candidate_scope = session_local`
+  - `candidate_family = correction_rewrite_preference`
+  - `statement`
+  - `supporting_artifact_ids`
+  - `supporting_source_message_ids`
+  - `supporting_signal_refs`
+  - `evidence_strength`
+  - `status = session_local_candidate`
+  - timestamps
+- The first shipped candidate statement should stay narrow and deterministic:
+  - `explicit rewrite correction recorded for this grounded brief`
+- The current extraction rule should stay conservative:
+  - rejected-only paths do not emit a candidate
+  - accepted-as-is-only paths do not emit a candidate
+  - current `session_local_memory_signal.content_signal` is the primary basis
+  - current `session_local_memory_signal.save_signal` may appear only as supporting evidence when the same current anchor still exposes `latest_approval_id`
+  - `evidence_strength` stays the single conservative value `explicit_single_artifact` even when current save support is attached
+  - `superseded_reject_signal` and `historical_save_identity_signal` do not become primary extraction sources
+  - approval-backed save support, when present, is supporting evidence only and never the sole basis for the candidate
+- The current implementation should keep repeated same-session `correction_rewrite_preference` drafts as separate source-message candidates:
+  - it should not yet expose a session-level merge helper or merged candidate summary
+  - it should not merge by `candidate_family` alone
+  - it should not reinterpret approval-backed save support or the historical adjuncts as a same-preference merge key
+- If a later reopen is needed, the smallest acceptable merge-helper contract should be:
+  - one optional top-level session-local read-only adjunct such as `session_candidate_family_signal`
+  - at least two distinct source-message `session_local_candidate` drafts in the same session
+  - a future merge key derived from the explicit corrected pair itself, not from family alone
+  - no overwrite of the source-message `session_local_candidate`
+  - no `durable_candidate`, review, or user-level-memory semantics
+- The current implementation should keep every shipped `session_local_candidate` promotion-ineligible in its own object shape:
+  - current source-message payloads may serialize sibling `candidate_confirmation_record`
+  - current source-message payloads may serialize sibling `durable_candidate`
+  - `session_local_candidate` itself emits no `promotion_basis`
+  - `session_local_candidate` itself emits no `promotion_eligibility`
+  - `session_local_candidate` itself emits no `has_explicit_confirmation`
+- The current implementation may now expose one optional source-message `candidate_confirmation_record` only when:
+  - the same current source message already exposes `session_local_candidate`
+  - the record keeps `candidate_id`, `candidate_family`, `candidate_updated_at`, `artifact_id`, `source_message_id`, `confirmation_scope = candidate_reuse`, `confirmation_label = explicit_reuse_confirmation`, and `recorded_at`
+  - the record stays separate from `session_local_candidate`, `session_local_memory_signal`, `superseded_reject_signal`, and `historical_save_identity_signal`
+  - the same source message clears stale confirmation again when a later explicit correction submit or non-`corrected` outcome supersedes the currently confirmed pair
+- The current shipped confirmation path must stay narrow:
+  - one response-card action such as `이 수정 방향 재사용 확인`
+  - shown only when the current source message already has `session_local_candidate`
+  - separate from save approval, approval reject, approval reissue, no-save behavior, retry, feedback `incorrect`, and reject-note input
+  - approval-backed save support alone must not create the confirmation trace
+  - explicit confirmation must not rewrite `supporting_signal_refs` or `evidence_strength` on the current candidate
+- The current implementation may now expose one optional source-message `durable_candidate` only when:
+  - the same current source message already exposes `session_local_candidate`
+  - the same current source message already exposes a matching `candidate_confirmation_record`
+  - the join stays exact on `artifact_id`, `source_message_id`, `candidate_id`, and `candidate_updated_at`
+  - stale or ambiguous confirmation matches omit `durable_candidate`
+  - the projection stays separate from `session_local_candidate`, `session_local_memory_signal`, `superseded_reject_signal`, and `historical_save_identity_signal`
+- The shipped first `durable_candidate` contract should stay separate from the shipped candidate and include only:
+  - `candidate_id`
+  - `candidate_scope = durable_candidate`
+  - `candidate_family`
+  - `statement`
+  - `supporting_artifact_ids`
+  - `supporting_source_message_ids`
+  - `supporting_signal_refs`
+  - `supporting_confirmation_refs`
+  - `evidence_strength`
+  - `has_explicit_confirmation`
+  - `promotion_basis = explicit_confirmation`
+  - `promotion_eligibility = eligible_for_review`
+  - timestamps
+- The first explicit-confirmation projection path should stay minimal:
+  - reuse `candidate_family`, `statement`, `supporting_artifact_ids`, `supporting_source_message_ids`, `supporting_signal_refs`, and `evidence_strength` from the current source-message `session_local_candidate`
+  - add one `supporting_confirmation_refs` item from the matching `candidate_confirmation_record`
+  - reuse the current source-message `session_local_candidate.candidate_id` while the projection stays source-message-anchored
+  - set `has_explicit_confirmation = true`
+  - set `promotion_basis = explicit_confirmation`
+  - set `promotion_eligibility = eligible_for_review`
+  - set projection timestamps from `candidate_confirmation_record.recorded_at`
+- Future promotion basis must stay narrow:
+  - explicit confirmation requires one candidate-linked positive reuse-confirmation signal and a same-anchor join on `candidate_id` plus `candidate_updated_at`
+  - repeated signal requires at least two distinct source-message candidates plus one truthful recurrence key derived from the explicit corrected pair itself
+  - approval-backed save, `superseded_reject_signal`, `historical_save_identity_signal`, and task-log replay alone do not create promotion eligibility
+- The first truthful recurrence-key contract is now implemented as one explicit source-message-anchored read-only `candidate_recurrence_key` draft:
+  - the key should mean one deterministic rewrite-transformation class derived from:
+    - normalized `original_response_snapshot.draft_text`
+    - normalized explicit `corrected_text`
+    - the current `candidate_family`
+  - the first minimum envelope should include:
+    - `candidate_family`
+    - `key_scope = correction_rewrite_recurrence`
+    - `key_version = explicit_pair_rewrite_delta_v1`
+    - `derivation_source = explicit_corrected_pair`
+    - `source_candidate_id`
+    - `source_candidate_updated_at`
+    - `normalized_delta_fingerprint`
+    - optional `rewrite_dimensions`
+    - `stability = deterministic_local`
+    - `derived_at`
+  - the recurrence identity should come only from `candidate_family` plus `key_version` plus `normalized_delta_fingerprint`
+  - `candidate_family` alone, fixed statement text alone, approval-backed save alone, queue presence alone, task-log replay alone, and `candidate_review_record` alone must never act as the recurrence key
+  - `candidate_review_record` may later strengthen repeated-signal evidence, but it must not replace the key itself
+  - if the repo cannot derive a deterministic normalized delta fingerprint from the explicit pair without free-form model summary or hidden classifier behavior, the key must be omitted and repeated-signal promotion must remain blocked
+  - repeated edits on one `artifact_id` + `source_message_id` do not count as multi-brief recurrence
+  - two distinct grounded briefs is the first truthful baseline for `correction_rewrite_preference`, but later families may require a stricter threshold
+- The first current post-key aggregation slice should stay same-session-only and read-only:
+  - the session payload may expose one optional top-level `recurrence_aggregate_candidates`
+  - one aggregate should be emitted only when at least two distinct grounded-brief source messages in the same current session share the same exact recurrence identity:
+    - `candidate_family`
+    - `key_scope`
+    - `key_version`
+    - `derivation_source`
+    - `normalized_delta_fingerprint`
+  - the item should carry only:
+    - `aggregate_key`
+    - `supporting_source_message_refs`
+    - `supporting_candidate_refs`
+    - optional `supporting_review_refs`
+    - `aggregate_promotion_marker`
+    - `reviewed_memory_precondition_status`
+    - `reviewed_memory_boundary_draft`
+    - `recurrence_count`
+    - `scope_boundary = same_session_current_state_only`
+    - `confidence_marker = same_session_exact_key_match`
+    - `first_seen_at`
+    - `last_seen_at`
+  - `source_candidate_id` and `source_candidate_updated_at` remain supporting refs only and must not become the aggregate identity
+  - `supporting_candidate_refs` and `supporting_review_refs` must stay exact current-version joins on `artifact_id`, `source_message_id`, `candidate_id`, and `candidate_updated_at`
+  - `candidate_review_record` may support confidence only when it still matches the same current source-message candidate version
+  - `durable_candidate` remains supporting context only and must not become a second aggregate-ref list in this slice
+  - approval-backed save, `session_local_memory_signal`, `superseded_reject_signal`, `historical_save_identity_signal`, queue presence, fixed statement text, `candidate_family` alone, and task-log replay alone must never act as aggregate basis
+  - the first aggregate surface must remain separate from source-message `candidate_recurrence_key`, separate from `review_queue_items`, and separate from any reviewed-memory or user-level-memory store
+  - cross-session counting should remain out of scope until a later local store, rollback, conflict, and reviewed-memory boundary exists
+- The first post-aggregate promotion boundary should stay contract-only and conservative:
+  - choose `Option A`:
+    - current same-session `recurrence_aggregate_candidates` stay promotion-ineligible
+    - exact aggregate identity is necessary, but still insufficient, for any later promotion work
+  - current source-message traces must remain narrower than any later reviewed-memory layer:
+    - `candidate_review_record` remains reviewed-but-not-applied and source-message-anchored
+    - `durable_candidate` remains source-message-anchored
+    - `recurrence_aggregate_candidates` remains same-session-only and read-only
+    - reviewed memory remains later, separate, rollbackable, disableable, conflict-visible, and operator-auditable
+  - review acceptance may later strengthen confidence, but it must never replace aggregate identity
+  - approval-backed save, `session_local_memory_signal`, `superseded_reject_signal`, `historical_save_identity_signal`, queue presence, fixed statement text, `candidate_family` alone, and task-log replay alone must never act as promotion basis
+  - the current contract may now emit only the smallest blocked marker inside each current aggregate item:
+    - one read-only aggregate-level promotion-eligibility marker only
+    - `promotion_basis = same_session_exact_recurrence_aggregate`
+    - `promotion_eligibility = blocked_pending_reviewed_memory_boundary`
+    - `reviewed_memory_boundary = not_open`
+    - `marker_version = same_session_blocked_reviewed_memory_v1`
+    - `derived_at = last_seen_at`
+  - the current contract may now also emit one read-only aggregate-level precondition status object inside each current aggregate item:
+    - `reviewed_memory_precondition_status`
+    - `status_version = same_session_reviewed_memory_preconditions_v1`
+    - `overall_status = blocked_all_required`
+    - `all_required = true`
+    - ordered `preconditions`
+    - `evaluated_at = last_seen_at`
+  - the current contract may now also emit one read-only aggregate-level boundary draft object inside each current aggregate item:
+    - `reviewed_memory_boundary_draft`
+    - `boundary_version = fixed_narrow_reviewed_scope_v1`
+    - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
+    - one `aggregate_identity_ref`
+    - `supporting_source_message_refs`
+    - `supporting_candidate_refs`
+    - optional `supporting_review_refs`
+    - `boundary_stage = draft_not_applied`
+    - `drafted_at = last_seen_at`
+  - the current contract may now also emit one read-only aggregate-level rollback-contract object inside each current aggregate item:
+    - `reviewed_memory_rollback_contract`
+    - `rollback_version = first_reviewed_memory_effect_reversal_v1`
+    - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
+    - one `aggregate_identity_ref`
+    - `supporting_source_message_refs`
+    - `supporting_candidate_refs`
+    - optional `supporting_review_refs`
+    - `rollback_target_kind = future_applied_reviewed_memory_effect_only`
+    - `rollback_stage = contract_only_not_applied`
+    - `audit_trace_expectation = operator_visible_local_transition_required`
+    - `defined_at = last_seen_at`
+  - the current contract may now also emit one read-only aggregate-level disable-contract object inside each current aggregate item:
+    - `reviewed_memory_disable_contract`
+    - `disable_version = first_reviewed_memory_effect_stop_apply_v1`
+    - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
+    - one `aggregate_identity_ref`
+    - `supporting_source_message_refs`
+    - `supporting_candidate_refs`
+    - optional `supporting_review_refs`
+    - `disable_target_kind = future_applied_reviewed_memory_effect_only`
+    - `disable_stage = contract_only_not_applied`
+    - `effect_behavior = stop_apply_without_reversal`
+    - `audit_trace_expectation = operator_visible_local_transition_required`
+    - `defined_at = last_seen_at`
+  - same-session aggregate unblock must remain closed until every reviewed-memory precondition is explicit:
+    - `reviewed_memory_boundary_defined`
+      - later reviewed memory needs its own local persistence/apply boundary plus one fixed narrow reviewed scope above source-message and aggregate traces
+      - the first reviewed scope should stay fixed at `same_session_exact_recurrence_aggregate_only`
+      - that scope is tied to one current aggregate identity plus its exact current supporting refs
+      - this is not source-message correction history, not `candidate_review_record`, not `recurrence_aggregate_candidates`, and not user-level memory
+    - `rollback_ready_reviewed_memory_effect`
+      - later reviewed-memory effect can be reversed without rewriting source-message traces or aggregate identity
+      - the first rollback target must stay fixed at one later applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
+      - the current `reviewed_memory_boundary_draft` remains a draft and basis ref, not the rollback target
+      - rollback must not mean rewinding `corrected_text`, deleting `candidate_review_record`, deleting `candidate_recurrence_key`, mutating `recurrence_aggregate_candidates`, or treating boundary-draft deletion as canonical rollback
+      - after rollback, aggregate identity, supporting refs, the current boundary draft, and operator-visible audit trace remain while only the later applied effect may deactivate
+    - `disable_ready_reviewed_memory_effect`
+      - later reviewed-memory effect can stop applying without deleting candidate traces, aggregate evidence, the current boundary draft, or the current rollback contract
+      - the first disable target must stay fixed at one later applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
+      - disable must not mean deleting `candidate_review_record`, deleting `candidate_recurrence_key`, mutating `recurrence_aggregate_candidates`, deleting `reviewed_memory_boundary_draft`, deleting `reviewed_memory_rollback_contract`, or claiming rollback reversal
+      - after disable, aggregate identity, supporting refs, the current boundary draft, the current rollback contract, and operator-visible audit trace remain while only the later applied effect may become inactive for future apply
+    - `conflict_visible_reviewed_memory_scope`
+      - future reviewed-memory layer must keep competing reviewed-memory targets visible before apply inside one reviewed scope
+      - the first visible scope must stay fixed at `same_session_exact_recurrence_aggregate_only`
+      - the first visible conflict categories must stay fixed and narrow:
+        - `future_reviewed_memory_candidate_draft_vs_applied_effect`
+        - `future_applied_reviewed_memory_effect_vs_applied_effect`
+      - conflict visibility must not be treated as a `corrected_text` diff viewer, `candidate_review_record` conflict promotion, aggregate-history rewrite, or any automatic resolver
+    - `operator_auditable_reviewed_memory_transition`
+      - any later reviewed-memory transition above the blocked marker leaves one explicit operator-visible local trace with canonical transition identity
+      - fixed transition action vocabulary must stay narrow:
+        - `future_reviewed_memory_apply`
+        - `future_reviewed_memory_stop_apply`
+        - `future_reviewed_memory_reversal`
+        - `future_reviewed_memory_conflict_visibility`
+      - operator trace must keep reviewed scope, aggregate identity, exact basis refs, timing, and explicit local reason or note boundary visible
+      - current append-only `task_log` may mirror that trace, but it does not become the canonical reviewed-memory transition store
+      - approval-backed save support, historical adjuncts, review acceptance, queue presence, and task-log replay alone must not create canonical transition state
+  - all listed preconditions are mandatory:
+    - current shipped boundary / rollback / disable / conflict / transition-audit objects still mean `contract exists`, not `satisfied`
+    - approval-backed save support, historical adjuncts, review acceptance, queue presence, and `task_log` mirror existence still do not satisfy readiness
+    - partial satisfaction may later surface only through one read-only aggregate-level status object
+    - partial satisfaction must not widen `promotion_eligibility`
+    - same-session unblock later must still remain separate from cross-session counting
+    - current shipped status object must not invent per-precondition satisfied / unsatisfied booleans
+    - the first same-session unblock threshold must stay binary:
+      - current shipped `reviewed_memory_unblock_contract.unblock_status = blocked_all_required`
+      - current shipped `reviewed_memory_capability_status.capability_outcome = unblocked_all_required`
+  - the shipped boundary draft should stay read-only and narrow:
+    - `reviewed_memory_planning_target_ref.target_label` remains `eligible_for_reviewed_memory_draft_planning_only`
+    - that target label means reviewed-memory draft planning only for one exact same-session aggregate
+    - it is not an emitted transition record and not a reviewed-memory apply result
+    - the current aggregate item now also exposes one additive shared planning-target ref:
+      - `reviewed_memory_planning_target_ref`
+      - `planning_target_version = same_session_reviewed_memory_planning_target_ref_v1`
+      - `target_label = eligible_for_reviewed_memory_draft_planning_only`
+      - `target_scope = same_session_exact_recurrence_aggregate_only`
+      - `target_boundary = reviewed_memory_draft_planning_only`
+      - `defined_at = last_seen_at`
+    - the shipped additive ref is now the canonical planning-target source
+    - the compatibility-window echo fields have now been removed together in one cleanup-only pass
+    - docs, payload, and tests now read planning-target meaning only from `reviewed_memory_planning_target_ref`
+    - no fallback target string, no partial cleanup, and no hidden drift is allowed
+    - no readiness or satisfaction tracker
+    - no apply result
+    - no cross-session scope
+  - the shipped rollback-contract slice should also stay read-only and narrow:
+    - `reviewed_memory_rollback_contract` keeps `rollback_target_kind = future_applied_reviewed_memory_effect_only`
+    - it keeps one `aggregate_identity_ref` plus exact supporting refs visible
+    - it keeps `rollback_stage = contract_only_not_applied`
+    - it keeps `audit_trace_expectation = operator_visible_local_transition_required`
+    - no payload-visible reviewed-memory store, no payload-visible proof-record or proof-boundary surface, no reviewed-memory apply result, and no cross-session widening
+  - the shipped disable-contract slice should also stay read-only and narrow:
+    - one `reviewed_memory_disable_contract`
+    - `disable_target_kind = future_applied_reviewed_memory_effect_only`
+    - one `aggregate_identity_ref`
+    - exact supporting refs
+    - `disable_stage = contract_only_not_applied`
+    - `effect_behavior = stop_apply_without_reversal`
+    - `audit_trace_expectation = operator_visible_local_transition_required`
+    - no payload-visible reviewed-memory store, no payload-visible proof-record or proof-boundary surface, no reviewed-memory apply result, and no cross-session widening
+  - the shipped conflict-visible slice should stay read-only and narrow:
+    - one `reviewed_memory_conflict_contract`
+    - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
+    - one `aggregate_identity_ref`
+    - exact supporting refs
+    - fixed `conflict_target_categories`:
+      - `future_reviewed_memory_candidate_draft_vs_applied_effect`
+      - `future_applied_reviewed_memory_effect_vs_applied_effect`
+    - `conflict_visibility_stage = contract_only_not_resolved`
+    - `audit_trace_expectation = operator_visible_local_transition_required`
+    - no reviewed-memory resolver, no reviewed-memory apply result, and no cross-session widening
+  - the shipped operator-audit slice should stay read-only and narrow:
+    - one `reviewed_memory_transition_audit_contract`
+    - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
+    - one `aggregate_identity_ref`
+    - exact supporting refs
+    - fixed `transition_action_vocabulary`:
+      - `future_reviewed_memory_apply`
+      - `future_reviewed_memory_stop_apply`
+      - `future_reviewed_memory_reversal`
+      - `future_reviewed_memory_conflict_visibility`
+    - `transition_identity_requirement = canonical_local_transition_id_required`
+    - `operator_visible_reason_boundary = explicit_reason_or_note_required`
+    - `audit_stage = contract_only_not_emitted`
+    - `audit_store_boundary = canonical_transition_record_separate_from_task_log`
+    - no reviewed-memory state machine, no reviewed-memory apply result, and no cross-session widening
+  - the first later operator-visible trigger-source slice should stay separate from both the shipped audit contract and the emitted record:
+    - choose `Option A`
+    - one separate aggregate-level surface fed only by `recurrence_aggregate_candidates`
+    - keep it inside the existing shell session stack as one section adjacent to `검토 후보`
+    - do not place it on source-message cards and do not place it in `review_queue_items`
+    - keep the first action label fixed at `검토 메모 적용 시작`
+    - blocked state should stay visible while `capability_outcome = blocked_all_required`:
+      - keep the control visible but disabled while `blocked_all_required` / `contract_only_not_emitted` truth still holds
+      - do not render an active `operator_reason_or_note` input while blocked
+      - do not mint `canonical_transition_id` or `emitted_at` while blocked
+    - enabled submit boundary is now implemented when `capability_outcome = unblocked_all_required`:
+      - show a mandatory `operator_reason_or_note` textarea on the aggregate card
+      - keep the submit button disabled until the textarea is non-empty
+      - clicking the enabled submit now emits one aggregate-level `reviewed_memory_transition_record` and persists it on the session under `reviewed_memory_emitted_transition_records`; reviewed-memory apply is NOT triggered
+    - enabled submission stays inline on the same aggregate card:
+      - require explicit local `operator_reason_or_note`
+      - create `canonical_transition_id` only at the enabled aggregate-card submit boundary
+      - create `emitted_at` only at that same enabled submit boundary
+    - trigger-source layer existence must remain separate from emitted-transition-record existence and separate from reviewed-memory apply result
+  - the first emitted-transition-record slice is now implemented and separate from the shipped audit contract:
+    - one aggregate-level read-only `reviewed_memory_transition_record`
+    - `transition_record_version = first_reviewed_memory_transition_record_v1`
+    - one `canonical_transition_id`
+    - one `transition_action` from the fixed vocabulary
+    - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
+    - one `aggregate_identity_ref`
+    - exact supporting refs
+    - one explicit `operator_reason_or_note`
+    - `record_stage = emitted_record_only_not_applied`
+    - `task_log_mirror_relation = mirror_allowed_not_canonical`
+    - `emitted_at`
+    - persisted on the session under `reviewed_memory_emitted_transition_records`
+    - no reviewed-memory apply result and no user-level memory write
+  - the shipped unblock slice should stay read-only and narrow:
+    - one `reviewed_memory_unblock_contract`
+    - exact `required_preconditions`
+    - `unblock_status = blocked_all_required`
+    - `satisfaction_basis_boundary = canonical_reviewed_memory_layer_capabilities_only`
+    - `partial_state_policy = partial_states_not_materialized`
+    - no per-precondition satisfaction matrix, no emitted transition record, and no reviewed-memory apply result
+  - the shipped satisfied capability outcome should stay on one separate read-only surface:
+    - one `reviewed_memory_capability_status`
+    - `capability_version = same_session_reviewed_memory_capabilities_v1`
+    - exact `required_preconditions`
+    - `capability_outcome`
+      - current shipped state = `unblocked_all_required`
+      - no later wider capability-outcome state is currently defined in the MVP slice
+    - `satisfaction_basis_boundary = canonical_reviewed_memory_layer_capabilities_only`
+    - `partial_state_policy = partial_states_not_materialized`
+    - no emitted transition record and no reviewed-memory apply result
+  - the current repo may now emit one separate read-only basis object:
+    - one current `reviewed_memory_capability_basis`
+    - `basis_version = same_session_reviewed_memory_capability_basis_v1`
+    - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
+    - one `aggregate_identity_ref`
+    - exact supporting refs
+    - exact `required_preconditions`
+    - `basis_status = all_required_capabilities_present`
+    - `satisfaction_basis_boundary = canonical_reviewed_memory_layer_capabilities_only`
+    - `evaluated_at`
+    - current contract-object existence alone must not materialize this basis object
+    - approval-backed save support, historical adjuncts, source-message review acceptance, queue presence, and `task_log` replay alone must not materialize this basis object
+- the current contract still must not emit a repeated-signal promotion object, a reviewed-memory candidate store, or a reviewed-memory apply path
+- Focused service or web-app regression for the current recurrence-key slice should keep verifying that:
+  - the first `durable_candidate` projection appears only when the same current source message still exposes both matching current-candidate and confirmation traces
+  - approval-backed save support stays distinguishable from explicit confirmation support
+  - approval-backed save support alone does not mark eligibility
+  - `superseded_reject_signal`, `historical_save_identity_signal`, and task-log replay alone do not mark eligibility
+  - repeated same-family candidates do not become eligible by `candidate_family` alone
+  - the current read-only review queue remains separate from review actions and user-level memory
+- Focused regression for the current recurrence-key slice should verify at least:
+  - only one explicit original-vs-corrected pair can derive one source-message `candidate_recurrence_key`
+  - later correction on the same source message invalidates the old key by changing `source_candidate_updated_at`
+  - approval-backed save support, historical adjuncts, queue presence, and review acceptance alone never emit a recurrence key
+  - repeated-signal aggregation remains blocked when fewer than two distinct grounded-brief anchors share the same key
+- Focused regression for the current same-session aggregation slice should verify at least:
+  - `recurrence_aggregate_candidates` appear only when at least two distinct grounded-brief anchors in the same session share the same exact recurrence identity
+  - repeated updates on one `artifact_id` + `source_message_id` do not inflate `recurrence_count`
+  - `candidate_review_record` may surface as `supporting_review_refs`, but it does not create aggregate identity by itself
+  - approval-backed save support, historical adjuncts, queue presence, and task-log replay alone never materialize an aggregate
+  - the first aggregate surface remains read-only and does not create repeated-signal promotion, reviewed memory, or user-level memory
+- Focused regression for the first future post-aggregate marker slice should verify at least:
+  - only already-materialized same-session aggregates can surface the marker
+  - the marker stays `blocked_pending_reviewed_memory_boundary` while no reviewed-memory / rollback boundary exists
+  - `derived_at` stays deterministic by reusing aggregate `last_seen_at`
+  - `candidate_review_record` may strengthen support refs, but source-message review acceptance alone never creates promotion identity
+  - approval-backed save support, historical adjuncts, queue presence, and task-log replay alone never lift aggregate promotion eligibility
+  - the marker remains read-only, non-applying, and distinct from reviewed memory and user-level memory
+- Focused regression for the current aggregate-level precondition-status slice should verify at least:
+  - only already-materialized same-session aggregates can surface the status object
+  - the status object stays fixed at `overall_status = blocked_all_required`
+  - `all_required` stays `true`
+  - the status object reports the exact mandatory precondition ids:
+    - `reviewed_memory_boundary_defined`
+    - `rollback_ready_reviewed_memory_effect`
+    - `disable_ready_reviewed_memory_effect`
+    - `conflict_visible_reviewed_memory_scope`
+    - `operator_auditable_reviewed_memory_transition`
+  - `evaluated_at` stays deterministic by reusing aggregate `last_seen_at`
+  - all listed preconditions stay required before any later eligibility transition can occur
+  - partially satisfied states remain unimplemented and the aggregate stays blocked
+  - no payload-visible reviewed-memory store, no payload-visible proof-record or proof-boundary surface, no reviewed-memory apply, and no cross-session counting open in that slice
+  - current `candidate_recurrence_key`, `recurrence_aggregate_candidates`, `candidate_review_record`, `durable_candidate`, and `review_queue_items` semantics remain unchanged
+- Focused regression for the current aggregate-level boundary-draft slice should verify at least:
+  - only already-materialized same-session aggregates can surface the draft object
+  - the draft keeps `reviewed_scope = same_session_exact_recurrence_aggregate_only`
+  - `aggregate_identity_ref` exactly mirrors the current aggregate identity fields
+  - `supporting_source_message_refs` and `supporting_candidate_refs` exactly mirror current aggregate supporting refs
+  - `supporting_review_refs` stay optional and may surface only when the current aggregate already has matching review support
+  - `drafted_at` stays deterministic by reusing aggregate `last_seen_at`
+  - `candidate_review_record` may stay an optional support ref, but it must not widen aggregate identity
+  - approval-backed save support, historical adjuncts, queue presence, and task-log replay alone never materialize the draft
+  - the draft remains read-only, non-applying, and distinct from readiness tracking, reviewed-memory store, and user-level memory
+- Focused regression for the current rollback-contract slice should verify at least:
+  - only already-materialized same-session aggregates and their shipped boundary drafts can surface the rollback contract
+  - `rollback_target_kind` stays `future_applied_reviewed_memory_effect_only`
+  - `rollback_stage` stays `contract_only_not_applied`
+  - `audit_trace_expectation` stays `operator_visible_local_transition_required`
+  - `defined_at` stays deterministic by reusing aggregate `last_seen_at`
+  - aggregate identity and exact supporting refs remain visible after rollback vocabulary is introduced
+  - `candidate_review_record` may appear only as optional support ref and never as rollback target
+  - approval-backed save support, historical adjuncts, queue presence, and task-log replay alone never create rollback readiness
+- Focused regression for the current disable-contract slice should verify at least:
+  - only already-materialized same-session aggregates and their shipped rollback contracts can surface the disable contract
+  - `disable_target_kind` stays `future_applied_reviewed_memory_effect_only`
+  - `disable_stage` stays `contract_only_not_applied`
+  - `effect_behavior` stays `stop_apply_without_reversal`
+  - `audit_trace_expectation` stays `operator_visible_local_transition_required`
+  - `defined_at` stays deterministic by reusing aggregate `last_seen_at`
+  - aggregate identity and exact supporting refs remain visible after disable vocabulary is introduced
+  - `candidate_review_record` may appear only as optional support ref and never as disable target
+  - approval-backed save support, historical adjuncts, queue presence, and task-log replay alone never create disable readiness
+- Focused regression for the next disable-contract slice should verify at least:
+  - only already-materialized same-session aggregates plus their shipped boundary draft and shipped rollback contract can surface the disable contract
+  - `disable_target_kind` stays `future_applied_reviewed_memory_effect_only`
+  - `disable_stage` stays `contract_only_not_applied`
+  - `effect_behavior` stays `stop_apply_without_reversal`
+  - `audit_trace_expectation` stays `operator_visible_local_transition_required`
+  - aggregate identity and exact supporting refs remain visible after disable vocabulary is introduced
+  - `candidate_review_record` may appear only as optional support ref and never as disable target
+  - approval-backed save support, historical adjuncts, queue presence, and task-log replay alone never create disable readiness
+- Focused regression for the current conflict-contract slice should verify at least:
+  - only already-materialized same-session aggregates plus their shipped boundary draft, shipped rollback contract, and shipped disable contract can surface the conflict contract
+  - `reviewed_scope` stays `same_session_exact_recurrence_aggregate_only`
+  - `conflict_target_categories` stay fixed at:
+    - `future_reviewed_memory_candidate_draft_vs_applied_effect`
+    - `future_applied_reviewed_memory_effect_vs_applied_effect`
+  - `conflict_visibility_stage` stays `contract_only_not_resolved`
+  - `audit_trace_expectation` stays `operator_visible_local_transition_required`
+  - aggregate identity and exact supporting refs remain visible after conflict vocabulary is introduced
+  - `candidate_review_record` may appear only as optional support ref and never as a conflict object by itself
+  - approval-backed save support, historical adjuncts, queue presence, and task-log replay alone never create conflict visibility
+- Focused regression for the current operator-audit-contract slice should verify at least:
+  - only already-materialized same-session aggregates plus their shipped boundary draft, shipped rollback contract, shipped disable contract, and shipped conflict contract can surface the operator-audit contract
+  - `reviewed_scope` stays `same_session_exact_recurrence_aggregate_only`
+  - `transition_action_vocabulary` stays fixed at:
+    - `future_reviewed_memory_apply`
+    - `future_reviewed_memory_stop_apply`
+    - `future_reviewed_memory_reversal`
+    - `future_reviewed_memory_conflict_visibility`
+  - `transition_identity_requirement` stays `canonical_local_transition_id_required`
+  - `operator_visible_reason_boundary` stays `explicit_reason_or_note_required`
+  - `audit_stage` stays `contract_only_not_emitted`
+  - `audit_store_boundary` stays `canonical_transition_record_separate_from_task_log`
+  - `post_transition_invariants` stays `aggregate_identity_and_contract_refs_retained`
+  - `defined_at` stays deterministic by reusing aggregate `last_seen_at`
+  - aggregate identity and exact supporting refs remain visible after operator-audit vocabulary is introduced
+  - `candidate_review_record` may appear only as optional support ref and never as transition record by itself
+  - approval-backed save support, historical adjuncts, queue presence, and task-log replay alone never create canonical operator-audit transition state
+- Focused regression for the shipped blocked trigger-source surface should verify at least:
+  - only already-materialized same-session aggregates can surface the aggregate-level trigger-source affordance
+  - the affordance is rendered on a separate aggregate surface, not in `review_queue_items` and not on source-message cards
+  - the action label stays fixed at `검토 메모 적용 시작`
+  - the control remains visible but disabled while `capability_outcome = blocked_all_required`
+  - the control remains visible but disabled while `audit_stage = contract_only_not_emitted`
+  - blocked state does not render an active `operator_reason_or_note` input
+  - blocked state does not create `canonical_transition_id`, `emitted_at`, or `reviewed_memory_transition_record`
+  - the submit boundary is enabled when `capability_outcome = unblocked_all_required` and the user has entered a non-empty reason note
+  - clicking the enabled submit now emits one `reviewed_memory_transition_record` with `record_stage = emitted_record_only_not_applied`; reviewed-memory apply is NOT triggered at this boundary
+  - after emission, the aggregate card shows a `검토 메모 적용 실행` (apply) button; clicking it POSTs to `/api/aggregate-transition-apply` which changes `record_stage` from `emitted_record_only_not_applied` to `applied_pending_result` and adds `applied_at`; after the apply boundary is reached, the same card shows a `결과 확정` button; clicking it changes `record_stage` to `applied_with_result`, creates an `apply_result` object with `result_version = first_reviewed_memory_apply_result_v1`, `applied_effect_kind = reviewed_memory_correction_pattern`, `result_stage = result_recorded_effect_pending`, and `result_at`; the memory effect on future responses is now active (`result_stage = effect_active`); active effects are stored on the session as `reviewed_memory_active_effects`; future responses include a `[검토 메모 활성]` prefix with the operator's reason and pattern fingerprint; after the effect is active the aggregate card also shows an `적용 중단` button; clicking it changes `record_stage` to `stopped`, sets `apply_result.result_stage` to `effect_stopped`, removes the effect from `reviewed_memory_active_effects`, and future responses no longer include the `[검토 메모 활성]` prefix
+  - `reviewed_memory_transition_record` is absent while blocked; emitted only at the enabled submit boundary
+  - `candidate_review_record`, approval-backed save support, historical adjuncts, queue presence, and `task_log` replay alone never activate the affordance
+- Focused regression for the emitted-transition-record slice should verify at least:
+  - only the enabled aggregate-card submit boundary for an already-materialized same-session aggregate can emit one `reviewed_memory_transition_record`
+  - the emitted record is persisted on the session under `reviewed_memory_emitted_transition_records`
+  - `record_stage` stays `emitted_record_only_not_applied` immediately after emit and does not trigger reviewed-memory apply result
+  - after the apply boundary is reached via `검토 메모 적용 실행`, `record_stage` changes to `applied_pending_result` and `applied_at` is set; after `결과 확정` is clicked, `record_stage` changes to `applied_with_result` and one `apply_result` object is created with `result_version = first_reviewed_memory_apply_result_v1`, `applied_effect_kind = reviewed_memory_correction_pattern`, `result_stage = result_recorded_effect_pending`, and `result_at`; the memory effect on future responses is now active (`result_stage = effect_active`); active effects are stored on the session as `reviewed_memory_active_effects`; future responses include a `[검토 메모 활성]` prefix with the operator's reason and pattern fingerprint; after the effect is active the aggregate card also shows an `적용 중단` button; clicking it changes `record_stage` to `stopped`, sets `apply_result.result_stage` to `effect_stopped`, removes the effect from `reviewed_memory_active_effects`, and future responses no longer include the `[검토 메모 활성]` prefix
+  - the first truthful emitted action stays `future_reviewed_memory_apply` only
+  - the emitted record requires truthful `capability_outcome = unblocked_all_required` first
+  - current implementation does not synthesize the object from contract existence, trigger-source visibility alone, `candidate_review_record`, approval-backed save support, historical adjuncts, queue presence, or `task_log` replay
+  - task-log-like replay data still does not materialize the object
+  - `transition_record_version` stays `first_reviewed_memory_transition_record_v1`
+  - `transition_action` stays within the shipped fixed vocabulary
+  - the first implementation emits only `future_reviewed_memory_apply`; stop-apply (`future_reviewed_memory_stop_apply`) is now also implemented (see stop-apply regression below); reversal (`future_reviewed_memory_reversal`) is now also implemented (see reversal regression below); conflict-visibility remains closed
+  - `reviewed_scope`, aggregate identity, and exact supporting refs mirror the same exact aggregate scope
+  - `operator_reason_or_note` is explicit and non-empty
+  - `record_stage` stays `emitted_record_only_not_applied`
+  - `task_log_mirror_relation` stays `mirror_allowed_not_canonical`
+  - `task_log` replay alone never becomes canonical transition state
+  - first-round `task_log` mirroring may remain optional, but if present it stays mirror-only
+  - emitted transition record remains separate from `blocked_all_required` / `unblocked_all_required`
+  - emitted transition record remains separate from reviewed-memory apply result, repeated-signal promotion, and cross-session counting
+- Focused regression for the shipped stop-apply slice (`future_reviewed_memory_stop_apply`) should verify at least:
+  - `future_reviewed_memory_stop_apply` is now implemented and is no longer future-only
+  - the stop-apply action is available only after the correction-pattern effect is active (`result_stage = effect_active`) and the effect is present in `reviewed_memory_active_effects`
+  - after the effect is active, the aggregate card shows an `적용 중단` (stop apply) button
+  - clicking `적용 중단` changes `record_stage` to `stopped`
+  - clicking `적용 중단` changes `apply_result.result_stage` to `effect_stopped`
+  - clicking `적용 중단` removes the effect from `reviewed_memory_active_effects` on the session
+  - after stop-apply, future responses no longer include the `[검토 메모 활성]` prefix
+  - aggregate identity, supporting refs, boundary draft, rollback contract, disable contract, and operator-visible audit trace remain after stop-apply
+  - stop-apply is distinct from rollback reversal: rolled-back state is not the same as stopped state
+  - reversal (`future_reviewed_memory_reversal`) is now also implemented: after the effect is stopped (`record_stage = stopped`), the aggregate card shows an `적용 되돌리기` button; clicking it changes `record_stage` to `reversed`, sets `apply_result.result_stage` to `effect_reversed`, and adds `reversed_at`; aggregate identity, supporting refs, and contracts are retained; reversal is separate from stop-apply
+  - conflict-visibility remains closed; it is later than reversal
+- Focused regression for the shipped reversal slice (`future_reviewed_memory_reversal`) should verify at least:
+  - `future_reviewed_memory_reversal` is now implemented and is no longer future-only
+  - the reversal action is available only after stop-apply (`record_stage = stopped`)
+  - after stop-apply, the aggregate card shows an `적용 되돌리기` (reverse) button
+  - clicking `적용 되돌리기` changes `record_stage` to `reversed`
+  - clicking `적용 되돌리기` changes `apply_result.result_stage` to `effect_reversed`
+  - clicking `적용 되돌리기` adds `reversed_at` to the record
+  - aggregate identity, supporting refs, boundary draft, rollback contract, disable contract, and operator-visible audit trace remain after reversal
+  - reversal is distinct from stop-apply: `reversed` state is not the same as `stopped` state
+  - conflict-visibility remains closed; it is later than reversal
+- Focused regression for the shipped same-session-unblock slice should verify at least:
+  - current shipped boundary / rollback / disable / conflict / transition-audit objects alone never move the aggregate out of `blocked_all_required`
+  - same-session unblock requires all five preconditions to be satisfied through later reviewed-memory-layer machinery, not by read-only contract-object existence
+  - the current binary capability vocabulary stays:
+    - `blocked_all_required`
+    - `unblocked_all_required`
+  - `eligible_for_reviewed_memory_draft_planning_only` still means draft planning only
+  - the current shipped target label now lives only on `reviewed_memory_planning_target_ref.target_label`
+  - emitted transition records, reviewed-memory apply, repeated-signal promotion, and cross-session counting remain closed in that slice
+- Focused regression for the first later satisfaction-surface slice should verify at least:
+  - the shipped `reviewed_memory_unblock_contract` remains the blocked-threshold contract only
+  - one shipped read-only `reviewed_memory_capability_status` now carries current `capability_outcome = unblocked_all_required`
+  - current shipped `unblocked_all_required` means draft-planning readiness only for one exact same-session aggregate
+  - the current truthful `unblocked_all_required` state requires one matching internal `reviewed_memory_capability_source_refs` family plus one matching `reviewed_memory_capability_basis`, not current contract-object existence alone
+  - that source family stays one additive internal aggregate-scoped helper only:
+    - `source_version = same_session_reviewed_memory_capability_source_refs_v1`
+    - `source_scope = same_session_exact_recurrence_aggregate_only`
+    - one `aggregate_identity_ref`
+    - exact supporting refs
+    - exact `required_preconditions`
+    - one `capability_source_refs` with `boundary_source_ref`, `rollback_source_ref`, `disable_source_ref`, `conflict_source_ref`, and `transition_audit_source_ref`
+    - `source_status = all_required_sources_present`
+    - deterministic `evaluated_at`
+  - current implementation now also materializes one `reviewed_memory_capability_basis` above the complete source family; the basis object is now present, and `capability_outcome` is now `unblocked_all_required`
+  - current implementation may also evaluate the future internal source family, and it now resolves all five same-aggregate refs: `boundary_source_ref`, `rollback_source_ref`, `disable_source_ref`, `conflict_source_ref`, and `transition_audit_source_ref`
+  - current implementation may also evaluate one internal `reviewed_memory_local_effect_presence_proof_record` helper for that same exact aggregate, and it now materializes only from one exact same-session internal `reviewed_memory_local_effect_presence_proof_record_store` entry for that aggregate; current implementation now also truthfully mints one exact payload-hidden canonical proof-record/store entry for the current exact aggregate state inside that internal boundary while the helper keeps `first_seen_at` alone, source-message review acceptance, review-queue presence, approval-backed save support, historical adjuncts, and `task_log` replay outside that lower canonical proof-record layer
+  - current implementation may also evaluate one internal `reviewed_memory_local_effect_presence_proof_boundary` helper for that same exact aggregate, and it now materializes one internal same-aggregate proof boundary only from one exact matching canonical local proof record/store entry while reusing the same `applied_effect_id` and `present_locally_at`; that layer stays payload-hidden
+  - current implementation may also evaluate one internal `reviewed_memory_local_effect_presence_fact_source_instance` helper for that same exact aggregate, and it now materializes one internal same-aggregate fact-source-instance result only from one exact matching proof-boundary result while reusing the same `applied_effect_id` and `present_locally_at`; that layer stays payload-hidden
+  - current implementation may also evaluate one internal `reviewed_memory_local_effect_presence_fact_source` helper for that same exact aggregate, and it now materializes one internal same-aggregate fact-source result only from one exact matching fact-source-instance result while reusing the same `applied_effect_id` and `present_locally_at`; that layer stays payload-hidden
+  - the exact local proof boundary beneath that fact-source-instance helper now stays one shared internal `reviewed_memory_local_effect_presence_proof_boundary`
+  - the exact canonical local proof record beneath that proof-boundary helper must stay one internal `reviewed_memory_local_effect_presence_proof_record`, and the proof-boundary helper now materializes only from one exact matching proof record inside one same-session internal `reviewed_memory_local_effect_presence_proof_record_store` boundary for the same aggregate
+  - current implementation may also evaluate one internal `reviewed_memory_local_effect_presence_event` helper for that same exact aggregate, and it now materializes one internal same-aggregate event result only from one exact matching fact-source result while reusing the same `applied_effect_id` and `present_locally_at`; that layer stays payload-hidden
+  - current implementation may also evaluate one internal `reviewed_memory_local_effect_presence_event_producer` helper for that same exact aggregate, and it now materializes one internal same-aggregate producer result only from one exact matching event result while reusing the same `applied_effect_id` and `present_locally_at`; that layer stays payload-hidden
+  - current implementation may also evaluate one internal `reviewed_memory_local_effect_presence_event_source` helper for that same exact aggregate, and it now materializes one internal same-aggregate event-source result only from one exact matching producer result while reusing the same `applied_effect_id` and `present_locally_at`
+  - current implementation may also evaluate one internal `reviewed_memory_local_effect_presence_record` helper for that same exact aggregate, and it now materializes one internal same-aggregate source-consumer record only from one exact matching event-source helper result while reusing the same `applied_effect_id` and `present_locally_at`
+  - current implementation may also evaluate one internal `reviewed_memory_applied_effect_target` helper for that same exact aggregate, and it now materializes one internal same-aggregate shared target only from one exact matching source-consumer helper result while reusing the same `applied_effect_id` and `present_locally_at`
+  - current implementation may also evaluate one internal `reviewed_memory_reversible_effect_handle` helper for that same exact aggregate, and it now materializes one internal same-aggregate rollback-capability handle only from one exact matching shared target plus one exact matching rollback contract
+  - the exact later rollback-capability backer for `rollback_source_ref` must stay one internal local `reviewed_memory_reversible_effect_handle`:
+    - `handle_version = first_same_session_reviewed_memory_reversible_effect_handle_v1`
+    - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
+    - one `aggregate_identity_ref`
+    - exact supporting refs
+    - one matching `boundary_source_ref`
+    - one matching `rollback_contract_ref`
+    - `effect_target_kind = applied_reviewed_memory_effect`
+    - `effect_capability = reversible_local_only`
+    - `effect_invariant = retain_identity_supporting_refs_boundary_and_audit`
+    - `effect_stage = handle_defined_not_applied`
+    - one local `handle_id`
+    - deterministic `defined_at`
+  - the exact later local target beneath that handle must stay one shared internal `reviewed_memory_applied_effect_target`:
+    - `target_version = first_same_session_reviewed_memory_applied_effect_target_v1`
+    - `target_scope = same_session_exact_recurrence_aggregate_only`
+    - one `aggregate_identity_ref`
+    - exact supporting refs
+    - one matching `boundary_source_ref`
+    - `effect_target_kind = applied_reviewed_memory_effect`
+    - `target_capability_boundary = local_effect_presence_only`
+    - `target_stage = effect_present_local_only`
+    - one local `applied_effect_id`
+    - deterministic `present_locally_at`
+  - the current `reviewed_memory_local_effect_presence_fact_source_instance` helper now materializes only from one exact matching `reviewed_memory_local_effect_presence_proof_boundary` for the same aggregate
+  - the exact later local fact source beneath that raw helper must stay one shared internal `reviewed_memory_local_effect_presence_fact_source`:
+    - `fact_source_version = first_same_session_reviewed_memory_local_effect_presence_fact_source_v1`
+    - `fact_source_scope = same_session_exact_recurrence_aggregate_only`
+    - one `aggregate_identity_ref`
+    - exact supporting refs
+    - one matching `boundary_source_ref`
+    - `effect_target_kind = applied_reviewed_memory_effect`
+    - `fact_capability_boundary = local_effect_presence_only`
+    - `fact_stage = presence_fact_available_local_only`
+    - one local `applied_effect_id`
+    - deterministic `present_locally_at`
+  - the exact later local effect-presence event above that fact source and beneath that producer helper must stay one shared internal `reviewed_memory_local_effect_presence_event`:
+    - `event_version = first_same_session_reviewed_memory_local_effect_presence_event_v1`
+    - `event_scope = same_session_exact_recurrence_aggregate_only`
+    - one `aggregate_identity_ref`
+    - exact supporting refs
+    - one matching `boundary_source_ref`
+    - `effect_target_kind = applied_reviewed_memory_effect`
+    - `event_capability_boundary = local_effect_presence_only`
+    - `event_stage = presence_observed_local_only`
+    - one local `applied_effect_id`
+    - deterministic `present_locally_at`
+  - the exact local effect-presence event source beneath that target must stay one shared internal `reviewed_memory_local_effect_presence_event_source`:
+    - `event_source_version = first_same_session_reviewed_memory_local_effect_presence_event_source_v1`
+    - `event_source_scope = same_session_exact_recurrence_aggregate_only`
+    - one `aggregate_identity_ref`
+    - exact supporting refs
+    - one matching `boundary_source_ref`
+    - `effect_target_kind = applied_reviewed_memory_effect`
+    - `event_capability_boundary = local_effect_presence_only`
+    - `event_stage = presence_event_recorded_local_only`
+    - one local `applied_effect_id`
+    - deterministic `present_locally_at`
+  - that target must stay shared by later rollback and later disable handles, while each later handle still keeps its own matching contract ref and capability meaning
+  - the raw-event helper `reviewed_memory_local_effect_presence_event` now materializes only from one exact matching `reviewed_memory_local_effect_presence_fact_source` for the same aggregate
+  - the producer helper `reviewed_memory_local_effect_presence_event_producer` now materializes only from one exact matching `reviewed_memory_local_effect_presence_event` for the same aggregate
+  - the source-consumer helper `reviewed_memory_local_effect_presence_record` may materialize only from one exact matching `reviewed_memory_local_effect_presence_event_source` for the same aggregate
+  - that target helper now materializes only from that exact matching source-consumer helper result for the same aggregate
+  - current implementation still emits no such handle in payload, even though the internal helper now materializes it and `rollback_source_ref` now resolves only to that same handle
+  - current implementation still emits no such target in payload, even though the internal target helper now materializes it only from one exact same-aggregate source-consumer helper result
+  - current implementation still emits no payload-visible raw local event, and the internal raw-event helper stays payload-hidden even though it now materializes only when one exact same-aggregate local effect-presence fact source exists above one truthful same-aggregate proof-boundary result that itself materializes from one canonical local proof record
+  - current implementation still emits no payload-visible event source or source-consumer record, and no helper may synthesize the source-consumer record from current contract existence or support-only traces
+  - current payload also emits no `reviewed_memory_capability_source_refs` surface because that source layer remains future internal machinery only
+  - capability-path opening alone does not create `canonical_transition_id`, `operator_reason_or_note`, `emitted_at`, or `reviewed_memory_transition_record`
+  - the shipped additive `reviewed_memory_planning_target_ref` stays present as the only current planning-target source after duplicated echo cleanup
+  - no extra post-cleanup compatibility note is needed to interpret the current payload; removed echo fields must stay absent from current schema expectations
+  - `candidate_review_record`, queue presence, approval-backed save support, historical adjuncts, `task_log` replay, and current `reviewed_memory_rollback_contract` existence alone never create that rollback-capability handle, that shared applied-effect target, the now-complete capability source family, `reviewed_memory_capability_basis`, or `unblocked_all_required`
+  - fake `reviewed_memory_capability_source_refs` input must not resolve the internal helper family
+  - fake `reviewed_memory_capability_basis` input must not widen `reviewed_memory_capability_status`
+  - emitted transition records, reviewed-memory apply, repeated-signal promotion, and cross-session counting remain separate later surfaces
+- Focused regression for the first future review-action slice should verify at least:
+  - a review action can target only a current source-message `durable_candidate`, not `session_local_candidate` alone
+  - a matching `candidate_review_record` requires the same `artifact_id`, `source_message_id`, `candidate_id`, and `candidate_updated_at`
+  - approval-backed save support alone still cannot create review eligibility or review outcome
+  - `accept` records reviewed-but-not-applied state and removes the matching item from pending `review_queue_items`
+  - `session_local_candidate`, `candidate_confirmation_record`, and `durable_candidate` shapes remain unchanged after review recording
+  - no user-level memory entry is created
+- A later response should be able to reflect a relevant `session_local` signal within the same session or a `durable_candidate` across later artifacts without requiring the same correction again.
+- Repeated correction reasons should decrease within the `correction` scope when the same preference pattern reappears.
+- Approval reject and reissue reasons should be tracked separately so save-path friction is not confused with content-quality correction.
+- Approval, evidence, corrected outcome, and reason records should remain linked to the same artifact trace.
+- The memory layer should improve the next response without being described as model retraining or user-level profile memory.
+- Reviewed memory should remain distinguishable from unreviewed `durable_candidate` state.
+- Repeated-signal promotion should remain distinguishable from explicit-confirmation promotion:
+  - explicit confirmation materializes one source-message `durable_candidate`
+  - recurrence key only opens later cross-source aggregation and must not be inferred from review acceptance or save support
+- Future user-level memory should apply only inside its reviewed scope.
+- Correction reuse and approval friction should remain separate evaluation axes even when both are linked to the same artifact.
+- Explicit-confirmation support and approval-backed-save support should remain distinguishable in trace outputs.
+
+### Eval Placeholder
+- Compare repeated `reason_label` counts within the `correction` scope before and after a preference candidate is reused.
+- Compare `approval_reissue` reason counts separately when the same path or filename preference is expected.
+- Check whether a later brief needs a smaller edit than the original brief for the same user pattern.
+- Check whether reviewed and unreviewed candidates remain separable in trace outputs.
+- Check whether suggested scope defaults to the narrowest safe option and whether broader suggestions preserve a justification trace.
+- Check whether approval-backed save without explicit confirmation stays weaker than explicit confirmation and never acts as the sole promotion reason.
+- Check whether the same candidate keeps a trace of narrower and broader scope alternatives.
+- Check whether rollback or disable stops later preference application inside the reviewed scope.
+- Check whether conflicting candidates preserve conflict ids and review-resolution traces.
+- Check whether correction reuse and approval friction reduction remain separate eval axes.
+- Check whether every eval-ready artifact preserves the chain:
+  - artifact -> original response -> evidence/source trace -> reason record -> review outcome when present -> rollback when present -> approval trail when present -> corrected or accepted outcome
+- Check whether any placeholder evaluation assumes a user-level memory system that does not exist yet.
+
+### Current Verification Focus For The Entry Slice
+- Start with focused service and smoke regression, not new browser-e2e coverage.
+- First checks should verify:
+  - a grounded-brief assistant message receives one stable `artifact_id`
+  - the same `artifact_id` persists through approval request and approval outcome paths when applicable
+  - the original grounded-brief response keeps one normalized `original_response_snapshot` linked to that same `artifact_id`
+  - session payloads expose the same snapshot contract as the response payload
+  - legacy grounded-brief session messages can be normalized into the same snapshot contract without a schema bump
+  - a direct approved grounded-brief save can expose one normalized `corrected_outcome` on the same source response and persisted source message
+  - an approval-executed save updates the original grounded-brief source message with `corrected_outcome.outcome = accepted_as_is` instead of copying it onto the later system response
+  - an explicit correction submit updates that same original grounded-brief source message with `corrected_text` and `corrected_outcome.outcome = corrected`
+  - a reject or reissue response can expose one normalized `approval_reason_record` linked to the same artifact anchor and source message
+  - a reissued pending approval can expose that same normalized `approval_reason_record` on the live approval payload
+  - write-note task-log entries keep the same `artifact_id`
+  - `corrected_outcome_recorded` task-log entries keep the same `artifact_id` and `source_message_id`
+  - `correction_submitted` task-log entries keep the same `artifact_id` and `source_message_id`
+  - `approval_rejected`, `approval_reissued`, and response-level task-log detail keep the same `approval_reason_record`
+  - feedback-linked traces keep the same assistant-message linkage and log the resolved `artifact_id`
+- For the first session-local memory signal slice, first checks should verify:
+  - a grounded-brief source message can expose one computed `session_local_memory_signal`
+  - the signal keeps the same `artifact_id` / `source_message_id` anchor
+  - latest `corrected_outcome` and current `content_reason_record` stay content-axis fields instead of moving onto approval-linked trace
+  - latest approval-linked `approval_reason_record` stays separate from content verdict in that signal
+  - latest save linkage exposes `save_content_source`, optional `approval_id`, and optional `saved_note_path` without copying the saved body
+  - task-log replay is not required to build the first signal projection
+- Corrected-save reconciliation should require explicit additional trace, not reinterpret existing trace:
+  - a fresh approval request linked to the same `artifact_id` / `source_message_id`
+  - approval preview and `note_text` generated from the corrected-text snapshot visible at request time
+  - an explicit save-target discriminator such as `save_content_source = corrected_text` on approval payload and approval/write task-log detail
+  - the same corrected-save approval trail should treat `approval_id` as the immutable snapshot identity; do not require a separate `snapshot_id` in the first slice
+- The slice should remain additive:
+  - one small response-level correction editor only
+  - no destructive migration
+  - no user-visible contract widening
+- The slice should still not claim:
+  - review actions
+  - eval-ready artifact completeness
+  - user-level memory
+- The current documentation-only follow-up should therefore not add:
+  - inferred corrected outcomes from feedback or retry
+  - inferred rejected outcomes from approval reject or no-save behavior
+
+### Eval Axis Separation
+- content-quality correction reuse
+- approval friction reduction
+- scope selection safety
+- reviewability / rollbackability
+- trace completeness
+- approval-backed save must remain inside approval-friction analysis or support-distinction analysis; it must not be counted as content-quality improvement
+- future user-level memory remains a future target and should not be assumed by any current gate or placeholder fixture
+
+### Eval-Ready Artifact Trace Contract
+- Core chain required for any eval-ready artifact:
+  - artifact record with `artifact_id`, `artifact_kind`, `session_id`, `assistant_message_id`, and `created_at`
+  - original response snapshot with draft text, source paths, response origin, summary chunks, and evidence snapshot
+  - evidence/source trace linked back to the same assistant message or artifact
+  - corrected or accepted outcome linked to the same artifact
+- If any core chain link above is missing, the artifact is not eval-ready for the workflow-grade fixture matrix.
+- Family-specific required extensions:
+  - correction reuse requires a `correction`-scope reason record
+  - approval friction requires an approval trail and relevant approval reject / reissue outcomes when the scenario expects them
+- reviewed-vs-unreviewed trace and scope-suggestion safety require a review record
+  - rollback stop-apply requires a rollback record plus a later artifact in the same reviewed scope
+  - conflict / defer trace requires `conflict_candidate_ids` or an equivalent defer / resolution record
+  - explicit-confirmation vs approval-backed save support distinction requires `has_explicit_confirmation` and approval-support linkage when approval support exists
+- If a family-specific extension is missing, the artifact may still be trace-complete for another fixture family, but not for that family.
+
+### Fixture Family Matrix Placeholder
+
+#### `GB-EVAL-CR-01` `correction_reuse`
+- Scenario:
+  - the same user pattern appears in a later grounded brief after an earlier correction
+- Input conditions:
+  - at least two related artifacts
+  - a prior `correction`-scope reason record
+  - a later artifact that can be compared against the prior one
+- Required trace:
+  - eval-ready artifact core chain
+  - correction reason record
+  - corrected or accepted outcome on both comparison points
+- Expected result:
+  - the same correction reason repeats less often or requires a smaller later edit
+- Not implemented today:
+  - corrected or rejected outcome pairs beyond `accepted_as_is`
+  - cross-artifact fixture harness
+- Future target levels:
+  - manual inspection placeholder now
+  - service fixture first
+  - unit helper for reason-count comparison
+  - e2e later only if memory or review UI exists
+
+#### `GB-EVAL-AF-01` `approval_friction`
+- Scenario:
+  - a repeated save-path or filename preference should reduce reject or reissue friction later
+- Input conditions:
+  - save-flow artifacts with approval activity
+  - at least one approval trail that includes path acceptance, reject, or reissue context
+- Required trace:
+  - eval-ready artifact core chain
+  - approval trail
+  - approval reject / reissue reason records when present
+- Expected result:
+  - repeated `approval_reissue` or reject friction decreases without hiding the approval gate
+- Not implemented today:
+  - richer reject / reissue labels beyond `explicit_rejection` and `path_change`
+  - artifact-linked approval fixture harness
+- Future target levels:
+  - manual inspection placeholder now
+  - service fixture first
+  - unit helper for reject / reissue counts
+  - e2e later around approval UI flows
+
+#### `GB-EVAL-RU-01` `reviewed_unreviewed_trace`
+- Scenario:
+  - reviewed and unreviewed `durable_candidate` records must remain distinguishable
+- Input conditions:
+  - candidate records that share a category or statement pattern
+  - at least one reviewed path and one unreviewed path
+- Required trace:
+  - eval-ready artifact core chain
+  - review record with `review_status`
+  - candidate linkage back to source artifacts
+- Expected result:
+  - reviewed entries are auditable as reviewed
+  - unreviewed candidates never appear as user-level memory
+- Not implemented today:
+  - review actions
+  - reviewed-memory store
+- Future target levels:
+  - manual inspection placeholder now
+  - service fixture first
+  - unit helper for reviewed/unreviewed eligibility checks
+  - e2e later when review UI exists
+
+#### `GB-EVAL-SC-01` `scope_suggestion_safety`
+- Scenario:
+  - multiple scope candidates fit and the system should still suggest the narrowest safe default
+- Input conditions:
+  - a candidate with more than one plausible scope candidate
+  - recorded scope suggestion fields
+- Required trace:
+  - eval-ready artifact core chain
+  - review record with `proposed_scope`
+  - `scope_candidates_considered`
+  - `scope_suggestion_reason`
+- Expected result:
+  - default order stays `workflow_type -> path_family -> document_type -> global`
+  - any broader suggestion keeps explicit justification
+- Not implemented today:
+  - scope suggestion engine
+  - recorded review items
+- Future target levels:
+  - manual inspection placeholder now
+  - service fixture first
+  - unit helper for scope-order validation
+  - e2e later when review UI exposes scope choices
+
+#### `GB-EVAL-RB-01` `rollback_stop_apply`
+- Scenario:
+  - a reviewed memory is rolled back and must stop affecting later artifacts in the same scope
+- Input conditions:
+  - a reviewed candidate
+  - a rollback or disable event
+  - a later artifact inside the same reviewed scope
+- Required trace:
+  - eval-ready artifact core chain
+  - review record
+  - rollback record
+  - later artifact trace showing non-application
+- Expected result:
+  - later artifacts inside the same reviewed scope stop applying the rolled-back entry
+- Not implemented today:
+  - rollback record
+  - reviewed-memory application layer
+- Future target levels:
+  - manual inspection placeholder now
+  - service fixture first
+  - unit helper for stop-apply filtering
+  - e2e later when rollback UI exists
+
+#### `GB-EVAL-CD-01` `conflict_defer_trace`
+- Scenario:
+  - same-category candidates conflict or stay deferred and must remain visible in audit traces
+- Input conditions:
+  - at least two conflicting candidates in the same category or scope
+  - a defer, reject, or edited resolution path
+- Required trace:
+  - eval-ready artifact core chain
+  - review record
+  - `conflict_candidate_ids` or equivalent resolution linkage
+- Expected result:
+  - no silent overwrite
+  - deferred, rejected, and edited paths remain distinguishable
+- Not implemented today:
+  - conflict queue
+  - defer-resolution surface
+- Future target levels:
+  - manual inspection placeholder now
+  - service fixture first
+  - unit helper for conflict eligibility and resolution checks
+  - e2e later when review UI exists
+
+#### `GB-EVAL-AS-01` `explicit_vs_save_support`
+- Scenario:
+  - explicit confirmation support and approval-backed save support must remain distinguishable
+- Input conditions:
+  - one candidate with explicit confirmation
+  - one comparable candidate with approval-backed save support only
+- Required trace:
+  - eval-ready artifact core chain
+  - `has_explicit_confirmation`
+  - `supporting_approval_ids` when present
+  - related approval trail
+- Expected result:
+  - explicit confirmation remains the stronger signal
+  - approval-backed save remains supporting evidence only
+  - content-quality and approval-friction analysis stay separated
+- Not implemented today:
+  - candidate review store
+  - explicit-confirmation vs support fixture harness
+- Future target levels:
+  - manual inspection placeholder now
+  - service fixture first
+  - unit helper for support classification
+  - e2e later only if UI exposes both support paths
+
+## Test Gates
+
+### Current Gates
+- Unit/service regression uses `python3 -m unittest -v`.
+- Playwright webServer launch clears inherited provider/model overrides, forces `LOCAL_AI_MODEL_PROVIDER=mock`, and does not reuse an already running smoke-port server, so operator shell state must not change the automated smoke baseline.
+- Playwright smoke covers 12 core browser scenarios:
+  - file summary with panels
+  - browser file picker
+  - browser folder picker
+  - approval reissue
+  - approval-backed save
+  - late flip after explicit original-draft save keeps saved history while latest content verdict changes
+  - `내용 거절` content-verdict path with same-card reject-note update, approval preserved, and later explicit save supersession
+  - corrected-save first bridge path
+  - corrected-save saved snapshot remains while late reject and later re-correct move the latest state separately
+  - candidate-linked explicit confirmation path stays outside approval UI, remains distinct from save support on the same source message, records `candidate_confirmation_record`, surfaces one local read-only `검토 후보`, and clears both the source-message projection and the queue item from current state after a later correction
+  - same-session recurrence aggregate path renders one separate local read-only `검토 메모 적용 후보` section, shows `검토 메모 적용 시작` enabled with a mandatory reason textarea when `capability_outcome = unblocked_all_required` (disabled while blocked or while the textarea is empty), keeps that action distinct from `검토 수락`, emits one `reviewed_memory_transition_record` with `record_stage = emitted_record_only_not_applied` on enabled submit, then shows `검토 메모 적용 실행` after emission and moves that same record to `applied_pending_result` with `applied_at` set on apply-boundary click, then shows `결과 확정` after the apply boundary and moves `record_stage` to `applied_with_result` with one `apply_result` object (`result_version = first_reviewed_memory_apply_result_v1`, `applied_effect_kind = reviewed_memory_correction_pattern`, `result_stage = result_recorded_effect_pending`, `result_at`) on confirm click, confirming the memory effect on future responses is now active (`result_stage = effect_active`) with active effects stored on the session as `reviewed_memory_active_effects` and future responses including a `[검토 메모 활성]` prefix
+  - streaming cancel
+
+### In Progress
+- Improve regression fixtures for weak-slot reinvestigation and source consensus.
+- Expand evaluation coverage for investigation quality beyond smoke-level correctness.
+
+### Next-Phase Placeholder
+- Freeze one first implementation slice before any broader memory implementation claims:
+  - `artifact_id` generation plus message/session/task-log linkage
+- Freeze one workflow-grade fixture matrix around named families:
+  - `GB-EVAL-CR-01`
+  - `GB-EVAL-AF-01`
+  - `GB-EVAL-RU-01`
+  - `GB-EVAL-SC-01`
+  - `GB-EVAL-RB-01`
+  - `GB-EVAL-CD-01`
+  - `GB-EVAL-AS-01`
+- Freeze one eval-ready artifact core trace contract before any family-specific automation is claimed.
+- Add focused service/smoke regression for artifact linkage before any review-surface automation is claimed.
+- Start with manual inspection placeholders while memory surfaces are still design targets.
+- Add service fixtures first once artifact, reason, review, approval, and rollback records exist.
+- Add unit helpers for trace-completeness validation, reason-count comparison, scope-order checks, and support classification.
+- Defer e2e automation until review or rollback UI surfaces actually exist.
+
+## OPEN QUESTION
+
+1. Should the default recurrence rule stay at two grounded briefs for every candidate category, or vary by category later?
+2. Should later category-specific tuning vary approval-backed-save weight beyond the baseline weak-content / medium-path rule?
+3. Should any repository-specific workflow let `path_family` outrank the default `workflow_type` suggestion?
+4. Which first operator surface would stay narrow enough to preserve approval-based safety later?
+5. Should the shipped `reviewed_memory_boundary_draft` keep repeating the fixed `reviewed_scope` label long term, or could a later normalization collapse it into `aggregate_identity_ref` plus supporting refs only?

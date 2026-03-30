@@ -75,12 +75,18 @@ class OllamaModelAdapter(ModelAdapter):
             system=(
                 "Summarize the provided document for a solo user in Korean. "
                 "Use Korean Hangul for explanatory text. Do not answer in Chinese or Japanese. "
+                "Prioritize what the document actually says or what happens over memorable wording. "
+                "If the text is narrative or fiction, summarize major characters or actors, key events, conflict changes, and the ending state in order. "
+                "If the text is informational or argumentative, summarize the topic, main points, decisions or actions, and conclusion. "
+                "If the prompt explicitly says 'Summary source type: search_results', treat it as a synthesis of selected search results and prioritize shared facts, meaningful differences, key actions or decisions, and the grounded conclusion. "
+                "If the prompt explicitly says 'Summary source type: local_document', preserve the document flow guidance above without inventing a separate mode. "
                 "Return only a concise Korean summary in plain text with no preamble, heading, or bullet label. "
                 "Keep file names and proper nouns as they are when needed."
             ),
             enforce_korean=True,
             korean_rewrite_instruction=(
                 "Rewrite the text into concise natural Korean using Hangul for explanatory text only. "
+                "Preserve the actual flow of events or arguments instead of isolated memorable sentences. "
                 "Do not use Chinese or Japanese. Remove markdown headings and return plain text only."
             ),
         )
@@ -91,12 +97,18 @@ class OllamaModelAdapter(ModelAdapter):
             system=(
                 "Summarize the provided document for a solo user in Korean. "
                 "Use Korean Hangul for explanatory text. Do not answer in Chinese or Japanese. "
+                "Prioritize what the document actually says or what happens over memorable wording. "
+                "If the text is narrative or fiction, summarize major characters or actors, key events, conflict changes, and the ending state in order. "
+                "If the text is informational or argumentative, summarize the topic, main points, decisions or actions, and conclusion. "
+                "If the prompt explicitly says 'Summary source type: search_results', treat it as a synthesis of selected search results and prioritize shared facts, meaningful differences, key actions or decisions, and the grounded conclusion. "
+                "If the prompt explicitly says 'Summary source type: local_document', preserve the document flow guidance above without inventing a separate mode. "
                 "Return only a concise Korean summary in plain text with no preamble, heading, or bullet label. "
                 "Keep file names and proper nouns as they are when needed."
             ),
             enforce_korean=True,
             korean_rewrite_instruction=(
                 "Rewrite the text into concise natural Korean using Hangul for explanatory text only. "
+                "Preserve the actual flow of events or arguments instead of isolated memorable sentences. "
                 "Do not use Chinese or Japanese. Remove markdown headings and return plain text only."
             ),
         )

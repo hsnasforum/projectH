@@ -215,6 +215,13 @@
       gap: 10px;
     }
 
+    .review-queue-list {
+      display: grid;
+      gap: 10px;
+      max-height: 220px;
+      overflow: auto;
+    }
+
     .history-item {
       display: grid;
       gap: 8px;
@@ -293,6 +300,106 @@
     .feedback-button:disabled {
       opacity: 0.6;
       cursor: not-allowed;
+    }
+
+    .correction-box {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+      padding: 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(101, 93, 82, 0.18);
+      background: rgba(255, 255, 255, 0.72);
+    }
+
+    .content-verdict-box {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(154, 61, 47, 0.18);
+      background: rgba(154, 61, 47, 0.04);
+    }
+
+    .content-verdict-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .content-verdict-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .content-verdict-button {
+      padding: 9px 14px;
+      font-size: 13px;
+    }
+
+    .content-verdict-note {
+      display: grid;
+      gap: 8px;
+    }
+
+    .content-verdict-note textarea {
+      min-height: 72px;
+    }
+
+    .correction-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .correction-label {
+      gap: 8px;
+    }
+
+    .correction-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .correction-actions button {
+      padding: 9px 14px;
+      font-size: 13px;
+    }
+
+    .candidate-confirmation-box {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(15, 108, 92, 0.22);
+      background: rgba(15, 108, 92, 0.05);
+    }
+
+    .candidate-confirmation-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .candidate-confirmation-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .candidate-confirmation-actions button {
+      padding: 9px 14px;
+      font-size: 13px;
     }
 
     .history-item-detail {
@@ -967,6 +1074,16 @@
             <p class="section-title">최근 세션</p>
             <div id="session-list" class="session-list"></div>
           </div>
+          <div id="review-queue-box" data-testid="review-queue-box" class="session-summary hidden">
+            <strong>검토 후보</strong>
+            <span id="review-queue-status" class="hint">현재 후보는 검토 수락만 기록할 수 있습니다. 아직 적용, 편집, 거절은 열지 않았습니다.</span>
+            <div id="review-queue-list" data-testid="review-queue-list" class="review-queue-list"></div>
+          </div>
+          <div id="aggregate-trigger-box" data-testid="aggregate-trigger-box" class="session-summary hidden">
+            <strong>검토 메모 적용 후보</strong>
+            <span id="aggregate-trigger-status" class="hint">현재 반복 교정 묶음은 aggregate 단위 경계만 보여주며, 아직 시작할 수 없습니다.</span>
+            <div id="aggregate-trigger-list" data-testid="aggregate-trigger-list" class="review-queue-list"></div>
+          </div>
         </div>
 
         <div id="transcript" class="transcript"></div>
@@ -1144,15 +1261,15 @@
             </div>
             <div id="response-quick-meta" class="quick-meta hidden">
               <div id="response-quick-meta-text" class="quick-meta-text"></div>
-            <div id="response-saved-path-row" class="path-row hidden">
-              <span id="response-saved-path" class="path-text"></span>
-              <button id="response-copy-path" class="copy-button subtle" type="button">경로 복사</button>
+              <div id="response-saved-path-row" class="path-row hidden">
+                <span id="response-saved-path" class="path-text"></span>
+                <button id="response-copy-path" class="copy-button subtle" type="button">경로 복사</button>
+              </div>
+              <div id="response-search-record-row" class="path-row hidden">
+                <span id="response-search-record" class="path-text"></span>
+                <button id="response-copy-search-record" class="copy-button subtle" type="button">검색 기록 복사</button>
+              </div>
             </div>
-            <div id="response-search-record-row" class="path-row hidden">
-              <span id="response-search-record" class="path-text"></span>
-              <button id="response-copy-search-record" class="copy-button subtle" type="button">검색 기록 복사</button>
-            </div>
-          </div>
             <pre id="response-text" data-testid="response-text">아직 보낸 요청이 없습니다.</pre>
             <div id="response-feedback-box" class="feedback-bar hidden">
               <div id="response-feedback-status" class="hint"></div>
@@ -1172,6 +1289,66 @@
               </div>
               <div class="feedback-actions">
                 <button id="response-feedback-retry" class="secondary" type="button">피드백 반영해 다시 답변</button>
+              </div>
+            </div>
+            <div id="response-content-verdict-box" data-testid="response-content-verdict-box" class="content-verdict-box hidden">
+              <div class="content-verdict-header">
+                <strong class="section-title">내용 판정</strong>
+                <span id="response-content-verdict-state" class="hint"></span>
+              </div>
+              <div id="response-content-verdict-status" class="hint"></div>
+              <div class="content-verdict-actions">
+                <button id="response-content-reject" data-testid="response-content-reject" class="danger content-verdict-button" type="button">내용 거절</button>
+              </div>
+              <div id="response-content-reason-box" data-testid="response-content-reason-box" class="content-verdict-note hidden">
+                <div id="response-content-reason-status" class="hint"></div>
+                <label class="content-verdict-note-label">
+                  거절 메모
+                  <textarea
+                    id="response-content-reason-input"
+                    data-testid="response-content-reason-input"
+                    name="response_content_reason_input"
+                    placeholder="선택 사항: 왜 이 답변 내용을 거절했는지 짧게 남겨 두세요."
+                  ></textarea>
+                </label>
+                <div class="content-verdict-actions">
+                  <button
+                    id="response-content-reason-submit"
+                    data-testid="response-content-reason-submit"
+                    class="secondary content-verdict-button"
+                    type="button"
+                  >거절 메모 기록</button>
+                </div>
+              </div>
+            </div>
+            <div id="response-correction-box" data-testid="response-correction-box" class="correction-box hidden">
+              <div class="correction-header">
+                <strong class="section-title">내용 수정</strong>
+                <span id="response-correction-state" class="hint"></span>
+              </div>
+              <div id="response-correction-status" class="hint"></div>
+              <label class="correction-label">
+                수정 텍스트
+                <textarea id="response-correction-input" data-testid="response-correction-input" name="response_correction_input" placeholder="현재 grounded brief 초안을 직접 고쳐서 기록해 주세요."></textarea>
+              </label>
+              <div class="correction-actions">
+                <button id="response-correction-submit" data-testid="response-correction-submit" class="secondary" type="button">수정본 기록</button>
+                <button id="response-correction-save-request" data-testid="response-correction-save-request" class="secondary" type="button">이 수정본으로 저장 요청</button>
+              </div>
+            </div>
+            <div id="response-candidate-confirmation-box" data-testid="response-candidate-confirmation-box" class="candidate-confirmation-box hidden">
+              <div class="candidate-confirmation-header">
+                <strong class="section-title">수정 방향 재사용</strong>
+                <span id="response-candidate-confirmation-state" class="hint"></span>
+              </div>
+              <div id="response-candidate-confirmation-status" class="hint"></div>
+              <div class="candidate-confirmation-actions">
+                <button
+                  id="response-candidate-confirmation-submit"
+                  data-testid="response-candidate-confirmation-submit"
+                  class="secondary"
+                  type="button"
+                >이 수정 방향 재사용 확인</button>
               </div>
             </div>
           </div>
@@ -1200,6 +1377,18 @@
               <div id="summary-chunks-hint" class="panel-hint hidden"></div>
               <div id="summary-chunks-scroll-region" data-testid="summary-chunks-scroll-region" class="panel-scroll-region">
                 <pre id="summary-chunks-text"></pre>
+              </div>
+            </div>
+          </div>
+          <div id="claim-coverage-box" data-testid="claim-coverage-box" class="panel hidden">
+            <div class="panel-header">
+              <strong class="section-title">사실 검증 상태</strong>
+              <button id="toggle-claim-coverage" class="toggle-button subtle" type="button">펼치기</button>
+            </div>
+            <div id="claim-coverage-body" class="panel-body hidden">
+              <div id="claim-coverage-hint" class="panel-hint hidden"></div>
+              <div id="claim-coverage-scroll-region" data-testid="claim-coverage-scroll-region" class="panel-scroll-region">
+                <pre id="claim-coverage-text"></pre>
               </div>
             </div>
           </div>
@@ -1271,6 +1460,24 @@
     const responseFeedbackReasonStatus = document.getElementById("response-feedback-reason-status");
     const responseFeedbackReasonButtons = Array.from(document.querySelectorAll("#response-feedback-reason-actions .feedback-button"));
     const responseFeedbackRetryButton = document.getElementById("response-feedback-retry");
+    const responseContentVerdictBox = document.getElementById("response-content-verdict-box");
+    const responseContentVerdictState = document.getElementById("response-content-verdict-state");
+    const responseContentVerdictStatus = document.getElementById("response-content-verdict-status");
+    const responseContentRejectButton = document.getElementById("response-content-reject");
+    const responseContentReasonBox = document.getElementById("response-content-reason-box");
+    const responseContentReasonStatus = document.getElementById("response-content-reason-status");
+    const responseContentReasonInput = document.getElementById("response-content-reason-input");
+    const responseContentReasonSubmitButton = document.getElementById("response-content-reason-submit");
+    const responseCorrectionBox = document.getElementById("response-correction-box");
+    const responseCorrectionState = document.getElementById("response-correction-state");
+    const responseCorrectionStatus = document.getElementById("response-correction-status");
+    const responseCorrectionInput = document.getElementById("response-correction-input");
+    const responseCorrectionSubmitButton = document.getElementById("response-correction-submit");
+    const responseCorrectionSaveRequestButton = document.getElementById("response-correction-save-request");
+    const responseCandidateConfirmationBox = document.getElementById("response-candidate-confirmation-box");
+    const responseCandidateConfirmationState = document.getElementById("response-candidate-confirmation-state");
+    const responseCandidateConfirmationStatus = document.getElementById("response-candidate-confirmation-status");
+    const responseCandidateConfirmationSubmitButton = document.getElementById("response-candidate-confirmation-submit");
     const responseSavedPathRow = document.getElementById("response-saved-path-row");
     const responseSavedPath = document.getElementById("response-saved-path");
     const responseCopyPathButton = document.getElementById("response-copy-path");
@@ -1300,6 +1507,12 @@
     const summaryChunksScrollRegion = document.getElementById("summary-chunks-scroll-region");
     const summaryChunksText = document.getElementById("summary-chunks-text");
     const summaryChunksToggleButton = document.getElementById("toggle-summary-chunks");
+    const claimCoverageBox = document.getElementById("claim-coverage-box");
+    const claimCoverageBody = document.getElementById("claim-coverage-body");
+    const claimCoverageHint = document.getElementById("claim-coverage-hint");
+    const claimCoverageScrollRegion = document.getElementById("claim-coverage-scroll-region");
+    const claimCoverageText = document.getElementById("claim-coverage-text");
+    const claimCoverageToggleButton = document.getElementById("toggle-claim-coverage");
     const runtimeBox = document.getElementById("runtime-box");
     const approvalBox = document.getElementById("approval-box");
     const approvalMeta = document.getElementById("approval-meta");
@@ -1325,6 +1538,12 @@
     const pickedFolderName = document.getElementById("picked-folder-name");
     const currentSessionTitleEl = document.getElementById("current-session-title");
     const currentSessionMetaEl = document.getElementById("current-session-meta");
+    const reviewQueueBox = document.getElementById("review-queue-box");
+    const reviewQueueStatus = document.getElementById("review-queue-status");
+    const reviewQueueList = document.getElementById("review-queue-list");
+    const aggregateTriggerBox = document.getElementById("aggregate-trigger-box");
+    const aggregateTriggerStatus = document.getElementById("aggregate-trigger-status");
+    const aggregateTriggerList = document.getElementById("aggregate-trigger-list");
     const webSearchPermissionInput = document.getElementById("web-search-permission");
     const searchOnlyCheck = document.getElementById("search-only-check");
     const newSessionButton = document.getElementById("new-session");
@@ -1336,6 +1555,7 @@
       defaultWebSearchPermission: "__DEFAULT_WEB_SEARCH_PERMISSION__",
       webSearchToolConnected: false,
       currentApproval: null,
+      currentSessionMessages: [],
       isBusy: false,
       busyTimer: null,
       busyStartedAt: 0,
@@ -1347,7 +1567,23 @@
       latestAssistantMessageId: null,
       latestAssistantUserText: "",
       latestAssistantFeedbackLabel: "",
-      latestAssistantFeedbackReason: ""
+      latestAssistantFeedbackReason: "",
+      latestContentVerdictMessageId: null,
+      latestContentVerdictArtifactId: "",
+      latestContentVerdictOutcome: "",
+      latestContentVerdictRecordedAt: "",
+      latestContentReasonNote: "",
+      latestContentReasonRecordedAt: "",
+      latestCorrectionMessageId: null,
+      latestCorrectionArtifactId: "",
+      latestCorrectionBaseText: "",
+      latestCorrectionRecordedText: "",
+      latestCorrectionRecordedAt: "",
+      latestCandidateConfirmationMessageId: null,
+      latestCandidateConfirmationArtifactId: "",
+      latestCandidateConfirmationCandidateId: "",
+      latestCandidateConfirmationCandidateUpdatedAt: "",
+      latestCandidateConfirmationRecordedAt: ""
     };
 
     function setText(id, value) {
@@ -1383,9 +1619,18 @@
       const label = String(origin.label || "시스템 응답");
       const model = origin.model ? String(origin.model) : "";
       const kind = String(origin.kind || "assistant");
+      const answerMode = String(origin.answer_mode || "general");
+      const sourceRoles = Array.isArray(origin.source_roles)
+        ? origin.source_roles.map((item) => String(item || "").trim()).filter(Boolean)
+        : [];
+      const verificationLabel = String(origin.verification_label || "").trim();
 
       const detailParts = [label];
+      if (answerMode === "entity_card") detailParts.push("설명 카드");
+      if (answerMode === "latest_update") detailParts.push("최신 확인");
+      if (verificationLabel) detailParts.push(verificationLabel);
       if (model) detailParts.push(`모델 ${model}`);
+      if (sourceRoles.length > 0) detailParts.push(`출처 ${sourceRoles.join(", ")}`);
       if (kind === "approval") detailParts.push("승인/취소 처리");
       return {
         provider,
@@ -1618,6 +1863,13 @@
           note: "파일은 저장하지 않고 승인 객체만 새로 발급합니다.",
         };
       }
+      if (mode === "corrected_save") {
+        return {
+          title: "수정본 저장 승인 준비 중",
+          detail: `${badge} · 기록된 수정본 기준으로 새 저장 승인 스냅샷을 만드는 중입니다.`,
+          note: "현재 편집 중인 텍스트는 포함되지 않으며, 승인 미리보기는 요청 시점 그대로 고정됩니다.",
+        };
+      }
       if (mode === "follow_up") {
         return {
           title: "후속 응답 생성 중",
@@ -1697,6 +1949,9 @@
         button.disabled = busy || !state.latestAssistantMessageId || !["unclear", "incorrect"].includes(state.latestAssistantFeedbackLabel);
       });
       responseFeedbackRetryButton.disabled = busy || !state.latestAssistantMessageId || !["unclear", "incorrect"].includes(state.latestAssistantFeedbackLabel);
+      updateContentVerdictState();
+      updateCorrectionFormState();
+      updateCandidateConfirmationState();
       updateCancelButton();
     }
 
@@ -2016,6 +2271,75 @@
       };
     }
 
+    function findMessageById(messages, messageId) {
+      const normalizedMessageId = String(messageId || "").trim();
+      if (!normalizedMessageId) return null;
+      const items = Array.isArray(messages) ? messages : [];
+      for (let index = items.length - 1; index >= 0; index -= 1) {
+        const message = items[index];
+        if (!message || typeof message !== "object") continue;
+        if (String(message.message_id || "").trim() === normalizedMessageId) {
+          return message;
+        }
+      }
+      return null;
+    }
+
+    function findArtifactSourceMessage(messages, artifactId) {
+      const normalizedArtifactId = String(artifactId || "").trim();
+      if (!normalizedArtifactId) return null;
+      const items = Array.isArray(messages) ? messages : [];
+      for (let index = items.length - 1; index >= 0; index -= 1) {
+        const message = items[index];
+        if (!message || typeof message !== "object") continue;
+        if (String(message.artifact_id || "").trim() !== normalizedArtifactId) continue;
+        if (message.original_response_snapshot && typeof message.original_response_snapshot === "object") {
+          return message;
+        }
+      }
+      return null;
+    }
+
+    function findLatestSavedMessageForArtifact(messages, artifactId) {
+      const normalizedArtifactId = String(artifactId || "").trim();
+      if (!normalizedArtifactId) return null;
+      const items = Array.isArray(messages) ? messages : [];
+      for (let index = items.length - 1; index >= 0; index -= 1) {
+        const message = items[index];
+        if (!message || typeof message !== "object") continue;
+        if (String(message.artifact_id || "").trim() !== normalizedArtifactId) continue;
+        if (String(message.saved_note_path || "").trim()) {
+          return message;
+        }
+      }
+      return null;
+    }
+
+    function resolveCorrectionTargetMessage(messages, latestAssistantMessage) {
+      if (canEditGroundedBrief(latestAssistantMessage)) {
+        return latestAssistantMessage;
+      }
+      const sourceMessageId = String(
+        latestAssistantMessage?.source_message_id
+        || latestAssistantMessage?.approval?.source_message_id
+        || ""
+      ).trim();
+      const sourceMessage = findMessageById(messages, sourceMessageId);
+      if (canEditGroundedBrief(sourceMessage)) {
+        return sourceMessage;
+      }
+      const artifactId = String(
+        latestAssistantMessage?.artifact_id
+        || latestAssistantMessage?.approval?.artifact_id
+        || ""
+      ).trim();
+      const artifactSourceMessage = findArtifactSourceMessage(messages, artifactId);
+      if (canEditGroundedBrief(artifactSourceMessage)) {
+        return artifactSourceMessage;
+      }
+      return null;
+    }
+
     function renderTranscript(messages) {
       transcriptEl.innerHTML = "";
       if (!messages || messages.length === 0) {
@@ -2084,10 +2408,24 @@
         if (Array.isArray(message.summary_chunks) && message.summary_chunks.length > 0) {
           metaLines.push(`요약 구간 ${message.summary_chunks.length}개`);
         }
+        if (Array.isArray(message.claim_coverage) && message.claim_coverage.length > 0) {
+          const claimSummary = formatClaimCoverageSummary(message.claim_coverage);
+          if (claimSummary) {
+            metaLines.push(`사실 검증 ${claimSummary}`);
+          }
+        }
         if (message.feedback?.label) {
           const feedbackLabel = formatFeedbackLabel(message.feedback.label);
           const feedbackReason = formatFeedbackReasonLabel(message.feedback.reason || "");
           metaLines.push(`피드백 ${feedbackLabel}${feedbackReason ? ` · ${feedbackReason}` : ""}`);
+        }
+        if (usesCorrectedSaveSnapshot(message)) {
+          metaLines.push("저장 기준 요청 시점 수정본 스냅샷");
+        }
+        if (usesRejectedContentVerdict(message)) {
+          metaLines.push("내용 거절 기록됨");
+        } else if (String(message.corrected_outcome?.outcome || "").trim().toLowerCase() === "corrected") {
+          metaLines.push("교정본 기록됨");
         }
         if (message.saved_note_path) {
           metaLines.push(`저장 경로 ${compactDisplayPath(message.saved_note_path)}`);
@@ -2209,6 +2547,13 @@
       return `.../${parts.slice(-4).join("/")}`;
     }
 
+    function compactIdentifier(value, leading = 8, trailing = 8) {
+      const normalized = String(value || "").trim();
+      if (!normalized) return "";
+      if (normalized.length <= leading + trailing + 1) return normalized;
+      return `${normalized.slice(0, leading)}…${normalized.slice(-trailing)}`;
+    }
+
     function sourceNameCounts(items) {
       const counts = {};
       items.forEach((item) => {
@@ -2242,6 +2587,271 @@
       if (normalized === "context_miss") return "문맥 오해";
       if (normalized === "awkward_tone") return "표현 어색함";
       return "";
+    }
+
+    function formatPromotionBasisLabel(value) {
+      const normalized = String(value || "").trim().toLowerCase();
+      if (normalized === "explicit_confirmation") return "명시 확인";
+      return normalized || "미확인";
+    }
+
+    function formatPromotionEligibilityLabel(value) {
+      const normalized = String(value || "").trim().toLowerCase();
+      if (normalized === "eligible_for_review") return "검토 대기";
+      return normalized || "미확인";
+    }
+
+    function formatConfirmationLabel(value) {
+      const normalized = String(value || "").trim().toLowerCase();
+      if (normalized === "explicit_reuse_confirmation") return "재사용 확인";
+      return normalized || "미확인";
+    }
+
+    function formatAggregateCandidateFamilyLabel(value) {
+      const normalized = String(value || "").trim().toLowerCase();
+      if (normalized === "correction_rewrite_preference") return "반복 교정 묶음";
+      return normalized || "검토 메모 적용 후보";
+    }
+
+    function aggregateTriggerTitle(item) {
+      const aggregateKey = item && typeof item === "object" && item.aggregate_key && typeof item.aggregate_key === "object"
+        ? item.aggregate_key
+        : {};
+      return formatAggregateCandidateFamilyLabel(aggregateKey.candidate_family);
+    }
+
+    function isAggregateTriggerUnblocked(item) {
+      return String(item?.reviewed_memory_capability_status?.capability_outcome || "").trim() === "unblocked_all_required";
+    }
+
+    function aggregateTriggerBlockedHelper(item) {
+      const capabilityOutcome = String(item?.reviewed_memory_capability_status?.capability_outcome || "").trim() || "미확인";
+      const auditStage = String(item?.reviewed_memory_transition_audit_contract?.audit_stage || "").trim() || "미확인";
+      if (isAggregateTriggerUnblocked(item)) {
+        return `검토 메모 적용을 시작할 수 있습니다. 사유를 입력한 뒤 시작 버튼을 누르세요.`;
+      }
+      return `아직 검토 메모를 적용할 수 없습니다. capability 상태가 ${capabilityOutcome}이고 transition audit 상태가 ${auditStage} 입니다.`;
+    }
+
+    function formatSignalRefLabel(signalName) {
+      const normalized = String(signalName || "").trim();
+      if (normalized === "session_local_memory_signal.content_signal") return "content_signal";
+      if (normalized === "session_local_memory_signal.save_signal") return "save_signal";
+      return normalized || "signal";
+    }
+
+    function normalizeMultilineText(text) {
+      return String(text || "").replace(/\r\n/g, "\n").trim();
+    }
+
+    function canEditGroundedBrief(message) {
+      return Boolean(
+        message
+        && message.role !== "user"
+        && message.message_id
+        && message.artifact_kind === "grounded_brief"
+        && message.original_response_snapshot
+      );
+    }
+
+    function currentCorrectionSeedText(message) {
+      const correctedText = normalizeMultilineText(message?.corrected_text || "");
+      if (correctedText) return correctedText;
+      const draftText = normalizeMultilineText(message?.original_response_snapshot?.draft_text || "");
+      if (draftText) return draftText;
+      return normalizeMultilineText(message?.text || "");
+    }
+
+    function usesCorrectedSaveSnapshot(item) {
+      return String(item?.save_content_source || "").trim() === "corrected_text";
+    }
+
+    function usesRejectedContentVerdict(item) {
+      return String(item?.corrected_outcome?.outcome || "").trim().toLowerCase() === "rejected";
+    }
+
+    function hasSavedHistoryForArtifact(artifactId) {
+      return Boolean(findLatestSavedMessageForArtifact(state.currentSessionMessages, artifactId));
+    }
+
+    function resolveApprovalSourceMessage(approval) {
+      if (!approval || typeof approval !== "object") return null;
+      const sourceMessageId = String(approval.source_message_id || "").trim();
+      const sourceMessage = findMessageById(state.currentSessionMessages, sourceMessageId);
+      if (sourceMessage) return sourceMessage;
+      return findArtifactSourceMessage(state.currentSessionMessages, approval.artifact_id);
+    }
+
+    function updateCorrectionHelperText() {
+      const hasMessage = Boolean(state.latestCorrectionMessageId);
+      if (!hasMessage) {
+        responseCorrectionState.textContent = "";
+        responseCorrectionStatus.textContent = "";
+        return;
+      }
+
+      const currentText = normalizeMultilineText(responseCorrectionInput.value);
+      const recordedText = normalizeMultilineText(state.latestCorrectionRecordedText);
+      const hasRecordedCorrection = Boolean(recordedText);
+      const hasUnrecordedEditorChange = hasRecordedCorrection && currentText !== recordedText;
+      const currentApprovalMatchesArtifact = Boolean(
+        state.currentApproval
+        && String(state.currentApproval.artifact_id || "").trim()
+        && String(state.currentApproval.artifact_id || "").trim() === String(state.latestCorrectionArtifactId || "").trim()
+      );
+
+      if (!hasRecordedCorrection) {
+        responseCorrectionState.textContent = "기록된 수정본이 아직 없습니다.";
+        responseCorrectionStatus.textContent = [
+          "먼저 수정본 기록을 눌러야 저장 요청 버튼이 켜집니다.",
+          "입력창의 미기록 텍스트는 바로 승인 스냅샷이 되지 않습니다.",
+          "저장 승인과는 별도입니다.",
+        ].join(" ");
+        return;
+      }
+
+      if (hasUnrecordedEditorChange) {
+        responseCorrectionState.textContent = "입력창 변경이 아직 다시 기록되지 않았습니다.";
+        const statusParts = [
+          "저장 요청 버튼은 직전 기록본으로만 동작합니다.",
+          "지금 입력 중인 수정으로 저장하려면 먼저 수정본 기록을 다시 눌러 주세요.",
+          "저장 승인과는 별도입니다.",
+        ];
+        if (currentApprovalMatchesArtifact) {
+          if (usesCorrectedSaveSnapshot(state.currentApproval)) {
+            statusParts.push("이미 열린 저장 승인 카드도 이전 요청 시점 스냅샷으로 그대로 유지됩니다.");
+          } else {
+            statusParts.push("현재 저장 승인은 기존 초안 기준이며, 수정본을 자동으로 저장하지 않습니다.");
+          }
+        }
+        responseCorrectionStatus.textContent = statusParts.join(" ");
+        return;
+      }
+
+      responseCorrectionState.textContent = state.latestCorrectionRecordedAt
+        ? `기록된 수정본이 있습니다 · ${formatWhen(state.latestCorrectionRecordedAt)}`
+        : "기록된 수정본이 있습니다.";
+      const statusParts = [
+        "저장 요청은 현재 입력창이 아니라 이미 기록된 수정본으로 새 승인 미리보기를 만듭니다.",
+        "저장 승인과는 별도입니다.",
+      ];
+      if (currentApprovalMatchesArtifact) {
+        if (usesCorrectedSaveSnapshot(state.currentApproval)) {
+          statusParts.push("이미 열린 저장 승인 카드가 있으면 그 카드도 요청 시점 스냅샷으로 고정되어 있습니다.");
+        } else {
+          statusParts.push("현재 저장 승인은 기존 초안 기준이며, 수정본을 자동으로 저장하지 않습니다.");
+        }
+      }
+      responseCorrectionStatus.textContent = statusParts.join(" ");
+    }
+
+    function updateCorrectionFormState() {
+      const hasMessage = Boolean(state.latestCorrectionMessageId);
+      const currentText = normalizeMultilineText(responseCorrectionInput.value);
+      const baseText = normalizeMultilineText(state.latestCorrectionBaseText);
+      const hasChange = Boolean(currentText) && currentText !== baseText;
+      const hasRecordedCorrection = Boolean(normalizeMultilineText(state.latestCorrectionRecordedText));
+      responseCorrectionInput.disabled = state.isBusy || !hasMessage;
+      responseCorrectionSubmitButton.disabled = state.isBusy || !hasMessage || !hasChange;
+      responseCorrectionSaveRequestButton.disabled = state.isBusy || !hasMessage || !hasRecordedCorrection;
+      if (!hasMessage) {
+        responseCorrectionSaveRequestButton.title = "";
+      } else if (!hasRecordedCorrection) {
+        responseCorrectionSaveRequestButton.title = "먼저 수정본 기록 후 저장 요청할 수 있습니다.";
+      } else if (currentText !== normalizeMultilineText(state.latestCorrectionRecordedText)) {
+        responseCorrectionSaveRequestButton.title = "현재 기록된 수정본으로 저장 요청합니다. 입력 중인 변경을 반영하려면 먼저 다시 기록해 주세요.";
+      } else {
+        responseCorrectionSaveRequestButton.title = "현재 기록된 수정본으로 저장 요청합니다.";
+      }
+      updateCorrectionHelperText();
+    }
+
+    function renderCorrectionEditor(message) {
+      const editable = canEditGroundedBrief(message);
+      showElement(responseCorrectionBox, editable);
+      state.latestCorrectionMessageId = editable ? String(message.message_id || "") : null;
+      state.latestCorrectionArtifactId = editable ? String(message.artifact_id || "") : "";
+      state.latestCorrectionBaseText = editable ? currentCorrectionSeedText(message) : "";
+      state.latestCorrectionRecordedText = editable ? normalizeMultilineText(message?.corrected_text || "") : "";
+      state.latestCorrectionRecordedAt = editable ? String(message?.corrected_outcome?.recorded_at || "") : "";
+
+      if (!editable) {
+        responseCorrectionInput.value = "";
+        updateCorrectionFormState();
+        return;
+      }
+
+      responseCorrectionInput.value = state.latestCorrectionBaseText;
+      updateCorrectionFormState();
+    }
+
+    function updateCandidateConfirmationState() {
+      const hasCandidate = Boolean(
+        state.latestCandidateConfirmationMessageId
+        && state.latestCandidateConfirmationCandidateId
+        && state.latestCandidateConfirmationCandidateUpdatedAt
+      );
+      const currentApprovalMatchesArtifact = Boolean(
+        state.currentApproval
+        && String(state.currentApproval.artifact_id || "").trim()
+        && String(state.currentApproval.artifact_id || "").trim() === String(state.latestCandidateConfirmationArtifactId || "").trim()
+      );
+      const isConfirmed = Boolean(state.latestCandidateConfirmationRecordedAt);
+
+      showElement(responseCandidateConfirmationBox, hasCandidate);
+      responseCandidateConfirmationSubmitButton.disabled = state.isBusy || !hasCandidate || isConfirmed;
+
+      if (!hasCandidate) {
+        responseCandidateConfirmationState.textContent = "";
+        responseCandidateConfirmationStatus.textContent = "";
+        responseCandidateConfirmationSubmitButton.title = "";
+        return;
+      }
+
+      if (isConfirmed) {
+        responseCandidateConfirmationState.textContent = state.latestCandidateConfirmationRecordedAt
+          ? `재사용 확인 기록됨 · ${formatWhen(state.latestCandidateConfirmationRecordedAt)}`
+          : "재사용 확인 기록됨";
+        const statusParts = [
+          "현재 기록된 수정 방향을 나중에도 다시 써도 된다는 positive reuse confirmation만 남겼습니다.",
+          "저장 승인, 내용 거절, 거절 메모와는 별도입니다.",
+        ];
+        if (currentApprovalMatchesArtifact) {
+          statusParts.push("이미 열린 저장 승인 카드와도 별개로 유지됩니다.");
+        }
+        responseCandidateConfirmationStatus.textContent = statusParts.join(" ");
+        responseCandidateConfirmationSubmitButton.title = "이미 현재 수정 방향 재사용 확인이 기록되었습니다.";
+        return;
+      }
+
+      responseCandidateConfirmationState.textContent = "현재 수정 방향 재사용 확인은 아직 없습니다.";
+      const statusParts = [
+        "이 버튼은 현재 기록된 수정 방향을 나중에도 다시 써도 된다는 positive reuse confirmation만 남깁니다.",
+        "저장 승인, 내용 거절, 거절 메모, 피드백과는 별도입니다.",
+      ];
+      if (currentApprovalMatchesArtifact) {
+        statusParts.push("이미 열린 저장 승인 카드와도 섞이지 않습니다.");
+      }
+      responseCandidateConfirmationStatus.textContent = statusParts.join(" ");
+      responseCandidateConfirmationSubmitButton.title = "현재 기록된 수정 방향 재사용 확인을 남깁니다.";
+    }
+
+    function renderCandidateConfirmationControl(message) {
+      const editable = canEditGroundedBrief(message);
+      const candidate = editable && message?.session_local_candidate && typeof message.session_local_candidate === "object"
+        ? message.session_local_candidate
+        : null;
+      const confirmationRecord = candidate && message?.candidate_confirmation_record && typeof message.candidate_confirmation_record === "object"
+        ? message.candidate_confirmation_record
+        : null;
+
+      state.latestCandidateConfirmationMessageId = candidate ? String(message.message_id || "") : null;
+      state.latestCandidateConfirmationArtifactId = candidate ? String(message.artifact_id || "") : "";
+      state.latestCandidateConfirmationCandidateId = candidate ? String(candidate.candidate_id || "") : "";
+      state.latestCandidateConfirmationCandidateUpdatedAt = candidate ? String(candidate.updated_at || "") : "";
+      state.latestCandidateConfirmationRecordedAt = confirmationRecord ? String(confirmationRecord.recorded_at || "") : "";
+
+      updateCandidateConfirmationState();
     }
 
     function setFeedbackButtonsState(container, selectedLabel, disabled) {
@@ -2354,12 +2964,24 @@
       if (response?.selected_source_paths?.length) parts.push(`출처 ${response.selected_source_paths.length}개`);
       if (response?.evidence?.length) parts.push(`근거 ${response.evidence.length}개`);
       if (response?.summary_chunks?.length) parts.push(`요약 구간 ${response.summary_chunks.length}개`);
+      if (response?.claim_coverage?.length) {
+        const claimSummary = formatClaimCoverageSummary(response.claim_coverage);
+        if (claimSummary) parts.push(`사실 검증 ${claimSummary}`);
+      }
       if (runtime?.provider) parts.push(`런타임 ${runtime.provider}`);
       if (response?.requires_approval) parts.push("승인 대기");
       if (response?.feedback?.label) {
         const feedbackLabel = formatFeedbackLabel(response.feedback.label);
         const feedbackReason = formatFeedbackReasonLabel(response.feedback.reason || "");
         parts.push(`피드백 ${feedbackLabel}${feedbackReason ? ` · ${feedbackReason}` : ""}`);
+      }
+      if (usesCorrectedSaveSnapshot(response)) {
+        parts.push("저장 기준 요청 시점 수정본 스냅샷");
+      }
+      if (usesRejectedContentVerdict(response)) {
+        parts.push("내용 거절 기록됨");
+      } else if (String(response?.corrected_outcome?.outcome || "").trim().toLowerCase() === "corrected") {
+        parts.push("교정본 기록됨");
       }
       showElement(responseQuickMeta, parts.length > 0 || Boolean(response?.saved_note_path) || Boolean(response?.web_search_record_path));
       responseQuickMetaText.textContent = parts.join(" · ");
@@ -2414,6 +3036,132 @@
       responseFeedbackRetryButton.disabled = state.isBusy;
     }
 
+    function updateContentVerdictState() {
+      const hasMessage = Boolean(state.latestContentVerdictMessageId);
+      const currentApprovalMatchesArtifact = Boolean(
+        state.currentApproval
+        && String(state.currentApproval.artifact_id || "").trim()
+        && String(state.currentApproval.artifact_id || "").trim() === String(state.latestContentVerdictArtifactId || "").trim()
+      );
+      const isRejected = state.latestContentVerdictOutcome === "rejected";
+
+      responseContentRejectButton.disabled = state.isBusy || !hasMessage || isRejected;
+      if (!hasMessage) {
+        responseContentVerdictState.textContent = "";
+        responseContentVerdictStatus.textContent = "";
+        responseContentRejectButton.title = "";
+        updateContentReasonNoteState();
+        return;
+      }
+
+      if (isRejected) {
+        responseContentVerdictState.textContent = state.latestContentVerdictRecordedAt
+          ? `내용 거절 기록됨 · ${formatWhen(state.latestContentVerdictRecordedAt)}`
+          : "내용 거절 기록됨";
+        const statusParts = [
+          "이 답변 내용을 거절로 기록했습니다.",
+          "저장 승인 거절과는 별도입니다.",
+          "아래 수정본 기록이나 저장 요청은 계속 별도 흐름으로 사용할 수 있습니다.",
+        ];
+        if (currentApprovalMatchesArtifact) {
+          statusParts.push("이미 열린 저장 승인 카드는 그대로 유지되며 자동 취소되지 않습니다.");
+        }
+        if (hasSavedHistoryForArtifact(state.latestContentVerdictArtifactId)) {
+          statusParts.push("이미 저장된 노트와 경로는 그대로 남고, 이번 내용 거절은 최신 판정만 바꿉니다.");
+        }
+        responseContentVerdictStatus.textContent = statusParts.join(" ");
+        responseContentRejectButton.title = "이미 내용 거절로 기록되었습니다.";
+        updateContentReasonNoteState();
+        return;
+      }
+
+      if (state.latestContentVerdictOutcome === "corrected") {
+        responseContentVerdictState.textContent = "최신 내용 판정은 기록된 수정본입니다.";
+      } else if (state.latestContentVerdictOutcome === "accepted_as_is") {
+        responseContentVerdictState.textContent = "최신 내용 판정은 원문 저장 승인입니다.";
+      } else {
+        responseContentVerdictState.textContent = "내용 거절은 아직 기록되지 않았습니다.";
+      }
+      const statusParts = [
+        "저장 승인 거절과는 별도입니다.",
+        "이 버튼을 누르면 grounded-brief 원문 응답에 내용 거절을 즉시 기록합니다.",
+      ];
+      if (currentApprovalMatchesArtifact) {
+        statusParts.push("이미 열린 저장 승인 카드는 그대로 유지되며 자동 취소되지 않습니다.");
+      }
+      responseContentVerdictStatus.textContent = statusParts.join(" ");
+      responseContentRejectButton.title = "이 답변 내용을 거절로 기록합니다.";
+      updateContentReasonNoteState();
+    }
+
+    function updateContentReasonNoteState() {
+      const hasMessage = Boolean(state.latestContentVerdictMessageId);
+      const isRejected = state.latestContentVerdictOutcome === "rejected";
+      const showReasonBox = hasMessage && isRejected;
+      const currentNote = normalizeMultilineText(responseContentReasonInput.value);
+      const recordedNote = normalizeMultilineText(state.latestContentReasonNote);
+
+      showElement(responseContentReasonBox, showReasonBox);
+      responseContentReasonInput.disabled = state.isBusy || !showReasonBox;
+      responseContentReasonSubmitButton.disabled = state.isBusy || !showReasonBox || !currentNote;
+
+      if (!showReasonBox) {
+        responseContentReasonStatus.textContent = "";
+        responseContentReasonSubmitButton.title = "";
+        return;
+      }
+
+      if (recordedNote && !currentNote) {
+        responseContentReasonStatus.textContent = "빈 제출로 기록된 거절 메모를 지우는 동작은 아직 지원하지 않습니다.";
+        responseContentReasonSubmitButton.title = "빈 메모 제출은 아직 지원하지 않습니다.";
+        return;
+      }
+
+      if (currentNote && currentNote !== recordedNote) {
+        responseContentReasonStatus.textContent = recordedNote
+          ? "수정 중인 거절 메모가 아직 다시 기록되지 않았습니다."
+          : "선택 사항입니다. 내용 거절만으로도 판정은 유효하고, 이 메모는 그 기록을 보강합니다.";
+        responseContentReasonSubmitButton.title = "현재 입력한 거절 메모를 source message에 기록합니다.";
+        return;
+      }
+
+      if (recordedNote) {
+        responseContentReasonStatus.textContent = state.latestContentReasonRecordedAt
+          ? `기록된 거절 메모가 있습니다 · ${formatWhen(state.latestContentReasonRecordedAt)}`
+          : "기록된 거절 메모가 있습니다.";
+        responseContentReasonSubmitButton.title = "같은 source message의 거절 메모를 다시 기록합니다.";
+        return;
+      }
+
+      responseContentReasonStatus.textContent = "선택 사항입니다. 비워 두면 메모 기록 버튼이 켜지지 않으며, 내용 거절만으로도 현재 verdict는 유효합니다.";
+      responseContentReasonSubmitButton.title = "메모를 입력하면 같은 source message에 기록합니다.";
+    }
+
+    function renderContentVerdictControl(message) {
+      const editable = canEditGroundedBrief(message);
+      showElement(responseContentVerdictBox, editable);
+      state.latestContentVerdictMessageId = editable ? String(message.message_id || "") : null;
+      state.latestContentVerdictArtifactId = editable ? String(message.artifact_id || "") : "";
+      state.latestContentVerdictOutcome = editable
+        ? String(message?.corrected_outcome?.outcome || "").trim().toLowerCase()
+        : "";
+      state.latestContentVerdictRecordedAt = editable ? String(message?.corrected_outcome?.recorded_at || "") : "";
+      state.latestContentReasonNote = editable ? normalizeMultilineText(message?.content_reason_record?.reason_note || "") : "";
+      state.latestContentReasonRecordedAt = editable ? String(message?.content_reason_record?.recorded_at || "") : "";
+      responseContentReasonInput.value = state.latestContentReasonNote || "";
+
+      if (!editable) {
+        responseContentVerdictState.textContent = "";
+        responseContentVerdictStatus.textContent = "";
+        responseContentRejectButton.title = "";
+        responseContentReasonStatus.textContent = "";
+        responseContentReasonSubmitButton.title = "";
+        return;
+      }
+
+      updateContentVerdictState();
+    }
+
     async function submitFeedback(messageId, feedbackLabel, feedbackReason = "") {
       if (!messageId || state.isBusy) return;
       const data = await fetchJson("/api/feedback", {
@@ -2429,12 +3177,165 @@
       if (data.session) {
         renderSession(data.session);
         renderApproval((data.session.pending_approvals || []).slice(-1)[0] || null);
+        const latestAssistantContext = findLatestAssistantContext(data.session.messages || []);
+        renderCorrectionEditor(
+          resolveCorrectionTargetMessage(data.session.messages || [], latestAssistantContext.assistant)
+        );
       }
       await fetchSessions();
       const reasonText = formatFeedbackReasonLabel(feedbackReason);
       renderNotice(
         `피드백을 '${formatFeedbackLabel(feedbackLabel)}'${reasonText ? ` · '${reasonText}'` : ""}으로 기록했습니다.`
       );
+    }
+
+    async function submitCorrection() {
+      if (state.isBusy || !state.latestCorrectionMessageId) return;
+      const data = await fetchJson("/api/correction", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: state.currentSessionId,
+          message_id: state.latestCorrectionMessageId,
+          corrected_text: responseCorrectionInput.value,
+        }),
+      });
+      if (data.session) {
+        renderSession(data.session);
+        renderApproval((data.session.pending_approvals || []).slice(-1)[0] || null);
+        const latestAssistantContext = findLatestAssistantContext(data.session.messages || []);
+        renderCorrectionEditor(
+          resolveCorrectionTargetMessage(data.session.messages || [], latestAssistantContext.assistant)
+        );
+      }
+      await fetchSessions();
+      renderNotice("수정본을 기록했습니다. 저장 승인은 별도 흐름으로 유지됩니다.");
+    }
+
+    async function submitCandidateConfirmation() {
+      if (
+        state.isBusy
+        || !state.latestCandidateConfirmationMessageId
+        || !state.latestCandidateConfirmationCandidateId
+        || !state.latestCandidateConfirmationCandidateUpdatedAt
+      ) return;
+      const data = await fetchJson("/api/candidate-confirmation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: state.currentSessionId,
+          message_id: state.latestCandidateConfirmationMessageId,
+          candidate_id: state.latestCandidateConfirmationCandidateId,
+          candidate_updated_at: state.latestCandidateConfirmationCandidateUpdatedAt,
+        }),
+      });
+      if (data.session) {
+        renderSession(data.session);
+        renderApproval((data.session.pending_approvals || []).slice(-1)[0] || null);
+      }
+      await fetchSessions();
+      renderNotice("현재 수정 방향을 나중에도 다시 써도 된다는 확인을 기록했습니다. 저장 승인과는 별도입니다.");
+    }
+
+    async function submitCandidateReviewAccept(item) {
+      if (state.isBusy || !item || typeof item !== "object") return;
+      const sourceMessageId = String(item.source_message_id || "").trim();
+      const candidateId = String(item.candidate_id || "").trim();
+      const confirmationRef = Array.isArray(item.supporting_confirmation_refs)
+        ? item.supporting_confirmation_refs.find((ref) => ref && typeof ref === "object")
+        : null;
+      const candidateUpdatedAt = String(confirmationRef?.candidate_updated_at || "").trim();
+      if (!sourceMessageId || !candidateId || !candidateUpdatedAt) return;
+
+      const data = await fetchJson("/api/candidate-review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: state.currentSessionId,
+          message_id: sourceMessageId,
+          candidate_id: candidateId,
+          candidate_updated_at: candidateUpdatedAt,
+          review_action: "accept",
+        }),
+      });
+      if (data.session) {
+        renderSession(data.session);
+        renderApproval((data.session.pending_approvals || []).slice(-1)[0] || null);
+      }
+      await fetchSessions();
+      renderNotice("검토 후보를 수락했습니다. 아직 적용되지는 않았습니다.");
+    }
+
+    async function submitContentVerdict() {
+      if (state.isBusy || !state.latestContentVerdictMessageId || state.latestContentVerdictOutcome === "rejected") return;
+      const data = await fetchJson("/api/content-verdict", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: state.currentSessionId,
+          message_id: state.latestContentVerdictMessageId,
+          content_verdict: "rejected",
+        }),
+      });
+      if (data.session) {
+        renderSession(data.session);
+        renderApproval((data.session.pending_approvals || []).slice(-1)[0] || null);
+      }
+      await fetchSessions();
+      const savedHistoryExists = hasSavedHistoryForArtifact(
+        String(data?.artifact_id || state.latestContentVerdictArtifactId || "").trim()
+      );
+      renderNotice(
+        savedHistoryExists
+          ? "내용 거절을 기록했습니다. 이미 저장된 노트는 그대로 유지되며 최신 내용 판정만 바뀝니다."
+          : "내용 거절을 기록했습니다. 저장 승인 거절과는 별도입니다."
+      );
+    }
+
+    async function submitContentReasonNote() {
+      if (state.isBusy || !state.latestContentVerdictMessageId || state.latestContentVerdictOutcome !== "rejected") return;
+      const reasonNote = normalizeMultilineText(responseContentReasonInput.value);
+      if (!reasonNote) return;
+      const data = await fetchJson("/api/content-reason-note", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: state.currentSessionId,
+          message_id: state.latestContentVerdictMessageId,
+          reason_note: reasonNote,
+        }),
+      });
+      if (data.session) {
+        renderSession(data.session);
+        renderApproval((data.session.pending_approvals || []).slice(-1)[0] || null);
+      }
+      await fetchSessions();
+      renderNotice("거절 메모를 기록했습니다. 내용 거절 판정은 그대로 유지됩니다.");
+    }
+
+    async function submitCorrectedSaveRequest() {
+      if (state.isBusy || !state.latestCorrectionMessageId || !normalizeMultilineText(state.latestCorrectionRecordedText)) return;
+      try {
+        startProgress("corrected_save", "system", "승인 워크플로");
+        responseText.textContent = "";
+        renderResponseOrigin({ provider: "system", badge: "SYSTEM", label: "시스템 응답", kind: "approval" });
+        const data = await submitStreamPayload({
+          session_id: state.currentSessionId,
+          corrected_save_message_id: state.latestCorrectionMessageId,
+        });
+        if (data?.cancelled) {
+          renderNotice(data.message || "요청을 취소했습니다.");
+          await fetchSessions();
+          return;
+        }
+        renderResult(data);
+        await fetchSessions();
+        if (data?.response?.status === "needs_approval") {
+          renderNotice("기록된 수정본 기준 저장 승인을 만들었습니다.");
+        }
+      } finally {
+        stopProgress();
+      }
     }
 
     async function retryLatestAssistantWithFeedback() {
@@ -2481,9 +3382,11 @@
         const label = item.label || "문서 근거";
         const sourceName = item.source_name || "(출처 없음)";
         const sourcePath = item.source_path || "";
+        const sourceRole = item.source_role || "";
         const snippet = truncateDisplayText(item.snippet || "");
         const duplicateName = counts[sourceName] > 1;
-        const titleSuffix = sharedPath ? "" : ` · ${sourceName}`;
+        const roleSuffix = sourceRole ? ` [${sourceRole}]` : "";
+        const titleSuffix = sharedPath ? roleSuffix : ` · ${sourceName}${roleSuffix}`;
         lines.push(`${index + 1}. ${label}${titleSuffix}`);
         if (!sharedPath && duplicateName && sourcePath) {
           lines.push(`   경로: ${compactDisplayPath(sourcePath)}`);
@@ -2551,6 +3454,111 @@
       summaryChunksText.textContent = lines.join("\n");
     }
 
+    function summarizeClaimCoverageCounts(claimCoverage) {
+      const items = Array.isArray(claimCoverage) ? claimCoverage.filter((item) => item && typeof item === "object") : [];
+      const counts = { strong: 0, weak: 0, missing: 0 };
+      items.forEach((item) => {
+        const status = String(item.status || "").trim();
+        if (status === "strong") counts.strong += 1;
+        else if (status === "weak") counts.weak += 1;
+        else if (status === "missing") counts.missing += 1;
+      });
+      return counts;
+    }
+
+    function formatClaimCoverageSummary(claimCoverage) {
+      const counts = summarizeClaimCoverageCounts(claimCoverage);
+      return formatClaimCoverageCountSummary(counts);
+    }
+
+    function formatClaimCoverageCountSummary(counts) {
+      const normalized = counts && typeof counts === "object" ? counts : {};
+      const parts = [];
+      if (Number(normalized.strong || 0) > 0) parts.push(`교차 확인 ${Number(normalized.strong || 0)}`);
+      if (Number(normalized.weak || 0) > 0) parts.push(`단일 출처 ${Number(normalized.weak || 0)}`);
+      if (Number(normalized.missing || 0) > 0) parts.push(`미확인 ${Number(normalized.missing || 0)}`);
+      return parts.join(" · ");
+    }
+
+    function formatAnswerModeLabel(answerMode) {
+      const normalized = String(answerMode || "general").trim();
+      if (normalized === "entity_card") return "설명 카드";
+      if (normalized === "latest_update") return "최신 확인";
+      return "일반 검색";
+    }
+
+    function formatClaimRenderedAs(renderedAs) {
+      const normalized = String(renderedAs || "").trim();
+      if (normalized === "fact_card") return "사실 카드 반영";
+      if (normalized === "uncertain") return "불확실 정보 반영";
+      if (normalized === "not_rendered") return "아직 본문 미반영";
+      return "";
+    }
+
+    function formatClaimProgress(item) {
+      if (!item || typeof item !== "object") return "";
+      const label = String(item.progress_label || "").trim();
+      const previousLabel = String(item.previous_status_label || "").trim();
+      const currentLabel = String(item.status_label || "").trim();
+      if (!label) return "";
+      if (!previousLabel || previousLabel === currentLabel) return label;
+      return `${label} (${previousLabel} → ${currentLabel})`;
+    }
+
+    function renderClaimCoverage(claimCoverage, progressSummary = "") {
+      const items = Array.isArray(claimCoverage) ? claimCoverage.filter((item) => item && typeof item === "object") : [];
+      const summaryLabel = formatClaimCoverageSummary(items);
+      setCollapsiblePanel(
+        claimCoverageBox,
+        claimCoverageBody,
+        claimCoverageToggleButton,
+        items.length > 0,
+        summaryLabel || `슬롯 ${items.length}개`
+      );
+      if (items.length === 0) {
+        renderPanelHint(claimCoverageHint, "");
+        claimCoverageText.textContent = "";
+        return;
+      }
+
+      const progressText = String(progressSummary || "").trim();
+      const lines = [];
+      items.forEach((item, index) => {
+        const slot = item.slot || `슬롯 ${index + 1}`;
+        const statusLabel = item.status_label || "검증 상태";
+        const value = truncateDisplayText(item.value || "", 200);
+        const supportCount = Number(item.support_count || 0);
+        const candidateCount = Number(item.candidate_count || 0);
+        const sourceRole = item.source_role || "";
+        const renderedAs = formatClaimRenderedAs(item.rendered_as);
+        const progressLabel = formatClaimProgress(item);
+        const focusPrefix = item.is_focus_slot ? "재조사 대상 · " : "";
+
+        lines.push(`${index + 1}. ${slot} · ${focusPrefix}${statusLabel}`);
+        if (value) {
+          lines.push(`   값: ${value}`);
+        }
+        const metaParts = [];
+        if (supportCount > 0) metaParts.push(`근거 ${supportCount}건`);
+        if (candidateCount > supportCount) metaParts.push(`후보 ${candidateCount}건`);
+        if (sourceRole) metaParts.push(`대표 출처: ${sourceRole}`);
+        if (renderedAs) metaParts.push(`표시: ${renderedAs}`);
+        if (progressLabel) metaParts.push(`변화: ${progressLabel}`);
+        if (metaParts.length > 0) {
+          lines.push(`   ${metaParts.join(" · ")}`);
+        }
+      });
+
+      renderPanelHint(
+        claimCoverageHint,
+        progressText
+          ? `${progressText} 교차 확인은 여러 출처 합의, 단일 출처는 신뢰 가능한 1개 출처 기준, 미확인은 추가 조사 필요 상태입니다.`
+          : "교차 확인은 여러 출처 합의, 단일 출처는 신뢰 가능한 1개 출처 기준, 미확인은 추가 조사 필요 상태입니다."
+      );
+      if (claimCoverageScrollRegion) claimCoverageScrollRegion.scrollTop = 0;
+      claimCoverageText.textContent = lines.join("\n");
+    }
+
     function renderContext(context) {
       showElement(contextBox, Boolean(context));
       if (!context) {
@@ -2591,6 +3599,432 @@
       });
     }
 
+    function renderReviewQueue(items) {
+      const reviewItems = Array.isArray(items) ? items.filter((item) => item && typeof item === "object") : [];
+      showElement(reviewQueueBox, reviewItems.length > 0);
+      reviewQueueList.innerHTML = "";
+
+      if (reviewItems.length === 0) {
+        reviewQueueStatus.textContent = "";
+        return;
+      }
+
+      reviewQueueStatus.textContent = "현재 후보는 검토 수락만 기록할 수 있습니다. 아직 적용, 편집, 거절은 열지 않았습니다.";
+      reviewItems.forEach((item) => {
+        const card = document.createElement("article");
+        card.className = "history-item";
+        card.setAttribute("data-testid", "review-queue-item");
+
+        const header = document.createElement("div");
+        header.className = "history-item-header";
+
+        const titleWrap = document.createElement("div");
+        titleWrap.className = "history-item-title";
+        const title = document.createElement("strong");
+        title.textContent = item.statement || item.candidate_family || "검토 후보";
+        titleWrap.appendChild(title);
+
+        const meta = document.createElement("span");
+        meta.textContent = [
+          `기준 ${formatPromotionBasisLabel(item.promotion_basis)}`,
+          `상태 ${formatPromotionEligibilityLabel(item.promotion_eligibility)}`,
+          item.updated_at ? `업데이트 ${formatWhen(item.updated_at)}` : "",
+        ].filter(Boolean).join(" · ");
+        titleWrap.appendChild(meta);
+        header.appendChild(titleWrap);
+        card.appendChild(header);
+
+        const anchor = document.createElement("div");
+        anchor.className = "history-item-summary";
+        anchor.textContent = [
+          `artifact ${compactIdentifier(item.artifact_id, 10, 10)}`,
+          `source ${compactIdentifier(item.source_message_id, 8, 8)}`,
+        ].filter(Boolean).join(" · ");
+        card.appendChild(anchor);
+
+        const signalRefs = Array.isArray(item.supporting_signal_refs)
+          ? item.supporting_signal_refs
+            .map((ref) => formatSignalRefLabel(ref?.signal_name))
+            .filter(Boolean)
+          : [];
+        if (signalRefs.length > 0) {
+          const support = document.createElement("div");
+          support.className = "history-item-summary";
+          support.textContent = `근거 신호 ${signalRefs.join(", ")}`;
+          card.appendChild(support);
+        }
+
+        const confirmationRef = Array.isArray(item.supporting_confirmation_refs)
+          ? item.supporting_confirmation_refs.find((ref) => ref && typeof ref === "object")
+          : null;
+        if (confirmationRef) {
+          const confirmation = document.createElement("div");
+          confirmation.className = "history-item-summary";
+          confirmation.textContent = [
+            `확인 ${formatConfirmationLabel(confirmationRef.confirmation_label)}`,
+            confirmationRef.recorded_at ? formatWhen(confirmationRef.recorded_at) : "",
+          ].filter(Boolean).join(" · ");
+          card.appendChild(confirmation);
+        }
+
+        const candidateUpdatedAt = String(confirmationRef?.candidate_updated_at || "").trim();
+        if (item.source_message_id && item.candidate_id && candidateUpdatedAt) {
+          const actions = document.createElement("div");
+          actions.className = "button-row";
+
+          const acceptButton = document.createElement("button");
+          acceptButton.type = "button";
+          acceptButton.className = "secondary";
+          acceptButton.textContent = "검토 수락";
+          acceptButton.setAttribute("data-testid", "review-queue-accept");
+          acceptButton.addEventListener("click", () => {
+            submitCandidateReviewAccept(item);
+          });
+          actions.appendChild(acceptButton);
+          card.appendChild(actions);
+        }
+
+        reviewQueueList.appendChild(card);
+      });
+    }
+
+    function renderAggregateTriggerSection(items) {
+      const aggregateItems = Array.isArray(items) ? items.filter((item) => item && typeof item === "object") : [];
+      showElement(aggregateTriggerBox, aggregateItems.length > 0);
+      aggregateTriggerList.innerHTML = "";
+
+      if (aggregateItems.length === 0) {
+        aggregateTriggerStatus.textContent = "";
+        return;
+      }
+
+      const hasUnblockedItem = aggregateItems.some((item) => isAggregateTriggerUnblocked(item));
+      aggregateTriggerStatus.textContent = hasUnblockedItem
+        ? "검토 메모 적용을 시작할 수 있는 묶음이 있습니다."
+        : "현재 반복 교정 묶음은 aggregate 단위 경계만 보여주며, 아직 시작할 수 없습니다.";
+      aggregateItems.forEach((item) => {
+        const aggregateKey = item.aggregate_key && typeof item.aggregate_key === "object" ? item.aggregate_key : {};
+        const capabilityOutcome = String(item.reviewed_memory_capability_status?.capability_outcome || "").trim() || "미확인";
+        const auditStage = String(item.reviewed_memory_transition_audit_contract?.audit_stage || "").trim() || "미확인";
+        const planningTargetLabel = String(item.reviewed_memory_planning_target_ref?.target_label || "").trim();
+        const card = document.createElement("article");
+        card.className = "history-item";
+        card.setAttribute("data-testid", "aggregate-trigger-item");
+
+        const header = document.createElement("div");
+        header.className = "history-item-header";
+
+        const titleWrap = document.createElement("div");
+        titleWrap.className = "history-item-title";
+        const title = document.createElement("strong");
+        title.textContent = aggregateTriggerTitle(item);
+        titleWrap.appendChild(title);
+
+        const meta = document.createElement("span");
+        meta.textContent = [
+          Number.isFinite(Number(item.recurrence_count)) ? `반복 ${Number(item.recurrence_count)}회` : "",
+          item.last_seen_at ? `마지막 확인 ${formatWhen(item.last_seen_at)}` : "",
+          `capability ${capabilityOutcome}`,
+          `audit ${auditStage}`,
+        ].filter(Boolean).join(" · ");
+        titleWrap.appendChild(meta);
+        header.appendChild(titleWrap);
+        card.appendChild(header);
+
+        const identitySummary = document.createElement("div");
+        identitySummary.className = "history-item-summary";
+        identitySummary.textContent = [
+          `family ${String(aggregateKey.candidate_family || "").trim() || "미확인"}`,
+          `fingerprint ${compactIdentifier(aggregateKey.normalized_delta_fingerprint, 8, 8) || "미확인"}`,
+        ].join(" · ");
+        card.appendChild(identitySummary);
+
+        if (planningTargetLabel) {
+          const planningTarget = document.createElement("div");
+          planningTarget.className = "history-item-summary";
+          planningTarget.textContent = `계획 타깃 ${planningTargetLabel}`;
+          card.appendChild(planningTarget);
+        }
+
+        const unblocked = isAggregateTriggerUnblocked(item);
+        const transitionRecord = item.reviewed_memory_transition_record && typeof item.reviewed_memory_transition_record === "object"
+          ? item.reviewed_memory_transition_record
+          : null;
+        const conflictVisibilityRecord = item.reviewed_memory_conflict_visibility_record && typeof item.reviewed_memory_conflict_visibility_record === "object"
+          ? item.reviewed_memory_conflict_visibility_record
+          : null;
+        const recordStage = transitionRecord ? String(transitionRecord.record_stage || "").trim() : "";
+        const hasEmittedRecord = recordStage === "emitted_record_only_not_applied";
+        const hasAppliedPending = recordStage === "applied_pending_result";
+        const hasAppliedResult = recordStage === "applied_with_result";
+        const hasStopped = recordStage === "stopped";
+        const hasReversed = recordStage === "reversed";
+
+        const helper = document.createElement("div");
+        helper.className = "history-item-summary";
+        helper.setAttribute("data-testid", "aggregate-trigger-helper");
+        helper.textContent = hasReversed && conflictVisibilityRecord
+          ? "충돌 확인이 완료되었습니다. 현재 aggregate 범위의 충돌 상태가 기록되었습니다."
+          : hasReversed
+          ? "검토 메모 적용이 되돌려졌습니다. 적용 효과가 완전히 철회되었습니다."
+          : hasStopped
+            ? "검토 메모 적용이 중단되었습니다. 이후 응답에 교정 패턴이 반영되지 않습니다."
+            : hasAppliedResult
+            ? "검토 메모 적용 효과가 활성화되었습니다. 이후 응답에 교정 패턴이 반영됩니다."
+          : hasAppliedPending
+            ? "검토 메모 적용이 실행되었습니다. 결과 확정 버튼을 눌러 주세요."
+            : hasEmittedRecord
+            ? `transition record가 발행되었습니다. 적용 실행 버튼을 눌러 주세요.`
+            : aggregateTriggerBlockedHelper(item);
+        card.appendChild(helper);
+
+        const actions = document.createElement("div");
+        actions.className = "button-row";
+
+        const aggregateFingerprint = String(aggregateKey.normalized_delta_fingerprint || "").trim();
+
+        if (hasReversed) {
+          const reversedLabel = document.createElement("span");
+          reversedLabel.className = "hint";
+          reversedLabel.setAttribute("data-testid", "aggregate-trigger-reversed");
+          reversedLabel.textContent = `적용 되돌림 완료 (${String(transitionRecord.canonical_transition_id || "").trim()})`;
+          actions.appendChild(reversedLabel);
+
+          if (conflictVisibilityRecord) {
+            const conflictLabel = document.createElement("span");
+            conflictLabel.className = "hint";
+            conflictLabel.setAttribute("data-testid", "aggregate-trigger-conflict-checked");
+            const entryCount = typeof conflictVisibilityRecord.conflict_entry_count === "number"
+              ? conflictVisibilityRecord.conflict_entry_count : 0;
+            conflictLabel.textContent = `충돌 확인 완료 (${String(conflictVisibilityRecord.canonical_transition_id || "").trim()} · 항목 ${entryCount}건)`;
+            actions.appendChild(conflictLabel);
+
+            const conflictEntries = Array.isArray(conflictVisibilityRecord.conflict_entries)
+              ? conflictVisibilityRecord.conflict_entries : [];
+            if (conflictEntries.length > 0) {
+              const conflictList = document.createElement("ul");
+              conflictList.className = "history-item-summary";
+              conflictList.setAttribute("data-testid", "aggregate-trigger-conflict-entries");
+              for (const entry of conflictEntries) {
+                const li = document.createElement("li");
+                li.textContent = `${String(entry.conflict_category || "")} — ${String(entry.detail || "")}`;
+                conflictList.appendChild(li);
+              }
+              actions.appendChild(conflictList);
+            }
+          } else {
+            const conflictCheckButton = document.createElement("button");
+            conflictCheckButton.type = "button";
+            conflictCheckButton.setAttribute("data-testid", "aggregate-trigger-conflict-check");
+            conflictCheckButton.textContent = "충돌 확인";
+            conflictCheckButton.addEventListener("click", async () => {
+              conflictCheckButton.disabled = true;
+              try {
+                const data = await fetchJson("/api/aggregate-transition-conflict-check", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    session_id: state.currentSessionId,
+                    aggregate_fingerprint: aggregateFingerprint,
+                    canonical_transition_id: String(transitionRecord.canonical_transition_id || "").trim(),
+                  }),
+                });
+                renderNotice(`충돌 확인이 완료되었습니다. (${data.canonical_transition_id})`);
+                if (data.session) {
+                  renderSession(data.session);
+                }
+                await fetchSessions();
+              } catch (error) {
+                renderError(error);
+              }
+            });
+            actions.appendChild(conflictCheckButton);
+          }
+        } else if (hasStopped) {
+          const stoppedLabel = document.createElement("span");
+          stoppedLabel.className = "hint";
+          stoppedLabel.setAttribute("data-testid", "aggregate-trigger-stopped");
+          stoppedLabel.textContent = `적용 중단됨 (${String(transitionRecord.canonical_transition_id || "").trim()})`;
+          actions.appendChild(stoppedLabel);
+
+          const reverseButton = document.createElement("button");
+          reverseButton.type = "button";
+          reverseButton.className = "danger";
+          reverseButton.textContent = "적용 되돌리기";
+          reverseButton.setAttribute("data-testid", "aggregate-trigger-reverse");
+          reverseButton.addEventListener("click", async () => {
+            reverseButton.disabled = true;
+            try {
+              const data = await fetchJson("/api/aggregate-transition-reverse", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  session_id: state.currentSessionId,
+                  aggregate_fingerprint: aggregateFingerprint,
+                  canonical_transition_id: String(transitionRecord.canonical_transition_id || "").trim(),
+                }),
+              });
+              renderNotice(`검토 메모 적용이 되돌려졌습니다. (${data.canonical_transition_id})`);
+              if (data.session) {
+                renderSession(data.session);
+              }
+              await fetchSessions();
+            } catch (error) {
+              renderError(error);
+            }
+          });
+          actions.appendChild(reverseButton);
+        } else if (hasAppliedResult) {
+          const resultLabel = document.createElement("span");
+          resultLabel.className = "hint";
+          resultLabel.setAttribute("data-testid", "aggregate-trigger-result");
+          const appliedEffect = transitionRecord.apply_result && typeof transitionRecord.apply_result === "object"
+            ? String(transitionRecord.apply_result.applied_effect_kind || "").trim()
+            : "";
+          resultLabel.textContent = `결과 확정 완료 (${String(transitionRecord.canonical_transition_id || "").trim()}${appliedEffect ? ` · ${appliedEffect}` : ""})`;
+          actions.appendChild(resultLabel);
+
+          const stopButton = document.createElement("button");
+          stopButton.type = "button";
+          stopButton.className = "danger";
+          stopButton.textContent = "적용 중단";
+          stopButton.setAttribute("data-testid", "aggregate-trigger-stop");
+          stopButton.addEventListener("click", async () => {
+            stopButton.disabled = true;
+            try {
+              const data = await fetchJson("/api/aggregate-transition-stop", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  session_id: state.currentSessionId,
+                  aggregate_fingerprint: aggregateFingerprint,
+                  canonical_transition_id: String(transitionRecord.canonical_transition_id || "").trim(),
+                }),
+              });
+              renderNotice(`검토 메모 적용이 중단되었습니다. (${data.canonical_transition_id})`);
+              if (data.session) {
+                renderSession(data.session);
+              }
+              await fetchSessions();
+            } catch (error) {
+              renderError(error);
+            }
+          });
+          actions.appendChild(stopButton);
+        } else if (hasAppliedPending) {
+          const resultButton = document.createElement("button");
+          resultButton.type = "button";
+          resultButton.className = "primary";
+          resultButton.textContent = "검토 메모 적용 결과 확정";
+          resultButton.setAttribute("data-testid", "aggregate-trigger-confirm-result");
+          resultButton.addEventListener("click", async () => {
+            resultButton.disabled = true;
+            try {
+              const data = await fetchJson("/api/aggregate-transition-result", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  session_id: state.currentSessionId,
+                  aggregate_fingerprint: aggregateFingerprint,
+                  canonical_transition_id: String(transitionRecord.canonical_transition_id || "").trim(),
+                }),
+              });
+              renderNotice(`검토 메모 적용 결과가 확정되었습니다. (${data.canonical_transition_id})`);
+              if (data.session) {
+                renderSession(data.session);
+              }
+              await fetchSessions();
+            } catch (error) {
+              renderError(error);
+            }
+          });
+          actions.appendChild(resultButton);
+        } else if (hasEmittedRecord) {
+          const applyButton = document.createElement("button");
+          applyButton.type = "button";
+          applyButton.className = "primary";
+          applyButton.textContent = "검토 메모 적용 실행";
+          applyButton.setAttribute("data-testid", "aggregate-trigger-apply");
+          applyButton.addEventListener("click", async () => {
+            applyButton.disabled = true;
+            try {
+              const data = await fetchJson("/api/aggregate-transition-apply", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  session_id: state.currentSessionId,
+                  aggregate_fingerprint: aggregateFingerprint,
+                  canonical_transition_id: String(transitionRecord.canonical_transition_id || "").trim(),
+                }),
+              });
+              renderNotice(`검토 메모 적용이 실행되었습니다. (${data.canonical_transition_id})`);
+              if (data.session) {
+                renderSession(data.session);
+              }
+              await fetchSessions();
+            } catch (error) {
+              renderError(error);
+            }
+          });
+          actions.appendChild(applyButton);
+        } else if (unblocked) {
+          const noteInput = document.createElement("textarea");
+          noteInput.className = "correction-input";
+          noteInput.rows = 2;
+          noteInput.placeholder = "적용 사유를 입력하세요 (필수)";
+          noteInput.setAttribute("data-testid", "aggregate-trigger-note");
+          card.appendChild(noteInput);
+
+          const startButton = document.createElement("button");
+          startButton.type = "button";
+          startButton.className = "primary";
+          startButton.textContent = "검토 메모 적용 시작";
+          startButton.disabled = true;
+          startButton.title = "사유를 입력하면 시작할 수 있습니다.";
+          startButton.setAttribute("data-testid", "aggregate-trigger-start");
+          noteInput.addEventListener("input", () => {
+            startButton.disabled = !noteInput.value.trim();
+          });
+          startButton.addEventListener("click", async () => {
+            const note = noteInput.value.trim();
+            if (!note) return;
+            startButton.disabled = true;
+            try {
+              const data = await fetchJson("/api/aggregate-transition", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  session_id: state.currentSessionId,
+                  aggregate_fingerprint: aggregateFingerprint,
+                  operator_reason_or_note: note,
+                }),
+              });
+              renderNotice(`transition record가 발행되었습니다. (${data.canonical_transition_id})`);
+              if (data.session) {
+                renderSession(data.session);
+              }
+              await fetchSessions();
+            } catch (error) {
+              renderError(error);
+            }
+          });
+          actions.appendChild(startButton);
+        } else {
+          const startButton = document.createElement("button");
+          startButton.type = "button";
+          startButton.className = "secondary";
+          startButton.textContent = "검토 메모 적용 시작";
+          startButton.disabled = true;
+          startButton.title = aggregateTriggerBlockedHelper(item);
+          startButton.setAttribute("data-testid", "aggregate-trigger-start");
+          actions.appendChild(startButton);
+        }
+        card.appendChild(actions);
+
+        aggregateTriggerList.appendChild(card);
+      });
+    }
+
     function renderSearchHistory(historyItems) {
       const items = Array.isArray(historyItems) ? historyItems.filter((item) => item && typeof item === "object") : [];
       showElement(searchHistoryBox, items.length > 0);
@@ -2625,6 +4059,28 @@
           summary.className = "history-item-summary";
           summary.textContent = item.summary_head;
           card.appendChild(summary);
+        }
+
+        const detailLines = [];
+        detailLines.push(formatAnswerModeLabel(item.answer_mode));
+        if (item.verification_label) {
+          detailLines.push(item.verification_label);
+        }
+        const sourceRoles = Array.isArray(item.source_roles)
+          ? item.source_roles.map((role) => String(role || "").trim()).filter(Boolean)
+          : [];
+        if (sourceRoles.length > 0) {
+          detailLines.push(`출처 ${sourceRoles.join(", ")}`);
+        }
+        const claimCoverageSummary = formatClaimCoverageCountSummary(item.claim_coverage_summary);
+        if (claimCoverageSummary) {
+          detailLines.push(`사실 검증 ${claimCoverageSummary}`);
+        }
+        if (detailLines.length > 0) {
+          const detailMeta = document.createElement("div");
+          detailMeta.className = "meta";
+          detailMeta.textContent = detailLines.join(" · ");
+          card.appendChild(detailMeta);
         }
 
         const pagePreviews = Array.isArray(item.pages_preview)
@@ -2737,7 +4193,11 @@
       rejectButton.disabled = !approval;
       approvalCopyPathButton.disabled = !approval;
 
-      if (!approval) return;
+      if (!approval) {
+        updateContentVerdictState();
+        updateCorrectionHelperText();
+        return;
+      }
 
       const lines = [
         `작업: ${approval.kind}`,
@@ -2746,8 +4206,18 @@
         `덮어쓰기 필요: ${approval.overwrite ? "예" : "아니오"}`,
         `생성 시각: ${formatWhen(approval.created_at)}`
       ];
+      const approvalSourceMessage = resolveApprovalSourceMessage(approval);
+      const hasRecordedCorrection = Boolean(normalizeMultilineText(approvalSourceMessage?.corrected_text || ""));
       if (Array.isArray(approval.source_paths) && approval.source_paths.length > 0) {
         lines.push(`출처: ${approval.source_paths.join(", ")}`);
+      }
+      if (usesCorrectedSaveSnapshot(approval)) {
+        lines.push("저장 기준: 기록된 수정본 스냅샷");
+        lines.push("이 미리보기는 저장 요청 시점에 고정되며, 나중에 수정본을 다시 기록해도 자동으로 바뀌지 않습니다.");
+        lines.push("더 새 수정본을 저장하려면 응답 카드에서 새 저장 요청을 다시 만들어야 합니다.");
+      } else if (hasRecordedCorrection) {
+        lines.push("저장 기준: 원래 grounded brief 초안");
+        lines.push("기록된 수정본은 이 승인 카드에 자동으로 반영되지 않습니다. 수정본 저장은 응답 카드의 별도 저장 요청으로만 진행됩니다.");
       }
       if (approval.overwrite) {
         lines.push("현재 MVP에서는 기존 파일 덮어쓰기를 지원하지 않습니다. 다른 저장 경로로 다시 요청해 주세요.");
@@ -2759,10 +4229,13 @@
       approveButton.disabled = state.isBusy || Boolean(approval.overwrite);
       reissueButton.disabled = state.isBusy || !approvalPathInput.value.trim();
       approvalCopyPathButton.disabled = !approval.requested_path;
+      updateContentVerdictState();
+      updateCorrectionHelperText();
     }
 
     function renderSession(session) {
       state.currentSessionId = session.session_id;
+      state.currentSessionMessages = Array.isArray(session.messages) ? session.messages : [];
       sessionIdInput.value = state.currentSessionId;
       setText("meta-session", state.currentSessionId);
       const sessionWebSearchPermission = normalizeWebSearchPermission(session.permissions?.web_search || state.defaultWebSearchPermission);
@@ -2770,23 +4243,37 @@
       updateWebSearchMeta(sessionWebSearchPermission);
       currentSessionTitleEl.textContent = session.title || session.session_id;
       currentSessionMetaEl.textContent = `메시지 ${session.messages?.length || 0}개 · 승인 대기 ${session.pending_approvals?.length || 0}건 · 웹 검색 ${formatWebSearchPermissionLabel(sessionWebSearchPermission)} · 마지막 업데이트 ${formatWhen(session.updated_at)}`;
+      renderReviewQueue(session.review_queue_items || []);
+      renderAggregateTriggerSection(session.recurrence_aggregate_candidates || []);
       renderTranscript(session.messages || []);
       const latestAssistantContext = findLatestAssistantContext(session.messages || []);
       const latestAssistantMessage = latestAssistantContext.assistant;
+      const correctionTargetMessage = resolveCorrectionTargetMessage(session.messages || [], latestAssistantMessage);
       if (latestAssistantMessage) {
         responseText.textContent = latestAssistantMessage.text || "응답 본문이 없습니다.";
         renderResponseOrigin(latestAssistantMessage.response_origin || null);
         renderResponseSummary(latestAssistantMessage, null);
         renderResponseFeedback(latestAssistantMessage, latestAssistantContext.userText);
+        renderContentVerdictControl(correctionTargetMessage);
+        renderCorrectionEditor(correctionTargetMessage);
+        renderCandidateConfirmationControl(correctionTargetMessage);
         renderEvidence(latestAssistantMessage.evidence || []);
         renderSummaryChunks(latestAssistantMessage.summary_chunks || []);
+        renderClaimCoverage(
+          latestAssistantMessage.claim_coverage || [],
+          latestAssistantMessage.claim_coverage_progress_summary || latestAssistantMessage.active_context?.claim_coverage_progress_summary || ""
+        );
       } else {
         responseText.textContent = "아직 보낸 요청이 없습니다.";
         renderResponseOrigin(null);
         renderResponseSummary(null, null);
         renderResponseFeedback(null);
+        renderContentVerdictControl(null);
+        renderCorrectionEditor(null);
+        renderCandidateConfirmationControl(null);
         renderEvidence([]);
         renderSummaryChunks([]);
+        renderClaimCoverage([], "");
       }
       renderContext(session.active_context || null);
       const sessionSuggestions = latestAssistantMessage?.follow_up_suggestions || session.active_context?.suggested_prompts || [];
@@ -2804,10 +4291,18 @@
       renderResponseOrigin(data.response?.response_origin || null);
       renderResponseSummary(data.response || null, data.runtime_status || null);
       const latestAssistantContext = findLatestAssistantContext(data.session?.messages || []);
+      const correctionTargetMessage = resolveCorrectionTargetMessage(data.session?.messages || [], latestAssistantContext.assistant);
       renderResponseFeedback(latestAssistantContext.assistant, latestAssistantContext.userText);
+      renderContentVerdictControl(correctionTargetMessage);
+      renderCorrectionEditor(correctionTargetMessage);
+      renderCandidateConfirmationControl(correctionTargetMessage);
       renderSelected(data.response?.selected_source_paths || []);
       renderEvidence(data.response?.evidence || []);
       renderSummaryChunks(data.response?.summary_chunks || []);
+      renderClaimCoverage(
+        data.response?.claim_coverage || [],
+        data.response?.claim_coverage_progress_summary || data.response?.active_context?.claim_coverage_progress_summary || ""
+      );
       renderPreview(data.response?.note_preview || "");
       renderContext(data.response?.active_context || data.session?.active_context || null);
       renderSuggestions(data.response?.follow_up_suggestions || data.session?.active_context?.suggested_prompts || []);
@@ -2816,8 +4311,14 @@
       if (data.session) {
         const pending = data.session.pending_approvals || [];
         renderApproval(data.response?.approval || pending[pending.length - 1] || null);
+        renderContentVerdictControl(correctionTargetMessage);
+        renderCorrectionEditor(correctionTargetMessage);
+        renderCandidateConfirmationControl(correctionTargetMessage);
       } else {
         renderApproval(data.response?.approval || null);
+        renderContentVerdictControl(null);
+        renderCorrectionEditor(null);
+        renderCandidateConfirmationControl(null);
       }
     }
 
@@ -2873,6 +4374,10 @@
       renderSession(data.session);
       const pending = data.session?.pending_approvals || [];
       renderApproval(pending[pending.length - 1] || null);
+      const latestAssistantContext = findLatestAssistantContext(data.session?.messages || []);
+      renderCorrectionEditor(
+        resolveCorrectionTargetMessage(data.session?.messages || [], latestAssistantContext.assistant)
+      );
       await fetchSessions();
     }
 
@@ -3087,11 +4592,35 @@
     responseFeedbackRetryButton.addEventListener("click", () => {
       retryLatestAssistantWithFeedback().catch(renderError);
     });
+    responseContentRejectButton.addEventListener("click", () => {
+      submitContentVerdict().catch(renderError);
+    });
+    responseContentReasonInput.addEventListener("input", () => {
+      updateContentReasonNoteState();
+    });
+    responseContentReasonSubmitButton.addEventListener("click", () => {
+      submitContentReasonNote().catch(renderError);
+    });
+    responseCorrectionInput.addEventListener("input", () => {
+      updateCorrectionFormState();
+    });
+    responseCorrectionSubmitButton.addEventListener("click", () => {
+      submitCorrection().catch(renderError);
+    });
+    responseCorrectionSaveRequestButton.addEventListener("click", () => {
+      submitCorrectedSaveRequest().catch(renderError);
+    });
+    responseCandidateConfirmationSubmitButton.addEventListener("click", () => {
+      submitCandidateConfirmation().catch(renderError);
+    });
     evidenceToggleButton.addEventListener("click", () => {
       togglePanelBody(evidenceBody, evidenceToggleButton, `근거 ${evidenceText.textContent ? evidenceText.textContent.split("\n").filter((line) => /^\d+\./.test(line)).length : 0}개 펼치기`, "접기");
     });
     summaryChunksToggleButton.addEventListener("click", () => {
       togglePanelBody(summaryChunksBody, summaryChunksToggleButton, `구간 ${summaryChunksText.textContent ? summaryChunksText.textContent.split("\n").filter((line) => /^\d+\./.test(line)).length : 0}개 펼치기`, "접기");
+    });
+    claimCoverageToggleButton.addEventListener("click", () => {
+      togglePanelBody(claimCoverageBody, claimCoverageToggleButton, `사실 검증 ${claimCoverageText.textContent ? claimCoverageText.textContent.split("\n").filter((line) => /^\d+\./.test(line)).length : 0}개 펼치기`, "접기");
     });
 
     Promise.resolve()

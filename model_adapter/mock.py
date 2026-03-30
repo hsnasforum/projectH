@@ -22,6 +22,16 @@ class MockModelAdapter(ModelAdapter):
         return f"[모의 응답] {prompt}"
 
     def summarize(self, text: str) -> str:
+        if "Summary mode: merged_chunk_outline" in text:
+            if "Summary source type: search_results" in text:
+                return "[모의 요약] " + self._summarize_search_chunk_outline(text)
+            return "[모의 요약] " + self._summarize_chunk_outline(text)
+        if "Summary mode: short_summary" in text:
+            if "Summary source type: search_results" in text:
+                return "[모의 요약] " + self._summarize_search_short_summary_prompt(text)
+            return "[모의 요약] " + self._summarize_short_summary_prompt(text)
+        if "Summary mode: chunk_note" in text:
+            return "[모의 요약] " + self._summarize_chunk_note_prompt(text)
         trimmed = text.strip().replace("\n", " ")
         return "[모의 요약] " + trimmed[:240]
 
@@ -163,6 +173,157 @@ class MockModelAdapter(ModelAdapter):
             return max(0, int(raw_value))
         except ValueError:
             return 0
+
+    def _summarize_chunk_outline(self, text: str) -> str:
+        notes: list[str] = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line.startswith("Chunk note "):
+                continue
+            _, _, content = line.partition(":")
+            cleaned = self._clean_line(content)
+            if cleaned.startswith("[모의 요약] "):
+                cleaned = cleaned[len("[모의 요약] ") :].strip()
+            if cleaned:
+                notes.append(cleaned)
+
+        if not notes:
+            trimmed = text.strip().replace("\n", " ")
+            return trimmed[:240]
+
+        def _priority(note: str) -> tuple[int, int]:
+            keywords = {
+                "핵심": 6,
+                "결정": 6,
+                "결론": 5,
+                "갈등": 5,
+                "마지막": 4,
+                "관계": 4,
+                "위험": 3,
+                "변화": 3,
+                "승인": 3,
+            }
+            score = sum(weight for keyword, weight in keywords.items() if keyword in note)
+            return (score, len(note))
+
+        ordered = sorted(
+            enumerate(notes),
+            key=lambda item: (-_priority(item[1])[0], -_priority(item[1])[1], item[0]),
+        )
+        selected: list[str] = []
+        seen: set[str] = set()
+        for _, note in ordered:
+            normalized = note.strip().lower()
+            if not normalized or normalized in seen:
+                continue
+            selected.append(note)
+            seen.add(normalized)
+            if len(selected) >= 4:
+                break
+
+        if not selected:
+            selected = notes[:4]
+        return " ".join(selected)[:240]
+
+    def _summarize_search_chunk_outline(self, text: str) -> str:
+        notes: list[str] = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line.startswith("Chunk note "):
+                continue
+            _, _, content = line.partition(":")
+            cleaned = self._clean_line(content)
+            if cleaned.startswith("[모의 요약] "):
+                cleaned = cleaned[len("[모의 요약] ") :].strip()
+            if cleaned:
+                notes.append(cleaned)
+
+        if not notes:
+            trimmed = text.strip().replace("\n", " ")
+            return trimmed[:240]
+
+        selected: list[str] = []
+        seen: set[str] = set()
+        for note in notes:
+            normalized = note.strip().lower()
+            if not normalized or normalized in seen:
+                continue
+            selected.append(note.rstrip("."))
+            seen.add(normalized)
+            if len(selected) >= 3:
+                break
+
+        if not selected:
+            return notes[0][:240]
+        if len(selected) == 1:
+            return selected[0][:240]
+        return ("여러 검색 결과를 종합하면 " + ", ".join(selected[:-1]) + "이고, " + selected[-1] + "입니다.")[:240]
+
+    def _summarize_short_summary_prompt(self, text: str) -> str:
+        body = self._extract_summary_prompt_body(text)
+        candidates: list[str] = []
+        for raw_line in body.splitlines():
+            line = self._clean_line(raw_line)
+            if not line:
+                continue
+            candidates.append(line)
+            if len(" ".join(candidates)) >= 240:
+                break
+        if candidates:
+            return " ".join(candidates)[:240]
+        trimmed = body.strip().replace("\n", " ")
+        return trimmed[:240]
+
+    def _summarize_search_short_summary_prompt(self, text: str) -> str:
+        body = self._extract_summary_prompt_body(text)
+        findings: list[str] = []
+        seen: set[str] = set()
+        for raw_line in body.splitlines():
+            line = self._clean_line(raw_line)
+            if not line or line.startswith(("Search query:", "Selected sources:", "Source path:", "Match type:", "Snippet:", "## Source:")):
+                continue
+            normalized = line.lower()
+            if normalized in seen:
+                continue
+            findings.append(line.rstrip("."))
+            seen.add(normalized)
+            if len(findings) >= 3:
+                break
+        if not findings:
+            trimmed = body.strip().replace("\n", " ")
+            return trimmed[:240]
+        if len(findings) == 1:
+            return findings[0][:240]
+        return ("여러 검색 결과를 종합하면 " + ", ".join(findings[:-1]) + "이고, " + findings[-1] + "입니다.")[:240]
+
+    def _summarize_chunk_note_prompt(self, text: str) -> str:
+        body = self._extract_summary_prompt_body(text)
+        candidates: list[str] = []
+        for raw_line in body.splitlines():
+            line = self._clean_line(raw_line)
+            if not line:
+                continue
+            if line.startswith(("## Source:", "Match type:", "Snippet:")):
+                continue
+            candidates.append(line)
+            if len(" ".join(candidates)) >= 240:
+                break
+        if candidates:
+            return " ".join(candidates)[:240]
+        trimmed = body.strip().replace("\n", " ")
+        return trimmed[:240]
+
+    def _extract_summary_prompt_body(self, text: str) -> str:
+        for marker in (
+            "Document excerpt:",
+            "Selected search-result excerpt:",
+            "Document text:",
+            "Selected search-result text:",
+        ):
+            _, separator, tail = text.partition(marker)
+            if separator:
+                return tail.strip()
+        return text.strip()
 
     def _extract_title(self, text: str, fallback: str) -> str:
         for raw_line in text.splitlines():

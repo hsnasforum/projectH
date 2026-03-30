@@ -129,6 +129,11 @@ class OllamaAdapterTest(unittest.TestCase):
         self.assertEqual(request_payload["stream"], True)
         self.assertIn("Summarize the provided document", str(request_payload["system"]))
         self.assertIn("in Korean", str(request_payload["system"]))
+        self.assertIn("If the text is narrative or fiction", str(request_payload["system"]))
+        self.assertIn("If the text is informational or argumentative", str(request_payload["system"]))
+        self.assertIn("Summary source type: search_results", str(request_payload["system"]))
+        self.assertIn("Summary source type: local_document", str(request_payload["system"]))
+        self.assertIn("Return only a concise Korean summary in plain text", str(request_payload["system"]))
 
     def test_respond_defaults_to_korean(self) -> None:
         adapter = OllamaModelAdapter(base_url=self.base_url, model="qwen2.5:3b", timeout_seconds=5)

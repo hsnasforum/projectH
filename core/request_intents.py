@@ -6,6 +6,8 @@ from typing import Literal
 
 
 SearchIntentKind = Literal["none", "explicit_web", "live_latest", "external_fact"]
+FreshnessRisk = Literal["low", "high"]
+AnswerMode = Literal["general", "entity_card", "latest_update"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,10 +16,14 @@ class SearchIntentDecision:
     query: str | None = None
     score: int = 0
     reasons: tuple[str, ...] = ()
+    freshness_risk: FreshnessRisk = "low"
+    answer_mode: AnswerMode = "general"
     suggestion_kind: SearchIntentKind = "none"
     suggestion_query: str | None = None
     suggestion_score: int = 0
     suggestion_reasons: tuple[str, ...] = ()
+    suggestion_freshness_risk: FreshnessRisk = "low"
+    suggestion_answer_mode: AnswerMode = "general"
 
 
 _DIRECT_WEB_MARKERS = (
@@ -81,6 +87,42 @@ _LATEST_INFO_KEYWORDS = (
     "개봉",
     "예매",
     "이슈",
+)
+
+_HIGH_FRESHNESS_HINTS = (
+    *_LIVE_INFO_KEYWORDS,
+    *_LATEST_INFO_KEYWORDS,
+    "출시",
+    "출시일",
+    "발매",
+    "발표",
+    "오픈",
+    "서비스 종료",
+    "가격",
+    "요금",
+    "예정",
+    "예약",
+    "버전",
+    "실적",
+    "선거",
+)
+
+_ENTITY_CARD_HINTS = (
+    "누구야",
+    "누구예요",
+    "누군지",
+    "뭐야",
+    "뭐예요",
+    "뭔지",
+    "무슨",
+    "어떤",
+    "뭐하는",
+    "소개",
+    "설명",
+    "알려줘",
+    "알려주세요",
+    "정리해줘",
+    "정리해주세요",
 )
 
 _IMPLICIT_WEB_SEARCH_ACTION_HINTS = (
@@ -470,35 +512,97 @@ def _extract_external_fact_suggestion(normalized: str) -> SearchIntentDecision:
     )
 
 
+def _infer_freshness_risk_and_answer_mode(
+    *,
+    normalized: str,
+    kind: SearchIntentKind,
+    query: str | None,
+) -> tuple[FreshnessRisk, AnswerMode]:
+    lowered_query = str(query or "").strip().lower()
+    if kind == "live_latest":
+        return "high", "latest_update"
+
+    if any(keyword in normalized for keyword in _HIGH_FRESHNESS_HINTS):
+        return "high", "latest_update"
+
+    if kind == "external_fact":
+        return "low", "entity_card"
+
+    if kind == "explicit_web":
+        if any(keyword in normalized for keyword in _ENTITY_CARD_HINTS):
+            return "low", "entity_card"
+        if any(
+            token in lowered_query
+            for token in ("profile", "wiki", "official", "소개", "설명", "정체")
+        ):
+            return "low", "entity_card"
+        return "low", "general"
+
+    return "low", "general"
+
+
+def _decorate_intent_decision(
+    normalized: str,
+    decision: SearchIntentDecision,
+) -> SearchIntentDecision:
+    freshness_risk, answer_mode = _infer_freshness_risk_and_answer_mode(
+        normalized=normalized,
+        kind=decision.kind,
+        query=decision.query,
+    )
+    suggestion_freshness_risk, suggestion_answer_mode = _infer_freshness_risk_and_answer_mode(
+        normalized=normalized,
+        kind=decision.suggestion_kind,
+        query=decision.suggestion_query,
+    )
+    return SearchIntentDecision(
+        kind=decision.kind,
+        query=decision.query,
+        score=decision.score,
+        reasons=decision.reasons,
+        freshness_risk=freshness_risk,
+        answer_mode=answer_mode,
+        suggestion_kind=decision.suggestion_kind,
+        suggestion_query=decision.suggestion_query,
+        suggestion_score=decision.suggestion_score,
+        suggestion_reasons=decision.suggestion_reasons,
+        suggestion_freshness_risk=suggestion_freshness_risk,
+        suggestion_answer_mode=suggestion_answer_mode,
+    )
+
+
 def classify_search_intent(user_text: str | None) -> SearchIntentDecision:
     normalized = normalize_user_text(user_text)
     if not normalized:
-        return SearchIntentDecision(reasons=("empty",))
+        return _decorate_intent_decision(normalized, SearchIntentDecision(reasons=("empty",)))
 
     explicit_candidate = _extract_explicit_candidate(normalized)
     if explicit_candidate.kind == "explicit_web":
-        return explicit_candidate
+        return _decorate_intent_decision(normalized, explicit_candidate)
 
     if _has_local_document_hint(normalized):
-        return SearchIntentDecision(reasons=("local_document_hint",))
+        return _decorate_intent_decision(normalized, SearchIntentDecision(reasons=("local_document_hint",)))
 
     live_latest_candidate = _extract_live_latest_candidate(normalized)
     external_fact_candidate = _extract_external_fact_candidate(normalized)
     external_fact_suggestion = _extract_external_fact_suggestion(normalized)
 
     if live_latest_candidate.score >= external_fact_candidate.score and live_latest_candidate.kind != "none":
-        return live_latest_candidate
+        return _decorate_intent_decision(normalized, live_latest_candidate)
     if external_fact_candidate.kind != "none":
-        return external_fact_candidate
+        return _decorate_intent_decision(normalized, external_fact_candidate)
     if external_fact_suggestion.suggestion_query:
-        return SearchIntentDecision(
-            reasons=("low_confidence_web_candidate",),
-            suggestion_kind=external_fact_suggestion.suggestion_kind,
-            suggestion_query=external_fact_suggestion.suggestion_query,
-            suggestion_score=external_fact_suggestion.suggestion_score,
-            suggestion_reasons=external_fact_suggestion.suggestion_reasons,
+        return _decorate_intent_decision(
+            normalized,
+            SearchIntentDecision(
+                reasons=("low_confidence_web_candidate",),
+                suggestion_kind=external_fact_suggestion.suggestion_kind,
+                suggestion_query=external_fact_suggestion.suggestion_query,
+                suggestion_score=external_fact_suggestion.suggestion_score,
+                suggestion_reasons=external_fact_suggestion.suggestion_reasons,
+            ),
         )
-    return SearchIntentDecision(reasons=("no_web_intent_signal",))
+    return _decorate_intent_decision(normalized, SearchIntentDecision(reasons=("no_web_intent_signal",)))
 
 
 def is_explicit_web_search_request(user_text: str | None) -> bool:

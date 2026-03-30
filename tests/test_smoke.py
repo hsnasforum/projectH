@@ -1,16 +1,20 @@
+import hashlib
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from app.web import WebAppService
+from config.settings import AppSettings
 from core.agent_loop import AgentLoop, UserRequest
 from model_adapter.mock import MockModelAdapter
 from storage.session_store import SessionStore
 from storage.task_log import TaskLogger
 from storage.web_search_store import WebSearchStore
 from tools.file_reader import FileReaderTool
-from tools.file_search import FileSearchTool
+from tools.file_search import FileSearchResult, FileSearchTool
 from tools.write_note import WriteNoteTool
 
 
@@ -90,6 +94,64 @@ class _CaptureContextModel(MockModelAdapter):
             summary_hint=summary_hint,
             evidence_items=evidence_items,
         )
+
+
+class _NarrativeReduceModel(MockModelAdapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.summary_inputs: list[str] = []
+
+    def summarize(self, text: str) -> str:
+        self.summary_inputs.append(text)
+        normalized = " ".join(text.split())
+        if "Summary mode: merged_chunk_outline" in text:
+            return (
+                "태양과 영희는 서로의 감정을 모른 척할 수 없게 되고, "
+                "철수는 그 변화를 모른 채 진심을 드러내며, "
+                "마지막에는 관계가 끝난 게 아니라는 신호가 다시 남습니다."
+            )
+        if "철수는 태양에게" in normalized:
+            return "철수는 태양에게 영희를 향한 진심을 털어놓고 태양은 더 깊이 흔들립니다."
+        if "오늘 끝난 거 아니죠" in normalized:
+            return "전시 이후 영희는 오늘이 끝난 게 아니라고 다시 신호를 보냅니다."
+        if "못 들은 척 못 하겠어" in normalized:
+            return "태양과 영희는 더는 감정을 모른 척할 수 없게 됩니다."
+        return super().summarize(text)
+
+
+class _SearchReduceModel(MockModelAdapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.summary_inputs: list[str] = []
+
+    def summarize(self, text: str) -> str:
+        self.summary_inputs.append(text)
+        if "Summary mode: merged_chunk_outline" in text and "Summary source type: search_results" in text:
+            return (
+                "여러 검색 결과를 종합하면 예산 통제와 승인 기반 저장 유지가 공통으로 강조되고, "
+                "문서마다 실행 항목의 우선순위와 범위에는 차이가 있다는 점이 함께 드러납니다."
+            )
+        return super().summarize(text)
+
+
+class _ShortSummaryCaptureModel(MockModelAdapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.summary_inputs: list[str] = []
+
+    def summarize(self, text: str) -> str:
+        self.summary_inputs.append(text)
+        if "Summary mode: short_summary" in text and "Summary source type: search_results" in text:
+            return (
+                "여러 검색 결과를 종합하면 예산 통제 유지가 공통으로 보이고, "
+                "문서마다 우선 실행 항목과 조정 범위가 다르다는 점이 함께 정리됩니다."
+            )
+        if "Summary mode: short_summary" in text and "Summary source type: local_document" in text:
+            return (
+                "태양과 영희의 긴장이 커지고 철수는 변화를 놓친 채 일정을 밀어붙이며, "
+                "마지막에는 관계가 아직 끝나지 않았다는 신호가 남습니다."
+            )
+        return super().summarize(text)
 
 
 class SmokeTest(unittest.TestCase):
@@ -243,7 +305,13 @@ class SmokeTest(unittest.TestCase):
             self.assertEqual(response.status, "answer")
             self.assertEqual(response.actions_taken, ["web_search"])
             self.assertEqual(response.response_origin["provider"], "web")
-            self.assertIn("웹 검색 요약: 오늘 날씨", response.text)
+            self.assertIn("웹 최신 확인: 오늘 날씨", response.text)
+            self.assertIn("현재 확인된 최신 정보:", response.text)
+            self.assertIn("기준:", response.text)
+            self.assertIn("확인 강도:", response.text)
+            self.assertEqual(response.response_origin["answer_mode"], "latest_update")
+            self.assertGreaterEqual(len(response.response_origin["source_roles"]), 1)
+            self.assertTrue(response.response_origin["verification_label"])
 
     def test_external_fact_info_request_uses_web_search_when_permission_enabled(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -564,7 +632,9 @@ class SmokeTest(unittest.TestCase):
 
             self.assertEqual(response.actions_taken, ["web_search"])
             self.assertEqual(response.response_origin["provider"], "web")
-            self.assertIn("웹 검색 요약: 아이유 최신 소식", response.text)
+            self.assertIn("웹 최신 확인: 아이유 최신 소식", response.text)
+            self.assertEqual(response.response_origin["answer_mode"], "latest_update")
+            self.assertTrue(response.response_origin["verification_label"])
 
     def test_external_fact_response_reflects_web_search_permission(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -883,7 +953,7 @@ class SmokeTest(unittest.TestCase):
             self.assertIn("메이플스토리는 넥슨이 서비스하거나 배급하는 액션 RPG 게임입니다.", response.text)
             self.assertIn("이용 형태는 온라인입니다.", response.text)
             self.assertIn("한 줄 정의:", response.text)
-            self.assertIn("사실 카드:", response.text)
+            self.assertIn("불확실 정보:", response.text)
             self.assertNotIn("협업 이벤트", response.text)
             self.assertEqual(response.active_context["source_paths"][0], "https://namu.wiki/w/%EB%A9%94%EC%9D%B4%ED%94%8C%EC%8A%A4%ED%86%A0%EB%A6%AC")
 
@@ -951,12 +1021,14 @@ class SmokeTest(unittest.TestCase):
             )
 
             self.assertEqual(response.actions_taken, ["web_search"])
-            self.assertIn("메이플스토리는 넥슨이 서비스하거나 배급하는 액션 RPG 게임입니다.", response.text)
-            self.assertIn("이용 형태는 온라인입니다.", response.text)
+            self.assertIn("한 줄 정의:", response.text)
+            self.assertIn("메이플스토리는 넥슨이 서비스하는 온라인 액션 RPG 게임이다.", response.text)
             self.assertIn("근거 출처:", response.text)
             self.assertIn("사실 카드:", response.text)
             self.assertIn("서비스/배급: 넥슨", response.text)
             self.assertIn("이용 형태: 온라인", response.text)
+            self.assertIn("불확실 정보:", response.text)
+            self.assertIn("장르/성격: 액션 RPG 게임", response.text)
             self.assertIn("[백과 기반]", response.text)
             self.assertNotIn("영상 더보기", response.text)
             self.assertIn("메이플스토리 설명", search_tool.search_calls)
@@ -1046,10 +1118,288 @@ class SmokeTest(unittest.TestCase):
             self.assertTrue(
                 any(
                     call in search_tool.search_calls
-                    for call in ["붉은사막 플랫폼", "붉은사막 서비스", "붉은사막 운영사", "붉은사막 개발사"]
+                    for call in [
+                        "붉은사막 서비스 공식",
+                        "붉은사막 공식 플랫폼",
+                        "붉은사막 개발사 펄어비스",
+                        "붉은사막 개발 중",
+                    ]
                 )
             )
             self.assertGreater(len(search_tool.search_calls), 4)
+
+    def test_web_search_entity_summary_uses_claim_confirmation_query_for_weak_slot(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+
+            search_tool = _FakeWebSearchTool(
+                {
+                    "붉은사막": [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 서비스하는 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                    "붉은사막 소개": [
+                        SimpleNamespace(
+                            title="붉은사막 공식 소개",
+                            url="https://official.example.com/crimson-desert-overview",
+                            snippet="붉은사막은 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                    "붉은사막 설명": [
+                        SimpleNamespace(
+                            title="붉은사막 소개",
+                            url="https://portal.example.com/crimson-desert-summary",
+                            snippet="붉은사막은 파이웰 대륙을 배경으로 하는 게임이다.",
+                        ),
+                    ],
+                    "붉은사막 위키": [
+                        SimpleNamespace(
+                            title="붉은사막 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                    "붉은사막 펄어비스 서비스 공식": [
+                        SimpleNamespace(
+                            title="Crimson Desert | Pearl Abyss",
+                            url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=1000",
+                            snippet="붉은사막은 펄어비스가 서비스하는 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                    "붉은사막 펄어비스 서비스": [
+                        SimpleNamespace(
+                            title="Crimson Desert | Pearl Abyss",
+                            url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=999",
+                            snippet="붉은사막은 펄어비스가 서비스하는 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                }
+            )
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": search_tool,
+                },
+                notes_dir=str(tmp_path / "notes"),
+                web_search_store=WebSearchStore(base_dir=str(tmp_path / "web-search")),
+            )
+
+            response = loop.handle(
+                UserRequest(
+                    user_text="붉은사막에 대해 알려줘",
+                    session_id="crimson-desert-claim-confirm-session",
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+
+            self.assertEqual(response.actions_taken, ["web_search"])
+            self.assertIn("서비스/배급: 펄어비스", response.text)
+            self.assertIn("붉은사막 펄어비스 서비스 공식", search_tool.search_calls)
+            self.assertNotIn("붉은사막 펄어비스 서비스", search_tool.search_calls)
+
+    def test_web_search_entity_summary_uses_official_probe_query_for_missing_slot(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+
+            search_tool = _FakeWebSearchTool(
+                {
+                    "붉은사막": [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                    "붉은사막 소개": [
+                        SimpleNamespace(
+                            title="붉은사막 소개",
+                            url="https://wiki.example.com/crimson-desert-overview",
+                            snippet="붉은사막은 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                    "붉은사막 설명": [
+                        SimpleNamespace(
+                            title="붉은사막 설명",
+                            url="https://blog.example.com/crimson-desert-summary",
+                            snippet="붉은사막은 파이웰 대륙을 배경으로 한다.",
+                        ),
+                    ],
+                    "붉은사막 위키": [
+                        SimpleNamespace(
+                            title="붉은사막 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                    "붉은사막 공식 플랫폼": [
+                        SimpleNamespace(
+                            title="Crimson Desert | Pearl Abyss",
+                            url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=321",
+                            snippet="붉은사막은 PC와 콘솔 플랫폼에서 즐길 수 있다.",
+                        ),
+                    ],
+                }
+            )
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": search_tool,
+                },
+                notes_dir=str(tmp_path / "notes"),
+                web_search_store=WebSearchStore(base_dir=str(tmp_path / "web-search")),
+            )
+
+            response = loop.handle(
+                UserRequest(
+                    user_text="붉은사막에 대해 알려줘",
+                    session_id="crimson-desert-platform-probe-session",
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+
+            self.assertEqual(response.actions_taken, ["web_search"])
+            self.assertIn("붉은사막 공식 플랫폼", search_tool.search_calls)
+            self.assertIn("이용 형태: PC / 콘솔", response.text)
+
+    def test_web_search_entity_summary_runs_third_probe_variant_for_remaining_missing_slot(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+
+            search_tool = _FakeWebSearchTool(
+                {
+                    "붉은사막": [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 서비스하는 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                    "붉은사막 소개": [
+                        SimpleNamespace(
+                            title="붉은사막 소개",
+                            url="https://wiki.example.com/crimson-desert-overview",
+                            snippet="붉은사막은 파이웰 대륙을 배경으로 한다.",
+                        ),
+                    ],
+                    "붉은사막 설명": [
+                        SimpleNamespace(
+                            title="붉은사막 설명",
+                            url="https://blog.example.com/crimson-desert-summary",
+                            snippet="붉은사막은 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                    "붉은사막 위키": [
+                        SimpleNamespace(
+                            title="붉은사막 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                    "붉은사막 플랫폼": [
+                        SimpleNamespace(
+                            title="붉은사막 플랫폼 안내",
+                            url="https://official.example.com/crimson-desert-platform",
+                            snippet="붉은사막은 PC와 콘솔에서 즐길 수 있다.",
+                        ),
+                    ],
+                }
+            )
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": search_tool,
+                },
+                notes_dir=str(tmp_path / "notes"),
+                web_search_store=WebSearchStore(base_dir=str(tmp_path / "web-search")),
+            )
+
+            response = loop.handle(
+                UserRequest(
+                    user_text="붉은사막에 대해 알려줘",
+                    session_id="crimson-desert-third-probe-session",
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+
+            self.assertEqual(response.actions_taken, ["web_search"])
+            self.assertIn("붉은사막 공식 플랫폼", search_tool.search_calls)
+            self.assertIn("붉은사막 플랫폼 위키", search_tool.search_calls)
+            self.assertIn("붉은사막 플랫폼", search_tool.search_calls)
+            self.assertIn("이용 형태: PC / 콘솔", response.text)
+
+    def test_web_search_entity_summary_marks_unresolved_slots_when_claim_support_is_weak(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": _FakeWebSearchTool(
+                        [
+                            SimpleNamespace(
+                                title="붉은사막 - 나무위키",
+                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                        ]
+                    ),
+                },
+                notes_dir=str(tmp_path / "notes"),
+                web_search_store=WebSearchStore(base_dir=str(tmp_path / "web-search")),
+            )
+
+            response = loop.handle(
+                UserRequest(
+                    user_text="붉은사막에 대해 알려줘",
+                    session_id="crimson-desert-weak-coverage-session",
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+
+            self.assertEqual(response.actions_taken, ["web_search"])
+            self.assertIn("한 줄 정의:", response.text)
+            self.assertIn("불확실 정보:", response.text)
+            self.assertIn("추가 확인 필요:", response.text)
+            self.assertIn("개발: 펄어비스 (단일 출처, 백과 기반)", response.text)
+            self.assertIn("장르/성격: 오픈월드 액션 어드벤처 게임 (단일 출처, 백과 기반)", response.text)
+            self.assertIn("상태: 개발 중 (단일 출처, 백과 기반)", response.text)
+            self.assertIn("서비스/배급: 교차 확인 가능한 근거가 더 필요합니다.", response.text)
+            self.assertIn("이용 형태: 교차 확인 가능한 근거가 더 필요합니다.", response.text)
+            self.assertGreaterEqual(len(response.claim_coverage), 5)
+            coverage_by_slot = {
+                str(item.get("slot") or ""): dict(item)
+                for item in response.claim_coverage
+                if isinstance(item, dict)
+            }
+            self.assertEqual(coverage_by_slot["개발"]["status"], "weak")
+            self.assertEqual(coverage_by_slot["개발"]["rendered_as"], "uncertain")
+            self.assertEqual(coverage_by_slot["서비스/배급"]["status"], "missing")
+            self.assertEqual(coverage_by_slot["이용 형태"]["status"], "missing")
+            self.assertIn("붉은사막 서비스 공식 검색해봐", response.follow_up_suggestions)
+            self.assertIn("붉은사막 공식 플랫폼 검색해봐", response.follow_up_suggestions)
+            self.assertIn("붉은사막 개발사 검색해봐", response.follow_up_suggestions)
 
     def test_web_search_entity_summary_prefers_trusted_diverse_sources(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -1120,6 +1470,100 @@ class SmokeTest(unittest.TestCase):
                     "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=123",
                 ],
             )
+
+    def test_entity_reinvestigation_query_reports_claim_progress(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            search_tool = _FakeWebSearchTool(
+                {
+                    "붉은사막에 대해 알려줘": [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                    "붉은사막": [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                    "붉은사막 공식 플랫폼 검색해봐": [
+                        SimpleNamespace(
+                            title="붉은사막 | 플랫폼 - 공식",
+                            url="https://crimsondesert.pearlabyss.com/ko-KR/Board/Detail?_boardNo=12",
+                            snippet="붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.",
+                        ),
+                    ],
+                    "붉은사막 공식 플랫폼": [
+                        SimpleNamespace(
+                            title="붉은사막 | 플랫폼 - 공식",
+                            url="https://crimsondesert.pearlabyss.com/ko-KR/Board/Detail?_boardNo=12",
+                            snippet="붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.",
+                        ),
+                    ],
+                },
+                pages={
+                    "https://crimsondesert.pearlabyss.com/ko-KR/Board/Detail?_boardNo=12": {
+                        "title": "붉은사막 | 플랫폼 - 공식",
+                        "text": "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이며 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임입니다.",
+                        "excerpt": "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정입니다.",
+                    }
+                },
+            )
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": search_tool,
+                },
+                notes_dir=str(tmp_path / "notes"),
+                web_search_store=WebSearchStore(base_dir=str(tmp_path / "web-search")),
+            )
+
+            first = loop.handle(
+                UserRequest(
+                    user_text="붉은사막에 대해 알려줘",
+                    session_id="entity-progress-session",
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+            self.assertEqual(first.response_origin["answer_mode"], "entity_card")
+            self.assertIsNone(first.claim_coverage_progress_summary)
+            first_search_call_count = len(search_tool.search_calls)
+
+            second = loop.handle(
+                UserRequest(
+                    user_text="붉은사막 공식 플랫폼 검색해봐",
+                    session_id="entity-progress-session",
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+
+            self.assertEqual(second.actions_taken, ["web_search"])
+            self.assertEqual(second.response_origin["provider"], "web")
+            self.assertEqual(second.response_origin["answer_mode"], "entity_card")
+            self.assertTrue(second.claim_coverage_progress_summary)
+            self.assertIn("이용 형태", second.claim_coverage_progress_summary)
+            self.assertIn("단일 출처 상태", second.claim_coverage_progress_summary)
+            coverage_by_slot = {
+                str(item.get("slot") or ""): dict(item)
+                for item in second.claim_coverage
+                if isinstance(item, dict)
+            }
+            self.assertEqual(coverage_by_slot["이용 형태"]["status"], "weak")
+            self.assertEqual(coverage_by_slot["이용 형태"]["progress_state"], "unchanged")
+            self.assertEqual(coverage_by_slot["이용 형태"]["progress_label"], "유지")
+            self.assertTrue(coverage_by_slot["이용 형태"]["is_focus_slot"])
+            self.assertIn("웹 검색 요약: 붉은사막", second.text)
+            second_search_calls = search_tool.search_calls[first_search_call_count:]
+            self.assertIn("붉은사막", second_search_calls)
+            self.assertIn("붉은사막 공식 플랫폼", second_search_calls)
 
     def test_web_search_entity_summary_prefers_multi_source_agreement_over_single_blog_claim(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -1772,6 +2216,25 @@ class SmokeTest(unittest.TestCase):
             self.assertTrue(response.requires_approval)
             self.assertEqual(response.status, "needs_approval")
             self.assertIsNotNone(response.approval)
+            self.assertEqual(response.artifact_kind, "grounded_brief")
+            self.assertTrue(str(response.artifact_id).startswith("artifact-"))
+            self.assertEqual(response.approval["artifact_id"], response.artifact_id)
+            self.assertEqual(response.approval["save_content_source"], "original_draft")
+            self.assertEqual(response.source_message_id, response.approval["source_message_id"])
+            self.assertIsNotNone(response.original_response_snapshot)
+            self.assertEqual(response.original_response_snapshot["artifact_id"], response.artifact_id)
+            self.assertEqual(response.original_response_snapshot["artifact_kind"], "grounded_brief")
+            self.assertEqual(response.original_response_snapshot["draft_text"], response.text)
+            self.assertEqual(response.original_response_snapshot["source_paths"], [str(source_path)])
+            self.assertIsNone(response.original_response_snapshot["response_origin"])
+            self.assertEqual(
+                response.original_response_snapshot["summary_chunks_snapshot"],
+                response.summary_chunks,
+            )
+            self.assertEqual(
+                response.original_response_snapshot["evidence_snapshot"],
+                response.evidence,
+            )
             self.assertGreater(len(response.follow_up_suggestions), 0)
             self.assertIsNotNone(response.active_context)
             self.assertIsNotNone(response.proposed_note_path)
@@ -1781,7 +2244,27 @@ class SmokeTest(unittest.TestCase):
             session = loop.session_store.get_session("session-1")
             self.assertEqual(len(session["pending_approvals"]), 1)
             self.assertEqual(session["active_context"]["label"], "source.md")
+            self.assertEqual(session["pending_approvals"][0]["artifact_id"], response.artifact_id)
+            self.assertEqual(session["pending_approvals"][0]["save_content_source"], "original_draft")
+            self.assertEqual(session["pending_approvals"][0]["source_message_id"], response.source_message_id)
+            self.assertEqual(session["messages"][-1]["artifact_id"], response.artifact_id)
+            self.assertEqual(session["messages"][-1]["artifact_kind"], "grounded_brief")
+            self.assertEqual(session["messages"][-1]["source_message_id"], response.source_message_id)
+            self.assertEqual(session["messages"][-1]["original_response_snapshot"]["artifact_id"], response.artifact_id)
+            self.assertEqual(
+                session["messages"][-1]["original_response_snapshot"]["draft_text"],
+                response.text,
+            )
             self.assertFalse(Path(response.proposed_note_path or "").exists())
+            log_records = [
+                json.loads(line)
+                for line in (tmp_path / "task_log.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            approval_record = next(record for record in log_records if record["action"] == "approval_requested")
+            self.assertEqual(approval_record["detail"]["artifact_id"], response.artifact_id)
+            self.assertEqual(approval_record["detail"]["source_message_id"], response.source_message_id)
+            self.assertEqual(approval_record["detail"]["save_content_source"], "original_draft")
 
     def test_pending_approval_can_be_executed_once_by_approval_id(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -1813,6 +2296,8 @@ class SmokeTest(unittest.TestCase):
                 )
             )
             approval_id = first.approval["approval_id"]
+            artifact_id = first.artifact_id
+            source_message_id = first.approval["source_message_id"]
 
             second = loop.handle(
                 UserRequest(
@@ -1830,9 +2315,54 @@ class SmokeTest(unittest.TestCase):
             )
 
             self.assertEqual(second.status, "saved")
+            self.assertEqual(second.artifact_id, artifact_id)
+            self.assertEqual(second.artifact_kind, "grounded_brief")
+            self.assertEqual(second.source_message_id, source_message_id)
+            self.assertEqual(second.save_content_source, "original_draft")
+            self.assertIsNone(second.corrected_outcome)
             self.assertTrue(note_path.exists())
             self.assertEqual(third.status, "error")
             self.assertIn("찾지 못했습니다", third.text)
+            session = loop.session_store.get_session("session-approval")
+            source_messages = [
+                message
+                for message in session["messages"]
+                if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
+            ]
+            self.assertTrue(source_messages)
+            corrected_outcome = source_messages[-1].get("corrected_outcome")
+            self.assertIsNotNone(corrected_outcome)
+            self.assertEqual(corrected_outcome["outcome"], "accepted_as_is")
+            self.assertEqual(corrected_outcome["artifact_id"], artifact_id)
+            self.assertEqual(corrected_outcome["approval_id"], approval_id)
+            self.assertEqual(corrected_outcome["saved_note_path"], str(note_path))
+            self.assertEqual(corrected_outcome["source_message_id"], source_messages[-1]["message_id"])
+            saved_messages = [
+                message
+                for message in session["messages"]
+                if message.get("saved_note_path") == str(note_path)
+            ]
+            self.assertTrue(saved_messages)
+            self.assertEqual(saved_messages[-1]["artifact_id"], artifact_id)
+            self.assertEqual(saved_messages[-1]["source_message_id"], source_message_id)
+            self.assertEqual(saved_messages[-1]["save_content_source"], "original_draft")
+            log_records = [
+                json.loads(line)
+                for line in (tmp_path / "task_log.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            approval_granted = next(record for record in log_records if record["action"] == "approval_granted")
+            write_note = next(record for record in log_records if record["action"] == "write_note" and record["detail"].get("approval_id") == approval_id)
+            corrected_outcome_recorded = next(record for record in log_records if record["action"] == "corrected_outcome_recorded")
+            self.assertEqual(approval_granted["detail"]["artifact_id"], artifact_id)
+            self.assertEqual(approval_granted["detail"]["source_message_id"], source_message_id)
+            self.assertEqual(approval_granted["detail"]["save_content_source"], "original_draft")
+            self.assertEqual(write_note["detail"]["artifact_id"], artifact_id)
+            self.assertEqual(write_note["detail"]["source_message_id"], source_message_id)
+            self.assertEqual(write_note["detail"]["save_content_source"], "original_draft")
+            self.assertEqual(corrected_outcome_recorded["detail"]["artifact_id"], artifact_id)
+            self.assertEqual(corrected_outcome_recorded["detail"]["approval_id"], approval_id)
+            self.assertEqual(corrected_outcome_recorded["detail"]["saved_note_path"], str(note_path))
 
     def test_pending_approval_can_be_reissued_with_new_path(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -1876,12 +2406,121 @@ class SmokeTest(unittest.TestCase):
             )
 
             self.assertEqual(second.status, "needs_approval")
+            self.assertEqual(second.artifact_id, first.artifact_id)
+            self.assertEqual(second.approval["artifact_id"], first.artifact_id)
+            self.assertEqual(second.source_message_id, first.source_message_id)
+            self.assertEqual(second.approval["source_message_id"], first.source_message_id)
+            self.assertEqual(second.approval["save_content_source"], "original_draft")
+            self.assertEqual(second.save_content_source, "original_draft")
             self.assertEqual(second.proposed_note_path, str(second_note_path))
             self.assertNotEqual(second.approval["approval_id"], first_approval_id)
+            self.assertIsNotNone(second.approval_reason_record)
+            self.assertEqual(second.approval_reason_record["reason_scope"], "approval_reissue")
+            self.assertEqual(second.approval_reason_record["reason_label"], "path_change")
+            self.assertEqual(second.approval_reason_record["artifact_id"], first.artifact_id)
+            self.assertTrue(second.approval_reason_record["source_message_id"])
+            self.assertEqual(second.approval_reason_record["approval_id"], second.approval["approval_id"])
+            self.assertEqual(
+                second.approval["approval_reason_record"]["approval_id"],
+                second.approval["approval_id"],
+            )
             self.assertIn("새 경로로 저장하려면 다시 승인해 주세요.", second.text)
             session = loop.session_store.get_session("session-reissue")
             self.assertEqual(len(session["pending_approvals"]), 1)
             self.assertEqual(session["pending_approvals"][0]["requested_path"], str(second_note_path))
+            self.assertEqual(session["pending_approvals"][0]["artifact_id"], first.artifact_id)
+            self.assertEqual(session["pending_approvals"][0]["source_message_id"], first.source_message_id)
+            self.assertEqual(session["pending_approvals"][0]["save_content_source"], "original_draft")
+            self.assertEqual(
+                session["pending_approvals"][0]["approval_reason_record"]["reason_scope"],
+                "approval_reissue",
+            )
+            self.assertEqual(
+                session["messages"][-1]["approval_reason_record"]["approval_id"],
+                second.approval["approval_id"],
+            )
+            log_records = [
+                json.loads(line)
+                for line in (tmp_path / "task_log.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            approval_reissued = next(record for record in log_records if record["action"] == "approval_reissued")
+            self.assertEqual(approval_reissued["detail"]["source_message_id"], first.source_message_id)
+            self.assertEqual(approval_reissued["detail"]["save_content_source"], "original_draft")
+            self.assertEqual(
+                approval_reissued["detail"]["approval_reason_record"]["approval_id"],
+                second.approval["approval_id"],
+            )
+
+    def test_pending_approval_can_be_rejected_with_reason_record(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+            )
+
+            first = loop.handle(
+                UserRequest(
+                    user_text=f"Summarize {source_path} and save the summary",
+                    session_id="session-reject",
+                    metadata={
+                        "source_path": str(source_path),
+                        "save_summary": True,
+                    },
+                )
+            )
+            approval_id = first.approval["approval_id"]
+
+            second = loop.handle(
+                UserRequest(
+                    user_text="",
+                    session_id="session-reject",
+                    rejected_approval_id=approval_id,
+                )
+            )
+
+            self.assertEqual(second.status, "answer")
+            self.assertIsNotNone(second.approval_reason_record)
+            self.assertEqual(second.approval_reason_record["reason_scope"], "approval_reject")
+            self.assertEqual(second.approval_reason_record["reason_label"], "explicit_rejection")
+            self.assertTrue(second.approval_reason_record["source_message_id"])
+            self.assertEqual(second.approval_reason_record["approval_id"], approval_id)
+            self.assertEqual(second.approval_reason_record["artifact_id"], first.artifact_id)
+            session = loop.session_store.get_session("session-reject")
+            self.assertEqual(session["pending_approvals"], [])
+            self.assertEqual(
+                session["messages"][-1]["approval_reason_record"]["approval_id"],
+                approval_id,
+            )
+            log_records = [
+                json.loads(line)
+                for line in (tmp_path / "task_log.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            approval_rejected = next(record for record in log_records if record["action"] == "approval_rejected")
+            agent_response = next(
+                record
+                for record in log_records
+                if record["action"] == "agent_response" and record["detail"].get("approval_reason_record")
+            )
+            self.assertEqual(
+                approval_rejected["detail"]["approval_reason_record"]["reason_label"],
+                "explicit_rejection",
+            )
+            self.assertEqual(
+                agent_response["detail"]["approval_reason_record"]["approval_id"],
+                approval_id,
+            )
 
     def test_follow_up_question_uses_document_context(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -2494,6 +3133,380 @@ class SmokeTest(unittest.TestCase):
             self.assertGreaterEqual(len(response.summary_chunks), 1)
             self.assertIn(middle_signal, response.summary_chunks[0]["selected_line"])
 
+    def test_summary_chunk_selection_splits_by_truthful_source_type(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+            )
+            chunk_summaries = [
+                {
+                    "chunk_id": "chunk-1",
+                    "index": 1,
+                    "summary": "마지막에 갈등이 커지고 관계 변화가 더 선명해집니다.",
+                    "source_path": str(tmp_path / "story.txt"),
+                    "evidence": [
+                        {
+                            "source_path": str(tmp_path / "story.txt"),
+                            "source_name": "story.txt",
+                            "label": "본문 근거",
+                            "snippet": "마지막에 갈등이 커지고 관계 변화가 더 선명해집니다.",
+                        }
+                    ],
+                },
+                {
+                    "chunk_id": "chunk-2",
+                    "index": 2,
+                    "summary": "여러 결과를 종합하면 공통 정책은 로컬 저장 유지이고 우선 조정할 항목이 남아 있습니다.",
+                    "source_path": str(tmp_path / "search-a.txt"),
+                    "evidence": [
+                        {
+                            "source_path": str(tmp_path / "search-a.txt"),
+                            "source_name": "search-a.txt",
+                            "label": "본문 근거",
+                            "snippet": "여러 결과를 종합하면 공통 정책은 로컬 저장 유지이고 우선 조정할 항목이 남아 있습니다.",
+                        }
+                    ],
+                },
+            ]
+
+            local_refs = loop._build_summary_chunk_refs(
+                chunk_summaries=chunk_summaries,
+                max_items=1,
+                summary_source_type="local_document",
+            )
+            search_refs = loop._build_summary_chunk_refs(
+                chunk_summaries=chunk_summaries,
+                max_items=1,
+                summary_source_type="search_results",
+            )
+
+            self.assertEqual(
+                set(local_refs[0].keys()),
+                {"chunk_id", "chunk_index", "total_chunks", "source_path", "source_name", "selected_line"},
+            )
+            self.assertEqual(
+                set(search_refs[0].keys()),
+                {"chunk_id", "chunk_index", "total_chunks", "source_path", "source_name", "selected_line"},
+            )
+            self.assertIn("갈등", local_refs[0]["selected_line"])
+            self.assertIn("종합하면 공통 정책", search_refs[0]["selected_line"])
+            self.assertNotEqual(local_refs[0]["selected_line"], search_refs[0]["selected_line"])
+
+    def test_long_narrative_summary_reduces_chunk_notes_into_one_flow(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "narrative.txt"
+            source_path.write_text(
+                "\n".join(
+                    [
+                        "3화. 모르는 척하는 사람이 제일 오래 버틴다",
+                        "",
+                        *["장면 도입 문장입니다." for _ in range(180)],
+                        "영희가 태양에게 못 들은 척 못 하겠다고 말하며 둘의 감정선이 더는 숨겨지지 않습니다.",
+                        *["감정 묘사 문장입니다." for _ in range(180)],
+                        "철수는 태양에게 영희를 향한 진심을 털어놓고, 태양은 그 말을 들으며 더 깊이 흔들립니다.",
+                        *["전시 장면 문장입니다." for _ in range(180)],
+                        "영희는 마지막에 오늘 끝난 거 아니죠 라는 메시지를 보내며 관계가 계속될 것임을 남깁니다.",
+                        *["마무리 장면 문장입니다." for _ in range(180)],
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            model = _NarrativeReduceModel()
+            loop = AgentLoop(
+                model=model,
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+            )
+
+            response = loop.handle(
+                UserRequest(
+                    user_text=f"Summarize {source_path}",
+                    session_id="long-narrative-summary-session",
+                    metadata={"source_path": str(source_path)},
+                )
+            )
+
+            self.assertEqual(
+                response.text,
+                "태양과 영희는 서로의 감정을 모른 척할 수 없게 되고, 철수는 그 변화를 모른 채 진심을 드러내며, 마지막에는 관계가 끝난 게 아니라는 신호가 다시 남습니다.",
+            )
+            self.assertGreaterEqual(len(response.summary_chunks), 1)
+            local_chunk_prompts = [
+                prompt
+                for prompt in model.summary_inputs
+                if "Summary mode: chunk_note" in prompt
+            ]
+            self.assertTrue(local_chunk_prompts)
+            self.assertTrue(all("Summary source type: local_document" in prompt for prompt in local_chunk_prompts))
+            self.assertTrue(
+                any(
+                    "part of a larger local document" in prompt
+                    and "major characters or actors" in prompt
+                    for prompt in local_chunk_prompts
+                )
+            )
+            self.assertTrue(all("selected search-result excerpt" not in prompt for prompt in local_chunk_prompts))
+            self.assertTrue(any("Summary mode: merged_chunk_outline" in prompt for prompt in model.summary_inputs))
+            self.assertTrue(
+                any(
+                    "Summary source type: local_document" in prompt
+                    for prompt in model.summary_inputs
+                    if "Summary mode: merged_chunk_outline" in prompt
+                )
+            )
+
+    def test_short_local_document_summary_uses_local_document_prompt(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "short-narrative.txt"
+            source_path.write_text(
+                "\n".join(
+                    [
+                        "태양과 영희는 전시 준비를 함께 하며 서로의 긴장을 숨기지 못합니다.",
+                        "철수는 그 변화를 눈치채지 못한 채 일정을 밀어붙입니다.",
+                        "마지막에는 영희가 오늘 끝난 건 아니라고 말합니다.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            model = _ShortSummaryCaptureModel()
+            loop = AgentLoop(
+                model=model,
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+            )
+
+            response = loop.handle(
+                UserRequest(
+                    user_text=f"Summarize {source_path}",
+                    session_id="short-local-summary-session",
+                    metadata={"source_path": str(source_path)},
+                )
+            )
+
+            self.assertEqual(
+                response.text,
+                "태양과 영희의 긴장이 커지고 철수는 변화를 놓친 채 일정을 밀어붙이며, 마지막에는 관계가 아직 끝나지 않았다는 신호가 남습니다.",
+            )
+            self.assertEqual(response.summary_chunks, [])
+            short_prompts = [
+                prompt
+                for prompt in model.summary_inputs
+                if "Summary mode: short_summary" in prompt
+            ]
+            self.assertTrue(short_prompts)
+            self.assertTrue(all("Summary source type: local_document" in prompt for prompt in short_prompts))
+            self.assertTrue(
+                any(
+                    "local document summary" in prompt
+                    and "document flow or state changes even when the text is short" in prompt
+                    and "major characters or actors" in prompt
+                    and "Return only concise Korean plain text with no heading or bullet label." in prompt
+                    for prompt in short_prompts
+                )
+            )
+            self.assertTrue(all("search-result text" not in prompt for prompt in short_prompts))
+            self.assertTrue(all("Summary mode: chunk_note" not in prompt for prompt in model.summary_inputs))
+            self.assertTrue(all("Summary mode: merged_chunk_outline" not in prompt for prompt in model.summary_inputs))
+
+    def test_long_search_summary_reduce_uses_search_result_synthesis_prompt(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_path = tmp_path / "budget-plan.md"
+            second_path = tmp_path / "budget-actions.md"
+            first_path.write_text(
+                "\n".join(
+                    [
+                        "# 예산 계획",
+                        *["예산 통제와 승인 기반 저장 유지가 중요하다는 설명입니다." for _ in range(220)],
+                        "이번 분기 예산 계획은 승인 기반 저장을 유지하면서 비용 초과를 줄이는 데 초점을 둡니다.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            second_path.write_text(
+                "\n".join(
+                    [
+                        "# 예산 실행 항목",
+                        *["예산 실행 항목과 우선순위를 정리하는 설명입니다." for _ in range(220)],
+                        "운영비 절감과 승인 대기 항목 정리가 우선이며, 팀별 집행 순서를 다시 조정해야 합니다.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            model = _SearchReduceModel()
+            loop = AgentLoop(
+                model=model,
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+            )
+            selected_results = [
+                FileSearchResult(
+                    path=str(first_path),
+                    matched_on="content",
+                    snippet="예산 통제와 승인 기반 저장 유지가 중요하다고 설명합니다.",
+                ),
+                FileSearchResult(
+                    path=str(second_path),
+                    matched_on="content",
+                    snippet="운영비 절감과 승인 대기 항목 정리를 우선 과제로 제시합니다.",
+                ),
+            ]
+            read_results = [loop.tools["read_file"].run(path=str(first_path)), loop.tools["read_file"].run(path=str(second_path))]
+
+            summary, note_body, summary_chunks = loop._build_multi_file_summary(
+                search_query="budget",
+                selected_results=selected_results,
+                read_results=read_results,
+            )
+
+            self.assertEqual(
+                summary,
+                "여러 검색 결과를 종합하면 예산 통제와 승인 기반 저장 유지가 공통으로 강조되고, 문서마다 실행 항목의 우선순위와 범위에는 차이가 있다는 점이 함께 드러납니다.",
+            )
+            self.assertIn("검색어: budget", note_body)
+            self.assertGreaterEqual(len(summary_chunks), 1)
+            search_reduce_prompts = [
+                prompt
+                for prompt in model.summary_inputs
+                if "Summary mode: merged_chunk_outline" in prompt
+            ]
+            search_chunk_prompts = [
+                prompt
+                for prompt in model.summary_inputs
+                if "Summary mode: chunk_note" in prompt
+            ]
+            self.assertTrue(search_chunk_prompts)
+            self.assertTrue(all("Summary source type: search_results" in prompt for prompt in search_chunk_prompts))
+            self.assertTrue(
+                any(
+                    "selected search-result excerpt" in prompt.lower()
+                    and "source-backed evidence chunk within a larger search-result synthesis" in prompt
+                    and "meaningful differences, and explicit actions or decisions" in prompt
+                    for prompt in search_chunk_prompts
+                )
+            )
+            self.assertTrue(all("major characters or actors" not in prompt for prompt in search_chunk_prompts))
+            self.assertTrue(search_reduce_prompts)
+            self.assertTrue(any("Summary source type: search_results" in prompt for prompt in search_reduce_prompts))
+            self.assertTrue(
+                any(
+                    "selected search-result notes" in prompt
+                    and "shared facts, meaningful differences, key actions or decisions, and the grounded conclusion" in prompt
+                    for prompt in search_reduce_prompts
+                )
+            )
+            self.assertTrue(
+                all("major characters or actors" not in prompt for prompt in search_reduce_prompts)
+            )
+
+    def test_short_search_summary_uses_search_result_short_prompt(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_path = tmp_path / "budget-plan.md"
+            second_path = tmp_path / "budget-actions.md"
+            first_path.write_text(
+                "\n".join(
+                    [
+                        "# 예산 계획",
+                        "예산 통제와 승인 기반 저장 유지를 계속 유지해야 합니다.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            second_path.write_text(
+                "\n".join(
+                    [
+                        "# 예산 실행 항목",
+                        "운영비 절감이 우선이고 팀별 집행 순서를 다시 조정해야 합니다.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            model = _ShortSummaryCaptureModel()
+            loop = AgentLoop(
+                model=model,
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+            )
+            selected_results = [
+                FileSearchResult(
+                    path=str(first_path),
+                    matched_on="content",
+                    snippet="예산 통제와 승인 기반 저장 유지를 계속 유지해야 한다고 말합니다.",
+                ),
+                FileSearchResult(
+                    path=str(second_path),
+                    matched_on="content",
+                    snippet="운영비 절감과 팀별 집행 순서 조정을 우선 과제로 제시합니다.",
+                ),
+            ]
+            read_results = [loop.tools["read_file"].run(path=str(first_path)), loop.tools["read_file"].run(path=str(second_path))]
+
+            summary, note_body, summary_chunks = loop._build_multi_file_summary(
+                search_query="budget",
+                selected_results=selected_results,
+                read_results=read_results,
+            )
+
+            self.assertEqual(
+                summary,
+                "여러 검색 결과를 종합하면 예산 통제 유지가 공통으로 보이고, 문서마다 우선 실행 항목과 조정 범위가 다르다는 점이 함께 정리됩니다.",
+            )
+            self.assertIn("검색어: budget", note_body)
+            self.assertEqual(summary_chunks, [])
+            short_prompts = [
+                prompt
+                for prompt in model.summary_inputs
+                if "Summary mode: short_summary" in prompt
+            ]
+            self.assertTrue(short_prompts)
+            self.assertTrue(all("Summary source type: search_results" in prompt for prompt in short_prompts))
+            self.assertTrue(
+                any(
+                    "selected local search results, not as one narrative document" in prompt
+                    and "shared facts, meaningful differences, explicit actions or decisions, and the grounded conclusion supported by the selected results" in prompt
+                    and "Return only concise Korean plain text with no heading or bullet label." in prompt
+                    for prompt in short_prompts
+                )
+            )
+            self.assertTrue(all("major characters or actors" not in prompt for prompt in short_prompts))
+            self.assertTrue(all("Summary mode: chunk_note" not in prompt for prompt in model.summary_inputs))
+            self.assertTrue(all("Summary mode: merged_chunk_outline" not in prompt for prompt in model.summary_inputs))
+
     def test_summary_save_with_approval_writes_note(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -2525,9 +3538,36 @@ class SmokeTest(unittest.TestCase):
 
             self.assertFalse(response.requires_approval)
             self.assertIsNotNone(response.saved_note_path)
+            self.assertTrue(str(response.artifact_id).startswith("artifact-"))
+            self.assertEqual(response.artifact_kind, "grounded_brief")
+            self.assertEqual(response.source_message_id, response.corrected_outcome["source_message_id"])
+            self.assertEqual(response.save_content_source, "original_draft")
+            self.assertIsNotNone(response.corrected_outcome)
+            self.assertEqual(response.corrected_outcome["outcome"], "accepted_as_is")
+            self.assertEqual(response.corrected_outcome["artifact_id"], response.artifact_id)
+            self.assertEqual(response.corrected_outcome["saved_note_path"], response.saved_note_path)
             saved_path = Path(response.saved_note_path or "")
             self.assertTrue(saved_path.exists())
             self.assertIn("# source.md 요약", saved_path.read_text(encoding="utf-8"))
+            session = loop.session_store.get_session("session-2")
+            self.assertEqual(session["messages"][-1]["source_message_id"], response.source_message_id)
+            self.assertEqual(session["messages"][-1]["save_content_source"], "original_draft")
+            self.assertEqual(
+                session["messages"][-1]["corrected_outcome"]["source_message_id"],
+                session["messages"][-1]["message_id"],
+            )
+            log_records = [
+                json.loads(line)
+                for line in (tmp_path / "task_log.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            write_note = next(record for record in log_records if record["action"] == "write_note")
+            corrected_outcome_recorded = next(record for record in log_records if record["action"] == "corrected_outcome_recorded")
+            self.assertEqual(write_note["detail"]["artifact_id"], response.artifact_id)
+            self.assertEqual(write_note["detail"]["source_message_id"], response.source_message_id)
+            self.assertEqual(write_note["detail"]["save_content_source"], "original_draft")
+            self.assertEqual(corrected_outcome_recorded["detail"]["artifact_id"], response.artifact_id)
+            self.assertIsNone(corrected_outcome_recorded["detail"]["approval_id"])
 
     def test_non_utf8_summary_save_with_approval_writes_note(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -2563,6 +3603,2965 @@ class SmokeTest(unittest.TestCase):
             saved_path = Path(response.saved_note_path or "")
             self.assertTrue(saved_path.exists())
             self.assertIn("# korean-note.txt 요약", saved_path.read_text(encoding="utf-8"))
+
+    def test_session_store_records_corrected_text_on_grounded_brief_source_message(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+            store = SessionStore(base_dir=str(tmp_path / "sessions"))
+
+            store.append_message("session-correction", {"role": "user", "text": "질문"})
+            stored_message = store.append_message(
+                "session-correction",
+                {
+                    "role": "assistant",
+                    "text": "원본 요약입니다.",
+                    "status": "answer",
+                    "artifact_id": "artifact-correction",
+                    "artifact_kind": "grounded_brief",
+                    "selected_source_paths": [str(source_path)],
+                    "evidence": [
+                        {
+                            "source_path": str(source_path),
+                            "source_name": "source.md",
+                            "label": "본문 근거",
+                            "snippet": "hello world",
+                        }
+                    ],
+                },
+            )
+
+            updated = store.record_correction_for_message(
+                "session-correction",
+                message_id=stored_message["message_id"],
+                corrected_text="수정한 요약입니다.\n핵심만 남겼습니다.",
+            )
+
+            self.assertIsNotNone(updated)
+            self.assertEqual(updated["corrected_text"], "수정한 요약입니다.\n핵심만 남겼습니다.")
+            self.assertEqual(updated["corrected_outcome"]["outcome"], "corrected")
+            self.assertEqual(updated["corrected_outcome"]["artifact_id"], "artifact-correction")
+            self.assertEqual(updated["corrected_outcome"]["source_message_id"], stored_message["message_id"])
+            self.assertEqual(updated["original_response_snapshot"]["draft_text"], "원본 요약입니다.")
+
+            session = store.get_session("session-correction")
+            source_messages = [
+                message
+                for message in session["messages"]
+                if message.get("artifact_id") == "artifact-correction" and message.get("original_response_snapshot")
+            ]
+            self.assertTrue(source_messages)
+            self.assertEqual(source_messages[-1]["corrected_text"], "수정한 요약입니다.\n핵심만 남겼습니다.")
+            self.assertEqual(source_messages[-1]["corrected_outcome"]["outcome"], "corrected")
+            self.assertEqual(source_messages[-1]["corrected_outcome"]["source_message_id"], stored_message["message_id"])
+
+    def test_rejected_content_verdict_records_reason_and_is_cleared_by_later_correction(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+            store = SessionStore(base_dir=str(tmp_path / "sessions"))
+
+            store.append_message("session-rejected-verdict", {"role": "user", "text": "질문"})
+            stored_message = store.append_message(
+                "session-rejected-verdict",
+                {
+                    "role": "assistant",
+                    "text": "원본 요약입니다.",
+                    "status": "answer",
+                    "artifact_id": "artifact-rejected",
+                    "artifact_kind": "grounded_brief",
+                    "selected_source_paths": [str(source_path)],
+                    "evidence": [
+                        {
+                            "source_path": str(source_path),
+                            "source_name": "source.md",
+                            "label": "본문 근거",
+                            "snippet": "hello world",
+                        }
+                    ],
+                },
+            )
+
+            rejected = store.record_rejected_content_verdict_for_message(
+                "session-rejected-verdict",
+                message_id=stored_message["message_id"],
+            )
+
+            self.assertIsNotNone(rejected)
+            self.assertEqual(rejected["corrected_outcome"]["outcome"], "rejected")
+            self.assertEqual(rejected["corrected_outcome"]["artifact_id"], "artifact-rejected")
+            self.assertEqual(rejected["corrected_outcome"]["source_message_id"], stored_message["message_id"])
+            self.assertEqual(rejected["content_reason_record"]["reason_scope"], "content_reject")
+            self.assertEqual(rejected["content_reason_record"]["reason_label"], "explicit_content_rejection")
+            self.assertEqual(rejected["content_reason_record"]["artifact_kind"], "grounded_brief")
+            self.assertNotIn("approval_reason_record", rejected)
+            rejected_recorded_at = rejected["corrected_outcome"]["recorded_at"]
+
+            noted = store.record_content_reason_note_for_message(
+                "session-rejected-verdict",
+                message_id=stored_message["message_id"],
+                reason_note="핵심 결론이 문서 문맥과 다릅니다.",
+            )
+
+            self.assertIsNotNone(noted)
+            self.assertEqual(noted["corrected_outcome"]["recorded_at"], rejected_recorded_at)
+            self.assertEqual(noted["content_reason_record"]["reason_scope"], "content_reject")
+            self.assertEqual(noted["content_reason_record"]["reason_label"], "explicit_content_rejection")
+            self.assertEqual(noted["content_reason_record"]["reason_note"], "핵심 결론이 문서 문맥과 다릅니다.")
+
+            corrected = store.record_correction_for_message(
+                "session-rejected-verdict",
+                message_id=stored_message["message_id"],
+                corrected_text="다시 고친 요약입니다.",
+            )
+
+            self.assertIsNotNone(corrected)
+            self.assertEqual(corrected["corrected_outcome"]["outcome"], "corrected")
+            self.assertEqual(corrected["corrected_text"], "다시 고친 요약입니다.")
+            self.assertNotIn("content_reason_record", corrected)
+
+            session = store.get_session("session-rejected-verdict")
+            source_messages = [
+                message
+                for message in session["messages"]
+                if message.get("artifact_id") == "artifact-rejected" and message.get("original_response_snapshot")
+            ]
+            self.assertTrue(source_messages)
+            latest_source = source_messages[-1]
+            self.assertEqual(latest_source["corrected_outcome"]["outcome"], "corrected")
+            self.assertEqual(latest_source["corrected_text"], "다시 고친 요약입니다.")
+            self.assertNotIn("content_reason_record", latest_source)
+
+    def test_rejected_content_reason_note_rejects_blank_submit(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+            store = SessionStore(base_dir=str(tmp_path / "sessions"))
+
+            store.append_message("session-rejected-note-blank", {"role": "user", "text": "질문"})
+            stored_message = store.append_message(
+                "session-rejected-note-blank",
+                {
+                    "role": "assistant",
+                    "text": "원본 요약입니다.",
+                    "status": "answer",
+                    "artifact_id": "artifact-rejected-note-blank",
+                    "artifact_kind": "grounded_brief",
+                    "selected_source_paths": [str(source_path)],
+                    "evidence": [
+                        {
+                            "source_path": str(source_path),
+                            "source_name": "source.md",
+                            "label": "본문 근거",
+                            "snippet": "hello world",
+                        }
+                    ],
+                },
+            )
+            store.record_rejected_content_verdict_for_message(
+                "session-rejected-note-blank",
+                message_id=stored_message["message_id"],
+            )
+
+            with self.assertRaises(ValueError) as ctx:
+                store.record_content_reason_note_for_message(
+                    "session-rejected-note-blank",
+                    message_id=stored_message["message_id"],
+                    reason_note="   \n ",
+                )
+
+            self.assertIn("거절 메모를 입력해 주세요.", str(ctx.exception))
+
+    def test_corrected_save_after_rejected_content_verdict_restores_corrected_outcome(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            note_path = tmp_path / "notes" / "source-summary.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+            )
+
+            initial = loop.handle(
+                UserRequest(
+                    user_text=f"Summarize {source_path}",
+                    session_id="session-rejected-save",
+                    metadata={"source_path": str(source_path)},
+                )
+            )
+            artifact_id = initial.artifact_id
+            source_message_id = initial.source_message_id
+            self.assertIsNotNone(source_message_id)
+
+            updated_source = loop.session_store.record_correction_for_message(
+                "session-rejected-save",
+                message_id=source_message_id or "",
+                corrected_text="수정본 A입니다.\n핵심만 남겼습니다.",
+            )
+            self.assertIsNotNone(updated_source)
+
+            rejected = loop.session_store.record_rejected_content_verdict_for_message(
+                "session-rejected-save",
+                message_id=source_message_id or "",
+            )
+            self.assertIsNotNone(rejected)
+            self.assertEqual(rejected["corrected_outcome"]["outcome"], "rejected")
+            self.assertEqual(rejected["corrected_text"], "수정본 A입니다.\n핵심만 남겼습니다.")
+            noted = loop.session_store.record_content_reason_note_for_message(
+                "session-rejected-save",
+                message_id=source_message_id or "",
+                reason_note="핵심 결론이 문맥과 다릅니다.",
+            )
+            self.assertIsNotNone(noted)
+            self.assertEqual(noted["content_reason_record"]["reason_note"], "핵심 결론이 문맥과 다릅니다.")
+
+            bridge = loop.handle(
+                UserRequest(
+                    user_text="",
+                    session_id="session-rejected-save",
+                    metadata={"corrected_save_message_id": source_message_id},
+                )
+            )
+            self.assertEqual(bridge.status, "needs_approval")
+            self.assertEqual(bridge.save_content_source, "corrected_text")
+            self.assertIsNotNone(bridge.approval)
+            approval_id = bridge.approval["approval_id"]
+
+            approved = loop.handle(
+                UserRequest(
+                    user_text="",
+                    session_id="session-rejected-save",
+                    approved_approval_id=approval_id,
+                )
+            )
+
+            self.assertEqual(approved.status, "saved")
+            self.assertEqual(approved.save_content_source, "corrected_text")
+            self.assertEqual(approved.saved_note_path, str(note_path))
+            self.assertTrue(note_path.exists())
+            self.assertEqual(note_path.read_text(encoding="utf-8"), "수정본 A입니다.\n핵심만 남겼습니다.")
+
+            session = loop.session_store.get_session("session-rejected-save")
+            source_messages = [
+                message
+                for message in session["messages"]
+                if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
+            ]
+            self.assertTrue(source_messages)
+            source_message = source_messages[-1]
+            self.assertEqual(source_message["corrected_outcome"]["outcome"], "corrected")
+            self.assertEqual(source_message["corrected_outcome"]["approval_id"], approval_id)
+            self.assertEqual(source_message["corrected_outcome"]["saved_note_path"], str(note_path))
+            self.assertEqual(source_message["corrected_text"], "수정본 A입니다.\n핵심만 남겼습니다.")
+            self.assertNotIn("content_reason_record", source_message)
+
+    def test_session_local_memory_signal_keeps_latest_save_linkage_but_omits_stale_reject_note(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            note_path = tmp_path / "notes" / "source-summary.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+            store = SessionStore(base_dir=str(tmp_path / "sessions"))
+
+            store.append_message("session-signal", {"role": "user", "text": "질문"})
+            source_message = store.append_message(
+                "session-signal",
+                {
+                    "role": "assistant",
+                    "text": "원본 요약입니다.",
+                    "status": "answer",
+                    "artifact_id": "artifact-session-signal",
+                    "artifact_kind": "grounded_brief",
+                    "selected_source_paths": [str(source_path)],
+                    "evidence": [
+                        {
+                            "source_path": str(source_path),
+                            "source_name": "source.md",
+                            "label": "본문 근거",
+                            "snippet": "hello world",
+                        }
+                    ],
+                },
+            )
+
+            store.record_correction_for_message(
+                "session-signal",
+                message_id=source_message["message_id"],
+                corrected_text="수정본 A입니다.\n핵심만 남겼습니다.",
+            )
+            store.record_corrected_outcome_for_artifact(
+                "session-signal",
+                artifact_id="artifact-session-signal",
+                outcome="corrected",
+                approval_id="approval-corrected",
+                saved_note_path=str(note_path),
+                preserve_existing=True,
+            )
+            store.append_message(
+                "session-signal",
+                {
+                    "role": "assistant",
+                    "text": f"승인 시점에 고정된 수정본을 {note_path}에 저장했습니다.",
+                    "status": "saved",
+                    "artifact_id": "artifact-session-signal",
+                    "artifact_kind": "grounded_brief",
+                    "source_message_id": source_message["message_id"],
+                    "saved_note_path": str(note_path),
+                    "save_content_source": "corrected_text",
+                },
+            )
+            store.record_rejected_content_verdict_for_message(
+                "session-signal",
+                message_id=source_message["message_id"],
+            )
+            store.record_content_reason_note_for_message(
+                "session-signal",
+                message_id=source_message["message_id"],
+                reason_note="핵심 결론이 문맥과 다릅니다.",
+            )
+            store.record_correction_for_message(
+                "session-signal",
+                message_id=source_message["message_id"],
+                corrected_text="수정본 B입니다.\n다시 손봤습니다.",
+            )
+
+            session = store.get_session("session-signal")
+            latest_source_message = [
+                message
+                for message in session["messages"]
+                if message.get("artifact_id") == "artifact-session-signal" and message.get("original_response_snapshot")
+            ][-1]
+
+            signal = store.build_session_local_memory_signal(
+                session,
+                source_message=latest_source_message,
+            )
+
+            self.assertIsNotNone(signal)
+            self.assertEqual(signal["signal_scope"], "session_local")
+            self.assertEqual(signal["artifact_id"], "artifact-session-signal")
+            self.assertEqual(signal["source_message_id"], source_message["message_id"])
+            self.assertEqual(signal["content_signal"]["latest_corrected_outcome"]["outcome"], "corrected")
+            self.assertTrue(signal["content_signal"]["has_corrected_text"])
+            self.assertNotIn("content_reason_record", signal["content_signal"])
+            self.assertEqual(signal["save_signal"]["latest_save_content_source"], "corrected_text")
+            self.assertEqual(signal["save_signal"]["latest_saved_note_path"], str(note_path))
+            self.assertNotIn("latest_approval_id", signal["save_signal"])
+
+    def test_candidate_recurrence_key_helper_uses_explicit_pair_only_and_keeps_fingerprint_stable(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            service = WebAppService(
+                settings=AppSettings(
+                    sessions_dir=str(tmp_path / "sessions"),
+                    task_log_path=str(tmp_path / "task_log.jsonl"),
+                    notes_dir=str(tmp_path / "notes"),
+                    model_provider="mock",
+                )
+            )
+
+            def build_candidate(*, artifact_id: str, source_message_id: str, updated_at: str) -> dict[str, object]:
+                return {
+                    "candidate_id": (
+                        f"session-local-candidate:{artifact_id}:{source_message_id}:correction_rewrite_preference"
+                    ),
+                    "candidate_scope": "session_local",
+                    "candidate_family": "correction_rewrite_preference",
+                    "statement": "explicit rewrite correction recorded for this grounded brief",
+                    "supporting_artifact_ids": [artifact_id],
+                    "supporting_source_message_ids": [source_message_id],
+                    "supporting_signal_refs": [
+                        {
+                            "signal_name": "session_local_memory_signal.content_signal",
+                            "relationship": "primary_basis",
+                        }
+                    ],
+                    "evidence_strength": "explicit_single_artifact",
+                    "status": "session_local_candidate",
+                    "created_at": updated_at,
+                    "updated_at": updated_at,
+                }
+
+            original_text = "원본 요약입니다.\n핵심을 설명합니다."
+            corrected_text = "수정본 요약입니다.\n핵심만 남깁니다."
+            recorded_at = "2026-03-28T00:00:00+00:00"
+            first_message = {
+                "message_id": "msg-a",
+                "source_message_id": "msg-a",
+                "artifact_id": "artifact-a",
+                "artifact_kind": "grounded_brief",
+                "original_response_snapshot": {
+                    "artifact_id": "artifact-a",
+                    "artifact_kind": "grounded_brief",
+                    "draft_text": original_text,
+                },
+                "corrected_text": corrected_text,
+                "corrected_outcome": {
+                    "outcome": "corrected",
+                    "recorded_at": recorded_at,
+                    "artifact_id": "artifact-a",
+                    "source_message_id": "msg-a",
+                },
+            }
+            second_message = {
+                "message_id": "msg-b",
+                "source_message_id": "msg-b",
+                "artifact_id": "artifact-b",
+                "artifact_kind": "grounded_brief",
+                "original_response_snapshot": {
+                    "artifact_id": "artifact-b",
+                    "artifact_kind": "grounded_brief",
+                    "draft_text": original_text,
+                },
+                "corrected_text": corrected_text,
+                "corrected_outcome": {
+                    "outcome": "corrected",
+                    "recorded_at": recorded_at,
+                    "artifact_id": "artifact-b",
+                    "source_message_id": "msg-b",
+                },
+            }
+
+            first_key = service._serialize_candidate_recurrence_key(
+                service._build_candidate_recurrence_key_for_message(
+                    message=first_message,
+                    session_local_candidate=build_candidate(
+                        artifact_id="artifact-a",
+                        source_message_id="msg-a",
+                        updated_at=recorded_at,
+                    ),
+                )
+            )
+            second_key = service._serialize_candidate_recurrence_key(
+                service._build_candidate_recurrence_key_for_message(
+                    message=second_message,
+                    session_local_candidate=build_candidate(
+                        artifact_id="artifact-b",
+                        source_message_id="msg-b",
+                        updated_at=recorded_at,
+                    ),
+                )
+            )
+
+            self.assertIsNotNone(first_key)
+            self.assertIsNotNone(second_key)
+            self.assertEqual(first_key["key_scope"], "correction_rewrite_recurrence")
+            self.assertEqual(first_key["key_version"], "explicit_pair_rewrite_delta_v1")
+            self.assertEqual(first_key["normalized_delta_fingerprint"], second_key["normalized_delta_fingerprint"])
+            self.assertEqual(first_key["rewrite_dimensions"], second_key["rewrite_dimensions"])
+
+            reviewed_without_pair = {
+                "message_id": "msg-reviewed",
+                "source_message_id": "msg-reviewed",
+                "artifact_id": "artifact-reviewed",
+                "artifact_kind": "grounded_brief",
+                "original_response_snapshot": {
+                    "artifact_id": "artifact-reviewed",
+                    "artifact_kind": "grounded_brief",
+                    "draft_text": original_text,
+                },
+                "corrected_outcome": {
+                    "outcome": "accepted_as_is",
+                    "recorded_at": recorded_at,
+                    "artifact_id": "artifact-reviewed",
+                    "source_message_id": "msg-reviewed",
+                },
+                "candidate_review_record": {
+                    "candidate_id": (
+                        "session-local-candidate:artifact-reviewed:msg-reviewed:"
+                        "correction_rewrite_preference"
+                    ),
+                    "candidate_updated_at": recorded_at,
+                    "artifact_id": "artifact-reviewed",
+                    "source_message_id": "msg-reviewed",
+                    "review_scope": "source_message_candidate_review",
+                    "review_action": "accept",
+                    "review_status": "accepted",
+                    "recorded_at": recorded_at,
+                },
+            }
+            reviewed_without_pair_key = service._build_candidate_recurrence_key_for_message(
+                message=reviewed_without_pair,
+                session_local_candidate=build_candidate(
+                    artifact_id="artifact-reviewed",
+                    source_message_id="msg-reviewed",
+                    updated_at=recorded_at,
+                ),
+            )
+            self.assertIsNone(reviewed_without_pair_key)
+
+    def test_recurrence_aggregate_candidates_helper_requires_exact_identity_and_distinct_anchors(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            service = WebAppService(
+                settings=AppSettings(
+                    sessions_dir=str(tmp_path / "sessions"),
+                    task_log_path=str(tmp_path / "task_log.jsonl"),
+                    notes_dir=str(tmp_path / "notes"),
+                    model_provider="mock",
+                )
+            )
+
+            base_identity = {
+                "candidate_family": "correction_rewrite_preference",
+                "key_scope": "correction_rewrite_recurrence",
+                "key_version": "explicit_pair_rewrite_delta_v1",
+                "derivation_source": "explicit_corrected_pair",
+                "normalized_delta_fingerprint": "sha256:shared-fingerprint",
+                "stability": "deterministic_local",
+            }
+
+            aggregate_candidates = service._build_recurrence_aggregate_candidates(
+                [
+                    {
+                        "message_id": "msg-a",
+                        "source_message_id": "msg-a",
+                        "artifact_id": "artifact-a",
+                        "artifact_kind": "grounded_brief",
+                        "original_response_snapshot": {
+                            "artifact_id": "artifact-a",
+                            "artifact_kind": "grounded_brief",
+                            "draft_text": "원본 요약입니다.",
+                        },
+                        "candidate_recurrence_key": {
+                            **base_identity,
+                            "source_candidate_id": "candidate-a:v1",
+                            "source_candidate_updated_at": "2026-03-28T00:00:00+00:00",
+                            "derived_at": "2026-03-28T00:00:00+00:00",
+                        },
+                    },
+                    {
+                        "message_id": "msg-a",
+                        "source_message_id": "msg-a",
+                        "artifact_id": "artifact-a",
+                        "artifact_kind": "grounded_brief",
+                        "original_response_snapshot": {
+                            "artifact_id": "artifact-a",
+                            "artifact_kind": "grounded_brief",
+                            "draft_text": "원본 요약입니다.",
+                        },
+                        "candidate_recurrence_key": {
+                            **base_identity,
+                            "source_candidate_id": "candidate-a:v2",
+                            "source_candidate_updated_at": "2026-03-28T00:05:00+00:00",
+                            "derived_at": "2026-03-28T00:05:00+00:00",
+                        },
+                        "candidate_review_record": {
+                            "candidate_id": "candidate-a:v2",
+                            "candidate_updated_at": "2026-03-28T00:05:00+00:00",
+                            "artifact_id": "artifact-a",
+                            "source_message_id": "msg-a",
+                            "review_scope": "source_message_candidate_review",
+                            "review_action": "accept",
+                            "review_status": "accepted",
+                            "recorded_at": "2026-03-28T00:06:00+00:00",
+                        },
+                    },
+                    {
+                        "message_id": "msg-b",
+                        "source_message_id": "msg-b",
+                        "artifact_id": "artifact-b",
+                        "artifact_kind": "grounded_brief",
+                        "original_response_snapshot": {
+                            "artifact_id": "artifact-b",
+                            "artifact_kind": "grounded_brief",
+                            "draft_text": "원본 요약입니다.",
+                        },
+                        "candidate_recurrence_key": {
+                            **base_identity,
+                            "source_candidate_id": "candidate-b:v1",
+                            "source_candidate_updated_at": "2026-03-28T00:04:00+00:00",
+                            "derived_at": "2026-03-28T00:04:00+00:00",
+                        },
+                    },
+                    {
+                        "message_id": "msg-c",
+                        "source_message_id": "msg-c",
+                        "artifact_id": "artifact-c",
+                        "artifact_kind": "grounded_brief",
+                        "original_response_snapshot": {
+                            "artifact_id": "artifact-c",
+                            "artifact_kind": "grounded_brief",
+                            "draft_text": "원본 요약입니다.",
+                        },
+                        "candidate_recurrence_key": {
+                            **base_identity,
+                            "normalized_delta_fingerprint": "sha256:different-fingerprint",
+                            "source_candidate_id": "candidate-c:v1",
+                            "source_candidate_updated_at": "2026-03-28T00:07:00+00:00",
+                            "derived_at": "2026-03-28T00:07:00+00:00",
+                        },
+                        "candidate_review_record": {
+                            "candidate_id": "candidate-c:v1",
+                            "candidate_updated_at": "2026-03-28T00:07:00+00:00",
+                            "artifact_id": "artifact-c",
+                            "source_message_id": "msg-c",
+                            "review_scope": "source_message_candidate_review",
+                            "review_action": "accept",
+                            "review_status": "accepted",
+                            "recorded_at": "2026-03-28T00:08:00+00:00",
+                        },
+                    },
+                    {
+                        "message_id": "msg-d",
+                        "source_message_id": "msg-d",
+                        "artifact_id": "artifact-d",
+                        "artifact_kind": "grounded_brief",
+                        "original_response_snapshot": {
+                            "artifact_id": "artifact-d",
+                            "artifact_kind": "grounded_brief",
+                            "draft_text": "원본 요약입니다.",
+                        },
+                        "durable_candidate": {
+                            "candidate_id": "candidate-d:v1",
+                            "candidate_scope": "durable_candidate",
+                            "candidate_family": "correction_rewrite_preference",
+                            "statement": "explicit rewrite correction recorded for this grounded brief",
+                            "supporting_artifact_ids": ["artifact-d"],
+                            "supporting_source_message_ids": ["msg-d"],
+                            "supporting_signal_refs": [
+                                {
+                                    "signal_name": "session_local_memory_signal.content_signal",
+                                    "relationship": "primary_basis",
+                                }
+                            ],
+                            "supporting_confirmation_refs": [
+                                {
+                                    "artifact_id": "artifact-d",
+                                    "source_message_id": "msg-d",
+                                    "candidate_id": "candidate-d:v1",
+                                    "candidate_updated_at": "2026-03-28T00:09:00+00:00",
+                                    "confirmation_label": "explicit_reuse_confirmation",
+                                    "recorded_at": "2026-03-28T00:09:00+00:00",
+                                }
+                            ],
+                            "evidence_strength": "explicit_single_artifact",
+                            "has_explicit_confirmation": True,
+                            "promotion_basis": "explicit_confirmation",
+                            "promotion_eligibility": "eligible_for_review",
+                            "created_at": "2026-03-28T00:09:00+00:00",
+                            "updated_at": "2026-03-28T00:09:00+00:00",
+                        },
+                        "historical_save_identity_signal": {
+                            "artifact_id": "artifact-d",
+                            "source_message_id": "msg-d",
+                            "replay_source": "task_log_audit",
+                            "approval_id": "approval-d",
+                            "recorded_at": "2026-03-28T00:10:00+00:00",
+                        },
+                    },
+                ]
+            )
+
+            self.assertEqual(len(aggregate_candidates), 1)
+            aggregate = aggregate_candidates[0]
+            self.assertEqual(
+                aggregate["aggregate_key"],
+                {
+                    "candidate_family": "correction_rewrite_preference",
+                    "key_scope": "correction_rewrite_recurrence",
+                    "key_version": "explicit_pair_rewrite_delta_v1",
+                    "derivation_source": "explicit_corrected_pair",
+                    "normalized_delta_fingerprint": "sha256:shared-fingerprint",
+                },
+            )
+            self.assertEqual(aggregate["recurrence_count"], 2)
+            self.assertEqual(aggregate["scope_boundary"], "same_session_current_state_only")
+            self.assertEqual(aggregate["confidence_marker"], "same_session_exact_key_match")
+            self.assertEqual(aggregate["first_seen_at"], "2026-03-28T00:04:00+00:00")
+            self.assertEqual(aggregate["last_seen_at"], "2026-03-28T00:05:00+00:00")
+            self.assertEqual(
+                aggregate["aggregate_promotion_marker"],
+                {
+                    "promotion_basis": "same_session_exact_recurrence_aggregate",
+                    "promotion_eligibility": "blocked_pending_reviewed_memory_boundary",
+                    "reviewed_memory_boundary": "not_open",
+                    "marker_version": "same_session_blocked_reviewed_memory_v1",
+                    "derived_at": "2026-03-28T00:05:00+00:00",
+                },
+            )
+            self.assertEqual(
+                aggregate["reviewed_memory_precondition_status"],
+                {
+                    "status_version": "same_session_reviewed_memory_preconditions_v1",
+                    "overall_status": "blocked_all_required",
+                    "all_required": True,
+                    "preconditions": [
+                        "reviewed_memory_boundary_defined",
+                        "rollback_ready_reviewed_memory_effect",
+                        "disable_ready_reviewed_memory_effect",
+                        "conflict_visible_reviewed_memory_scope",
+                        "operator_auditable_reviewed_memory_transition",
+                    ],
+                    "evaluated_at": "2026-03-28T00:05:00+00:00",
+                },
+            )
+            self.assertEqual(
+                aggregate["reviewed_memory_boundary_draft"],
+                {
+                    "boundary_version": "fixed_narrow_reviewed_scope_v1",
+                    "reviewed_scope": "same_session_exact_recurrence_aggregate_only",
+                    "aggregate_identity_ref": {
+                        "candidate_family": "correction_rewrite_preference",
+                        "key_scope": "correction_rewrite_recurrence",
+                        "key_version": "explicit_pair_rewrite_delta_v1",
+                        "derivation_source": "explicit_corrected_pair",
+                        "normalized_delta_fingerprint": "sha256:shared-fingerprint",
+                    },
+                    "supporting_source_message_refs": [
+                        {"artifact_id": "artifact-a", "source_message_id": "msg-a"},
+                        {"artifact_id": "artifact-b", "source_message_id": "msg-b"},
+                    ],
+                    "supporting_candidate_refs": [
+                        {
+                            "artifact_id": "artifact-a",
+                            "source_message_id": "msg-a",
+                            "candidate_id": "candidate-a:v2",
+                            "candidate_updated_at": "2026-03-28T00:05:00+00:00",
+                        },
+                        {
+                            "artifact_id": "artifact-b",
+                            "source_message_id": "msg-b",
+                            "candidate_id": "candidate-b:v1",
+                            "candidate_updated_at": "2026-03-28T00:04:00+00:00",
+                        },
+                    ],
+                    "supporting_review_refs": [
+                        {
+                            "artifact_id": "artifact-a",
+                            "source_message_id": "msg-a",
+                            "candidate_id": "candidate-a:v2",
+                            "candidate_updated_at": "2026-03-28T00:05:00+00:00",
+                            "review_action": "accept",
+                            "review_status": "accepted",
+                            "recorded_at": "2026-03-28T00:06:00+00:00",
+                        }
+                    ],
+                    "boundary_stage": "draft_not_applied",
+                    "drafted_at": "2026-03-28T00:05:00+00:00",
+                },
+            )
+            self.assertEqual(
+                aggregate["reviewed_memory_rollback_contract"],
+                {
+                    "rollback_version": "first_reviewed_memory_effect_reversal_v1",
+                    "reviewed_scope": "same_session_exact_recurrence_aggregate_only",
+                    "aggregate_identity_ref": {
+                        "candidate_family": "correction_rewrite_preference",
+                        "key_scope": "correction_rewrite_recurrence",
+                        "key_version": "explicit_pair_rewrite_delta_v1",
+                        "derivation_source": "explicit_corrected_pair",
+                        "normalized_delta_fingerprint": "sha256:shared-fingerprint",
+                    },
+                    "supporting_source_message_refs": [
+                        {"artifact_id": "artifact-a", "source_message_id": "msg-a"},
+                        {"artifact_id": "artifact-b", "source_message_id": "msg-b"},
+                    ],
+                    "supporting_candidate_refs": [
+                        {
+                            "artifact_id": "artifact-a",
+                            "source_message_id": "msg-a",
+                            "candidate_id": "candidate-a:v2",
+                            "candidate_updated_at": "2026-03-28T00:05:00+00:00",
+                        },
+                        {
+                            "artifact_id": "artifact-b",
+                            "source_message_id": "msg-b",
+                            "candidate_id": "candidate-b:v1",
+                            "candidate_updated_at": "2026-03-28T00:04:00+00:00",
+                        },
+                    ],
+                    "supporting_review_refs": [
+                        {
+                            "artifact_id": "artifact-a",
+                            "source_message_id": "msg-a",
+                            "candidate_id": "candidate-a:v2",
+                            "candidate_updated_at": "2026-03-28T00:05:00+00:00",
+                            "review_action": "accept",
+                            "review_status": "accepted",
+                            "recorded_at": "2026-03-28T00:06:00+00:00",
+                        }
+                    ],
+                    "rollback_target_kind": "future_applied_reviewed_memory_effect_only",
+                    "rollback_stage": "contract_only_not_applied",
+                    "audit_trace_expectation": "operator_visible_local_transition_required",
+                    "defined_at": "2026-03-28T00:05:00+00:00",
+                },
+            )
+            self.assertEqual(
+                aggregate["reviewed_memory_disable_contract"],
+                {
+                    "disable_version": "first_reviewed_memory_effect_stop_apply_v1",
+                    "reviewed_scope": "same_session_exact_recurrence_aggregate_only",
+                    "aggregate_identity_ref": {
+                        "candidate_family": "correction_rewrite_preference",
+                        "key_scope": "correction_rewrite_recurrence",
+                        "key_version": "explicit_pair_rewrite_delta_v1",
+                        "derivation_source": "explicit_corrected_pair",
+                        "normalized_delta_fingerprint": "sha256:shared-fingerprint",
+                    },
+                    "supporting_source_message_refs": [
+                        {"artifact_id": "artifact-a", "source_message_id": "msg-a"},
+                        {"artifact_id": "artifact-b", "source_message_id": "msg-b"},
+                    ],
+                    "supporting_candidate_refs": [
+                        {
+                            "artifact_id": "artifact-a",
+                            "source_message_id": "msg-a",
+                            "candidate_id": "candidate-a:v2",
+                            "candidate_updated_at": "2026-03-28T00:05:00+00:00",
+                        },
+                        {
+                            "artifact_id": "artifact-b",
+                            "source_message_id": "msg-b",
+                            "candidate_id": "candidate-b:v1",
+                            "candidate_updated_at": "2026-03-28T00:04:00+00:00",
+                        },
+                    ],
+                    "supporting_review_refs": [
+                        {
+                            "artifact_id": "artifact-a",
+                            "source_message_id": "msg-a",
+                            "candidate_id": "candidate-a:v2",
+                            "candidate_updated_at": "2026-03-28T00:05:00+00:00",
+                            "review_action": "accept",
+                            "review_status": "accepted",
+                            "recorded_at": "2026-03-28T00:06:00+00:00",
+                        }
+                    ],
+                    "disable_target_kind": "future_applied_reviewed_memory_effect_only",
+                    "disable_stage": "contract_only_not_applied",
+                    "effect_behavior": "stop_apply_without_reversal",
+                    "audit_trace_expectation": "operator_visible_local_transition_required",
+                    "defined_at": "2026-03-28T00:05:00+00:00",
+                },
+            )
+            self.assertEqual(
+                aggregate["reviewed_memory_conflict_contract"],
+                {
+                    "conflict_version": "first_reviewed_memory_scope_visibility_v1",
+                    "reviewed_scope": "same_session_exact_recurrence_aggregate_only",
+                    "aggregate_identity_ref": {
+                        "candidate_family": "correction_rewrite_preference",
+                        "key_scope": "correction_rewrite_recurrence",
+                        "key_version": "explicit_pair_rewrite_delta_v1",
+                        "derivation_source": "explicit_corrected_pair",
+                        "normalized_delta_fingerprint": "sha256:shared-fingerprint",
+                    },
+                    "supporting_source_message_refs": [
+                        {"artifact_id": "artifact-a", "source_message_id": "msg-a"},
+                        {"artifact_id": "artifact-b", "source_message_id": "msg-b"},
+                    ],
+                    "supporting_candidate_refs": [
+                        {
+                            "artifact_id": "artifact-a",
+                            "source_message_id": "msg-a",
+                            "candidate_id": "candidate-a:v2",
+                            "candidate_updated_at": "2026-03-28T00:05:00+00:00",
+                        },
+                        {
+                            "artifact_id": "artifact-b",
+                            "source_message_id": "msg-b",
+                            "candidate_id": "candidate-b:v1",
+                            "candidate_updated_at": "2026-03-28T00:04:00+00:00",
+                        },
+                    ],
+                    "supporting_review_refs": [
+                        {
+                            "artifact_id": "artifact-a",
+                            "source_message_id": "msg-a",
+                            "candidate_id": "candidate-a:v2",
+                            "candidate_updated_at": "2026-03-28T00:05:00+00:00",
+                            "review_action": "accept",
+                            "review_status": "accepted",
+                            "recorded_at": "2026-03-28T00:06:00+00:00",
+                        }
+                    ],
+                    "conflict_target_categories": [
+                        "future_reviewed_memory_candidate_draft_vs_applied_effect",
+                        "future_applied_reviewed_memory_effect_vs_applied_effect",
+                    ],
+                    "conflict_visibility_stage": "contract_only_not_resolved",
+                    "audit_trace_expectation": "operator_visible_local_transition_required",
+                    "defined_at": "2026-03-28T00:05:00+00:00",
+                },
+            )
+            self.assertEqual(
+                aggregate["reviewed_memory_transition_audit_contract"],
+                {
+                    "audit_version": "first_reviewed_memory_transition_identity_v1",
+                    "reviewed_scope": "same_session_exact_recurrence_aggregate_only",
+                    "aggregate_identity_ref": {
+                        "candidate_family": "correction_rewrite_preference",
+                        "key_scope": "correction_rewrite_recurrence",
+                        "key_version": "explicit_pair_rewrite_delta_v1",
+                        "derivation_source": "explicit_corrected_pair",
+                        "normalized_delta_fingerprint": "sha256:shared-fingerprint",
+                    },
+                    "supporting_source_message_refs": [
+                        {"artifact_id": "artifact-a", "source_message_id": "msg-a"},
+                        {"artifact_id": "artifact-b", "source_message_id": "msg-b"},
+                    ],
+                    "supporting_candidate_refs": [
+                        {
+                            "artifact_id": "artifact-a",
+                            "source_message_id": "msg-a",
+                            "candidate_id": "candidate-a:v2",
+                            "candidate_updated_at": "2026-03-28T00:05:00+00:00",
+                        },
+                        {
+                            "artifact_id": "artifact-b",
+                            "source_message_id": "msg-b",
+                            "candidate_id": "candidate-b:v1",
+                            "candidate_updated_at": "2026-03-28T00:04:00+00:00",
+                        },
+                    ],
+                    "supporting_review_refs": [
+                        {
+                            "artifact_id": "artifact-a",
+                            "source_message_id": "msg-a",
+                            "candidate_id": "candidate-a:v2",
+                            "candidate_updated_at": "2026-03-28T00:05:00+00:00",
+                            "review_action": "accept",
+                            "review_status": "accepted",
+                            "recorded_at": "2026-03-28T00:06:00+00:00",
+                        }
+                    ],
+                    "transition_action_vocabulary": [
+                        "future_reviewed_memory_apply",
+                        "future_reviewed_memory_stop_apply",
+                        "future_reviewed_memory_reversal",
+                        "future_reviewed_memory_conflict_visibility",
+                    ],
+                    "transition_identity_requirement": "canonical_local_transition_id_required",
+                    "operator_visible_reason_boundary": "explicit_reason_or_note_required",
+                    "audit_stage": "contract_only_not_emitted",
+                    "audit_store_boundary": "canonical_transition_record_separate_from_task_log",
+                    "post_transition_invariants": "aggregate_identity_and_contract_refs_retained",
+                    "defined_at": "2026-03-28T00:05:00+00:00",
+                },
+            )
+            self.assertNotIn("reviewed_memory_transition_record", aggregate)
+            self.assertEqual(
+                aggregate["reviewed_memory_unblock_contract"],
+                {
+                    "unblock_version": "same_session_reviewed_memory_unblock_v1",
+                    "required_preconditions": [
+                        "reviewed_memory_boundary_defined",
+                        "rollback_ready_reviewed_memory_effect",
+                        "disable_ready_reviewed_memory_effect",
+                        "conflict_visible_reviewed_memory_scope",
+                        "operator_auditable_reviewed_memory_transition",
+                    ],
+                    "unblock_status": "blocked_all_required",
+                    "satisfaction_basis_boundary": "canonical_reviewed_memory_layer_capabilities_only",
+                    "partial_state_policy": "partial_states_not_materialized",
+                    "evaluated_at": "2026-03-28T00:05:00+00:00",
+                },
+            )
+            self.assertEqual(
+                aggregate["reviewed_memory_capability_status"],
+                {
+                    "capability_version": "same_session_reviewed_memory_capabilities_v1",
+                    "required_preconditions": [
+                        "reviewed_memory_boundary_defined",
+                        "rollback_ready_reviewed_memory_effect",
+                        "disable_ready_reviewed_memory_effect",
+                        "conflict_visible_reviewed_memory_scope",
+                        "operator_auditable_reviewed_memory_transition",
+                    ],
+                    "capability_outcome": "blocked_all_required",
+                    "satisfaction_basis_boundary": "canonical_reviewed_memory_layer_capabilities_only",
+                    "partial_state_policy": "partial_states_not_materialized",
+                    "evaluated_at": "2026-03-28T00:05:00+00:00",
+                },
+            )
+            source_context = {
+                "source_version": "same_session_reviewed_memory_capability_source_refs_v1",
+                "source_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "supporting_review_refs": list(aggregate["supporting_review_refs"]),
+                "required_preconditions": list(
+                    aggregate["reviewed_memory_unblock_contract"]["required_preconditions"]
+                ),
+                "evaluated_at": "2026-03-28T00:05:00+00:00",
+            }
+            self.assertEqual(
+                service._resolve_recurrence_aggregate_reviewed_memory_boundary_source_ref(
+                    aggregate,
+                    source_context,
+                ),
+                {
+                    "ref_version": "same_session_reviewed_memory_boundary_source_ref_v1",
+                    "ref_kind": "aggregate_reviewed_memory_trigger_affordance",
+                    "ref_scope": "same_session_exact_recurrence_aggregate_only",
+                    "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                    "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                    "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                    "supporting_review_refs": list(aggregate["supporting_review_refs"]),
+                    "trigger_action_label": "검토 메모 적용 시작",
+                    "trigger_state": "visible_disabled",
+                    "target_label": "eligible_for_reviewed_memory_draft_planning_only",
+                    "target_boundary": "reviewed_memory_draft_planning_only",
+                    "defined_at": "2026-03-28T00:05:00+00:00",
+                },
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_proof_boundary(
+                    aggregate,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_fact_source_instance(
+                    aggregate,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_fact_source(
+                    aggregate,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event(
+                    aggregate,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_producer(
+                    aggregate,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_source(
+                    aggregate,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_record(
+                    aggregate,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_applied_effect_target(
+                    aggregate,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_reversible_effect_handle(
+                    aggregate,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_rollback_source_ref(
+                    aggregate,
+                    source_context,
+                )
+            )
+            rollback_mismatched_source_context = dict(source_context)
+            rollback_mismatched_source_context["aggregate_identity_ref"] = {
+                "candidate_family": "different"
+            }
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_rollback_source_ref(
+                    aggregate,
+                    rollback_mismatched_source_context,
+                )
+            )
+            rollback_missing_precondition_context = dict(source_context)
+            rollback_missing_precondition_context["required_preconditions"] = [
+                item
+                for item in source_context["required_preconditions"]
+                if item != "rollback_ready_reviewed_memory_effect"
+            ]
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_rollback_source_ref(
+                    aggregate,
+                    rollback_missing_precondition_context,
+                )
+            )
+            aggregate_missing_rollback_contract = dict(aggregate)
+            aggregate_missing_rollback_contract.pop("reviewed_memory_rollback_contract", None)
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_rollback_source_ref(
+                    aggregate_missing_rollback_contract,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_disable_source_ref(
+                    aggregate,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_conflict_source_ref(
+                    aggregate,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_transition_audit_source_ref(
+                    aggregate,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_proof_record(
+                    aggregate,
+                    source_context,
+                )
+            )
+            aggregate_without_boundary_draft = dict(aggregate)
+            aggregate_without_boundary_draft.pop("reviewed_memory_boundary_draft", None)
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_boundary_source_ref(
+                    aggregate_without_boundary_draft,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_proof_record(
+                    aggregate_without_boundary_draft,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_proof_boundary(
+                    aggregate_without_boundary_draft,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_fact_source_instance(
+                    aggregate_without_boundary_draft,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_fact_source(
+                    aggregate_without_boundary_draft,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event(
+                    aggregate_without_boundary_draft,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_producer(
+                    aggregate_without_boundary_draft,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_record(
+                    aggregate_without_boundary_draft,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_source(
+                    aggregate_without_boundary_draft,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_applied_effect_target(
+                    aggregate_without_boundary_draft,
+                    source_context,
+                )
+            )
+            aggregate_without_first_seen_at = dict(aggregate)
+            aggregate_without_first_seen_at.pop("first_seen_at", None)
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_proof_record(
+                    aggregate_without_first_seen_at,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_proof_boundary(
+                    aggregate_without_first_seen_at,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_fact_source_instance(
+                    aggregate_without_first_seen_at,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_fact_source(
+                    aggregate_without_first_seen_at,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event(
+                    aggregate_without_first_seen_at,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_producer(
+                    aggregate_without_first_seen_at,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_source(
+                    aggregate_without_first_seen_at,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_record(
+                    aggregate_without_first_seen_at,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_applied_effect_target(
+                    aggregate_without_first_seen_at,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_reversible_effect_handle(
+                    aggregate_without_first_seen_at,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_rollback_source_ref(
+                    aggregate_without_first_seen_at,
+                    source_context,
+                )
+            )
+            self.assertNotIn("reviewed_memory_capability_source_refs", aggregate)
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_capability_source_refs(aggregate)
+            )
+            self.assertNotIn("reviewed_memory_capability_basis", aggregate)
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_capability_basis(aggregate)
+            )
+            self.assertEqual(
+                aggregate["reviewed_memory_planning_target_ref"],
+                {
+                    "planning_target_version": "same_session_reviewed_memory_planning_target_ref_v1",
+                    "target_label": "eligible_for_reviewed_memory_draft_planning_only",
+                    "target_scope": "same_session_exact_recurrence_aggregate_only",
+                    "target_boundary": "reviewed_memory_draft_planning_only",
+                    "defined_at": "2026-03-28T00:05:00+00:00",
+                },
+            )
+            self.assertEqual(
+                aggregate["reviewed_memory_planning_target_ref"]["target_label"],
+                "eligible_for_reviewed_memory_draft_planning_only",
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_transition_record(aggregate)
+            )
+            aggregate_with_task_log_replay = dict(aggregate)
+            aggregate_with_task_log_replay["task_log_replay"] = {
+                "canonical_transition_id": "transition-local-1",
+                "operator_reason_or_note": "apply now",
+                "emitted_at": "2026-03-28T00:07:00+00:00",
+            }
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_capability_source_refs(
+                    aggregate_with_task_log_replay
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_proof_record(
+                    aggregate_with_task_log_replay,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_proof_boundary(
+                    aggregate_with_task_log_replay,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_fact_source_instance(
+                    aggregate_with_task_log_replay,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_fact_source(
+                    aggregate_with_task_log_replay,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_applied_effect_target(
+                    aggregate_with_task_log_replay,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_reversible_effect_handle(
+                    aggregate_with_task_log_replay,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_rollback_source_ref(
+                    aggregate_with_task_log_replay,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_capability_basis(
+                    aggregate_with_task_log_replay
+                )
+            )
+            self.assertEqual(
+                service._build_recurrence_aggregate_reviewed_memory_capability_status(
+                    aggregate_with_task_log_replay
+                ),
+                aggregate["reviewed_memory_capability_status"],
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_transition_record(
+                    aggregate_with_task_log_replay
+                )
+            )
+
+    def test_local_effect_presence_proof_record_materializes_only_from_exact_internal_store_entry(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            service = WebAppService(
+                settings=AppSettings(
+                    sessions_dir=str(tmp_path / "sessions"),
+                    task_log_path=str(tmp_path / "task_log.jsonl"),
+                    notes_dir=str(tmp_path / "notes"),
+                    model_provider="mock",
+                )
+            )
+
+            base_identity = {
+                "candidate_family": "correction_rewrite_preference",
+                "key_scope": "correction_rewrite_recurrence",
+                "key_version": "explicit_pair_rewrite_delta_v1",
+                "derivation_source": "explicit_corrected_pair",
+                "normalized_delta_fingerprint": "sha256:proof-record-fingerprint",
+                "stability": "deterministic_local",
+            }
+            messages = [
+                {
+                    "message_id": "msg-proof-a",
+                    "source_message_id": "msg-proof-a",
+                    "artifact_id": "artifact-proof-a",
+                    "artifact_kind": "grounded_brief",
+                    "original_response_snapshot": {
+                        "artifact_id": "artifact-proof-a",
+                        "artifact_kind": "grounded_brief",
+                        "draft_text": "원본 요약입니다.",
+                    },
+                    "candidate_recurrence_key": {
+                        **base_identity,
+                        "source_candidate_id": "candidate-proof-a:v1",
+                        "source_candidate_updated_at": "2026-03-28T00:01:00+00:00",
+                        "derived_at": "2026-03-28T00:01:00+00:00",
+                    },
+                },
+                {
+                    "message_id": "msg-proof-b",
+                    "source_message_id": "msg-proof-b",
+                    "artifact_id": "artifact-proof-b",
+                    "artifact_kind": "grounded_brief",
+                    "original_response_snapshot": {
+                        "artifact_id": "artifact-proof-b",
+                        "artifact_kind": "grounded_brief",
+                        "draft_text": "원본 요약입니다.",
+                    },
+                    "candidate_recurrence_key": {
+                        **base_identity,
+                        "source_candidate_id": "candidate-proof-b:v1",
+                        "source_candidate_updated_at": "2026-03-28T00:03:00+00:00",
+                        "derived_at": "2026-03-28T00:03:00+00:00",
+                    },
+                },
+            ]
+
+            aggregate = service._build_recurrence_aggregate_candidates(messages)[0]
+            source_context = service._build_recurrence_aggregate_reviewed_memory_source_context(
+                aggregate
+            )
+            self.assertIsNotNone(source_context)
+            boundary_source_ref = service._resolve_recurrence_aggregate_reviewed_memory_boundary_source_ref(
+                aggregate,
+                source_context or {},
+            )
+            self.assertIsNotNone(boundary_source_ref)
+            proof_record_entry = (
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_proof_record_store_entry(
+                    aggregate
+                )
+            )
+            self.assertIsNotNone(proof_record_entry)
+            expected_proof_record_entry = {
+                "proof_record_version": "first_same_session_reviewed_memory_local_effect_presence_proof_record_v1",
+                "proof_record_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "boundary_source_ref": dict(boundary_source_ref),
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "proof_capability_boundary": "local_effect_presence_only",
+                "proof_record_stage": "canonical_presence_recorded_local_only",
+                "applied_effect_id": proof_record_entry["applied_effect_id"],
+                "present_locally_at": aggregate["last_seen_at"],
+            }
+            if isinstance(aggregate.get("supporting_review_refs"), list) and aggregate.get(
+                "supporting_review_refs"
+            ):
+                expected_proof_record_entry["supporting_review_refs"] = list(
+                    aggregate["supporting_review_refs"]
+                )
+            self.assertEqual(
+                proof_record_entry,
+                expected_proof_record_entry,
+            )
+
+            conflicting_proof_record_entry = dict(proof_record_entry)
+            conflicting_proof_record_entry["applied_effect_id"] = "reviewed-memory-effect:stale"
+            conflicting_proof_record_entry["present_locally_at"] = "2026-03-28T00:04:00+00:00"
+            merged_proof_record_store_entries = (
+                service._build_reviewed_memory_local_effect_presence_proof_record_store_entries(
+                    [aggregate],
+                    existing_entries=[conflicting_proof_record_entry],
+                )
+            )
+            self.assertEqual(merged_proof_record_store_entries, [proof_record_entry])
+
+            aggregate_with_store = service._build_recurrence_aggregate_candidates(
+                messages,
+                proof_record_store_entries=merged_proof_record_store_entries,
+            )[0]
+            proof_record = service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_proof_record(
+                aggregate_with_store,
+                source_context or {},
+            )
+            self.assertEqual(proof_record, proof_record_entry)
+            expected_proof_boundary = {
+                "proof_boundary_version": "first_same_session_reviewed_memory_local_effect_presence_proof_boundary_v1",
+                "proof_boundary_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "boundary_source_ref": dict(boundary_source_ref),
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "proof_capability_boundary": "local_effect_presence_only",
+                "proof_stage": "first_presence_proved_local_only",
+                "applied_effect_id": proof_record_entry["applied_effect_id"],
+                "present_locally_at": aggregate["last_seen_at"],
+            }
+            if isinstance(aggregate.get("supporting_review_refs"), list) and aggregate.get(
+                "supporting_review_refs"
+            ):
+                expected_proof_boundary["supporting_review_refs"] = list(
+                    aggregate["supporting_review_refs"]
+                )
+            self.assertEqual(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_proof_boundary(
+                    aggregate_with_store,
+                    source_context,
+                ),
+                expected_proof_boundary,
+            )
+            expected_fact_source_instance = {
+                "fact_source_instance_version": (
+                    "first_same_session_reviewed_memory_local_effect_presence_fact_source_instance_v1"
+                ),
+                "fact_source_instance_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "boundary_source_ref": dict(boundary_source_ref),
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "fact_capability_boundary": "local_effect_presence_only",
+                "fact_stage": "presence_fact_available_local_only",
+                "applied_effect_id": proof_record_entry["applied_effect_id"],
+                "present_locally_at": aggregate["last_seen_at"],
+            }
+            if isinstance(aggregate.get("supporting_review_refs"), list) and aggregate.get(
+                "supporting_review_refs"
+            ):
+                expected_fact_source_instance["supporting_review_refs"] = list(
+                    aggregate["supporting_review_refs"]
+                )
+            self.assertEqual(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_fact_source_instance(
+                    aggregate_with_store,
+                    source_context,
+                ),
+                expected_fact_source_instance,
+            )
+            expected_fact_source = {
+                "fact_source_version": "first_same_session_reviewed_memory_local_effect_presence_fact_source_v1",
+                "fact_source_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "boundary_source_ref": dict(boundary_source_ref),
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "fact_capability_boundary": "local_effect_presence_only",
+                "fact_stage": "presence_fact_available_local_only",
+                "applied_effect_id": proof_record_entry["applied_effect_id"],
+                "present_locally_at": aggregate["last_seen_at"],
+            }
+            if isinstance(aggregate.get("supporting_review_refs"), list) and aggregate.get(
+                "supporting_review_refs"
+            ):
+                expected_fact_source["supporting_review_refs"] = list(
+                    aggregate["supporting_review_refs"]
+                )
+            self.assertEqual(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_fact_source(
+                    aggregate_with_store,
+                    source_context,
+                ),
+                expected_fact_source,
+            )
+            expected_event = {
+                "event_version": "first_same_session_reviewed_memory_local_effect_presence_event_v1",
+                "event_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "boundary_source_ref": dict(boundary_source_ref),
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "event_capability_boundary": "local_effect_presence_only",
+                "event_stage": "presence_observed_local_only",
+                "applied_effect_id": proof_record_entry["applied_effect_id"],
+                "present_locally_at": aggregate["last_seen_at"],
+            }
+            if isinstance(aggregate.get("supporting_review_refs"), list) and aggregate.get(
+                "supporting_review_refs"
+            ):
+                expected_event["supporting_review_refs"] = list(
+                    aggregate["supporting_review_refs"]
+                )
+            self.assertEqual(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event(
+                    aggregate_with_store,
+                    source_context,
+                ),
+                expected_event,
+            )
+            expected_producer = {
+                "producer_version": "first_same_session_reviewed_memory_local_effect_presence_event_producer_v1",
+                "producer_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "boundary_source_ref": dict(boundary_source_ref),
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "producer_capability_boundary": "local_effect_presence_only",
+                "producer_stage": "presence_event_recorded_local_only",
+                "applied_effect_id": proof_record_entry["applied_effect_id"],
+                "present_locally_at": aggregate["last_seen_at"],
+            }
+            if isinstance(aggregate.get("supporting_review_refs"), list) and aggregate.get(
+                "supporting_review_refs"
+            ):
+                expected_producer["supporting_review_refs"] = list(
+                    aggregate["supporting_review_refs"]
+                )
+            self.assertEqual(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_producer(
+                    aggregate_with_store,
+                    source_context,
+                ),
+                expected_producer,
+            )
+            expected_event_source = {
+                "event_source_version": "first_same_session_reviewed_memory_local_effect_presence_event_source_v1",
+                "event_source_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "boundary_source_ref": dict(boundary_source_ref),
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "event_capability_boundary": "local_effect_presence_only",
+                "event_stage": "presence_event_recorded_local_only",
+                "applied_effect_id": proof_record_entry["applied_effect_id"],
+                "present_locally_at": aggregate["last_seen_at"],
+            }
+            if isinstance(aggregate.get("supporting_review_refs"), list) and aggregate.get(
+                "supporting_review_refs"
+            ):
+                expected_event_source["supporting_review_refs"] = list(
+                    aggregate["supporting_review_refs"]
+                )
+            self.assertEqual(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_source(
+                    aggregate_with_store,
+                    source_context,
+                ),
+                expected_event_source,
+            )
+            mismatched_event_source_context = dict(source_context)
+            mismatched_event_source_context["aggregate_identity_ref"] = {"candidate_family": "different"}
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_source(
+                    aggregate_with_store,
+                    mismatched_event_source_context,
+                )
+            )
+            expected_record = {
+                "source_version": "first_same_session_reviewed_memory_local_effect_presence_record_v1",
+                "source_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "boundary_source_ref": dict(boundary_source_ref),
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "source_capability_boundary": "local_effect_presence_only",
+                "source_stage": "presence_recorded_local_only",
+                "applied_effect_id": proof_record_entry["applied_effect_id"],
+                "present_locally_at": aggregate["last_seen_at"],
+            }
+            if isinstance(aggregate.get("supporting_review_refs"), list) and aggregate.get(
+                "supporting_review_refs"
+            ):
+                expected_record["supporting_review_refs"] = list(aggregate["supporting_review_refs"])
+            self.assertEqual(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_record(
+                    aggregate_with_store,
+                    source_context,
+                ),
+                expected_record,
+            )
+            mismatched_record_context = dict(source_context)
+            mismatched_record_context["aggregate_identity_ref"] = {"candidate_family": "different"}
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_record(
+                    aggregate_with_store,
+                    mismatched_record_context,
+                )
+            )
+            expected_target = {
+                "target_version": "first_same_session_reviewed_memory_applied_effect_target_v1",
+                "target_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "boundary_source_ref": dict(boundary_source_ref),
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "target_capability_boundary": "local_effect_presence_only",
+                "target_stage": "effect_present_local_only",
+                "applied_effect_id": proof_record_entry["applied_effect_id"],
+                "present_locally_at": aggregate["last_seen_at"],
+            }
+            if isinstance(aggregate.get("supporting_review_refs"), list) and aggregate.get(
+                "supporting_review_refs"
+            ):
+                expected_target["supporting_review_refs"] = list(aggregate["supporting_review_refs"])
+            self.assertEqual(
+                service._build_recurrence_aggregate_reviewed_memory_applied_effect_target(
+                    aggregate_with_store,
+                    source_context,
+                ),
+                expected_target,
+            )
+            mismatched_target_context = dict(source_context)
+            mismatched_target_context["aggregate_identity_ref"] = {"candidate_family": "different"}
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_applied_effect_target(
+                    aggregate_with_store,
+                    mismatched_target_context,
+                )
+            )
+            handle_identity_payload = {
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "boundary_source_ref": dict(boundary_source_ref),
+                "rollback_contract_ref": dict(aggregate["reviewed_memory_rollback_contract"]),
+                "applied_effect_id": proof_record_entry["applied_effect_id"],
+                "defined_at": aggregate["last_seen_at"],
+            }
+            if isinstance(aggregate.get("supporting_review_refs"), list) and aggregate.get(
+                "supporting_review_refs"
+            ):
+                handle_identity_payload["supporting_review_refs"] = list(
+                    aggregate["supporting_review_refs"]
+                )
+            expected_handle_id = (
+                "reviewed-memory-handle:"
+                + hashlib.sha256(
+                    json.dumps(handle_identity_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+                ).hexdigest()[:24]
+            )
+            expected_handle = {
+                "handle_version": "first_same_session_reviewed_memory_reversible_effect_handle_v1",
+                "reviewed_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "boundary_source_ref": dict(boundary_source_ref),
+                "rollback_contract_ref": dict(aggregate["reviewed_memory_rollback_contract"]),
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "effect_capability": "reversible_local_only",
+                "effect_invariant": "retain_identity_supporting_refs_boundary_and_audit",
+                "effect_stage": "handle_defined_not_applied",
+                "handle_id": expected_handle_id,
+                "defined_at": aggregate["last_seen_at"],
+            }
+            if isinstance(aggregate.get("supporting_review_refs"), list) and aggregate.get(
+                "supporting_review_refs"
+            ):
+                expected_handle["supporting_review_refs"] = list(aggregate["supporting_review_refs"])
+            self.assertEqual(
+                service._build_recurrence_aggregate_reviewed_memory_reversible_effect_handle(
+                    aggregate_with_store,
+                    source_context,
+                ),
+                expected_handle,
+            )
+            mismatched_handle_context = dict(source_context)
+            mismatched_handle_context["aggregate_identity_ref"] = {"candidate_family": "different"}
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_reversible_effect_handle(
+                    aggregate_with_store,
+                    mismatched_handle_context,
+                )
+            )
+            self.assertEqual(
+                service._resolve_recurrence_aggregate_reviewed_memory_rollback_source_ref(
+                    aggregate_with_store,
+                    source_context,
+                ),
+                {
+                    "ref_version": "same_session_reviewed_memory_rollback_source_ref_v1",
+                    "ref_kind": "reviewed_memory_reversible_effect_handle",
+                    "ref_scope": "same_session_exact_recurrence_aggregate_only",
+                    "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                    "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                    "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                    "handle_id": expected_handle_id,
+                    "effect_target_kind": "applied_reviewed_memory_effect",
+                    "effect_capability": "reversible_local_only",
+                    "effect_stage": "handle_defined_not_applied",
+                    "defined_at": aggregate["last_seen_at"],
+                }
+                | (
+                    {"supporting_review_refs": list(aggregate["supporting_review_refs"])}
+                    if isinstance(aggregate.get("supporting_review_refs"), list)
+                    and aggregate.get("supporting_review_refs")
+                    else {}
+                ),
+            )
+            expected_disable_source_ref = {
+                "ref_version": "same_session_reviewed_memory_disable_source_ref_v1",
+                "ref_kind": "reviewed_memory_disable_contract_backed_source",
+                "ref_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "boundary_source_ref": dict(boundary_source_ref),
+                "disable_contract_ref": dict(aggregate["reviewed_memory_disable_contract"]),
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "effect_capability": "disable_local_only",
+                "effect_stage": "disable_defined_not_applied",
+                "defined_at": aggregate["last_seen_at"],
+            }
+            if isinstance(aggregate.get("supporting_review_refs"), list) and aggregate.get(
+                "supporting_review_refs"
+            ):
+                expected_disable_source_ref["supporting_review_refs"] = list(
+                    aggregate["supporting_review_refs"]
+                )
+            self.assertEqual(
+                service._resolve_recurrence_aggregate_reviewed_memory_disable_source_ref(
+                    aggregate_with_store,
+                    source_context,
+                ),
+                expected_disable_source_ref,
+            )
+            disable_mismatched_context = dict(source_context)
+            disable_mismatched_context["aggregate_identity_ref"] = {"candidate_family": "different"}
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_disable_source_ref(
+                    aggregate_with_store,
+                    disable_mismatched_context,
+                )
+            )
+            disable_missing_precondition_context = dict(source_context)
+            disable_missing_precondition_context["required_preconditions"] = [
+                item
+                for item in source_context["required_preconditions"]
+                if item != "disable_ready_reviewed_memory_effect"
+            ]
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_disable_source_ref(
+                    aggregate_with_store,
+                    disable_missing_precondition_context,
+                )
+            )
+            aggregate_missing_disable_contract = dict(aggregate_with_store)
+            aggregate_missing_disable_contract.pop("reviewed_memory_disable_contract", None)
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_disable_source_ref(
+                    aggregate_missing_disable_contract,
+                    source_context,
+                )
+            )
+            expected_conflict_source_ref = {
+                "ref_version": "same_session_reviewed_memory_conflict_source_ref_v1",
+                "ref_kind": "reviewed_memory_conflict_contract_backed_source",
+                "ref_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "boundary_source_ref": dict(boundary_source_ref),
+                "conflict_contract_ref": dict(aggregate["reviewed_memory_conflict_contract"]),
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "effect_capability": "conflict_visible_local_only",
+                "effect_stage": "conflict_scope_defined_not_applied",
+                "defined_at": aggregate["last_seen_at"],
+            }
+            if isinstance(aggregate.get("supporting_review_refs"), list) and aggregate.get(
+                "supporting_review_refs"
+            ):
+                expected_conflict_source_ref["supporting_review_refs"] = list(
+                    aggregate["supporting_review_refs"]
+                )
+            self.assertEqual(
+                service._resolve_recurrence_aggregate_reviewed_memory_conflict_source_ref(
+                    aggregate_with_store,
+                    source_context,
+                ),
+                expected_conflict_source_ref,
+            )
+            conflict_mismatched_context = dict(source_context)
+            conflict_mismatched_context["aggregate_identity_ref"] = {"candidate_family": "different"}
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_conflict_source_ref(
+                    aggregate_with_store,
+                    conflict_mismatched_context,
+                )
+            )
+            conflict_missing_precondition_context = dict(source_context)
+            conflict_missing_precondition_context["required_preconditions"] = [
+                item
+                for item in source_context["required_preconditions"]
+                if item != "conflict_visible_reviewed_memory_scope"
+            ]
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_conflict_source_ref(
+                    aggregate_with_store,
+                    conflict_missing_precondition_context,
+                )
+            )
+            aggregate_missing_conflict_contract = dict(aggregate_with_store)
+            aggregate_missing_conflict_contract.pop("reviewed_memory_conflict_contract", None)
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_conflict_source_ref(
+                    aggregate_missing_conflict_contract,
+                    source_context,
+                )
+            )
+            expected_transition_audit_source_ref = {
+                "ref_version": "same_session_reviewed_memory_transition_audit_source_ref_v1",
+                "ref_kind": "reviewed_memory_transition_audit_contract_backed_source",
+                "ref_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "boundary_source_ref": dict(boundary_source_ref),
+                "transition_audit_contract_ref": dict(aggregate["reviewed_memory_transition_audit_contract"]),
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "effect_capability": "transition_audit_local_only",
+                "effect_stage": "audit_defined_not_emitted",
+                "defined_at": aggregate["last_seen_at"],
+            }
+            if isinstance(aggregate.get("supporting_review_refs"), list) and aggregate.get(
+                "supporting_review_refs"
+            ):
+                expected_transition_audit_source_ref["supporting_review_refs"] = list(
+                    aggregate["supporting_review_refs"]
+                )
+            self.assertEqual(
+                service._resolve_recurrence_aggregate_reviewed_memory_transition_audit_source_ref(
+                    aggregate_with_store,
+                    source_context,
+                ),
+                expected_transition_audit_source_ref,
+            )
+            audit_mismatched_context = dict(source_context)
+            audit_mismatched_context["aggregate_identity_ref"] = {"candidate_family": "different"}
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_transition_audit_source_ref(
+                    aggregate_with_store,
+                    audit_mismatched_context,
+                )
+            )
+            audit_missing_precondition_context = dict(source_context)
+            audit_missing_precondition_context["required_preconditions"] = [
+                item
+                for item in source_context["required_preconditions"]
+                if item != "operator_auditable_reviewed_memory_transition"
+            ]
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_transition_audit_source_ref(
+                    aggregate_with_store,
+                    audit_missing_precondition_context,
+                )
+            )
+            aggregate_missing_audit_contract = dict(aggregate_with_store)
+            aggregate_missing_audit_contract.pop("reviewed_memory_transition_audit_contract", None)
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_transition_audit_source_ref(
+                    aggregate_missing_audit_contract,
+                    source_context,
+                )
+            )
+            capability_source_refs_result = (
+                service._build_recurrence_aggregate_reviewed_memory_capability_source_refs(
+                    aggregate_with_store
+                )
+            )
+            self.assertIsNotNone(capability_source_refs_result)
+            self.assertEqual(
+                capability_source_refs_result["source_status"],
+                "all_required_sources_present",
+            )
+            self.assertIn("capability_source_refs", capability_source_refs_result)
+            self.assertIsNotNone(capability_source_refs_result["capability_source_refs"]["boundary_source_ref"])
+            self.assertIsNotNone(capability_source_refs_result["capability_source_refs"]["rollback_source_ref"])
+            self.assertIsNotNone(capability_source_refs_result["capability_source_refs"]["disable_source_ref"])
+            self.assertIsNotNone(capability_source_refs_result["capability_source_refs"]["conflict_source_ref"])
+            self.assertIsNotNone(capability_source_refs_result["capability_source_refs"]["transition_audit_source_ref"])
+            self.assertIn("reviewed_memory_capability_basis", aggregate_with_store)
+            capability_basis = aggregate_with_store["reviewed_memory_capability_basis"]
+            self.assertEqual(capability_basis["basis_version"], "same_session_reviewed_memory_capability_basis_v1")
+            self.assertEqual(capability_basis["reviewed_scope"], "same_session_exact_recurrence_aggregate_only")
+            self.assertEqual(capability_basis["aggregate_identity_ref"], dict(aggregate_with_store["aggregate_key"]))
+            self.assertEqual(
+                capability_basis["supporting_source_message_refs"],
+                list(aggregate_with_store["supporting_source_message_refs"]),
+            )
+            self.assertEqual(
+                capability_basis["supporting_candidate_refs"],
+                list(aggregate_with_store["supporting_candidate_refs"]),
+            )
+            self.assertEqual(
+                capability_basis["required_preconditions"],
+                list(aggregate_with_store["reviewed_memory_unblock_contract"]["required_preconditions"]),
+            )
+            self.assertEqual(capability_basis["basis_status"], "all_required_capabilities_present")
+            self.assertEqual(capability_basis["satisfaction_basis_boundary"], "canonical_reviewed_memory_layer_capabilities_only")
+            self.assertEqual(capability_basis["evaluated_at"], aggregate_with_store["last_seen_at"])
+            self.assertEqual(
+                aggregate_with_store["reviewed_memory_capability_status"]["capability_outcome"],
+                "unblocked_all_required",
+            )
+            self.assertNotIn("reviewed_memory_transition_record", aggregate_with_store)
+
+            mismatched_proof_record_entry = dict(proof_record_entry)
+            mismatched_proof_record_entry["aggregate_identity_ref"] = {
+                "candidate_family": "different"
+            }
+            aggregate_with_mismatched_store = service._build_recurrence_aggregate_candidates(
+                messages,
+                proof_record_store_entries=[mismatched_proof_record_entry],
+            )[0]
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_proof_record(
+                    aggregate_with_mismatched_store,
+                    source_context,
+                )
+            )
+            aggregate_with_support_only = dict(aggregate)
+            aggregate_with_support_only["review_queue_items"] = [
+                {
+                    "artifact_id": "artifact-a",
+                    "source_message_id": "msg-a",
+                    "candidate_id": "candidate-a:v2",
+                    "candidate_updated_at": "2026-03-28T00:05:00+00:00",
+                }
+            ]
+            aggregate_with_support_only["candidate_review_record"] = {
+                "artifact_id": "artifact-a",
+                "source_message_id": "msg-a",
+                "candidate_id": "candidate-a:v2",
+                "candidate_updated_at": "2026-03-28T00:05:00+00:00",
+                "review_action": "accept",
+                "review_status": "accepted",
+                "recorded_at": "2026-03-28T00:06:00+00:00",
+            }
+            aggregate_with_support_only["approval_backed_save_support"] = {
+                "saved_note_path": "/tmp/note.md"
+            }
+            aggregate_with_support_only["historical_adjunct"] = {
+                "artifact_id": "artifact-a",
+                "saved_note_path": "/tmp/note.md",
+            }
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_rollback_source_ref(
+                    aggregate_with_support_only,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_capability_source_refs(
+                    aggregate_with_support_only
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_capability_basis(
+                    aggregate_with_support_only
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_proof_record(
+                    aggregate_with_support_only,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_proof_boundary(
+                    aggregate_with_support_only,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_fact_source_instance(
+                    aggregate_with_support_only,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_fact_source(
+                    aggregate_with_support_only,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event(
+                    aggregate_with_support_only,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_producer(
+                    aggregate_with_support_only,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_source(
+                    aggregate_with_support_only,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_record(
+                    aggregate_with_support_only,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_applied_effect_target(
+                    aggregate_with_support_only,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_reversible_effect_handle(
+                    aggregate_with_support_only,
+                    source_context,
+                )
+            )
+            self.assertEqual(
+                service._build_recurrence_aggregate_reviewed_memory_capability_status(
+                    aggregate_with_support_only
+                ),
+                aggregate["reviewed_memory_capability_status"],
+            )
+            supporting_review_refs = list(aggregate.get("supporting_review_refs") or [])
+            aggregate_with_fake_handle = dict(aggregate)
+            aggregate_with_fake_handle["reviewed_memory_reversible_effect_handle"] = {
+                "handle_version": "first_same_session_reviewed_memory_reversible_effect_handle_v1",
+                "reviewed_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "supporting_review_refs": supporting_review_refs,
+                "boundary_source_ref": {
+                    "ref_kind": "fake-boundary-source-ref",
+                },
+                "rollback_contract_ref": {
+                    "rollback_version": "first_reviewed_memory_effect_reversal_v1",
+                },
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "effect_capability": "reversible_local_only",
+                "effect_stage": "handle_defined_not_applied",
+                "handle_id": "fake-handle",
+                "defined_at": "2026-03-28T00:05:00+00:00",
+            }
+            aggregate_with_fake_target = dict(aggregate)
+            aggregate_with_fake_target["reviewed_memory_applied_effect_target"] = {
+                "target_version": "first_same_session_reviewed_memory_applied_effect_target_v1",
+                "target_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "supporting_review_refs": supporting_review_refs,
+                "boundary_source_ref": {"ref_kind": "fake-boundary-source-ref"},
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "target_capability_boundary": "local_effect_presence_only",
+                "target_stage": "effect_present_local_only",
+                "applied_effect_id": "fake-effect",
+                "present_locally_at": "2026-03-28T00:05:00+00:00",
+            }
+            aggregate_with_fake_source = dict(aggregate)
+            aggregate_with_fake_source["reviewed_memory_local_effect_presence_record"] = {
+                "source_version": "first_same_session_reviewed_memory_local_effect_presence_record_v1",
+                "source_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "supporting_review_refs": supporting_review_refs,
+                "boundary_source_ref": {"ref_kind": "fake-boundary-source-ref"},
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "source_capability_boundary": "local_effect_presence_only",
+                "source_stage": "presence_recorded_local_only",
+                "applied_effect_id": "fake-effect",
+                "present_locally_at": "2026-03-28T00:05:00+00:00",
+            }
+            aggregate_with_fake_event_source = dict(aggregate)
+            aggregate_with_fake_event_source["reviewed_memory_local_effect_presence_event_source"] = {
+                "event_source_version": "first_same_session_reviewed_memory_local_effect_presence_event_source_v1",
+                "event_source_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "supporting_review_refs": supporting_review_refs,
+                "boundary_source_ref": {"ref_kind": "fake-boundary-source-ref"},
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "event_capability_boundary": "local_effect_presence_only",
+                "event_stage": "presence_event_recorded_local_only",
+                "applied_effect_id": "fake-effect",
+                "present_locally_at": "2026-03-28T00:05:00+00:00",
+            }
+            aggregate_with_fake_producer = dict(aggregate)
+            aggregate_with_fake_producer["reviewed_memory_local_effect_presence_event_producer"] = {
+                "producer_version": "first_same_session_reviewed_memory_local_effect_presence_event_producer_v1",
+                "producer_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "supporting_review_refs": supporting_review_refs,
+                "boundary_source_ref": {"ref_kind": "fake-boundary-source-ref"},
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "producer_capability_boundary": "local_effect_presence_only",
+                "producer_stage": "presence_event_recorded_local_only",
+                "applied_effect_id": "fake-effect",
+                "present_locally_at": "2026-03-28T00:05:00+00:00",
+            }
+            aggregate_with_fake_event = dict(aggregate)
+            aggregate_with_fake_event["reviewed_memory_local_effect_presence_event"] = {
+                "event_version": "first_same_session_reviewed_memory_local_effect_presence_event_v1",
+                "event_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "supporting_review_refs": supporting_review_refs,
+                "boundary_source_ref": {"ref_kind": "fake-boundary-source-ref"},
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "event_capability_boundary": "local_effect_presence_only",
+                "event_stage": "presence_observed_local_only",
+                "applied_effect_id": "fake-effect",
+                "present_locally_at": "2026-03-28T00:05:00+00:00",
+            }
+            aggregate_with_fake_fact_source = dict(aggregate)
+            aggregate_with_fake_fact_source["reviewed_memory_local_effect_presence_fact_source"] = {
+                "fact_source_version": "first_same_session_reviewed_memory_local_effect_presence_fact_source_v1",
+                "fact_source_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "supporting_review_refs": supporting_review_refs,
+                "boundary_source_ref": {"ref_kind": "fake-boundary-source-ref"},
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "fact_capability_boundary": "local_effect_presence_only",
+                "fact_stage": "presence_fact_available_local_only",
+                "applied_effect_id": "fake-effect",
+                "present_locally_at": "2026-03-28T00:05:00+00:00",
+            }
+            aggregate_with_fake_proof_boundary = dict(aggregate)
+            aggregate_with_fake_proof_boundary["reviewed_memory_local_effect_presence_proof_boundary"] = {
+                "proof_boundary_version": "first_same_session_reviewed_memory_local_effect_presence_proof_boundary_v1",
+                "proof_boundary_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "supporting_review_refs": supporting_review_refs,
+                "boundary_source_ref": {"ref_kind": "fake-boundary-source-ref"},
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "proof_capability_boundary": "local_effect_presence_only",
+                "proof_stage": "first_presence_proved_local_only",
+                "applied_effect_id": "fake-effect",
+                "present_locally_at": "2026-03-28T00:05:00+00:00",
+            }
+            aggregate_with_fake_fact_source_instance = dict(aggregate)
+            aggregate_with_fake_fact_source_instance["reviewed_memory_local_effect_presence_fact_source_instance"] = {
+                "fact_source_instance_version": (
+                    "first_same_session_reviewed_memory_local_effect_presence_fact_source_instance_v1"
+                ),
+                "fact_source_instance_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "supporting_review_refs": supporting_review_refs,
+                "boundary_source_ref": {"ref_kind": "fake-boundary-source-ref"},
+                "effect_target_kind": "applied_reviewed_memory_effect",
+                "fact_capability_boundary": "local_effect_presence_only",
+                "fact_stage": "presence_fact_available_local_only",
+                "applied_effect_id": "fake-effect",
+                "present_locally_at": "2026-03-28T00:05:00+00:00",
+            }
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_proof_boundary(
+                    aggregate_with_fake_proof_boundary,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_fact_source_instance(
+                    aggregate_with_fake_proof_boundary,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_fact_source_instance(
+                    aggregate_with_fake_fact_source_instance,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_fact_source(
+                    aggregate_with_fake_fact_source_instance,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_fact_source(
+                    aggregate_with_fake_fact_source,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event(
+                    aggregate_with_fake_event,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_producer(
+                    aggregate_with_fake_event,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_source(
+                    aggregate_with_fake_event,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_record(
+                    aggregate_with_fake_event,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_applied_effect_target(
+                    aggregate_with_fake_event,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_reversible_effect_handle(
+                    aggregate_with_fake_event,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_rollback_source_ref(
+                    aggregate_with_fake_event,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_producer(
+                    aggregate_with_fake_producer,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_source(
+                    aggregate_with_fake_producer,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_record(
+                    aggregate_with_fake_producer,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_applied_effect_target(
+                    aggregate_with_fake_producer,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_reversible_effect_handle(
+                    aggregate_with_fake_producer,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_rollback_source_ref(
+                    aggregate_with_fake_producer,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_source(
+                    aggregate_with_fake_event_source,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_record(
+                    aggregate_with_fake_event_source,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_applied_effect_target(
+                    aggregate_with_fake_event_source,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_reversible_effect_handle(
+                    aggregate_with_fake_event_source,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_rollback_source_ref(
+                    aggregate_with_fake_event_source,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event(
+                    aggregate_with_fake_fact_source,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_producer(
+                    aggregate_with_fake_fact_source,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_source(
+                    aggregate_with_fake_fact_source,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_record(
+                    aggregate_with_fake_fact_source,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_applied_effect_target(
+                    aggregate_with_fake_fact_source,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_reversible_effect_handle(
+                    aggregate_with_fake_fact_source,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_rollback_source_ref(
+                    aggregate_with_fake_fact_source,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_record(
+                    aggregate_with_fake_source,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_applied_effect_target(
+                    aggregate_with_fake_source,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_reversible_effect_handle(
+                    aggregate_with_fake_source,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_rollback_source_ref(
+                    aggregate_with_fake_source,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_applied_effect_target(
+                    aggregate_with_fake_target,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_reversible_effect_handle(
+                    aggregate_with_fake_target,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_rollback_source_ref(
+                    aggregate_with_fake_target,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_reversible_effect_handle(
+                    aggregate_with_fake_handle,
+                    source_context,
+                )
+            )
+            self.assertIsNone(
+                service._resolve_recurrence_aggregate_reviewed_memory_rollback_source_ref(
+                    aggregate_with_fake_handle,
+                    source_context,
+                )
+            )
+            aggregate_with_fake_source_refs = dict(aggregate)
+            aggregate_with_fake_source_refs["reviewed_memory_capability_source_refs"] = {
+                "source_version": "same_session_reviewed_memory_capability_source_refs_v1",
+                "source_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "required_preconditions": list(
+                    aggregate["reviewed_memory_unblock_contract"]["required_preconditions"]
+                ),
+                "capability_source_refs": {
+                    "boundary_source_ref": {"ref_kind": "fake"},
+                    "rollback_source_ref": {"ref_kind": "fake"},
+                    "disable_source_ref": {"ref_kind": "fake"},
+                    "conflict_source_ref": {"ref_kind": "fake"},
+                    "transition_audit_source_ref": {"ref_kind": "fake"},
+                },
+                "source_status": "all_required_sources_present",
+                "evaluated_at": "2026-03-28T00:05:00+00:00",
+            }
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_capability_source_refs(
+                    aggregate_with_fake_source_refs
+                )
+            )
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_capability_basis(
+                    aggregate_with_fake_source_refs
+                )
+            )
+            self.assertEqual(
+                service._build_recurrence_aggregate_reviewed_memory_capability_status(
+                    aggregate_with_fake_source_refs
+                ),
+                aggregate["reviewed_memory_capability_status"],
+            )
+            aggregate_with_fake_basis = dict(aggregate)
+            aggregate_with_fake_basis["reviewed_memory_capability_basis"] = {
+                "basis_version": "same_session_reviewed_memory_capability_basis_v1",
+                "reviewed_scope": "same_session_exact_recurrence_aggregate_only",
+                "aggregate_identity_ref": dict(aggregate["aggregate_key"]),
+                "supporting_source_message_refs": list(aggregate["supporting_source_message_refs"]),
+                "supporting_candidate_refs": list(aggregate["supporting_candidate_refs"]),
+                "required_preconditions": list(
+                    aggregate["reviewed_memory_unblock_contract"]["required_preconditions"]
+                ),
+                "basis_status": "all_required_capabilities_present",
+                "satisfaction_basis_boundary": "canonical_reviewed_memory_layer_capabilities_only",
+                "evaluated_at": "2026-03-28T00:05:00+00:00",
+            }
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_capability_status(
+                    aggregate_with_fake_basis
+                )
+            )
+            self.assertNotIn("future_transition_target", aggregate["reviewed_memory_precondition_status"])
+            self.assertNotIn("readiness_target", aggregate["reviewed_memory_unblock_contract"])
+            self.assertNotIn("readiness_target", aggregate["reviewed_memory_capability_status"])
+            aggregate_without_marker = dict(aggregate)
+            aggregate_without_marker.pop("aggregate_promotion_marker", None)
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_precondition_status(aggregate_without_marker)
+            )
+            aggregate_without_status = dict(aggregate)
+            aggregate_without_status.pop("reviewed_memory_precondition_status", None)
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_boundary_draft(aggregate_without_status)
+            )
+            aggregate_without_boundary_draft = dict(aggregate)
+            aggregate_without_boundary_draft.pop("reviewed_memory_boundary_draft", None)
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_rollback_contract(
+                    aggregate_without_boundary_draft
+                )
+            )
+            aggregate_without_rollback_contract = dict(aggregate)
+            aggregate_without_rollback_contract.pop("reviewed_memory_rollback_contract", None)
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_disable_contract(
+                    aggregate_without_rollback_contract
+                )
+            )
+            aggregate_without_disable_contract = dict(aggregate)
+            aggregate_without_disable_contract.pop("reviewed_memory_disable_contract", None)
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_conflict_contract(
+                    aggregate_without_disable_contract
+                )
+            )
+            aggregate_without_conflict_contract = dict(aggregate)
+            aggregate_without_conflict_contract.pop("reviewed_memory_conflict_contract", None)
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_transition_audit_contract(
+                    aggregate_without_conflict_contract
+                )
+            )
+            aggregate_without_transition_audit_contract = dict(aggregate)
+            aggregate_without_transition_audit_contract.pop("reviewed_memory_transition_audit_contract", None)
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_unblock_contract(
+                    aggregate_without_transition_audit_contract
+                )
+            )
+            aggregate_without_unblock_contract = dict(aggregate)
+            aggregate_without_unblock_contract.pop("reviewed_memory_unblock_contract", None)
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_capability_status(
+                    aggregate_without_unblock_contract
+                )
+            )
+            aggregate_without_capability_status = dict(aggregate)
+            aggregate_without_capability_status.pop("reviewed_memory_capability_status", None)
+            self.assertIsNone(
+                service._build_recurrence_aggregate_reviewed_memory_planning_target_ref(
+                    aggregate_without_capability_status
+                )
+            )
+            self.assertEqual(
+                aggregate["supporting_source_message_refs"],
+                [
+                    {"artifact_id": "artifact-proof-b", "source_message_id": "msg-proof-b"},
+                    {"artifact_id": "artifact-proof-a", "source_message_id": "msg-proof-a"},
+                ],
+            )
+            self.assertEqual(
+                aggregate["supporting_candidate_refs"],
+                [
+                    {
+                        "artifact_id": "artifact-proof-b",
+                        "source_message_id": "msg-proof-b",
+                        "candidate_id": "candidate-proof-b:v1",
+                        "candidate_updated_at": "2026-03-28T00:03:00+00:00",
+                    },
+                    {
+                        "artifact_id": "artifact-proof-a",
+                        "source_message_id": "msg-proof-a",
+                        "candidate_id": "candidate-proof-a:v1",
+                        "candidate_updated_at": "2026-03-28T00:01:00+00:00",
+                    },
+                ],
+            )
+            self.assertNotIn("supporting_review_refs", aggregate)
+
+    def test_candidate_confirmation_record_stays_source_message_anchored_and_clears_on_superseding_correction(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+            store = SessionStore(base_dir=str(tmp_path / "sessions"))
+
+            store.append_message("candidate-confirmation-store", {"role": "user", "text": "질문"})
+            source_message = store.append_message(
+                "candidate-confirmation-store",
+                {
+                    "role": "assistant",
+                    "text": "원본 요약입니다.",
+                    "status": "answer",
+                    "artifact_id": "artifact-candidate-confirmation",
+                    "artifact_kind": "grounded_brief",
+                    "selected_source_paths": [str(source_path)],
+                    "evidence": [
+                        {
+                            "source_path": str(source_path),
+                            "source_name": "source.md",
+                            "label": "본문 근거",
+                            "snippet": "hello world",
+                        }
+                    ],
+                },
+            )
+
+            corrected = store.record_correction_for_message(
+                "candidate-confirmation-store",
+                message_id=source_message["message_id"],
+                corrected_text="수정본 A입니다.\n핵심만 남겼습니다.",
+            )
+            self.assertIsNotNone(corrected)
+            candidate_updated_at = corrected["corrected_outcome"]["recorded_at"]
+
+            confirmed = store.record_candidate_confirmation_for_message(
+                "candidate-confirmation-store",
+                message_id=source_message["message_id"],
+                candidate_confirmation_record={
+                    "candidate_id": (
+                        "session-local-candidate:artifact-candidate-confirmation:"
+                        f"{source_message['message_id']}:correction_rewrite_preference"
+                    ),
+                    "candidate_family": "correction_rewrite_preference",
+                    "candidate_updated_at": candidate_updated_at,
+                    "artifact_id": "artifact-candidate-confirmation",
+                    "source_message_id": source_message["message_id"],
+                    "confirmation_scope": "candidate_reuse",
+                    "confirmation_label": "explicit_reuse_confirmation",
+                },
+            )
+            self.assertIsNotNone(confirmed)
+            self.assertEqual(
+                confirmed["candidate_confirmation_record"]["candidate_id"],
+                (
+                    "session-local-candidate:artifact-candidate-confirmation:"
+                    f"{source_message['message_id']}:correction_rewrite_preference"
+                ),
+            )
+            self.assertEqual(
+                confirmed["candidate_confirmation_record"]["candidate_updated_at"],
+                candidate_updated_at,
+            )
+            self.assertEqual(
+                confirmed["candidate_confirmation_record"]["source_message_id"],
+                source_message["message_id"],
+            )
+
+            corrected_again = store.record_correction_for_message(
+                "candidate-confirmation-store",
+                message_id=source_message["message_id"],
+                corrected_text="수정본 B입니다.\n다시 손봤습니다.",
+            )
+            self.assertIsNotNone(corrected_again)
+            self.assertNotIn("candidate_confirmation_record", corrected_again)
+
+    def test_candidate_review_record_stays_source_message_anchored_and_clears_on_superseding_correction(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+            store = SessionStore(base_dir=str(tmp_path / "sessions"))
+
+            store.append_message("candidate-review-store", {"role": "user", "text": "질문"})
+            source_message = store.append_message(
+                "candidate-review-store",
+                {
+                    "role": "assistant",
+                    "text": "원본 요약입니다.",
+                    "status": "answer",
+                    "artifact_id": "artifact-candidate-review",
+                    "artifact_kind": "grounded_brief",
+                    "selected_source_paths": [str(source_path)],
+                    "evidence": [
+                        {
+                            "source_path": str(source_path),
+                            "source_name": "source.md",
+                            "label": "본문 근거",
+                            "snippet": "hello world",
+                        }
+                    ],
+                },
+            )
+
+            corrected = store.record_correction_for_message(
+                "candidate-review-store",
+                message_id=source_message["message_id"],
+                corrected_text="수정본 A입니다.\n핵심만 남겼습니다.",
+            )
+            self.assertIsNotNone(corrected)
+            candidate_updated_at = corrected["corrected_outcome"]["recorded_at"]
+
+            confirmed = store.record_candidate_confirmation_for_message(
+                "candidate-review-store",
+                message_id=source_message["message_id"],
+                candidate_confirmation_record={
+                    "candidate_id": (
+                        "session-local-candidate:artifact-candidate-review:"
+                        f"{source_message['message_id']}:correction_rewrite_preference"
+                    ),
+                    "candidate_family": "correction_rewrite_preference",
+                    "candidate_updated_at": candidate_updated_at,
+                    "artifact_id": "artifact-candidate-review",
+                    "source_message_id": source_message["message_id"],
+                    "confirmation_scope": "candidate_reuse",
+                    "confirmation_label": "explicit_reuse_confirmation",
+                },
+            )
+            self.assertIsNotNone(confirmed)
+
+            reviewed = store.record_candidate_review_for_message(
+                "candidate-review-store",
+                message_id=source_message["message_id"],
+                candidate_review_record={
+                    "candidate_id": (
+                        "session-local-candidate:artifact-candidate-review:"
+                        f"{source_message['message_id']}:correction_rewrite_preference"
+                    ),
+                    "candidate_updated_at": candidate_updated_at,
+                    "artifact_id": "artifact-candidate-review",
+                    "source_message_id": source_message["message_id"],
+                    "review_scope": "source_message_candidate_review",
+                    "review_action": "accept",
+                    "review_status": "accepted",
+                },
+            )
+            self.assertIsNotNone(reviewed)
+            self.assertEqual(
+                reviewed["candidate_review_record"]["candidate_id"],
+                (
+                    "session-local-candidate:artifact-candidate-review:"
+                    f"{source_message['message_id']}:correction_rewrite_preference"
+                ),
+            )
+            self.assertEqual(
+                reviewed["candidate_review_record"]["candidate_updated_at"],
+                candidate_updated_at,
+            )
+            self.assertEqual(
+                reviewed["candidate_review_record"]["source_message_id"],
+                source_message["message_id"],
+            )
+
+            corrected_again = store.record_correction_for_message(
+                "candidate-review-store",
+                message_id=source_message["message_id"],
+                corrected_text="수정본 B입니다.\n다시 손봤습니다.",
+            )
+            self.assertIsNotNone(corrected_again)
+            self.assertNotIn("candidate_confirmation_record", corrected_again)
+            self.assertNotIn("candidate_review_record", corrected_again)
+
+    def test_corrected_save_bridge_uses_recorded_snapshot_and_preserves_corrected_outcome(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            note_path = tmp_path / "notes" / "source-summary.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+            )
+
+            initial = loop.handle(
+                UserRequest(
+                    user_text=f"Summarize {source_path}",
+                    session_id="corrected-save-session",
+                    metadata={"source_path": str(source_path)},
+                )
+            )
+            artifact_id = initial.artifact_id
+            source_message_id = initial.source_message_id
+            self.assertIsNotNone(source_message_id)
+
+            updated_source = loop.session_store.record_correction_for_message(
+                "corrected-save-session",
+                message_id=source_message_id or "",
+                corrected_text="수정본 A입니다.\n핵심만 남겼습니다.",
+            )
+            self.assertIsNotNone(updated_source)
+
+            bridge = loop.handle(
+                UserRequest(
+                    user_text="",
+                    session_id="corrected-save-session",
+                    metadata={"corrected_save_message_id": source_message_id},
+                )
+            )
+
+            self.assertEqual(bridge.status, "needs_approval")
+            self.assertTrue(bridge.requires_approval)
+            self.assertEqual(bridge.artifact_id, artifact_id)
+            self.assertEqual(bridge.source_message_id, source_message_id)
+            self.assertEqual(bridge.save_content_source, "corrected_text")
+            self.assertIn("현재 기록된 수정본 스냅샷", bridge.text)
+            self.assertIn("요청 시점 그대로 고정", bridge.text)
+            self.assertIsNotNone(bridge.approval)
+            self.assertEqual(bridge.approval["artifact_id"], artifact_id)
+            self.assertEqual(bridge.approval["source_message_id"], source_message_id)
+            self.assertEqual(bridge.approval["save_content_source"], "corrected_text")
+            self.assertEqual(bridge.approval["requested_path"], str(note_path))
+            self.assertIn("수정본 A입니다.", bridge.approval["preview_markdown"])
+
+            approval_id = bridge.approval["approval_id"]
+            pending_before = loop.session_store.get_pending_approval("corrected-save-session", approval_id)
+            self.assertIsNotNone(pending_before)
+            self.assertEqual(pending_before["note_text"], "수정본 A입니다.\n핵심만 남겼습니다.")
+
+            updated_again = loop.session_store.record_correction_for_message(
+                "corrected-save-session",
+                message_id=source_message_id or "",
+                corrected_text="수정본 B입니다.\n다시 손봤습니다.",
+            )
+            self.assertIsNotNone(updated_again)
+
+            pending_after = loop.session_store.get_pending_approval("corrected-save-session", approval_id)
+            self.assertIsNotNone(pending_after)
+            self.assertEqual(pending_after["note_text"], "수정본 A입니다.\n핵심만 남겼습니다.")
+            self.assertIn("수정본 A입니다.", pending_after["preview_markdown"])
+
+            approved = loop.handle(
+                UserRequest(
+                    user_text="",
+                    session_id="corrected-save-session",
+                    approved_approval_id=approval_id,
+                )
+            )
+
+            self.assertEqual(approved.status, "saved")
+            self.assertEqual(approved.artifact_id, artifact_id)
+            self.assertEqual(approved.source_message_id, source_message_id)
+            self.assertEqual(approved.save_content_source, "corrected_text")
+            self.assertEqual(approved.saved_note_path, str(note_path))
+            self.assertIn("승인 시점에 고정된 수정본", approved.text)
+            self.assertIn("다시 저장 요청", approved.text)
+            self.assertTrue(note_path.exists())
+            self.assertEqual(note_path.read_text(encoding="utf-8"), "수정본 A입니다.\n핵심만 남겼습니다.")
+
+            session = loop.session_store.get_session("corrected-save-session")
+            source_messages = [
+                message
+                for message in session["messages"]
+                if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
+            ]
+            self.assertTrue(source_messages)
+            source_message = source_messages[-1]
+            self.assertEqual(source_message["corrected_text"], "수정본 B입니다.\n다시 손봤습니다.")
+            self.assertEqual(source_message["corrected_outcome"]["outcome"], "corrected")
+            self.assertEqual(source_message["corrected_outcome"]["artifact_id"], artifact_id)
+            self.assertEqual(source_message["corrected_outcome"]["approval_id"], approval_id)
+            self.assertEqual(source_message["corrected_outcome"]["saved_note_path"], str(note_path))
+            self.assertEqual(source_message["corrected_outcome"]["source_message_id"], source_message_id)
+
+            saved_messages = [
+                message
+                for message in session["messages"]
+                if message.get("saved_note_path") == str(note_path)
+            ]
+            self.assertTrue(saved_messages)
+            self.assertEqual(saved_messages[-1]["artifact_id"], artifact_id)
+            self.assertEqual(saved_messages[-1]["source_message_id"], source_message_id)
+            self.assertEqual(saved_messages[-1]["save_content_source"], "corrected_text")
+
+            log_records = [
+                json.loads(line)
+                for line in (tmp_path / "task_log.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            approval_requested = next(
+                record
+                for record in log_records
+                if record["action"] == "approval_requested" and record["detail"].get("approval_id") == approval_id
+            )
+            approval_granted = next(
+                record
+                for record in log_records
+                if record["action"] == "approval_granted" and record["detail"].get("approval_id") == approval_id
+            )
+            write_note = next(
+                record
+                for record in log_records
+                if record["action"] == "write_note" and record["detail"].get("approval_id") == approval_id
+            )
+            corrected_outcome_recorded = next(
+                record
+                for record in log_records
+                if record["action"] == "corrected_outcome_recorded" and record["detail"].get("approval_id") == approval_id
+            )
+            self.assertEqual(approval_requested["detail"]["artifact_id"], artifact_id)
+            self.assertEqual(approval_requested["detail"]["source_message_id"], source_message_id)
+            self.assertEqual(approval_requested["detail"]["save_content_source"], "corrected_text")
+            self.assertEqual(approval_granted["detail"]["artifact_id"], artifact_id)
+            self.assertEqual(approval_granted["detail"]["source_message_id"], source_message_id)
+            self.assertEqual(approval_granted["detail"]["save_content_source"], "corrected_text")
+            self.assertEqual(write_note["detail"]["artifact_id"], artifact_id)
+            self.assertEqual(write_note["detail"]["source_message_id"], source_message_id)
+            self.assertEqual(write_note["detail"]["save_content_source"], "corrected_text")
+            self.assertEqual(corrected_outcome_recorded["detail"]["outcome"], "corrected")
+            self.assertEqual(corrected_outcome_recorded["detail"]["artifact_id"], artifact_id)
+            self.assertEqual(corrected_outcome_recorded["detail"]["approval_id"], approval_id)
+            self.assertEqual(corrected_outcome_recorded["detail"]["saved_note_path"], str(note_path))
 
     def test_scanned_pdf_returns_helpful_ocr_message(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -2683,12 +6682,97 @@ class SmokeTest(unittest.TestCase):
 
             self.assertFalse(response.requires_approval)
             self.assertIsNotNone(response.saved_note_path)
+            self.assertEqual(response.artifact_kind, "grounded_brief")
+            self.assertEqual(response.source_message_id, response.corrected_outcome["source_message_id"])
+            self.assertEqual(response.save_content_source, "original_draft")
+            self.assertIsNotNone(response.corrected_outcome)
+            self.assertEqual(response.corrected_outcome["outcome"], "accepted_as_is")
+            self.assertEqual(response.corrected_outcome["artifact_id"], response.artifact_id)
+            self.assertEqual(response.corrected_outcome["saved_note_path"], response.saved_note_path)
             saved_path = Path(response.saved_note_path or "")
             self.assertTrue(saved_path.exists())
             note_text = saved_path.read_text(encoding="utf-8")
             self.assertIn("# 'budget' 검색 요약", note_text)
             self.assertIn("budget-plan.md", note_text)
             self.assertIn("meeting-notes.md", note_text)
+            session = loop.session_store.get_session("session-3")
+            self.assertEqual(session["messages"][-1]["artifact_id"], response.artifact_id)
+            self.assertEqual(session["messages"][-1]["source_message_id"], response.source_message_id)
+            self.assertEqual(session["messages"][-1]["save_content_source"], "original_draft")
+            self.assertEqual(
+                session["messages"][-1]["corrected_outcome"]["source_message_id"],
+                session["messages"][-1]["message_id"],
+            )
+            log_records = [
+                json.loads(line)
+                for line in (tmp_path / "task_log.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            write_note = next(record for record in log_records if record["action"] == "write_note")
+            corrected_outcome_recorded = next(record for record in log_records if record["action"] == "corrected_outcome_recorded")
+            self.assertEqual(write_note["detail"]["source_message_id"], response.source_message_id)
+            self.assertEqual(write_note["detail"]["save_content_source"], "original_draft")
+            self.assertEqual(corrected_outcome_recorded["detail"]["artifact_id"], response.artifact_id)
+            self.assertIsNone(corrected_outcome_recorded["detail"]["approval_id"])
+
+    def test_session_store_backfills_save_content_source_for_legacy_pending_save_approval(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            session_path = tmp_path / "sessions" / "legacy-save-content-source.json"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1.0",
+                        "session_id": "legacy-save-content-source",
+                        "title": "legacy-save-content-source",
+                        "messages": [
+                            {
+                                "message_id": "msg-source-legacy",
+                                "role": "assistant",
+                                "text": "legacy grounded brief",
+                                "artifact_id": "artifact-legacy",
+                                "artifact_kind": "grounded_brief",
+                                "original_response_snapshot": {
+                                    "artifact_id": "artifact-legacy",
+                                    "artifact_kind": "grounded_brief",
+                                    "draft_text": "legacy grounded brief",
+                                    "source_paths": [str(tmp_path / "source.md")],
+                                    "response_origin": None,
+                                    "summary_chunks_snapshot": [],
+                                    "evidence_snapshot": [],
+                                },
+                            }
+                        ],
+                        "pending_approvals": [
+                            {
+                                "approval_id": "approval-legacy",
+                                "artifact_id": "artifact-legacy",
+                                "kind": "save_note",
+                                "requested_path": str(tmp_path / "notes" / "legacy.md"),
+                                "overwrite": False,
+                                "preview_markdown": "# legacy",
+                                "source_paths": [str(tmp_path / "source.md")],
+                                "created_at": "2026-03-27T00:00:00+00:00",
+                                "note_text": "# legacy",
+                            }
+                        ],
+                        "permissions": {"web_search": "disabled"},
+                        "active_context": None,
+                        "created_at": "2026-03-27T00:00:00+00:00",
+                        "updated_at": "2026-03-27T00:00:00+00:00",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            store = SessionStore(base_dir=str(tmp_path / "sessions"))
+
+            session = store.get_session("legacy-save-content-source")
+
+            self.assertEqual(session["pending_approvals"][0]["save_content_source"], "original_draft")
+            self.assertEqual(session["pending_approvals"][0]["source_message_id"], "msg-source-legacy")
 
     def test_search_only_lists_numbered_results(self) -> None:
         with TemporaryDirectory() as tmp_dir:

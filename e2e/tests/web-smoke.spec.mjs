@@ -13,9 +13,34 @@ const searchFixtureMemoPath = path.join(searchFixtureDir, "memo.md");
 const initialNotePath = path.join(noteDir, "initial-note.md");
 const revisedNotePath = path.join(noteDir, "reissued-note.md");
 const directNotePath = path.join(noteDir, "saved-note.md");
+const lateFlipNotePath = path.join(noteDir, "late-flip-note.md");
+const rejectedVerdictNotePath = path.join(noteDir, "rejected-verdict-note.md");
+const correctedBridgeNotePath = path.join(repoRoot, "data", "notes", "long-summary-fixture-summary.md");
+const middleSignal = "중간 섹션 핵심 결정은 승인 기반 저장을 유지하는 것입니다.";
 
 function buildSessionId(prefix) {
   return `pw-${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+async function fetchSessionPayload(page, sessionId) {
+  const response = await page.request.get(`/api/session?session_id=${encodeURIComponent(sessionId)}`);
+  expect(response.ok()).toBeTruthy();
+  return await response.json();
+}
+
+function findLatestCandidateSourceMessage(messages) {
+  return [...(Array.isArray(messages) ? messages : [])]
+    .reverse()
+    .find(
+      (message) => message && message.session_local_candidate && typeof message.session_local_candidate === "object"
+    );
+}
+
+function findMessageById(messages, messageId) {
+  const normalizedMessageId = String(messageId || "");
+  return (Array.isArray(messages) ? messages : []).find(
+    (message) => message && String(message.message_id || "") === normalizedMessageId
+  );
 }
 
 async function openAdvancedSettings(page) {
@@ -26,9 +51,11 @@ async function openAdvancedSettings(page) {
 }
 
 async function prepareSession(page, prefix) {
+  await page.locator("#new-session").click();
   await openAdvancedSettings(page);
   const sessionId = buildSessionId(prefix);
   await page.getByTestId("session-id").fill(sessionId);
+  await expect(page.getByTestId("approval-box")).toBeHidden();
   return sessionId;
 }
 
@@ -36,7 +63,6 @@ function ensureLongFixture() {
   fs.mkdirSync(fixtureDir, { recursive: true });
   fs.mkdirSync(noteDir, { recursive: true });
   fs.mkdirSync(searchFixtureDir, { recursive: true });
-  const middleSignal = "중간 섹션 핵심 결정은 승인 기반 저장을 유지하는 것입니다.";
   const lines = [
     "# 긴 요약 문서",
     "",
@@ -59,14 +85,19 @@ function ensureLongFixture() {
     ["# Memo", "", "other notes"].join("\n"),
     "utf-8"
   );
+  fs.mkdirSync(path.dirname(correctedBridgeNotePath), { recursive: true });
   fs.rmSync(initialNotePath, { force: true });
   fs.rmSync(revisedNotePath, { force: true });
   fs.rmSync(directNotePath, { force: true });
+  fs.rmSync(lateFlipNotePath, { force: true });
+  fs.rmSync(rejectedVerdictNotePath, { force: true });
+  fs.rmSync(correctedBridgeNotePath, { force: true });
 }
 
 test.beforeEach(async ({ page }) => {
   ensureLongFixture();
   await page.goto("/");
+  await page.waitForLoadState("networkidle");
 });
 
 test("파일 요약 후 근거와 요약 구간이 보입니다", async ({ page }) => {
@@ -151,6 +182,562 @@ test("승인 후 실제 note가 저장됩니다", async ({ page }) => {
 
   await expect(page.getByTestId("response-box")).toContainText("저장했습니다.");
   expect(fs.existsSync(directNotePath)).toBeTruthy();
+});
+
+test("원문 저장 후 늦게 내용 거절해도 saved history와 latest verdict가 분리됩니다", async ({ page }) => {
+  await prepareSession(page, "late-flip");
+  await page.getByTestId("source-path").fill(longFixturePath);
+  await page.getByTestId("save-summary").check();
+  await page.getByTestId("note-path").fill(lateFlipNotePath);
+  await page.getByTestId("submit-request").click();
+
+  const responseBox = page.getByTestId("response-box");
+
+  await expect(page.getByTestId("approval-box")).toBeVisible();
+  await page.getByTestId("approve-button").click();
+
+  await expect(responseBox).toContainText("저장했습니다.");
+  await expect(page.locator("#response-saved-path-row")).toBeVisible();
+  await expect(page.locator("#response-saved-path")).toContainText("late-flip-note.md");
+  await expect(page.locator("#response-content-verdict-state")).toContainText("최신 내용 판정은 원문 저장 승인입니다.");
+  await expect(page.getByTestId("response-content-reason-box")).toBeHidden();
+  expect(fs.existsSync(lateFlipNotePath)).toBeTruthy();
+  const savedBeforeReject = fs.readFileSync(lateFlipNotePath, "utf-8");
+  expect(savedBeforeReject).toContain("중간 섹션 핵심 결정은 승인 기반 저장을 유지하는 것입니다.");
+
+  await page.getByTestId("response-content-reject").click();
+
+  await expect(responseBox).toContainText("저장했습니다.");
+  await expect(page.locator("#notice-box")).toContainText("이미 저장된 노트는 그대로 유지되며 최신 내용 판정만 바뀝니다.");
+  await expect(page.locator("#response-content-verdict-state")).toContainText("내용 거절 기록됨");
+  await expect(page.locator("#response-content-verdict-status")).toContainText("이미 저장된 노트와 경로는 그대로 남고, 이번 내용 거절은 최신 판정만 바꿉니다.");
+  await expect(page.getByTestId("response-content-reason-box")).toBeVisible();
+  await expect(page.locator("#response-saved-path-row")).toBeVisible();
+  await expect(page.locator("#response-saved-path")).toContainText("late-flip-note.md");
+  expect(fs.readFileSync(lateFlipNotePath, "utf-8")).toBe(savedBeforeReject);
+});
+
+test("내용 거절은 approval을 유지하고 나중 explicit save로 supersede 됩니다", async ({ page }) => {
+  const rejectNote = "핵심 결론이 문서 문맥과 다릅니다.";
+  const sessionId = await prepareSession(page, "rejected-verdict");
+  await page.getByTestId("source-path").fill(longFixturePath);
+  await page.getByTestId("save-summary").check();
+  await page.getByTestId("note-path").fill(rejectedVerdictNotePath);
+  await page.getByTestId("submit-request").click();
+
+  const responseBox = page.getByTestId("response-box");
+  const approvalBox = page.getByTestId("approval-box");
+
+  await expect(responseBox).toContainText("중간 섹션 핵심 결정은 승인 기반 저장을 유지하는 것입니다.");
+  await expect(approvalBox).toBeVisible();
+  await expect(responseBox.getByTestId("response-content-verdict-box")).toBeVisible();
+  await expect(responseBox.getByTestId("response-content-reject")).toBeVisible();
+  await expect(responseBox.getByTestId("response-content-reason-box")).toBeHidden();
+  await expect(approvalBox.locator('[data-testid="response-content-reject"]')).toHaveCount(0);
+  await expect(page.locator("#response-content-verdict-status")).toContainText("저장 승인 거절과는 별도입니다.");
+  await expect(page.locator("#response-content-verdict-status")).toContainText("이미 열린 저장 승인 카드는 그대로 유지되며 자동 취소되지 않습니다.");
+  await expect(page.locator("#approval-preview")).toContainText("중간 섹션 핵심 결정은 승인 기반 저장을 유지하는 것입니다.");
+
+  const originalApprovalPreview = (await page.locator("#approval-preview").textContent()) || "";
+
+  await page.getByTestId("response-content-reject").click();
+
+  await expect(page.locator("#notice-box")).toContainText("내용 거절을 기록했습니다. 저장 승인 거절과는 별도입니다.");
+  await expect(page.locator("#response-content-verdict-state")).toContainText("내용 거절 기록됨");
+  await expect(page.locator("#response-content-verdict-status")).toContainText("이 답변 내용을 거절로 기록했습니다.");
+  await expect(page.locator("#response-content-verdict-status")).toContainText("이미 열린 저장 승인 카드는 그대로 유지되며 자동 취소되지 않습니다.");
+  await expect(responseBox.getByTestId("response-content-reason-box")).toBeVisible();
+  await expect(responseBox.getByTestId("response-content-reason-submit")).toBeDisabled();
+  await expect(page.locator("#response-content-reason-status")).toContainText("비워 두면 메모 기록 버튼이 켜지지 않으며");
+  await page.getByTestId("response-content-reason-input").fill(rejectNote);
+  await expect(responseBox.getByTestId("response-content-reason-submit")).toBeEnabled();
+  await page.getByTestId("response-content-reason-submit").click();
+  await expect(page.locator("#notice-box")).toContainText("거절 메모를 기록했습니다. 내용 거절 판정은 그대로 유지됩니다.");
+  await expect(page.getByTestId("response-content-reason-input")).toHaveValue(rejectNote);
+  await expect(page.locator("#response-content-reason-status")).toContainText("기록된 거절 메모가 있습니다");
+  await expect(page.locator("#response-quick-meta-text")).toContainText("내용 거절 기록됨");
+  await expect(approvalBox).toBeVisible();
+  await expect(page.getByTestId("approval-path-input")).toHaveValue(rejectedVerdictNotePath);
+  await expect(page.locator("#approval-preview")).toHaveText(originalApprovalPreview);
+  await expect(page.getByTestId("approve-button")).toBeEnabled();
+
+  await page.getByTestId("approve-button").click();
+
+  await expect(responseBox).toContainText("저장했습니다.");
+  await expect
+    .poll(async () => {
+      const payload = await fetchSessionPayload(page, sessionId);
+      return Array.isArray(payload.session?.pending_approvals) ? payload.session.pending_approvals.length : -1;
+    })
+    .toBe(0);
+  await expect(approvalBox).toBeHidden();
+  await expect(page.locator("#response-saved-path-row")).toBeVisible();
+  await expect(page.locator("#response-saved-path")).toContainText("rejected-verdict-note.md");
+  await expect(page.locator("#response-content-verdict-state")).toContainText("최신 내용 판정은 원문 저장 승인입니다.");
+  await expect(responseBox.getByTestId("response-content-reason-box")).toBeHidden();
+  await expect(page.getByTestId("response-content-reject")).toBeEnabled();
+  await expect(page.locator("#response-quick-meta-text")).not.toContainText("내용 거절 기록됨");
+  expect(fs.existsSync(rejectedVerdictNotePath)).toBeTruthy();
+});
+
+test("corrected-save first bridge path가 기록본 기준 승인 스냅샷으로 저장됩니다", async ({ page }) => {
+  const correctedTextA = "수정본 A입니다.\n핵심만 남겼습니다.";
+  const correctedTextB = "수정본 B입니다.\n다시 손봤습니다.";
+
+  await prepareSession(page, "corrected-save");
+  await page.getByTestId("source-path").fill(longFixturePath);
+  await page.getByTestId("submit-request").click();
+
+  await expect(page.getByTestId("response-box")).toContainText("중간 섹션 핵심 결정은 승인 기반 저장을 유지하는 것입니다.");
+  await expect(page.getByTestId("response-correction-box")).toBeVisible();
+  await expect(page.getByTestId("response-correction-save-request")).toBeVisible();
+  await expect(page.getByTestId("response-correction-save-request")).toBeDisabled();
+  await expect(page.locator("#response-correction-status")).toContainText("먼저 수정본 기록을 눌러야 저장 요청 버튼이 켜집니다.");
+  await expect(page.locator("#response-correction-status")).toContainText("미기록 텍스트는 바로 승인 스냅샷이 되지 않습니다.");
+
+  await page.getByTestId("response-correction-input").fill(correctedTextA);
+  await expect(page.getByTestId("response-correction-submit")).toBeEnabled();
+  await page.getByTestId("response-correction-submit").click();
+
+  await expect(page.locator("#notice-box")).toContainText("수정본을 기록했습니다.");
+  await expect(page.getByTestId("response-correction-save-request")).toBeEnabled();
+  await expect(page.locator("#response-correction-state")).toContainText("기록된 수정본이 있습니다");
+  await expect(page.locator("#response-correction-status")).toContainText("이미 기록된 수정본으로 새 승인 미리보기를 만듭니다.");
+
+  await page.getByTestId("response-correction-save-request").click();
+
+  await expect(page.locator("#notice-box")).toContainText("기록된 수정본 기준 저장 승인을 만들었습니다.");
+  await expect(page.getByTestId("approval-box")).toBeVisible();
+  await expect(page.locator("#approval-meta")).toContainText("저장 기준: 기록된 수정본 스냅샷");
+  await expect(page.locator("#approval-meta")).toContainText("요청 시점에 고정되며");
+  await expect(page.locator("#approval-meta")).toContainText("새 저장 요청을 다시 만들어야 합니다.");
+  await expect(page.locator("#approval-meta")).not.toContainText("저장 기준: 원래 grounded brief 초안");
+  await expect(page.locator("#approval-preview")).toContainText("수정본 A입니다.");
+  await expect(page.getByTestId("response-box")).toContainText("현재 기록된 수정본 스냅샷");
+
+  await page.getByTestId("response-correction-input").fill(correctedTextB);
+  await expect(page.getByTestId("response-correction-save-request")).toBeEnabled();
+  await expect(page.locator("#response-correction-state")).toContainText("입력창 변경이 아직 다시 기록되지 않았습니다.");
+  await expect(page.locator("#response-correction-status")).toContainText("저장 요청 버튼은 직전 기록본으로만 동작합니다.");
+  await expect(page.locator("#response-correction-status")).toContainText("이미 열린 저장 승인 카드도 이전 요청 시점 스냅샷으로 그대로 유지됩니다.");
+  await expect(page.locator("#approval-preview")).toContainText("수정본 A입니다.");
+  await expect(page.locator("#approval-preview")).not.toContainText("수정본 B입니다.");
+
+  await page.getByTestId("approve-button").click();
+
+  await expect(page.getByTestId("approval-box")).toBeHidden();
+  await expect(page.getByTestId("response-box")).toContainText("승인 시점에 고정된 수정본");
+  await expect(page.getByTestId("response-box")).toContainText("다시 저장 요청해 주세요.");
+  await expect(page.locator("#response-saved-path-row")).toBeVisible();
+  await expect(page.locator("#response-saved-path")).toContainText("long-summary-fixture-summary.md");
+  expect(fs.existsSync(correctedBridgeNotePath)).toBeTruthy();
+  expect(fs.readFileSync(correctedBridgeNotePath, "utf-8")).toBe(correctedTextA);
+});
+
+test("corrected-save 저장 뒤 늦게 내용 거절하고 다시 수정해도 saved snapshot과 latest state가 분리됩니다", async ({ page }) => {
+  const correctedTextA = "수정본 A입니다.\n핵심만 남겼습니다.";
+  const correctedTextB = "수정본 B입니다.\n다시 손봤습니다.";
+  const rejectNote = "초기 수정본의 결론이 여전히 과장되어 있습니다.";
+
+  await prepareSession(page, "corrected-long-history");
+  await page.getByTestId("source-path").fill(longFixturePath);
+  await page.getByTestId("submit-request").click();
+
+  const responseBox = page.getByTestId("response-box");
+
+  await page.getByTestId("response-correction-input").fill(correctedTextA);
+  await page.getByTestId("response-correction-submit").click();
+  await expect(page.locator("#notice-box")).toContainText("수정본을 기록했습니다.");
+
+  await page.getByTestId("response-correction-save-request").click();
+  await expect(page.getByTestId("approval-box")).toBeVisible();
+  await expect(page.locator("#approval-meta")).toContainText("저장 기준: 기록된 수정본 스냅샷");
+  await expect(page.locator("#approval-preview")).toContainText("수정본 A입니다.");
+
+  await page.getByTestId("approve-button").click();
+
+  await expect(responseBox).toContainText("승인 시점에 고정된 수정본");
+  await expect(page.locator("#response-quick-meta-text")).toContainText("저장 기준 요청 시점 수정본 스냅샷");
+  await expect(page.locator("#response-saved-path-row")).toBeVisible();
+  await expect(page.locator("#response-content-verdict-state")).toContainText("최신 내용 판정은 기록된 수정본입니다.");
+  await expect(page.locator("#response-correction-state")).toContainText("기록된 수정본이 있습니다");
+  expect(fs.existsSync(correctedBridgeNotePath)).toBeTruthy();
+  expect(fs.readFileSync(correctedBridgeNotePath, "utf-8")).toBe(correctedTextA);
+
+  await page.getByTestId("response-content-reject").click();
+
+  await expect(responseBox).toContainText("승인 시점에 고정된 수정본");
+  await expect(page.locator("#notice-box")).toContainText("이미 저장된 노트는 그대로 유지되며 최신 내용 판정만 바뀝니다.");
+  await expect(page.locator("#response-quick-meta-text")).toContainText("저장 기준 요청 시점 수정본 스냅샷");
+  await expect(page.locator("#response-quick-meta-text")).not.toContainText("내용 거절 기록됨");
+  await expect(page.locator("#response-content-verdict-state")).toContainText("내용 거절 기록됨");
+  await expect(page.locator("#response-content-verdict-status")).toContainText("이미 저장된 노트와 경로는 그대로 남고, 이번 내용 거절은 최신 판정만 바꿉니다.");
+  await expect(page.getByTestId("response-content-reason-box")).toBeVisible();
+  expect(fs.readFileSync(correctedBridgeNotePath, "utf-8")).toBe(correctedTextA);
+
+  await page.getByTestId("response-content-reason-input").fill(rejectNote);
+  await page.getByTestId("response-content-reason-submit").click();
+  await expect(page.locator("#notice-box")).toContainText("거절 메모를 기록했습니다. 내용 거절 판정은 그대로 유지됩니다.");
+  await expect(page.locator("#response-content-reason-status")).toContainText("기록된 거절 메모가 있습니다");
+
+  await page.getByTestId("response-correction-input").fill(correctedTextB);
+  await page.getByTestId("response-correction-submit").click();
+
+  await expect(page.locator("#notice-box")).toContainText("수정본을 기록했습니다.");
+  await expect(responseBox).toContainText("승인 시점에 고정된 수정본");
+  await expect(page.locator("#response-quick-meta-text")).toContainText("저장 기준 요청 시점 수정본 스냅샷");
+  await expect(page.locator("#response-quick-meta-text")).not.toContainText("내용 거절 기록됨");
+  await expect(page.locator("#response-content-verdict-state")).toContainText("최신 내용 판정은 기록된 수정본입니다.");
+  await expect(page.getByTestId("response-content-reason-box")).toBeHidden();
+  await expect(page.getByTestId("response-correction-input")).toHaveValue(correctedTextB);
+  await expect(page.locator("#response-correction-state")).toContainText("기록된 수정본이 있습니다");
+  await expect(page.locator("#response-correction-status")).toContainText("이미 기록된 수정본으로 새 승인 미리보기를 만듭니다.");
+  await expect(page.getByTestId("response-correction-save-request")).toBeEnabled();
+  await expect(page.locator("#response-saved-path-row")).toBeVisible();
+  expect(fs.readFileSync(correctedBridgeNotePath, "utf-8")).toBe(correctedTextA);
+});
+
+test("candidate confirmation path는 save support와 분리되어 기록되고 later correction으로 current state에서 사라집니다", async ({ page }) => {
+  const correctedTextA = "수정 방향 A입니다.\n핵심만 남겼습니다.";
+  const correctedTextB = "수정 방향 B입니다.\n다시 손봤습니다.";
+
+  const sessionId = await prepareSession(page, "candidate-confirmation");
+  await page.getByTestId("source-path").fill(longFixturePath);
+  await page.getByTestId("submit-request").click();
+
+  const responseBox = page.getByTestId("response-box");
+  const approvalBox = page.getByTestId("approval-box");
+  const confirmationBox = page.getByTestId("response-candidate-confirmation-box");
+  const confirmationButton = page.getByTestId("response-candidate-confirmation-submit");
+  const reviewQueueBox = page.getByTestId("review-queue-box");
+
+  await expect(responseBox).toContainText(middleSignal);
+  await expect(confirmationBox).toBeHidden();
+  await expect(reviewQueueBox).toBeHidden();
+
+  await page.getByTestId("response-correction-input").fill(correctedTextA);
+  await page.getByTestId("response-correction-submit").click();
+
+  await expect(page.locator("#notice-box")).toContainText("수정본을 기록했습니다.");
+  await expect(confirmationBox).toBeVisible();
+  await expect(confirmationButton).toBeEnabled();
+  await expect(page.locator("#response-candidate-confirmation-status")).toContainText("positive reuse confirmation만 남깁니다.");
+  await expect(page.locator("#response-candidate-confirmation-status")).toContainText("저장 승인, 내용 거절, 거절 메모, 피드백과는 별도입니다.");
+
+  await expect
+    .poll(async () => {
+      const payload = await fetchSessionPayload(page, sessionId);
+      const message = findLatestCandidateSourceMessage(payload.session?.messages);
+      return Array.isArray(message?.session_local_candidate?.supporting_signal_refs)
+        ? message.session_local_candidate.supporting_signal_refs.length
+        : 0;
+    })
+    .toBe(1);
+
+  let sessionPayload = await fetchSessionPayload(page, sessionId);
+  let sourceMessage = findLatestCandidateSourceMessage(sessionPayload.session?.messages);
+  expect(sourceMessage).toBeTruthy();
+  const sourceMessageId = sourceMessage.message_id;
+  expect(sourceMessage.candidate_confirmation_record).toBeUndefined();
+  expect(sourceMessage.session_local_candidate.supporting_signal_refs).toEqual([
+    {
+      signal_name: "session_local_memory_signal.content_signal",
+      relationship: "primary_basis",
+    },
+  ]);
+
+  await page.getByTestId("response-correction-save-request").click();
+
+  await expect(approvalBox).toBeVisible();
+  await expect(confirmationBox).toBeVisible();
+  await expect(approvalBox.locator('[data-testid="response-candidate-confirmation-submit"]')).toHaveCount(0);
+  await expect(page.locator("#response-candidate-confirmation-status")).toContainText("이미 열린 저장 승인 카드와도 섞이지 않습니다.");
+
+  await page.getByTestId("approve-button").click();
+
+  await expect(approvalBox).toBeHidden();
+  await expect(responseBox).toContainText("승인 시점에 고정된 수정본");
+  await expect(page.locator("#response-quick-meta-text")).toContainText("저장 기준 요청 시점 수정본 스냅샷");
+
+  await expect
+    .poll(async () => {
+      const payload = await fetchSessionPayload(page, sessionId);
+      const message = findMessageById(payload.session?.messages, sourceMessageId);
+      return Array.isArray(message?.session_local_candidate?.supporting_signal_refs)
+        ? message.session_local_candidate.supporting_signal_refs.length
+        : 0;
+    })
+    .toBe(2);
+
+  sessionPayload = await fetchSessionPayload(page, sessionId);
+  sourceMessage = findMessageById(sessionPayload.session?.messages, sourceMessageId);
+  expect(sourceMessage).toBeTruthy();
+  expect(sourceMessage.candidate_confirmation_record).toBeUndefined();
+  expect(sourceMessage.session_local_candidate.supporting_signal_refs).toEqual([
+    {
+      signal_name: "session_local_memory_signal.content_signal",
+      relationship: "primary_basis",
+    },
+    {
+      signal_name: "session_local_memory_signal.save_signal",
+      relationship: "supporting_evidence",
+    },
+  ]);
+
+  await expect(confirmationButton).toBeEnabled();
+  await confirmationButton.click();
+
+  await expect(page.locator("#notice-box")).toContainText("현재 수정 방향을 나중에도 다시 써도 된다는 확인을 기록했습니다. 저장 승인과는 별도입니다.");
+  await expect(page.locator("#response-candidate-confirmation-state")).toContainText("재사용 확인 기록됨");
+  await expect(confirmationButton).toBeDisabled();
+  await expect(page.locator("#response-candidate-confirmation-status")).toContainText("positive reuse confirmation만 남겼습니다.");
+  await expect(page.locator("#response-candidate-confirmation-status")).toContainText("저장 승인, 내용 거절, 거절 메모와는 별도입니다.");
+  await expect(reviewQueueBox).toBeVisible();
+  await expect(reviewQueueBox).toContainText("검토 후보");
+  await expect(reviewQueueBox).toContainText("현재 후보는 검토 수락만 기록할 수 있습니다. 아직 적용, 편집, 거절은 열지 않았습니다.");
+  await expect(reviewQueueBox).toContainText("explicit rewrite correction recorded for this grounded brief");
+  await expect(reviewQueueBox).toContainText("기준 명시 확인");
+  await expect(reviewQueueBox).toContainText("상태 검토 대기");
+  const reviewAcceptButton = reviewQueueBox.getByTestId("review-queue-accept");
+  await expect(reviewAcceptButton).toHaveCount(1);
+  await expect(reviewAcceptButton).toHaveText("검토 수락");
+  await reviewAcceptButton.click();
+
+  await expect(page.locator("#notice-box")).toContainText("검토 후보를 수락했습니다. 아직 적용되지는 않았습니다.");
+  await expect(reviewQueueBox).toBeHidden();
+
+  sessionPayload = await fetchSessionPayload(page, sessionId);
+  sourceMessage = findMessageById(sessionPayload.session?.messages, sourceMessageId);
+  expect(sourceMessage.candidate_confirmation_record.confirmation_label).toBe("explicit_reuse_confirmation");
+  expect(sourceMessage.candidate_confirmation_record.candidate_id).toBe(sourceMessage.session_local_candidate.candidate_id);
+  expect(sourceMessage.session_local_candidate.supporting_signal_refs).toEqual([
+    {
+      signal_name: "session_local_memory_signal.content_signal",
+      relationship: "primary_basis",
+    },
+    {
+      signal_name: "session_local_memory_signal.save_signal",
+      relationship: "supporting_evidence",
+    },
+  ]);
+  expect("has_explicit_confirmation" in sourceMessage.session_local_candidate).toBe(false);
+  expect("promotion_basis" in sourceMessage.session_local_candidate).toBe(false);
+  expect("promotion_eligibility" in sourceMessage.session_local_candidate).toBe(false);
+  expect(sourceMessage.durable_candidate.candidate_id).toBe(sourceMessage.session_local_candidate.candidate_id);
+  expect(sourceMessage.durable_candidate.candidate_scope).toBe("durable_candidate");
+  expect(sourceMessage.durable_candidate.has_explicit_confirmation).toBe(true);
+  expect(sourceMessage.durable_candidate.promotion_basis).toBe("explicit_confirmation");
+  expect(sourceMessage.durable_candidate.promotion_eligibility).toBe("eligible_for_review");
+  expect(sourceMessage.durable_candidate.supporting_confirmation_refs).toEqual([
+    {
+      artifact_id: sourceMessage.artifact_id,
+      source_message_id: sourceMessageId,
+      candidate_id: sourceMessage.session_local_candidate.candidate_id,
+      candidate_updated_at: sourceMessage.session_local_candidate.updated_at,
+      confirmation_label: "explicit_reuse_confirmation",
+      recorded_at: sourceMessage.candidate_confirmation_record.recorded_at,
+    },
+  ]);
+  expect(sourceMessage.candidate_review_record).toEqual({
+    candidate_id: sourceMessage.session_local_candidate.candidate_id,
+    candidate_updated_at: sourceMessage.session_local_candidate.updated_at,
+    artifact_id: sourceMessage.artifact_id,
+    source_message_id: sourceMessageId,
+    review_scope: "source_message_candidate_review",
+    review_action: "accept",
+    review_status: "accepted",
+    recorded_at: sourceMessage.candidate_review_record.recorded_at,
+  });
+  expect(sessionPayload.session.review_queue_items).toEqual([]);
+
+  await page.getByTestId("response-correction-input").fill(correctedTextB);
+  await page.getByTestId("response-correction-submit").click();
+
+  await expect(page.locator("#notice-box")).toContainText("수정본을 기록했습니다.");
+  await expect(page.locator("#response-candidate-confirmation-state")).toContainText("현재 수정 방향 재사용 확인은 아직 없습니다.");
+  await expect(confirmationButton).toBeEnabled();
+  await expect(reviewQueueBox).toBeHidden();
+
+  sessionPayload = await fetchSessionPayload(page, sessionId);
+  sourceMessage = findMessageById(sessionPayload.session?.messages, sourceMessageId);
+  expect(sourceMessage.candidate_review_record).toBeUndefined();
+  expect(sourceMessage.candidate_confirmation_record).toBeUndefined();
+  expect(sourceMessage.durable_candidate).toBeUndefined();
+});
+
+test("same-session recurrence aggregate는 separate blocked trigger surface로 렌더링됩니다", async ({ page }) => {
+  const correctedText = "수정 방향 A입니다.\n핵심만 남겼습니다.";
+  const sessionId = await prepareSession(page, "aggregate-trigger");
+  const reviewQueueBox = page.getByTestId("review-queue-box");
+  const aggregateTriggerBox = page.getByTestId("aggregate-trigger-box");
+
+  await page.getByTestId("source-path").fill(longFixturePath);
+  await page.getByTestId("submit-request").click();
+
+  await expect(page.getByTestId("response-box")).toContainText(middleSignal);
+  await expect(reviewQueueBox).toBeHidden();
+  await expect(aggregateTriggerBox).toBeHidden();
+
+  await page.getByTestId("response-correction-input").fill(correctedText);
+  await page.getByTestId("response-correction-submit").click();
+  await expect(page.locator("#notice-box")).toContainText("수정본을 기록했습니다.");
+  await expect(page.getByTestId("response-candidate-confirmation-box")).toBeVisible();
+  await page.getByTestId("response-candidate-confirmation-submit").click();
+
+  await expect(page.locator("#notice-box")).toContainText("현재 수정 방향을 나중에도 다시 써도 된다는 확인을 기록했습니다. 저장 승인과는 별도입니다.");
+  await expect(reviewQueueBox).toBeVisible();
+  await expect(reviewQueueBox).toContainText("검토 후보");
+  await expect(aggregateTriggerBox).toBeHidden();
+
+  await page.getByTestId("source-path").fill(longFixturePath);
+  await page.getByTestId("submit-request").click();
+
+  await expect(page.getByTestId("response-box")).toContainText(middleSignal);
+  await page.getByTestId("response-correction-input").fill(correctedText);
+  await page.getByTestId("response-correction-submit").click();
+
+  await expect(page.locator("#notice-box")).toContainText("수정본을 기록했습니다.");
+  await expect(aggregateTriggerBox).toBeVisible();
+  await expect(aggregateTriggerBox).toContainText("검토 메모 적용 후보");
+  await expect(aggregateTriggerBox).toContainText("반복 교정 묶음");
+  await expect(aggregateTriggerBox).toContainText("capability unblocked_all_required");
+  await expect(aggregateTriggerBox).toContainText("audit contract_only_not_emitted");
+  await expect(aggregateTriggerBox).toContainText("계획 타깃 eligible_for_reviewed_memory_draft_planning_only");
+  await expect(aggregateTriggerBox).toContainText("검토 메모 적용을 시작할 수 있습니다. 사유를 입력한 뒤 시작 버튼을 누르세요.");
+
+  const noteInput = aggregateTriggerBox.getByTestId("aggregate-trigger-note");
+  await expect(noteInput).toBeVisible();
+
+  const startButton = aggregateTriggerBox.getByTestId("aggregate-trigger-start");
+  await expect(startButton).toBeVisible();
+  await expect(startButton).toBeDisabled();
+
+  await noteInput.fill("반복 교정 패턴을 적용합니다.");
+  await expect(startButton).toBeEnabled();
+
+  await startButton.click();
+  await expect(page.locator("#notice-box")).toContainText("transition record가 발행되었습니다.");
+
+  await expect(reviewQueueBox).toBeVisible();
+  await expect(reviewQueueBox).toContainText("검토 수락");
+
+  const emittedPayload = await fetchSessionPayload(page, sessionId);
+  expect(emittedPayload.session.recurrence_aggregate_candidates).toHaveLength(1);
+  const emittedAggregate = emittedPayload.session.recurrence_aggregate_candidates[0];
+  expect(emittedAggregate.reviewed_memory_transition_record).toBeDefined();
+  expect(emittedAggregate.reviewed_memory_transition_record.transition_record_version).toBe("first_reviewed_memory_transition_record_v1");
+  expect(emittedAggregate.reviewed_memory_transition_record.transition_action).toBe("future_reviewed_memory_apply");
+  expect(emittedAggregate.reviewed_memory_transition_record.operator_reason_or_note).toBe("반복 교정 패턴을 적용합니다.");
+  expect(emittedAggregate.reviewed_memory_transition_record.record_stage).toBe("emitted_record_only_not_applied");
+  expect(emittedAggregate.reviewed_memory_transition_record.canonical_transition_id).toBeTruthy();
+  expect(emittedAggregate.reviewed_memory_transition_record.emitted_at).toBeTruthy();
+
+  const applyButton = aggregateTriggerBox.getByTestId("aggregate-trigger-apply");
+  await expect(applyButton).toBeVisible();
+  await expect(applyButton).toBeEnabled();
+  await applyButton.click();
+  await expect(page.locator("#notice-box")).toContainText("검토 메모 적용이 실행되었습니다.");
+
+  const appliedPayload = await fetchSessionPayload(page, sessionId);
+  expect(appliedPayload.session.recurrence_aggregate_candidates).toHaveLength(1);
+  const appliedAggregate = appliedPayload.session.recurrence_aggregate_candidates[0];
+  expect(appliedAggregate.reviewed_memory_transition_record.record_stage).toBe("applied_pending_result");
+  expect(appliedAggregate.reviewed_memory_transition_record.applied_at).toBeTruthy();
+  expect(appliedAggregate.reviewed_memory_transition_record.canonical_transition_id).toBe(
+    emittedAggregate.reviewed_memory_transition_record.canonical_transition_id
+  );
+
+  const confirmResultButton = aggregateTriggerBox.getByTestId("aggregate-trigger-confirm-result");
+  await expect(confirmResultButton).toBeVisible();
+  await expect(confirmResultButton).toBeEnabled();
+  await confirmResultButton.click();
+  await expect(page.locator("#notice-box")).toContainText("검토 메모 적용 결과가 확정되었습니다.");
+
+  const resultPayload = await fetchSessionPayload(page, sessionId);
+  expect(resultPayload.session.recurrence_aggregate_candidates).toHaveLength(1);
+  const resultAggregate = resultPayload.session.recurrence_aggregate_candidates[0];
+  expect(resultAggregate.reviewed_memory_transition_record.record_stage).toBe("applied_with_result");
+  expect(resultAggregate.reviewed_memory_transition_record.result_at).toBeTruthy();
+  expect(resultAggregate.reviewed_memory_transition_record.apply_result).toBeDefined();
+  expect(resultAggregate.reviewed_memory_transition_record.apply_result.result_version).toBe("first_reviewed_memory_apply_result_v1");
+  expect(resultAggregate.reviewed_memory_transition_record.apply_result.applied_effect_kind).toBe("reviewed_memory_correction_pattern");
+  expect(resultAggregate.reviewed_memory_transition_record.apply_result.result_stage).toBe("effect_active");
+  expect(resultAggregate.reviewed_memory_transition_record.canonical_transition_id).toBe(
+    emittedAggregate.reviewed_memory_transition_record.canonical_transition_id
+  );
+
+  await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-result")).toBeVisible();
+  await expect(aggregateTriggerBox).toContainText("검토 메모 적용 효과가 활성화되었습니다.");
+
+  await page.getByTestId("source-path").fill(longFixturePath);
+  await page.getByTestId("submit-request").click();
+  await expect(page.getByTestId("response-box")).toContainText("[검토 메모 활성]");
+  await expect(page.getByTestId("response-box")).toContainText("반복 교정 패턴을 적용합니다.");
+
+  const stopButton = aggregateTriggerBox.getByTestId("aggregate-trigger-stop");
+  await expect(stopButton).toBeVisible();
+  await expect(stopButton).toBeEnabled();
+  await stopButton.click();
+  await expect(page.locator("#notice-box")).toContainText("검토 메모 적용이 중단되었습니다.");
+
+  await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-stopped")).toBeVisible();
+  await expect(aggregateTriggerBox).toContainText("검토 메모 적용이 중단되었습니다. 이후 응답에 교정 패턴이 반영되지 않습니다.");
+
+  const stoppedPayload = await fetchSessionPayload(page, sessionId);
+  const stoppedAggregate = stoppedPayload.session.recurrence_aggregate_candidates[0];
+  expect(stoppedAggregate.reviewed_memory_transition_record.record_stage).toBe("stopped");
+  expect(stoppedAggregate.reviewed_memory_transition_record.stopped_at).toBeTruthy();
+  expect(stoppedAggregate.reviewed_memory_transition_record.apply_result.result_stage).toBe("effect_stopped");
+
+  await page.getByTestId("source-path").fill(longFixturePath);
+  await page.getByTestId("submit-request").click();
+  await expect(page.getByTestId("response-box")).not.toContainText("[검토 메모 활성]");
+
+  const reverseButton = aggregateTriggerBox.getByTestId("aggregate-trigger-reverse");
+  await expect(reverseButton).toBeVisible();
+  await expect(reverseButton).toBeEnabled();
+  await reverseButton.click();
+  await expect(page.locator("#notice-box")).toContainText("검토 메모 적용이 되돌려졌습니다.");
+
+  await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-reversed")).toBeVisible();
+  await expect(aggregateTriggerBox).toContainText("검토 메모 적용이 되돌려졌습니다. 적용 효과가 완전히 철회되었습니다.");
+
+  const reversedPayload = await fetchSessionPayload(page, sessionId);
+  const reversedAggregate = reversedPayload.session.recurrence_aggregate_candidates[0];
+  expect(reversedAggregate.reviewed_memory_transition_record.record_stage).toBe("reversed");
+  expect(reversedAggregate.reviewed_memory_transition_record.reversed_at).toBeTruthy();
+  expect(reversedAggregate.reviewed_memory_transition_record.apply_result.result_stage).toBe("effect_reversed");
+  expect(reversedAggregate.reviewed_memory_transition_record.canonical_transition_id).toBe(
+    emittedAggregate.reviewed_memory_transition_record.canonical_transition_id
+  );
+
+  const conflictCheckButton = aggregateTriggerBox.getByTestId("aggregate-trigger-conflict-check");
+  await expect(conflictCheckButton).toBeVisible();
+  await expect(conflictCheckButton).toBeEnabled();
+  await conflictCheckButton.click();
+  await expect(page.locator("#notice-box")).toContainText("충돌 확인이 완료되었습니다.");
+
+  await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-conflict-checked")).toBeVisible();
+  await expect(aggregateTriggerBox).toContainText("충돌 확인이 완료되었습니다. 현재 aggregate 범위의 충돌 상태가 기록되었습니다.");
+
+  const conflictPayload = await fetchSessionPayload(page, sessionId);
+  const conflictAggregate = conflictPayload.session.recurrence_aggregate_candidates[0];
+  expect(conflictAggregate.reviewed_memory_conflict_visibility_record).toBeDefined();
+  expect(conflictAggregate.reviewed_memory_conflict_visibility_record.transition_action).toBe("future_reviewed_memory_conflict_visibility");
+  expect(conflictAggregate.reviewed_memory_conflict_visibility_record.record_stage).toBe("conflict_visibility_checked");
+  expect(conflictAggregate.reviewed_memory_conflict_visibility_record.conflict_visibility_stage).toBe("conflict_visibility_checked");
+  expect(conflictAggregate.reviewed_memory_conflict_visibility_record.canonical_transition_id).toBeTruthy();
+  expect(conflictAggregate.reviewed_memory_conflict_visibility_record.checked_at).toBeTruthy();
+  expect(conflictAggregate.reviewed_memory_conflict_visibility_record.source_apply_transition_ref).toBe(
+    emittedAggregate.reviewed_memory_transition_record.canonical_transition_id
+  );
+  expect(typeof conflictAggregate.reviewed_memory_conflict_visibility_record.conflict_entry_count).toBe("number");
+  expect(Array.isArray(conflictAggregate.reviewed_memory_conflict_visibility_record.conflict_entries)).toBe(true);
+
+  expect(conflictAggregate.reviewed_memory_transition_record.record_stage).toBe("reversed");
+  expect(conflictAggregate.reviewed_memory_transition_record.canonical_transition_id).toBe(
+    emittedAggregate.reviewed_memory_transition_record.canonical_transition_id
+  );
 });
 
 test("스트리밍 중 취소 버튼이 동작합니다", async ({ page }) => {

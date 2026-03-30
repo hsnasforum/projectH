@@ -1,84 +1,114 @@
-# Local AI Assistant Starter v3
+# projectH
 
-이 저장소는 **로컬 우선 AI 비서 MVP**를 빠르게 시작하기 위한 스타터 스캐폴드입니다.
-개인 문서 작업 생산성을 목표로 하며, 기본값은 로컬 처리, 읽기 중심, 승인 기반 저장입니다.
+`projectH`는 **로컬 퍼스트 문서 비서 웹 MVP**입니다.
+사용자는 로컬 파일을 읽고, 요약하고, 검색하고, 필요할 때만 승인 기반으로 저장할 수 있습니다. 웹 검색은 핵심 제품이 아니라 **보조 조사 모드**로 제한적으로 붙어 있습니다.
 
-## 제품 목표
+## Phase Split
 
-이 프로젝트는 다음을 할 수 있는 데스크톱/로컬 AI 비서를 만드는 것을 목표로 합니다.
+### Current Shipped Contract
+- 로컬 퍼스트 문서 비서 웹 MVP
+- 핵심 루프: 문서 읽기 -> grounded summary -> 후속 질의 -> 승인 기반 저장
+- 웹 조사는 secondary mode
 
-- 로컬 파일 읽기
-- 문서 요약
-- 문서 검색
-- 명시적 승인 후 노트 또는 요약 저장
-- 세션 기록과 작업 로그 보존
+### Next Phase Design Target
+- `grounded brief` 1개를 공식 artifact로 고정
+- 그 artifact를 기준으로 correction / approval / preference memory를 구조화
+- 이 단계는 문서 설계 계약 고정 단계이며, 아직 모델 학습이나 프로그램 조작 구현 단계가 아닙니다
 
-## 현재 상태
+### Long-Term North Star
+- 사용자가 가르치면 길들여지고, 나중에는 승인 기반 로컬 행동까지 확장되는 로컬 개인 에이전트
+- 프로그램 조작과 모델 적응 계층은 그 이후 단계입니다
 
-현재 스캐폴드에는 아래가 포함되어 있습니다.
+## Current Product Slice
 
-- 프로젝트 전역 작업 지침 (`AGENTS.md`, `CLAUDE.md`)
-- Codex/Claude 설정 및 템플릿
-- 재사용 가능한 스킬과 서브에이전트
-- 아키텍처 및 마일스톤 문서
-- 교체 가능한 모델 어댑터를 가진 Python 중심 MVP 뼈대
-- 브라우저에서 바로 확인할 수 있는 로컬 전용 웹 셸
-- 승인 카드에서 저장 경로를 다시 지정해 approval을 재발급하는 UX
-- 근거 패널, 요약 반영 구간 패널, response origin 배지, 스트리밍 취소
-- Playwright 기반 브라우저 스모크 4종과 WSL 실행 경로
+현재 구현된 웹 MVP는 아래를 포함합니다.
 
-## 추천 시작 순서
+- local web shell (`python3 -m app.web`)
+- recent sessions / conversation timeline
+- file summary / document search / general chat
+- approval-based save
+- reissue approval flow
+- evidence / source panel
+- summary span / applied-range panel
+- response origin badge
+- streaming progress + cancel
+- response feedback capture
+- grounded-brief artifact trace anchor on summary responses, save approvals, and relevant local traces
+- normalized original-response snapshot, minimum `accepted_as_is` / `corrected` content-outcome capture, and minimum reject / reissue approval reason capture on grounded-brief traces
+- small grounded-brief correction editor seeded with the current draft text, with explicit correction submit kept separate from save approval
+- current save approvals and save/write traces now expose `save_content_source = original_draft | corrected_text` plus explicit `source_message_id` anchoring to the original grounded-brief source message
+- minimum corrected-save bridge action that stays always visible inside the correction area, stays disabled until a recorded `corrected_text` exists, creates a fresh approval from that recorded text, freezes the approval snapshot under a new `approval_id`, and reuses the same `artifact_id` / `source_message_id` with `save_content_source = corrected_text`
+- one small candidate-linked confirmation action on the grounded-brief response card that appears only when the current `session_local_candidate` exists and persists one separate source-message `candidate_confirmation_record`
+- one optional source-message-anchored `durable_candidate` projection plus one local `검토 후보` section fed only by current pending `review_queue_items`, with one `accept`-only reviewed-but-not-applied action that records source-message `candidate_review_record`
+- one separate aggregate-level `검토 메모 적용 후보` section fed only by current same-session `recurrence_aggregate_candidates`, shown adjacent to `검토 후보` only when aggregates exist, with one visible-but-disabled `검토 메모 적용 시작` action per aggregate card plus blocked helper copy only
+- short-summary and long-summary prompts, plus the internal `summary_chunks` anchor-selection heuristic, now all reuse the same truthful source boundary already known to current call sites, so local file or uploaded-document summaries keep document-flow and narrative-friendly guidance while selected local search-result summaries keep source-backed synthesis guidance without adding a new mode toggle or classifier
+- PDF text-layer reading with OCR-not-supported guidance
+- permission-gated web investigation with local JSON history
 
-1. `docs/ARCHITECTURE.md` 읽기
-2. `docs/ACCEPTANCE_CRITERIA.md` 읽기
-3. `AGENTS.md` 확인 또는 수정
-4. `.codex/config.toml` 확인
-5. 첫 세로 흐름 구현/확인
-   - 파일 읽기
-   - mock/provider 기반 요약
-   - 승인 후 노트 저장
-   - 작업 로그 기록
+## Chosen Next-Phase Artifact
 
-## 저장소 구조
+다음 단계의 공식 artifact는 `grounded brief`입니다.
 
-- `app/`: 진입점과 UI 계층
-- `core/`: 오케스트레이션 및 에이전트 루프
-- `tools/`: 감사 가능한 로컬 도구
-- `storage/`: 세션 저장 및 작업 로그
-- `model_adapter/`: 모델 프로바이더 추상화
-- `docs/`: 아키텍처, 마일스톤, 인수 기준
-- `.codex/`, `.claude/`: 보조 에이전트 설정
-- `.agents/skills/`, `.claude/skills/`: 재사용 가능한 작업 스킬
+- 현재 codebase가 이미 단일 문서를 읽고 요약 본문과 저장 미리보기를 만드는 흐름에 가장 잘 맞습니다
+- evidence, summary chunks, approval preview, feedback을 한 단위에 묶기 쉽습니다
+- memo보다 범용적이고, action-item note보다 좁지 않아서 correction memory의 기준 단위로 적합합니다
 
-## 기본 안전 원칙
+## Run
 
-- 기본 동작은 읽기 중심입니다.
-- 쓰기 작업은 명시적 승인을 요구합니다.
-- 조용한 삭제나 덮어쓰기를 허용하지 않습니다.
-- 별도 지시가 없으면 로컬 우선으로 동작합니다.
+- CLI:
+  - `python3 -m app.main README.md --provider mock`
+- Local web shell:
+  - `python3 -m app.web`
+- Default URL:
+  - `http://127.0.0.1:8765`
 
-## 실행 방법
+## Verification
 
-- CLI: `python3 -m app.main README.md --provider mock`
-- 로컬 웹 셸: `python3 -m app.web`
-- 기본 웹 주소: `http://127.0.0.1:8765`
-- 브라우저 E2E 설치: `make e2e-install`
-- 브라우저 E2E 실행: `make e2e-test`
+- Unit/service regression:
+  - `python3 -m unittest -v`
+- Browser smoke install:
+  - `make e2e-install`
+- Browser smoke run:
+  - `make e2e-test`
 
-## 웹에서 바로 볼 수 있는 것
+## Playwright Smoke Coverage
 
-- 파일 요약 / 문서 검색 / 일반 채팅 전환
-- 브라우저 파일 선택창으로 로컬 파일 직접 고르기
-- 최근 세션 목록과 대화 타임라인
-- 근거와 출처 패널
-- 요약에 반영한 구간 패널
-- 저장 승인 카드와 저장 경로 재입력
-- 스트리밍 진행 상태와 취소 버튼
+Current smoke scenarios:
+1. file summary renders evidence and summary-range panels
+2. browser file picker summary flow
+3. browser folder picker search flow
+4. approval reissue with changed save path
+5. approval-backed note save
+6. late flip after explicit original-draft save keeps saved history while latest content verdict changes
+7. `내용 거절` content-verdict path with same-card reject-note update, pending approval preserved, and later explicit save supersession
+8. corrected-save first bridge path
+9. corrected-save saved snapshot remains while late reject and later re-correct move the latest state separately
+10. candidate-linked explicit confirmation path stays outside approval UI, remains distinct from save support on the same source message, records `candidate_confirmation_record`, surfaces one `검토 후보` with `검토 수락`, records source-message `candidate_review_record`, removes the pending queue item without applying user-level memory, and clears the current-source traces again after a later correction
+11. same-session recurrence aggregate path renders one separate `검토 메모 적용 후보` section only after an aggregate exists, keeps `검토 메모 적용 시작` visible but disabled, keeps the queue-side `검토 수락` separate, and preserves `reviewed_memory_transition_record` absence
+12. streaming cancel
 
-## 현재 한계
+`make e2e-test` launches a dedicated Playwright web server for smoke with inherited `LOCAL_AI_MODEL_PROVIDER` / `LOCAL_AI_OLLAMA_MODEL` overrides cleared, `LOCAL_AI_MODEL_PROVIDER=mock` reapplied, and existing servers on the smoke port not reused. Shell overrides such as `LOCAL_AI_MODEL_PROVIDER=ollama` therefore do not change the automated baseline. Other runtimes remain optional and are validated separately.
 
-- 텍스트 레이어가 있는 PDF는 `pypdf`로 읽을 수 있습니다.
-- 스캔본 또는 이미지형 PDF는 감지하지만, OCR은 이 MVP 범위에 포함하지 않습니다.
-- OCR이 필요한 경우 조용히 실패하지 않고, 왜 요약할 수 없는지와 다음 단계를 안내합니다.
-- 브라우저 E2E 스모크는 WSL 기준 `node`/`npm`/`npx`가 설치된 환경에서 검증했습니다.
-- Ollama 경로는 수동 확인 위주이며, Playwright 자동화는 `mock` 프로바이더 기준으로 고정되어 있습니다.
+## Safety Defaults
+
+- local-first by default
+- write actions require explicit approval
+- overwrite is rejected by default
+- web search is permission-gated, read-only, and logged
+- OCR is not enabled in the current MVP
+- structured correction / preference memory is not yet implemented; the current memory foundation is limited to grounded-brief trace anchoring, normalized original-response snapshots, explicit `corrected_text` submission plus minimum `accepted_as_is` / `corrected` / `rejected` outcome capture on the source message, one source-message `content_reason_record` for explicit `내용 거절` plus optional same-card reject-note updates, and approval-linked `approval_reason_record` traces for reject / reissue
+- the shipped candidate-linked reuse confirmation remains separate from approval-backed save support: it is stored as one source-message `candidate_confirmation_record`, leaves `session_local_candidate` unchanged, may materialize one source-message `durable_candidate` plus one pending `review_queue_items` entry, and now allows only one reviewed-but-not-applied `accept` action that writes source-message `candidate_review_record` without opening user-level memory
+- corrected-save is implemented only as a minimum bridge action: it starts from the response-card correction area, stays visible but disabled until a correction is recorded, consumes recorded `corrected_text` only, and creates a fresh immutable approval snapshot without rebasing older pending approvals
+
+## Where To Read Next
+
+The current source-of-truth product docs live in the root `docs/` directory.
+Files under `docs/recycle/` are retained drafts or historical notes unless explicitly promoted.
+
+- product overview: [docs/project-brief.md](/home/xpdlqj/code/projectH/docs/project-brief.md)
+- product rationale: [docs/PRODUCT_PROPOSAL.md](/home/xpdlqj/code/projectH/docs/PRODUCT_PROPOSAL.md)
+- current product contract: [docs/PRODUCT_SPEC.md](/home/xpdlqj/code/projectH/docs/PRODUCT_SPEC.md)
+- architecture: [docs/ARCHITECTURE.md](/home/xpdlqj/code/projectH/docs/ARCHITECTURE.md)
+- acceptance and QA gates: [docs/ACCEPTANCE_CRITERIA.md](/home/xpdlqj/code/projectH/docs/ACCEPTANCE_CRITERIA.md)
+- milestones and backlog: [docs/MILESTONES.md](/home/xpdlqj/code/projectH/docs/MILESTONES.md), [docs/TASK_BACKLOG.md](/home/xpdlqj/code/projectH/docs/TASK_BACKLOG.md)
+- next-phase design contract: [plandoc/2026-03-26-grounded-brief-memory-contract.md](/home/xpdlqj/code/projectH/plandoc/2026-03-26-grounded-brief-memory-contract.md)

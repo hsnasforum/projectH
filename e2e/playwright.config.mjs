@@ -18,9 +18,16 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: `bash -lc 'cd ${repoRoot} && LOCAL_AI_MOCK_STREAM_DELAY_MS=80 python3 -m app.web --host 127.0.0.1 --port 8879'`,
+    command: (
+      `bash -lc 'cd ${repoRoot} && `
+      + `env -u LOCAL_AI_MODEL_PROVIDER -u LOCAL_AI_OLLAMA_MODEL `
+      + `LOCAL_AI_MODEL_PROVIDER=mock `
+      + `LOCAL_AI_OLLAMA_MODEL= `
+      + `LOCAL_AI_MOCK_STREAM_DELAY_MS=80 `
+      + `python3 -m app.web --host 127.0.0.1 --port 8879'`
+    ),
     url: "http://127.0.0.1:8879",
-    reuseExistingServer: true,
+    reuseExistingServer: false,
     timeout: 60_000,
   },
 });

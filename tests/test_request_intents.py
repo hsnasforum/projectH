@@ -92,6 +92,8 @@ class RequestIntentTest(unittest.TestCase):
         self.assertEqual(decision.query, "김창섭")
         self.assertGreaterEqual(decision.score, 4)
         self.assertIn("identity_curiosity", decision.reasons)
+        self.assertEqual(decision.answer_mode, "entity_card")
+        self.assertEqual(decision.freshness_risk, "low")
 
     def test_classify_search_intent_can_return_low_confidence_suggestion(self) -> None:
         decision = classify_search_intent("김창섭 궁금한데")
@@ -101,6 +103,8 @@ class RequestIntentTest(unittest.TestCase):
         self.assertEqual(decision.suggestion_query, "김창섭")
         self.assertGreaterEqual(decision.suggestion_score, 3)
         self.assertIn("soft_curiosity", decision.suggestion_reasons)
+        self.assertEqual(decision.suggestion_answer_mode, "entity_card")
+        self.assertEqual(decision.suggestion_freshness_risk, "low")
 
     def test_classify_search_intent_ignores_feedback_retry_suffix(self) -> None:
         decision = classify_search_intent(
@@ -111,6 +115,20 @@ class RequestIntentTest(unittest.TestCase):
 
         self.assertEqual(decision.kind, "external_fact")
         self.assertEqual(decision.query, "붉은사막")
+
+    def test_live_latest_queries_are_marked_as_latest_update(self) -> None:
+        decision = classify_search_intent("오늘 날씨 어때요?")
+
+        self.assertEqual(decision.kind, "live_latest")
+        self.assertEqual(decision.answer_mode, "latest_update")
+        self.assertEqual(decision.freshness_risk, "high")
+
+    def test_explicit_latest_search_queries_are_marked_as_latest_update(self) -> None:
+        decision = classify_search_intent("아이유 최신 소식 검색해봐")
+
+        self.assertEqual(decision.kind, "explicit_web")
+        self.assertEqual(decision.answer_mode, "latest_update")
+        self.assertEqual(decision.freshness_risk, "high")
 
 
 if __name__ == "__main__":

@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
+CORE_ENTITY_SLOTS = ("개발", "서비스/배급", "장르/성격", "상태", "이용 형태")
+TRUSTED_CLAIM_SOURCE_ROLES = frozenset({"백과 기반", "공식 기반", "데이터 기반", "설명형 출처"})
+
 
 @dataclass(frozen=True, slots=True)
 class ClaimRecord:
@@ -16,12 +19,22 @@ class ClaimRecord:
     supporting_sources: tuple[tuple[str, str, str], ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class SlotCoverage:
+    slot: str
+    status: str
+    primary_claim: ClaimRecord | None = None
+    candidate_count: int = 0
+
+
 _ROLE_PRIORITY = {
     "백과 기반": 4,
     "공식 기반": 3,
+    "데이터 기반": 3,
     "설명형 출처": 2,
     "보조 기사": 1,
     "보조 출처": 1,
+    "보조 커뮤니티": 0,
     "보조 포털": 0,
     "보조 블로그": 0,
 }
@@ -111,3 +124,32 @@ def merge_claim_records(records: Iterable[ClaimRecord]) -> list[ClaimRecord]:
     for slot_items in merged_by_slot.values():
         merged.extend(slot_items)
     return merged
+
+
+def summarize_slot_coverage(
+    records: Iterable[ClaimRecord],
+    *,
+    slots: Iterable[str] = CORE_ENTITY_SLOTS,
+) -> dict[str, SlotCoverage]:
+    grouped: dict[str, list[ClaimRecord]] = {}
+    for record in records:
+        slot = " ".join(str(record.slot or "").split()).strip()
+        if not slot:
+            continue
+        grouped.setdefault(slot, []).append(record)
+
+    coverage: dict[str, SlotCoverage] = {}
+    for slot in slots:
+        items = grouped.get(slot) or []
+        if not items:
+            coverage[slot] = SlotCoverage(slot=slot, status="missing", primary_claim=None, candidate_count=0)
+            continue
+        primary = max(items, key=_claim_sort_key)
+        status = "strong" if primary.support_count >= 2 else "weak"
+        coverage[slot] = SlotCoverage(
+            slot=slot,
+            status=status,
+            primary_claim=primary,
+            candidate_count=len(items),
+        )
+    return coverage

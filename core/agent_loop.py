@@ -1,14 +1,28 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
 from typing import Any, Callable, Dict, Mapping
 from urllib.parse import urlparse
+from uuid import uuid4
 
-from core.approval import ApprovalRequest
+from core.approval import (
+    SAVE_CONTENT_SOURCE_CORRECTED_TEXT,
+    SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT,
+    ApprovalRequest,
+    build_approval_reason_record,
+)
 from core.request_intents import classify_search_intent
-from core.web_claims import ClaimRecord, merge_claim_records
+from core.source_policy import build_source_policy, score_source_for_mode
+from core.web_claims import (
+    CORE_ENTITY_SLOTS,
+    TRUSTED_CLAIM_SOURCE_ROLES,
+    ClaimRecord,
+    merge_claim_records,
+    summarize_slot_coverage,
+)
 from model_adapter.base import (
     FOLLOW_UP_INTENT_ACTION_ITEMS,
     FOLLOW_UP_INTENT_GENERAL,
@@ -37,6 +51,8 @@ class UserRequest:
 @dataclass
 class AgentResponse:
     text: str
+    message_id: str | None = None
+    source_message_id: str | None = None
     status: str = "answer"
     actions_taken: list[str] = field(default_factory=list)
     requires_approval: bool = False
@@ -50,7 +66,15 @@ class AgentResponse:
     response_origin: dict[str, Any] | None = None
     evidence: list[dict[str, str]] = field(default_factory=list)
     summary_chunks: list[dict[str, Any]] = field(default_factory=list)
+    claim_coverage: list[dict[str, Any]] = field(default_factory=list)
+    claim_coverage_progress_summary: str | None = None
     web_search_record_path: str | None = None
+    artifact_id: str | None = None
+    artifact_kind: str | None = None
+    original_response_snapshot: dict[str, Any] | None = None
+    corrected_outcome: dict[str, Any] | None = None
+    approval_reason_record: dict[str, Any] | None = None
+    save_content_source: str | None = None
 
 
 class RequestCancelledError(RuntimeError):
@@ -73,6 +97,304 @@ class AgentLoop:
         self.tools = tools
         self.notes_dir = Path(notes_dir)
         self.web_search_store = web_search_store
+
+    def _new_grounded_brief_artifact_id(self) -> str:
+        return f"artifact-{uuid4().hex[:12]}"
+
+    def _new_message_id(self) -> str:
+        return f"msg-{uuid4().hex[:12]}"
+
+    def _build_original_response_snapshot(self, response: AgentResponse) -> dict[str, Any] | None:
+        if response.artifact_kind != "grounded_brief" or not response.artifact_id:
+            return None
+        if not response.evidence and not response.summary_chunks:
+            return None
+
+        return {
+            "artifact_id": response.artifact_id,
+            "artifact_kind": response.artifact_kind,
+            "draft_text": response.text,
+            "source_paths": [str(path) for path in response.selected_source_paths if str(path).strip()],
+            "response_origin": dict(response.response_origin) if isinstance(response.response_origin, dict) else None,
+            "summary_chunks_snapshot": [dict(item) for item in response.summary_chunks if isinstance(item, dict)],
+            "evidence_snapshot": [dict(item) for item in response.evidence if isinstance(item, dict)],
+        }
+
+    def _build_grounded_brief_response(self, **kwargs: Any) -> AgentResponse:
+        response = AgentResponse(**kwargs)
+        response.original_response_snapshot = self._build_original_response_snapshot(response)
+        return response
+
+    def _build_accepted_as_is_outcome(
+        self,
+        *,
+        artifact_id: str | None,
+        saved_note_path: str | None,
+        approval_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        if not artifact_id or not saved_note_path:
+            return None
+        outcome = {
+            "outcome": "accepted_as_is",
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "artifact_id": artifact_id,
+            "saved_note_path": saved_note_path,
+        }
+        if approval_id:
+            outcome["approval_id"] = approval_id
+        return outcome
+
+    def _log_corrected_outcome_recorded(self, session_id: str, corrected_outcome: dict[str, Any]) -> None:
+        self.task_logger.log(
+            session_id=session_id,
+            action="corrected_outcome_recorded",
+            detail={
+                "outcome": corrected_outcome.get("outcome"),
+                "recorded_at": corrected_outcome.get("recorded_at"),
+                "artifact_id": corrected_outcome.get("artifact_id"),
+                "source_message_id": corrected_outcome.get("source_message_id"),
+                "approval_id": corrected_outcome.get("approval_id"),
+                "saved_note_path": corrected_outcome.get("saved_note_path"),
+            },
+        )
+
+    def _resolve_artifact_source_message_id(self, session_id: str, artifact_id: str | None) -> str | None:
+        normalized_artifact_id = str(artifact_id or "").strip()
+        if not normalized_artifact_id:
+            return None
+        source_message = self.session_store.find_artifact_source_message(session_id, normalized_artifact_id)
+        if not isinstance(source_message, dict):
+            return None
+        source_message_id = str(source_message.get("message_id") or "").strip()
+        return source_message_id or None
+
+    def _build_approval_reason_record(
+        self,
+        *,
+        session_id: str,
+        artifact_id: str | None,
+        approval_id: str | None,
+        source_message_id: str | None = None,
+        reason_scope: str,
+        reason_label: str,
+        reason_note: str | None = None,
+    ) -> dict[str, Any] | None:
+        normalized_artifact_id = str(artifact_id or "").strip()
+        normalized_approval_id = str(approval_id or "").strip()
+        resolved_source_message_id = str(source_message_id or "").strip() or self._resolve_artifact_source_message_id(
+            session_id,
+            normalized_artifact_id,
+        )
+        if not normalized_artifact_id or not normalized_approval_id or not resolved_source_message_id:
+            return None
+        return build_approval_reason_record(
+            reason_scope=reason_scope,
+            reason_label=reason_label,
+            reason_note=reason_note,
+            artifact_id=normalized_artifact_id,
+            artifact_kind="grounded_brief",
+            source_message_id=resolved_source_message_id,
+            approval_id=normalized_approval_id,
+        )
+
+    def _find_message_by_id(self, session_id: str, message_id: str | None) -> dict[str, Any] | None:
+        normalized_message_id = str(message_id or "").strip()
+        if not normalized_message_id:
+            return None
+        session = self.session_store.get_session(session_id)
+        messages = session.get("messages", [])
+        for message in reversed(messages):
+            if str(message.get("message_id") or "").strip() != normalized_message_id:
+                continue
+            return dict(message)
+        return None
+
+    def _extract_grounded_brief_source_paths(self, message: dict[str, Any] | None) -> list[str]:
+        if not isinstance(message, dict):
+            return []
+        snapshot = message.get("original_response_snapshot")
+        if isinstance(snapshot, dict):
+            source_paths = [str(path) for path in snapshot.get("source_paths", []) if str(path).strip()]
+            if source_paths:
+                return source_paths
+        return [str(path) for path in message.get("selected_source_paths", []) if str(path).strip()]
+
+    def _extract_search_query_from_label(self, label: str | None) -> str | None:
+        normalized_label = str(label or "").strip()
+        match = re.match(r"^'(?P<query>.+)' 검색 결과$", normalized_label)
+        if not match:
+            return None
+        search_query = str(match.group("query") or "").strip()
+        return search_query or None
+
+    def _latest_pending_note_path_for_artifact(self, session_id: str, artifact_id: str | None) -> str | None:
+        normalized_artifact_id = str(artifact_id or "").strip()
+        if not normalized_artifact_id:
+            return None
+        session = self.session_store.get_session(session_id)
+        for approval in reversed(session.get("pending_approvals", [])):
+            if not isinstance(approval, dict):
+                continue
+            if str(approval.get("artifact_id") or "").strip() != normalized_artifact_id:
+                continue
+            requested_path = str(approval.get("requested_path") or "").strip()
+            if requested_path:
+                return requested_path
+        return None
+
+    def _resolve_corrected_save_note_path(
+        self,
+        *,
+        request: UserRequest,
+        source_message: dict[str, Any],
+    ) -> str | None:
+        requested_note_path = str(request.metadata.get("note_path") or "").strip()
+        if requested_note_path:
+            return requested_note_path
+
+        artifact_id = str(source_message.get("artifact_id") or "").strip() or None
+        pending_path = self._latest_pending_note_path_for_artifact(request.session_id, artifact_id)
+        if pending_path:
+            return pending_path
+
+        saved_note_path = str(source_message.get("saved_note_path") or "").strip()
+        if saved_note_path:
+            return saved_note_path
+
+        corrected_outcome = source_message.get("corrected_outcome")
+        if isinstance(corrected_outcome, dict):
+            corrected_saved_path = str(corrected_outcome.get("saved_note_path") or "").strip()
+            if corrected_saved_path:
+                return corrected_saved_path
+
+        proposed_note_path = str(source_message.get("proposed_note_path") or "").strip()
+        if proposed_note_path:
+            return proposed_note_path
+
+        source_paths = self._extract_grounded_brief_source_paths(source_message)
+        if len(source_paths) == 1:
+            return self._build_note_path(request, source_paths[0])
+
+        active_context = source_message.get("active_context")
+        if isinstance(active_context, dict) and str(active_context.get("kind") or "").strip() == "search":
+            search_query = self._extract_search_query_from_label(active_context.get("label"))
+            if search_query:
+                return self._build_search_note_path(request, search_query)
+
+        return None
+
+    def _request_corrected_save_bridge(self, request: UserRequest) -> AgentResponse:
+        source_message_id = str(request.metadata.get("corrected_save_message_id") or "").strip()
+        if not source_message_id:
+            return AgentResponse(
+                text="저장 요청을 만들 수정본 원문 메시지 ID가 없습니다.",
+                status="error",
+                actions_taken=["approval_error"],
+            )
+
+        source_message = self._find_message_by_id(request.session_id, source_message_id)
+        if not isinstance(source_message, dict):
+            return AgentResponse(
+                text="수정본 저장 요청을 만들 grounded-brief 원문 응답을 찾지 못했습니다.",
+                status="error",
+                actions_taken=["approval_error"],
+            )
+
+        artifact_id = str(source_message.get("artifact_id") or "").strip()
+        if (
+            source_message.get("role") != "assistant"
+            or str(source_message.get("artifact_kind") or "").strip() != "grounded_brief"
+            or not artifact_id
+            or not isinstance(source_message.get("original_response_snapshot"), dict)
+        ):
+            return AgentResponse(
+                text="수정본 저장 요청은 grounded-brief 원문 응답에서만 만들 수 있습니다.",
+                status="error",
+                actions_taken=["approval_error"],
+            )
+
+        corrected_text = str(source_message.get("corrected_text") or "").replace("\r\n", "\n").strip()
+        if not corrected_text:
+            return AgentResponse(
+                text="기록된 수정본이 없습니다. 먼저 수정본 기록을 눌러 주세요.",
+                status="error",
+                actions_taken=["approval_error"],
+                artifact_id=artifact_id,
+                artifact_kind="grounded_brief",
+                source_message_id=source_message_id,
+            )
+
+        note_path = self._resolve_corrected_save_note_path(
+            request=request,
+            source_message=source_message,
+        )
+        if not note_path:
+            return AgentResponse(
+                text="수정본 저장 경로를 정할 수 없습니다. 먼저 원래 저장 요청을 만들거나 저장된 경로가 있는 응답에서 다시 시도해 주세요.",
+                status="error",
+                actions_taken=["approval_error"],
+                artifact_id=artifact_id,
+                artifact_kind="grounded_brief",
+                source_message_id=source_message_id,
+            )
+
+        source_paths = self._extract_grounded_brief_source_paths(source_message)
+        approval = self._request_save_note_approval(
+            session_id=request.session_id,
+            note_path=note_path,
+            note_body=corrected_text,
+            source_paths=source_paths,
+            artifact_id=artifact_id,
+            source_message_id=source_message_id,
+            save_content_source=SAVE_CONTENT_SOURCE_CORRECTED_TEXT,
+        )
+        return AgentResponse(
+            text=(
+                f"현재 기록된 수정본 스냅샷을 {approval.requested_path}에 저장하려면 승인이 필요합니다. "
+                "이 승인 미리보기는 요청 시점 그대로 고정됩니다."
+            ),
+            status="needs_approval",
+            actions_taken=["approval_requested"],
+            requires_approval=True,
+            proposed_note_path=approval.requested_path,
+            selected_source_paths=source_paths,
+            note_preview=approval.preview_markdown,
+            approval=approval.to_public_dict(),
+            artifact_id=artifact_id,
+            artifact_kind="grounded_brief",
+            source_message_id=source_message_id,
+            save_content_source=approval.save_content_source,
+        )
+
+    def _append_response_message(self, session_id: str, response: AgentResponse) -> dict[str, Any]:
+        stored_message = self.session_store.append_message(session_id, self._assistant_message(response))
+        stored_message_id = str(stored_message.get("message_id") or "").strip()
+        if stored_message_id:
+            response.message_id = stored_message_id
+        stored_source_message_id = str(stored_message.get("source_message_id") or "").strip()
+        if stored_source_message_id:
+            response.source_message_id = stored_source_message_id
+        stored_approval = stored_message.get("approval")
+        if isinstance(stored_approval, dict):
+            response.approval = dict(stored_approval)
+            if not response.source_message_id:
+                approval_source_message_id = str(stored_approval.get("source_message_id") or "").strip()
+                if approval_source_message_id:
+                    response.source_message_id = approval_source_message_id
+        approval_reason_record = stored_message.get("approval_reason_record")
+        if isinstance(approval_reason_record, dict):
+            response.approval_reason_record = dict(approval_reason_record)
+            if isinstance(response.approval, dict):
+                response.approval["approval_reason_record"] = dict(approval_reason_record)
+        corrected_outcome = stored_message.get("corrected_outcome")
+        if isinstance(corrected_outcome, dict):
+            response.corrected_outcome = dict(corrected_outcome)
+            if not response.source_message_id:
+                corrected_source_message_id = str(corrected_outcome.get("source_message_id") or "").strip()
+                if corrected_source_message_id:
+                    response.source_message_id = corrected_source_message_id
+            self._log_corrected_outcome_recorded(session_id, corrected_outcome)
+        return stored_message
 
     def _extract_search_query(self, request: UserRequest) -> str | None:
         search_query = request.metadata.get("search_query")
@@ -471,6 +793,161 @@ class AgentLoop:
             return compact
         return compact[:max_chars].rstrip() + "..."
 
+    def _normalize_summary_source_type(self, source_type: str) -> str:
+        return "search_results" if source_type == "search_results" else "local_document"
+
+    def _build_individual_chunk_summary_prompt(
+        self,
+        *,
+        source_label: str,
+        chunk_text: str,
+        summary_source_type: str = "local_document",
+    ) -> str:
+        normalized_summary_source_type = self._normalize_summary_source_type(summary_source_type)
+        excerpt_label = "Selected search-result excerpt:" if normalized_summary_source_type == "search_results" else "Document excerpt:"
+        lines = [
+            "Summary mode: chunk_note",
+            f"Summary source type: {normalized_summary_source_type}",
+            f"Source label: {source_label}",
+        ]
+        if normalized_summary_source_type == "search_results":
+            lines.extend(
+                [
+                    "Write one concise Korean chunk note from the selected search-result excerpt below.",
+                    "Treat it as one source-backed evidence chunk within a larger search-result synthesis.",
+                    "Prioritize source-backed facts, meaningful differences, and explicit actions or decisions visible in this excerpt.",
+                    "Do not retell it like a narrative scene or describe the task itself.",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "Write one concise Korean chunk note from the document excerpt below.",
+                    "Treat it as one part of a larger local document and preserve the relevant flow or state changes from this excerpt.",
+                    "Prioritize what this part actually says or what happens over memorable wording.",
+                    "If the text is narrative or fiction, summarize major characters or actors, key events, conflict changes, and the ending state of this part.",
+                    "If the text is informational or argumentative, summarize the topic, main points, decisions or actions, and conclusion of this part.",
+                ]
+            )
+        lines.extend(
+            [
+                "Return only concise Korean plain text with no heading or bullet label.",
+                "Do not mention chunk numbers.",
+                "",
+                excerpt_label,
+                chunk_text.strip(),
+            ]
+        )
+        return "\n".join(lines).strip()
+
+    def _build_short_summary_prompt(
+        self,
+        *,
+        source_label: str,
+        text: str,
+        summary_source_type: str = "local_document",
+    ) -> str:
+        normalized_summary_source_type = self._normalize_summary_source_type(summary_source_type)
+        excerpt_label = "Selected search-result text:" if normalized_summary_source_type == "search_results" else "Document text:"
+        lines = [
+            "Summary mode: short_summary",
+            f"Summary source type: {normalized_summary_source_type}",
+            f"Source label: {source_label}",
+        ]
+        if normalized_summary_source_type == "search_results":
+            lines.extend(
+                [
+                    "Write one concise Korean synthesis from the selected search-result text below.",
+                    "Treat it as a summary of selected local search results, not as one narrative document.",
+                    "Prioritize shared facts, meaningful differences, explicit actions or decisions, and the grounded conclusion supported by the selected results.",
+                    "Do not retell it like a narrative scene or describe the task itself.",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "Write one concise Korean summary from the document text below.",
+                    "Treat it as a local document summary and preserve the relevant document flow or state changes even when the text is short.",
+                    "Prioritize what the document actually says or what happens over memorable wording.",
+                    "If the text is narrative or fiction, summarize major characters or actors, key events, conflict changes, and the ending state in order.",
+                    "If the text is informational or argumentative, summarize the topic, main points, decisions or actions, and conclusion.",
+                ]
+            )
+        lines.extend(
+            [
+                "Return only concise Korean plain text with no heading or bullet label.",
+                "Do not describe the task itself or mention an artificial mode.",
+                "",
+                excerpt_label,
+                text.strip(),
+            ]
+        )
+        return "\n".join(lines).strip()
+
+    def _build_chunk_summary_reduce_prompt(
+        self,
+        *,
+        source_label: str,
+        chunk_summaries: list[dict[str, Any]],
+        reduce_source_type: str = "local_document",
+    ) -> str:
+        normalized_reduce_source_type = self._normalize_summary_source_type(reduce_source_type)
+        lines = [
+            "Summary mode: merged_chunk_outline",
+            f"Summary source type: {normalized_reduce_source_type}",
+            f"Source label: {source_label}",
+        ]
+        if normalized_reduce_source_type == "search_results":
+            lines.extend(
+                [
+                    "Write one concise Korean synthesis from the selected search-result notes below.",
+                    "Prioritize shared facts, meaningful differences, key actions or decisions, and the grounded conclusion across the selected results.",
+                    "Treat the notes as source-backed search findings, not as scenes in a narrative.",
+                    "Prefer source-backed synthesis over vivid wording or isolated lines.",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "Write one concise Korean summary from the chunk notes below.",
+                    "Prioritize what the document actually says or what happens over memorable wording.",
+                    "If the text is narrative or fiction, summarize major characters or actors, key events, conflict changes, and the ending state in order.",
+                    "If the text is informational or argumentative, summarize the topic, main points, decisions or actions, and conclusion.",
+                ]
+            )
+        lines.extend(
+            [
+            "Do not mention chunk numbers or describe the task itself.",
+            "",
+            ]
+        )
+
+        added = 0
+        for index, chunk_summary in enumerate(chunk_summaries, start=1):
+            summary_text = str(chunk_summary.get("summary") or "").strip()
+            if not summary_text:
+                continue
+            summary_text = re.sub(r"^\[[^\]]+\]\s*", "", summary_text)
+            summary_text = re.sub(r"^[*-]\s*", "", summary_text)
+            summary_text = self._summarize_hint(summary_text, max_chars=220)
+            if not summary_text:
+                continue
+            lines.append(f"Chunk note {index}: {summary_text}")
+            added += 1
+
+        if not added:
+            selected_entries = self._select_summary_chunk_entries(
+                chunk_summaries=chunk_summaries,
+                max_lines=4,
+                summary_source_type=reduce_source_type,
+            )
+            for index, (line, _) in enumerate(selected_entries, start=1):
+                cleaned = self._summarize_hint(line, max_chars=220)
+                if cleaned:
+                    lines.append(f"Chunk note {index}: {cleaned}")
+
+        return "\n".join(lines).strip()
+
     def _chunk_text_for_retrieval(
         self,
         *,
@@ -581,6 +1058,7 @@ class AgentLoop:
         *,
         chunk_summaries: list[dict[str, Any]],
         max_lines: int = 4,
+        summary_source_type: str = "local_document",
     ) -> list[tuple[str, dict[str, Any]]]:
         if not chunk_summaries:
             return []
@@ -590,6 +1068,7 @@ class AgentLoop:
                 return [(summary_text, chunk_summaries[0])]
             return []
 
+        normalized_summary_source_type = self._normalize_summary_source_type(summary_source_type)
         selected_entries: list[tuple[str, dict[str, Any]]] = []
         seen: set[str] = set()
         preferred_indices = [0, len(chunk_summaries) // 2, len(chunk_summaries) - 1]
@@ -613,6 +1092,43 @@ class AgentLoop:
             "구현": 2,
             "추가": 1,
         }
+        if normalized_summary_source_type == "search_results":
+            priority_keywords.update(
+                {
+                    "공통": 7,
+                    "종합": 6,
+                    "차이": 6,
+                    "다르": 5,
+                    "우선": 5,
+                    "조정": 4,
+                    "강조": 4,
+                    "범위": 3,
+                    "근거": 3,
+                }
+            )
+            penalty_keywords = {
+                "갈등": 2,
+                "관계": 2,
+                "감정": 1,
+                "장면": 1,
+            }
+        else:
+            priority_keywords.update(
+                {
+                    "갈등": 5,
+                    "관계": 4,
+                    "변화": 4,
+                    "마지막": 4,
+                    "끝": 4,
+                    "신호": 3,
+                    "감정": 3,
+                    "사건": 3,
+                    "인물": 2,
+                    "말하": 2,
+                    "드러": 2,
+                }
+            )
+            penalty_keywords: dict[str, int] = {}
 
         def _evidence_lines(chunk_summary: dict[str, Any]) -> list[str]:
             lines: list[str] = []
@@ -639,6 +1155,9 @@ class AgentLoop:
             for keyword, weight in priority_keywords.items():
                 if keyword in line:
                     score += weight
+            for keyword, weight in penalty_keywords.items():
+                if keyword in line:
+                    score -= weight
             if len(line) >= 20:
                 score += 1
             if any(keyword in line for keyword in ["도입", "마무리"]):
@@ -719,10 +1238,12 @@ class AgentLoop:
         *,
         chunk_summaries: list[dict[str, Any]],
         max_lines: int = 4,
+        summary_source_type: str = "local_document",
     ) -> str:
         selected_entries = self._select_summary_chunk_entries(
             chunk_summaries=chunk_summaries,
             max_lines=max_lines,
+            summary_source_type=summary_source_type,
         )
         if not selected_entries:
             return ""
@@ -742,10 +1263,12 @@ class AgentLoop:
         *,
         chunk_summaries: list[dict[str, Any]],
         max_items: int = 3,
+        summary_source_type: str = "local_document",
     ) -> list[dict[str, Any]]:
         selected_entries = self._select_summary_chunk_entries(
             chunk_summaries=chunk_summaries,
             max_lines=max(max_items + 1, 4),
+            summary_source_type=summary_source_type,
         )
         if not selected_entries:
             return []
@@ -780,15 +1303,21 @@ class AgentLoop:
         text: str,
         source_label: str,
         source_path: str | None = None,
+        reduce_source_type: str = "local_document",
         stream_event_callback: Callable[[dict[str, Any]], None] | None = None,
         phase_event_callback: Callable[[dict[str, Any]], None] | None = None,
         cancel_requested: Callable[[], bool] | None = None,
         chunk_threshold: int = 4200,
     ) -> tuple[str, list[dict[str, Any]]]:
         if len(text) <= chunk_threshold:
+            short_summary_prompt = self._build_short_summary_prompt(
+                source_label=source_label,
+                text=text,
+                summary_source_type=reduce_source_type,
+            )
             return (
                 self._collect_model_stream(
-                    self.model.stream_summarize(text),
+                    self.model.stream_summarize(short_summary_prompt),
                     stream_event_callback=stream_event_callback,
                     cancel_requested=cancel_requested,
                 ),
@@ -798,9 +1327,14 @@ class AgentLoop:
         summary_source_path = source_path or source_label
         chunks = self._chunk_text_for_summary(source_path=summary_source_path, text=text)
         if len(chunks) <= 1:
+            short_summary_prompt = self._build_short_summary_prompt(
+                source_label=source_label,
+                text=text,
+                summary_source_type=reduce_source_type,
+            )
             return (
                 self._collect_model_stream(
-                    self.model.stream_summarize(text),
+                    self.model.stream_summarize(short_summary_prompt),
                     stream_event_callback=stream_event_callback,
                     cancel_requested=cancel_requested,
                 ),
@@ -818,8 +1352,13 @@ class AgentLoop:
                 detail=f"{source_label} 문서를 {total_chunks}개 구간으로 나눠 {index}번째 핵심을 정리하는 중입니다.",
                 note="먼저 구간별 핵심을 추린 뒤, 마지막에 하나의 요약으로 합칩니다.",
             )
+            chunk_summary_prompt = self._build_individual_chunk_summary_prompt(
+                source_label=source_label,
+                chunk_text=str(chunk.get("text") or ""),
+                summary_source_type=reduce_source_type,
+            )
             chunk_summary = self._collect_model_stream(
-                self.model.stream_summarize(str(chunk.get("text") or "")),
+                self.model.stream_summarize(chunk_summary_prompt),
                 cancel_requested=cancel_requested,
             )
             chunk_text = str(chunk.get("text") or "")
@@ -849,8 +1388,27 @@ class AgentLoop:
             detail=f"{source_label} 문서의 구간 요약 {total_chunks}개를 하나의 초안으로 합치는 중입니다.",
             note="문서 앞, 중간, 뒤에서 핵심이 빠지지 않도록 균형 있게 묶습니다.",
         )
-        final_summary = self._merge_chunk_summaries(chunk_summaries=chunk_summaries)
-        summary_chunks = self._build_summary_chunk_refs(chunk_summaries=chunk_summaries)
+        reduce_prompt = self._build_chunk_summary_reduce_prompt(
+            source_label=source_label,
+            chunk_summaries=chunk_summaries,
+            reduce_source_type=reduce_source_type,
+        )
+        final_summary = ""
+        if reduce_prompt:
+            final_summary = self._collect_model_stream(
+                self.model.stream_summarize(reduce_prompt),
+                stream_event_callback=stream_event_callback,
+                cancel_requested=cancel_requested,
+            ).strip()
+        if not final_summary:
+            final_summary = self._merge_chunk_summaries(
+                chunk_summaries=chunk_summaries,
+                summary_source_type=reduce_source_type,
+            )
+        summary_chunks = self._build_summary_chunk_refs(
+            chunk_summaries=chunk_summaries,
+            summary_source_type=reduce_source_type,
+        )
         if stream_event_callback:
             stream_event_callback({"event": "text_replace", "text": final_summary})
         return final_summary, summary_chunks
@@ -1755,12 +2313,74 @@ class AgentLoop:
             },
         )
 
-    def _follow_up_suggestions_for_web_search(self, query: str) -> list[str]:
-        return [
-            f"{query} 검색 결과 핵심 3줄만 다시 정리해 주세요.",
-            f"{query} 검색 결과에서 가장 믿을 만한 출처만 추려 주세요.",
-            f"{query} 검색 결과를 메모 형식으로 다시 써 주세요.",
-        ]
+    def _build_entity_reinvestigation_suggestions(
+        self,
+        *,
+        query: str,
+        claim_coverage: list[dict[str, Any]] | None = None,
+    ) -> list[str]:
+        slot_prompt_map = {
+            "개발": f"{query} 개발사 검색해봐",
+            "서비스/배급": f"{query} 서비스 공식 검색해봐",
+            "장르/성격": f"{query} 장르 검색해봐",
+            "상태": f"{query} 출시 상태 검색해봐",
+            "이용 형태": f"{query} 공식 플랫폼 검색해봐",
+        }
+        status_priority = {"missing": 0, "weak": 1}
+        candidates: list[tuple[int, int, str]] = []
+        for index, item in enumerate(claim_coverage or []):
+            if not isinstance(item, dict):
+                continue
+            slot = str(item.get("slot") or "").strip()
+            status = str(item.get("status") or "").strip()
+            prompt = slot_prompt_map.get(slot)
+            if not prompt or status not in status_priority:
+                continue
+            candidates.append((status_priority[status], index, prompt))
+
+        candidates.sort(key=lambda item: (item[0], item[1]))
+        suggestions: list[str] = []
+        seen: set[str] = set()
+        for _, _, prompt in candidates:
+            if prompt in seen:
+                continue
+            seen.add(prompt)
+            suggestions.append(prompt)
+            if len(suggestions) >= 3:
+                break
+        return suggestions
+
+    def _follow_up_suggestions_for_web_search(
+        self,
+        query: str,
+        *,
+        answer_mode: str | None = None,
+        claim_coverage: list[dict[str, Any]] | None = None,
+    ) -> list[str]:
+        suggestions: list[str] = []
+        if answer_mode == "entity_card":
+            suggestions.extend(
+                self._build_entity_reinvestigation_suggestions(
+                    query=query,
+                    claim_coverage=claim_coverage,
+                )
+            )
+        suggestions.extend(
+            [
+                f"{query} 검색 결과 핵심 3줄만 다시 정리해 주세요.",
+                f"{query} 검색 결과에서 가장 믿을 만한 출처만 추려 주세요.",
+                f"{query} 검색 결과를 메모 형식으로 다시 써 주세요.",
+            ]
+        )
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for prompt in suggestions:
+            normalized = str(prompt).strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped.append(normalized)
+        return deduped
 
     def _extract_load_web_search_record_id(self, request: UserRequest) -> str | None:
         value = request.metadata.get("load_web_search_record_id")
@@ -2009,9 +2629,20 @@ class AgentLoop:
         excerpt = self._summarize_hint(excerpt_source, max_chars=excerpt_limit)
         return excerpt, focused_text
 
-    def _infer_web_query_profile(self, *, query: str, intent_kind: str | None = None) -> str:
+    def _infer_web_query_profile(
+        self,
+        *,
+        query: str,
+        intent_kind: str | None = None,
+        answer_mode: str | None = None,
+        freshness_risk: str | None = None,
+    ) -> str:
         normalized = " ".join(str(query or "").split()).lower()
         query_terms = self._extract_web_query_terms(query)
+        if answer_mode == "entity_card":
+            return "entity"
+        if answer_mode == "latest_update" or freshness_risk == "high":
+            return "live"
         live_markers = {
             "날씨",
             "기온",
@@ -2063,11 +2694,23 @@ class AgentLoop:
             return "entity"
         return "general"
 
-    def _expand_web_search_queries(self, *, query: str, intent_kind: str | None = None) -> list[str]:
+    def _expand_web_search_queries(
+        self,
+        *,
+        query: str,
+        intent_kind: str | None = None,
+        answer_mode: str | None = None,
+        freshness_risk: str | None = None,
+    ) -> list[str]:
         normalized_query = " ".join(str(query or "").split()).strip()
         if not normalized_query:
             return []
-        query_profile = self._infer_web_query_profile(query=normalized_query, intent_kind=intent_kind)
+        query_profile = self._infer_web_query_profile(
+            query=normalized_query,
+            intent_kind=intent_kind,
+            answer_mode=answer_mode,
+            freshness_risk=freshness_risk,
+        )
         variants = [normalized_query]
         if query_profile == "entity":
             variants.extend(
@@ -2095,6 +2738,32 @@ class AgentLoop:
             seen.add(key)
             deduped.append(compact)
         return deduped[:4]
+
+    def _build_source_policy_decision(
+        self,
+        *,
+        query: str,
+        url: str,
+        title: str,
+        summary_text: str,
+    ):
+        descriptive_source = self._looks_like_descriptive_web_source(
+            query=query,
+            title=title,
+            summary_text=summary_text,
+        )
+        return build_source_policy(
+            url=url,
+            descriptive_source=descriptive_source,
+            official_domain=self._looks_like_official_product_domain(url),
+            opinion_or_blog=self._looks_like_opinion_or_blog_source(title=title, summary_text=summary_text),
+            event_or_campaign=self._looks_like_event_or_campaign_source(title=title, summary_text=summary_text),
+            operational_noise=(
+                self._looks_like_operational_entity_noise(summary_text)
+                or self._looks_like_noisy_web_segment(summary_text)
+            ),
+            community_domain=self._looks_like_game_portal_or_community_domain(url),
+        )
 
     def _classify_web_source_kind(self, url: str) -> str:
         hostname = urlparse(str(url or "").strip()).netloc.lower()
@@ -2405,6 +3074,7 @@ class AgentLoop:
             developer_match = (
                 re.search(rf"{re.escape(query)}(?:는|은)\s+(.+?)가\s+개발\s+중인", normalized)
                 or re.search(rf"{re.escape(query)}(?:는|은)\s+(.+?)가\s+개발한", normalized)
+                or re.search(rf"{re.escape(query)}(?:는|은)\s+(.+?)가\s+개발하는", normalized)
                 or re.search(rf"{re.escape(query)}(?:는|은)\s+(.+?)에서\s+개발\s+중인", normalized)
             )
             if developer_match:
@@ -2633,32 +3303,20 @@ class AgentLoop:
             return pair[0] if has_final else pair[1]
         return pair[1]
 
-    def _entity_source_role_label(self, *, query: str, source: dict[str, Any]) -> str:
+    def _web_source_role_label(self, *, query: str, source: dict[str, Any]) -> str:
         url = str(source.get("url") or "").strip()
         title = str(source.get("title") or source.get("result_title") or "").strip()
         summary_text = str(source.get("summary_text") or source.get("snippet") or title).strip()
-        source_kind = self._classify_web_source_kind(url)
-        descriptive_source = self._looks_like_descriptive_web_source(
+        source_policy = self._build_source_policy_decision(
             query=query,
+            url=url,
             title=title,
             summary_text=summary_text,
         )
+        return source_policy.role_label
 
-        if source_kind == "encyclopedia":
-            return "백과 기반"
-        if self._looks_like_official_product_domain(url) and descriptive_source:
-            return "공식 기반"
-        if self._looks_like_opinion_or_blog_source(title=title, summary_text=summary_text):
-            return "보조 블로그"
-        if descriptive_source and source_kind == "general":
-            return "설명형 출처"
-        if source_kind == "news":
-            return "보조 기사"
-        if source_kind == "blog":
-            return "보조 블로그"
-        if source_kind == "portal" or self._looks_like_game_portal_or_community_domain(url):
-            return "보조 포털"
-        return "보조 출처"
+    def _entity_source_role_label(self, *, query: str, source: dict[str, Any]) -> str:
+        return self._web_source_role_label(query=query, source=source)
 
     def _split_entity_fact_bullet(self, bullet: str) -> tuple[str, str] | None:
         if ":" not in str(bullet or ""):
@@ -2749,6 +3407,54 @@ class AgentLoop:
                 collected.append((source_url, bullets))
         return collected
 
+    def _build_entity_claim_confirmation_queries(
+        self,
+        *,
+        query: str,
+        slot: str,
+        claim_value: str,
+    ) -> list[str]:
+        compact_value = " ".join(str(claim_value or "").split()).strip().rstrip(".")
+        if not compact_value or len(compact_value) > 48:
+            return []
+
+        query_map: dict[str, list[str]] = {
+            "개발": [f"{query} {compact_value} 개발", f"{query} 개발사 {compact_value}"],
+            "서비스/배급": [f"{query} {compact_value} 서비스", f"{query} {compact_value} 배급"],
+            "장르/성격": [f"{query} {compact_value}", f"{query} 장르 {compact_value}"],
+            "상태": [f"{query} {compact_value}", f"{query} 상태 {compact_value}"],
+            "이용 형태": [f"{query} {compact_value} 플랫폼", f"{query} {compact_value}"],
+        }
+        return query_map.get(slot, [])
+
+    def _build_entity_slot_probe_queries(
+        self,
+        *,
+        query: str,
+        slot: str,
+        status: str,
+        primary_claim: ClaimRecord | None,
+    ) -> list[str]:
+        compact_value = " ".join(str(getattr(primary_claim, "value", "") or "").split()).strip().rstrip(".")
+        if status == "weak" and compact_value:
+            query_map: dict[str, list[str]] = {
+                "개발": [f"{query} {compact_value} 개발사 공식", f"{query} {compact_value} 개발사 위키"],
+                "서비스/배급": [f"{query} {compact_value} 서비스 공식", f"{query} {compact_value} 운영 공식"],
+                "장르/성격": [f"{query} {compact_value} 장르 위키", f"{query} {compact_value} 소개"],
+                "상태": [f"{query} {compact_value} 공식", f"{query} {compact_value} 출시 상태"],
+                "이용 형태": [f"{query} {compact_value} 플랫폼 공식", f"{query} {compact_value} 플랫폼"],
+            }
+            return query_map.get(slot, [])
+
+        query_map = {
+            "개발": [f"{query} 개발사 공식", f"{query} 개발사 위키", f"{query} 개발사"],
+            "서비스/배급": [f"{query} 서비스 공식", f"{query} 운영사 공식", f"{query} 배급"],
+            "장르/성격": [f"{query} 장르 위키", f"{query} 소개", f"{query} 설명"],
+            "상태": [f"{query} 출시 상태 공식", f"{query} 공식 출시", f"{query} 개발 중"],
+            "이용 형태": [f"{query} 공식 플랫폼", f"{query} 플랫폼 위키", f"{query} 플랫폼"],
+        }
+        return query_map.get(slot, [])
+
     def _extract_entity_fact_labels(self, *, bullets: list[str]) -> set[str]:
         labels: set[str] = set()
         for bullet in bullets:
@@ -2765,45 +3471,101 @@ class AgentLoop:
         selected_sources: list[dict[str, Any]],
         existing_queries: list[str],
     ) -> list[str]:
-        source_fact_bullets = self._collect_entity_source_fact_bullets(
+        claim_records = self._build_entity_claim_records(
             query=query,
-            sources=selected_sources,
+            selected_sources=selected_sources,
         )
-        consensus_bullets = self._build_consensus_entity_fact_bullets(
-            query=query,
-            source_fact_bullets=source_fact_bullets,
-        )
-        present_labels = self._extract_entity_fact_labels(bullets=consensus_bullets)
-        core_labels = present_labels & {"개발", "서비스/배급", "장르/성격", "상태", "이용 형태"}
-        has_distribution_or_access = bool({"서비스/배급", "이용 형태"} & core_labels)
+        coverage = summarize_slot_coverage(claim_records, slots=CORE_ENTITY_SLOTS)
+        strong_slots = {slot for slot, item in coverage.items() if item.status == "strong"}
+        has_distribution_or_access = bool({"서비스/배급", "이용 형태"} & strong_slots)
         if (
-            len(consensus_bullets) >= 4
-            and {"개발", "장르/성격"} <= core_labels
+            len(strong_slots) >= 4
+            and {"개발", "장르/성격"} <= strong_slots
             and has_distribution_or_access
         ):
             return []
 
-        query_plan: list[tuple[str, list[str]]] = [
-            ("개발", [f"{query} 개발사", f"{query} 개발"]),
-            ("서비스/배급", [f"{query} 서비스", f"{query} 운영사", f"{query} 배급"]),
-            ("장르/성격", [f"{query} 장르", f"{query} 어떤 게임", f"{query} 소개"]),
-            ("상태", [f"{query} 출시", f"{query} 개발 중", f"{query} 서비스 중"]),
-            ("이용 형태", [f"{query} 플랫폼", f"{query} 온라인", f"{query} 모바일"]),
-        ]
+        slot_priority = {
+            "개발": 0,
+            "서비스/배급": 1,
+            "장르/성격": 2,
+            "이용 형태": 3,
+            "상태": 4,
+        }
         seen_queries = {" ".join(str(item or "").split()).strip().lower() for item in existing_queries}
         second_pass_queries: list[str] = []
-        for label, variants in query_plan:
-            if label in present_labels:
+        prior_slot_probe_counts: dict[str, int] = {}
+        for existing_query in existing_queries:
+            probed_slot = self._entity_slot_from_search_query(query=query, matched_query=existing_query)
+            if not probed_slot:
                 continue
-            for variant in variants:
+            prior_slot_probe_counts[probed_slot] = prior_slot_probe_counts.get(probed_slot, 0) + 1
+
+        pending_slots = [
+            (slot, slot_coverage)
+            for slot, slot_coverage in coverage.items()
+            if slot_coverage.status != "strong"
+        ]
+        pending_slots.sort(
+            key=lambda item: (
+                0
+                if item[1].status == "missing" and prior_slot_probe_counts.get(item[0], 0) >= 1
+                else 1
+                if item[1].status == "missing"
+                else 2
+                if prior_slot_probe_counts.get(item[0], 0) >= 1
+                else 3,
+                -prior_slot_probe_counts.get(item[0], 0),
+                slot_priority.get(item[0], 99),
+            )
+        )
+        for label, slot_coverage in pending_slots:
+            confirmation_variants: list[str] = []
+            if slot_coverage.primary_claim is not None:
+                confirmation_variants = self._build_entity_claim_confirmation_queries(
+                    query=query,
+                    slot=label,
+                    claim_value=slot_coverage.primary_claim.value,
+                )
+            probe_variants = self._build_entity_slot_probe_queries(
+                query=query,
+                slot=label,
+                status=slot_coverage.status,
+                primary_claim=slot_coverage.primary_claim,
+            )
+            prior_probe_count = prior_slot_probe_counts.get(label, 0)
+            source_role = (
+                str(getattr(slot_coverage.primary_claim, "source_role", "") or "").strip()
+                if slot_coverage.primary_claim is not None
+                else ""
+            )
+            prefer_probe_first = (
+                slot_coverage.status == "missing"
+                or prior_probe_count >= 1
+                or (slot_coverage.status == "weak" and source_role != "공식 기반")
+            )
+            ordered_variants = (
+                [*probe_variants, *confirmation_variants]
+                if prefer_probe_first
+                else [*confirmation_variants, *probe_variants]
+            )
+            added_for_slot = 0
+            max_queries_for_slot = (
+                2
+                if slot_coverage.status == "weak" and (prior_probe_count >= 1 or source_role != "공식 기반")
+                else 1
+            )
+            for variant in ordered_variants:
                 normalized = " ".join(str(variant or "").split()).strip()
                 key = normalized.lower()
                 if not normalized or key in seen_queries:
                     continue
                 seen_queries.add(key)
                 second_pass_queries.append(normalized)
-                break
-            if len(second_pass_queries) >= 3:
+                added_for_slot += 1
+                if added_for_slot >= max_queries_for_slot:
+                    break
+            if len(second_pass_queries) >= 4:
                 break
         return second_pass_queries
 
@@ -2851,6 +3613,61 @@ class AgentLoop:
         if len(support_by_label) >= 2:
             agreement_score += 3
         return agreement_score
+
+    def _entity_slot_from_probe_text(self, text: str) -> str | None:
+        normalized_text = " ".join(str(text or "").split()).strip().lower()
+        if not normalized_text:
+            return None
+        slot_keywords = [
+            ("이용 형태", ["플랫폼", "pc", "콘솔", "모바일", "온라인"]),
+            ("서비스/배급", ["서비스", "운영사", "운영", "배급"]),
+            ("개발", ["개발사", "개발"]),
+            ("상태", ["출시 상태", "공식 출시", "개발 중", "출시"]),
+            ("장르/성격", ["장르"]),
+        ]
+        for slot, keywords in slot_keywords:
+            if any(keyword in normalized_text for keyword in keywords):
+                return slot
+        return None
+
+    def _entity_slot_from_search_query(self, *, query: str, matched_query: str) -> str | None:
+        normalized_query = " ".join(str(query or "").split()).strip().lower()
+        normalized_matched_query = " ".join(str(matched_query or "").split()).strip().lower()
+        if not normalized_matched_query or normalized_matched_query == normalized_query:
+            return None
+        return self._entity_slot_from_probe_text(normalized_matched_query)
+
+    def _entity_source_probe_bonus(
+        self,
+        *,
+        query: str,
+        source: dict[str, Any],
+        fact_bullets: list[str] | None = None,
+    ) -> int:
+        matched_query = str(source.get("matched_query") or "").strip()
+        slot = self._entity_slot_from_search_query(query=query, matched_query=matched_query)
+        if not slot:
+            return 0
+
+        parsed_bullets = [
+            parsed
+            for parsed in (
+                self._split_entity_fact_bullet(bullet)
+                for bullet in (fact_bullets or self._extract_entity_source_fact_bullets(query=query, source=source))
+            )
+            if parsed
+        ]
+        if not any(label == slot for label, _ in parsed_bullets):
+            return 0
+
+        source_role = self._entity_source_role_label(query=query, source=source)
+        bonus = 6
+        if source_role in TRUSTED_CLAIM_SOURCE_ROLES:
+            bonus += 2
+        normalized_matched_query = " ".join(matched_query.split()).strip().lower()
+        if "공식" in normalized_matched_query and source_role == "공식 기반":
+            bonus += 2
+        return bonus
 
     def _entity_fact_sort_key(self, label: str) -> tuple[int, str]:
         priority = {
@@ -3030,26 +3847,30 @@ class AgentLoop:
         *,
         query: str,
         claim_records: list[ClaimRecord],
-    ) -> tuple[list[ClaimRecord], list[ClaimRecord]]:
+    ) -> tuple[list[ClaimRecord], list[ClaimRecord], list[ClaimRecord], list[str]]:
         grouped: dict[str, list[ClaimRecord]] = {}
         for claim in claim_records:
             grouped.setdefault(claim.slot, []).append(claim)
 
-        trusted_roles = {"백과 기반", "공식 기반", "설명형 출처"}
         core_slots = ["개발", "서비스/배급", "장르/성격", "상태", "이용 형태"]
         supporting_slots = ["배경", "특징", "플레이 특징"]
+        coverage = summarize_slot_coverage(claim_records, slots=core_slots)
 
-        selected: list[ClaimRecord] = []
-        selected_values: set[tuple[str, str]] = set()
+        strong_selected: list[ClaimRecord] = []
+        weak_selected: list[ClaimRecord] = []
         for slot in core_slots:
             items = grouped.get(slot) or []
             if not items:
                 continue
             best = max(items, key=self._entity_claim_sort_key)
-            if best.support_count < 2 and best.source_role not in trusted_roles:
+            slot_coverage = coverage.get(slot)
+            if not slot_coverage:
                 continue
-            selected.append(best)
-            selected_values.add((best.slot, best.value))
+            if slot_coverage.status == "strong":
+                strong_selected.append(best)
+                continue
+            if best.source_role in TRUSTED_CLAIM_SOURCE_ROLES:
+                weak_selected.append(best)
 
         supporting: list[ClaimRecord] = []
         for slot in supporting_slots:
@@ -3058,7 +3879,7 @@ class AgentLoop:
                 continue
             best = max(items, key=self._entity_claim_sort_key)
             if slot in {"배경", "특징"}:
-                if best.support_count < 2 and best.source_role not in trusted_roles:
+                if best.support_count < 2 and best.source_role not in TRUSTED_CLAIM_SOURCE_ROLES:
                     continue
             elif best.support_count < 2:
                 continue
@@ -3070,23 +3891,231 @@ class AgentLoop:
                 continue
             supporting.append(best)
 
-        if len(selected) < 2:
-            fallback_candidates = [
-                claim
-                for claim in claim_records
-                if claim.source_role in trusted_roles
-                and claim.slot in core_slots
-                and (claim.slot, claim.value) not in selected_values
-            ]
-            for claim in sorted(fallback_candidates, key=self._entity_claim_sort_key, reverse=True):
-                selected.append(claim)
-                selected_values.add((claim.slot, claim.value))
-                if len(selected) >= 3:
-                    break
-
-        selected.sort(key=lambda item: self._entity_fact_sort_key(item.slot))
+        strong_selected.sort(key=lambda item: self._entity_fact_sort_key(item.slot))
+        weak_selected.sort(key=lambda item: self._entity_fact_sort_key(item.slot))
         supporting.sort(key=lambda item: (self._entity_fact_sort_key(item.slot), -item.support_count))
-        return selected[:5], supporting[:2]
+        covered_slots = {claim.slot for claim in [*strong_selected, *weak_selected]}
+        unresolved_slots = [
+            slot
+            for slot in core_slots
+            if coverage.get(slot) and coverage[slot].status != "strong" and slot not in covered_slots
+        ]
+        return strong_selected[:5], weak_selected[:5], supporting[:2], unresolved_slots[:3]
+
+    def _build_entity_claim_coverage_items(
+        self,
+        *,
+        core_coverage: dict[str, Any],
+        primary_claims: list[ClaimRecord],
+        weak_claims: list[ClaimRecord],
+    ) -> list[dict[str, Any]]:
+        strong_slots = {claim.slot for claim in primary_claims}
+        weak_slots = {claim.slot for claim in weak_claims}
+        coverage_items: list[dict[str, Any]] = []
+
+        for slot in CORE_ENTITY_SLOTS:
+            slot_coverage = core_coverage.get(slot)
+            primary_claim = getattr(slot_coverage, "primary_claim", None)
+            if primary_claim is None:
+                coverage_items.append(
+                    {
+                        "slot": slot,
+                        "status": "missing",
+                        "status_label": "미확인",
+                        "support_count": 0,
+                        "candidate_count": 0,
+                        "value": "",
+                        "source_role": "",
+                        "rendered_as": "not_rendered",
+                    }
+                )
+                continue
+
+            if slot in strong_slots:
+                rendered_as = "fact_card"
+            elif slot in weak_slots:
+                rendered_as = "uncertain"
+            else:
+                rendered_as = "not_rendered"
+
+            status = str(getattr(slot_coverage, "status", "weak") or "weak")
+            coverage_items.append(
+                {
+                    "slot": slot,
+                    "status": status,
+                    "status_label": "교차 확인" if status == "strong" else "단일 출처",
+                    "support_count": int(getattr(primary_claim, "support_count", 0) or 0),
+                    "candidate_count": int(getattr(slot_coverage, "candidate_count", 0) or 0),
+                    "value": str(getattr(primary_claim, "value", "") or ""),
+                    "source_role": str(getattr(primary_claim, "source_role", "") or ""),
+                    "rendered_as": rendered_as,
+                }
+            )
+
+        return coverage_items
+
+    def _annotate_claim_coverage_progress(
+        self,
+        *,
+        previous_claim_coverage: list[dict[str, Any]] | None,
+        current_claim_coverage: list[dict[str, Any]] | None,
+        query: str,
+    ) -> list[dict[str, Any]]:
+        items = [dict(item) for item in current_claim_coverage or [] if isinstance(item, dict)]
+        if not items:
+            return []
+
+        previous_map = {
+            str(item.get("slot") or "").strip(): str(item.get("status") or "").strip()
+            for item in previous_claim_coverage or []
+            if isinstance(item, dict) and str(item.get("slot") or "").strip()
+        }
+        focus_slot = self._entity_slot_from_probe_text(query)
+
+        annotated: list[dict[str, Any]] = []
+        for item in items:
+            slot = str(item.get("slot") or "").strip()
+            current_status = str(item.get("status") or "").strip() or "missing"
+            previous_status = previous_map.get(slot, "missing")
+            previous_rank = self._claim_coverage_status_rank(previous_status)
+            current_rank = self._claim_coverage_status_rank(current_status)
+            progress_state = ""
+            progress_label = ""
+            if current_rank > previous_rank:
+                progress_state = "improved"
+                progress_label = "보강됨"
+            elif current_rank < previous_rank:
+                progress_state = "regressed"
+                progress_label = "약해짐"
+            elif previous_map:
+                progress_state = "unchanged"
+                progress_label = "유지"
+
+            updated = dict(item)
+            updated["previous_status"] = previous_status
+            updated["previous_status_label"] = self._claim_coverage_status_label(previous_status)
+            updated["progress_state"] = progress_state
+            updated["progress_label"] = progress_label
+            updated["is_focus_slot"] = bool(focus_slot and slot == focus_slot)
+            annotated.append(updated)
+        return annotated
+
+    def _claim_coverage_status_rank(self, status: str) -> int:
+        normalized = str(status or "").strip()
+        if normalized == "strong":
+            return 2
+        if normalized == "weak":
+            return 1
+        return 0
+
+    def _claim_coverage_status_label(self, status: str) -> str:
+        normalized = str(status or "").strip()
+        if normalized == "strong":
+            return "교차 확인"
+        if normalized == "weak":
+            return "단일 출처"
+        return "미확인"
+
+    def _looks_like_related_entity_query(self, previous_query: str | None, current_query: str | None) -> bool:
+        previous = " ".join(str(previous_query or "").split()).strip().lower()
+        current = " ".join(str(current_query or "").split()).strip().lower()
+        if not previous or not current:
+            return False
+        return previous in current or current in previous
+
+    def _should_treat_as_entity_reinvestigation(
+        self,
+        *,
+        active_context: dict[str, Any] | None,
+        query: str,
+    ) -> bool:
+        if not isinstance(active_context, dict) or active_context.get("kind") != "web_search":
+            return False
+        previous_query = self._extract_web_search_query_from_context(active_context)
+        if not self._looks_like_related_entity_query(previous_query, query):
+            return False
+        slot = self._entity_slot_from_probe_text(query)
+        return bool(slot)
+
+    def _build_claim_coverage_progress_summary(
+        self,
+        *,
+        previous_claim_coverage: list[dict[str, Any]] | None,
+        current_claim_coverage: list[dict[str, Any]] | None,
+        query: str,
+    ) -> str | None:
+        previous_map = {
+            str(item.get("slot") or "").strip(): str(item.get("status") or "").strip()
+            for item in previous_claim_coverage or []
+            if isinstance(item, dict) and str(item.get("slot") or "").strip()
+        }
+        current_map = {
+            str(item.get("slot") or "").strip(): str(item.get("status") or "").strip()
+            for item in current_claim_coverage or []
+            if isinstance(item, dict) and str(item.get("slot") or "").strip()
+        }
+        if not previous_map or not current_map:
+            return None
+
+        focus_slot = self._entity_slot_from_probe_text(query)
+        improved_slots: list[tuple[str, str, str]] = []
+        regressed_slots: list[tuple[str, str, str]] = []
+        unresolved_slots: list[tuple[str, str]] = []
+        for slot in CORE_ENTITY_SLOTS:
+            current_status = current_map.get(slot, "")
+            if not current_status:
+                continue
+            previous_status = previous_map.get(slot, "missing")
+            previous_rank = self._claim_coverage_status_rank(previous_status)
+            current_rank = self._claim_coverage_status_rank(current_status)
+            if current_rank > previous_rank:
+                improved_slots.append(
+                    (
+                        slot,
+                        self._claim_coverage_status_label(previous_status),
+                        self._claim_coverage_status_label(current_status),
+                    )
+                )
+            elif current_rank < previous_rank:
+                regressed_slots.append(
+                    (
+                        slot,
+                        self._claim_coverage_status_label(previous_status),
+                        self._claim_coverage_status_label(current_status),
+                    )
+                )
+            if current_status in {"weak", "missing"}:
+                unresolved_slots.append((slot, self._claim_coverage_status_label(current_status)))
+
+        if focus_slot:
+            focus_particle = self._select_korean_particle(focus_slot, "은는")
+            for slot, previous_label, current_label in improved_slots:
+                if slot == focus_slot:
+                    return f"재조사 결과 {slot}{focus_particle} {previous_label}에서 {current_label}로 보강되었습니다."
+            for slot, previous_label, current_label in regressed_slots:
+                if slot == focus_slot:
+                    return f"재조사 결과 {slot}{focus_particle} {previous_label}에서 {current_label}로 약해졌습니다."
+            for slot, current_label in unresolved_slots:
+                if slot == focus_slot:
+                    return f"재조사했지만 {slot}{focus_particle} 아직 {current_label} 상태입니다."
+
+        if improved_slots:
+            improved_summary = ", ".join(
+                f"{slot} {before}->{after}" for slot, before, after in improved_slots[:3]
+            )
+            if unresolved_slots:
+                unresolved_summary = ", ".join(
+                    f"{slot} {label}" for slot, label in unresolved_slots[:2]
+                )
+                return f"재조사 결과 {improved_summary}로 보강되었습니다. 아직 {unresolved_summary} 상태의 슬롯이 남아 있습니다."
+            return f"재조사 결과 {improved_summary}로 보강되었습니다."
+
+        if unresolved_slots:
+            unresolved_summary = ", ".join(
+                f"{slot} {label}" for slot, label in unresolved_slots[:3]
+            )
+            return f"재조사했지만 아직 {unresolved_summary} 상태입니다."
+        return None
 
     def _build_entity_claim_source_lines(
         self,
@@ -3094,11 +4123,12 @@ class AgentLoop:
         query: str,
         selected_sources: list[dict[str, Any]],
         primary_claims: list[ClaimRecord],
+        weak_claims: list[ClaimRecord],
         supplemental_claims: list[ClaimRecord],
     ) -> list[str]:
         support_refs: list[tuple[str, str, str]] = []
         seen_support_refs: set[tuple[str, str, str]] = set()
-        for claim in [*primary_claims, *supplemental_claims]:
+        for claim in [*primary_claims, *weak_claims, *supplemental_claims]:
             refs = claim.supporting_sources or ((claim.source_url, claim.source_title, claim.source_role),)
             for url, title, role in refs:
                 compact_url = str(url or "").strip()
@@ -3269,11 +4299,14 @@ class AgentLoop:
             query=query,
             selected_sources=selected_sources,
         )
-        primary_claims, supplemental_claims = self._select_entity_fact_card_claims(
+        core_coverage = summarize_slot_coverage(claim_records, slots=CORE_ENTITY_SLOTS)
+        primary_claims, weak_claims, supplemental_claims, unresolved_slots = self._select_entity_fact_card_claims(
             query=query,
             claim_records=claim_records,
         )
-        detail_lines = [f"{claim.slot}: {claim.value}" for claim in primary_claims]
+        detail_lines = [f"{claim.slot}: {claim.value}" for claim in primary_claims] or [
+            f"{claim.slot}: {claim.value}" for claim in weak_claims
+        ]
         intro_line = self._compose_entity_intro_line(
             query=query,
             detail_lines=detail_lines,
@@ -3294,11 +4327,22 @@ class AgentLoop:
             for claim in primary_claims:
                 support_suffix = f" (교차 확인 {claim.support_count}건)" if claim.support_count >= 2 else ""
                 lines.append(f"- {claim.slot}: {claim.value}{support_suffix}")
+        if weak_claims:
+            lines.append("")
+            lines.append("불확실 정보:")
+            for claim in weak_claims:
+                role_label = core_coverage.get(claim.slot).primary_claim.source_role if core_coverage.get(claim.slot) and core_coverage.get(claim.slot).primary_claim else claim.source_role
+                lines.append(f"- {claim.slot}: {claim.value} (단일 출처, {role_label})")
         if supplemental_claims:
             lines.append("")
             lines.append("보조 사실:")
             for claim in supplemental_claims:
                 lines.append(f"- {claim.slot}: {claim.value} (교차 확인 {claim.support_count}건)")
+        if unresolved_slots:
+            lines.append("")
+            lines.append("추가 확인 필요:")
+            for slot in unresolved_slots:
+                lines.append(f"- {slot}: 교차 확인 가능한 근거가 더 필요합니다.")
         lines.append("")
         lines.append("근거 출처:")
         lines.extend(
@@ -3306,6 +4350,7 @@ class AgentLoop:
                 query=query,
                 selected_sources=selected_sources,
                 primary_claims=primary_claims,
+                weak_claims=weak_claims,
                 supplemental_claims=supplemental_claims,
             )
         )
@@ -3320,6 +4365,8 @@ class AgentLoop:
         *,
         query: str,
         intent_kind: str | None,
+        answer_mode: str | None,
+        freshness_risk: str | None,
         query_terms: list[str],
         title: str,
         snippet: str,
@@ -3332,13 +4379,22 @@ class AgentLoop:
         snippet_lowered = snippet.lower()
         summary_lowered = summary_text.lower()
         url_lowered = url.lower()
-        query_profile = self._infer_web_query_profile(query=query, intent_kind=intent_kind)
-        source_kind = self._classify_web_source_kind(url)
-        descriptive_source = self._looks_like_descriptive_web_source(
+        query_profile = self._infer_web_query_profile(
             query=query,
+            intent_kind=intent_kind,
+            answer_mode=answer_mode,
+            freshness_risk=freshness_risk,
+        )
+        source_policy = self._build_source_policy_decision(
+            query=query,
+            url=url,
             title=title,
             summary_text=summary_text or snippet or title,
         )
+        resolved_answer_mode = answer_mode or (
+            "entity_card" if query_profile == "entity" else "latest_update" if query_profile == "live" else "general"
+        )
+        resolved_freshness_risk = freshness_risk or ("high" if query_profile == "live" else "low")
 
         score = 0
         for term in query_terms:
@@ -3369,39 +4425,22 @@ class AgentLoop:
         if any(marker in summary_text for marker in ["이다", "입니다", "그룹", "밴드", "가수", "배우", "기업", "브랜드", "서비스", "발표", "출시", "예정", "공개", "날씨", "기온"]):
             score += 2
 
-        if descriptive_source:
-            score += 5
-        if self._looks_like_opinion_or_blog_source(title=title, summary_text=summary_text):
-            score -= 6
+        score += score_source_for_mode(
+            source_policy,
+            answer_mode=resolved_answer_mode,
+            freshness_risk=resolved_freshness_risk,
+        )
 
         if query_profile == "entity":
-            if source_kind == "encyclopedia":
-                score += 7
-            elif source_kind == "news":
-                score -= 5
-            elif source_kind == "blog":
-                score -= 4
-            elif source_kind == "portal":
-                score -= 6
-            if self._looks_like_game_portal_or_community_domain(url):
-                score -= 8
             if self._looks_like_official_product_domain(url):
-                if descriptive_source:
-                    score += 4
                 if self._looks_like_operational_entity_noise(summary_text) or self._looks_like_noisy_web_segment(summary_text):
                     score -= 8
-            if self._looks_like_event_or_campaign_source(title=title, summary_text=summary_text):
-                score -= 6
             if any(
                 marker in f"{title_lowered} {summary_lowered}"
                 for marker in ["업데이트", "패치", "이벤트", "쿠폰", "사전예약", "게시판", "인벤", "공식 카페"]
             ):
                 score -= 5
         elif query_profile == "live":
-            if source_kind == "news":
-                score += 6
-            elif source_kind == "encyclopedia":
-                score -= 3
             if "날씨" in query and any(marker in summary_text for marker in ["기온", "강수", "미세먼지", "바람"]):
                 score += 4
 
@@ -3417,6 +4456,8 @@ class AgentLoop:
         *,
         query: str,
         intent_kind: str | None,
+        answer_mode: str | None,
+        freshness_risk: str | None,
         url: str,
         title: str,
         snippet: str,
@@ -3436,6 +4477,8 @@ class AgentLoop:
         page_score = self._score_ranked_web_source(
             query=query,
             intent_kind=intent_kind,
+            answer_mode=answer_mode,
+            freshness_risk=freshness_risk,
             query_terms=query_terms,
             title=title,
             snippet=snippet,
@@ -3447,6 +4490,8 @@ class AgentLoop:
         snippet_score = self._score_ranked_web_source(
             query=query,
             intent_kind=intent_kind,
+            answer_mode=answer_mode,
+            freshness_risk=freshness_risk,
             query_terms=query_terms,
             title=title,
             snippet=snippet,
@@ -3462,6 +4507,8 @@ class AgentLoop:
         *,
         query: str,
         intent_kind: str | None = None,
+        answer_mode: str | None = None,
+        freshness_risk: str | None = None,
         results: list[dict[str, str]],
         pages: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
@@ -3490,6 +4537,8 @@ class AgentLoop:
             prefer_page = fetch_ok and self._should_prefer_web_page_text(
                 query=query,
                 intent_kind=intent_kind,
+                answer_mode=answer_mode,
+                freshness_risk=freshness_risk,
                 url=url,
                 title=page_title or result_title,
                 snippet=snippet,
@@ -3510,6 +4559,8 @@ class AgentLoop:
             score = self._score_ranked_web_source(
                 query=query,
                 intent_kind=intent_kind,
+                answer_mode=answer_mode,
+                freshness_risk=freshness_risk,
                 query_terms=query_terms,
                 title=display_title,
                 snippet=snippet,
@@ -3525,6 +4576,7 @@ class AgentLoop:
                     "title": display_title,
                     "result_title": result_title,
                     "snippet": snippet,
+                    "matched_query": str(result.get("matched_query") or "").strip(),
                     "summary_text": summary_text,
                     "context_text": context_text,
                     "page_preferred": prefer_page,
@@ -3541,12 +4593,19 @@ class AgentLoop:
         *,
         query: str,
         intent_kind: str | None = None,
+        answer_mode: str | None = None,
+        freshness_risk: str | None = None,
         ranked_sources: list[dict[str, Any]],
         max_items: int,
     ) -> list[dict[str, Any]]:
         if not ranked_sources:
             return []
-        query_profile = self._infer_web_query_profile(query=query, intent_kind=intent_kind)
+        query_profile = self._infer_web_query_profile(
+            query=query,
+            intent_kind=intent_kind,
+            answer_mode=answer_mode,
+            freshness_risk=freshness_risk,
+        )
         top_score = int(ranked_sources[0].get("score") or 0)
         if query_profile == "entity":
             threshold = max(4, top_score - 7)
@@ -3578,40 +4637,25 @@ class AgentLoop:
             url = str(source.get("url") or "").strip()
             title = str(source.get("title") or source.get("result_title") or "").strip()
             summary_text = str(source.get("summary_text") or source.get("snippet") or title).strip()
-            source_kind = self._classify_web_source_kind(url)
-            descriptive_source = self._looks_like_descriptive_web_source(
+            source_policy = self._build_source_policy_decision(
                 query=query,
+                url=url,
                 title=title,
                 summary_text=summary_text,
             )
-            score = 0
-            if source_kind == "encyclopedia":
-                score += 12
-            elif self._looks_like_official_product_domain(url) and descriptive_source:
-                score += 9
-            elif source_kind == "general" and descriptive_source:
-                score += 7
-            elif source_kind == "general":
-                score += 4
-            elif source_kind == "news":
-                score += 1
-            elif source_kind == "blog":
-                score -= 3
-            elif source_kind == "portal":
-                score -= 5
-            elif source_kind == "video":
-                score -= 7
-            if self._looks_like_opinion_or_blog_source(title=title, summary_text=summary_text):
-                score -= 6
-            if self._looks_like_game_portal_or_community_domain(url):
-                score -= 4
-            if self._looks_like_event_or_campaign_source(title=title, summary_text=summary_text):
-                score -= 4
-            if self._looks_like_operational_entity_noise(summary_text):
-                score -= 4
-            return score
+            return score_source_for_mode(
+                source_policy,
+                answer_mode="entity_card",
+                freshness_risk=freshness_risk or "low",
+            )
 
         candidates = list(selected)
+        for source in ranked_sources:
+            if source in candidates:
+                continue
+            matched_query = str(source.get("matched_query") or "").strip()
+            if self._entity_slot_from_search_query(query=query, matched_query=matched_query):
+                candidates.append(source)
         if len(candidates) < max_items:
             for source in ranked_sources:
                 if source in candidates:
@@ -3625,7 +4669,20 @@ class AgentLoop:
             for index, source in enumerate(candidates)
         }
 
-        decorated: list[tuple[int, int, int, int, dict[str, Any]]] = []
+        probe_bonus_by_index = {
+            index: self._entity_source_probe_bonus(
+                query=query,
+                source=source,
+                fact_bullets=fact_bullets_by_index.get(index) or [],
+            )
+            for index, source in enumerate(candidates)
+        }
+        probe_bonus_by_source_id = {
+            id(source): probe_bonus_by_index.get(index, 0)
+            for index, source in enumerate(candidates)
+        }
+
+        decorated: list[tuple[int, int, int, int, int, dict[str, Any]]] = []
         for index, source in enumerate(candidates):
             trust_score = _entity_trust_score(source)
             agreement_score = self._entity_source_fact_agreement_score(
@@ -3633,9 +4690,19 @@ class AgentLoop:
                 sources=candidates,
                 fact_bullets_by_index=fact_bullets_by_index,
             )
+            probe_bonus = probe_bonus_by_index.get(index, 0)
             rank_score = int(source.get("score") or 0)
-            decorated.append((trust_score + agreement_score, agreement_score, rank_score, -index, source))
-        decorated.sort(key=lambda item: (item[0], item[1], item[2], item[3]), reverse=True)
+            decorated.append(
+                (
+                    trust_score + agreement_score + probe_bonus,
+                    probe_bonus,
+                    agreement_score,
+                    rank_score,
+                    -index,
+                    source,
+                )
+            )
+        decorated.sort(key=lambda item: (item[0], item[1], item[2], item[3], item[4]), reverse=True)
 
         chosen: list[dict[str, Any]] = []
         seen_domains: set[str] = set()
@@ -3644,37 +4711,49 @@ class AgentLoop:
         def _push(source: dict[str, Any]) -> bool:
             hostname = self._source_hostname(str(source.get("url") or "").strip())
             source_url = str(source.get("url") or "").strip()
-            source_kind = self._classify_web_source_kind(source_url)
+            source_policy = self._build_source_policy_decision(
+                query=query,
+                url=source_url,
+                title=str(source.get("title") or source.get("result_title") or "").strip(),
+                summary_text=str(source.get("summary_text") or source.get("snippet") or "").strip(),
+            )
             source_title = str(source.get("title") or source.get("result_title") or "").strip()
             source_summary = str(source.get("summary_text") or source.get("snippet") or source_title).strip()
             trust_score = _entity_trust_score(source)
+            probe_bonus = probe_bonus_by_source_id.get(id(source), 0)
             if hostname and hostname in seen_domains:
                 return False
-            if any(_entity_trust_score(item) >= 7 for item in chosen) and trust_score < 4:
+            if any(_entity_trust_score(item) >= 7 for item in chosen) and trust_score < 4 and probe_bonus <= 0:
                 return False
-            if source_kind in {"portal", "blog", "video"} and source_kind_counts.get(source_kind, 0) >= 1:
+            if source_policy.source_type == "community" and source_kind_counts.get(source_policy.source_type, 0) >= 1:
                 return False
             if (
                 self._looks_like_event_or_campaign_source(title=source_title, summary_text=source_summary)
                 and any(_entity_trust_score(item) >= 7 for item in chosen)
                 and trust_score < 7
+                and probe_bonus <= 0
             ):
                 return False
-            if source_kind == "news" and any(_entity_trust_score(item) >= 7 for item in chosen) and trust_score < 7:
+            if (
+                source_policy.source_type == "news"
+                and any(_entity_trust_score(item) >= 7 for item in chosen)
+                and trust_score < 7
+                and probe_bonus <= 0
+            ):
                 return False
             chosen.append(source)
             if hostname:
                 seen_domains.add(hostname)
-            source_kind_counts[source_kind] = source_kind_counts.get(source_kind, 0) + 1
+            source_kind_counts[source_policy.source_type] = source_kind_counts.get(source_policy.source_type, 0) + 1
             return True
 
-        for trust_score, _, _, _, source in decorated:
+        for trust_score, _, _, _, _, source in decorated:
             if len(chosen) >= max_items:
                 break
             if trust_score >= 4:
                 _push(source)
 
-        for _, _, _, _, source in decorated:
+        for _, _, _, _, _, source in decorated:
             if len(chosen) >= max_items:
                 break
             _push(source)
@@ -3687,20 +4766,28 @@ class AgentLoop:
                     continue
                 trust_score = _entity_trust_score(source)
                 source_url = str(source.get("url") or "").strip()
-                source_kind = self._classify_web_source_kind(source_url)
+                source_policy = self._build_source_policy_decision(
+                    query=query,
+                    url=source_url,
+                    title=str(source.get("title") or source.get("result_title") or "").strip(),
+                    summary_text=str(source.get("summary_text") or source.get("snippet") or "").strip(),
+                )
                 source_title = str(source.get("title") or source.get("result_title") or "").strip()
                 source_summary = str(source.get("summary_text") or source.get("snippet") or source_title).strip()
+                probe_bonus = probe_bonus_by_source_id.get(id(source), 0)
                 if (
                     any(_entity_trust_score(item) >= 7 for item in chosen)
                     and trust_score < 4
+                    and probe_bonus <= 0
                 ):
                     continue
                 if (
                     any(_entity_trust_score(item) >= 7 for item in chosen)
                     and (
-                        source_kind == "news"
+                        source_policy.source_type == "news"
                         or self._looks_like_event_or_campaign_source(title=source_title, summary_text=source_summary)
                     )
+                    and probe_bonus <= 0
                 ):
                     continue
                 chosen.append(source)
@@ -3714,6 +4801,8 @@ class AgentLoop:
         search_tool: Any,
         results: list[dict[str, str]],
         intent_kind: str | None = None,
+        answer_mode: str | None = None,
+        freshness_risk: str | None = None,
         phase_event_callback: Callable[[dict[str, Any]], None] | None = None,
         max_pages: int = 3,
     ) -> list[dict[str, Any]]:
@@ -3730,6 +4819,8 @@ class AgentLoop:
                 -self._score_ranked_web_source(
                     query=query,
                     intent_kind=intent_kind,
+                    answer_mode=answer_mode,
+                    freshness_risk=freshness_risk,
                     query_terms=query_terms,
                     title=str(item.get("title") or "").strip(),
                     snippet=str(item.get("snippet") or "").strip(),
@@ -3812,6 +4903,8 @@ class AgentLoop:
         ranked_sources: list[dict[str, Any]] | None = None,
         query: str | None = None,
         intent_kind: str | None = None,
+        answer_mode: str | None = None,
+        freshness_risk: str | None = None,
         limit: int = 3,
     ) -> list[dict[str, str]]:
         if ranked_sources:
@@ -3819,12 +4912,15 @@ class AgentLoop:
             selected_sources = self._select_ranked_web_sources(
                 query=query or "",
                 intent_kind=intent_kind,
+                answer_mode=answer_mode,
+                freshness_risk=freshness_risk,
                 ranked_sources=ranked_sources,
                 max_items=limit,
             )
             for source in selected_sources:
                 url = str(source.get("url") or "").strip()
                 title = str(source.get("title") or source.get("result_title") or url or "(출처 없음)").strip()
+                source_role = self._web_source_role_label(query=query or title, source=source)
                 if bool(source.get("page_preferred")) and str(source.get("context_text") or "").strip():
                     for item in self._extract_text_evidence_items(
                         source_path=url,
@@ -3833,6 +4929,7 @@ class AgentLoop:
                     ):
                         item["label"] = "웹 원문 근거"
                         item["source_name"] = title
+                        item["source_role"] = source_role
                         evidence.append(item)
                 else:
                     evidence.append(
@@ -3841,6 +4938,7 @@ class AgentLoop:
                             "source_name": title,
                             "source_path": url,
                             "snippet": str(source.get("summary_text") or source.get("snippet") or title).strip(),
+                            "source_role": source_role,
                         }
                     )
             return self._dedupe_evidence_items(evidence, max_items=limit)
@@ -3857,6 +4955,14 @@ class AgentLoop:
             for item in self._extract_text_evidence_items(source_path=url, text=page_text, max_items=2):
                 item["label"] = "웹 원문 근거"
                 item["source_name"] = title
+                item["source_role"] = self._web_source_role_label(
+                    query=query or title,
+                    source={
+                        "url": url,
+                        "title": title,
+                        "summary_text": str(page.get("excerpt") or page_text).strip(),
+                    },
+                )
                 page_evidence.append(item)
         if page_evidence:
             return self._dedupe_evidence_items(page_evidence, max_items=limit)
@@ -3872,18 +4978,157 @@ class AgentLoop:
                     "source_name": title,
                     "source_path": str(item.get("url") or "").strip(),
                     "snippet": str(item.get("snippet") or title).strip(),
+                    "source_role": self._web_source_role_label(query=query or title, source=item),
                 }
             )
         return evidence
 
-    def _build_web_search_origin(self) -> dict[str, Any]:
+    def _build_web_search_origin(
+        self,
+        *,
+        answer_mode: str | None = None,
+        selected_sources: list[dict[str, Any]] | None = None,
+        query: str | None = None,
+    ) -> dict[str, Any]:
+        mode_label = "웹 검색 결과"
+        if answer_mode == "entity_card":
+            mode_label = "외부 웹 설명 카드"
+        elif answer_mode == "latest_update":
+            mode_label = "외부 웹 최신 확인"
+        source_roles = self._summarize_web_source_roles(query=query or "", sources=selected_sources or [])
+        verification_label = self._build_web_verification_label(
+            query=query or "",
+            sources=selected_sources or [],
+            answer_mode=answer_mode,
+        )
         return {
             "provider": "web",
             "badge": "WEB",
-            "label": "외부 웹 검색 결과",
+            "label": mode_label,
             "model": None,
             "kind": "assistant",
+            "answer_mode": str(answer_mode or "general"),
+            "source_roles": source_roles,
+            "verification_label": verification_label,
         }
+
+    def _summarize_web_source_roles(self, *, query: str, sources: list[dict[str, Any]]) -> list[str]:
+        seen: list[str] = []
+        for source in sources:
+            role = self._web_source_role_label(query=query or str(source.get("title") or ""), source=source)
+            if role and role not in seen:
+                seen.append(role)
+        return seen[:3]
+
+    def _build_web_verification_label(
+        self,
+        *,
+        query: str,
+        sources: list[dict[str, Any]],
+        answer_mode: str | None,
+    ) -> str:
+        if not sources:
+            return ""
+
+        type_counts: dict[str, int] = {}
+        for source in sources:
+            url = str(source.get("url") or "").strip()
+            title = str(source.get("title") or source.get("result_title") or "").strip()
+            summary_text = str(source.get("summary_text") or source.get("snippet") or title).strip()
+            policy = self._build_source_policy_decision(
+                query=query or title,
+                url=url,
+                title=title,
+                summary_text=summary_text,
+            )
+            source_type = str(policy.source_type or "general")
+            type_counts[source_type] = type_counts.get(source_type, 0) + 1
+
+        official_count = type_counts.get("official", 0)
+        news_count = type_counts.get("news", 0)
+        wiki_count = type_counts.get("wiki", 0)
+        database_count = type_counts.get("database", 0)
+        strong_reference_count = official_count + wiki_count + database_count
+        total = len(sources)
+
+        if answer_mode == "latest_update":
+            if official_count >= 1 and news_count >= 1:
+                return "공식+기사 교차 확인"
+            if official_count >= 1 and total >= 2:
+                return "공식 확인 중심"
+            if news_count >= 2:
+                return "기사 교차 확인"
+            if official_count >= 1:
+                return "공식 단일 출처"
+            if total >= 2:
+                return "다중 출처 참고"
+            return "단일 출처 참고"
+
+        if answer_mode == "entity_card":
+            if strong_reference_count >= 2:
+                return "설명형 다중 출처 합의"
+            if official_count >= 1:
+                return "공식 단일 출처"
+            if wiki_count >= 1 or database_count >= 1:
+                return "설명형 단일 출처"
+            if total >= 2:
+                return "다중 출처 참고"
+            return "단일 출처 참고"
+
+        return "다중 출처 참고" if total >= 2 else "단일 출처 참고"
+
+    def _build_latest_update_web_summary(
+        self,
+        *,
+        query: str,
+        selected_sources: list[dict[str, Any]],
+        pages: list[dict[str, Any]] | None = None,
+    ) -> str:
+        verification_label = self._build_web_verification_label(
+            query=query,
+            sources=selected_sources,
+            answer_mode="latest_update",
+        )
+        source_roles = self._summarize_web_source_roles(query=query, sources=selected_sources)
+        lines = [
+            f"웹 최신 확인: {query}",
+            "",
+            "현재 확인된 최신 정보:",
+        ]
+
+        added_points = 0
+        for source in selected_sources[:3]:
+            title = str(source.get("title") or source.get("result_title") or "(출처 없음)").strip()
+            summary_text = str(source.get("summary_text") or source.get("snippet") or "").strip()
+            if not summary_text:
+                continue
+            compact = self._clean_evidence_line(summary_text).rstrip(".")
+            if not compact or self._looks_like_noisy_web_segment(compact):
+                continue
+            role_label = self._web_source_role_label(query=query, source=source)
+            lines.append(f"- {compact}.")
+            lines.append(f"  출처: {title} [{role_label}]")
+            url = str(source.get("url") or "").strip()
+            if url:
+                lines.append(f"  링크: {url}")
+            added_points += 1
+
+        if added_points == 0:
+            lines.append("- 최신 정보를 설명할 만한 검색 결과를 충분히 모으지 못했습니다.")
+
+        lines.append("")
+        lines.append("기준:")
+        lines.append("- 최신성 민감 질문이라 공식 발표나 기사형 출처를 우선 확인했습니다.")
+        if verification_label:
+            lines.append(f"- 확인 강도: {verification_label}")
+        if source_roles:
+            lines.append(f"- 출처 성격: {', '.join(source_roles)}")
+        ok_pages = [page for page in pages or [] if str(page.get("fetch_status") or "") == "ok"]
+        if ok_pages:
+            lines.append(f"- 읽을 수 있었던 원문 {len(ok_pages)}건과 검색 결과를 함께 정리했습니다.")
+        else:
+            lines.append("- 원문을 바로 읽지 못한 링크는 검색 결과 설명을 기준으로 정리했습니다.")
+        return "\n".join(lines)
 
     def _extract_web_search_query_from_context(self, active_context: dict[str, Any]) -> str | None:
         label = str(active_context.get("label") or "").strip()
@@ -3902,6 +5147,10 @@ class AgentLoop:
         pages: list[dict[str, Any]] | None = None,
         ranked_sources: list[dict[str, Any]] | None = None,
         intent_kind: str | None = None,
+        answer_mode: str | None = None,
+        freshness_risk: str | None = None,
+        claim_coverage: list[dict[str, Any]] | None = None,
+        claim_coverage_progress_summary: str | None = None,
         record_path: str | None = None,
     ) -> dict[str, Any]:
         sections: list[str] = []
@@ -3913,6 +5162,8 @@ class AgentLoop:
             or self._rank_web_search_sources(
                 query=query,
                 intent_kind=intent_kind,
+                answer_mode=answer_mode,
+                freshness_risk=freshness_risk,
                 results=results,
                 pages=pages,
             )
@@ -3920,6 +5171,8 @@ class AgentLoop:
         selected_sources = self._select_ranked_web_sources(
             query=query,
             intent_kind=intent_kind,
+            answer_mode=answer_mode,
+            freshness_risk=freshness_risk,
             ranked_sources=ranked,
             max_items=5,
         )
@@ -3998,10 +5251,18 @@ class AgentLoop:
             source_paths=source_paths,
             excerpt="\n".join(sections)[:9000],
             summary_hint=summary_text,
-            suggested_prompts=self._follow_up_suggestions_for_web_search(query),
+            suggested_prompts=self._follow_up_suggestions_for_web_search(
+                query,
+                answer_mode=answer_mode,
+                claim_coverage=claim_coverage,
+            ),
             evidence_pool=evidence_pool,
             retrieval_chunks=retrieval_chunks,
-        ) | {"record_path": record_path}
+        ) | {
+            "record_path": record_path,
+            "claim_coverage": [dict(item) for item in claim_coverage or [] if isinstance(item, dict)],
+            "claim_coverage_progress_summary": str(claim_coverage_progress_summary or "").strip(),
+        }
 
     def _summarize_web_search_results(
         self,
@@ -4011,6 +5272,8 @@ class AgentLoop:
         pages: list[dict[str, Any]] | None = None,
         ranked_sources: list[dict[str, Any]] | None = None,
         intent_kind: str | None = None,
+        answer_mode: str | None = None,
+        freshness_risk: str | None = None,
     ) -> str:
         lines = [
             f"웹 검색 요약: {query}",
@@ -4021,6 +5284,8 @@ class AgentLoop:
             or self._rank_web_search_sources(
                 query=query,
                 intent_kind=intent_kind,
+                answer_mode=answer_mode,
+                freshness_risk=freshness_risk,
                 results=results,
                 pages=pages,
             )
@@ -4028,10 +5293,17 @@ class AgentLoop:
         selected_sources = self._select_ranked_web_sources(
             query=query,
             intent_kind=intent_kind,
+            answer_mode=answer_mode,
+            freshness_risk=freshness_risk,
             ranked_sources=ranked,
             max_items=3,
         )
-        query_profile = self._infer_web_query_profile(query=query, intent_kind=intent_kind)
+        query_profile = self._infer_web_query_profile(
+            query=query,
+            intent_kind=intent_kind,
+            answer_mode=answer_mode,
+            freshness_risk=freshness_risk,
+        )
         ok_pages = [page for page in pages or [] if str(page.get("fetch_status") or "") == "ok" and str(page.get("text") or "").strip()]
         if ok_pages and query_profile != "entity":
             lines.append(f"원문 확인: {len(ok_pages)}건")
@@ -4042,6 +5314,12 @@ class AgentLoop:
                     query=query,
                     selected_sources=selected_sources,
                     ranked_sources=ranked,
+                    pages=pages,
+                )
+            if answer_mode == "latest_update" or query_profile == "live":
+                return self._build_latest_update_web_summary(
+                    query=query,
+                    selected_sources=selected_sources,
                     pages=pages,
                 )
             for index, source in enumerate(selected_sources, start=1):
@@ -4075,8 +5353,12 @@ class AgentLoop:
         request: UserRequest,
         query: str,
         intent_kind: str | None = None,
+        answer_mode: str | None = None,
+        freshness_risk: str | None = None,
         phase_event_callback: Callable[[dict[str, Any]], None] | None = None,
         deprioritized_urls: set[str] | None = None,
+        seed_queries: list[str] | None = None,
+        progress_query: str | None = None,
         response_action: str = "web_search",
         log_action: str = "web_search_executed",
     ) -> AgentResponse:
@@ -4105,7 +5387,31 @@ class AgentLoop:
             detail=f"'{query}'에 대한 외부 웹 검색 결과를 읽는 중입니다.",
             note="읽기 전용 검색만 수행하고, 결과는 로컬 기록으로 남깁니다.",
         )
-        search_queries = self._expand_web_search_queries(query=query, intent_kind=intent_kind)
+        query_profile = self._infer_web_query_profile(
+            query=query,
+            intent_kind=intent_kind,
+            answer_mode=answer_mode,
+            freshness_risk=freshness_risk,
+        )
+        effective_answer_mode = answer_mode
+        if intent_kind == "external_fact" and query_profile == "entity":
+            effective_answer_mode = "entity_card"
+        elif intent_kind == "live_latest" and query_profile == "live":
+            effective_answer_mode = "latest_update"
+        search_queries: list[str] = []
+        seen_search_queries: set[str] = set()
+        for candidate in [*(seed_queries or []), *self._expand_web_search_queries(
+            query=query,
+            intent_kind=intent_kind,
+            answer_mode=effective_answer_mode,
+            freshness_risk=freshness_risk,
+        )]:
+            normalized_candidate = " ".join(str(candidate or "").split()).strip()
+            key = normalized_candidate.lower()
+            if not normalized_candidate or key in seen_search_queries:
+                continue
+            seen_search_queries.add(key)
+            search_queries.append(normalized_candidate)
         serialized_results: list[dict[str, str]] = []
         seen_urls: set[str] = set()
         search_errors: list[str] = []
@@ -4155,38 +5461,78 @@ class AgentLoop:
             ]
             serialized_results = prioritized + fallback
         serialized_results = serialized_results[:5]
+        previous_active_context = self.session_store.get_active_context(request.session_id)
+        previous_query = None
+        previous_claim_coverage: list[dict[str, Any]] = []
+        if isinstance(previous_active_context, dict) and previous_active_context.get("kind") == "web_search":
+            previous_query = self._extract_web_search_query_from_context(previous_active_context)
+            previous_claim_coverage = [
+                dict(item)
+                for item in previous_active_context.get("claim_coverage", [])
+                if isinstance(item, dict)
+            ]
         fetched_pages = self._fetch_web_page_records(
             query=query,
             search_tool=search_tool,
             intent_kind=intent_kind,
+            answer_mode=effective_answer_mode,
+            freshness_risk=freshness_risk,
             results=serialized_results,
             phase_event_callback=phase_event_callback,
         )
         ranked_sources = self._rank_web_search_sources(
             query=query,
             intent_kind=intent_kind,
+            answer_mode=effective_answer_mode,
+            freshness_risk=freshness_risk,
             results=serialized_results,
             pages=fetched_pages,
         )
-        if intent_kind == "external_fact" and self._infer_web_query_profile(query=query, intent_kind=intent_kind) == "entity":
-            selected_sources = self._select_ranked_web_sources(
-                query=query,
-                intent_kind=intent_kind,
-                ranked_sources=ranked_sources,
-                max_items=3,
-            )
-            second_pass_queries = self._build_entity_second_pass_queries(
-                query=query,
-                selected_sources=selected_sources,
-                existing_queries=search_queries,
-            )
-            if second_pass_queries:
+        if intent_kind == "external_fact" and self._infer_web_query_profile(
+            query=query,
+            intent_kind=intent_kind,
+            answer_mode=effective_answer_mode,
+            freshness_risk=freshness_risk,
+        ) == "entity":
+            round_labels = [
+                (
+                    "web_search_second_pass",
+                    "부족한 핵심 정보 다시 찾는 중",
+                    "설명형 슬롯이 비었거나 단일 출처만 있을 때 보조 검색을 다시 실행합니다.",
+                ),
+                (
+                    "web_search_confirmation_pass",
+                    "약한 정보 다시 검증하는 중",
+                    "단일 출처 정보는 공식/위키 성격의 질의로 한 번 더 교차 확인합니다.",
+                ),
+                (
+                    "web_search_targeted_completion_pass",
+                    "남은 핵심 슬롯 추가 확인 중",
+                    "앞선 조사로도 비어 있거나 약한 슬롯만 남았을 때, 남은 슬롯 전용 질의를 한 번 더 실행합니다.",
+                ),
+            ]
+            for round_index, (phase_name, phase_title, phase_note) in enumerate(round_labels, start=1):
+                selected_sources = self._select_ranked_web_sources(
+                    query=query,
+                    intent_kind=intent_kind,
+                    answer_mode=effective_answer_mode,
+                    freshness_risk=freshness_risk,
+                    ranked_sources=ranked_sources,
+                    max_items=3,
+                )
+                second_pass_queries = self._build_entity_second_pass_queries(
+                    query=query,
+                    selected_sources=selected_sources,
+                    existing_queries=search_queries,
+                )
+                if not second_pass_queries:
+                    break
                 self._emit_phase(
                     phase_event_callback,
-                    phase="web_search_second_pass",
-                    title="부족한 핵심 정보 다시 찾는 중",
-                    detail=f"'{query}' 설명에 비어 있는 핵심 정보를 보완하기 위해 보조 검색을 다시 실행하는 중입니다.",
-                    note="개발사, 장르, 서비스 형태처럼 설명형 슬롯이 비었을 때만 추가 검색합니다.",
+                    phase=phase_name,
+                    title=phase_title,
+                    detail=f"'{query}' 설명에 비어 있거나 약한 핵심 정보를 보완하기 위해 {round_index + 1}차 조사를 실행하는 중입니다.",
+                    note=phase_note,
                 )
                 new_results: list[dict[str, str]] = []
                 for search_query in second_pass_queries:
@@ -4210,28 +5556,95 @@ class AgentLoop:
                         }
                         serialized_results.append(item)
                         new_results.append(item)
-                if new_results:
-                    new_pages = self._fetch_web_page_records(
-                        query=query,
-                        search_tool=search_tool,
-                        intent_kind=intent_kind,
-                        results=new_results,
-                        phase_event_callback=phase_event_callback,
-                        max_pages=2,
-                    )
-                    fetched_pages.extend(new_pages)
-                    ranked_sources = self._rank_web_search_sources(
-                        query=query,
-                        intent_kind=intent_kind,
-                        results=serialized_results[:8],
-                        pages=fetched_pages,
-                    )
+                if not new_results:
+                    continue
+                new_pages = self._fetch_web_page_records(
+                    query=query,
+                    search_tool=search_tool,
+                    intent_kind=intent_kind,
+                    answer_mode=effective_answer_mode,
+                    freshness_risk=freshness_risk,
+                    results=new_results,
+                    phase_event_callback=phase_event_callback,
+                    max_pages=2,
+                )
+                fetched_pages.extend(new_pages)
+                ranked_sources = self._rank_web_search_sources(
+                    query=query,
+                    intent_kind=intent_kind,
+                    answer_mode=effective_answer_mode,
+                    freshness_risk=freshness_risk,
+                    results=serialized_results[:8],
+                    pages=fetched_pages,
+                )
+        claim_coverage: list[dict[str, Any]] = []
+        query_profile = self._infer_web_query_profile(
+            query=query,
+            intent_kind=intent_kind,
+            answer_mode=effective_answer_mode,
+            freshness_risk=freshness_risk,
+        )
+        if intent_kind == "external_fact" and query_profile == "entity":
+            entity_sources = self._select_ranked_web_sources(
+                query=query,
+                intent_kind=intent_kind,
+                answer_mode=answer_mode,
+                freshness_risk=freshness_risk,
+                ranked_sources=ranked_sources,
+                max_items=3,
+            )
+            entity_claim_records = self._build_entity_claim_records(
+                query=query,
+                selected_sources=entity_sources,
+            )
+            entity_core_coverage = summarize_slot_coverage(entity_claim_records, slots=CORE_ENTITY_SLOTS)
+            primary_claims, weak_claims, _, _ = self._select_entity_fact_card_claims(
+                query=query,
+                claim_records=entity_claim_records,
+            )
+            claim_coverage = self._build_entity_claim_coverage_items(
+                core_coverage=entity_core_coverage,
+                primary_claims=primary_claims,
+                weak_claims=weak_claims,
+            )
+            if previous_claim_coverage and self._looks_like_related_entity_query(previous_query, query):
+                claim_coverage = self._annotate_claim_coverage_progress(
+                    previous_claim_coverage=previous_claim_coverage,
+                    current_claim_coverage=claim_coverage,
+                    query=progress_query or query,
+                )
+        claim_coverage_progress_summary: str | None = None
+        if (
+            effective_answer_mode == "entity_card"
+            and previous_claim_coverage
+            and claim_coverage
+            and self._looks_like_related_entity_query(previous_query, query)
+        ):
+            claim_coverage_progress_summary = self._build_claim_coverage_progress_summary(
+                previous_claim_coverage=previous_claim_coverage,
+                current_claim_coverage=claim_coverage,
+                query=progress_query or query,
+            )
         summary_text = self._summarize_web_search_results(
             query=query,
             intent_kind=intent_kind,
+            answer_mode=effective_answer_mode,
+            freshness_risk=freshness_risk,
             results=serialized_results[:8],
             pages=fetched_pages,
             ranked_sources=ranked_sources,
+        )
+        response_origin = self._build_web_search_origin(
+            answer_mode=effective_answer_mode,
+            selected_sources=self._select_ranked_web_sources(
+                query=query,
+                intent_kind=intent_kind,
+                answer_mode=effective_answer_mode,
+                freshness_risk=freshness_risk,
+                ranked_sources=ranked_sources,
+                max_items=3,
+            ),
+            query=query,
         )
         record_info = self.web_search_store.save(
             session_id=request.session_id,
@@ -4240,6 +5653,8 @@ class AgentLoop:
             results=serialized_results[:8],
             summary_text=summary_text,
             pages=fetched_pages,
+            response_origin=response_origin,
+            claim_coverage=claim_coverage,
         )
         record_path = str(record_info["record_path"])
         active_context = self._build_web_search_active_context(
@@ -4249,6 +5664,10 @@ class AgentLoop:
             pages=fetched_pages,
             ranked_sources=ranked_sources,
             intent_kind=intent_kind,
+            answer_mode=effective_answer_mode,
+            freshness_risk=freshness_risk,
+            claim_coverage=claim_coverage,
+            claim_coverage_progress_summary=claim_coverage_progress_summary,
             record_path=record_path,
         )
         self.session_store.set_active_context(request.session_id, active_context)
@@ -4278,8 +5697,12 @@ class AgentLoop:
                 ranked_sources=ranked_sources,
                 query=query,
                 intent_kind=intent_kind,
+                answer_mode=effective_answer_mode,
+                freshness_risk=freshness_risk,
             ),
-            response_origin=self._build_web_search_origin(),
+            claim_coverage=claim_coverage,
+            claim_coverage_progress_summary=claim_coverage_progress_summary,
+            response_origin=response_origin,
             web_search_record_path=record_path,
         )
 
@@ -4314,10 +5737,13 @@ class AgentLoop:
             detail=f"'{query}'에 대해 기존 상위 링크 우선순위를 낮춰 다시 확인하는 중입니다.",
             note="질문과 어긋나거나 사실이 다른 결과를 줄이기 위해 새 결과와 기존 결과를 다시 섞어 정렬합니다.",
         )
+        search_intent = self._classify_search_intent(request.user_text)
         response = self._run_web_search(
             request=request,
             query=query,
-            intent_kind=self._classify_search_intent(request.user_text).kind,
+            intent_kind=search_intent.kind,
+            answer_mode=search_intent.answer_mode,
+            freshness_risk=search_intent.freshness_risk,
             phase_event_callback=phase_event_callback,
             deprioritized_urls=previous_urls or None,
             response_action="web_search_retry",
@@ -4399,6 +5825,28 @@ class AgentLoop:
             pages=pages,
             ranked_sources=ranked_sources,
         )
+        claim_coverage: list[dict[str, Any]] = []
+        query_profile = self._infer_web_query_profile(query=query)
+        if query_profile == "entity":
+            entity_sources = self._select_ranked_web_sources(
+                query=query,
+                ranked_sources=ranked_sources,
+                max_items=3,
+            )
+            entity_claim_records = self._build_entity_claim_records(
+                query=query,
+                selected_sources=entity_sources,
+            )
+            entity_core_coverage = summarize_slot_coverage(entity_claim_records, slots=CORE_ENTITY_SLOTS)
+            primary_claims, weak_claims, _, _ = self._select_entity_fact_card_claims(
+                query=query,
+                claim_records=entity_claim_records,
+            )
+            claim_coverage = self._build_entity_claim_coverage_items(
+                core_coverage=entity_core_coverage,
+                primary_claims=primary_claims,
+                weak_claims=weak_claims,
+            )
         record_path = str(record.get("record_path") or "").strip()
         active_context = self._build_web_search_active_context(
             query=query,
@@ -4406,6 +5854,8 @@ class AgentLoop:
             summary_text=summary_text,
             pages=pages,
             ranked_sources=ranked_sources,
+            answer_mode="entity_card" if claim_coverage else ("latest_update" if summary_text.startswith("웹 최신 확인:") else "general"),
+            claim_coverage=claim_coverage,
             record_path=record_path or None,
         )
         self.session_store.set_active_context(request.session_id, active_context)
@@ -4436,6 +5886,7 @@ class AgentLoop:
             ]
         )
         if show_only:
+            reloaded_answer_mode = "entity_card" if claim_coverage else ("latest_update" if summary_text.startswith("웹 최신 확인:") else "general")
             return AgentResponse(
                 text=f"최근 웹 검색 기록을 다시 불러왔습니다.\n\n{summary_text}",
                 status="answer",
@@ -4448,7 +5899,12 @@ class AgentLoop:
                     pages=pages,
                     ranked_sources=ranked_sources,
                 ),
-                response_origin=self._build_web_search_origin(),
+                claim_coverage=claim_coverage,
+                response_origin=self._build_web_search_origin(
+                    answer_mode=reloaded_answer_mode,
+                    selected_sources=ranked_sources[:3],
+                    query=query,
+                ),
                 web_search_record_path=record_path or None,
             )
 
@@ -4671,6 +6127,7 @@ class AgentLoop:
             "summary_hint": context.get("summary_hint"),
             "suggested_prompts": [str(prompt) for prompt in context.get("suggested_prompts", [])],
             "record_path": context.get("record_path"),
+            "claim_coverage_progress_summary": str(context.get("claim_coverage_progress_summary") or "").strip(),
         }
 
     def _build_file_active_context(self, *, resolved_path: str, text: str, summary: str) -> dict[str, Any]:
@@ -4915,6 +6372,7 @@ class AgentLoop:
             text=summary_input,
             source_label=f"'{search_query}' 검색 결과",
             source_path=f"'{search_query}' 검색 결과",
+            reduce_source_type="search_results",
             stream_event_callback=stream_event_callback,
             phase_event_callback=phase_event_callback,
             cancel_requested=cancel_requested,
@@ -4971,6 +6429,9 @@ class AgentLoop:
         note_path: str,
         note_body: str,
         source_paths: list[str],
+        artifact_id: str | None = None,
+        source_message_id: str | None = None,
+        save_content_source: str = SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT,
     ) -> ApprovalRequest:
         writer = self.tools.get("write_note")
         overwrite = False
@@ -4986,7 +6447,140 @@ class AgentLoop:
             preview_markdown=self._build_note_preview(note_body),
             source_paths=source_paths,
             note_text=note_body,
+            artifact_id=artifact_id,
+            source_message_id=source_message_id,
+            save_content_source=save_content_source,
         )
+
+    def _request_save_note_approval(
+        self,
+        *,
+        session_id: str,
+        note_path: str,
+        note_body: str,
+        source_paths: list[str],
+        artifact_id: str | None = None,
+        source_message_id: str | None = None,
+        save_content_source: str = SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT,
+        approval_request_detail: dict[str, Any] | None = None,
+    ) -> ApprovalRequest:
+        approval = self._build_save_note_approval(
+            note_path=note_path,
+            note_body=note_body,
+            source_paths=source_paths,
+            artifact_id=artifact_id,
+            source_message_id=source_message_id,
+            save_content_source=save_content_source,
+        )
+        self.session_store.add_pending_approval(session_id, approval.to_record())
+        detail = {
+            "approval_id": approval.approval_id,
+            "artifact_id": artifact_id,
+            "source_message_id": source_message_id,
+            "note_path": approval.requested_path,
+            "overwrite": approval.overwrite,
+            "save_content_source": approval.save_content_source,
+        }
+        if approval_request_detail:
+            detail.update({key: value for key, value in approval_request_detail.items() if value is not None})
+        self.task_logger.log(
+            session_id=session_id,
+            action="approval_requested",
+            detail=detail,
+        )
+        return approval
+
+    def _execute_save_note_write(
+        self,
+        *,
+        session_id: str,
+        note_path: str,
+        note_body: str,
+        artifact_id: str | None = None,
+        source_message_id: str | None = None,
+        approval_id: str | None = None,
+        source_paths: list[str] | None = None,
+        save_content_source: str = SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT,
+        write_detail: dict[str, Any] | None = None,
+        record_accepted_as_is: bool = False,
+        preserve_existing_corrected_outcome: bool = False,
+    ) -> tuple[str, dict[str, Any] | None]:
+        saved_path = self.tools["write_note"].run(
+            path=note_path,
+            text=note_body,
+            approved=True,
+        )
+        detail = {
+            "artifact_id": artifact_id,
+            "source_message_id": source_message_id,
+            "note_path": saved_path,
+            "save_content_source": save_content_source,
+        }
+        if approval_id:
+            detail["approval_id"] = approval_id
+        if source_paths is not None:
+            detail["source_paths"] = list(source_paths)
+        if write_detail:
+            detail.update({key: value for key, value in write_detail.items() if value is not None})
+        self.task_logger.log(
+            session_id=session_id,
+            action="write_note",
+            detail=detail,
+        )
+
+        corrected_outcome: dict[str, Any] | None = None
+        if record_accepted_as_is:
+            updated_source_message = self.session_store.record_corrected_outcome_for_artifact(
+                session_id,
+                artifact_id=artifact_id,
+                outcome="accepted_as_is",
+                approval_id=approval_id,
+                saved_note_path=saved_path,
+            )
+            if updated_source_message is not None:
+                outcome = updated_source_message.get("corrected_outcome")
+                if isinstance(outcome, dict):
+                    corrected_outcome = dict(outcome)
+                    self._log_corrected_outcome_recorded(session_id, corrected_outcome)
+        elif preserve_existing_corrected_outcome:
+            updated_source_message = self.session_store.record_corrected_outcome_for_artifact(
+                session_id,
+                artifact_id=artifact_id,
+                outcome="corrected",
+                approval_id=approval_id,
+                saved_note_path=saved_path,
+                preserve_existing=True,
+            )
+            if updated_source_message is not None:
+                outcome = updated_source_message.get("corrected_outcome")
+                if isinstance(outcome, dict):
+                    corrected_outcome = dict(outcome)
+                    self._log_corrected_outcome_recorded(session_id, corrected_outcome)
+        return saved_path, corrected_outcome
+
+    def _build_grounded_brief_source_response_fields(
+        self,
+        *,
+        artifact_id: str | None,
+        source_message_id: str | None,
+        saved_note_path: str | None = None,
+        save_content_source: str | None = None,
+        corrected_outcome: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        fields: dict[str, Any] = {}
+        if artifact_id:
+            fields["artifact_id"] = artifact_id
+            fields["artifact_kind"] = "grounded_brief"
+        if source_message_id:
+            fields["message_id"] = source_message_id
+            fields["source_message_id"] = source_message_id
+        if saved_note_path:
+            fields["saved_note_path"] = saved_note_path
+        if save_content_source:
+            fields["save_content_source"] = save_content_source
+        if corrected_outcome:
+            fields["corrected_outcome"] = dict(corrected_outcome)
+        return fields
 
     def _execute_pending_approval(self, request: UserRequest) -> AgentResponse:
         approval_id = request.approved_approval_id
@@ -5020,29 +6614,45 @@ class AgentLoop:
                 "approval_id": approval.approval_id,
                 "kind": approval.kind,
                 "requested_path": approval.requested_path,
+                "artifact_id": approval.artifact_id,
+                "source_message_id": approval.source_message_id,
+                "save_content_source": approval.save_content_source,
             },
         )
 
-        saved_path = self.tools["write_note"].run(
-            path=approval.requested_path,
-            text=approval.note_text,
-            approved=True,
-        )
-        self.task_logger.log(
+        saved_path, _ = self._execute_save_note_write(
             session_id=request.session_id,
-            action="write_note",
-            detail={
-                "approval_id": approval.approval_id,
-                "note_path": saved_path,
-                "source_paths": approval.source_paths,
-            },
+            note_path=approval.requested_path,
+            note_body=approval.note_text,
+            artifact_id=approval.artifact_id,
+            source_message_id=approval.source_message_id,
+            approval_id=approval.approval_id,
+            source_paths=approval.source_paths,
+            save_content_source=approval.save_content_source or SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT,
+            record_accepted_as_is=(
+                (approval.save_content_source or SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT)
+                == SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT
+            ),
+            preserve_existing_corrected_outcome=(
+                (approval.save_content_source or "").strip() == SAVE_CONTENT_SOURCE_CORRECTED_TEXT
+            ),
         )
+        saved_text = f"요약 노트를 {saved_path}에 저장했습니다."
+        if (approval.save_content_source or "").strip() == SAVE_CONTENT_SOURCE_CORRECTED_TEXT:
+            saved_text = (
+                f"승인 시점에 고정된 수정본을 {saved_path}에 저장했습니다. "
+                "더 새 수정본을 저장하려면 다시 저장 요청해 주세요."
+            )
         return AgentResponse(
-            text=f"요약 노트를 {saved_path}에 저장했습니다.",
+            text=saved_text,
             status="saved",
             actions_taken=["approval_granted", "write_note"],
             saved_note_path=saved_path,
             selected_source_paths=list(approval.source_paths),
+            artifact_id=approval.artifact_id,
+            artifact_kind="grounded_brief" if approval.artifact_id else None,
+            source_message_id=approval.source_message_id,
+            save_content_source=approval.save_content_source,
         )
 
     def _reissue_pending_approval(self, request: UserRequest) -> AgentResponse:
@@ -5082,6 +6692,9 @@ class AgentLoop:
                 note_path=note_path,
                 note_body=approval.note_text,
                 source_paths=list(approval.source_paths),
+                artifact_id=approval.artifact_id,
+                source_message_id=approval.source_message_id,
+                save_content_source=approval.save_content_source or SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT,
             )
         except (PermissionError, OSError) as exc:
             return AgentResponse(
@@ -5090,6 +6703,15 @@ class AgentLoop:
                 actions_taken=["approval_error"],
                 selected_source_paths=list(approval.source_paths),
             )
+        approval_reason_record = self._build_approval_reason_record(
+            session_id=request.session_id,
+            artifact_id=reissued.artifact_id,
+            approval_id=reissued.approval_id,
+            source_message_id=reissued.source_message_id,
+            reason_scope="approval_reissue",
+            reason_label="path_change",
+        )
+        reissued.approval_reason_record = approval_reason_record
         self.session_store.pop_pending_approval(request.session_id, approval.approval_id)
         self.session_store.add_pending_approval(request.session_id, reissued.to_record())
 
@@ -5103,6 +6725,10 @@ class AgentLoop:
                 "new_requested_path": reissued.requested_path,
                 "overwrite": reissued.overwrite,
                 "source_paths": reissued.source_paths,
+                "artifact_id": reissued.artifact_id,
+                "source_message_id": reissued.source_message_id,
+                "save_content_source": reissued.save_content_source,
+                "approval_reason_record": approval_reason_record,
             },
         )
 
@@ -5126,6 +6752,11 @@ class AgentLoop:
             selected_source_paths=list(reissued.source_paths),
             note_preview=reissued.preview_markdown,
             approval=reissued.to_public_dict(),
+            artifact_id=reissued.artifact_id,
+            artifact_kind="grounded_brief" if reissued.artifact_id else None,
+            source_message_id=reissued.source_message_id,
+            approval_reason_record=approval_reason_record,
+            save_content_source=reissued.save_content_source,
         )
 
     def _reject_pending_approval(self, request: UserRequest) -> AgentResponse:
@@ -5146,6 +6777,14 @@ class AgentLoop:
             )
 
         approval = ApprovalRequest.from_record(approval_record)
+        approval_reason_record = self._build_approval_reason_record(
+            session_id=request.session_id,
+            artifact_id=approval.artifact_id,
+            approval_id=approval.approval_id,
+            source_message_id=approval.source_message_id,
+            reason_scope="approval_reject",
+            reason_label="explicit_rejection",
+        )
         self.task_logger.log(
             session_id=request.session_id,
             action="approval_rejected",
@@ -5153,6 +6792,10 @@ class AgentLoop:
                 "approval_id": approval.approval_id,
                 "kind": approval.kind,
                 "requested_path": approval.requested_path,
+                "artifact_id": approval.artifact_id,
+                "source_message_id": approval.source_message_id,
+                "save_content_source": approval.save_content_source,
+                "approval_reason_record": approval_reason_record,
             },
         )
         return AgentResponse(
@@ -5160,10 +6803,23 @@ class AgentLoop:
             status="answer",
             actions_taken=["approval_rejected"],
             selected_source_paths=list(approval.source_paths),
+            artifact_id=approval.artifact_id,
+            artifact_kind="grounded_brief" if approval.artifact_id else None,
+            source_message_id=approval.source_message_id,
+            approval_reason_record=approval_reason_record,
+            save_content_source=approval.save_content_source,
         )
 
     def _assistant_message(self, response: AgentResponse) -> Dict[str, Any]:
         message: Dict[str, Any] = {"role": "assistant", "text": response.text, "status": response.status}
+        if response.message_id:
+            message["message_id"] = response.message_id
+        if response.artifact_id:
+            message["artifact_id"] = response.artifact_id
+        if response.artifact_kind:
+            message["artifact_kind"] = response.artifact_kind
+        if response.source_message_id:
+            message["source_message_id"] = response.source_message_id
         if response.requires_approval:
             message["requires_approval"] = True
         if response.proposed_note_path:
@@ -5191,7 +6847,44 @@ class AgentLoop:
             message["evidence"] = [dict(item) for item in response.evidence if isinstance(item, dict)]
         if response.summary_chunks:
             message["summary_chunks"] = [dict(item) for item in response.summary_chunks if isinstance(item, dict)]
+        if response.claim_coverage:
+            message["claim_coverage"] = [dict(item) for item in response.claim_coverage if isinstance(item, dict)]
+        if response.claim_coverage_progress_summary:
+            message["claim_coverage_progress_summary"] = response.claim_coverage_progress_summary
+        if response.original_response_snapshot:
+            message["original_response_snapshot"] = dict(response.original_response_snapshot)
+        if response.corrected_outcome:
+            message["corrected_outcome"] = dict(response.corrected_outcome)
+        if response.approval_reason_record:
+            message["approval_reason_record"] = dict(response.approval_reason_record)
+        if response.save_content_source:
+            message["save_content_source"] = response.save_content_source
         return message
+
+    def _agent_response_log_detail(self, response: AgentResponse) -> dict[str, Any]:
+        approval_save_content_source = None
+        approval_source_message_id = None
+        if isinstance(response.approval, dict):
+            approval_save_content_source = response.approval.get("save_content_source")
+            approval_source_message_id = response.approval.get("source_message_id")
+        return {
+            "status": response.status,
+            "actions": response.actions_taken,
+            "requires_approval": response.requires_approval,
+            "proposed_note_path": response.proposed_note_path,
+            "saved_note_path": response.saved_note_path,
+            "selected_source_paths": response.selected_source_paths,
+            "has_note_preview": bool(response.note_preview),
+            "approval_id": response.approval["approval_id"] if response.approval else None,
+            "artifact_id": response.artifact_id,
+            "artifact_kind": response.artifact_kind,
+            "source_message_id": response.source_message_id or approval_source_message_id,
+            "save_content_source": response.save_content_source or approval_save_content_source,
+            "approval_reason_record": dict(response.approval_reason_record) if response.approval_reason_record else None,
+            "active_context_label": response.active_context.get("label") if response.active_context else None,
+            "evidence_count": len(response.evidence),
+            "summary_chunk_count": len(response.summary_chunks),
+        }
 
     def handle(
         self,
@@ -5214,12 +6907,30 @@ class AgentLoop:
                 "approved_approval_id": request.approved_approval_id,
                 "rejected_approval_id": request.rejected_approval_id,
                 "reissue_approval_id": request.reissue_approval_id,
+                "corrected_save_message_id": request.metadata.get("corrected_save_message_id"),
                 "note_path": request.metadata.get("note_path"),
                 "retry_feedback_label": request.metadata.get("retry_feedback_label"),
                 "retry_feedback_reason": request.metadata.get("retry_feedback_reason"),
                 "retry_target_message_id": request.metadata.get("retry_target_message_id"),
             },
         )
+        if request.metadata.get("corrected_save_message_id"):
+            self._emit_phase(
+                phase_event_callback,
+                phase="approval_prepared",
+                title="수정본 저장 승인 카드 준비 중",
+                detail="기록된 수정본으로 새 저장 승인 스냅샷을 만드는 중입니다.",
+                note="현재 편집 중인 텍스트는 포함되지 않으며, 승인 미리보기는 요청 시점 그대로 고정됩니다.",
+            )
+            response = self._request_corrected_save_bridge(request)
+            self._append_response_message(request.session_id, response)
+            self.task_logger.log(
+                session_id=request.session_id,
+                action="agent_response",
+                detail=self._agent_response_log_detail(response),
+            )
+            return response
+
         if request.reissue_approval_id:
             self._emit_phase(
                 phase_event_callback,
@@ -5229,23 +6940,11 @@ class AgentLoop:
                 note="실제 파일은 아직 저장하지 않습니다.",
             )
             response = self._reissue_pending_approval(request)
-            self.session_store.append_message(request.session_id, self._assistant_message(response))
+            self._append_response_message(request.session_id, response)
             self.task_logger.log(
                 session_id=request.session_id,
                 action="agent_response",
-                detail={
-                    "status": response.status,
-                    "actions": response.actions_taken,
-                    "requires_approval": response.requires_approval,
-                    "proposed_note_path": response.proposed_note_path,
-                    "saved_note_path": response.saved_note_path,
-                    "selected_source_paths": response.selected_source_paths,
-                    "has_note_preview": bool(response.note_preview),
-                    "approval_id": response.approval["approval_id"] if response.approval else None,
-                    "active_context_label": response.active_context.get("label") if response.active_context else None,
-                    "evidence_count": len(response.evidence),
-                    "summary_chunk_count": len(response.summary_chunks),
-                },
+                detail=self._agent_response_log_detail(response),
             )
             return response
 
@@ -5258,23 +6957,11 @@ class AgentLoop:
                 note="기존 승인 객체만 실행합니다.",
             )
             response = self._execute_pending_approval(request)
-            self.session_store.append_message(request.session_id, self._assistant_message(response))
+            self._append_response_message(request.session_id, response)
             self.task_logger.log(
                 session_id=request.session_id,
                 action="agent_response",
-                detail={
-                    "status": response.status,
-                    "actions": response.actions_taken,
-                    "requires_approval": response.requires_approval,
-                    "proposed_note_path": response.proposed_note_path,
-                    "saved_note_path": response.saved_note_path,
-                    "selected_source_paths": response.selected_source_paths,
-                    "has_note_preview": bool(response.note_preview),
-                    "approval_id": response.approval["approval_id"] if response.approval else None,
-                    "active_context_label": response.active_context.get("label") if response.active_context else None,
-                    "evidence_count": len(response.evidence),
-                    "summary_chunk_count": len(response.summary_chunks),
-                },
+                detail=self._agent_response_log_detail(response),
             )
             return response
 
@@ -5287,23 +6974,11 @@ class AgentLoop:
                 note="파일은 저장되지 않습니다.",
             )
             response = self._reject_pending_approval(request)
-            self.session_store.append_message(request.session_id, self._assistant_message(response))
+            self._append_response_message(request.session_id, response)
             self.task_logger.log(
                 session_id=request.session_id,
                 action="agent_response",
-                detail={
-                    "status": response.status,
-                    "actions": response.actions_taken,
-                    "requires_approval": response.requires_approval,
-                    "proposed_note_path": response.proposed_note_path,
-                    "saved_note_path": response.saved_note_path,
-                    "selected_source_paths": response.selected_source_paths,
-                    "has_note_preview": bool(response.note_preview),
-                    "approval_id": response.approval["approval_id"] if response.approval else None,
-                    "active_context_label": response.active_context.get("label") if response.active_context else None,
-                    "evidence_count": len(response.evidence),
-                    "summary_chunk_count": len(response.summary_chunks),
-                },
+                detail=self._agent_response_log_detail(response),
             )
             return response
 
@@ -5334,6 +7009,11 @@ class AgentLoop:
             explicit_web_search_query = (
                 search_intent.query if search_intent.kind == "explicit_web" else None
             )
+            explicit_web_search_effective_query = explicit_web_search_query
+            explicit_web_search_probe_query: str | None = None
+            explicit_web_search_intent_kind = search_intent.kind
+            explicit_web_search_answer_mode = search_intent.answer_mode
+            explicit_web_search_freshness_risk = search_intent.freshness_risk
             implicit_web_search_query = (
                 search_intent.query
                 if requested_web_search_permission == "enabled" and search_intent.kind == "live_latest"
@@ -5351,6 +7031,17 @@ class AgentLoop:
                 has_explicit_source_path=has_explicit_source_path,
                 uploaded_file=uploaded_file,
             )
+            if explicit_web_search_query and self._should_treat_as_entity_reinvestigation(
+                active_context=active_context,
+                query=explicit_web_search_query,
+            ):
+                explicit_web_search_intent_kind = "external_fact"
+                explicit_web_search_answer_mode = "entity_card"
+                explicit_web_search_freshness_risk = "low"
+                explicit_web_search_probe_query = explicit_web_search_query
+                explicit_web_search_effective_query = (
+                    self._extract_web_search_query_from_context(active_context) or explicit_web_search_query
+                )
             self.task_logger.log(
                 session_id=request.session_id,
                 action="request_intent_classified",
@@ -5359,10 +7050,14 @@ class AgentLoop:
                     "query": search_intent.query,
                     "score": search_intent.score,
                     "reasons": list(search_intent.reasons),
+                    "freshness_risk": search_intent.freshness_risk,
+                    "answer_mode": search_intent.answer_mode,
                     "suggestion_kind": search_intent.suggestion_kind,
                     "suggestion_query": search_intent.suggestion_query,
                     "suggestion_score": search_intent.suggestion_score,
                     "suggestion_reasons": list(search_intent.suggestion_reasons),
+                    "suggestion_freshness_risk": search_intent.suggestion_freshness_risk,
+                    "suggestion_answer_mode": search_intent.suggestion_answer_mode,
                 },
             )
 
@@ -5441,9 +7136,13 @@ class AgentLoop:
                 else:
                     response = self._run_web_search(
                         request=request,
-                        query=explicit_web_search_query,
-                        intent_kind=search_intent.kind,
+                        query=explicit_web_search_effective_query or explicit_web_search_query,
+                        intent_kind=explicit_web_search_intent_kind,
+                        answer_mode=explicit_web_search_answer_mode,
+                        freshness_risk=explicit_web_search_freshness_risk,
                         phase_event_callback=phase_event_callback,
+                        seed_queries=[explicit_web_search_probe_query] if explicit_web_search_probe_query else None,
+                        progress_query=explicit_web_search_probe_query,
                     )
             elif (
                 external_fact_query
@@ -5476,6 +7175,8 @@ class AgentLoop:
                         request=request,
                         query=external_fact_query,
                         intent_kind=search_intent.kind,
+                        answer_mode=search_intent.answer_mode,
+                        freshness_risk=search_intent.freshness_risk,
                         phase_event_callback=phase_event_callback,
                     )
             elif (
@@ -5496,6 +7197,8 @@ class AgentLoop:
                     request=request,
                     query=implicit_web_search_query,
                     intent_kind=search_intent.kind,
+                    answer_mode=search_intent.answer_mode,
+                    freshness_risk=search_intent.freshness_risk,
                     phase_event_callback=phase_event_callback,
                 )
             elif active_context_mode in {"document", "mixed"}:
@@ -5710,6 +7413,8 @@ class AgentLoop:
                         intent=FOLLOW_UP_INTENT_GENERAL,
                         user_request=request.user_text or search_query,
                     )
+                    artifact_id = self._new_grounded_brief_artifact_id()
+                    source_message_id = self._new_message_id()
 
                     if self._wants_summary_save(request) and "write_note" in self.tools:
                         note_path = self._build_search_note_path(request, search_query)
@@ -5721,27 +7426,19 @@ class AgentLoop:
                                 detail=f"검색 요약 노트를 {note_path}에 저장할 수 있도록 승인 미리보기를 만드는 중입니다.",
                                 note="승인 전에는 실제 파일을 쓰지 않습니다.",
                             )
-                            approval = self._build_save_note_approval(
+                            approval = self._request_save_note_approval(
+                                session_id=request.session_id,
                                 note_path=note_path,
                                 note_body=note_body,
                                 source_paths=[item.path for item in selected_results],
-                            )
-                            self.session_store.add_pending_approval(
-                                request.session_id,
-                                approval.to_record(),
-                            )
-                            self.task_logger.log(
-                                session_id=request.session_id,
-                                action="approval_requested",
-                                detail={
-                                    "approval_id": approval.approval_id,
+                                artifact_id=artifact_id,
+                                source_message_id=source_message_id,
+                                approval_request_detail={
                                     "search_query": search_query,
-                                    "note_path": approval.requested_path,
-                                    "overwrite": approval.overwrite,
                                     "source_paths": [item.resolved_path for item in read_results],
                                 },
                             )
-                            response = AgentResponse(
+                            response = self._build_grounded_brief_response(
                                 text=self._append_notice(
                                     (
                                         f"{summary}\n\n{selected_sources_text}\n\n"
@@ -5765,6 +7462,10 @@ class AgentLoop:
                                 follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
                                 evidence=selected_evidence,
                                 summary_chunks=summary_chunks,
+                                **self._build_grounded_brief_source_response_fields(
+                                    artifact_id=artifact_id,
+                                    source_message_id=source_message_id,
+                                ),
                             )
                         else:
                             self._emit_phase(
@@ -5774,20 +7475,19 @@ class AgentLoop:
                                 detail=f"{note_path} 경로에 검색 요약 노트를 쓰는 중입니다.",
                                 note="승인된 경로에만 새 파일을 만듭니다.",
                             )
-                            saved_path = self.tools["write_note"].run(
-                                path=note_path,
-                                text=note_body,
-                                approved=True,
-                            )
-                            self.task_logger.log(
+                            saved_path, _ = self._execute_save_note_write(
                                 session_id=request.session_id,
-                                action="write_note",
-                                detail={
-                                    "search_query": search_query,
-                                    "note_path": saved_path,
-                                },
+                                note_path=note_path,
+                                note_body=note_body,
+                                artifact_id=artifact_id,
+                                source_message_id=source_message_id,
+                                write_detail={"search_query": search_query},
                             )
-                            response = AgentResponse(
+                            corrected_outcome = self._build_accepted_as_is_outcome(
+                                artifact_id=artifact_id,
+                                saved_note_path=saved_path,
+                            )
+                            response = self._build_grounded_brief_response(
                                 text=self._append_notice(
                                     (
                                         f"{summary}\n\n{selected_sources_text}\n\n"
@@ -5802,15 +7502,21 @@ class AgentLoop:
                                     "summarize_search_results",
                                     "write_note",
                                 ],
-                                saved_note_path=saved_path,
                                 selected_source_paths=[item.path for item in selected_results],
                                 active_context=self._public_active_context(new_active_context),
                                 follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
                                 evidence=selected_evidence,
                                 summary_chunks=summary_chunks,
+                                **self._build_grounded_brief_source_response_fields(
+                                    artifact_id=artifact_id,
+                                    source_message_id=source_message_id,
+                                    saved_note_path=saved_path,
+                                    save_content_source=SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT,
+                                    corrected_outcome=corrected_outcome,
+                                ),
                             )
                     else:
-                        response = AgentResponse(
+                        response = self._build_grounded_brief_response(
                             text=self._append_notice(
                                 f"{summary}\n\n{selected_sources_text}",
                                 search_notice,
@@ -5822,6 +7528,8 @@ class AgentLoop:
                             follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
                             evidence=selected_evidence,
                             summary_chunks=summary_chunks,
+                            artifact_id=artifact_id,
+                            artifact_kind="grounded_brief",
                         )
             elif uploaded_file and "read_file" in self.tools:
                 uploaded_name = str(uploaded_file.get("name") or "selected-file")
@@ -5911,6 +7619,8 @@ class AgentLoop:
                     intent=FOLLOW_UP_INTENT_GENERAL,
                     user_request=request.user_text or read_result.resolved_path,
                 )
+                artifact_id = self._new_grounded_brief_artifact_id()
+                source_message_id = self._new_message_id()
 
                 if self._wants_summary_save(request) and "write_note" in self.tools:
                     note_path = self._build_note_path(request, read_result.resolved_path)
@@ -5922,26 +7632,16 @@ class AgentLoop:
                             detail=f"요약 노트를 {note_path}에 저장할 수 있도록 승인 미리보기를 만드는 중입니다.",
                             note="승인 전에는 실제 파일을 쓰지 않습니다.",
                         )
-                        approval = self._build_save_note_approval(
+                        approval = self._request_save_note_approval(
+                            session_id=request.session_id,
                             note_path=note_path,
                             note_body=note_draft.note_body,
                             source_paths=[read_result.resolved_path],
+                            artifact_id=artifact_id,
+                            source_message_id=source_message_id,
+                            approval_request_detail={"source_path": read_result.resolved_path},
                         )
-                        self.session_store.add_pending_approval(
-                            request.session_id,
-                            approval.to_record(),
-                        )
-                        self.task_logger.log(
-                            session_id=request.session_id,
-                            action="approval_requested",
-                            detail={
-                                "approval_id": approval.approval_id,
-                                "source_path": read_result.resolved_path,
-                                "note_path": approval.requested_path,
-                                "overwrite": approval.overwrite,
-                            },
-                        )
-                        response = AgentResponse(
+                        response = self._build_grounded_brief_response(
                             text=(
                                 f"{note_draft.summary}\n\n"
                                 f"요약 노트를 {approval.requested_path}에 저장하려면 승인이 필요합니다."
@@ -5957,6 +7657,10 @@ class AgentLoop:
                             follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
                             evidence=document_evidence,
                             summary_chunks=summary_chunks,
+                            **self._build_grounded_brief_source_response_fields(
+                                artifact_id=artifact_id,
+                                source_message_id=source_message_id,
+                            ),
                         )
                     else:
                         self._emit_phase(
@@ -5966,32 +7670,37 @@ class AgentLoop:
                             detail=f"{note_path} 경로에 요약 노트를 쓰는 중입니다.",
                             note="승인된 경로에만 새 파일을 만듭니다.",
                         )
-                        saved_path = self.tools["write_note"].run(
-                            path=note_path,
-                            text=note_draft.note_body,
-                            approved=True,
-                        )
-                        self.task_logger.log(
+                        saved_path, _ = self._execute_save_note_write(
                             session_id=request.session_id,
-                            action="write_note",
-                            detail={
-                                "source_path": read_result.resolved_path,
-                                "note_path": saved_path,
-                            },
+                            note_path=note_path,
+                            note_body=note_draft.note_body,
+                            artifact_id=artifact_id,
+                            source_message_id=source_message_id,
+                            write_detail={"source_path": read_result.resolved_path},
                         )
-                        response = AgentResponse(
+                        corrected_outcome = self._build_accepted_as_is_outcome(
+                            artifact_id=artifact_id,
+                            saved_note_path=saved_path,
+                        )
+                        response = self._build_grounded_brief_response(
                             text=f"{note_draft.summary}\n\n요약 노트를 {saved_path}에 저장했습니다.",
                             status="saved",
                             actions_taken=["read_uploaded_file", "summarize", "write_note"],
-                            saved_note_path=saved_path,
                             selected_source_paths=[read_result.resolved_path],
                             active_context=self._public_active_context(new_active_context),
                             follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
                             evidence=document_evidence,
                             summary_chunks=summary_chunks,
+                            **self._build_grounded_brief_source_response_fields(
+                                artifact_id=artifact_id,
+                                source_message_id=source_message_id,
+                                saved_note_path=saved_path,
+                                save_content_source=SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT,
+                                corrected_outcome=corrected_outcome,
+                            ),
                         )
                 else:
-                    response = AgentResponse(
+                    response = self._build_grounded_brief_response(
                         text=note_draft.summary,
                         status="answer",
                         actions_taken=["read_uploaded_file", "summarize"],
@@ -6000,6 +7709,8 @@ class AgentLoop:
                         follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
                         evidence=document_evidence,
                         summary_chunks=summary_chunks,
+                        artifact_id=artifact_id,
+                        artifact_kind="grounded_brief",
                     )
             elif source_path and "read_file" in self.tools:
                 self._raise_if_cancelled(cancel_requested)
@@ -6084,6 +7795,8 @@ class AgentLoop:
                     intent=FOLLOW_UP_INTENT_GENERAL,
                     user_request=request.user_text or read_result.resolved_path,
                 )
+                artifact_id = self._new_grounded_brief_artifact_id()
+                source_message_id = self._new_message_id()
 
                 if self._wants_summary_save(request) and "write_note" in self.tools:
                     note_path = self._build_note_path(request, read_result.resolved_path)
@@ -6095,26 +7808,16 @@ class AgentLoop:
                             detail=f"요약 노트를 {note_path}에 저장할 수 있도록 승인 미리보기를 만드는 중입니다.",
                             note="승인 전에는 실제 파일을 쓰지 않습니다.",
                         )
-                        approval = self._build_save_note_approval(
+                        approval = self._request_save_note_approval(
+                            session_id=request.session_id,
                             note_path=note_path,
                             note_body=note_draft.note_body,
                             source_paths=[read_result.resolved_path],
+                            artifact_id=artifact_id,
+                            source_message_id=source_message_id,
+                            approval_request_detail={"source_path": read_result.resolved_path},
                         )
-                        self.session_store.add_pending_approval(
-                            request.session_id,
-                            approval.to_record(),
-                        )
-                        self.task_logger.log(
-                            session_id=request.session_id,
-                            action="approval_requested",
-                            detail={
-                                "approval_id": approval.approval_id,
-                                "source_path": read_result.resolved_path,
-                                "note_path": approval.requested_path,
-                                "overwrite": approval.overwrite,
-                            },
-                        )
-                        response = AgentResponse(
+                        response = self._build_grounded_brief_response(
                             text=(
                                 f"{note_draft.summary}\n\n"
                                 f"요약 노트를 {approval.requested_path}에 저장하려면 승인이 필요합니다."
@@ -6130,6 +7833,10 @@ class AgentLoop:
                             follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
                             evidence=document_evidence,
                             summary_chunks=summary_chunks,
+                            **self._build_grounded_brief_source_response_fields(
+                                artifact_id=artifact_id,
+                                source_message_id=source_message_id,
+                            ),
                         )
                     else:
                         self._emit_phase(
@@ -6139,32 +7846,37 @@ class AgentLoop:
                             detail=f"{note_path} 경로에 요약 노트를 쓰는 중입니다.",
                             note="승인된 경로에만 새 파일을 만듭니다.",
                         )
-                        saved_path = self.tools["write_note"].run(
-                            path=note_path,
-                            text=note_draft.note_body,
-                            approved=True,
-                        )
-                        self.task_logger.log(
+                        saved_path, _ = self._execute_save_note_write(
                             session_id=request.session_id,
-                            action="write_note",
-                            detail={
-                                "source_path": read_result.resolved_path,
-                                "note_path": saved_path,
-                            },
+                            note_path=note_path,
+                            note_body=note_draft.note_body,
+                            artifact_id=artifact_id,
+                            source_message_id=source_message_id,
+                            write_detail={"source_path": read_result.resolved_path},
                         )
-                        response = AgentResponse(
+                        corrected_outcome = self._build_accepted_as_is_outcome(
+                            artifact_id=artifact_id,
+                            saved_note_path=saved_path,
+                        )
+                        response = self._build_grounded_brief_response(
                             text=f"{note_draft.summary}\n\n요약 노트를 {saved_path}에 저장했습니다.",
                             status="saved",
                             actions_taken=["read_file", "summarize", "write_note"],
-                            saved_note_path=saved_path,
                             selected_source_paths=[read_result.resolved_path],
                             active_context=self._public_active_context(new_active_context),
                             follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
                             evidence=document_evidence,
                             summary_chunks=summary_chunks,
+                            **self._build_grounded_brief_source_response_fields(
+                                artifact_id=artifact_id,
+                                source_message_id=source_message_id,
+                                saved_note_path=saved_path,
+                                save_content_source=SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT,
+                                corrected_outcome=corrected_outcome,
+                            ),
                         )
                 else:
-                    response = AgentResponse(
+                    response = self._build_grounded_brief_response(
                         text=note_draft.summary,
                         status="answer",
                         actions_taken=["read_file", "summarize"],
@@ -6173,6 +7885,8 @@ class AgentLoop:
                         follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
                         evidence=document_evidence,
                         summary_chunks=summary_chunks,
+                        artifact_id=artifact_id,
+                        artifact_kind="grounded_brief",
                     )
             elif active_context_mode in {"document", "mixed"}:
                 if active_context_mode == "mixed":
@@ -6301,22 +8015,10 @@ class AgentLoop:
                 detail={"error": str(exc)},
             )
 
-        self.session_store.append_message(request.session_id, self._assistant_message(response))
+        self._append_response_message(request.session_id, response)
         self.task_logger.log(
             session_id=request.session_id,
             action="agent_response",
-            detail={
-                "status": response.status,
-                "actions": response.actions_taken,
-                "requires_approval": response.requires_approval,
-                "proposed_note_path": response.proposed_note_path,
-                "saved_note_path": response.saved_note_path,
-                "selected_source_paths": response.selected_source_paths,
-                "has_note_preview": bool(response.note_preview),
-                "approval_id": response.approval["approval_id"] if response.approval else None,
-                "active_context_label": response.active_context.get("label") if response.active_context else None,
-                "evidence_count": len(response.evidence),
-                "summary_chunk_count": len(response.summary_chunks),
-            },
+            detail=self._agent_response_log_detail(response),
         )
         return response

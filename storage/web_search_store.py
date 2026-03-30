@@ -188,6 +188,16 @@ class WebSearchStore:
                 break
         return previews
 
+    def _summarize_claim_coverage(self, claim_coverage: list[dict[str, Any]] | None) -> dict[str, int]:
+        counts = {"strong": 0, "weak": 0, "missing": 0}
+        for item in claim_coverage or []:
+            if not isinstance(item, dict):
+                continue
+            status = str(item.get("status") or "").strip()
+            if status in counts:
+                counts[status] += 1
+        return counts
+
     def save(
         self,
         *,
@@ -197,6 +207,8 @@ class WebSearchStore:
         results: list[dict[str, Any]],
         summary_text: str,
         pages: list[dict[str, Any]] | None = None,
+        response_origin: dict[str, Any] | None = None,
+        claim_coverage: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         timestamp = datetime.now(timezone.utc).isoformat()
         slug = re.sub(r"[^a-zA-Z0-9가-힣]+", "-", query).strip("-").lower() or "search"
@@ -223,6 +235,8 @@ class WebSearchStore:
             "results": results,
             "pages": normalized_pages,
             "summary_text": summary_text,
+            "response_origin": dict(response_origin or {}),
+            "claim_coverage": [dict(item) for item in claim_coverage or [] if isinstance(item, dict)],
         }
         path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
         return {
@@ -290,6 +304,14 @@ class WebSearchStore:
                     "page_count": int(record.get("page_count") or 0),
                     "record_path": str(record.get("record_path") or ""),
                     "summary_head": first_line,
+                    "answer_mode": str((record.get("response_origin") or {}).get("answer_mode") or "general"),
+                    "verification_label": str((record.get("response_origin") or {}).get("verification_label") or ""),
+                    "source_roles": [
+                        str(item)
+                        for item in (record.get("response_origin") or {}).get("source_roles", [])
+                        if str(item).strip()
+                    ],
+                    "claim_coverage_summary": self._summarize_claim_coverage(record.get("claim_coverage")),
                     "pages_preview": self._build_pages_preview(record),
                 }
             )

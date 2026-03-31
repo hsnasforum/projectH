@@ -24,13 +24,15 @@
 현재 구현된 웹 MVP는 아래를 포함합니다.
 
 - local web shell (`python3 -m app.web`)
-- recent sessions / conversation timeline
+- recent sessions / conversation timeline with per-message timestamps
 - file summary / document search / general chat
-- approval-based save
+- approval-based save with default notes directory shown in the save-path placeholder
 - reissue approval flow
-- evidence / source panel
+- evidence / source panel with source-role trust labels on each evidence item
+- source filename and summary source-type label (`문서 요약` / `선택 결과 요약`) in quick-meta bar, and source filename in transcript meta when a single source document is used
 - summary span / applied-range panel
-- response origin badge
+- response origin badge with separate answer-mode badge for web investigation (`설명 카드` / `최신 확인`), source-role trust labels, and verification strength tags in origin detail
+- copy-to-clipboard buttons: `응답 복사`, `저장 경로 복사`, `승인 경로 복사`, `검색 기록 경로 복사` (shared helper shows clipboard-specific failure notice on both success-path rejection and fallback failure)
 - streaming progress + cancel
 - response feedback capture
 - grounded-brief artifact trace anchor on summary responses, save approvals, and relevant local traces
@@ -41,9 +43,10 @@
 - one small candidate-linked confirmation action on the grounded-brief response card that appears only when the current `session_local_candidate` exists and persists one separate source-message `candidate_confirmation_record`
 - one optional source-message-anchored `durable_candidate` projection plus one local `검토 후보` section fed only by current pending `review_queue_items`, with one `accept`-only reviewed-but-not-applied action that records source-message `candidate_review_record`
 - one separate aggregate-level `검토 메모 적용 후보` section fed only by current same-session `recurrence_aggregate_candidates`, shown adjacent to `검토 후보` only when aggregates exist, with one visible-but-disabled `검토 메모 적용 시작` action per aggregate card plus blocked helper copy only
-- short-summary and long-summary prompts, plus the internal `summary_chunks` anchor-selection heuristic, now all reuse the same truthful source boundary already known to current call sites, so local file or uploaded-document summaries keep document-flow and narrative-friendly guidance while selected local search-result summaries keep source-backed synthesis guidance without adding a new mode toggle or classifier
+- short-summary and long-summary prompts, plus the internal `summary_chunks` anchor-selection heuristic, now all reuse the same truthful source boundary already known to current call sites, so local file or uploaded-document summaries keep document-flow and narrative-friendly guidance with a strict source-anchored faithfulness rule (no fabricated events, no term substitution, no conclusions beyond what the text shows) while selected local search-result summaries keep source-backed synthesis guidance without adding a new mode toggle or classifier
 - PDF text-layer reading with OCR-not-supported guidance
-- permission-gated web investigation with local JSON history
+- permission-gated web investigation with local JSON history, answer-mode badges, color-coded verification-strength badges, and color-coded source-role trust badges in history cards
+- claim coverage panel with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`), actionable hints for weak or unresolved slots, source role with trust level labels, and a color-coded fact-strength summary bar above the response text for web investigation
 
 ## Chosen Next-Phase Artifact
 
@@ -74,7 +77,7 @@
 ## Playwright Smoke Coverage
 
 Current smoke scenarios:
-1. file summary renders evidence and summary-range panels
+1. file summary renders evidence, summary-range panels, per-message timestamps in the transcript, response copy button state with clipboard write verification, source filename in quick-meta, and note-path default-directory placeholder
 2. browser file picker summary flow
 3. browser folder picker search flow
 4. approval reissue with changed save path

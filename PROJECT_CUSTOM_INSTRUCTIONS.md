@@ -75,8 +75,41 @@
   - Codex가 최신 `/work`, 최신 `/verify`를 읽고 실제 검증을 재실행합니다.
   - Codex가 `/verify`를 남깁니다.
   - Codex가 다음 Claude 지시사항을 `.pipeline/codex_feedback.md`에 씁니다.
+- `.pipeline/codex_feedback.md`는 아래 두 상태 중 하나를 반드시 명시합니다.
+  - `STATUS: implement`
+  - `STATUS: needs_operator`
+- `STATUS: implement`이면 Codex가 이미 다음 단일 슬라이스를 확정한 상태이고, Claude는 그 한 슬라이스만 구현합니다.
+- `STATUS: needs_operator`이면 Codex가 아직 truthful하게 다음 단일 슬라이스를 확정하지 못한 상태이며, Claude는 새 구현을 시작하지 않고 대기합니다.
+- 자동화 기준으로는 `STATUS` 줄 자체가 stop/go 제어 신호입니다. 멈추고 싶으면 본문 설명을 조금 바꾸는 대신 `STATUS`를 바꿔야 합니다.
 - `.pipeline/gpt_prompt.md`는 필요하면 scratch나 legacy 호환용으로 남길 수 있지만, canonical 흐름의 필수 단계는 아닙니다.
 - rolling 슬롯 파일은 매 라운드 덮어써도 되지만, 영속 truth는 항상 `/work`와 `/verify`에 남겨야 합니다.
+- 기본 모드에서 Codex는 "이번 Claude 작업 검수자 + 방향 가드"입니다. 매 라운드 전체 프로젝트 감사처럼 동작하지 않습니다.
+- Codex는 검수 후 다음 단일 슬라이스를 정하거나 `needs_operator`로 멈춰야 합니다. "슬라이스가 안 보이면 Claude가 알아서 고르라"는 식으로 넘기지 않습니다.
+- watcher는 파일 감지와 pane 전달까지만 보장합니다. pane이 바쁘거나 interrupted 상태인 경우 자동 전송 후 실제 처리 실패는 watcher 밖의 세션 상태 문제로 봅니다.
+- 전체 프로젝트 진단이나 milestone audit이 필요할 때만 별도 `report/` 문서로 분리합니다.
+
+## 6-2. 검증 범위 최소화 원칙
+- 검증은 항상 가장 좁은 relevant 범위부터 시작합니다.
+- 작은 helper, service, storage, handler 변경은 관련 Python compile + 관련 unittest까지만 우선 수행합니다.
+- browser contract를 직접 바꾸지 않았다면 `make e2e-test`를 기본값처럼 반복하지 않습니다.
+- `make e2e-test`는 아래 상황에서만 우선순위를 높입니다.
+  - 실제 브라우저 UI나 flow가 바뀐 경우
+  - browser smoke failure가 현재 blocker인 경우
+  - release 또는 ready 판정을 해야 하는 경우
+- 검증 공백이 있다는 사실만으로 다음 슬라이스를 route-by-route completeness 작업으로 확장하지 않습니다.
+
+## 6-3. 다음 슬라이스 선정 원칙
+- 다음 슬라이스는 현재 document-first MVP 사용자 가치에 직접 닿아야 합니다.
+- 다음 슬라이스 후보는 아래 우선순위로 평가합니다.
+  - 사용자가 직접 체감하는 기능 개선
+  - 현재 shipped flow의 실제 리스크 감소
+  - 문서-코드 truth mismatch 해소
+  - 내부 completeness
+- 내부 contract, helper, route, handler의 completeness는 기본 우선순위가 아닙니다.
+- reviewed-memory 작업도 계속 가능하지만, 다음 슬라이스는 user-visible reviewed-memory clarity, actual document workflow improvement, approval/evidence/search/summary quality 중 무엇을 직접 개선하는지 먼저 설명할 수 있어야 합니다.
+- 현재 planning anchor는 reviewed-memory가 사용자에게 보이고, effect가 활성화되며, 사용자가 그 effect를 명시적으로 중단할 수 있는 지점까지입니다. 그 이후 deeper reversal, conflict-visibility, route-by-route completeness는 자동 기본값으로 이어지지 않습니다.
+- `/verify`는 이 다음 슬라이스를 제안할 수 있지만, 그 제안은 "이번 Claude 작업 검수 결과"에서 자연스럽게 이어지는 범위여야 하며, 별도 요청 없는 전체 roadmap 재설계로 확장되면 안 됩니다.
+- 따라서 `.pipeline/codex_feedback.md`는 기본적으로 "단일 슬라이스 확정" 문서여야 하며, 확정하지 못했을 때만 `STATUS: needs_operator`로 멈춥니다.
 
 ## 7. 제품 방향 정리 원칙
 - 현재 단계의 핵심은 `문서 작업`입니다.

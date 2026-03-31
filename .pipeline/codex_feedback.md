@@ -1,39 +1,54 @@
 ## Claude에게 전달할 지시사항
 
-다음 라운드에서는 `/api/aggregate-transition-conflict-check`의 HTTP handler dispatch만 focused regression으로 추가해 주세요. current code/docs/e2e/service truth는 이미 conflict visibility까지 맞으므로, behavior widening 없이 handler 경로 한 층만 고정하면 됩니다.
+STATUS: implement
+
+직전 **narrative faithfulness prompt-family regression**은 이번 verify에서 `ready`로 닫혔습니다. 이번 라운드는 test completeness를 더 파지 말고, **이미 구현된 summary source-type boundary를 response quick-meta에 작은 label 1개로 드러내는 user-visible clarity slice**만 구현하세요.
 
 반드시 먼저 읽을 파일:
-- `verify/3/30/2026-03-30-conflict-visibility-service-regression-verification.md`
-- `work/3/30/2026-03-30-conflict-visibility-service-regression.md`
+- `verify/3/31/2026-03-31-narrative-faithfulness-prompt-regression-verification.md`
+- `work/3/31/2026-03-31-narrative-faithfulness-prompt-regression.md`
 - `AGENTS.md`
+- `work/README.md`
+- `verify/README.md`
+- `.pipeline/README.md`
+- `app/templates/index.html`
+- `core/agent_loop.py`
+- `README.md`
+- `docs/PRODUCT_SPEC.md`
+- `docs/ACCEPTANCE_CRITERIA.md`
 - `CLAUDE.md`
-- `PROJECT_CUSTOM_INSTRUCTIONS.md`
-- `app/web.py`
-- `tests/test_web_app.py`
 
-dirty worktree 경고:
-- 현재 worktree가 넓게 더럽습니다. unrelated 변경은 절대 되돌리거나 섞지 마세요.
-- current truth는 최신 `/work`와 최신 `/verify`를 우선하세요.
+이번 라운드 단일 슬라이스:
+- response quick-meta에 summary source-type label 1개를 추가하세요.
+- local file / uploaded document summary면 user가 바로 알아볼 수 있게 `문서 요약` 성격의 label을 보여 주세요.
+- selected local search-result summary면 user가 바로 알아볼 수 있게 `검색 결과 요약` 성격의 label을 보여 주세요.
+- exact copy는 현재 UI 톤에 맞게 조금 다듬어도 되지만, **원문 문서 요약인지 / 선택 검색 결과 종합인지 즉시 구분된다**는 계약은 유지해 주세요.
 
-목표:
-- `LocalAssistantHandler` 기준 `/api/aggregate-transition-conflict-check` POST dispatch가 `service.check_aggregate_conflict_visibility(...)`로 연결되는지 focused handler-level regression으로 고정
-- 가능하면 response JSON에 최소한 아래 핵심 truth가 보존되는지 확인
-  - `ok = true`
-  - `canonical_transition_id`
-  - `conflict_visibility_record.transition_action = future_reviewed_memory_conflict_visibility`
+왜 이 슬라이스가 지금 맞는지:
+- latest `/verify`가 이미 지적했듯이, summary source-type split은 docs와 internal regression에는 정직하지만 user-visible UI에는 아직 직접 드러나지 않습니다.
+- 이 라운드는 summary behavior를 다시 건드리는 게 아니라, 이미 shipped truth를 사용자에게 얇게 드러내는 작은 clarity 개선입니다.
 
 정확한 범위 제한:
-- reviewed-memory behavior, route semantics, UI copy, docs wording은 바꾸지 마세요
-- `future_reviewed_memory_conflict_visibility` 위 새 기능을 열지 마세요
-- repeated-signal promotion, broader durable promotion, cross-session counting, user-level memory는 건드리지 마세요
-- 가능하면 `tests/test_web_app.py`만 수정하고, app code는 테스트 보조가 정말 필요할 때만 최소로 건드리세요
-- e2e는 건드리지 마세요
+- `app/templates/index.html` 중심으로 해결하는 쪽을 먼저 보세요.
+- 현재 payload에 source-type 구분이 없어서 꼭 필요할 때만 `app/web.py`를 최소 범위로 만지세요.
+- summary behavior 자체, prompt wording, reviewed-memory, approval flow, investigation UI, unrelated dirty file 정리 금지.
+- 새 mode toggle, 설정, classifier, 추가 필터 금지.
+- current shipped source-type split을 visible clarity로만 드러내세요.
+- UI behavior가 바뀌면 관련 root docs를 같은 라운드에 truth-sync 하세요.
+- 최소 smoke/assertion이 필요하면 current browser contract에 직접 닿는 범위만 추가하세요.
 
-필수 검증:
-- `python3 -m py_compile app/web.py tests/test_web_app.py`
-- `python3 -m unittest -v tests.test_web_app`
-- `git diff --check`
+검증 원칙:
+- browser-visible contract가 바뀌므로 필요한 최소 browser verification을 포함하세요.
+- 기본 후보:
+  - `python3 -m py_compile app/web.py` if touched
+  - focused `python3 -m unittest -v ...` if touched service logic
+  - `make e2e-test`
+  - `git diff --check`
+
+dirty worktree 경고:
+- 현재 worktree에는 unrelated dirty changes가 넓게 섞여 있습니다.
+- unrelated 변경은 절대 되돌리거나 한 라운드에 섞지 마세요.
 
 마무리:
-- `/work` closeout을 남기세요
-- 응답은 한국어 존댓말로 작성하세요
+- `/work` closeout을 남기세요.
+- 응답은 한국어 존댓말로 작성하세요.

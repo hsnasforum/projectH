@@ -102,6 +102,8 @@ Priority order:
   - tracked Codex round closeout notes and operator handoff context
 - `verify/`
   - tracked verification rerun notes and truth-reconciliation handoff results
+- `report/`
+  - occasional whole-project trajectory audits or milestone-level review memos
 - `.pipeline/`
   - rolling automation handoff slots for the single-Codex tmux flow
   - `codex_feedback.md` is the primary next-Claude handoff slot written after verification
@@ -151,7 +153,7 @@ Current source-of-truth docs live in the root `docs/` directory.
 
 - When tmux or a comparable split-lane setup is used, the canonical lanes are:
   - Claude = implementation lane
-  - Codex = verification plus handoff lane
+  - Codex = round verification plus handoff lane
   - watcher = file-watch and delivery helper lane
 - Codex responsibilities:
   - read the newest `/work` note first
@@ -160,8 +162,62 @@ Current source-of-truth docs live in the root `docs/` directory.
   - leave or update the persistent `/verify` note
   - write the next Claude-facing handoff to `.pipeline/codex_feedback.md`
 - `.pipeline/codex_feedback.md` is the primary rolling latest-slot file for automation.
+- `.pipeline/codex_feedback.md` should always declare one explicit handoff status:
+  - `STATUS: implement`
+  - `STATUS: needs_operator`
+- `STATUS: implement` means Codex already fixed one exact next slice and Claude should implement that slice only.
+- `STATUS: needs_operator` means Codex did not truthfully fix one next slice yet; Claude must not self-select a slice from that handoff.
+- In automation, the status line itself is the control signal. If the operator wants to stop automatic Claude execution, change `STATUS`, not just the surrounding prose.
 - `.pipeline/gpt_prompt.md` may remain as an optional or legacy scratch slot, but it is no longer required for the canonical flow.
 - Persistent truth still lives in `/work` and `/verify`; if `.pipeline` disagrees with them, trust the latest `/work` and `/verify`.
+- watcher guarantees file-detection and pane-delivery only. If Claude or Codex is busy, interrupted, or not actually ready to receive input, that is a lane/session-state issue rather than a `.pipeline` contract issue.
+
+## Codex Review Scope
+
+- In the canonical flow, Codex is not the default whole-project auditor for every round.
+- Codex should first verify whether the latest Claude `/work` note is truthful:
+  - the claimed code changes are actually present
+  - the claimed docs changes match implementation
+  - the claimed checks were actually rerun when required
+  - the round did not widen scope away from current MVP priorities
+- Treat `/verify` as the review report for the latest Claude round plus a narrow direction guard, not as a mandatory full-repository diagnosis.
+- After that review, Codex should either:
+  - choose one exact next slice and write `STATUS: implement`, or
+  - explicitly stop automation with `STATUS: needs_operator`
+- Do not push slice selection back onto Claude with wording such as "continue only if you can find a good slice."
+- Use a broader whole-project audit only when explicitly requested or when a milestone, release, or trajectory check is needed.
+- When a broader audit is needed, record it under `report/` so it does not overwrite the meaning of `/verify`.
+
+## Slice Selection Guardrails
+
+- The next slice must improve at least one of the following:
+  - user-visible value in the current document-first MVP
+  - a concrete current-risk reduction
+  - a currently shipped contract that is actually broken or misleading
+- Do not choose the next slice only because a route, helper, contract family, or handler-level regression is still incomplete.
+- Do not let uncovered verification gaps alone drive roadmap priority unless they block a currently shipped user flow.
+- Prefer slices that the user can see, feel, or directly benefit from over internal completeness work.
+
+## Reviewed-Memory Planning Boundary
+
+- Reviewed-memory remains in scope, but planning should proceed from the user-visible loop outward, not from internal contract completeness inward.
+- For current planning and handoff purposes, the default reviewed-memory anchor is:
+  - the reviewed-memory path becomes visible to the user
+  - the effect can become active
+  - the effect can be explicitly stopped
+- Later reviewed-memory layers that may already exist in code or historical notes, such as deeper reversal, conflict-visibility, or route-by-route handler completeness, must not automatically become the next default slice.
+- If a later reviewed-memory layer is chosen again, the handoff must explain why it improves current MVP value more than summary quality, search quality, approval UX, evidence UX, or current user-visible reviewed-memory clarity.
+
+## Verification Scope Rules
+
+- Verification should be risk-based, not maximal by default.
+- Run the narrowest relevant check first.
+- Use full browser or end-to-end verification only when:
+  - a browser-visible contract changed
+  - a release or ready decision is being made
+  - a current browser flow is suspected broken
+- Do not treat every focused service or handler regression as a reason to rerun the full browser suite.
+- Do not let uncovered route-level regressions automatically become the next product slice unless they protect a currently shipped user-facing contract.
 
 ## Working Rules
 
@@ -183,6 +239,7 @@ Current source-of-truth docs live in the root `docs/` directory.
 13. Use `trace-implementer` for small additive grounded-brief trace or memory-foundation implementation slices that must keep current UI stable while moving code, tests, and docs together.
 14. Use `round-handoff` when a Codex round is complete and you need to re-check the latest `/work` note, rerun honest verification, leave or update a `/verify` note, and draft the next operator prompt without overstating progress.
 15. In the single-Codex tmux flow, keep Codex responsible for rerun verification and next-Claude feedback together; do not reintroduce a second canonical Codex lane unless the docs are updated again.
+16. In automation handoff, Claude should implement only `STATUS: implement` handoffs. If the handoff says `STATUS: needs_operator`, Claude should wait instead of choosing a slice.
 
 ## Personalization / Learning Rules
 
@@ -201,12 +258,14 @@ Current source-of-truth docs live in the root `docs/` directory.
 
 - Meaningful implementation or operator-flow work should leave a closeout note under `work/<month>/<day>/YYYY-MM-DD-<slug>.md`.
 - Meaningful verification-backed handoff or independent rerun-check work should leave a verification note under `verify/<month>/<day>/YYYY-MM-DD-<slug>.md`.
+- Occasional whole-project, milestone, or trajectory audits should leave a report under `report/YYYY-MM-DD-<slug>.md`.
 - `.pipeline/codex_feedback.md` may mirror the latest handoff for automation, but it never replaces the persistent `/work` and `/verify` notes.
 - `.pipeline/gpt_prompt.md` may remain as an optional or legacy scratch slot, but it is not required in the canonical single-Codex flow.
 - In the single-Codex flow:
   - Claude finishes implementation and leaves `/work`
   - Codex reruns verification and leaves `/verify`
   - Codex then writes `.pipeline/codex_feedback.md` for the next Claude round
+- `/verify` should stay tied to the latest Claude round. Do not turn every verification note into a whole-project audit.
 - Before starting a new meaningful round, check the newest note in today's `work/<month>/<day>/` folder. If there is no note for today, read the newest note from the previous day.
 - Before starting a verification-backed handoff round, read the newest `work/<month>/<day>/` note first and then the newest note in today's `verify/<month>/<day>/` folder if one exists.
 - New `work/` closeout notes and new `verify/` verification notes should use these sections in order unless the user explicitly asks for another format:

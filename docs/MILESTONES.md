@@ -33,7 +33,7 @@
 
 ### Milestone 3: Core QA And Trace Baseline
 - Python regression suite
-- Playwright smoke suite
+- Playwright smoke suite (scenario 1 now also covers response copy button state with clipboard write verification, per-message timestamps, source filename in quick-meta, and note-path default-directory placeholder)
 - stable mock-baseline Playwright launch contract with dedicated mock webServer startup and no preexisting-server reuse on the smoke port
 - late flip after explicit original-draft save browser smoke
 - corrected-save first bridge browser smoke

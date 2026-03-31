@@ -35,11 +35,8 @@ get_mtime() {
 send_to_pane() {
     local pane="$1"
     local msg="$2"
-    # 텍스트 입력
     tmux send-keys -t "$pane" "$msg" ""
-    # Enter 전에 충분히 대기
     sleep 0.5
-    # Enter 전송
     tmux send-keys -t "$pane" "" Enter
     sleep 0.3
 }
@@ -56,12 +53,12 @@ handle_work_updated() {
     echo -e "${CYAN}│  파일: $(basename "$filepath")${NC}"
     echo -e "${CYAN}└─────────────────────────────────────────${NC}"
 
-    local msg="AGENTS.md, work/README.md, verify/README.md, .pipeline/README.md를 먼저 읽고, 최신 /work와 같은 날 최신 /verify를 기준으로 코드/문서 truth를 교차확인한 뒤 필요한 검증을 재실행해줘. 결과는 /verify에 남기고, 다음 Claude 지시사항은 .pipeline/codex_feedback.md에 갱신해줘."
+    local msg="AGENTS.md, work/README.md, verify/README.md, .pipeline/README.md를 먼저 읽고, 최신 Claude /work를 기준으로 이번 라운드 작업만 검수해줘. 같은 날 최신 /verify를 참고해 현재 truth를 맞추고, 이번 변경에 필요한 검증만 다시 실행해 /verify에 남겨줘. 그다음 Claude가 바로 구현할 수 있는 정확한 다음 단일 슬라이스를 .pipeline/codex_feedback.md에 작성해줘. Claude에게 슬라이스 선택을 넘기지 마. 단일 슬라이스를 확정할 수 없으면 .pipeline/codex_feedback.md에 STATUS: needs_operator만 남겨줘. 전체 프로젝트 audit이 필요하면 /verify가 아니라 report/에 분리해줘."
 
     send_to_pane "$PANE_CODEX" "$msg"
 
     echo -e "${GREEN}  ✓ Codex pane에 전송 완료${NC}"
-    echo -e "${GRAY}  → Codex가 .pipeline/codex_feedback.md 저장하면 Claude에 자동 전달됩니다${NC}"
+    echo -e "${GRAY}  → Codex가 .pipeline/codex_feedback.md 저장하면 STATUS 확인 후 분기합니다${NC}"
     echo ""
 }
 
@@ -69,15 +66,47 @@ handle_codex_feedback_updated() {
     echo ""
     echo -e "${GREEN}┌─────────────────────────────────────────${NC}"
     echo -e "${GREEN}│ [STEP 2] Codex 지시사항 감지${NC}"
-    echo -e "${GREEN}│  → Claude pane에 자동 전송 중...${NC}"
+    echo -e "${GREEN}│  STATUS 확인 중...${NC}"
     echo -e "${GREEN}└─────────────────────────────────────────${NC}"
 
-    local msg=".pipeline/codex_feedback.md 읽고 다음 작업 진행해줘."
+    # STATUS 파싱
+    local status
+    status="$(grep -E '^STATUS:' "$CODEX_FEEDBACK" | head -n1 | cut -d':' -f2 | xargs)"
 
-    send_to_pane "$PANE_CLAUDE" "$msg"
+    echo -e "  STATUS: ${YELLOW}${status:-없음}${NC}"
 
-    echo -e "${GREEN}  ✓ Claude pane에 전송 완료${NC}"
-    echo -e "${GRAY}  → 다음 루프 대기 중...${NC}"
+    if [ "$status" = "implement" ]; then
+        # Claude에 자동 전달
+        echo -e "${GREEN}  → implement 확인 → Claude pane에 자동 전송 중...${NC}"
+        send_to_pane "$PANE_CLAUDE" ".pipeline/codex_feedback.md 읽고, STATUS가 implement일 때만 그 지시대로 한 슬라이스만 구현해줘. 작업 후 /work closeout 남겨줘."
+        echo -e "${GREEN}  ✓ Claude pane에 전송 완료${NC}"
+        echo -e "${GRAY}  → 다음 루프 대기 중...${NC}"
+
+    elif [ "$status" = "needs_operator" ]; then
+        # 자동 전달 금지, 사용자 알림만
+        echo ""
+        echo -e "${RED}  ══════════════════════════════════════${NC}"
+        echo -e "${RED}  ★ OPERATOR 확인 필요                  ${NC}"
+        echo -e "${RED}  ══════════════════════════════════════${NC}"
+        echo -e "${YELLOW}  자동 전달을 중단했습니다.${NC}"
+        echo -e "${YELLOW}  .pipeline/codex_feedback.md 를 확인하고${NC}"
+        echo -e "${YELLOW}  직접 Claude에 지시해 주세요.${NC}"
+        echo -e "${RED}  ══════════════════════════════════════${NC}"
+        # 터미널 벨 알림
+        echo -e "\a"
+
+    else
+        # STATUS 없거나 미정 → 자동 전달 금지
+        echo ""
+        echo -e "${RED}  ══════════════════════════════════════${NC}"
+        echo -e "${RED}  ★ STATUS 미정 - 자동 전달 중단        ${NC}"
+        echo -e "${RED}  ══════════════════════════════════════${NC}"
+        echo -e "${YELLOW}  codex_feedback.md에 STATUS가 없습니다.${NC}"
+        echo -e "${YELLOW}  STATUS: implement 또는 needs_operator${NC}"
+        echo -e "${YELLOW}  형식으로 첫 줄에 추가 후 수동 진행해 주세요.${NC}"
+        echo -e "${RED}  ══════════════════════════════════════${NC}"
+        echo -e "\a"
+    fi
     echo ""
 }
 
@@ -93,10 +122,14 @@ echo -e "  프로젝트: $PROJECT_ROOT"
 echo ""
 echo -e "  감시 대상:"
 echo -e "${GRAY}    work/**/*.md                  → Claude 완료 (→ Codex)${NC}"
-echo -e "${GRAY}    .pipeline/codex_feedback.md   → Codex 완료 (→ Claude)${NC}"
+echo -e "${GRAY}    .pipeline/codex_feedback.md   → Codex 완료 (STATUS 분기)${NC}"
 echo ""
-echo -e "${YELLOW}  완전 자동 루프 - 포커스 불필요${NC}"
-echo -e "${GRAY}  Ctrl+C 로 종료${NC}"
+echo -e "  STATUS 분기 규칙:"
+echo -e "${GREEN}    STATUS: implement    → Claude 자동 전달${NC}"
+echo -e "${RED}    STATUS: needs_operator → 자동 전달 중단, 사용자 알림${NC}"
+echo -e "${RED}    STATUS 없음           → 자동 전달 중단, 사용자 알림${NC}"
+echo ""
+echo -e "${YELLOW}  Ctrl+C 로 종료${NC}"
 echo -e "${CYAN}============================================${NC}"
 echo ""
 

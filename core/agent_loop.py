@@ -827,6 +827,7 @@ class AgentLoop:
                     "Prioritize what this part actually says or what happens over memorable wording.",
                     "If the text is narrative or fiction, summarize major characters or actors, key events, conflict changes, and the ending state of this part.",
                     "If the text is informational or argumentative, summarize the topic, main points, decisions or actions, and conclusion of this part.",
+                    "STRICT: Only include events, facts, and conclusions that appear explicitly in the excerpt. Do not add events that did not happen, substitute different words for specific terms (e.g. replacing '전시' with '공연'), or state relationship outcomes or plot conclusions beyond what the text actually shows.",
                 ]
             )
         lines.extend(
@@ -871,6 +872,7 @@ class AgentLoop:
                     "Prioritize what the document actually says or what happens over memorable wording.",
                     "If the text is narrative or fiction, summarize major characters or actors, key events, conflict changes, and the ending state in order.",
                     "If the text is informational or argumentative, summarize the topic, main points, decisions or actions, and conclusion.",
+                    "STRICT: Only include events, facts, and conclusions that appear explicitly in the text. Do not add events that did not happen, substitute different words for specific terms (e.g. replacing '전시' with '공연'), or state relationship outcomes or plot conclusions beyond what the text actually shows.",
                 ]
             )
         lines.extend(
@@ -913,6 +915,7 @@ class AgentLoop:
                     "Prioritize what the document actually says or what happens over memorable wording.",
                     "If the text is narrative or fiction, summarize major characters or actors, key events, conflict changes, and the ending state in order.",
                     "If the text is informational or argumentative, summarize the topic, main points, decisions or actions, and conclusion.",
+                    "STRICT: Only include events, facts, and conclusions that appear in the chunk notes. Do not add events that did not happen, substitute different words for specific terms, or state relationship outcomes or plot conclusions beyond what the notes actually contain.",
                 ]
             )
         lines.extend(

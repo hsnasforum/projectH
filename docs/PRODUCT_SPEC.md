@@ -39,9 +39,9 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
   - document summary with evidence and summary chunks
   - chunked long-document summary reduction that rewrites per-chunk notes into one final Korean summary instead of only echoing isolated lines
   - source-type-aware short-summary, per-chunk, and reduce prompt split plus source-type-aware `summary_chunks` selection heuristics that keep local file or uploaded-document summaries narrative-friendly and document-oriented while keeping selected local search-result summaries focused on shared facts, differences, actions, and conclusion
-  - narrative/fiction summary guidance that prioritizes characters, key events, conflict changes, and ending state over memorable wording
+  - narrative/fiction summary guidance that prioritizes characters, key events, conflict changes, and ending state over memorable wording, with a strict source-anchored faithfulness rule (no fabricated events, no term substitution, no conclusions beyond what the text shows)
   - active document context for follow-up Q&A
-  - approval-gated save of summary notes
+  - approval-gated save of summary notes with default notes directory shown in the save-path placeholder
   - response feedback capture
   - grounded-brief trace anchors on summary responses, save approvals, and relevant trace logs
   - small grounded-brief correction editor seeded with the current draft text
@@ -150,7 +150,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 ### Implemented
 - local-only web shell on `127.0.0.1`
 - recent session list
-- conversation timeline
+- conversation timeline with per-message timestamps
 - one compact `검토 후보` section inside the current session shell for eligible current `durable_candidate` items, plus one `accept`-only reviewed-but-not-applied action
 - advanced settings for provider/runtime/session/search permission
 - browser file picker and browser folder picker
@@ -261,11 +261,13 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 ## Response Panels And UI Metadata
 
 ### Implemented
-- evidence/source panel
+- evidence/source panel with source-role trust labels on each evidence item
+- source filename and summary source-type label (`문서 요약` / `선택 결과 요약`) in quick-meta bar, and source filename in transcript meta when a single source document is used
 - summary span / applied-range panel
-- response origin badge
-- claim verification / coverage panel where applicable
-- web search history panel with source previews
+- response origin badge with separate answer-mode badge for web investigation (`설명 카드` / `최신 확인`), source-role trust labels, and verification strength tags in origin detail
+- copy-to-clipboard buttons: `응답 복사`, `저장 경로 복사`, `승인 경로 복사`, `검색 기록 경로 복사` (shared helper shows clipboard-specific failure notice on both success-path rejection and fallback failure)
+- claim verification / coverage panel where applicable, with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`) leading each slot line, actionable hints for weak or unresolved slots, source role with trust level labels, and a color-coded fact-strength summary bar above the response text
+- web search history panel with source previews, answer-mode badges, color-coded verification-strength badges, and color-coded source-role trust badges in history cards
 - progress box and cancel button during streaming
 
 ### In Progress

@@ -90,6 +90,7 @@ class WebAppService:
             "web_search_tool_connected": True,
             "web_host": self.settings.web_host,
             "web_port": self.settings.web_port,
+            "notes_dir": self.settings.notes_dir,
         }
 
     def list_sessions_payload(self) -> dict[str, Any]:

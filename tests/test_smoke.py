@@ -3329,6 +3329,59 @@ class SmokeTest(unittest.TestCase):
             self.assertTrue(all("search-result text" not in prompt for prompt in short_prompts))
             self.assertTrue(all("Summary mode: chunk_note" not in prompt for prompt in model.summary_inputs))
             self.assertTrue(all("Summary mode: merged_chunk_outline" not in prompt for prompt in model.summary_inputs))
+            self.assertTrue(
+                all("STRICT:" in prompt and "Do not add events that did not happen" in prompt for prompt in short_prompts),
+                "local document short summary must include strict source-anchored faithfulness rule",
+            )
+
+    def test_local_document_prompt_strict_rule_absent_in_search_results(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+            )
+            local_chunk = loop._build_individual_chunk_summary_prompt(
+                source_label="story.txt",
+                chunk_text="태양이 영희에게 말한다.",
+                summary_source_type="local_document",
+            )
+            search_chunk = loop._build_individual_chunk_summary_prompt(
+                source_label="result.txt",
+                chunk_text="검색 결과입니다.",
+                summary_source_type="search_results",
+            )
+            local_short = loop._build_short_summary_prompt(
+                source_label="story.txt",
+                text="태양이 영희에게 말한다.",
+                summary_source_type="local_document",
+            )
+            search_short = loop._build_short_summary_prompt(
+                source_label="result.txt",
+                text="검색 결과입니���.",
+                summary_source_type="search_results",
+            )
+            local_reduce = loop._build_chunk_summary_reduce_prompt(
+                source_label="story.txt",
+                chunk_summaries=[{"summary": "chunk 1 요약", "chunk_id": "c1", "index": 1, "source_path": "story.txt"}],
+                reduce_source_type="local_document",
+            )
+            search_reduce = loop._build_chunk_summary_reduce_prompt(
+                source_label="result.txt",
+                chunk_summaries=[{"summary": "chunk 1 요약", "chunk_id": "c1", "index": 1, "source_path": "result.txt"}],
+                reduce_source_type="search_results",
+            )
+            for label, prompt in [("local_chunk", local_chunk), ("local_short", local_short), ("local_reduce", local_reduce)]:
+                self.assertIn("STRICT:", prompt, f"{label} must contain STRICT rule")
+                self.assertIn("Do not add events that did not happen", prompt, f"{label} must forbid fabricated events")
+            for label, prompt in [("search_chunk", search_chunk), ("search_short", search_short), ("search_reduce", search_reduce)]:
+                self.assertNotIn("STRICT:", prompt, f"{label} must NOT contain STRICT rule")
 
     def test_long_search_summary_reduce_uses_search_result_synthesis_prompt(self) -> None:
         with TemporaryDirectory() as tmp_dir:

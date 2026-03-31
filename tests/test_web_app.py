@@ -7190,6 +7190,311 @@ class WebAppServiceTest(unittest.TestCase):
                 )
             self.assertEqual(ctx.exception.status_code, 400)
 
+    def test_handler_dispatches_aggregate_transition_stop_to_service(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            server = LocalOnlyHTTPServer(("127.0.0.1", 0), service)
+            port = server.server_address[1]
+
+            import http.client
+            import threading
+
+            thread = threading.Thread(target=server.handle_request, daemon=True)
+            thread.start()
+
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                body = json.dumps({
+                    "session_id": "handler-stop-test",
+                    "aggregate_fingerprint": "nonexistent",
+                    "canonical_transition_id": "nonexistent",
+                }).encode("utf-8")
+                conn.request(
+                    "POST",
+                    "/api/aggregate-transition-stop",
+                    body=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Content-Length": str(len(body)),
+                        "Host": f"127.0.0.1:{port}",
+                        "Origin": f"http://127.0.0.1:{port}",
+                    },
+                )
+                resp = conn.getresponse()
+                resp_body = json.loads(resp.read().decode("utf-8"))
+                conn.close()
+            finally:
+                server.server_close()
+                thread.join(timeout=5)
+
+            self.assertEqual(resp.status, 404)
+            self.assertFalse(resp_body.get("ok", True))
+            self.assertIn("error", resp_body)
+
+    def test_handler_dispatches_aggregate_transition_stop_returns_ok(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "hstop-source-a.md"
+            second_source_path = tmp_path / "hstop-source-b.md"
+            shared_body = "# Handler Stop\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "handler-stop-ok-session"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            # Build an unblocked aggregate and drive through emit→apply→confirm
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_sid = first["response"]["source_message_id"]
+            first_aid = first["response"]["artifact_id"]
+            fc = service.submit_correction(
+                {"session_id": session_id, "message_id": first_sid, "corrected_text": corrected_text}
+            )
+            fm = [m for m in fc["session"]["messages"]
+                  if m.get("artifact_id") == first_aid and m.get("original_response_snapshot")][-1]
+            cand = fm["session_local_candidate"]
+            service.submit_candidate_confirmation(
+                {"session_id": session_id, "message_id": first_sid,
+                 "candidate_id": cand["candidate_id"], "candidate_updated_at": cand["updated_at"]}
+            )
+            service.submit_candidate_review(
+                {"session_id": session_id, "message_id": first_sid,
+                 "candidate_id": cand["candidate_id"], "candidate_updated_at": cand["updated_at"],
+                 "review_action": "accept"}
+            )
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_sid = second["response"]["source_message_id"]
+            service.submit_correction(
+                {"session_id": session_id, "message_id": second_sid, "corrected_text": corrected_text}
+            )
+            sess = service.get_session_payload(session_id)
+            agg = sess["session"]["recurrence_aggregate_candidates"][0]
+            fp = agg["aggregate_key"]["normalized_delta_fingerprint"]
+
+            emitted = service.emit_aggregate_transition(
+                {"session_id": session_id, "aggregate_fingerprint": fp, "operator_reason_or_note": "핸들러 stop 테스트"}
+            )
+            tid = emitted["canonical_transition_id"]
+            service.apply_aggregate_transition(
+                {"session_id": session_id, "aggregate_fingerprint": fp, "canonical_transition_id": tid}
+            )
+            service.confirm_aggregate_transition_result(
+                {"session_id": session_id, "aggregate_fingerprint": fp, "canonical_transition_id": tid}
+            )
+
+            # Now test stop via HTTP handler
+            server = LocalOnlyHTTPServer(("127.0.0.1", 0), service)
+            port = server.server_address[1]
+
+            import http.client
+            import threading
+
+            thread = threading.Thread(target=server.handle_request, daemon=True)
+            thread.start()
+
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                body = json.dumps({
+                    "session_id": session_id,
+                    "aggregate_fingerprint": fp,
+                    "canonical_transition_id": tid,
+                }).encode("utf-8")
+                conn.request(
+                    "POST",
+                    "/api/aggregate-transition-stop",
+                    body=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Content-Length": str(len(body)),
+                        "Host": f"127.0.0.1:{port}",
+                        "Origin": f"http://127.0.0.1:{port}",
+                    },
+                )
+                resp = conn.getresponse()
+                resp_body = json.loads(resp.read().decode("utf-8"))
+                conn.close()
+            finally:
+                server.server_close()
+                thread.join(timeout=5)
+
+            self.assertEqual(resp.status, 200)
+            self.assertTrue(resp_body["ok"])
+            self.assertIn("canonical_transition_id", resp_body)
+            self.assertEqual(resp_body["transition_record"]["record_stage"], "stopped")
+
+    def test_handler_dispatches_aggregate_transition_reverse_to_service(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            server = LocalOnlyHTTPServer(("127.0.0.1", 0), service)
+            port = server.server_address[1]
+
+            import http.client
+            import threading
+
+            thread = threading.Thread(target=server.handle_request, daemon=True)
+            thread.start()
+
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                body = json.dumps({
+                    "session_id": "handler-reverse-test",
+                    "aggregate_fingerprint": "nonexistent",
+                    "canonical_transition_id": "nonexistent",
+                }).encode("utf-8")
+                conn.request(
+                    "POST",
+                    "/api/aggregate-transition-reverse",
+                    body=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Content-Length": str(len(body)),
+                        "Host": f"127.0.0.1:{port}",
+                        "Origin": f"http://127.0.0.1:{port}",
+                    },
+                )
+                resp = conn.getresponse()
+                resp_body = json.loads(resp.read().decode("utf-8"))
+                conn.close()
+            finally:
+                server.server_close()
+                thread.join(timeout=5)
+
+            # The route dispatches to reverse_aggregate_transition;
+            # with no transition records the service returns a 404 error.
+            self.assertEqual(resp.status, 404)
+            self.assertFalse(resp_body.get("ok", True))
+            self.assertIn("error", resp_body)
+
+    def test_handler_dispatches_aggregate_transition_reverse_returns_ok(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "hrev-source-a.md"
+            second_source_path = tmp_path / "hrev-source-b.md"
+            shared_body = "# Handler Reverse\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "handler-reverse-ok-session"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            # Build an unblocked aggregate and drive through emit→apply→confirm→stop
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_sid = first["response"]["source_message_id"]
+            first_aid = first["response"]["artifact_id"]
+            fc = service.submit_correction(
+                {"session_id": session_id, "message_id": first_sid, "corrected_text": corrected_text}
+            )
+            fm = [m for m in fc["session"]["messages"]
+                  if m.get("artifact_id") == first_aid and m.get("original_response_snapshot")][-1]
+            cand = fm["session_local_candidate"]
+            service.submit_candidate_confirmation(
+                {"session_id": session_id, "message_id": first_sid,
+                 "candidate_id": cand["candidate_id"], "candidate_updated_at": cand["updated_at"]}
+            )
+            service.submit_candidate_review(
+                {"session_id": session_id, "message_id": first_sid,
+                 "candidate_id": cand["candidate_id"], "candidate_updated_at": cand["updated_at"],
+                 "review_action": "accept"}
+            )
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_sid = second["response"]["source_message_id"]
+            service.submit_correction(
+                {"session_id": session_id, "message_id": second_sid, "corrected_text": corrected_text}
+            )
+            sess = service.get_session_payload(session_id)
+            agg = sess["session"]["recurrence_aggregate_candidates"][0]
+            fp = agg["aggregate_key"]["normalized_delta_fingerprint"]
+
+            emitted = service.emit_aggregate_transition(
+                {"session_id": session_id, "aggregate_fingerprint": fp, "operator_reason_or_note": "핸들러 reverse 테스트"}
+            )
+            tid = emitted["canonical_transition_id"]
+            service.apply_aggregate_transition(
+                {"session_id": session_id, "aggregate_fingerprint": fp, "canonical_transition_id": tid}
+            )
+            service.confirm_aggregate_transition_result(
+                {"session_id": session_id, "aggregate_fingerprint": fp, "canonical_transition_id": tid}
+            )
+            service.stop_apply_aggregate_transition(
+                {"session_id": session_id, "aggregate_fingerprint": fp, "canonical_transition_id": tid}
+            )
+
+            # Now test reverse via HTTP handler
+            server = LocalOnlyHTTPServer(("127.0.0.1", 0), service)
+            port = server.server_address[1]
+
+            import http.client
+            import threading
+
+            thread = threading.Thread(target=server.handle_request, daemon=True)
+            thread.start()
+
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                body = json.dumps({
+                    "session_id": session_id,
+                    "aggregate_fingerprint": fp,
+                    "canonical_transition_id": tid,
+                }).encode("utf-8")
+                conn.request(
+                    "POST",
+                    "/api/aggregate-transition-reverse",
+                    body=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Content-Length": str(len(body)),
+                        "Host": f"127.0.0.1:{port}",
+                        "Origin": f"http://127.0.0.1:{port}",
+                    },
+                )
+                resp = conn.getresponse()
+                resp_body = json.loads(resp.read().decode("utf-8"))
+                conn.close()
+            finally:
+                server.server_close()
+                thread.join(timeout=5)
+
+            self.assertEqual(resp.status, 200)
+            self.assertTrue(resp_body["ok"])
+            self.assertIn("canonical_transition_id", resp_body)
+            self.assertEqual(resp_body["transition_record"]["record_stage"], "reversed")
+
     def test_handler_dispatches_aggregate_transition_conflict_check_to_service(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -7359,6 +7664,22 @@ class WebAppServiceTest(unittest.TestCase):
         handler.end_headers = lambda: None
 
         handler._send_json(200, {"ok": True})
+
+
+    def test_get_config_includes_notes_dir(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            notes_path = str(Path(tmp_dir) / "custom_notes")
+            settings = AppSettings(
+                app_name="config-test",
+                sessions_dir=str(Path(tmp_dir) / "sessions"),
+                task_log_path=str(Path(tmp_dir) / "task_log.jsonl"),
+                notes_dir=notes_path,
+                model_provider="mock",
+                ollama_model="",
+            )
+            service = WebAppService(settings=settings)
+            config = service.get_config()
+            self.assertEqual(config["notes_dir"], notes_path)
 
 
 if __name__ == "__main__":

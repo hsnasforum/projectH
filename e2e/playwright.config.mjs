@@ -23,7 +23,7 @@ export default defineConfig({
       + `env -u LOCAL_AI_MODEL_PROVIDER -u LOCAL_AI_OLLAMA_MODEL `
       + `LOCAL_AI_MODEL_PROVIDER=mock `
       + `LOCAL_AI_OLLAMA_MODEL= `
-      + `LOCAL_AI_MOCK_STREAM_DELAY_MS=80 `
+      + `LOCAL_AI_MOCK_STREAM_DELAY_MS=10 `
       + `python3 -m app.web --host 127.0.0.1 --port 8879'`
     ),
     url: "http://127.0.0.1:8879",

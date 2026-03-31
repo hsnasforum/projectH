@@ -48,6 +48,7 @@ Current implemented focus:
 - `.agents/skills/`, `.claude/skills/`: mirrored repo-specific skills
 - `work/`: tracked closeout notes for Codex rounds and operator handoff
 - `verify/`: tracked verification rerun notes and truth-reconciliation handoff results
+- `report/`: occasional whole-project or milestone-level audit memos
 - `.pipeline/`: rolling automation handoff slots; `codex_feedback.md` is the primary Codex -> Claude next-round prompt, and `gpt_prompt.md` is now optional or legacy
 - `plandoc/`: staged roadmap and strategy notes above the current shipped contract
 
@@ -99,6 +100,7 @@ And if helper-agent or repo-skill files changed, also sync:
 - Meaningful work should leave a closeout note at `work/<month>/<day>/YYYY-MM-DD-<slug>.md`.
 - Meaningful verification-backed handoff or rerun-check work should leave a verification note at `verify/<month>/<day>/YYYY-MM-DD-<slug>.md`.
 - `.pipeline/codex_feedback.md` is the primary rolling latest-slot handoff file for automation and may be overwritten; it does not replace `/work` or `/verify`.
+- `.pipeline/codex_feedback.md` should explicitly say either `STATUS: implement` or `STATUS: needs_operator`.
 - `.pipeline/gpt_prompt.md` may remain as an optional or legacy scratch slot, but it is no longer part of the canonical single-Codex flow.
 - Before a new round, read today's newest note first; if none exists, use the newest note from the previous day.
 - Before a new verification-backed handoff round, read the newest `work/` note first and then the newest same-day `verify/` note if one exists.
@@ -106,9 +108,25 @@ And if helper-agent or repo-skill files changed, also sync:
 
 ## Single Codex Reminder
 
-- Codex = verification and handoff lane: reads latest `/work` and `/verify`, reruns checks, updates `/verify`, then writes `.pipeline/codex_feedback.md`.
+- Codex = round verification and handoff lane: reads latest `/work` and `/verify`, reruns the checks needed to review that round, updates `/verify`, then writes `.pipeline/codex_feedback.md`.
+- `STATUS: implement` means the next slice is already fixed and should be implemented as written.
+- `STATUS: needs_operator` means the next slice is intentionally not fixed yet; do not start a new implementation round from that handoff.
+- In automation, the status line is the control signal. A prose change without a status change should not be treated as a stop/go override.
 - `gpt_prompt.md` is optional or legacy and should not be treated as required for the canonical flow.
 - If `.pipeline` contents disagree with persistent notes, trust `/work` and `/verify`.
+- Whole-project audits are exceptional and belong in `report/`; they should not silently redefine the meaning of `/verify`.
+
+## Current Handoff Interpretation Rules
+
+- Read `.pipeline/codex_feedback.md` as the latest operator handoff, but keep current MVP priorities above internal completeness.
+- Do not self-select a new slice from `.pipeline/codex_feedback.md`.
+- If the file says `STATUS: implement`, implement that one slice only.
+- If the file says `STATUS: needs_operator`, wait for a new handoff instead of creating a new `/work` round.
+- If watcher delivered the handoff but your lane is busy, interrupted, or mid-response, that is a session-state issue rather than a handoff-policy change.
+- Do not widen a reviewed-memory slice only because more internal layers or route-level regressions remain.
+- If the handoff appears to pull the work toward route-by-route completeness rather than user-visible value, prefer the smallest user-visible or current-risk-reducing interpretation that still fits the written instruction.
+- Browser or end-to-end checks are not default for every round; use them when the current change actually touches browser-visible behavior or when the handoff explicitly requires a ready or release decision.
+- For current planning purposes, treat the reviewed-memory user-visible loop through effect activation plus explicit stop as the default anchor; later reversal or conflict-visibility layers may exist, but they are not the automatic next slice.
 
 ## Response Pattern
 

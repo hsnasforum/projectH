@@ -9,22 +9,26 @@
 
 ### Implemented
 - The local web shell loads on `127.0.0.1`.
-- The home screen shows recent sessions and the current conversation timeline.
+- The home screen shows recent sessions and the current conversation timeline with per-message timestamps.
 - Users can switch between file summary, document search, and general chat.
 - Save requests return an approval object and do not write immediately.
+- The note-path input placeholder shows the default notes directory from the server config so users know where notes will be saved when the path is left empty. Covered by one focused unit test (`get_config` includes `notes_dir`) and one Playwright scenario-1 assertion (placeholder contains default directory).
 - Reissuing an approval with a new path creates a new approval instead of writing immediately.
 - Recent results can show:
-  - evidence/source panel
+  - evidence/source panel with source-role trust labels (`[공식 기반(높음)]`, `[보조 기사(보통)]`, etc.) on each evidence item
   - summary-range panel
   - response origin badge
-  - claim coverage or verification state where applicable
+  - source filename in the quick-meta bar when a single source document is used
+  - summary source-type label in the quick-meta bar (`문서 요약` for local document, `선택 결과 요약` for selected search results)
+  - claim coverage or verification state where applicable, with status tag (`[교차 확인]`, `[단일 출처]`, `[미확인]`) leading each slot line, actionable hints for weak or unresolved slots, and a color-coded fact-strength summary bar above the response text when claim coverage data exists
 - Long summaries can keep `summary_chunks` visible while still reducing chunk notes into one final Korean summary.
-- Narrative or fiction-like text should be summarized by prioritizing characters, key events, conflict changes, and ending state over isolated memorable lines.
+- Narrative or fiction-like text should be summarized by prioritizing characters, key events, conflict changes, and ending state over isolated memorable lines. Summary prompts enforce a strict source-anchored rule: only events, facts, and conclusions explicitly present in the source text are included; adding fabricated events, substituting specific terms with different words, or stating relationship outcomes beyond what the text shows is prohibited.
 - The current short-summary, per-chunk chunk-note, and final reduce prompts, plus the internal `summary_chunks` selection heuristic, may split truthfully by existing source boundary only: local file or uploaded-document summaries keep the narrative-friendly document-flow guidance, while selected local search-result summaries keep search-synthesis guidance focused on shared facts, differences, actions, and conclusion.
 - Streaming requests show progress and can be cancelled.
 - PDF files with a text layer can be read.
 - Image-only/scanned PDFs return OCR-not-supported guidance instead of silently failing.
-- Web investigation history is saved locally and can be reloaded in-session.
+- Web investigation history is saved locally and can be reloaded in-session. History cards show answer-mode, verification-strength, and source-role trust badges in the header for quick scanning.
+- Copy-to-clipboard buttons with purpose-specific labels: `응답 복사`, `저장 경로 복사`, `승인 경로 복사`, `검색 기록 경로 복사`. All share one `copyTextValue()` helper. Both the success path (`navigator.clipboard.writeText` rejection) and the fallback path (`execCommand("copy")` failure) show a clipboard-specific failure notice instead of a generic error or false success. The response copy success path happy case is covered by Playwright scenario-1 assertions for button state gating and actual clipboard write verification. The rejection and fallback failure branches are verified by code review only (not reachable in current Chromium-based Playwright baseline).
 - Assistant responses can store a feedback label and optional reason.
 - Grounded-brief summary responses can persist one stable `artifact_id` plus `artifact_kind = grounded_brief`.
 - Save approvals and relevant approval / write / feedback traces can carry the same `artifact_id` when applicable.
@@ -39,7 +43,9 @@
 ### In Progress
 - Entity-card web investigation should prioritize agreement-backed facts over noisy snippets.
 - Reinvestigation should improve weak slots before weak facts are shown as stable facts.
-- Latest-update responses should remain clearly separated from entity-card responses.
+- Latest-update responses should remain clearly separated from entity-card responses. The response origin area shows a separate answer-mode badge (`설명 카드` or `최신 확인`) for web investigation responses.
+- Claim coverage slots show source role with trust level (`공식 기반 (신뢰도 높음)`, `보조 커뮤니티 (신뢰도 낮음)`, etc.) on a dedicated line to help users judge source quality at a glance.
+- Response origin detail for web investigation shows source roles with compact trust labels (`출처 유형 공식 기반(높음), 보조 기사(보통)`).
 
 ### Not Implemented
 - OCR execution

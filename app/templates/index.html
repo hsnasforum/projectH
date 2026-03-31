@@ -243,6 +243,13 @@
       gap: 4px;
     }
 
+    .history-badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-items: center;
+    }
+
     .history-item-title strong {
       font-size: 14px;
     }
@@ -482,6 +489,12 @@
       color: var(--muted);
     }
 
+    .message-when {
+      font-size: 11px;
+      color: var(--muted);
+      opacity: 0.7;
+    }
+
     .message-header-left,
     .message-header-right {
       display: inline-flex;
@@ -538,6 +551,101 @@
       font-weight: 700;
       text-transform: uppercase;
       border: 1px solid transparent;
+    }
+
+    .answer-mode-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+      background: rgba(59, 130, 246, 0.12);
+      color: #2563eb;
+      border: 1px solid rgba(59, 130, 246, 0.25);
+    }
+
+    .verification-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+    }
+    .verification-badge.ver-strong {
+      background: rgba(22, 163, 74, 0.12);
+      color: #15803d;
+      border: 1px solid rgba(22, 163, 74, 0.25);
+    }
+    .verification-badge.ver-medium {
+      background: rgba(202, 138, 4, 0.12);
+      color: #a16207;
+      border: 1px solid rgba(202, 138, 4, 0.25);
+    }
+    .verification-badge.ver-weak {
+      background: rgba(220, 38, 38, 0.12);
+      color: #dc2626;
+      border: 1px solid rgba(220, 38, 38, 0.25);
+    }
+
+    .source-role-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-size: 9px;
+      font-weight: 600;
+    }
+    .source-role-badge.trust-high {
+      background: rgba(22, 163, 74, 0.08);
+      color: #15803d;
+      border: 1px solid rgba(22, 163, 74, 0.18);
+    }
+    .source-role-badge.trust-medium {
+      background: rgba(202, 138, 4, 0.08);
+      color: #a16207;
+      border: 1px solid rgba(202, 138, 4, 0.18);
+    }
+    .source-role-badge.trust-low {
+      background: rgba(220, 38, 38, 0.08);
+      color: #dc2626;
+      border: 1px solid rgba(220, 38, 38, 0.18);
+    }
+
+    .fact-strength-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      background: rgba(29, 27, 23, 0.04);
+      border: 1px solid rgba(29, 27, 23, 0.08);
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+    .fact-strength-bar .fact-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .fact-strength-bar .fact-count {
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-size: 11px;
+    }
+    .fact-strength-bar .fact-count.strong {
+      background: rgba(22, 163, 74, 0.12);
+      color: #15803d;
+    }
+    .fact-strength-bar .fact-count.weak {
+      background: rgba(202, 138, 4, 0.12);
+      color: #a16207;
+    }
+    .fact-strength-bar .fact-count.missing {
+      background: rgba(220, 38, 38, 0.12);
+      color: #dc2626;
     }
 
     .origin-badge.mock {
@@ -1256,20 +1364,23 @@
               <strong class="section-title">응답</strong>
               <div id="response-origin-group" class="origin-group hidden">
                 <span id="response-origin-badge" class="origin-badge">SYSTEM</span>
+                <span id="response-answer-mode-badge" class="answer-mode-badge" hidden></span>
                 <span id="response-origin-detail" class="origin-detail"></span>
               </div>
+              <button id="response-copy-text" data-testid="response-copy-text" class="copy-button subtle" type="button" hidden>응답 복사</button>
             </div>
             <div id="response-quick-meta" class="quick-meta hidden">
               <div id="response-quick-meta-text" class="quick-meta-text"></div>
               <div id="response-saved-path-row" class="path-row hidden">
                 <span id="response-saved-path" class="path-text"></span>
-                <button id="response-copy-path" class="copy-button subtle" type="button">경로 복사</button>
+                <button id="response-copy-path" class="copy-button subtle" type="button">저장 경로 복사</button>
               </div>
               <div id="response-search-record-row" class="path-row hidden">
                 <span id="response-search-record" class="path-text"></span>
-                <button id="response-copy-search-record" class="copy-button subtle" type="button">검색 기록 복사</button>
+                <button id="response-copy-search-record" class="copy-button subtle" type="button">검색 기록 경로 복사</button>
               </div>
             </div>
+            <div id="fact-strength-bar" data-testid="fact-strength-bar" class="fact-strength-bar" hidden></div>
             <pre id="response-text" data-testid="response-text">아직 보낸 요청이 없습니다.</pre>
             <div id="response-feedback-box" class="feedback-bar hidden">
               <div id="response-feedback-status" class="hint"></div>
@@ -1421,7 +1532,7 @@
               </label>
               <div class="approval-actions">
                 <button id="reissue-button" data-testid="reissue-button" class="secondary" type="button">새 경로로 승인 다시 만들기</button>
-                <button id="approval-copy-path" class="copy-button subtle" type="button">경로 복사</button>
+                <button id="approval-copy-path" class="copy-button subtle" type="button">승인 경로 복사</button>
               </div>
             </div>
             <pre id="approval-preview"></pre>
@@ -1448,8 +1559,10 @@
     const progressNote = document.getElementById("progress-note");
     const cancelRequestButton = document.getElementById("cancel-request");
     const responseText = document.getElementById("response-text");
+    const factStrengthBar = document.getElementById("fact-strength-bar");
     const responseOriginGroup = document.getElementById("response-origin-group");
     const responseOriginBadge = document.getElementById("response-origin-badge");
+    const responseAnswerModeBadge = document.getElementById("response-answer-mode-badge");
     const responseOriginDetail = document.getElementById("response-origin-detail");
     const responseQuickMeta = document.getElementById("response-quick-meta");
     const responseQuickMetaText = document.getElementById("response-quick-meta-text");
@@ -1481,6 +1594,7 @@
     const responseSavedPathRow = document.getElementById("response-saved-path-row");
     const responseSavedPath = document.getElementById("response-saved-path");
     const responseCopyPathButton = document.getElementById("response-copy-path");
+    const responseCopyTextButton = document.getElementById("response-copy-text");
     const responseSearchRecordRow = document.getElementById("response-search-record-row");
     const responseSearchRecord = document.getElementById("response-search-record");
     const responseCopySearchRecordButton = document.getElementById("response-copy-search-record");
@@ -1600,6 +1714,23 @@
       }
     }
 
+    function formatMessageWhen(value) {
+      if (!value) return "";
+      try {
+        const date = new Date(value);
+        const now = new Date();
+        const sameDay = date.getFullYear() === now.getFullYear()
+          && date.getMonth() === now.getMonth()
+          && date.getDate() === now.getDate();
+        if (sameDay) {
+          return date.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
+        }
+        return date.toLocaleString("ko-KR");
+      } catch (error) {
+        return String(value);
+      }
+    }
+
     function formatWhen(value) {
       if (!value) return "시간 정보 없음";
       try {
@@ -1625,17 +1756,19 @@
         : [];
       const verificationLabel = String(origin.verification_label || "").trim();
 
+      const answerModeLabel = formatAnswerModeLabel(answerMode);
+      const isInvestigation = answerMode === "entity_card" || answerMode === "latest_update";
+
       const detailParts = [label];
-      if (answerMode === "entity_card") detailParts.push("설명 카드");
-      if (answerMode === "latest_update") detailParts.push("최신 확인");
-      if (verificationLabel) detailParts.push(verificationLabel);
+      if (verificationLabel) detailParts.push(formatVerificationLabel(verificationLabel));
       if (model) detailParts.push(`모델 ${model}`);
-      if (sourceRoles.length > 0) detailParts.push(`출처 ${sourceRoles.join(", ")}`);
+      if (sourceRoles.length > 0) detailParts.push(`출처 유형 ${sourceRoles.map(formatSourceRoleCompact).join(", ")}`);
       if (kind === "approval") detailParts.push("승인/취소 처리");
       return {
         provider,
         badge,
         detail: detailParts.join(" · "),
+        answerModeBadge: isInvestigation ? answerModeLabel : "",
       };
     }
 
@@ -2045,10 +2178,12 @@
       if (event.event === "text_delta") {
         const current = responseText.textContent === "아직 보낸 요청이 없습니다." ? "" : responseText.textContent;
         responseText.textContent = `${current}${event.delta || ""}`;
+        showElement(responseCopyTextButton, true);
         return;
       }
       if (event.event === "text_replace") {
         responseText.textContent = event.text || "";
+        showElement(responseCopyTextButton, Boolean(event.text));
         return;
       }
       if (event.event === "final") {
@@ -2174,6 +2309,7 @@
         document.getElementById("user-text").value = promptText;
         startProgress("follow_up", currentProvider(), currentModel());
         responseText.textContent = "";
+        showElement(responseCopyTextButton, false);
         renderResponseOrigin(null);
         const data = await submitStreamPayload({
           session_id: state.currentSessionId,
@@ -2202,6 +2338,7 @@
       try {
         startProgress(progressMode, currentProvider(), currentModel());
         responseText.textContent = "";
+        showElement(responseCopyTextButton, false);
         renderResponseOrigin(null);
         const data = await submitStreamPayload({
           ...buildSharedRequestSettings(),
@@ -2364,6 +2501,13 @@
         role.textContent = message.role === "user" ? "사용자" : "비서";
         left.appendChild(role);
 
+        if (message.created_at) {
+          const when = document.createElement("span");
+          when.className = "message-when";
+          when.textContent = formatMessageWhen(message.created_at);
+          left.appendChild(when);
+        }
+
         if (message.role !== "user" && message.status) {
           const statusBadge = document.createElement("span");
           applyStatusBadge(statusBadge, message.status);
@@ -2399,7 +2543,10 @@
 
         const metaLines = [];
         if (message.status) metaLines.push(`상태 ${compactStatusLabel(message.status)}`);
-        if (Array.isArray(message.selected_source_paths) && message.selected_source_paths.length > 0) {
+        if (Array.isArray(message.selected_source_paths) && message.selected_source_paths.length === 1) {
+          const sourceName = String(message.selected_source_paths[0] || "").split(/[\\/]/).filter(Boolean).pop() || "출처 1개";
+          metaLines.push(`출처 ${sourceName}`);
+        } else if (Array.isArray(message.selected_source_paths) && message.selected_source_paths.length > 1) {
           metaLines.push(`출처 ${message.selected_source_paths.length}개`);
         }
         if (Array.isArray(message.evidence) && message.evidence.length > 0) {
@@ -2460,7 +2607,7 @@
           const copyButton = document.createElement("button");
           copyButton.type = "button";
           copyButton.className = "copy-button subtle";
-          copyButton.textContent = "검색 기록 복사";
+          copyButton.textContent = "검색 기록 경로 복사";
           copyButton.addEventListener("click", () => {
             copyTextValue(message.web_search_record_path, "검색 기록 경로를 복사했습니다.").catch(renderError);
           });
@@ -2511,12 +2658,19 @@
       if (!formattedOrigin) {
         responseOriginBadge.className = "origin-badge system";
         responseOriginBadge.textContent = "SYSTEM";
+        showElement(responseAnswerModeBadge, false);
         responseOriginDetail.textContent = "";
         return;
       }
 
       responseOriginBadge.className = `origin-badge ${formattedOrigin.provider}`;
       responseOriginBadge.textContent = formattedOrigin.badge;
+      if (formattedOrigin.answerModeBadge) {
+        responseAnswerModeBadge.textContent = formattedOrigin.answerModeBadge;
+        showElement(responseAnswerModeBadge, true);
+      } else {
+        showElement(responseAnswerModeBadge, false);
+      }
       responseOriginDetail.textContent = formattedOrigin.detail;
     }
 
@@ -2941,8 +3095,12 @@
       const value = String(text || "").trim();
       if (!value) return;
       if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(value);
-        renderNotice(successMessage);
+        try {
+          await navigator.clipboard.writeText(value);
+          renderNotice(successMessage);
+        } catch (_clipboardError) {
+          renderNotice("클립보드 복사에 실패했습니다. 브라우저 권한을 확인하거나 텍스트를 직접 선택해 복사해 주세요.");
+        }
         return;
       }
 
@@ -2952,22 +3110,33 @@
       helper.style.opacity = "0";
       document.body.appendChild(helper);
       helper.select();
-      document.execCommand("copy");
+      const copied = document.execCommand("copy");
       document.body.removeChild(helper);
-      renderNotice(successMessage);
+      if (copied) {
+        renderNotice(successMessage);
+      } else {
+        renderNotice("클립보드 복사에 실패했습니다. 텍스트를 직접 선택해 복사해 주세요.");
+      }
     }
 
     function renderResponseSummary(response, runtime) {
       const responseStatus = response?.status || "";
       const parts = [];
       if (responseStatus) parts.push(`상태 ${compactStatusLabel(responseStatus)}`);
-      if (response?.selected_source_paths?.length) parts.push(`출처 ${response.selected_source_paths.length}개`);
+      const contextKind = String(response?.active_context?.kind || "").trim();
+      if (contextKind === "search") {
+        parts.push("선택 결과 요약");
+      } else if (contextKind === "document" && (response?.summary_chunks?.length || response?.evidence?.length)) {
+        parts.push("문서 요약");
+      }
+      if (response?.selected_source_paths?.length === 1) {
+        const sourceName = String(response.selected_source_paths[0] || "").split(/[\\/]/).filter(Boolean).pop() || "출처 1개";
+        parts.push(`출처 ${sourceName}`);
+      } else if (response?.selected_source_paths?.length > 1) {
+        parts.push(`출처 ${response.selected_source_paths.length}개`);
+      }
       if (response?.evidence?.length) parts.push(`근거 ${response.evidence.length}개`);
       if (response?.summary_chunks?.length) parts.push(`요약 구간 ${response.summary_chunks.length}개`);
-      if (response?.claim_coverage?.length) {
-        const claimSummary = formatClaimCoverageSummary(response.claim_coverage);
-        if (claimSummary) parts.push(`사실 검증 ${claimSummary}`);
-      }
       if (runtime?.provider) parts.push(`런타임 ${runtime.provider}`);
       if (response?.requires_approval) parts.push("승인 대기");
       if (response?.feedback?.label) {
@@ -3182,7 +3351,6 @@
           resolveCorrectionTargetMessage(data.session.messages || [], latestAssistantContext.assistant)
         );
       }
-      await fetchSessions();
       const reasonText = formatFeedbackReasonLabel(feedbackReason);
       renderNotice(
         `피드백을 '${formatFeedbackLabel(feedbackLabel)}'${reasonText ? ` · '${reasonText}'` : ""}으로 기록했습니다.`
@@ -3208,7 +3376,6 @@
           resolveCorrectionTargetMessage(data.session.messages || [], latestAssistantContext.assistant)
         );
       }
-      await fetchSessions();
       renderNotice("수정본을 기록했습니다. 저장 승인은 별도 흐름으로 유지됩니다.");
     }
 
@@ -3233,7 +3400,6 @@
         renderSession(data.session);
         renderApproval((data.session.pending_approvals || []).slice(-1)[0] || null);
       }
-      await fetchSessions();
       renderNotice("현재 수정 방향을 나중에도 다시 써도 된다는 확인을 기록했습니다. 저장 승인과는 별도입니다.");
     }
 
@@ -3262,7 +3428,6 @@
         renderSession(data.session);
         renderApproval((data.session.pending_approvals || []).slice(-1)[0] || null);
       }
-      await fetchSessions();
       renderNotice("검토 후보를 수락했습니다. 아직 적용되지는 않았습니다.");
     }
 
@@ -3281,7 +3446,6 @@
         renderSession(data.session);
         renderApproval((data.session.pending_approvals || []).slice(-1)[0] || null);
       }
-      await fetchSessions();
       const savedHistoryExists = hasSavedHistoryForArtifact(
         String(data?.artifact_id || state.latestContentVerdictArtifactId || "").trim()
       );
@@ -3309,7 +3473,6 @@
         renderSession(data.session);
         renderApproval((data.session.pending_approvals || []).slice(-1)[0] || null);
       }
-      await fetchSessions();
       renderNotice("거절 메모를 기록했습니다. 내용 거절 판정은 그대로 유지됩니다.");
     }
 
@@ -3318,6 +3481,7 @@
       try {
         startProgress("corrected_save", "system", "승인 워크플로");
         responseText.textContent = "";
+        showElement(responseCopyTextButton, false);
         renderResponseOrigin({ provider: "system", badge: "SYSTEM", label: "시스템 응답", kind: "approval" });
         const data = await submitStreamPayload({
           session_id: state.currentSessionId,
@@ -3385,7 +3549,7 @@
         const sourceRole = item.source_role || "";
         const snippet = truncateDisplayText(item.snippet || "");
         const duplicateName = counts[sourceName] > 1;
-        const roleSuffix = sourceRole ? ` [${sourceRole}]` : "";
+        const roleSuffix = sourceRole ? ` [${formatSourceRoleCompact(sourceRole)}]` : "";
         const titleSuffix = sharedPath ? roleSuffix : ` · ${sourceName}${roleSuffix}`;
         lines.push(`${index + 1}. ${label}${titleSuffix}`);
         if (!sharedPath && duplicateName && sourcePath) {
@@ -3466,6 +3630,51 @@
       return counts;
     }
 
+    function renderFactStrengthBar(claimCoverage) {
+      const counts = summarizeClaimCoverageCounts(claimCoverage);
+      const total = counts.strong + counts.weak + counts.missing;
+      if (total === 0) {
+        showElement(factStrengthBar, false);
+        return;
+      }
+      factStrengthBar.innerHTML = "";
+      const label = document.createElement("span");
+      label.textContent = "사실 검증:";
+      label.style.fontWeight = "600";
+      factStrengthBar.appendChild(label);
+      if (counts.strong > 0) {
+        const group = document.createElement("span");
+        group.className = "fact-group";
+        const badge = document.createElement("span");
+        badge.className = "fact-count strong";
+        badge.textContent = counts.strong;
+        group.appendChild(badge);
+        group.appendChild(document.createTextNode(" 교차 확인"));
+        factStrengthBar.appendChild(group);
+      }
+      if (counts.weak > 0) {
+        const group = document.createElement("span");
+        group.className = "fact-group";
+        const badge = document.createElement("span");
+        badge.className = "fact-count weak";
+        badge.textContent = counts.weak;
+        group.appendChild(badge);
+        group.appendChild(document.createTextNode(" 단일 출처"));
+        factStrengthBar.appendChild(group);
+      }
+      if (counts.missing > 0) {
+        const group = document.createElement("span");
+        group.className = "fact-group";
+        const badge = document.createElement("span");
+        badge.className = "fact-count missing";
+        badge.textContent = counts.missing;
+        group.appendChild(badge);
+        group.appendChild(document.createTextNode(" 미확인"));
+        factStrengthBar.appendChild(group);
+      }
+      showElement(factStrengthBar, true);
+    }
+
     function formatClaimCoverageSummary(claimCoverage) {
       const counts = summarizeClaimCoverageCounts(claimCoverage);
       return formatClaimCoverageCountSummary(counts);
@@ -3485,6 +3694,76 @@
       if (normalized === "entity_card") return "설명 카드";
       if (normalized === "latest_update") return "최신 확인";
       return "일반 검색";
+    }
+
+    function formatSourceRoleWithTrust(sourceRole) {
+      const role = String(sourceRole || "").trim();
+      if (!role) return "";
+      const trustMap = {
+        "공식 기반": "높음",
+        "백과 기반": "높음",
+        "데이터 기반": "높음",
+        "보조 기사": "보통",
+        "설명형 출처": "보통",
+        "보조 커뮤니티": "낮음",
+        "보조 출처": "낮음",
+      };
+      const trust = trustMap[role];
+      return trust ? `${role} (신뢰도 ${trust})` : role;
+    }
+
+    function formatSourceRoleCompact(sourceRole) {
+      const role = String(sourceRole || "").trim();
+      if (!role) return "";
+      const trustMap = {
+        "공식 기반": "높음",
+        "백과 기반": "높음",
+        "데이터 기반": "높음",
+        "보조 기사": "보통",
+        "설명형 출처": "보통",
+        "보조 커뮤니티": "낮음",
+        "보조 출처": "낮음",
+      };
+      const trust = trustMap[role];
+      return trust ? `${role}(${trust})` : role;
+    }
+
+    function formatVerificationLabel(label) {
+      const normalized = String(label || "").trim();
+      if (!normalized) return "";
+      const strongLabels = ["공식+기사 교차 확인", "공식 확인 중심", "기사 교차 확인", "설명형 다중 출처 합의"];
+      const mediumLabels = ["공식 단일 출처", "설명형 단일 출처"];
+      if (strongLabels.includes(normalized)) return `검증: ${normalized} [강]`;
+      if (mediumLabels.includes(normalized)) return `검증: ${normalized} [중]`;
+      return `검증: ${normalized} [약]`;
+    }
+
+    function verificationStrengthClass(label) {
+      const normalized = String(label || "").trim();
+      const strongLabels = ["공식+기사 교차 확인", "공식 확인 중심", "기사 교차 확인", "설명형 다중 출처 합의"];
+      const mediumLabels = ["공식 단일 출처", "설명형 단일 출처"];
+      if (strongLabels.includes(normalized)) return "ver-strong";
+      if (mediumLabels.includes(normalized)) return "ver-medium";
+      return "ver-weak";
+    }
+
+    function formatVerificationBadge(label) {
+      const normalized = String(label || "").trim();
+      if (!normalized) return "";
+      const strongLabels = ["공식+기사 교차 확인", "공식 확인 중심", "기사 교차 확인", "설명형 다중 출처 합의"];
+      const mediumLabels = ["공식 단일 출처", "설명형 단일 출처"];
+      if (strongLabels.includes(normalized)) return `검증 강`;
+      if (mediumLabels.includes(normalized)) return `검증 중`;
+      return `검증 약`;
+    }
+
+    function sourceRoleTrustClass(sourceRole) {
+      const role = String(sourceRole || "").trim();
+      const highRoles = ["공식 기반", "백과 기반", "데이터 기반"];
+      const mediumRoles = ["보조 기사", "설명형 출처"];
+      if (highRoles.includes(role)) return "trust-high";
+      if (mediumRoles.includes(role)) return "trust-medium";
+      return "trust-low";
     }
 
     function formatClaimRenderedAs(renderedAs) {
@@ -3534,14 +3813,21 @@
         const progressLabel = formatClaimProgress(item);
         const focusPrefix = item.is_focus_slot ? "재조사 대상 · " : "";
 
-        lines.push(`${index + 1}. ${slot} · ${focusPrefix}${statusLabel}`);
+        lines.push(`${index + 1}. [${statusLabel}] ${slot}${focusPrefix ? ` · ${focusPrefix.replace(/ · $/, "")}` : ""}`);
         if (value) {
           lines.push(`   값: ${value}`);
+        }
+        if (statusLabel === "미확인") {
+          lines.push(`   → 추가 출처가 필요합니다.`);
+        } else if (statusLabel === "단일 출처") {
+          lines.push(`   → 1개 출처만 확인됨. 교차 검증이 권장됩니다.`);
+        }
+        if (sourceRole) {
+          lines.push(`   출처 유형: ${formatSourceRoleWithTrust(sourceRole)}`);
         }
         const metaParts = [];
         if (supportCount > 0) metaParts.push(`근거 ${supportCount}건`);
         if (candidateCount > supportCount) metaParts.push(`후보 ${candidateCount}건`);
-        if (sourceRole) metaParts.push(`대표 출처: ${sourceRole}`);
         if (renderedAs) metaParts.push(`표시: ${renderedAs}`);
         if (progressLabel) metaParts.push(`변화: ${progressLabel}`);
         if (metaParts.length > 0) {
@@ -3833,7 +4119,6 @@
                 if (data.session) {
                   renderSession(data.session);
                 }
-                await fetchSessions();
               } catch (error) {
                 renderError(error);
               }
@@ -3868,7 +4153,6 @@
               if (data.session) {
                 renderSession(data.session);
               }
-              await fetchSessions();
             } catch (error) {
               renderError(error);
             }
@@ -3905,7 +4189,6 @@
               if (data.session) {
                 renderSession(data.session);
               }
-              await fetchSessions();
             } catch (error) {
               renderError(error);
             }
@@ -3933,7 +4216,6 @@
               if (data.session) {
                 renderSession(data.session);
               }
-              await fetchSessions();
             } catch (error) {
               renderError(error);
             }
@@ -3961,7 +4243,6 @@
               if (data.session) {
                 renderSession(data.session);
               }
-              await fetchSessions();
             } catch (error) {
               renderError(error);
             }
@@ -4003,7 +4284,6 @@
               if (data.session) {
                 renderSession(data.session);
               }
-              await fetchSessions();
             } catch (error) {
               renderError(error);
             }
@@ -4046,6 +4326,41 @@
         const title = document.createElement("strong");
         title.textContent = item.query || "검색 기록";
         titleWrap.appendChild(title);
+        const answerMode = String(item.answer_mode || "").trim();
+        const isInvestigation = answerMode === "entity_card" || answerMode === "latest_update";
+        const badgeRow = document.createElement("div");
+        badgeRow.className = "history-badge-row";
+        let hasBadges = false;
+        if (isInvestigation) {
+          const modeBadge = document.createElement("span");
+          modeBadge.className = "answer-mode-badge";
+          modeBadge.textContent = formatAnswerModeLabel(answerMode);
+          badgeRow.appendChild(modeBadge);
+          hasBadges = true;
+        }
+        if (item.verification_label) {
+          const verBadge = document.createElement("span");
+          verBadge.className = `verification-badge ${verificationStrengthClass(item.verification_label)}`;
+          verBadge.textContent = formatVerificationBadge(item.verification_label);
+          badgeRow.appendChild(verBadge);
+          hasBadges = true;
+        }
+        const headerSourceRoles = Array.isArray(item.source_roles)
+          ? item.source_roles.map((role) => String(role || "").trim()).filter(Boolean)
+          : [];
+        if (headerSourceRoles.length > 0) {
+          const uniqueRoles = [...new Set(headerSourceRoles)];
+          uniqueRoles.forEach((role) => {
+            const roleBadge = document.createElement("span");
+            roleBadge.className = `source-role-badge ${sourceRoleTrustClass(role)}`;
+            roleBadge.textContent = formatSourceRoleCompact(role);
+            badgeRow.appendChild(roleBadge);
+          });
+          hasBadges = true;
+        }
+        if (hasBadges) {
+          titleWrap.appendChild(badgeRow);
+        }
         const meta = document.createElement("span");
         const resultCount = Number(item.result_count || 0);
         const pageCount = Number(item.page_count || 0);
@@ -4062,15 +4377,8 @@
         }
 
         const detailLines = [];
-        detailLines.push(formatAnswerModeLabel(item.answer_mode));
-        if (item.verification_label) {
-          detailLines.push(item.verification_label);
-        }
-        const sourceRoles = Array.isArray(item.source_roles)
-          ? item.source_roles.map((role) => String(role || "").trim()).filter(Boolean)
-          : [];
-        if (sourceRoles.length > 0) {
-          detailLines.push(`출처 ${sourceRoles.join(", ")}`);
+        if (!isInvestigation) {
+          detailLines.push(formatAnswerModeLabel(item.answer_mode));
         }
         const claimCoverageSummary = formatClaimCoverageCountSummary(item.claim_coverage_summary);
         if (claimCoverageSummary) {
@@ -4162,7 +4470,7 @@
         const copyButton = document.createElement("button");
         copyButton.type = "button";
         copyButton.className = "copy-button subtle";
-        copyButton.textContent = "경로 복사";
+        copyButton.textContent = "검색 기록 경로 복사";
         copyButton.disabled = !item.record_path;
         copyButton.addEventListener("click", () => {
           copyTextValue(item.record_path || "", "검색 기록 경로를 복사했습니다.").catch(renderError);
@@ -4251,6 +4559,7 @@
       const correctionTargetMessage = resolveCorrectionTargetMessage(session.messages || [], latestAssistantMessage);
       if (latestAssistantMessage) {
         responseText.textContent = latestAssistantMessage.text || "응답 본문이 없습니다.";
+        showElement(responseCopyTextButton, Boolean(latestAssistantMessage.text));
         renderResponseOrigin(latestAssistantMessage.response_origin || null);
         renderResponseSummary(latestAssistantMessage, null);
         renderResponseFeedback(latestAssistantMessage, latestAssistantContext.userText);
@@ -4263,8 +4572,10 @@
           latestAssistantMessage.claim_coverage || [],
           latestAssistantMessage.claim_coverage_progress_summary || latestAssistantMessage.active_context?.claim_coverage_progress_summary || ""
         );
+        renderFactStrengthBar(latestAssistantMessage.claim_coverage || []);
       } else {
         responseText.textContent = "아직 보낸 요청이 없습니다.";
+        showElement(responseCopyTextButton, false);
         renderResponseOrigin(null);
         renderResponseSummary(null, null);
         renderResponseFeedback(null);
@@ -4274,6 +4585,7 @@
         renderEvidence([]);
         renderSummaryChunks([]);
         renderClaimCoverage([], "");
+        renderFactStrengthBar([]);
       }
       renderContext(session.active_context || null);
       const sessionSuggestions = latestAssistantMessage?.follow_up_suggestions || session.active_context?.suggested_prompts || [];
@@ -4288,6 +4600,7 @@
         renderSession(data.session);
       }
       responseText.textContent = data.response?.text || "응답 본문이 없습니다.";
+      showElement(responseCopyTextButton, Boolean(data.response?.text));
       renderResponseOrigin(data.response?.response_origin || null);
       renderResponseSummary(data.response || null, data.runtime_status || null);
       const latestAssistantContext = findLatestAssistantContext(data.session?.messages || []);
@@ -4303,6 +4616,7 @@
         data.response?.claim_coverage || [],
         data.response?.claim_coverage_progress_summary || data.response?.active_context?.claim_coverage_progress_summary || ""
       );
+      renderFactStrengthBar(data.response?.claim_coverage || []);
       renderPreview(data.response?.note_preview || "");
       renderContext(data.response?.active_context || data.session?.active_context || null);
       renderSuggestions(data.response?.follow_up_suggestions || data.session?.active_context?.suggested_prompts || []);
@@ -4361,6 +4675,10 @@
       setText("meta-model", data.default_model_label || "선택형 로컬 모델");
       setText("meta-session", data.default_session_id);
       updateWebSearchMeta(state.defaultWebSearchPermission);
+      const notesDir = String(data.notes_dir || "").trim();
+      if (notesDir) {
+        document.getElementById("note-path").placeholder = `비워두면 ${notesDir} 기본 경로를 사용합니다.`;
+      }
     }
 
     async function fetchSessions() {
@@ -4386,6 +4704,7 @@
       try {
         startProgress("approve", "system", "승인 워크플로");
         responseText.textContent = "";
+        showElement(responseCopyTextButton, false);
         renderResponseOrigin({ provider: "system", badge: "SYSTEM", label: "시스템 응답", kind: "approval" });
         const data = await submitStreamPayload({
           session_id: state.currentSessionId,
@@ -4414,6 +4733,7 @@
       try {
         startProgress("reissue", "system", "승인 워크플로");
         responseText.textContent = "";
+        showElement(responseCopyTextButton, false);
         renderResponseOrigin({ provider: "system", badge: "SYSTEM", label: "시스템 응답", kind: "approval" });
         const data = await submitStreamPayload({
           session_id: state.currentSessionId,
@@ -4437,6 +4757,7 @@
       try {
         startProgress("reject", "system", "승인 워크플로");
         responseText.textContent = "";
+        showElement(responseCopyTextButton, false);
         renderResponseOrigin({ provider: "system", badge: "SYSTEM", label: "시스템 응답", kind: "approval" });
         const data = await submitStreamPayload({
           session_id: state.currentSessionId,
@@ -4464,6 +4785,7 @@
       try {
         startProgress("request", currentProvider(), currentModel());
         responseText.textContent = "";
+        showElement(responseCopyTextButton, false);
         renderResponseOrigin(null);
         const data = await submitStreamPayload(await collectPayload());
         if (data?.cancelled) {
@@ -4559,6 +4881,9 @@
     });
     responseCopyPathButton.addEventListener("click", () => {
       copyTextValue(responseCopyPathButton.dataset.path || "", "저장 경로를 복사했습니다.").catch(renderError);
+    });
+    responseCopyTextButton.addEventListener("click", () => {
+      copyTextValue(responseText.textContent || "", "응답 텍스트를 복사했습니다.").catch(renderError);
     });
     responseCopySearchRecordButton.addEventListener("click", () => {
       copyTextValue(responseCopySearchRecordButton.dataset.path || "", "검색 기록 경로를 복사했습니다.").catch(renderError);

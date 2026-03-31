@@ -20,7 +20,7 @@
 9. PDF text-layer handling and OCR-not-supported guidance
 10. Permission-gated web investigation with local history
 11. Claim coverage and slot reinvestigation scaffolding
-12. Playwright smoke coverage for the main browser loop
+12. Playwright smoke coverage for the main browser loop (scenario 1 now also covers response copy button state with clipboard write verification, per-message timestamps, source filename in quick-meta, and note-path default-directory placeholder)
 13. Corrected-save first bridge Playwright smoke coverage
 14. Rejected content-verdict Playwright smoke coverage
 15. Late flip after explicit original-draft save Playwright smoke coverage

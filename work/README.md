@@ -30,6 +30,7 @@
 
 - 임시 스크립트, scratch 메모, 로그, one-off 출력
 - 이런 파일은 `tmp/` 또는 `work/local/` 아래에 두고 commit 대상에서 제외합니다.
+- whole-project audit이나 milestone review는 `/work`가 아니라 `report/`에 두는 편이 더 적절합니다.
 
 ## 권장 예시
 
@@ -42,6 +43,9 @@
 - helper-agent, skill, Codex operator flow가 바뀌면 `/work`에도 그 라운드의 이유와 영향 범위를 남겨 후속 작업자가 문맥을 이어받을 수 있게 합니다.
 - `/work`가 구현 closeout, `/verify`가 검증 결과라는 경계가 바뀌면 두 README를 같은 라운드에서 함께 갱신합니다.
 - `.pipeline/codex_feedback.md`는 자동화용 rolling 최신 슬롯입니다. 구현 truth는 항상 최신 `/work`에 남기고, `.pipeline`은 그 내용을 넘겨주기 위한 보조 수단으로만 씁니다.
+- Claude는 보통 `.pipeline/codex_feedback.md`가 `STATUS: implement`일 때만 새 구현 `/work`를 남깁니다. `STATUS: needs_operator`일 때는 새 `/work` closeout을 억지로 만들지 않습니다.
 - `.pipeline/gpt_prompt.md`는 optional/legacy scratch 슬롯로 남길 수 있지만, canonical single-Codex 흐름의 필수 단계는 아닙니다.
 - single-Codex tmux 흐름에서도 Claude가 `/work`를 남긴 뒤 Codex가 검증과 handoff를 처리하더라도, 구현의 canonical closeout은 계속 `/work`입니다.
 - 현재 helper-agent 표면에는 `trace-implementer`가 포함되며, 이 역할은 grounded-brief trace/memory foundation의 작은 구현 슬라이스를 맡는 전용 구현 서브에이전트입니다.
+- `/work`의 구현 closeout은 "무엇을 만들었는가"를 기록하는 곳이지, 단순히 아직 비어 있는 internal regression 자리를 채웠다는 이유만으로 다음 제품 우선순위를 정당화하는 곳이 아닙니다.
+- 현재 reviewed-memory 구현은 계속 허용되지만, closeout reason은 user-visible value, current-risk reduction, 또는 현재 shipped contract 정합성 중 무엇을 개선했는지 먼저 드러내야 합니다.

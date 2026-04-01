@@ -13,6 +13,8 @@ interface SessionState {
   thinkingStatus: string;
   title: string;
   abort: AbortController | null;
+  /** Briefly true after a background session finishes */
+  justCompleted: boolean;
 }
 
 function emptyState(title: string): SessionState {
@@ -24,12 +26,15 @@ function emptyState(title: string): SessionState {
     thinkingStatus: "",
     title,
     abort: null,
+    justCompleted: false,
   };
 }
 
 export function useChat(settings: AppSettings) {
   const [sessionId, setSessionId] = useState(DEFAULT_SESSION);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [notifications, setNotifications] = useState<{ id: string; title: string; sid: string }[]>([]);
+  const activeSessionRef = useRef(DEFAULT_SESSION);
 
   // Map of session states — survives session switches
   const statesRef = useRef<Map<string, SessionState>>(new Map());
@@ -74,13 +79,19 @@ export function useChat(settings: AppSettings) {
 
   const switchSession = useCallback((sid: string) => {
     // Don't abort anything — background session keeps running
+    activeSessionRef.current = sid;
     setSessionId(sid);
   }, []);
 
   const newSession = useCallback(() => {
     const id = `session-${Date.now().toString(36)}`;
     statesRef.current.set(id, emptyState(id));
+    activeSessionRef.current = id;
     setSessionId(id);
+  }, []);
+
+  const dismissNotification = useCallback((id: string) => {
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
   }, []);
 
   const send = useCallback(async (text: string, opts?: {
@@ -219,12 +230,27 @@ export function useChat(settings: AppSettings) {
         });
       }
     } finally {
+      const wasBackground = activeSessionRef.current !== targetSid;
       updateState(targetSid, {
         isStreaming: false,
         streamingText: "",
         thinkingStatus: "",
         abort: null,
+        justCompleted: wasBackground,
       });
+      if (wasBackground) {
+        const title = getState(targetSid).title || targetSid;
+        const nid = `notif-${Date.now()}`;
+        setNotifications((prev) => [...prev, { id: nid, title, sid: targetSid }]);
+        // Auto-dismiss after 5 seconds
+        setTimeout(() => {
+          setNotifications((prev) => prev.filter((n) => n.id !== nid));
+        }, 5000);
+        // Clear justCompleted after 8 seconds
+        setTimeout(() => {
+          updateState(targetSid, { justCompleted: false });
+        }, 8000);
+      }
       loadSessions();
     }
   }, [sessionId, settings, loadSessions, getState, updateState]);
@@ -261,10 +287,12 @@ export function useChat(settings: AppSettings) {
   // Current session state (for rendering)
   const current = getState(sessionId);
 
-  // Which sessions are streaming in background?
+  // Which sessions are streaming / just completed in background?
   const backgroundStreaming = new Set<string>();
+  const completedSessions = new Set<string>();
   statesRef.current.forEach((s, sid) => {
     if (sid !== sessionId && s.isStreaming) backgroundStreaming.add(sid);
+    if (s.justCompleted) completedSessions.add(sid);
   });
 
   return {
@@ -277,6 +305,9 @@ export function useChat(settings: AppSettings) {
     isStreaming: current.isStreaming,
     thinkingStatus: current.thinkingStatus,
     backgroundStreaming,
+    completedSessions,
+    notifications,
+    dismissNotification,
     send,
     approve,
     reject,

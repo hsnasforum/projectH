@@ -7,6 +7,7 @@ interface Props {
   sessions: SessionSummary[];
   currentSessionId: string;
   backgroundStreaming: Set<string>;
+  completedSessions: Set<string>;
   settings: AppSettings;
   onSelectSession: (id: string) => void;
   onNewSession: () => void;
@@ -31,6 +32,7 @@ export default function Sidebar({
   sessions,
   currentSessionId,
   backgroundStreaming,
+  completedSessions,
   settings,
   onSelectSession,
   onNewSession,
@@ -38,6 +40,10 @@ export default function Sidebar({
   onDeleteAll,
   onSettingsChange,
 }: Props) {
+  // Sort: most recently updated first
+  const sortedSessions = [...sessions].sort(
+    (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const update = (patch: Partial<AppSettings>) =>
@@ -91,7 +97,7 @@ export default function Sidebar({
           )}
         </div>
         <div className="space-y-0.5">
-          {sessions.map((s) => (
+          {sortedSessions.map((s) => (
             <div
               key={s.session_id}
               className={`
@@ -110,6 +116,11 @@ export default function Sidebar({
                   {s.title}
                   {backgroundStreaming.has(s.session_id) && (
                     <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0" title="처리 중" />
+                  )}
+                  {!backgroundStreaming.has(s.session_id) && completedSessions.has(s.session_id) && (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="2.5" className="shrink-0" title="완료">
+                      <path d="M20 6L9 17l-5-5" />
+                    </svg>
                   )}
                 </div>
                 <div className="flex items-center gap-2 mt-0.5 text-[11px] opacity-60">

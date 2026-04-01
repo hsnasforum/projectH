@@ -6573,6 +6573,12 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
         if parsed.path.startswith("/static/"):
             self._serve_static(parsed.path)
             return
+        if parsed.path == "/app" or parsed.path == "/app/":
+            self._serve_react_app()
+            return
+        if parsed.path.startswith("/assets/"):
+            self._serve_react_asset(parsed.path)
+            return
         self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "요청한 경로를 찾을 수 없습니다."}})
 
     def do_POST(self) -> None:
@@ -6723,6 +6729,46 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "public, max-age=3600")
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+    _REACT_DIST_DIR = Path(__file__).resolve().parent / "static" / "dist"
+
+    def _serve_react_app(self) -> None:
+        index_path = self._REACT_DIST_DIR / "index.html"
+        if not index_path.is_file():
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "React 앱 빌드가 없습니다. app/frontend에서 npm run build를 실행해 주세요."}})
+            return
+        try:
+            data = index_path.read_bytes()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+    def _serve_react_asset(self, url_path: str) -> None:
+        relative = url_path[len("/assets/"):]
+        if not relative or ".." in relative or relative.startswith("/"):
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "요청한 경로를 찾을 수 없습니다."}})
+            return
+        file_path = self._REACT_DIST_DIR / "assets" / relative
+        if not file_path.is_file():
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "요청한 경로를 찾을 수 없습니다."}})
+            return
+        content_type, _ = mimetypes.guess_type(file_path.name)
+        if content_type is None:
+            content_type = "application/octet-stream"
+        try:
+            data = file_path.read_bytes()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
             self.end_headers()
             self.wfile.write(data)
         except (BrokenPipeError, ConnectionResetError):

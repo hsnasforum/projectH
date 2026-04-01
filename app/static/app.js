@@ -379,6 +379,7 @@
       };
 
       const mode = activeMode();
+      const userTextValue = document.getElementById("user-text").value;
       if (mode === "file") {
         const uploadedFile = await buildUploadedFilePayload();
         if (uploadedFile) {
@@ -386,6 +387,7 @@
         } else {
           payload.source_path = sourcePathInput.value.trim();
         }
+        if (userTextValue) payload.user_text = userTextValue;
       } else if (mode === "search") {
         const uploadedSearchFiles = await buildUploadedSearchFilesPayload();
         if (uploadedSearchFiles && uploadedSearchFiles.length > 0) {
@@ -393,11 +395,12 @@
         } else {
           payload.search_root = searchRootInput.value.trim();
         }
-        payload.search_query = searchQueryInput.value.trim();
+        payload.search_query = searchQueryInput.value.trim() || userTextValue;
         payload.search_limit = document.getElementById("search-limit").value.trim();
         payload.search_only = document.getElementById("search-only").checked;
+        if (userTextValue) payload.user_text = userTextValue;
       } else {
-        payload.user_text = document.getElementById("user-text").value;
+        payload.user_text = userTextValue;
       }
       return payload;
     }
@@ -3432,6 +3435,86 @@
     claimCoverageToggleButton.addEventListener("click", () => {
       togglePanelBody(claimCoverageBody, claimCoverageToggleButton, `사실 검증 ${claimCoverageText.textContent ? claimCoverageText.textContent.split("\n").filter((line) => /^\d+\./.test(line)).length : 0}개 펼치기`, "접기");
     });
+
+    // ── Sidebar toggle ──
+    const sidebarEl = document.getElementById("sidebar");
+    const sidebarToggleBtn = document.getElementById("sidebar-toggle");
+    if (sidebarToggleBtn && sidebarEl) {
+      sidebarToggleBtn.addEventListener("click", () => {
+        const isMobile = window.innerWidth <= 768;
+        if (isMobile) {
+          sidebarEl.classList.toggle("open");
+        } else {
+          sidebarEl.classList.toggle("collapsed");
+          document.body.classList.toggle("sidebar-collapsed");
+        }
+      });
+    }
+
+    // ── Attach dropdown toggle ──
+    const attachToggle = document.getElementById("attach-toggle");
+    const attachDropdown = document.getElementById("attach-dropdown");
+    if (attachToggle && attachDropdown) {
+      attachToggle.addEventListener("click", (e) => {
+        e.preventDefault();
+        attachDropdown.classList.toggle("hidden");
+      });
+      document.addEventListener("click", (e) => {
+        if (!attachToggle.contains(e.target) && !attachDropdown.contains(e.target)) {
+          attachDropdown.classList.add("hidden");
+        }
+      });
+    }
+
+    // Close attach dropdown after picking file/folder
+    pickFileButton.addEventListener("click", () => {
+      if (attachDropdown) attachDropdown.classList.add("hidden");
+    });
+    pickFolderButton.addEventListener("click", () => {
+      if (attachDropdown) attachDropdown.classList.add("hidden");
+    });
+
+    // ── Auto-resize textarea ──
+    const userTextEl = document.getElementById("user-text");
+    if (userTextEl) {
+      userTextEl.addEventListener("input", () => {
+        userTextEl.style.height = "auto";
+        userTextEl.style.height = Math.min(userTextEl.scrollHeight, 150) + "px";
+      });
+      // ── Enter to submit, Shift+Enter for newline ──
+      userTextEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+          e.preventDefault();
+          if (!state.isBusy) {
+            requestForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+          }
+        }
+      });
+    }
+
+    // ── Scroll chat to bottom helper ──
+    const chatMessagesEl = document.getElementById("chat-messages");
+    function scrollChatToBottom() {
+      if (chatMessagesEl) {
+        requestAnimationFrame(() => {
+          chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+        });
+      }
+    }
+
+    // Patch renderTranscript to scroll after render
+    const _originalRenderTranscript = renderTranscript;
+    renderTranscript = function(messages) {
+      _originalRenderTranscript(messages);
+      scrollChatToBottom();
+    };
+
+    // Patch stopProgress to scroll after response
+    const _originalStopProgress = stopProgress;
+    stopProgress = function() {
+      _originalStopProgress();
+      scrollChatToBottom();
+    };
 
     Promise.resolve()
       .then(fetchConfig)

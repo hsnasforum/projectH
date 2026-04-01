@@ -196,6 +196,27 @@ class AgentLoop:
         except Exception:
             return self._get_active_preferences(10)
 
+    def _maybe_review_response(
+        self,
+        *,
+        draft: str,
+        user_request: str,
+        context_hint: str = "",
+        should_review: bool = False,
+    ) -> str:
+        """If 2-stage review is enabled and should_review is True, send draft to 14B for review."""
+        if not should_review or not draft or self._model_router is None:
+            return draft
+        try:
+            reviewed = self.model.review_draft(
+                draft=draft,
+                user_request=user_request,
+                context_hint=context_hint,
+            )
+            return reviewed if reviewed else draft
+        except Exception:
+            return draft
+
     def _get_active_preferences(self, budget: int = 10) -> list[dict[str, str]] | None:
         if not self.preference_store:
             return None
@@ -6032,6 +6053,16 @@ class AgentLoop:
             results=serialized_results[:8],
             pages=fetched_pages,
             ranked_sources=ranked_sources,
+        )
+        # 2-stage review: let 14B check for unsupported claims in web synthesis
+        summary_text = self._maybe_review_response(
+            draft=summary_text,
+            user_request=query,
+            context_hint="웹 검색 결과 합성",
+            should_review=(
+                effective_answer_mode in (AnswerMode.ENTITY_CARD, AnswerMode.LATEST_UPDATE)
+                or len(serialized_results) >= 3
+            ),
         )
         response_origin = self._build_web_search_origin(
             answer_mode=effective_answer_mode,

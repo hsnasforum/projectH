@@ -60,6 +60,47 @@ class OllamaModelAdapter(ModelAdapter):
         """Context manager to temporarily override the model for a call."""
         return _ModelOverrideContext(self, model_name)
 
+    _REVIEW_SYSTEM_PROMPT = (
+        "당신은 사실 확인 검토자입니다. 아래 초안을 검토하세요.\n"
+        "검토 기준:\n"
+        "1. 근거 없이 확정적으로 서술한 문장이 있으면 '~로 알려져 있습니다' 등 유보적 표현으로 수정\n"
+        "2. 출처 간 정보가 충돌하면 '출처에 따라 다릅니다'를 추가\n"
+        "3. 교차 확인 안 된 단일 출처 정보에 확정 표현이 있으면 수정\n"
+        "4. 사실이 아닌 내용(hallucination)이 보이면 해당 문장을 '확인되지 않은 정보입니다'로 교체\n"
+        "\n"
+        "수정이 필요 없으면 'OK'만 출력하세요.\n"
+        "수정이 필요하면 수정된 전체 텍스트만 출력하세요. 설명은 쓰지 마세요."
+    )
+
+    def review_draft(self, *, draft: str, user_request: str, context_hint: str = "") -> str | None:
+        """Use the heavy model (14B) to review a draft for unsupported claims."""
+        from model_adapter.router import ModelConfig
+        config = ModelConfig()
+        heavy_model = config.heavy
+
+        prompt_parts = [
+            "=== 사용자 질문 ===",
+            user_request,
+        ]
+        if context_hint:
+            prompt_parts.extend(["", "=== 맥락 ===", context_hint])
+        prompt_parts.extend(["", "=== 검토할 초안 ===", draft])
+
+        with self.use_model(heavy_model):
+            result = self._generate(
+                prompt="\n".join(prompt_parts),
+                system=self._REVIEW_SYSTEM_PROMPT,
+                enforce_korean=False,
+            )
+
+        cleaned = result.strip()
+        if not cleaned or cleaned.upper() == "OK" or cleaned == draft.strip():
+            return None
+        # Only accept if the review actually looks like a revision (not meta-commentary)
+        if len(cleaned) < len(draft) // 3:
+            return None
+        return cleaned
+
     @staticmethod
     def _format_preference_block(active_preferences: list[dict[str, str]] | None, *, korean: bool = False) -> str:
         if not active_preferences:

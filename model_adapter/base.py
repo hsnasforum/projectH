@@ -74,6 +74,10 @@ class ModelAdapter(ABC):
     def health_check(self) -> ModelRuntimeStatus:
         raise NotImplementedError
 
+    def review_draft(self, *, draft: str, user_request: str, context_hint: str = "") -> str | None:
+        """Review a draft with a stronger model. Returns corrected text or None if OK."""
+        return None
+
     def stream_respond(self, prompt: str, *, active_preferences: list[dict[str, str]] | None = None) -> Iterator[ModelStreamEvent]:
         yield ModelStreamEvent(kind=StreamEventType.TEXT_REPLACE, text=self.respond(prompt, active_preferences=active_preferences))
 

@@ -304,3 +304,41 @@ class FollowUpIntent(StrEnum):
 
 class ApprovalKind(StrEnum):
     SAVE_NOTE = "save_note"
+
+
+# ---------------------------------------------------------------------------
+# Correction lifecycle
+# ---------------------------------------------------------------------------
+
+class CorrectionStatus(StrEnum):
+    RECORDED = "recorded"
+    CONFIRMED = "confirmed"
+    PROMOTED = "promoted"
+    ACTIVE = "active"
+    STOPPED = "stopped"
+
+
+CORRECTION_STATUS_TRANSITIONS: dict[CorrectionStatus, tuple[CorrectionStatus, ...]] = {
+    CorrectionStatus.RECORDED: (CorrectionStatus.CONFIRMED,),
+    CorrectionStatus.CONFIRMED: (CorrectionStatus.PROMOTED,),
+    CorrectionStatus.PROMOTED: (CorrectionStatus.ACTIVE,),
+    CorrectionStatus.ACTIVE: (CorrectionStatus.STOPPED,),
+}
+
+
+# ---------------------------------------------------------------------------
+# Preference lifecycle (cross-session)
+# ---------------------------------------------------------------------------
+
+class PreferenceStatus(StrEnum):
+    CANDIDATE = "candidate"
+    ACTIVE = "active"
+    PAUSED = "paused"
+    REJECTED = "rejected"
+
+
+PREFERENCE_STATUS_TRANSITIONS: dict[PreferenceStatus, tuple[PreferenceStatus, ...]] = {
+    PreferenceStatus.CANDIDATE: (PreferenceStatus.ACTIVE, PreferenceStatus.REJECTED),
+    PreferenceStatus.ACTIVE: (PreferenceStatus.PAUSED, PreferenceStatus.REJECTED),
+    PreferenceStatus.PAUSED: (PreferenceStatus.ACTIVE, PreferenceStatus.REJECTED),
+}

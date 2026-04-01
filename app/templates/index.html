@@ -7,424 +7,418 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <div class="shell">
-    <section class="hero">
-      <article class="hero-card hero-copy">
-        <div class="eyebrow">Local-first Web MVP</div>
-        <h1>읽고, 찾고, 미리 보고, 승인 후 저장합니다</h1>
-        <p>
-          이 웹 셸은 브라우저에서 파일 요약, 문서 검색, 세션 기록, 승인 기반 저장 흐름을 한 번에 확인하는 데모용 MVP입니다.
-          기본값은 읽기 중심이며, 위험한 쓰기 작업은 항상 별도 승인 카드에서 멈춥니다.
-        </p>
-      </article>
-      <aside class="hero-card hero-meta">
-        <h2>현재 기본값</h2>
-        <div class="meta-list">
-          <div class="meta-row">
-            <strong>앱</strong>
-            <span id="meta-app-name">__APP_NAME__</span>
+  <!-- Sidebar -->
+  <nav class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <span class="app-title" id="meta-app-name">__APP_NAME__</span>
+      <button id="new-session" class="sidebar-new-btn" type="button">+ 새 채팅</button>
+    </div>
+
+    <div class="sidebar-sessions">
+      <div class="sidebar-section-label">최근 세션</div>
+      <div id="session-list" class="session-list"></div>
+    </div>
+
+    <div class="sidebar-extras">
+      <div id="review-queue-box" data-testid="review-queue-box" class="sidebar-panel hidden">
+        <div class="sidebar-section-label">검토 후보</div>
+        <span id="review-queue-status" class="sidebar-hint">현재 후보는 검토 수락만 기록할 수 있습니다. 아직 적용, 편집, 거절은 열지 않았습니다.</span>
+        <div id="review-queue-list" data-testid="review-queue-list" class="review-queue-list"></div>
+      </div>
+      <div id="aggregate-trigger-box" data-testid="aggregate-trigger-box" class="sidebar-panel hidden">
+        <div class="sidebar-section-label">검토 메모 적용 후보</div>
+        <span id="aggregate-trigger-status" class="sidebar-hint">현재 반복 교정 묶음은 aggregate 단위 경계만 보여주며, 아직 시작할 수 없습니다.</span>
+        <div id="aggregate-trigger-list" data-testid="aggregate-trigger-list" class="review-queue-list"></div>
+      </div>
+    </div>
+
+    <div class="sidebar-footer">
+      <details data-testid="advanced-settings" id="settings-panel" class="sidebar-settings">
+        <summary>설정</summary>
+        <div class="settings-grid">
+          <label>
+            세션 ID
+            <input id="session-id" data-testid="session-id" name="session_id" type="text" value="__DEFAULT_SESSION_ID__">
+          </label>
+          <label>
+            프로바이더
+            <select id="provider" name="provider">
+              <option value="mock">mock</option>
+              <option value="ollama">ollama</option>
+            </select>
+          </label>
+          <label>
+            모델
+            <input id="model" name="model" type="text" value="__DEFAULT_MODEL__" placeholder="예: llama3.2:latest">
+          </label>
+          <label>
+            Base URL
+            <input id="base-url" name="base_url" type="text" value="__DEFAULT_BASE_URL__">
+          </label>
+          <label>
+            검색 개수 제한
+            <input id="search-limit" name="search_limit" type="number" min="1" value="3">
+          </label>
+          <label>
+            저장 경로
+            <input id="note-path" data-testid="note-path" name="note_path" type="text" placeholder="비워두면 notes 디렉터리 기본 경로를 사용합니다.">
+          </label>
+          <label class="settings-wide">
+            선택 출처 경로
+            <textarea id="selected-paths" name="selected_paths" placeholder="검색 결과에서 특정 파일만 요약하고 싶으면 경로 또는 고유 suffix를 한 줄에 하나씩 입력해 주세요."></textarea>
+          </label>
+          <label class="settings-check">
+            <input id="skip-preflight" name="skip_preflight" type="checkbox">
+            <span>런타임 사전 확인 건너뛰기</span>
+          </label>
+        </div>
+        <p class="sidebar-hint">외부 웹 검색은 읽기 전용으로 연결되어 있고, 검색 결과 요약과 링크/스니펫을 세션별 로컬 기록으로 저장합니다. 지금은 차단/승인 필요/허용 상태를 세션별로 나눠 두고 있습니다.</p>
+      </details>
+    </div>
+  </nav>
+
+  <!-- Main chat area -->
+  <main class="chat-main" id="chat-main">
+    <!-- Header -->
+    <header class="chat-header">
+      <button class="sidebar-toggle" id="sidebar-toggle" type="button" title="메뉴">&#9776;</button>
+      <div class="chat-header-info">
+        <strong id="current-session-title">__DEFAULT_SESSION_ID__</strong>
+        <span id="current-session-meta" class="hint">아직 메시지가 없습니다.</span>
+      </div>
+      <div class="chat-header-actions">
+        <span id="meta-provider" class="header-badge">__DEFAULT_PROVIDER__</span>
+        <span id="meta-model" class="header-badge">__DEFAULT_MODEL_LABEL__</span>
+        <button id="refresh-session" class="icon-btn" type="button" title="새로고침">&#8635;</button>
+      </div>
+    </header>
+
+    <!-- Messages area (scrollable) -->
+    <div class="chat-messages" id="chat-messages">
+      <!-- Status boxes -->
+      <div id="error-box" class="status-box error hidden"></div>
+      <div id="notice-box" class="status-box notice hidden"></div>
+      <div id="runtime-box" class="status-box hidden"></div>
+
+      <!-- Transcript -->
+      <div id="transcript" class="transcript"></div>
+
+      <!-- Progress indicator (typing animation) -->
+      <div id="progress-box" data-testid="progress-box" class="typing-indicator hidden">
+        <div class="typing-avatar">
+          <span class="progress-dot"></span>
+        </div>
+        <div class="typing-content">
+          <div class="typing-dots"><span></span><span></span><span></span></div>
+          <div class="typing-meta">
+            <span id="progress-title" class="progress-title-text">응답 생성 중</span>
+            <span id="progress-detail" class="progress-detail"></span>
           </div>
-          <div class="meta-row">
-            <strong>프로바이더</strong>
-            <span id="meta-provider">__DEFAULT_PROVIDER__</span>
+          <div class="typing-footer">
+            <span id="progress-elapsed" class="progress-timer">0.0초</span>
+            <button id="cancel-request" data-testid="cancel-request" class="cancel-btn hidden" type="button">응답 취소</button>
           </div>
-          <div class="meta-row">
-            <strong>모델</strong>
-            <span id="meta-model">__DEFAULT_MODEL_LABEL__</span>
+          <div id="progress-note" class="busy-note"></div>
+        </div>
+      </div>
+
+      <!-- Response detail section (panels for latest response) -->
+      <div id="response-box" data-testid="response-box" class="assistant-card response-detail-card hidden">
+        <div class="panel-header">
+          <strong class="section-title">응답</strong>
+          <div id="response-origin-group" class="origin-group hidden">
+            <span id="response-origin-badge" class="origin-badge">SYSTEM</span>
+            <span id="response-answer-mode-badge" class="answer-mode-badge" hidden></span>
+            <span id="response-origin-detail" class="origin-detail"></span>
           </div>
-          <div class="meta-row">
-            <strong>현재 세션</strong>
-            <span id="meta-session">__DEFAULT_SESSION_ID__</span>
+          <button id="response-copy-text" data-testid="response-copy-text" class="copy-button subtle" type="button" hidden>응답 복사</button>
+        </div>
+        <div id="response-quick-meta" class="quick-meta hidden">
+          <div id="response-quick-meta-text" class="quick-meta-text"></div>
+          <div id="response-saved-path-row" class="path-row hidden">
+            <span id="response-saved-path" class="path-text"></span>
+            <button id="response-copy-path" class="copy-button subtle" type="button">저장 경로 복사</button>
           </div>
-          <div class="meta-row">
-            <strong>웹 검색</strong>
-            <span id="meta-web-search">__DEFAULT_WEB_SEARCH_PERMISSION_LABEL__</span>
+          <div id="response-search-record-row" class="path-row hidden">
+            <span id="response-search-record" class="path-text"></span>
+            <button id="response-copy-search-record" class="copy-button subtle" type="button">검색 기록 경로 복사</button>
           </div>
         </div>
-      </aside>
-    </section>
+        <div id="fact-strength-bar" data-testid="fact-strength-bar" class="fact-strength-bar" hidden></div>
+        <pre id="response-text" data-testid="response-text">아직 보낸 요청이 없습니다.</pre>
 
-    <section class="workspace">
-      <article class="grid-card">
-        <div class="card-header">
-          <h2>세션과 대화 기록</h2>
-          <div class="button-row">
-            <button id="new-session" class="secondary" type="button">새 세션</button>
-            <button id="refresh-session" class="secondary" type="button">새로고침</button>
+        <!-- Feedback -->
+        <div id="response-feedback-box" class="feedback-bar hidden">
+          <div id="response-feedback-status" class="hint"></div>
+          <div id="response-feedback-actions" class="feedback-actions">
+            <button class="feedback-button" data-feedback-value="helpful" type="button">도움 됨</button>
+            <button class="feedback-button" data-feedback-value="unclear" type="button">애매함</button>
+            <button class="feedback-button" data-feedback-value="incorrect" type="button">틀림</button>
+          </div>
+        </div>
+        <div id="response-feedback-detail-box" class="feedback-bar hidden">
+          <div id="response-feedback-reason-status" class="hint"></div>
+          <div id="response-feedback-reason-actions" class="feedback-actions">
+            <button class="feedback-button" data-feedback-reason="factual_error" type="button">사실과 다름</button>
+            <button class="feedback-button" data-feedback-reason="irrelevant_result" type="button">검색과 무관</button>
+            <button class="feedback-button" data-feedback-reason="context_miss" type="button">문맥 오해</button>
+            <button class="feedback-button" data-feedback-reason="awkward_tone" type="button">표현 어색함</button>
+          </div>
+          <div class="feedback-actions">
+            <button id="response-feedback-retry" class="secondary" type="button">피드백 반영해 다시 답변</button>
           </div>
         </div>
 
-        <div class="session-stack">
-          <div class="session-summary">
-            <strong id="current-session-title">__DEFAULT_SESSION_ID__</strong>
-            <span id="current-session-meta" class="hint">아직 메시지가 없습니다.</span>
+        <!-- Content verdict -->
+        <div id="response-content-verdict-box" data-testid="response-content-verdict-box" class="content-verdict-box hidden">
+          <div class="content-verdict-header">
+            <strong class="section-title">내용 판정</strong>
+            <span id="response-content-verdict-state" class="hint"></span>
           </div>
-          <div>
-            <p class="section-title">최근 세션</p>
-            <div id="session-list" class="session-list"></div>
+          <div id="response-content-verdict-status" class="hint"></div>
+          <div class="content-verdict-actions">
+            <button id="response-content-reject" data-testid="response-content-reject" class="danger content-verdict-button" type="button">내용 거절</button>
           </div>
-          <div id="review-queue-box" data-testid="review-queue-box" class="session-summary hidden">
-            <strong>검토 후보</strong>
-            <span id="review-queue-status" class="hint">현재 후보는 검토 수락만 기록할 수 있습니다. 아직 적용, 편집, 거절은 열지 않았습니다.</span>
-            <div id="review-queue-list" data-testid="review-queue-list" class="review-queue-list"></div>
-          </div>
-          <div id="aggregate-trigger-box" data-testid="aggregate-trigger-box" class="session-summary hidden">
-            <strong>검토 메모 적용 후보</strong>
-            <span id="aggregate-trigger-status" class="hint">현재 반복 교정 묶음은 aggregate 단위 경계만 보여주며, 아직 시작할 수 없습니다.</span>
-            <div id="aggregate-trigger-list" data-testid="aggregate-trigger-list" class="review-queue-list"></div>
+          <div id="response-content-reason-box" data-testid="response-content-reason-box" class="content-verdict-note hidden">
+            <div id="response-content-reason-status" class="hint"></div>
+            <label class="content-verdict-note-label">
+              거절 메모
+              <textarea
+                id="response-content-reason-input"
+                data-testid="response-content-reason-input"
+                name="response_content_reason_input"
+                placeholder="선택 사항: 왜 이 답변 내용을 거절했는지 짧게 남겨 두세요."
+              ></textarea>
+            </label>
+            <div class="content-verdict-actions">
+              <button
+                id="response-content-reason-submit"
+                data-testid="response-content-reason-submit"
+                class="secondary content-verdict-button"
+                type="button"
+              >거절 메모 기록</button>
+            </div>
           </div>
         </div>
 
-        <div id="transcript" class="transcript"></div>
-      </article>
+        <!-- Correction -->
+        <div id="response-correction-box" data-testid="response-correction-box" class="correction-box hidden">
+          <div class="correction-header">
+            <strong class="section-title">내용 수정</strong>
+            <span id="response-correction-state" class="hint"></span>
+          </div>
+          <div id="response-correction-status" class="hint"></div>
+          <label class="correction-label">
+            수정 텍스트
+            <textarea id="response-correction-input" data-testid="response-correction-input" name="response_correction_input" placeholder="현재 grounded brief 초안을 직접 고쳐서 기록해 주세요."></textarea>
+          </label>
+          <div class="correction-actions">
+            <button id="response-correction-submit" data-testid="response-correction-submit" class="secondary" type="button">수정본 기록</button>
+            <button id="response-correction-save-request" data-testid="response-correction-save-request" class="secondary" type="button">이 수정본으로 저장 요청</button>
+          </div>
+        </div>
 
-      <aside class="sidebar">
-        <section class="grid-card">
-          <div class="card-header">
-            <h2>요청 보내기</h2>
-            <span class="hint">파일 요약, 문서 검색, 일반 채팅을 한 화면에서 전환할 수 있습니다.</span>
+        <!-- Candidate confirmation -->
+        <div id="response-candidate-confirmation-box" data-testid="response-candidate-confirmation-box" class="candidate-confirmation-box hidden">
+          <div class="candidate-confirmation-header">
+            <strong class="section-title">수정 방향 재사용</strong>
+            <span id="response-candidate-confirmation-state" class="hint"></span>
           </div>
-          <form id="request-form" data-testid="request-form">
-            <div>
-              <p class="section-title">모드</p>
-              <div class="mode-row">
-                <label class="mode-pill">
-                  <input type="radio" name="request_mode" value="file" checked>
-                  <span>파일 요약</span>
-                </label>
-                <label class="mode-pill">
-                  <input type="radio" name="request_mode" value="search">
-                  <span>문서 검색</span>
-                </label>
-                <label class="mode-pill">
-                  <input type="radio" name="request_mode" value="chat">
-                  <span>일반 채팅</span>
-                </label>
-              </div>
-            </div>
+          <div id="response-candidate-confirmation-status" class="hint"></div>
+          <div class="candidate-confirmation-actions">
+            <button
+              id="response-candidate-confirmation-submit"
+              data-testid="response-candidate-confirmation-submit"
+              class="secondary"
+              type="button"
+            >이 수정 방향 재사용 확인</button>
+          </div>
+        </div>
+      </div>
 
-            <div id="file-fields" class="field-grid single">
-              <label>
-                파일 경로
-                <input id="source-path" data-testid="source-path" name="source_path" type="text" placeholder="/absolute/or/relative/path/to/file.pdf">
-              </label>
-              <input id="browser-file-input" data-testid="browser-file-input" type="file" class="hidden" accept=".txt,.md,.pdf,.json,.csv,.log,.yaml,.yml,.toml,.ini,.py,.ts,.tsx,.js,.jsx">
-              <div class="button-row">
-                <button id="pick-file-button" data-testid="pick-file-button" class="secondary" type="button">파일 찾기</button>
-                <button id="clear-picked-file" class="secondary hidden" type="button">선택 해제</button>
-              </div>
-              <div id="picked-file-row" class="path-row hidden">
-                <span id="picked-file-name" class="path-text"></span>
-              </div>
-              <p class="hint">브라우저 파일 선택창으로 직접 고른 파일은 로컬 서버로만 전달되며, 절대경로 대신 파일명 기준으로 처리됩니다.</p>
-            </div>
+      <!-- Panels (evidence, summary-chunks, claim-coverage, etc.) -->
+      <div id="selected-box" class="panel hidden">
+        <strong class="section-title">선택된 출처</strong>
+        <pre id="selected-text"></pre>
+      </div>
 
-            <div id="search-fields" class="field-grid hidden">
-              <label>
-                검색 루트
-                <input id="search-root" data-testid="search-root" name="search_root" type="text" placeholder="/path/to/folder">
-              </label>
-              <label>
-                검색어
-                <input id="search-query" data-testid="search-query" name="search_query" type="text" placeholder="budget">
-              </label>
-              <input id="browser-folder-input" data-testid="browser-folder-input" type="file" class="hidden" webkitdirectory directory multiple>
-              <div class="button-row">
-                <button id="pick-folder-button" data-testid="pick-folder-button" class="secondary" type="button">폴더 찾기</button>
-                <button id="clear-picked-folder" class="secondary hidden" type="button">선택 해제</button>
-              </div>
-              <div id="picked-folder-row" class="path-row hidden">
-                <span id="picked-folder-name" class="path-text"></span>
-              </div>
-              <p class="hint">브라우저 폴더 선택창으로 직접 고른 파일은 로컬 서버로만 전달되며, search_root 대신 선택 파일 목록 기준으로 검색합니다.</p>
-            </div>
+      <div id="evidence-box" data-testid="evidence-box" class="panel collapsible-panel hidden">
+        <div class="panel-header">
+          <strong class="section-title">근거와 출처</strong>
+          <button id="toggle-evidence" class="toggle-button subtle" type="button">펼치기</button>
+        </div>
+        <div id="evidence-body" class="panel-body hidden">
+          <div id="evidence-hint" class="panel-hint hidden"></div>
+          <div id="evidence-scroll-region" data-testid="evidence-scroll-region" class="panel-scroll-region">
+            <pre id="evidence-text"></pre>
+          </div>
+        </div>
+      </div>
 
-            <div id="chat-fields" class="field-grid single hidden">
-              <label>
-                메시지
-                <textarea id="user-text" name="user_text" placeholder="문서 작업과 관련된 일반 질문이나 메모를 입력해 주세요."></textarea>
-              </label>
-            </div>
+      <div id="summary-chunks-box" data-testid="summary-chunks-box" class="panel collapsible-panel hidden">
+        <div class="panel-header">
+          <strong class="section-title">요약에 반영한 구간</strong>
+          <button id="toggle-summary-chunks" class="toggle-button subtle" type="button">펼치기</button>
+        </div>
+        <div id="summary-chunks-body" class="panel-body hidden">
+          <div id="summary-chunks-hint" class="panel-hint hidden"></div>
+          <div id="summary-chunks-scroll-region" data-testid="summary-chunks-scroll-region" class="panel-scroll-region">
+            <pre id="summary-chunks-text"></pre>
+          </div>
+        </div>
+      </div>
 
-            <div class="checks">
-              <label class="check">
-                <input id="save-summary" data-testid="save-summary" name="save_summary" type="checkbox">
-                <span>요약 노트 저장 요청</span>
-              </label>
-              <label id="search-only-check" class="check hidden">
-                <input id="search-only" name="search_only" type="checkbox">
-                <span>검색 결과만 보기</span>
-              </label>
-            </div>
+      <div id="claim-coverage-box" data-testid="claim-coverage-box" class="panel collapsible-panel hidden">
+        <div class="panel-header">
+          <strong class="section-title">사실 검증 상태</strong>
+          <button id="toggle-claim-coverage" class="toggle-button subtle" type="button">펼치기</button>
+        </div>
+        <div id="claim-coverage-body" class="panel-body hidden">
+          <div id="claim-coverage-hint" class="panel-hint hidden"></div>
+          <div id="claim-coverage-scroll-region" data-testid="claim-coverage-scroll-region" class="panel-scroll-region">
+            <pre id="claim-coverage-text"></pre>
+          </div>
+        </div>
+      </div>
 
-            <details data-testid="advanced-settings">
-              <summary>고급 설정</summary>
-              <div class="field-grid" style="margin-top: 12px;">
-                <label>
-                  세션 ID
-                  <input id="session-id" data-testid="session-id" name="session_id" type="text" value="__DEFAULT_SESSION_ID__">
-                </label>
-                <label>
-                  프로바이더
-                  <select id="provider" name="provider">
-                    <option value="mock">mock</option>
-                    <option value="ollama">ollama</option>
-                  </select>
-                </label>
-                <label>
-                  모델
-                  <input id="model" name="model" type="text" value="__DEFAULT_MODEL__" placeholder="예: llama3.2:latest">
-                </label>
-                <label>
-                  Base URL
-                  <input id="base-url" name="base_url" type="text" value="__DEFAULT_BASE_URL__">
-                </label>
-                <label>
-                  검색 개수 제한
-                  <input id="search-limit" name="search_limit" type="number" min="1" value="3">
-                </label>
-                <label>
-                  외부 웹 검색 권한
-                  <select id="web-search-permission" data-testid="web-search-permission" name="web_search_permission">
-                    <option value="disabled">차단</option>
-                    <option value="approval">승인 후 허용</option>
-                    <option value="enabled">허용</option>
-                  </select>
-                </label>
-                <label>
-                  저장 경로
-                  <input id="note-path" data-testid="note-path" name="note_path" type="text" placeholder="비워두면 notes 디렉터리 기본 경로를 사용합니다.">
-                </label>
-                <label class="field-grid single">
-                  선택 출처 경로
-                  <textarea id="selected-paths" name="selected_paths" placeholder="검색 결과에서 특정 파일만 요약하고 싶으면 경로 또는 고유 suffix를 한 줄에 하나씩 입력해 주세요."></textarea>
-                </label>
-              </div>
-              <div class="checks" style="margin-top: 12px;">
-                <label class="check">
-                  <input id="skip-preflight" name="skip_preflight" type="checkbox">
-                  <span>런타임 사전 확인 건너뛰기</span>
-                </label>
-              </div>
-              <p class="hint" style="margin-top: 12px;">외부 웹 검색은 읽기 전용으로 연결되어 있고, 검색 결과 요약과 링크/스니펫을 세션별 로컬 기록으로 저장합니다. 지금은 차단/승인 필요/허용 상태를 세션별로 나눠 두고 있습니다.</p>
-            </details>
+      <div id="preview-box" class="panel hidden">
+        <strong class="section-title">노트 미리보기</strong>
+        <pre id="preview-text"></pre>
+      </div>
+      <div id="context-box" class="panel hidden">
+        <strong class="section-title">현재 문서 문맥</strong>
+        <pre id="context-text"></pre>
+      </div>
+      <div id="suggestions-box" class="panel suggestions-panel hidden">
+        <strong class="section-title">다음에 이렇게 물어볼 수 있습니다</strong>
+        <div id="suggestions-list" class="suggestion-list"></div>
+      </div>
 
-            <div class="actions">
-              <button class="primary" data-testid="submit-request" type="submit">요청 실행</button>
-              <button class="secondary" id="load-session" type="button">세션 불러오기</button>
-            </div>
-          </form>
-        </section>
+      <div id="search-history-box" class="panel hidden">
+        <div class="panel-header">
+          <strong class="section-title">최근 웹 검색 기록</strong>
+          <span id="search-history-meta" class="hint"></span>
+        </div>
+        <div id="search-history-list" class="history-list"></div>
+      </div>
 
-        <section class="grid-card">
-          <div class="card-header">
-            <h2>최근 결과</h2>
-            <span class="hint">응답 본문, 선택 출처, 노트 미리보기, 런타임 상태를 확인할 수 있습니다.</span>
+      <!-- Approval card (inline in chat) -->
+      <div id="approval-box" data-testid="approval-box" class="panel approval-box hidden">
+        <strong class="section-title">저장 승인</strong>
+        <div id="approval-meta" class="approval-meta"></div>
+        <div class="approval-inputs">
+          <label>
+            저장 경로
+            <input id="approval-path-input" data-testid="approval-path-input" name="approval_path_input" type="text" placeholder="새 저장 경로를 입력해 주세요.">
+          </label>
+          <div class="approval-actions">
+            <button id="reissue-button" data-testid="reissue-button" class="secondary" type="button">새 경로로 승인 다시 만들기</button>
+            <button id="approval-copy-path" class="copy-button subtle" type="button">승인 경로 복사</button>
           </div>
-          <div id="error-box" class="status-box error hidden"></div>
-          <div id="notice-box" class="status-box hidden"></div>
-          <div id="progress-box" data-testid="progress-box" class="status-box progress-box hidden">
-            <div class="progress-meta">
-              <div class="progress-summary">
-                <div class="progress-title">
-                  <span class="progress-dot"></span>
-                  <span id="progress-title">응답 생성 중</span>
-                </div>
-                <div id="progress-detail" class="progress-detail"></div>
-              </div>
-              <div class="button-row">
-                <div id="progress-elapsed" class="progress-timer">0.0초</div>
-                <button id="cancel-request" data-testid="cancel-request" class="secondary hidden" type="button">응답 취소</button>
-              </div>
-            </div>
-            <div id="progress-note" class="busy-note"></div>
-          </div>
-          <div id="runtime-box" class="status-box hidden"></div>
-          <div id="response-box" data-testid="response-box" class="panel">
-            <div class="panel-header">
-              <strong class="section-title">응답</strong>
-              <div id="response-origin-group" class="origin-group hidden">
-                <span id="response-origin-badge" class="origin-badge">SYSTEM</span>
-                <span id="response-answer-mode-badge" class="answer-mode-badge" hidden></span>
-                <span id="response-origin-detail" class="origin-detail"></span>
-              </div>
-              <button id="response-copy-text" data-testid="response-copy-text" class="copy-button subtle" type="button" hidden>응답 복사</button>
-            </div>
-            <div id="response-quick-meta" class="quick-meta hidden">
-              <div id="response-quick-meta-text" class="quick-meta-text"></div>
-              <div id="response-saved-path-row" class="path-row hidden">
-                <span id="response-saved-path" class="path-text"></span>
-                <button id="response-copy-path" class="copy-button subtle" type="button">저장 경로 복사</button>
-              </div>
-              <div id="response-search-record-row" class="path-row hidden">
-                <span id="response-search-record" class="path-text"></span>
-                <button id="response-copy-search-record" class="copy-button subtle" type="button">검색 기록 경로 복사</button>
-              </div>
-            </div>
-            <div id="fact-strength-bar" data-testid="fact-strength-bar" class="fact-strength-bar" hidden></div>
-            <pre id="response-text" data-testid="response-text">아직 보낸 요청이 없습니다.</pre>
-            <div id="response-feedback-box" class="feedback-bar hidden">
-              <div id="response-feedback-status" class="hint"></div>
-              <div id="response-feedback-actions" class="feedback-actions">
-                <button class="feedback-button" data-feedback-value="helpful" type="button">도움 됨</button>
-                <button class="feedback-button" data-feedback-value="unclear" type="button">애매함</button>
-                <button class="feedback-button" data-feedback-value="incorrect" type="button">틀림</button>
-              </div>
-            </div>
-            <div id="response-feedback-detail-box" class="feedback-bar hidden">
-              <div id="response-feedback-reason-status" class="hint"></div>
-              <div id="response-feedback-reason-actions" class="feedback-actions">
-                <button class="feedback-button" data-feedback-reason="factual_error" type="button">사실과 다름</button>
-                <button class="feedback-button" data-feedback-reason="irrelevant_result" type="button">검색과 무관</button>
-                <button class="feedback-button" data-feedback-reason="context_miss" type="button">문맥 오해</button>
-                <button class="feedback-button" data-feedback-reason="awkward_tone" type="button">표현 어색함</button>
-              </div>
-              <div class="feedback-actions">
-                <button id="response-feedback-retry" class="secondary" type="button">피드백 반영해 다시 답변</button>
-              </div>
-            </div>
-            <div id="response-content-verdict-box" data-testid="response-content-verdict-box" class="content-verdict-box hidden">
-              <div class="content-verdict-header">
-                <strong class="section-title">내용 판정</strong>
-                <span id="response-content-verdict-state" class="hint"></span>
-              </div>
-              <div id="response-content-verdict-status" class="hint"></div>
-              <div class="content-verdict-actions">
-                <button id="response-content-reject" data-testid="response-content-reject" class="danger content-verdict-button" type="button">내용 거절</button>
-              </div>
-              <div id="response-content-reason-box" data-testid="response-content-reason-box" class="content-verdict-note hidden">
-                <div id="response-content-reason-status" class="hint"></div>
-                <label class="content-verdict-note-label">
-                  거절 메모
-                  <textarea
-                    id="response-content-reason-input"
-                    data-testid="response-content-reason-input"
-                    name="response_content_reason_input"
-                    placeholder="선택 사항: 왜 이 답변 내용을 거절했는지 짧게 남겨 두세요."
-                  ></textarea>
-                </label>
-                <div class="content-verdict-actions">
-                  <button
-                    id="response-content-reason-submit"
-                    data-testid="response-content-reason-submit"
-                    class="secondary content-verdict-button"
-                    type="button"
-                  >거절 메모 기록</button>
-                </div>
-              </div>
-            </div>
-            <div id="response-correction-box" data-testid="response-correction-box" class="correction-box hidden">
-              <div class="correction-header">
-                <strong class="section-title">내용 수정</strong>
-                <span id="response-correction-state" class="hint"></span>
-              </div>
-              <div id="response-correction-status" class="hint"></div>
-              <label class="correction-label">
-                수정 텍스트
-                <textarea id="response-correction-input" data-testid="response-correction-input" name="response_correction_input" placeholder="현재 grounded brief 초안을 직접 고쳐서 기록해 주세요."></textarea>
-              </label>
-              <div class="correction-actions">
-                <button id="response-correction-submit" data-testid="response-correction-submit" class="secondary" type="button">수정본 기록</button>
-                <button id="response-correction-save-request" data-testid="response-correction-save-request" class="secondary" type="button">이 수정본으로 저장 요청</button>
-              </div>
-            </div>
-            <div id="response-candidate-confirmation-box" data-testid="response-candidate-confirmation-box" class="candidate-confirmation-box hidden">
-              <div class="candidate-confirmation-header">
-                <strong class="section-title">수정 방향 재사용</strong>
-                <span id="response-candidate-confirmation-state" class="hint"></span>
-              </div>
-              <div id="response-candidate-confirmation-status" class="hint"></div>
-              <div class="candidate-confirmation-actions">
-                <button
-                  id="response-candidate-confirmation-submit"
-                  data-testid="response-candidate-confirmation-submit"
-                  class="secondary"
-                  type="button"
-                >이 수정 방향 재사용 확인</button>
+        </div>
+        <pre id="approval-preview"></pre>
+        <div class="actions">
+          <button id="approve-button" data-testid="approve-button" class="primary" type="button">저장 승인</button>
+          <button id="reject-button" class="danger" type="button">취소</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Input bar (fixed bottom) -->
+    <div class="chat-input-bar">
+      <form id="request-form" data-testid="request-form" class="input-form">
+        <!-- Attachment area -->
+        <div class="input-attachments">
+          <div class="attach-menu">
+            <button type="button" class="attach-btn" id="attach-toggle" title="파일 첨부">&#128206;</button>
+            <div class="attach-dropdown hidden" id="attach-dropdown">
+              <div class="attach-dropdown-inner">
+                <button type="button" class="attach-option-btn" id="pick-file-button" data-testid="pick-file-button">파일 선택</button>
+                <button type="button" class="attach-option-btn" id="pick-folder-button" data-testid="pick-folder-button">폴더 검색</button>
               </div>
             </div>
           </div>
-          <div id="selected-box" class="panel hidden">
-            <strong class="section-title">선택된 출처</strong>
-            <pre id="selected-text"></pre>
+
+          <!-- Source path input (visible for direct path entry) -->
+          <input id="source-path" data-testid="source-path" name="source_path" type="text" placeholder="파일 경로..." class="attach-path-input">
+
+          <!-- Picked file/folder indicators -->
+          <div id="picked-file-row" class="attach-tag hidden">
+            <span id="picked-file-name"></span>
+            <button id="clear-picked-file" type="button" class="attach-tag-close">&times;</button>
           </div>
-          <div id="evidence-box" data-testid="evidence-box" class="panel hidden">
-            <div class="panel-header">
-              <strong class="section-title">근거와 출처</strong>
-              <button id="toggle-evidence" class="toggle-button subtle" type="button">펼치기</button>
-            </div>
-            <div id="evidence-body" class="panel-body hidden">
-              <div id="evidence-hint" class="panel-hint hidden"></div>
-              <div id="evidence-scroll-region" data-testid="evidence-scroll-region" class="panel-scroll-region">
-                <pre id="evidence-text"></pre>
-              </div>
-            </div>
+          <div id="picked-folder-row" class="attach-tag hidden">
+            <span id="picked-folder-name"></span>
+            <button id="clear-picked-folder" type="button" class="attach-tag-close">&times;</button>
           </div>
-          <div id="summary-chunks-box" data-testid="summary-chunks-box" class="panel hidden">
-            <div class="panel-header">
-              <strong class="section-title">요약에 반영한 구간</strong>
-              <button id="toggle-summary-chunks" class="toggle-button subtle" type="button">펼치기</button>
-            </div>
-            <div id="summary-chunks-body" class="panel-body hidden">
-              <div id="summary-chunks-hint" class="panel-hint hidden"></div>
-              <div id="summary-chunks-scroll-region" data-testid="summary-chunks-scroll-region" class="panel-scroll-region">
-                <pre id="summary-chunks-text"></pre>
-              </div>
-            </div>
+        </div>
+
+        <!-- Hidden file inputs -->
+        <input id="browser-file-input" data-testid="browser-file-input" type="file" class="hidden" accept=".txt,.md,.pdf,.json,.csv,.log,.yaml,.yml,.toml,.ini,.py,.ts,.tsx,.js,.jsx">
+        <input id="browser-folder-input" data-testid="browser-folder-input" type="file" class="hidden" webkitdirectory directory multiple>
+
+        <!-- Text input row -->
+        <div class="input-row">
+          <textarea id="user-text" name="user_text" placeholder="메시지를 입력하세요..." rows="1"></textarea>
+          <button type="submit" class="send-btn" data-testid="submit-request" title="요청 실행">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path d="M2 21l21-9L2 3v7l15 2-15 2z" fill="currentColor"/></svg>
+          </button>
+        </div>
+
+        <!-- Options bar -->
+        <div class="input-options">
+          <!-- Mode pills -->
+          <div class="mode-row">
+            <label class="mode-pill">
+              <input type="radio" name="request_mode" value="file" checked>
+              <span>파일</span>
+            </label>
+            <label class="mode-pill">
+              <input type="radio" name="request_mode" value="search">
+              <span>검색</span>
+            </label>
+            <label class="mode-pill">
+              <input type="radio" name="request_mode" value="chat">
+              <span>채팅</span>
+            </label>
           </div>
-          <div id="claim-coverage-box" data-testid="claim-coverage-box" class="panel hidden">
-            <div class="panel-header">
-              <strong class="section-title">사실 검증 상태</strong>
-              <button id="toggle-claim-coverage" class="toggle-button subtle" type="button">펼치기</button>
-            </div>
-            <div id="claim-coverage-body" class="panel-body hidden">
-              <div id="claim-coverage-hint" class="panel-hint hidden"></div>
-              <div id="claim-coverage-scroll-region" data-testid="claim-coverage-scroll-region" class="panel-scroll-region">
-                <pre id="claim-coverage-text"></pre>
-              </div>
-            </div>
+          <label class="option-chip">
+            <input id="save-summary" data-testid="save-summary" name="save_summary" type="checkbox">
+            <span>저장 요청</span>
+          </label>
+          <label id="search-only-check" class="option-chip hidden">
+            <input id="search-only" name="search_only" type="checkbox">
+            <span>검색만</span>
+          </label>
+          <select id="web-search-permission" data-testid="web-search-permission" name="web_search_permission" class="option-select">
+            <option value="disabled">웹검색 차단</option>
+            <option value="approval">웹검색 승인</option>
+            <option value="enabled">웹검색 허용</option>
+          </select>
+        </div>
+
+        <!-- Mode-specific field groups (shown/hidden by applyMode) -->
+        <div id="file-fields" class="mode-fields hidden"></div>
+        <div id="search-fields" class="mode-fields hidden">
+          <div class="search-fields-row">
+            <input id="search-root" data-testid="search-root" name="search_root" type="text" placeholder="검색 루트 경로..." class="search-field-input">
+            <input id="search-query" data-testid="search-query" name="search_query" type="text" placeholder="검색어..." class="search-field-input">
           </div>
-          <div id="preview-box" class="panel hidden">
-            <strong class="section-title">노트 미리보기</strong>
-            <pre id="preview-text"></pre>
-          </div>
-          <div id="context-box" class="panel hidden">
-            <strong class="section-title">현재 문서 문맥</strong>
-            <pre id="context-text"></pre>
-          </div>
-          <div id="suggestions-box" class="panel hidden">
-            <strong class="section-title">다음에 이렇게 물어볼 수 있습니다</strong>
-            <div id="suggestions-list" class="suggestion-list"></div>
-          </div>
-          <div id="search-history-box" class="panel hidden">
-            <div class="panel-header">
-              <strong class="section-title">최근 웹 검색 기록</strong>
-              <span id="search-history-meta" class="hint"></span>
-            </div>
-            <div id="search-history-list" class="history-list"></div>
-          </div>
-          <div id="approval-box" data-testid="approval-box" class="panel approval-box hidden">
-            <strong class="section-title">저장 승인</strong>
-            <div id="approval-meta" class="approval-meta"></div>
-            <div class="approval-inputs">
-              <label>
-                저장 경로
-                <input id="approval-path-input" data-testid="approval-path-input" name="approval_path_input" type="text" placeholder="새 저장 경로를 입력해 주세요.">
-              </label>
-              <div class="approval-actions">
-                <button id="reissue-button" data-testid="reissue-button" class="secondary" type="button">새 경로로 승인 다시 만들기</button>
-                <button id="approval-copy-path" class="copy-button subtle" type="button">승인 경로 복사</button>
-              </div>
-            </div>
-            <pre id="approval-preview"></pre>
-            <div class="actions">
-              <button id="approve-button" data-testid="approve-button" class="primary" type="button">저장 승인</button>
-              <button id="reject-button" class="danger" type="button">취소</button>
-            </div>
-          </div>
-        </section>
-      </aside>
-    </section>
+        </div>
+        <div id="chat-fields" class="mode-fields hidden"></div>
+
+        <!-- Hidden form elements -->
+        <div class="hidden">
+          <button id="load-session" type="button">세션 불러오기</button>
+        </div>
+      </form>
+    </div>
+  </main>
+
+  <!-- Hidden meta elements for JS compatibility -->
+  <div class="hidden">
+    <span id="meta-session">__DEFAULT_SESSION_ID__</span>
+    <span id="meta-web-search">__DEFAULT_WEB_SEARCH_PERMISSION_LABEL__</span>
   </div>
 
   <script src="/static/contracts.js"></script>

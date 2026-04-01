@@ -75,6 +75,12 @@ class WebAppService:
         self.session_store = SessionStore(base_dir=settings.sessions_dir)
         self.task_logger = TaskLogger(path=settings.task_log_path)
         self.web_search_store = WebSearchStore(base_dir=settings.web_search_history_dir)
+        from storage.artifact_store import ArtifactStore
+        self.artifact_store = ArtifactStore(base_dir=settings.artifacts_dir)
+        from storage.correction_store import CorrectionStore
+        self.correction_store = CorrectionStore(base_dir=settings.corrections_dir)
+        from storage.preference_store import PreferenceStore
+        self.preference_store = PreferenceStore(base_dir=settings.preferences_dir)
         self.template_path = Path(template_path) if template_path else Path(__file__).with_name("templates") / "index.html"
         self._active_stream_requests: dict[str, threading.Event] = {}
         self._active_stream_lock = threading.Lock()
@@ -220,10 +226,55 @@ class WebAppService:
                 },
             )
 
+        artifact_id = str(updated_message.get("artifact_id") or "").strip()
+        if artifact_id and self.artifact_store.get(artifact_id):
+            try:
+                self.artifact_store.append_correction(
+                    artifact_id,
+                    corrected_text=serialized_corrected_text or "",
+                    outcome="corrected",
+                )
+            except Exception:
+                pass
+
+        # Record correction pattern in correction store
+        original_snapshot = updated_message.get("original_response_snapshot")
+        if (
+            artifact_id
+            and isinstance(original_snapshot, dict)
+            and serialized_corrected_text
+        ):
+            original_draft = str(original_snapshot.get("draft_text") or "").strip()
+            if original_draft and original_draft != serialized_corrected_text:
+                try:
+                    self.correction_store.record_correction(
+                        artifact_id=artifact_id,
+                        session_id=session_id,
+                        source_message_id=(
+                            corrected_outcome.get("source_message_id")
+                            if corrected_outcome else message_id
+                        ),
+                        original_text=original_draft,
+                        corrected_text=serialized_corrected_text,
+                    )
+                except Exception:
+                    pass
+
+        # Auto-promote to preference candidate if cross-session recurrence detected
+        if artifact_id:
+            try:
+                corrections = self.correction_store.find_by_artifact(artifact_id)
+                for c in corrections:
+                    fp = c.get("delta_fingerprint")
+                    if fp:
+                        self.preference_store.promote_from_corrections(fp, self.correction_store)
+            except Exception:
+                pass
+
         return {
             "ok": True,
             "message_id": message_id,
-            "artifact_id": str(updated_message.get("artifact_id") or "").strip() or None,
+            "artifact_id": artifact_id or None,
             "corrected_text": serialized_corrected_text,
             "corrected_outcome": corrected_outcome,
             "session": self._serialize_session(self.session_store.get_session(session_id)),
@@ -279,10 +330,21 @@ class WebAppService:
                 },
             )
 
+        artifact_id = str(updated_message.get("artifact_id") or "").strip()
+        if artifact_id and self.artifact_store.get(artifact_id):
+            try:
+                self.artifact_store.record_outcome(
+                    artifact_id,
+                    outcome="rejected",
+                    content_verdict="rejected",
+                )
+            except Exception:
+                pass
+
         return {
             "ok": True,
             "message_id": message_id,
-            "artifact_id": str(updated_message.get("artifact_id") or "").strip() or None,
+            "artifact_id": artifact_id or None,
             "content_verdict": content_verdict,
             "corrected_outcome": corrected_outcome,
             "content_reason_record": content_reason_record,
@@ -1198,6 +1260,8 @@ class WebAppService:
                 tools=self._build_tools(),
                 notes_dir=self.settings.notes_dir,
                 web_search_store=self.web_search_store,
+                artifact_store=self.artifact_store,
+                preference_store=self.preference_store,
             )
             response = loop.handle(
                 UserRequest(
@@ -1331,6 +1395,8 @@ class WebAppService:
             tools=self._build_tools(),
             notes_dir=self.settings.notes_dir,
             web_search_store=self.web_search_store,
+            artifact_store=self.artifact_store,
+            preference_store=self.preference_store,
         )
         request = UserRequest(
             user_text=self._build_user_text(
@@ -6573,6 +6639,12 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
         if parsed.path.startswith("/static/"):
             self._serve_static(parsed.path)
             return
+        if parsed.path == "/app" or parsed.path == "/app/":
+            self._serve_react_app()
+            return
+        if parsed.path.startswith("/assets/"):
+            self._serve_react_asset(parsed.path)
+            return
         self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "요청한 경로를 찾을 수 없습니다."}})
 
     def do_POST(self) -> None:
@@ -6723,6 +6795,46 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "public, max-age=3600")
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+    _REACT_DIST_DIR = Path(__file__).resolve().parent / "static" / "dist"
+
+    def _serve_react_app(self) -> None:
+        index_path = self._REACT_DIST_DIR / "index.html"
+        if not index_path.is_file():
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "React 앱 빌드가 없습니다. app/frontend에서 npm run build를 실행해 주세요."}})
+            return
+        try:
+            data = index_path.read_bytes()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+    def _serve_react_asset(self, url_path: str) -> None:
+        relative = url_path[len("/assets/"):]
+        if not relative or ".." in relative or relative.startswith("/"):
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "요청한 경로를 찾을 수 없습니다."}})
+            return
+        file_path = self._REACT_DIST_DIR / "assets" / relative
+        if not file_path.is_file():
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "요청한 경로를 찾을 수 없습니다."}})
+            return
+        content_type, _ = mimetypes.guess_type(file_path.name)
+        if content_type is None:
+            content_type = "application/octet-stream"
+        try:
+            data = file_path.read_bytes()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
             self.end_headers()
             self.wfile.write(data)
         except (BrokenPipeError, ConnectionResetError):

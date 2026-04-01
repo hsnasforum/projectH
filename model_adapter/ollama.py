@@ -40,11 +40,11 @@ class OllamaModelAdapter(ModelAdapter):
 
     @property
     def _is_compact_model(self) -> bool:
-        """Return True for models ≤ 7B where prompt simplification helps."""
+        """Return True for models ≤ 14B where Korean-first prompts help."""
         m = self._COMPACT_MODEL_PATTERNS.search(self.model)
         if m:
             size = float(m.group(1) or m.group(2))
-            return size <= 7
+            return size <= 14
         # If size is not detectable, assume compact for safety.
         return True
 
@@ -1111,6 +1111,9 @@ class OllamaModelAdapter(ModelAdapter):
         hangul_count = len(re.findall(r"[가-힣]", text))
         han_count = len(re.findall(r"[\u4E00-\u9FFF]", text))
         kana_count = len(re.findall(r"[\u3040-\u30FF]", text))
+        # Detect broken/garbled Unicode: combining marks, replacement chars,
+        # or stray diacritics that appear mixed with Korean text.
+        garbled_count = len(re.findall(r"[\u0300-\u036F\uFFFD\u0318\u0358]", text))
         if kana_count >= 1 and hangul_count >= 1:
             return True
         if han_count >= 1 and hangul_count >= 4:
@@ -1118,6 +1121,9 @@ class OllamaModelAdapter(ModelAdapter):
         if kana_count >= 2 and hangul_count < max(2, kana_count // 2):
             return True
         if han_count >= 8 and hangul_count < max(3, han_count // 4):
+            return True
+        # Garbled characters mixed with Korean text
+        if garbled_count >= 1 and hangul_count >= 4:
             return True
         return False
 

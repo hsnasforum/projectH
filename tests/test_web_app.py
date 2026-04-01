@@ -40,7 +40,7 @@ class _BrokenPipeWriter:
 
 
 class _SlowStreamingModel(ModelAdapter):
-    def respond(self, prompt: str) -> str:
+    def respond(self, prompt: str, *, active_preferences: list[dict[str, str]] | None = None) -> str:
         return f"응답: {prompt}"
 
     def summarize(self, text: str) -> str:
@@ -63,6 +63,7 @@ class _SlowStreamingModel(ModelAdapter):
         context_excerpt: str,
         summary_hint: str | None = None,
         evidence_items: list[dict[str, str]] | None = None,
+        active_preferences: list[dict[str, str]] | None = None,
     ) -> str:
         return f"{context_label}: {user_request}"
 

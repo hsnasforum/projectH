@@ -33,7 +33,19 @@ class OllamaModelAdapter(ModelAdapter):
         self.model = model
         self.timeout_seconds = timeout_seconds
 
-    def respond(self, prompt: str) -> str:
+    @staticmethod
+    def _format_preference_block(active_preferences: list[dict[str, str]] | None) -> str:
+        if not active_preferences:
+            return ""
+        lines = ["\n\nUser correction preferences (apply these consistently to all responses):"]
+        for pref in active_preferences[:10]:
+            desc = pref.get("description", "").strip()
+            if desc:
+                lines.append(f"- {desc}")
+        return "\n".join(lines) if len(lines) > 1 else ""
+
+    def respond(self, prompt: str, *, active_preferences: list[dict[str, str]] | None = None) -> str:
+        pref_block = self._format_preference_block(active_preferences)
         return self._generate(
             prompt=prompt,
             system=(
@@ -43,6 +55,7 @@ class OllamaModelAdapter(ModelAdapter):
                 "If the user asks about a real-world person, channel, brand, product, company, or other external fact without giving a supporting source, "
                 "do not guess. State that you cannot verify it from the current local context and ask for a local document or source text. "
                 "Never claim personal experiences such as having watched, read, visited, used, or tried something yourself."
+                + pref_block
             ),
             enforce_korean=True,
             korean_rewrite_instruction=(
@@ -51,7 +64,8 @@ class OllamaModelAdapter(ModelAdapter):
             ),
         )
 
-    def stream_respond(self, prompt: str):
+    def stream_respond(self, prompt: str, *, active_preferences: list[dict[str, str]] | None = None):
+        pref_block = self._format_preference_block(active_preferences)
         yield from self._stream_generate(
             prompt=prompt,
             system=(
@@ -61,6 +75,7 @@ class OllamaModelAdapter(ModelAdapter):
                 "If the user asks about a real-world person, channel, brand, product, company, or other external fact without giving a supporting source, "
                 "do not guess. State that you cannot verify it from the current local context and ask for a local document or source text. "
                 "Never claim personal experiences such as having watched, read, visited, used, or tried something yourself."
+                + pref_block
             ),
             enforce_korean=True,
             korean_rewrite_instruction=(
@@ -139,6 +154,7 @@ class OllamaModelAdapter(ModelAdapter):
         context_excerpt: str,
         summary_hint: str | None = None,
         evidence_items: list[dict[str, str]] | None = None,
+        active_preferences: list[dict[str, str]] | None = None,
     ) -> str:
         prompt, context_cues = self._build_context_prompt(
             intent=intent,
@@ -149,9 +165,10 @@ class OllamaModelAdapter(ModelAdapter):
             summary_hint=summary_hint,
             evidence_items=evidence_items,
         )
+        pref_block = self._format_preference_block(active_preferences)
         raw_answer = self._generate(
             prompt=prompt,
-            system=self._intent_system_prompt(intent),
+            system=self._intent_system_prompt(intent) + pref_block,
             enforce_korean=True,
             korean_rewrite_instruction=self._intent_output_contract(intent),
         )
@@ -172,6 +189,7 @@ class OllamaModelAdapter(ModelAdapter):
         context_excerpt: str,
         summary_hint: str | None = None,
         evidence_items: list[dict[str, str]] | None = None,
+        active_preferences: list[dict[str, str]] | None = None,
     ):
         prompt, context_cues = self._build_context_prompt(
             intent=intent,
@@ -182,10 +200,11 @@ class OllamaModelAdapter(ModelAdapter):
             summary_hint=summary_hint,
             evidence_items=evidence_items,
         )
+        pref_block = self._format_preference_block(active_preferences)
         raw_answer = ""
         for event in self._stream_generate(
             prompt=prompt,
-            system=self._intent_system_prompt(intent),
+            system=self._intent_system_prompt(intent) + pref_block,
             enforce_korean=True,
             korean_rewrite_instruction=self._intent_output_contract(intent),
         ):

@@ -64,22 +64,23 @@ export default function ChatArea({
         <h1 className="text-[15px] font-semibold text-ink truncate flex-1">
           {sessionTitle}
         </h1>
-        {settings.provider === "ollama" && (
-          <select
-            value={settings.model}
-            onChange={(e) => onSettingsChange({ ...settings, model: e.target.value })}
-            className="
-              text-[13px] text-muted bg-stone-50 border border-stone-200
-              rounded-lg px-2.5 py-1.5 outline-none
-              hover:border-stone-300 focus:border-stone-400
-              transition-colors cursor-pointer
-            "
-          >
-            {OLLAMA_MODELS.map((m) => (
-              <option key={m.value} value={m.value}>{m.label}</option>
-            ))}
-          </select>
-        )}
+        <select
+          value={settings.model}
+          onChange={(e) => onSettingsChange({ ...settings, model: e.target.value })}
+          className="
+            shrink-0 text-[13px] text-muted bg-stone-50 border border-stone-200
+            rounded-lg px-2.5 py-1.5 outline-none
+            hover:border-stone-300 focus:border-stone-400
+            transition-colors cursor-pointer
+          "
+        >
+          {settings.provider === "ollama"
+            ? OLLAMA_MODELS.map((m) => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))
+            : <option value={settings.model}>{settings.model || "모델"}</option>
+          }
+        </select>
       </header>
 
       {/* Messages */}

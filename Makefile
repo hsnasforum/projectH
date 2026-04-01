@@ -1,4 +1,4 @@
-.PHONY: run test e2e-install e2e-test
+.PHONY: run test e2e-install e2e-test eval eval-mock
 
 run:
 	python -m app.main
@@ -11,3 +11,9 @@ e2e-install:
 
 e2e-test:
 	cd e2e && npm test
+
+eval-mock:
+	python -m eval.harness --provider mock --save
+
+eval:
+	python -m eval.harness --provider ollama --save

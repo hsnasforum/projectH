@@ -33,73 +33,113 @@ class OllamaModelAdapter(ModelAdapter):
         self.model = model
         self.timeout_seconds = timeout_seconds
 
+    # Models at or below this parameter threshold get simplified Korean-first prompts.
+    _COMPACT_MODEL_PATTERNS = re.compile(
+        r"(?i)(?::(\d+(?:\.\d+)?)b)|(?:(\d+(?:\.\d+)?)b[-_])",
+    )
+
+    @property
+    def _is_compact_model(self) -> bool:
+        """Return True for models ≤ 7B where prompt simplification helps."""
+        m = self._COMPACT_MODEL_PATTERNS.search(self.model)
+        if m:
+            size = float(m.group(1) or m.group(2))
+            return size <= 7
+        # If size is not detectable, assume compact for safety.
+        return True
+
     @staticmethod
-    def _format_preference_block(active_preferences: list[dict[str, str]] | None) -> str:
+    def _format_preference_block(active_preferences: list[dict[str, str]] | None, *, korean: bool = False) -> str:
         if not active_preferences:
             return ""
-        lines = ["\n\nUser correction preferences (apply these consistently to all responses):"]
+        if korean:
+            lines = ["\n\n[사용자 선호]\n다음 사항을 응답에 반영하세요:"]
+        else:
+            lines = ["\n\nUser correction preferences (apply these consistently to all responses):"]
         for pref in active_preferences[:10]:
             desc = pref.get("description", "").strip()
             if desc:
                 lines.append(f"- {desc}")
         return "\n".join(lines) if len(lines) > 1 else ""
 
+    # ── Compact (≤7B) Korean-first system prompts ──────────────────
+    _COMPACT_SYSTEM_RESPOND = (
+        "당신은 로컬 문서 어시스턴트입니다. 한국어로 답하세요.\n"
+        "규칙:\n"
+        "- 간결하고 정확하게 답하세요.\n"
+        "- 확인할 수 없는 사실은 추측하지 말고 '확인할 수 없습니다'라고 하세요.\n"
+        "- 직접 경험한 것처럼 말하지 마세요."
+    )
+
+    _FULL_SYSTEM_RESPOND = (
+        "You are a local-first AI assistant. Answer in Korean by default unless the user explicitly requests another language. "
+        "Use Korean Hangul for explanatory text. Do not answer in Chinese or Japanese unless the user explicitly asks for those languages. "
+        "Keep answers concise, grounded, and safe for file-based productivity workflows. "
+        "If the user asks about a real-world person, channel, brand, product, company, or other external fact without giving a supporting source, "
+        "do not guess. State that you cannot verify it from the current local context and ask for a local document or source text. "
+        "Never claim personal experiences such as having watched, read, visited, used, or tried something yourself."
+    )
+
     def respond(self, prompt: str, *, active_preferences: list[dict[str, str]] | None = None) -> str:
-        pref_block = self._format_preference_block(active_preferences)
+        compact = self._is_compact_model
+        pref_block = self._format_preference_block(active_preferences, korean=compact)
+        system = (self._COMPACT_SYSTEM_RESPOND if compact else self._FULL_SYSTEM_RESPOND) + pref_block
         return self._generate(
             prompt=prompt,
-            system=(
-                "You are a local-first AI assistant. Answer in Korean by default unless the user explicitly requests another language. "
-                "Use Korean Hangul for explanatory text. Do not answer in Chinese or Japanese unless the user explicitly asks for those languages. "
-                "Keep answers concise, grounded, and safe for file-based productivity workflows. "
-                "If the user asks about a real-world person, channel, brand, product, company, or other external fact without giving a supporting source, "
-                "do not guess. State that you cannot verify it from the current local context and ask for a local document or source text. "
-                "Never claim personal experiences such as having watched, read, visited, used, or tried something yourself."
-                + pref_block
-            ),
+            system=system,
             enforce_korean=True,
             korean_rewrite_instruction=(
+                "한국어 한 문단으로 간결하게 다시 쓰세요." if compact else
                 "Return one short Korean paragraph using Hangul for explanatory text. "
                 "Do not use Chinese or Japanese. If the claim is not verified, say that you cannot confirm it."
             ),
         )
 
     def stream_respond(self, prompt: str, *, active_preferences: list[dict[str, str]] | None = None):
-        pref_block = self._format_preference_block(active_preferences)
+        compact = self._is_compact_model
+        pref_block = self._format_preference_block(active_preferences, korean=compact)
+        system = (self._COMPACT_SYSTEM_RESPOND if compact else self._FULL_SYSTEM_RESPOND) + pref_block
         yield from self._stream_generate(
             prompt=prompt,
-            system=(
-                "You are a local-first AI assistant. Answer in Korean by default unless the user explicitly requests another language. "
-                "Use Korean Hangul for explanatory text. Do not answer in Chinese or Japanese unless the user explicitly asks for those languages. "
-                "Keep answers concise, grounded, and safe for file-based productivity workflows. "
-                "If the user asks about a real-world person, channel, brand, product, company, or other external fact without giving a supporting source, "
-                "do not guess. State that you cannot verify it from the current local context and ask for a local document or source text. "
-                "Never claim personal experiences such as having watched, read, visited, used, or tried something yourself."
-                + pref_block
-            ),
+            system=system,
             enforce_korean=True,
             korean_rewrite_instruction=(
+                "한국어 한 문단으로 간결하게 다시 쓰세요." if compact else
                 "Return one short Korean paragraph using Hangul for explanatory text. "
                 "Do not use Chinese or Japanese. If the claim is not verified, say that you cannot confirm it."
             ),
         )
 
+    _COMPACT_SYSTEM_SUMMARIZE = (
+        "주어진 문서를 한국어로 요약하세요.\n"
+        "규칙:\n"
+        "- 문서에 실제로 적힌 내용만 요약하세요.\n"
+        "- 이야기글이면 인물, 사건, 결말 순서로 쓰세요.\n"
+        "- 정보글이면 주제, 핵심 내용, 결론 순서로 쓰세요.\n"
+        "- 제목이나 머리말 없이 본문만 쓰세요.\n"
+        "- 고유명사와 파일명은 그대로 유지하세요."
+    )
+
+    _FULL_SYSTEM_SUMMARIZE = (
+        "Summarize the provided document for a solo user in Korean. "
+        "Use Korean Hangul for explanatory text. Do not answer in Chinese or Japanese. "
+        "Prioritize what the document actually says or what happens over memorable wording. "
+        "If the text is narrative or fiction, summarize major characters or actors, key events, conflict changes, and the ending state in order. "
+        "If the text is informational or argumentative, summarize the topic, main points, decisions or actions, and conclusion. "
+        "If the prompt explicitly says 'Summary source type: search_results', treat it as a synthesis of selected search results and prioritize shared facts, meaningful differences, key actions or decisions, and the grounded conclusion. "
+        "If the prompt explicitly says 'Summary source type: local_document', preserve the document flow guidance above without inventing a separate mode. "
+        "Return only a concise Korean summary in plain text with no preamble, heading, or bullet label. "
+        "Keep file names and proper nouns as they are when needed."
+    )
+
     def summarize(self, text: str) -> str:
+        compact = self._is_compact_model
         return self._generate(
             prompt=text,
-            system=(
-                "Summarize the provided document for a solo user in Korean. "
-                "Use Korean Hangul for explanatory text. Do not answer in Chinese or Japanese. "
-                "Prioritize what the document actually says or what happens over memorable wording. "
-                "If the text is narrative or fiction, summarize major characters or actors, key events, conflict changes, and the ending state in order. "
-                "If the text is informational or argumentative, summarize the topic, main points, decisions or actions, and conclusion. "
-                "If the prompt explicitly says 'Summary source type: search_results', treat it as a synthesis of selected search results and prioritize shared facts, meaningful differences, key actions or decisions, and the grounded conclusion. "
-                "If the prompt explicitly says 'Summary source type: local_document', preserve the document flow guidance above without inventing a separate mode. "
-                "Return only a concise Korean summary in plain text with no preamble, heading, or bullet label. "
-                "Keep file names and proper nouns as they are when needed."
-            ),
+            system=self._COMPACT_SYSTEM_SUMMARIZE if compact else self._FULL_SYSTEM_SUMMARIZE,
             enforce_korean=True,
             korean_rewrite_instruction=(
+                "자연스러운 한국어로 간결하게 다시 쓰세요. 마크다운 제목 제거." if compact else
                 "Rewrite the text into concise natural Korean using Hangul for explanatory text only. "
                 "Preserve the actual flow of events or arguments instead of isolated memorable sentences. "
                 "Do not use Chinese or Japanese. Remove markdown headings and return plain text only."
@@ -107,21 +147,13 @@ class OllamaModelAdapter(ModelAdapter):
         )
 
     def stream_summarize(self, text: str):
+        compact = self._is_compact_model
         yield from self._stream_generate(
             prompt=text,
-            system=(
-                "Summarize the provided document for a solo user in Korean. "
-                "Use Korean Hangul for explanatory text. Do not answer in Chinese or Japanese. "
-                "Prioritize what the document actually says or what happens over memorable wording. "
-                "If the text is narrative or fiction, summarize major characters or actors, key events, conflict changes, and the ending state in order. "
-                "If the text is informational or argumentative, summarize the topic, main points, decisions or actions, and conclusion. "
-                "If the prompt explicitly says 'Summary source type: search_results', treat it as a synthesis of selected search results and prioritize shared facts, meaningful differences, key actions or decisions, and the grounded conclusion. "
-                "If the prompt explicitly says 'Summary source type: local_document', preserve the document flow guidance above without inventing a separate mode. "
-                "Return only a concise Korean summary in plain text with no preamble, heading, or bullet label. "
-                "Keep file names and proper nouns as they are when needed."
-            ),
+            system=self._COMPACT_SYSTEM_SUMMARIZE if compact else self._FULL_SYSTEM_SUMMARIZE,
             enforce_korean=True,
             korean_rewrite_instruction=(
+                "자연스러운 한국어로 간결하게 다시 쓰세요. 마크다운 제목 제거." if compact else
                 "Rewrite the text into concise natural Korean using Hangul for explanatory text only. "
                 "Preserve the actual flow of events or arguments instead of isolated memorable sentences. "
                 "Do not use Chinese or Japanese. Remove markdown headings and return plain text only."
@@ -156,21 +188,38 @@ class OllamaModelAdapter(ModelAdapter):
         evidence_items: list[dict[str, str]] | None = None,
         active_preferences: list[dict[str, str]] | None = None,
     ) -> str:
-        prompt, context_cues = self._build_context_prompt(
-            intent=intent,
-            user_request=user_request,
-            context_label=context_label,
-            source_paths=source_paths,
-            context_excerpt=context_excerpt,
-            summary_hint=summary_hint,
-            evidence_items=evidence_items,
-        )
-        pref_block = self._format_preference_block(active_preferences)
+        compact = self._is_compact_model
+        if compact:
+            prompt, context_cues = self._build_compact_context_prompt(
+                intent=intent,
+                user_request=user_request,
+                context_label=context_label,
+                source_paths=source_paths,
+                context_excerpt=context_excerpt,
+                summary_hint=summary_hint,
+                evidence_items=evidence_items,
+            )
+            pref_block = self._format_preference_block(active_preferences, korean=True)
+            system = self._compact_intent_system_prompt(intent) + pref_block
+            rewrite = self._compact_intent_output_contract(intent)
+        else:
+            prompt, context_cues = self._build_context_prompt(
+                intent=intent,
+                user_request=user_request,
+                context_label=context_label,
+                source_paths=source_paths,
+                context_excerpt=context_excerpt,
+                summary_hint=summary_hint,
+                evidence_items=evidence_items,
+            )
+            pref_block = self._format_preference_block(active_preferences)
+            system = self._intent_system_prompt(intent) + pref_block
+            rewrite = self._intent_output_contract(intent)
         raw_answer = self._generate(
             prompt=prompt,
-            system=self._intent_system_prompt(intent) + pref_block,
+            system=system,
             enforce_korean=True,
-            korean_rewrite_instruction=self._intent_output_contract(intent),
+            korean_rewrite_instruction=rewrite,
         )
         return self._postprocess_answer(
             intent=intent,
@@ -191,22 +240,39 @@ class OllamaModelAdapter(ModelAdapter):
         evidence_items: list[dict[str, str]] | None = None,
         active_preferences: list[dict[str, str]] | None = None,
     ):
-        prompt, context_cues = self._build_context_prompt(
-            intent=intent,
-            user_request=user_request,
-            context_label=context_label,
-            source_paths=source_paths,
-            context_excerpt=context_excerpt,
-            summary_hint=summary_hint,
-            evidence_items=evidence_items,
-        )
-        pref_block = self._format_preference_block(active_preferences)
+        compact = self._is_compact_model
+        if compact:
+            prompt, context_cues = self._build_compact_context_prompt(
+                intent=intent,
+                user_request=user_request,
+                context_label=context_label,
+                source_paths=source_paths,
+                context_excerpt=context_excerpt,
+                summary_hint=summary_hint,
+                evidence_items=evidence_items,
+            )
+            pref_block = self._format_preference_block(active_preferences, korean=True)
+            system = self._compact_intent_system_prompt(intent) + pref_block
+            rewrite = self._compact_intent_output_contract(intent)
+        else:
+            prompt, context_cues = self._build_context_prompt(
+                intent=intent,
+                user_request=user_request,
+                context_label=context_label,
+                source_paths=source_paths,
+                context_excerpt=context_excerpt,
+                summary_hint=summary_hint,
+                evidence_items=evidence_items,
+            )
+            pref_block = self._format_preference_block(active_preferences)
+            system = self._intent_system_prompt(intent) + pref_block
+            rewrite = self._intent_output_contract(intent)
         raw_answer = ""
         for event in self._stream_generate(
             prompt=prompt,
-            system=self._intent_system_prompt(intent) + pref_block,
+            system=system,
             enforce_korean=True,
-            korean_rewrite_instruction=self._intent_output_contract(intent),
+            korean_rewrite_instruction=rewrite,
         ):
             raw_answer = self._apply_stream_event(raw_answer, event)
             yield event
@@ -300,6 +366,79 @@ class OllamaModelAdapter(ModelAdapter):
         if intent == FOLLOW_UP_INTENT_MEMO:
             return common + " Preserve the most decision-relevant facts and action-relevant lines."
         return common
+
+    # ── Compact (≤7B) Korean-first context methods ────────────────
+
+    def _compact_intent_system_prompt(self, intent: str) -> str:
+        base = (
+            "당신은 로컬 문서 어시스턴트입니다.\n"
+            "규칙:\n"
+            "- 아래 제공된 근거와 문서 발췌만 사용하세요.\n"
+            "- 근거에 없는 내용은 '제공된 근거만으로는 확인되지 않습니다'라고 하세요.\n"
+            "- 사실, 일정, 원인을 지어내지 마세요.\n"
+            "- 한국어로 답하세요."
+        )
+        if intent == FOLLOW_UP_INTENT_KEY_POINTS:
+            return base + "\n- 핵심 포인트 3개를 글머리 기호로 쓰세요.\n- 목적, 원칙, 결정, 결론 위주로 쓰세요."
+        if intent == FOLLOW_UP_INTENT_ACTION_ITEMS:
+            return base + "\n- 실행 가능한 항목만 번호 목록으로 쓰세요 (최대 5개).\n- 실행할 일이 없으면 '문서에 바로 실행할 일은 없습니다'라고 쓰세요."
+        if intent == FOLLOW_UP_INTENT_MEMO:
+            return base + "\n- 메모 형식으로 쓰세요: 제목:, 핵심:, 다음 행동:"
+        return base + "\n- 짧은 한 문단으로 답하세요."
+
+    def _compact_intent_output_contract(self, intent: str) -> str:
+        if intent == FOLLOW_UP_INTENT_KEY_POINTS:
+            return "핵심 3개를 글머리 기호로. 제목 없이."
+        if intent == FOLLOW_UP_INTENT_ACTION_ITEMS:
+            return "번호 목록. 최대 5개. 실행 가능한 것만."
+        if intent == FOLLOW_UP_INTENT_MEMO:
+            return "제목:, 핵심:, 다음 행동: 형식."
+        return "한국어 한 문단."
+
+    def _build_compact_context_prompt(
+        self,
+        *,
+        intent: str,
+        user_request: str,
+        context_label: str,
+        source_paths: list[str],
+        context_excerpt: str,
+        summary_hint: str | None = None,
+        evidence_items: list[dict[str, str]] | None = None,
+    ) -> tuple[str, dict[str, list[str]]]:
+        """Simplified prompt for small models: evidence first, minimal meta."""
+        context_cues = self._extract_context_cues(context_excerpt)
+        sections: list[str] = []
+
+        # 1. Document excerpt FIRST (most important for grounding)
+        sections.append("=== 문서 내용 ===")
+        sections.append(context_excerpt[:4000])
+
+        # 2. Bounded evidence (merged, not split into categories)
+        evidence_lines = self._format_evidence_items(evidence_items)
+        if evidence_lines:
+            sections.append("")
+            sections.append("=== 핵심 근거 ===")
+            for line in evidence_lines:
+                sections.append(line)
+
+        # 3. Summary hint if present
+        if summary_hint:
+            sections.append("")
+            sections.append(f"=== 요약 ===\n{summary_hint}")
+
+        # 4. Source info (compact)
+        if source_paths:
+            sources = ", ".join(Path(p).name for p in source_paths[:3])
+            sections.append(f"\n출처: {sources}")
+
+        # 5. User question LAST (closest to where model generates)
+        sections.append("")
+        sections.append(f"=== 질문 ===\n{user_request}")
+
+        return "\n".join(sections), context_cues
+
+    # ── Full (>7B) context methods (unchanged) ────────────────────
 
     def _build_context_prompt(
         self,

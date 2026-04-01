@@ -25,7 +25,7 @@ export default function MessageBubble({ message }: Props) {
             rounded-2xl px-4 py-3 text-[15px] leading-[1.75]
             ${isUser
               ? "bg-beige-100 text-ink rounded-br-md"
-              : "bg-transparent text-ink"
+              : "bg-white border border-stone-100 text-ink rounded-bl-md shadow-sm"
             }
           `}
         >

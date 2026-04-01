@@ -95,6 +95,26 @@ export async function postCorrection(
   });
 }
 
+// -- Session management API --
+
+export async function deleteSession(sessionId: string): Promise<{ ok: boolean; deleted: boolean }> {
+  const res = await fetch(`${BASE}/api/sessions/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId }),
+  });
+  return res.json();
+}
+
+export async function deleteAllSessions(): Promise<{ ok: boolean; deleted_count: number }> {
+  const res = await fetch(`${BASE}/api/sessions/delete-all`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  return res.json();
+}
+
 // -- Preferences API --
 
 export interface PreferenceRecord {

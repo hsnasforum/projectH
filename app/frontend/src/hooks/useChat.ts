@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Message, SessionSummary, PendingApproval, AppSettings } from "../types";
-import { fetchSessions, fetchSession, streamChat, postChat } from "../api/client";
+import { fetchSessions, fetchSession, streamChat, postChat, deleteSession as apiDeleteSession, deleteAllSessions as apiDeleteAllSessions } from "../api/client";
 
 const DEFAULT_SESSION = "demo-session";
 
@@ -153,7 +153,7 @@ export function useChat(settings: AppSettings) {
       abortRef.current = null;
       loadSessions();
     }
-  }, [sessionId, loadSessions]);
+  }, [sessionId, settings, loadSessions]);
 
   const approve = useCallback((approvalId: string) => {
     send("", { approvedApprovalId: approvalId });
@@ -166,6 +166,18 @@ export function useChat(settings: AppSettings) {
   const cancel = useCallback(() => {
     abortRef.current?.abort();
   }, []);
+
+  const deleteCurrentSession = useCallback(async () => {
+    await apiDeleteSession(sessionId);
+    newSession();
+    loadSessions();
+  }, [sessionId, newSession, loadSessions]);
+
+  const deleteAll = useCallback(async () => {
+    await apiDeleteAllSessions();
+    newSession();
+    setSessions([]);
+  }, [newSession]);
 
   return {
     sessionId,
@@ -181,6 +193,8 @@ export function useChat(settings: AppSettings) {
     cancel,
     switchSession,
     newSession,
+    deleteCurrentSession,
+    deleteAll,
     loadSession,
   };
 }

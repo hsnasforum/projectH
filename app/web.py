@@ -410,6 +410,24 @@ class WebAppService:
 
     # -- Preference management --
 
+    # -- Session management --
+
+    def delete_session(self, payload: dict[str, Any]) -> dict[str, Any]:
+        session_id = self._normalize_optional_text(payload.get("session_id"))
+        if not session_id:
+            raise WebApiError(400, "삭제할 세션 ID가 필요합니다.")
+        deleted = self.session_store.delete_session(session_id)
+        if deleted:
+            self.task_logger.log(session_id=session_id, action="session_deleted", detail={})
+        return {"ok": True, "deleted": deleted, "session_id": session_id}
+
+    def delete_all_sessions(self) -> dict[str, Any]:
+        count = self.session_store.delete_all_sessions()
+        self.task_logger.log(session_id="system", action="all_sessions_deleted", detail={"count": count})
+        return {"ok": True, "deleted_count": count}
+
+    # -- Preference management --
+
     def list_preferences_payload(self) -> dict[str, Any]:
         all_prefs = self.preference_store.list_all()
         return {
@@ -6712,6 +6730,8 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             "/api/preferences/activate",
             "/api/preferences/pause",
             "/api/preferences/reject",
+            "/api/sessions/delete",
+            "/api/sessions/delete-all",
         }:
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "요청한 경로를 찾을 수 없습니다."}})
             return
@@ -6777,6 +6797,14 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/preferences/reject":
                 response = self.server.service.reject_preference(payload)
+                self._send_json(HTTPStatus.OK, response)
+                return
+            if parsed.path == "/api/sessions/delete":
+                response = self.server.service.delete_session(payload)
+                self._send_json(HTTPStatus.OK, response)
+                return
+            if parsed.path == "/api/sessions/delete-all":
+                response = self.server.service.delete_all_sessions()
                 self._send_json(HTTPStatus.OK, response)
                 return
             if parsed.path == "/api/chat/cancel":

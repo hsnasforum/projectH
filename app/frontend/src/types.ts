@@ -145,11 +145,11 @@ export interface AppSettings {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  provider: "mock",
-  model: "",
+  provider: "ollama",
+  model: "qwen2.5:3b",
   baseUrl: "http://localhost:11434",
   searchLimit: 3,
   notePath: "",
-  webSearchPermission: "disabled",
+  webSearchPermission: "approval",
   skipPreflight: false,
 };

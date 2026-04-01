@@ -5,16 +5,17 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-ALLOWED_APPROVAL_REASON_LABELS = {
-    "approval_reject": {"explicit_rejection"},
-    "approval_reissue": {"path_change"},
-}
-SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT = "original_draft"
-SAVE_CONTENT_SOURCE_CORRECTED_TEXT = "corrected_text"
-ALLOWED_SAVE_CONTENT_SOURCES = {
-    SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT,
-    SAVE_CONTENT_SOURCE_CORRECTED_TEXT,
-}
+from core.contracts import (
+    ALLOWED_APPROVAL_REASON_LABELS,
+    ALLOWED_SAVE_CONTENT_SOURCES,
+    ArtifactKind,
+    ApprovalKind,
+    SaveContentSource,
+)
+
+# Re-export for backward compatibility with existing importers
+SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT = SaveContentSource.ORIGINAL_DRAFT
+SAVE_CONTENT_SOURCE_CORRECTED_TEXT = SaveContentSource.CORRECTED_TEXT
 
 
 def utc_now_iso() -> str:
@@ -35,7 +36,7 @@ def normalize_source_message_id(value: Any) -> str | None:
 
 def default_save_content_source_for_approval_kind(kind: Any) -> str | None:
     normalized_kind = str(kind or "").strip().lower()
-    if normalized_kind == "save_note":
+    if normalized_kind == ApprovalKind.SAVE_NOTE:
         return SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT
     return None
 
@@ -153,7 +154,7 @@ class ApprovalRequest:
             approval_reason_record=normalize_approval_reason_record(
                 approval_reason_record,
                 fallback_artifact_id=artifact_id,
-                fallback_artifact_kind="grounded_brief" if artifact_id else None,
+                fallback_artifact_kind=ArtifactKind.GROUNDED_BRIEF if artifact_id else None,
                 fallback_source_message_id=normalized_source_message_id,
             ),
         )
@@ -180,7 +181,7 @@ class ApprovalRequest:
             approval_reason_record=normalize_approval_reason_record(
                 record.get("approval_reason_record"),
                 fallback_artifact_id=artifact_id,
-                fallback_artifact_kind="grounded_brief" if artifact_id else None,
+                fallback_artifact_kind=ArtifactKind.GROUNDED_BRIEF if artifact_id else None,
                 fallback_source_message_id=source_message_id,
                 fallback_approval_id=approval_id,
             ),

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Literal
 
-
-SearchIntentKind = Literal["none", "explicit_web", "live_latest", "external_fact"]
-FreshnessRisk = Literal["low", "high"]
-AnswerMode = Literal["general", "entity_card", "latest_update"]
+from core.contracts import (
+    AnswerMode,
+    FreshnessRisk,
+    SearchIntentKind,
+)
 
 
 @dataclass(frozen=True, slots=True)

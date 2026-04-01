@@ -17,6 +17,26 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.localization import localize_runtime_status_payload, localize_session, localize_text
+from core.contracts import (
+    AnswerMode,
+    ArtifactKind,
+    CandidateConfirmationScope,
+    CandidateFamily,
+    CandidateReviewAction,
+    ContentReasonScope,
+    ContentVerdict,
+    CorrectedOutcome,
+    CoverageStatus,
+    FeedbackLabel,
+    FeedbackReason,
+    RecordStage,
+    ResponseOriginKind,
+    ResponseOriginProvider,
+    ResultStage,
+    SearchIntentKind,
+    StreamEventType,
+    WebSearchPermission,
+)
 from config.settings import AppSettings
 from core.agent_loop import AgentLoop, AgentResponse, RequestCancelledError, UserRequest
 from core.request_intents import classify_search_intent
@@ -215,7 +235,7 @@ class WebAppService:
 
         if not message_id:
             raise WebApiError(400, "내용 판정을 기록할 메시지 ID가 필요합니다.")
-        if content_verdict != "rejected":
+        if content_verdict != ContentVerdict.REJECTED:
             raise WebApiError(400, "현재 content verdict는 rejected만 지원합니다.")
 
         try:
@@ -304,7 +324,7 @@ class WebAppService:
                     if content_reason_record
                     else corrected_outcome.get("source_message_id") if corrected_outcome else message_id
                 ),
-                "reason_scope": content_reason_record.get("reason_scope") if content_reason_record else "content_reject",
+                "reason_scope": content_reason_record.get("reason_scope") if content_reason_record else ContentReasonScope.CONTENT_REJECT,
                 "reason_label": (
                     content_reason_record.get("reason_label")
                     if content_reason_record
@@ -372,7 +392,7 @@ class WebAppService:
                     "candidate_updated_at": candidate_updated_at,
                     "artifact_id": source_message.get("artifact_id"),
                     "source_message_id": source_message.get("message_id"),
-                    "confirmation_scope": "candidate_reuse",
+                    "confirmation_scope": CandidateConfirmationScope.CANDIDATE_REUSE,
                     "confirmation_label": "explicit_reuse_confirmation",
                 },
             )
@@ -421,7 +441,7 @@ class WebAppService:
 
         if not message_id:
             raise WebApiError(400, "검토 수락을 기록할 메시지 ID가 필요합니다.")
-        if review_action != "accept":
+        if review_action != CandidateReviewAction.ACCEPT:
             raise WebApiError(400, "현재 review action은 검토 수락만 지원합니다.")
         if not candidate_id or not candidate_updated_at:
             raise WebApiError(400, "현재 durable candidate 정보가 필요합니다.")
@@ -486,7 +506,7 @@ class WebAppService:
                     "artifact_id": source_message.get("artifact_id"),
                     "source_message_id": source_message.get("message_id"),
                     "review_scope": "source_message_candidate_review",
-                    "review_action": "accept",
+                    "review_action": CandidateReviewAction.ACCEPT,
                     "review_status": "accepted",
                 },
             )
@@ -568,7 +588,7 @@ class WebAppService:
             "supporting_source_message_refs": list(target_aggregate.get("supporting_source_message_refs") or []),
             "supporting_candidate_refs": list(target_aggregate.get("supporting_candidate_refs") or []),
             "operator_reason_or_note": operator_reason_or_note,
-            "record_stage": "emitted_record_only_not_applied",
+            "record_stage": RecordStage.EMITTED,
             "task_log_mirror_relation": "mirror_allowed_not_canonical",
             "emitted_at": now,
         }
@@ -591,7 +611,7 @@ class WebAppService:
                 "transition_action": "future_reviewed_memory_apply",
                 "aggregate_fingerprint": aggregate_fingerprint,
                 "operator_reason_or_note": operator_reason_or_note,
-                "record_stage": "emitted_record_only_not_applied",
+                "record_stage": RecordStage.EMITTED,
                 "emitted_at": now,
             },
         )
@@ -634,11 +654,11 @@ class WebAppService:
 
         if target_record is None:
             raise WebApiError(404, "해당 transition record를 찾지 못했습니다.")
-        if str(target_record.get("record_stage") or "").strip() != "emitted_record_only_not_applied":
+        if str(target_record.get("record_stage") or "").strip() != RecordStage.EMITTED:
             raise WebApiError(400, "이미 적용된 transition record입니다.")
 
         now = datetime.now(timezone.utc).isoformat()
-        target_record["record_stage"] = "applied_pending_result"
+        target_record["record_stage"] = RecordStage.APPLIED_PENDING
         target_record["applied_at"] = now
         self.session_store._save(session_id, session)
 
@@ -649,7 +669,7 @@ class WebAppService:
                 "canonical_transition_id": canonical_transition_id,
                 "transition_action": str(target_record.get("transition_action") or ""),
                 "aggregate_fingerprint": aggregate_fingerprint,
-                "record_stage": "applied_pending_result",
+                "record_stage": RecordStage.APPLIED_PENDING,
                 "applied_at": now,
             },
         )
@@ -692,20 +712,20 @@ class WebAppService:
 
         if target_record is None:
             raise WebApiError(404, "해당 transition record를 찾지 못했습니다.")
-        if str(target_record.get("record_stage") or "").strip() != "applied_pending_result":
+        if str(target_record.get("record_stage") or "").strip() != RecordStage.APPLIED_PENDING:
             raise WebApiError(400, "아직 적용 실행이 완료되지 않았거나 이미 결과가 확정되었습니다.")
 
         now = datetime.now(timezone.utc).isoformat()
         aggregate_identity_ref = dict(target_record.get("aggregate_identity_ref") or {})
         operator_reason = str(target_record.get("operator_reason_or_note") or "").strip()
-        target_record["record_stage"] = "applied_with_result"
+        target_record["record_stage"] = RecordStage.APPLIED_WITH_RESULT
         target_record["apply_result"] = {
             "result_version": "first_reviewed_memory_apply_result_v1",
             "applied_effect_kind": "reviewed_memory_correction_pattern",
             "applied_scope": "same_session_exact_recurrence_aggregate_only",
             "aggregate_identity_ref": aggregate_identity_ref,
             "transition_ref": canonical_transition_id,
-            "result_stage": "effect_active",
+            "result_stage": ResultStage.EFFECT_ACTIVE,
             "result_at": now,
         }
         target_record["result_at"] = now
@@ -730,9 +750,9 @@ class WebAppService:
             detail={
                 "canonical_transition_id": canonical_transition_id,
                 "aggregate_fingerprint": aggregate_fingerprint,
-                "record_stage": "applied_with_result",
+                "record_stage": RecordStage.APPLIED_WITH_RESULT,
                 "applied_effect_kind": "reviewed_memory_correction_pattern",
-                "result_stage": "effect_active",
+                "result_stage": ResultStage.EFFECT_ACTIVE,
                 "result_at": now,
             },
         )
@@ -769,14 +789,14 @@ class WebAppService:
             break
         if target_record is None:
             raise WebApiError(404, "해당 transition record를 찾지 못했습니다.")
-        if str(target_record.get("record_stage") or "").strip() != "applied_with_result":
+        if str(target_record.get("record_stage") or "").strip() != RecordStage.APPLIED_WITH_RESULT:
             raise WebApiError(400, "적용 결과가 확정된 상태에서만 중단할 수 있습니다.")
 
         now = datetime.now(timezone.utc).isoformat()
-        target_record["record_stage"] = "stopped"
+        target_record["record_stage"] = RecordStage.STOPPED
         target_record["stopped_at"] = now
         if isinstance(target_record.get("apply_result"), dict):
-            target_record["apply_result"]["result_stage"] = "effect_stopped"
+            target_record["apply_result"]["result_stage"] = ResultStage.EFFECT_STOPPED
 
         active_effects = session.get("reviewed_memory_active_effects")
         if isinstance(active_effects, list):
@@ -794,7 +814,7 @@ class WebAppService:
             detail={
                 "canonical_transition_id": canonical_transition_id,
                 "aggregate_fingerprint": aggregate_fingerprint,
-                "record_stage": "stopped",
+                "record_stage": RecordStage.STOPPED,
                 "stopped_at": now,
             },
         )
@@ -831,14 +851,14 @@ class WebAppService:
             break
         if target_record is None:
             raise WebApiError(404, "해당 transition record를 찾지 못했습니다.")
-        if str(target_record.get("record_stage") or "").strip() != "stopped":
+        if str(target_record.get("record_stage") or "").strip() != RecordStage.STOPPED:
             raise WebApiError(400, "적용이 중단된 상태에서만 되돌릴 수 있습니다.")
 
         now = datetime.now(timezone.utc).isoformat()
-        target_record["record_stage"] = "reversed"
+        target_record["record_stage"] = RecordStage.REVERSED
         target_record["reversed_at"] = now
         if isinstance(target_record.get("apply_result"), dict):
-            target_record["apply_result"]["result_stage"] = "effect_reversed"
+            target_record["apply_result"]["result_stage"] = ResultStage.EFFECT_REVERSED
 
         self.session_store._save(session_id, session)
 
@@ -848,7 +868,7 @@ class WebAppService:
             detail={
                 "canonical_transition_id": canonical_transition_id,
                 "aggregate_fingerprint": aggregate_fingerprint,
-                "record_stage": "reversed",
+                "record_stage": RecordStage.REVERSED,
                 "reversed_at": now,
             },
         )
@@ -885,7 +905,7 @@ class WebAppService:
             break
         if target_record is None:
             raise WebApiError(404, "해당 transition record를 찾지 못했습니다.")
-        if str(target_record.get("record_stage") or "").strip() != "reversed":
+        if str(target_record.get("record_stage") or "").strip() != RecordStage.REVERSED:
             raise WebApiError(400, "적용이 되돌려진 상태에서만 충돌 확인할 수 있습니다.")
 
         now = datetime.now(timezone.utc).isoformat()
@@ -916,13 +936,13 @@ class WebAppService:
                 ]
                 reversed_records = [
                     r for r in applied_records
-                    if str(r.get("record_stage") or "").strip() == "reversed"
+                    if str(r.get("record_stage") or "").strip() == RecordStage.REVERSED
                 ]
                 active_records = [
                     r for r in applied_records
-                    if str(r.get("record_stage") or "").strip() == "applied_with_result"
+                    if str(r.get("record_stage") or "").strip() == RecordStage.APPLIED_WITH_RESULT
                     and isinstance(r.get("apply_result"), dict)
-                    and str(r["apply_result"].get("result_stage") or "").strip() == "effect_active"
+                    and str(r["apply_result"].get("result_stage") or "").strip() == ResultStage.EFFECT_ACTIVE
                 ]
 
                 if candidate_refs and (active_records or reversed_records):
@@ -952,8 +972,8 @@ class WebAppService:
             "source_apply_transition_ref": canonical_transition_id,
             "conflict_entries": conflict_entries,
             "conflict_entry_count": len(conflict_entries),
-            "conflict_visibility_stage": "conflict_visibility_checked",
-            "record_stage": "conflict_visibility_checked",
+            "conflict_visibility_stage": RecordStage.CONFLICT_CHECKED,
+            "record_stage": RecordStage.CONFLICT_CHECKED,
             "task_log_mirror_relation": "mirror_allowed_not_canonical",
             "checked_at": now,
         }
@@ -974,7 +994,7 @@ class WebAppService:
                 "aggregate_fingerprint": aggregate_fingerprint,
                 "source_apply_transition_ref": canonical_transition_id,
                 "conflict_entry_count": len(conflict_entries),
-                "record_stage": "conflict_visibility_checked",
+                "record_stage": RecordStage.CONFLICT_CHECKED,
                 "checked_at": now,
             },
         )
@@ -1042,12 +1062,12 @@ class WebAppService:
                     meta_event_callback=push_stream_event,
                     cancel_requested=cancel_event.is_set,
                 )
-                event_queue.put({"ok": True, "event": "final", "data": final_payload})
+                event_queue.put({"ok": True, "event": StreamEventType.FINAL, "data": final_payload})
             except RequestCancelledError:
                 event_queue.put(
                     {
                         "ok": True,
-                        "event": "cancelled",
+                        "event": StreamEventType.CANCELLED,
                         "request_id": request_id,
                         "message": "요청을 취소했습니다. 현재까지 받은 응답만 화면에 남겨둡니다.",
                     }
@@ -1056,7 +1076,7 @@ class WebAppService:
                 event_queue.put(
                     {
                         "ok": False,
-                        "event": "error",
+                        "event": StreamEventType.ERROR,
                         "error": {"message": localize_text(exc.message)},
                         "status_code": int(exc.status_code),
                     }
@@ -1065,7 +1085,7 @@ class WebAppService:
                 event_queue.put(
                     {
                         "ok": False,
-                        "event": "error",
+                        "event": StreamEventType.ERROR,
                         "error": {"message": "JSON 요청 본문 형식이 올바르지 않습니다."},
                         "status_code": int(HTTPStatus.BAD_REQUEST),
                     }
@@ -1074,7 +1094,7 @@ class WebAppService:
                 event_queue.put(
                     {
                         "ok": False,
-                        "event": "error",
+                        "event": StreamEventType.ERROR,
                         "error": {"message": localize_text(str(exc))},
                         "status_code": int(HTTPStatus.BAD_GATEWAY),
                     }
@@ -1083,7 +1103,7 @@ class WebAppService:
                 event_queue.put(
                     {
                         "ok": False,
-                        "event": "error",
+                        "event": StreamEventType.ERROR,
                         "error": {"message": localize_text(str(exc))},
                         "status_code": int(HTTPStatus.INTERNAL_SERVER_ERROR),
                     }
@@ -1195,14 +1215,14 @@ class WebAppService:
                 cancel_requested=cancel_requested,
             )
             response.response_origin = self._build_response_origin(
-                provider="system",
+                provider=ResponseOriginProvider.SYSTEM,
                 model_name=None,
-                response_kind="approval",
+                response_kind=ResponseOriginKind.APPROVAL,
             )
             if meta_event_callback:
                 meta_event_callback(
                     {
-                        "event": "response_origin",
+                        "event": StreamEventType.RESPONSE_ORIGIN,
                         "response_origin": self._serialize_response_origin(response.response_origin),
                     }
                 )
@@ -1240,10 +1260,10 @@ class WebAppService:
         base_url = self._normalize_optional_text(payload.get("base_url")) or self.settings.ollama_base_url
         has_search_request = bool(search_query and (search_root or uploaded_search_files))
         search_intent = classify_search_intent(user_text)
-        explicit_web_search_request = search_intent.kind == "explicit_web"
-        implicit_web_search_query = search_intent.query if search_intent.kind == "live_latest" else None
-        external_fact_web_query = search_intent.query if search_intent.kind == "external_fact" else None
-        suggested_web_query = search_intent.suggestion_query if search_intent.kind == "none" else None
+        explicit_web_search_request = search_intent.kind == SearchIntentKind.EXPLICIT_WEB
+        implicit_web_search_query = search_intent.query if search_intent.kind == SearchIntentKind.LIVE_LATEST else None
+        external_fact_web_query = search_intent.query if search_intent.kind == SearchIntentKind.EXTERNAL_FACT else None
+        suggested_web_query = search_intent.suggestion_query if search_intent.kind == SearchIntentKind.NONE else None
         needs_model = (
             not (has_search_request and search_only)
             and not explicit_web_search_request
@@ -1279,12 +1299,12 @@ class WebAppService:
         response_origin = self._build_response_origin(
             provider=provider,
             model_name=model_name,
-            response_kind="assistant",
+            response_kind=ResponseOriginKind.ASSISTANT,
         )
         if meta_event_callback and localized_runtime_status:
             meta_event_callback(
                 {
-                    "event": "runtime_status",
+                    "event": StreamEventType.RUNTIME_STATUS,
                     "runtime_status": localized_runtime_status,
                 }
             )
@@ -1298,7 +1318,7 @@ class WebAppService:
         if meta_event_callback:
             meta_event_callback(
                 {
-                    "event": "response_origin",
+                    "event": StreamEventType.RESPONSE_ORIGIN,
                     "response_origin": self._serialize_response_origin(response_origin),
                 }
             )
@@ -1353,7 +1373,7 @@ class WebAppService:
         elif meta_event_callback and response.response_origin != response_origin:
             meta_event_callback(
                 {
-                    "event": "response_origin",
+                    "event": StreamEventType.RESPONSE_ORIGIN,
                     "response_origin": self._serialize_response_origin(response.response_origin),
                 }
             )
@@ -1408,7 +1428,7 @@ class WebAppService:
         response.text = updated_text
 
         if stream_event_callback:
-            stream_event_callback({"event": "text_replace", "text": updated_text})
+            stream_event_callback({"event": StreamEventType.TEXT_REPLACE, "text": updated_text})
 
         return response
 
@@ -1452,7 +1472,7 @@ class WebAppService:
             return
         callback(
             {
-                "event": "phase",
+                "event": StreamEventType.PHASE,
                 "phase": phase,
                 "title": title,
                 "detail": detail,
@@ -1861,13 +1881,13 @@ class WebAppService:
                     "page_count": int(item.get("page_count") or 0),
                     "record_path": str(item.get("record_path") or ""),
                     "summary_head": localize_text(str(item.get("summary_head") or "")),
-                    "answer_mode": str(item.get("answer_mode") or "general"),
+                    "answer_mode": str(item.get("answer_mode") or AnswerMode.GENERAL),
                     "verification_label": localize_text(str(item.get("verification_label") or "")),
                     "source_roles": [localize_text(str(role)) for role in item.get("source_roles", []) if str(role).strip()],
                     "claim_coverage_summary": {
-                        "strong": int((item.get("claim_coverage_summary") or {}).get("strong") or 0),
-                        "weak": int((item.get("claim_coverage_summary") or {}).get("weak") or 0),
-                        "missing": int((item.get("claim_coverage_summary") or {}).get("missing") or 0),
+                        CoverageStatus.STRONG: int((item.get("claim_coverage_summary") or {}).get(CoverageStatus.STRONG) or 0),
+                        CoverageStatus.WEAK: int((item.get("claim_coverage_summary") or {}).get(CoverageStatus.WEAK) or 0),
+                        CoverageStatus.MISSING: int((item.get("claim_coverage_summary") or {}).get(CoverageStatus.MISSING) or 0),
                     },
                     "pages_preview": [
                         {
@@ -1924,25 +1944,25 @@ class WebAppService:
         model_name: str | None,
         response_kind: str,
     ) -> dict[str, Any]:
-        normalized_provider = (provider or "system").strip().lower()
-        if normalized_provider == "ollama":
+        normalized_provider = (provider or ResponseOriginProvider.SYSTEM).strip().lower()
+        if normalized_provider == ResponseOriginProvider.OLLAMA:
             return {
-                "provider": "ollama",
+                "provider": ResponseOriginProvider.OLLAMA,
                 "badge": "OLLAMA",
                 "label": "실제 로컬 모델 응답",
                 "model": model_name or "선택형 로컬 모델",
                 "kind": response_kind,
             }
-        if normalized_provider == "mock":
+        if normalized_provider == ResponseOriginProvider.MOCK:
             return {
-                "provider": "mock",
+                "provider": ResponseOriginProvider.MOCK,
                 "badge": "MOCK",
                 "label": "모의 데모 응답",
                 "model": model_name or "내장 모의 어댑터",
                 "kind": response_kind,
             }
         return {
-            "provider": "system",
+            "provider": ResponseOriginProvider.SYSTEM,
             "badge": "SYSTEM",
             "label": "시스템 응답",
             "model": None,
@@ -1953,12 +1973,12 @@ class WebAppService:
         if origin is None:
             return None
         return {
-            "provider": str(origin.get("provider") or "system"),
+            "provider": str(origin.get("provider") or ResponseOriginProvider.SYSTEM),
             "badge": str(origin.get("badge") or "SYSTEM"),
             "label": str(origin.get("label") or "시스템 응답"),
             "model": origin.get("model"),
-            "kind": str(origin.get("kind") or "assistant"),
-            "answer_mode": str(origin.get("answer_mode") or "general"),
+            "kind": str(origin.get("kind") or ResponseOriginKind.ASSISTANT),
+            "answer_mode": str(origin.get("answer_mode") or AnswerMode.GENERAL),
             "source_roles": [str(item) for item in origin.get("source_roles", []) if str(item).strip()],
             "verification_label": str(origin.get("verification_label") or "").strip(),
         }
@@ -2122,7 +2142,7 @@ class WebAppService:
 
         outcome = str(corrected_outcome.get("outcome") or "").strip()
         recorded_at = str(corrected_outcome.get("recorded_at") or "").strip()
-        if outcome != "rejected" or not recorded_at:
+        if outcome != CorrectedOutcome.REJECTED or not recorded_at:
             return None
 
         serialized = {
@@ -2201,7 +2221,7 @@ class WebAppService:
         if (
             not candidate_id
             or candidate_scope != "session_local"
-            or candidate_family != "correction_rewrite_preference"
+            or candidate_family != CandidateFamily.CORRECTION_REWRITE
             or not statement
             or status != "session_local_candidate"
             or not created_at
@@ -2271,7 +2291,7 @@ class WebAppService:
         stability = str(candidate_recurrence_key.get("stability") or "").strip()
         derived_at = str(candidate_recurrence_key.get("derived_at") or "").strip()
         if (
-            candidate_family != "correction_rewrite_preference"
+            candidate_family != CandidateFamily.CORRECTION_REWRITE
             or key_scope != "correction_rewrite_recurrence"
             or key_version != "explicit_pair_rewrite_delta_v1"
             or derivation_source != "explicit_corrected_pair"
@@ -2382,7 +2402,7 @@ class WebAppService:
         if (
             not candidate_id
             or candidate_scope != "durable_candidate"
-            or candidate_family != "correction_rewrite_preference"
+            or candidate_family != CandidateFamily.CORRECTION_REWRITE
             or not statement
             or evidence_strength != "explicit_single_artifact"
             or not has_explicit_confirmation
@@ -5309,7 +5329,7 @@ class WebAppService:
                 continue
             if str(record.get("transition_action") or "").strip() != "future_reviewed_memory_conflict_visibility":
                 continue
-            if str(record.get("record_stage") or "").strip() != "conflict_visibility_checked":
+            if str(record.get("record_stage") or "").strip() != RecordStage.CONFLICT_CHECKED:
                 continue
             return dict(record)
 
@@ -5377,7 +5397,7 @@ class WebAppService:
             if not isinstance(message, dict):
                 continue
             if (
-                str(message.get("artifact_kind") or "").strip() != "grounded_brief"
+                str(message.get("artifact_kind") or "").strip() != ArtifactKind.GROUNDED_BRIEF
                 or not isinstance(message.get("original_response_snapshot"), dict)
             ):
                 continue
@@ -5597,7 +5617,7 @@ class WebAppService:
             if not isinstance(message, dict):
                 continue
             if (
-                str(message.get("artifact_kind") or "").strip() != "grounded_brief"
+                str(message.get("artifact_kind") or "").strip() != ArtifactKind.GROUNDED_BRIEF
                 or not isinstance(message.get("original_response_snapshot"), dict)
             ):
                 continue
@@ -5679,7 +5699,7 @@ class WebAppService:
             or not artifact_id
             or source_message_id is None
             or review_scope != "source_message_candidate_review"
-            or review_action != "accept"
+            or review_action != CandidateReviewAction.ACCEPT
             or review_status != "accepted"
             or not recorded_at
         ):
@@ -5713,11 +5733,11 @@ class WebAppService:
         recorded_at = str(candidate_confirmation_record.get("recorded_at") or "").strip()
         if (
             not candidate_id
-            or candidate_family != "correction_rewrite_preference"
+            or candidate_family != CandidateFamily.CORRECTION_REWRITE
             or not candidate_updated_at
             or not artifact_id
             or source_message_id is None
-            or confirmation_scope != "candidate_reuse"
+            or confirmation_scope != CandidateConfirmationScope.CANDIDATE_REUSE
             or confirmation_label != "explicit_reuse_confirmation"
             or not recorded_at
         ):
@@ -5849,7 +5869,7 @@ class WebAppService:
         confirmation_recorded_at = str(candidate_confirmation_record.get("recorded_at") or "").strip()
         if (
             not candidate_id
-            or candidate_family != "correction_rewrite_preference"
+            or candidate_family != CandidateFamily.CORRECTION_REWRITE
             or not candidate_updated_at
             or candidate_confirmation_record.get("candidate_id") != candidate_id
             or candidate_confirmation_record.get("candidate_family") != candidate_family
@@ -5912,7 +5932,7 @@ class WebAppService:
         latest_corrected_outcome = content_signal.get("latest_corrected_outcome")
         if not isinstance(latest_corrected_outcome, dict):
             return None
-        if str(latest_corrected_outcome.get("outcome") or "").strip() != "corrected":
+        if str(latest_corrected_outcome.get("outcome") or "").strip() != CorrectedOutcome.CORRECTED:
             return None
         if not bool(content_signal.get("has_corrected_text")):
             return None
@@ -5953,7 +5973,7 @@ class WebAppService:
                 f"session-local-candidate:{artifact_id}:{source_message_id}:correction_rewrite_preference"
             ),
             "candidate_scope": "session_local",
-            "candidate_family": "correction_rewrite_preference",
+            "candidate_family": CandidateFamily.CORRECTION_REWRITE,
             "statement": "explicit rewrite correction recorded for this grounded brief",
             "supporting_artifact_ids": [artifact_id],
             "supporting_source_message_ids": [source_message_id],
@@ -5993,7 +6013,7 @@ class WebAppService:
         ]
         if (
             not candidate_id
-            or candidate_family != "correction_rewrite_preference"
+            or candidate_family != CandidateFamily.CORRECTION_REWRITE
             or not candidate_updated_at
             or artifact_id not in supporting_artifact_ids
             or source_message_id not in supporting_source_message_ids
@@ -6003,7 +6023,7 @@ class WebAppService:
         corrected_outcome = self._serialize_corrected_outcome(message.get("corrected_outcome"))
         if (
             not isinstance(corrected_outcome, dict)
-            or str(corrected_outcome.get("outcome") or "").strip() != "corrected"
+            or str(corrected_outcome.get("outcome") or "").strip() != CorrectedOutcome.CORRECTED
             or str(corrected_outcome.get("artifact_id") or "").strip() != artifact_id
             or str(corrected_outcome.get("source_message_id") or "").strip() != source_message_id
             or str(corrected_outcome.get("recorded_at") or "").strip() != candidate_updated_at
@@ -6090,7 +6110,7 @@ class WebAppService:
         serialized = self._serialize_content_reason_record(content_reason_record)
         if serialized is None:
             return None
-        if serialized.get("reason_scope") != "content_reject":
+        if serialized.get("reason_scope") != ContentReasonScope.CONTENT_REJECT:
             return None
         if serialized.get("reason_label") != "explicit_content_rejection":
             return None
@@ -6103,7 +6123,7 @@ class WebAppService:
             return None
 
         serialized["artifact_id"] = artifact_id
-        serialized["artifact_kind"] = str(serialized.get("artifact_kind") or "").strip() or "grounded_brief"
+        serialized["artifact_kind"] = str(serialized.get("artifact_kind") or "").strip() or ArtifactKind.GROUNDED_BRIEF
         serialized["source_message_id"] = source_message_id
         if not str(serialized.get("recorded_at") or "").strip():
             return None
@@ -6151,7 +6171,7 @@ class WebAppService:
             artifact_id, source_message_id = anchor
 
             if action == "content_verdict_recorded":
-                if str(detail.get("content_verdict") or "").strip() != "rejected":
+                if str(detail.get("content_verdict") or "").strip() != ContentVerdict.REJECTED:
                     continue
                 content_reason_record = self._normalize_superseded_reject_reason_record(
                     detail.get("content_reason_record"),
@@ -6170,7 +6190,7 @@ class WebAppService:
                     "source_message_id": source_message_id,
                     "replay_source": "task_log_audit",
                     "corrected_outcome": {
-                        "outcome": "rejected",
+                        "outcome": CorrectedOutcome.REJECTED,
                         "recorded_at": recorded_at,
                     },
                 }
@@ -6272,7 +6292,7 @@ class WebAppService:
             return None
         latest_corrected_outcome = content_signal.get("latest_corrected_outcome")
         if isinstance(latest_corrected_outcome, dict):
-            if str(latest_corrected_outcome.get("outcome") or "").strip() == "rejected":
+            if str(latest_corrected_outcome.get("outcome") or "").strip() == CorrectedOutcome.REJECTED:
                 return None
 
         anchor = self._normalize_source_message_anchor(message)
@@ -6328,7 +6348,7 @@ class WebAppService:
         if (
             response.original_response_snapshot is None
             and (
-                response.artifact_kind != "grounded_brief"
+                response.artifact_kind != ArtifactKind.GROUNDED_BRIEF
                 or not response.artifact_id
                 or (not response.evidence and not response.summary_chunks)
             )
@@ -6417,7 +6437,7 @@ class WebAppService:
         return serialized
 
     def _serialize_permissions(self, permissions: Any) -> dict[str, str]:
-        web_search_permission = "disabled"
+        web_search_permission = WebSearchPermission.DISABLED
         if isinstance(permissions, dict):
             web_search_permission = self._normalize_web_search_permission(permissions.get("web_search"))
         return {
@@ -6441,7 +6461,7 @@ class WebAppService:
         if normalized is None:
             return None
         lowered = normalized.lower()
-        if lowered not in {"helpful", "unclear", "incorrect"}:
+        if lowered not in {FeedbackLabel.HELPFUL, FeedbackLabel.UNCLEAR, FeedbackLabel.INCORRECT}:
             return None
         return lowered
 
@@ -6450,7 +6470,7 @@ class WebAppService:
         if normalized is None:
             return None
         lowered = normalized.lower()
-        if lowered not in {"factual_error", "irrelevant_result", "context_miss", "awkward_tone"}:
+        if lowered not in {FeedbackReason.FACTUAL_ERROR, FeedbackReason.IRRELEVANT_RESULT, FeedbackReason.CONTEXT_MISS, FeedbackReason.AWKWARD_TONE}:
             return None
         return lowered
 
@@ -6459,23 +6479,23 @@ class WebAppService:
         if normalized is None:
             return None
         lowered = normalized.lower()
-        if lowered == "rejected":
+        if lowered == ContentVerdict.REJECTED:
             return lowered
         return None
 
     def _normalize_web_search_permission(self, raw_value: Any) -> str:
         if not isinstance(raw_value, str):
-            return "disabled"
+            return WebSearchPermission.DISABLED
         normalized = raw_value.strip().lower()
-        if normalized in {"disabled", "approval", "enabled"}:
+        if normalized in {WebSearchPermission.DISABLED, WebSearchPermission.APPROVAL, WebSearchPermission.ENABLED}:
             return normalized
-        return "disabled"
+        return WebSearchPermission.DISABLED
 
     def _web_search_permission_label(self, permission: Any) -> str:
         normalized = self._normalize_web_search_permission(permission)
-        if normalized == "approval":
+        if normalized == WebSearchPermission.APPROVAL:
             return "승인 필요 · 읽기 전용 검색"
-        if normalized == "enabled":
+        if normalized == WebSearchPermission.ENABLED:
             return "허용 · 읽기 전용 검색"
         return "차단 · 읽기 전용 검색"
 

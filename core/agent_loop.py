@@ -14,6 +14,19 @@ from core.approval import (
     ApprovalRequest,
     build_approval_reason_record,
 )
+from core.contracts import (
+    ArtifactKind,
+    AnswerMode,
+    CoverageStatus,
+    FreshnessRisk,
+    FollowUpIntent,
+    ResponseStatus,
+    SaveContentSource,
+    SearchIntentKind,
+    SourceRole,
+    SourceType,
+    StreamEventType,
+)
 from core.request_intents import classify_search_intent
 from core.source_policy import build_source_policy, score_source_for_mode
 from core.web_claims import (
@@ -53,7 +66,7 @@ class AgentResponse:
     text: str
     message_id: str | None = None
     source_message_id: str | None = None
-    status: str = "answer"
+    status: str = ResponseStatus.ANSWER
     actions_taken: list[str] = field(default_factory=list)
     requires_approval: bool = False
     proposed_note_path: str | None = None
@@ -106,7 +119,7 @@ class AgentLoop:
         return f"msg-{uuid4().hex[:12]}"
 
     def _build_original_response_snapshot(self, response: AgentResponse) -> dict[str, Any] | None:
-        if response.artifact_kind != "grounded_brief" or not response.artifact_id:
+        if response.artifact_kind != ArtifactKind.GROUNDED_BRIEF or not response.artifact_id:
             return None
         if not response.evidence and not response.summary_chunks:
             return None
@@ -193,7 +206,7 @@ class AgentLoop:
             reason_label=reason_label,
             reason_note=reason_note,
             artifact_id=normalized_artifact_id,
-            artifact_kind="grounded_brief",
+            artifact_kind=ArtifactKind.GROUNDED_BRIEF,
             source_message_id=resolved_source_message_id,
             approval_id=normalized_approval_id,
         )
@@ -289,7 +302,7 @@ class AgentLoop:
         if not source_message_id:
             return AgentResponse(
                 text="저장 요청을 만들 수정본 원문 메시지 ID가 없습니다.",
-                status="error",
+                status=ResponseStatus.ERROR,
                 actions_taken=["approval_error"],
             )
 
@@ -297,20 +310,20 @@ class AgentLoop:
         if not isinstance(source_message, dict):
             return AgentResponse(
                 text="수정본 저장 요청을 만들 grounded-brief 원문 응답을 찾지 못했습니다.",
-                status="error",
+                status=ResponseStatus.ERROR,
                 actions_taken=["approval_error"],
             )
 
         artifact_id = str(source_message.get("artifact_id") or "").strip()
         if (
             source_message.get("role") != "assistant"
-            or str(source_message.get("artifact_kind") or "").strip() != "grounded_brief"
+            or str(source_message.get("artifact_kind") or "").strip() != ArtifactKind.GROUNDED_BRIEF
             or not artifact_id
             or not isinstance(source_message.get("original_response_snapshot"), dict)
         ):
             return AgentResponse(
                 text="수정본 저장 요청은 grounded-brief 원문 응답에서만 만들 수 있습니다.",
-                status="error",
+                status=ResponseStatus.ERROR,
                 actions_taken=["approval_error"],
             )
 
@@ -318,10 +331,10 @@ class AgentLoop:
         if not corrected_text:
             return AgentResponse(
                 text="기록된 수정본이 없습니다. 먼저 수정본 기록을 눌러 주세요.",
-                status="error",
+                status=ResponseStatus.ERROR,
                 actions_taken=["approval_error"],
                 artifact_id=artifact_id,
-                artifact_kind="grounded_brief",
+                artifact_kind=ArtifactKind.GROUNDED_BRIEF,
                 source_message_id=source_message_id,
             )
 
@@ -332,10 +345,10 @@ class AgentLoop:
         if not note_path:
             return AgentResponse(
                 text="수정본 저장 경로를 정할 수 없습니다. 먼저 원래 저장 요청을 만들거나 저장된 경로가 있는 응답에서 다시 시도해 주세요.",
-                status="error",
+                status=ResponseStatus.ERROR,
                 actions_taken=["approval_error"],
                 artifact_id=artifact_id,
-                artifact_kind="grounded_brief",
+                artifact_kind=ArtifactKind.GROUNDED_BRIEF,
                 source_message_id=source_message_id,
             )
 
@@ -354,7 +367,7 @@ class AgentLoop:
                 f"현재 기록된 수정본 스냅샷을 {approval.requested_path}에 저장하려면 승인이 필요합니다. "
                 "이 승인 미리보기는 요청 시점 그대로 고정됩니다."
             ),
-            status="needs_approval",
+            status=ResponseStatus.NEEDS_APPROVAL,
             actions_taken=["approval_requested"],
             requires_approval=True,
             proposed_note_path=approval.requested_path,
@@ -362,7 +375,7 @@ class AgentLoop:
             note_preview=approval.preview_markdown,
             approval=approval.to_public_dict(),
             artifact_id=artifact_id,
-            artifact_kind="grounded_brief",
+            artifact_kind=ArtifactKind.GROUNDED_BRIEF,
             source_message_id=source_message_id,
             save_content_source=approval.save_content_source,
         )
@@ -1416,7 +1429,7 @@ class AgentLoop:
             summary_source_type=reduce_source_type,
         )
         if stream_event_callback:
-            stream_event_callback({"event": "text_replace", "text": final_summary})
+            stream_event_callback({"event": StreamEventType.TEXT_REPLACE, "text": final_summary})
         return final_summary, summary_chunks
 
     def _collect_retrieval_chunks(self, *, read_results: list[Any], max_total_chunks: int = 36) -> list[dict[str, str]]:
@@ -2170,7 +2183,7 @@ class AgentLoop:
             )
         return AgentResponse(
             text=text,
-            status="answer",
+            status=ResponseStatus.ANSWER,
             actions_taken=["respond_with_limitations"],
             response_origin={
                 "provider": "system",
@@ -2205,7 +2218,7 @@ class AgentLoop:
                 "저는 직접 봤다거나 써 봤다거나 다녀온 경험이 있는 것처럼 말할 수는 없습니다. "
                 "대신 작품 소개, 줄거리, 리뷰, 제품 설명 같은 텍스트를 주시면 그 내용만 기준으로 정리해 드릴 수 있습니다."
             ),
-            status="answer",
+            status=ResponseStatus.ANSWER,
             actions_taken=["respond_with_limitations"],
             response_origin={
                 "provider": "system",
@@ -2245,7 +2258,7 @@ class AgentLoop:
                 f"{self._web_search_permission_phrase(permission)} 실시간 날씨나 뉴스 같은 외부 조회 도구가 아직 연결되어 있지 않습니다. "
                 "그래서 지금 바로 조회해 드릴 수는 없습니다. 지역명과 함께 메모나 관련 텍스트를 주시면 그 범위 안에서 정리해 드릴 수 있습니다."
             ),
-            status="answer",
+            status=ResponseStatus.ANSWER,
             actions_taken=["respond_with_limitations"],
             response_origin={
                 "provider": "system",
@@ -2274,7 +2287,7 @@ class AgentLoop:
             )
         return AgentResponse(
             text=text,
-            status="answer",
+            status=ResponseStatus.ANSWER,
             actions_taken=["respond_with_limitations"],
             response_origin={
                 "provider": "system",
@@ -2307,7 +2320,7 @@ class AgentLoop:
             suggestions = []
         return AgentResponse(
             text=text,
-            status="answer",
+            status=ResponseStatus.ANSWER,
             actions_taken=["suggest_web_search"],
             follow_up_suggestions=suggestions,
             response_origin={
@@ -2332,7 +2345,7 @@ class AgentLoop:
             "상태": f"{query} 출시 상태 검색해봐",
             "이용 형태": f"{query} 공식 플랫폼 검색해봐",
         }
-        status_priority = {"missing": 0, "weak": 1}
+        status_priority = {CoverageStatus.MISSING: 0, CoverageStatus.WEAK: 1}
         candidates: list[tuple[int, int, str]] = []
         for index, item in enumerate(claim_coverage or []):
             if not isinstance(item, dict):
@@ -2364,7 +2377,7 @@ class AgentLoop:
         claim_coverage: list[dict[str, Any]] | None = None,
     ) -> list[str]:
         suggestions: list[str] = []
-        if answer_mode == "entity_card":
+        if answer_mode == AnswerMode.ENTITY_CARD:
             suggestions.extend(
                 self._build_entity_reinvestigation_suggestions(
                     query=query,
@@ -2645,9 +2658,9 @@ class AgentLoop:
     ) -> str:
         normalized = " ".join(str(query or "").split()).lower()
         query_terms = self._extract_web_query_terms(query)
-        if answer_mode == "entity_card":
+        if answer_mode == AnswerMode.ENTITY_CARD:
             return "entity"
-        if answer_mode == "latest_update" or freshness_risk == "high":
+        if answer_mode == AnswerMode.LATEST_UPDATE or freshness_risk == FreshnessRisk.HIGH:
             return "live"
         live_markers = {
             "날씨",
@@ -2692,9 +2705,9 @@ class AgentLoop:
             "이벤트",
             "협업",
         }
-        if intent_kind == "live_latest" or any(marker in normalized for marker in live_markers):
+        if intent_kind == SearchIntentKind.LIVE_LATEST or any(marker in normalized for marker in live_markers):
             return "live"
-        if intent_kind == "external_fact":
+        if intent_kind == SearchIntentKind.EXTERNAL_FACT:
             return "entity"
         if 1 <= len(query_terms) <= 3 and not any(marker in normalized for marker in broad_topic_markers):
             return "entity"
@@ -3510,7 +3523,7 @@ class AgentLoop:
         primary_claim: ClaimRecord | None,
     ) -> list[str]:
         compact_value = " ".join(str(getattr(primary_claim, "value", "") or "").split()).strip().rstrip(".")
-        if status == "weak" and compact_value:
+        if status == CoverageStatus.WEAK and compact_value:
             query_map: dict[str, list[str]] = {
                 "개발": [f"{query} {compact_value} 개발사 공식", f"{query} {compact_value} 개발사 위키"],
                 "서비스/배급": [f"{query} {compact_value} 서비스 공식", f"{query} {compact_value} 운영 공식"],
@@ -3550,7 +3563,7 @@ class AgentLoop:
             selected_sources=selected_sources,
         )
         coverage = summarize_slot_coverage(claim_records, slots=CORE_ENTITY_SLOTS)
-        strong_slots = {slot for slot, item in coverage.items() if item.status == "strong"}
+        strong_slots = {slot for slot, item in coverage.items() if item.status == CoverageStatus.STRONG}
         has_distribution_or_access = bool({"서비스/배급", "이용 형태"} & strong_slots)
         if (
             len(strong_slots) >= 4
@@ -3578,14 +3591,14 @@ class AgentLoop:
         pending_slots = [
             (slot, slot_coverage)
             for slot, slot_coverage in coverage.items()
-            if slot_coverage.status != "strong"
+            if slot_coverage.status != CoverageStatus.STRONG
         ]
         pending_slots.sort(
             key=lambda item: (
                 0
-                if item[1].status == "missing" and prior_slot_probe_counts.get(item[0], 0) >= 1
+                if item[1].status == CoverageStatus.MISSING and prior_slot_probe_counts.get(item[0], 0) >= 1
                 else 1
-                if item[1].status == "missing"
+                if item[1].status == CoverageStatus.MISSING
                 else 2
                 if prior_slot_probe_counts.get(item[0], 0) >= 1
                 else 3,
@@ -3614,9 +3627,9 @@ class AgentLoop:
                 else ""
             )
             prefer_probe_first = (
-                slot_coverage.status == "missing"
+                slot_coverage.status == CoverageStatus.MISSING
                 or prior_probe_count >= 1
-                or (slot_coverage.status == "weak" and source_role != "공식 기반")
+                or (slot_coverage.status == CoverageStatus.WEAK and source_role != SourceRole.OFFICIAL)
             )
             ordered_variants = (
                 [*probe_variants, *confirmation_variants]
@@ -3626,7 +3639,7 @@ class AgentLoop:
             added_for_slot = 0
             max_queries_for_slot = (
                 2
-                if slot_coverage.status == "weak" and (prior_probe_count >= 1 or source_role != "공식 기반")
+                if slot_coverage.status == CoverageStatus.WEAK and (prior_probe_count >= 1 or source_role != SourceRole.OFFICIAL)
                 else 1
             )
             for variant in ordered_variants:
@@ -3747,7 +3760,7 @@ class AgentLoop:
         if source_role in TRUSTED_CLAIM_SOURCE_ROLES:
             bonus += 2
         normalized_matched_query = " ".join(matched_query.split()).strip().lower()
-        if "공식" in normalized_matched_query and source_role == "공식 기반":
+        if "공식" in normalized_matched_query and source_role == SourceRole.OFFICIAL:
             bonus += 2
         return bonus
 
@@ -3880,13 +3893,13 @@ class AgentLoop:
             source_title = str(source.get("title") or source.get("result_title") or "").strip()
             source_role = self._entity_source_role_label(query=query, source=source)
             role_confidence = {
-                "백과 기반": 0.95,
-                "공식 기반": 0.9,
-                "설명형 출처": 0.75,
-                "보조 기사": 0.55,
-                "보조 포털": 0.45,
-                "보조 블로그": 0.35,
-                "보조 출처": 0.4,
+                SourceRole.WIKI: 0.95,
+                SourceRole.OFFICIAL: 0.9,
+                SourceRole.DESCRIPTIVE: 0.75,
+                SourceRole.NEWS: 0.55,
+                SourceRole.PORTAL: 0.45,
+                SourceRole.BLOG: 0.35,
+                SourceRole.AUXILIARY: 0.4,
             }.get(source_role, 0.4)
             for bullet in self._extract_entity_source_fact_bullets(query=query, source=source):
                 parsed = self._split_entity_fact_bullet(bullet)
@@ -3908,13 +3921,13 @@ class AgentLoop:
 
     def _entity_claim_sort_key(self, claim: ClaimRecord) -> tuple[int, int, int, int, str]:
         role_priority = {
-            "백과 기반": 4,
-            "공식 기반": 3,
-            "설명형 출처": 2,
-            "보조 기사": 1,
-            "보조 출처": 1,
-            "보조 포털": 0,
-            "보조 블로그": 0,
+            SourceRole.WIKI: 4,
+            SourceRole.OFFICIAL: 3,
+            SourceRole.DESCRIPTIVE: 2,
+            SourceRole.NEWS: 1,
+            SourceRole.AUXILIARY: 1,
+            SourceRole.PORTAL: 0,
+            SourceRole.BLOG: 0,
         }
         return (
             claim.support_count,
@@ -3948,7 +3961,7 @@ class AgentLoop:
             slot_coverage = coverage.get(slot)
             if not slot_coverage:
                 continue
-            if slot_coverage.status == "strong":
+            if slot_coverage.status == CoverageStatus.STRONG:
                 strong_selected.append(best)
                 continue
             if best.source_role in TRUSTED_CLAIM_SOURCE_ROLES:
@@ -3980,7 +3993,7 @@ class AgentLoop:
         unresolved_slots = [
             slot
             for slot in core_slots
-            if coverage.get(slot) and coverage[slot].status != "strong" and slot not in covered_slots
+            if coverage.get(slot) and coverage[slot].status != CoverageStatus.STRONG and slot not in covered_slots
         ]
         return strong_selected[:5], weak_selected[:5], supporting[:2], unresolved_slots[:3]
 
@@ -4002,7 +4015,7 @@ class AgentLoop:
                 coverage_items.append(
                     {
                         "slot": slot,
-                        "status": "missing",
+                        "status": CoverageStatus.MISSING,
                         "status_label": "미확인",
                         "support_count": 0,
                         "candidate_count": 0,
@@ -4020,12 +4033,12 @@ class AgentLoop:
             else:
                 rendered_as = "not_rendered"
 
-            status = str(getattr(slot_coverage, "status", "weak") or "weak")
+            status = str(getattr(slot_coverage, "status", CoverageStatus.WEAK) or CoverageStatus.WEAK)
             coverage_items.append(
                 {
                     "slot": slot,
                     "status": status,
-                    "status_label": "교차 확인" if status == "strong" else "단일 출처",
+                    "status_label": "교차 확인" if status == CoverageStatus.STRONG else "단일 출처",
                     "support_count": int(getattr(primary_claim, "support_count", 0) or 0),
                     "candidate_count": int(getattr(slot_coverage, "candidate_count", 0) or 0),
                     "value": str(getattr(primary_claim, "value", "") or ""),
@@ -4057,8 +4070,8 @@ class AgentLoop:
         annotated: list[dict[str, Any]] = []
         for item in items:
             slot = str(item.get("slot") or "").strip()
-            current_status = str(item.get("status") or "").strip() or "missing"
-            previous_status = previous_map.get(slot, "missing")
+            current_status = str(item.get("status") or "").strip() or CoverageStatus.MISSING
+            previous_status = previous_map.get(slot, CoverageStatus.MISSING)
             previous_rank = self._claim_coverage_status_rank(previous_status)
             current_rank = self._claim_coverage_status_rank(current_status)
             progress_state = ""
@@ -4084,17 +4097,17 @@ class AgentLoop:
 
     def _claim_coverage_status_rank(self, status: str) -> int:
         normalized = str(status or "").strip()
-        if normalized == "strong":
+        if normalized == CoverageStatus.STRONG:
             return 2
-        if normalized == "weak":
+        if normalized == CoverageStatus.WEAK:
             return 1
         return 0
 
     def _claim_coverage_status_label(self, status: str) -> str:
         normalized = str(status or "").strip()
-        if normalized == "strong":
+        if normalized == CoverageStatus.STRONG:
             return "교차 확인"
-        if normalized == "weak":
+        if normalized == CoverageStatus.WEAK:
             return "단일 출처"
         return "미확인"
 
@@ -4147,7 +4160,7 @@ class AgentLoop:
             current_status = current_map.get(slot, "")
             if not current_status:
                 continue
-            previous_status = previous_map.get(slot, "missing")
+            previous_status = previous_map.get(slot, CoverageStatus.MISSING)
             previous_rank = self._claim_coverage_status_rank(previous_status)
             current_rank = self._claim_coverage_status_rank(current_status)
             if current_rank > previous_rank:
@@ -4166,7 +4179,7 @@ class AgentLoop:
                         self._claim_coverage_status_label(current_status),
                     )
                 )
-            if current_status in {"weak", "missing"}:
+            if current_status in {CoverageStatus.WEAK, CoverageStatus.MISSING}:
                 unresolved_slots.append((slot, self._claim_coverage_status_label(current_status)))
 
         if focus_slot:
@@ -4225,13 +4238,13 @@ class AgentLoop:
         lines: list[str] = []
         seen_urls: set[str] = set()
         role_priority = {
-            "백과 기반": 4,
-            "공식 기반": 3,
-            "설명형 출처": 2,
-            "보조 기사": 1,
-            "보조 출처": 1,
-            "보조 포털": 0,
-            "보조 블로그": 0,
+            SourceRole.WIKI: 4,
+            SourceRole.OFFICIAL: 3,
+            SourceRole.DESCRIPTIVE: 2,
+            SourceRole.NEWS: 1,
+            SourceRole.AUXILIARY: 1,
+            SourceRole.PORTAL: 0,
+            SourceRole.BLOG: 0,
         }
         support_refs.sort(key=lambda item: (role_priority.get(item[2], 0), len(item[1])), reverse=True)
         for url, title, role_label in support_refs:
@@ -4474,9 +4487,9 @@ class AgentLoop:
             summary_text=summary_text or snippet or title,
         )
         resolved_answer_mode = answer_mode or (
-            "entity_card" if query_profile == "entity" else "latest_update" if query_profile == "live" else "general"
+            AnswerMode.ENTITY_CARD if query_profile == "entity" else AnswerMode.LATEST_UPDATE if query_profile == "live" else AnswerMode.GENERAL
         )
-        resolved_freshness_risk = freshness_risk or ("high" if query_profile == "live" else "low")
+        resolved_freshness_risk = freshness_risk or (FreshnessRisk.HIGH if query_profile == "live" else FreshnessRisk.LOW)
 
         score = 0
         for term in query_terms:
@@ -4727,8 +4740,8 @@ class AgentLoop:
             )
             return score_source_for_mode(
                 source_policy,
-                answer_mode="entity_card",
-                freshness_risk=freshness_risk or "low",
+                answer_mode=AnswerMode.ENTITY_CARD,
+                freshness_risk=freshness_risk or FreshnessRisk.LOW,
             )
 
         candidates = list(selected)
@@ -5126,19 +5139,19 @@ class AgentLoop:
         claim_coverage: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         mode_label = "웹 검색 결과"
-        if answer_mode == "entity_card":
+        if answer_mode == AnswerMode.ENTITY_CARD:
             mode_label = "외부 웹 설명 카드"
-        elif answer_mode == "latest_update":
+        elif answer_mode == AnswerMode.LATEST_UPDATE:
             mode_label = "외부 웹 최신 확인"
         role_sources = list(selected_sources or [])
-        if answer_mode == "entity_card" and role_sources:
+        if answer_mode == AnswerMode.ENTITY_CARD and role_sources:
             role_sources = [
                 s for s in role_sources
                 if self._extract_entity_source_fact_bullets(query=query or "", source=s)
             ]
             if not role_sources:
                 role_sources = list(selected_sources or [])
-        elif answer_mode == "latest_update" and role_sources:
+        elif answer_mode == AnswerMode.LATEST_UPDATE and role_sources:
             role_sources = [
                 s for s in role_sources
                 if not self._looks_like_noisy_web_segment(
@@ -5160,7 +5173,7 @@ class AgentLoop:
             "label": mode_label,
             "model": None,
             "kind": "assistant",
-            "answer_mode": str(answer_mode or "general"),
+            "answer_mode": str(answer_mode or AnswerMode.GENERAL),
             "source_roles": source_roles,
             "verification_label": verification_label,
         }
@@ -5195,17 +5208,17 @@ class AgentLoop:
                 title=title,
                 summary_text=summary_text,
             )
-            source_type = str(policy.source_type or "general")
+            source_type = str(policy.source_type or SourceType.GENERAL)
             type_counts[source_type] = type_counts.get(source_type, 0) + 1
 
-        official_count = type_counts.get("official", 0)
-        news_count = type_counts.get("news", 0)
-        wiki_count = type_counts.get("wiki", 0)
-        database_count = type_counts.get("database", 0)
+        official_count = type_counts.get(SourceType.OFFICIAL, 0)
+        news_count = type_counts.get(SourceType.NEWS, 0)
+        wiki_count = type_counts.get(SourceType.WIKI, 0)
+        database_count = type_counts.get(SourceType.DATABASE, 0)
         strong_reference_count = official_count + wiki_count + database_count
         total = len(sources)
 
-        if answer_mode == "latest_update":
+        if answer_mode == AnswerMode.LATEST_UPDATE:
             if official_count >= 1 and news_count >= 1:
                 return "공식+기사 교차 확인"
             if official_count >= 1 and total >= 2:
@@ -5218,9 +5231,9 @@ class AgentLoop:
                 return "다중 출처 참고"
             return "단일 출처 참고"
 
-        if answer_mode == "entity_card":
+        if answer_mode == AnswerMode.ENTITY_CARD:
             has_strong_slot = any(
-                str(item.get("status") or "").strip() == "strong"
+                str(item.get("status") or "").strip() == CoverageStatus.STRONG
                 for item in (claim_coverage or [])
                 if isinstance(item, dict)
             )
@@ -5246,7 +5259,7 @@ class AgentLoop:
         verification_label = self._build_web_verification_label(
             query=query,
             sources=selected_sources,
-            answer_mode="latest_update",
+            answer_mode=AnswerMode.LATEST_UPDATE,
         )
         non_noisy_sources = [
             s for s in selected_sources
@@ -5478,14 +5491,14 @@ class AgentLoop:
             lines.append(f"원문 확인: {len(ok_pages)}건")
             lines.append("")
         if selected_sources:
-            if query_profile == "entity" and intent_kind == "external_fact":
+            if query_profile == "entity" and intent_kind == SearchIntentKind.EXTERNAL_FACT:
                 return self._build_entity_web_summary(
                     query=query,
                     selected_sources=selected_sources,
                     ranked_sources=ranked,
                     pages=pages,
                 )
-            if answer_mode == "latest_update" or query_profile == "live":
+            if answer_mode == AnswerMode.LATEST_UPDATE or query_profile == "live":
                 return self._build_latest_update_web_summary(
                     query=query,
                     selected_sources=selected_sources,
@@ -5538,7 +5551,7 @@ class AgentLoop:
                     f"현재 세션에서는 웹 검색을 허용한 상태지만 검색 도구가 아직 연결되지 않았습니다. "
                     f"그래서 '{query}' 검색을 실행하지 못했습니다."
                 ),
-                status="answer",
+                status=ResponseStatus.ANSWER,
                 actions_taken=["respond_with_limitations"],
                 response_origin={
                     "provider": "system",
@@ -5563,10 +5576,10 @@ class AgentLoop:
             freshness_risk=freshness_risk,
         )
         effective_answer_mode = answer_mode
-        if intent_kind == "external_fact" and query_profile == "entity":
-            effective_answer_mode = "entity_card"
-        elif intent_kind == "live_latest" and query_profile == "live":
-            effective_answer_mode = "latest_update"
+        if intent_kind == SearchIntentKind.EXTERNAL_FACT and query_profile == "entity":
+            effective_answer_mode = AnswerMode.ENTITY_CARD
+        elif intent_kind == SearchIntentKind.LIVE_LATEST and query_profile == "live":
+            effective_answer_mode = AnswerMode.LATEST_UPDATE
         search_queries: list[str] = []
         seen_search_queries: set[str] = set()
         for candidate in [*(seed_queries or []), *self._expand_web_search_queries(
@@ -5611,7 +5624,7 @@ class AgentLoop:
             error_text = search_errors[0] if search_errors else "검색 결과를 찾지 못했습니다."
             return AgentResponse(
                 text=f"웹 검색을 시도했지만 실패했습니다: {error_text}",
-                status="error",
+                status=ResponseStatus.ERROR,
                 actions_taken=["web_search_error"],
                 response_origin={
                     "provider": "system",
@@ -5657,7 +5670,7 @@ class AgentLoop:
             results=serialized_results,
             pages=fetched_pages,
         )
-        if intent_kind == "external_fact" and self._infer_web_query_profile(
+        if intent_kind == SearchIntentKind.EXTERNAL_FACT and self._infer_web_query_profile(
             query=query,
             intent_kind=intent_kind,
             answer_mode=effective_answer_mode,
@@ -5754,7 +5767,7 @@ class AgentLoop:
             answer_mode=effective_answer_mode,
             freshness_risk=freshness_risk,
         )
-        if intent_kind == "external_fact" and query_profile == "entity":
+        if intent_kind == SearchIntentKind.EXTERNAL_FACT and query_profile == "entity":
             entity_sources = self._select_ranked_web_sources(
                 query=query,
                 intent_kind=intent_kind,
@@ -5785,7 +5798,7 @@ class AgentLoop:
                 )
         claim_coverage_progress_summary: str | None = None
         if (
-            effective_answer_mode == "entity_card"
+            effective_answer_mode == AnswerMode.ENTITY_CARD
             and previous_claim_coverage
             and claim_coverage
             and self._looks_like_related_entity_query(previous_query, query)
@@ -5859,7 +5872,7 @@ class AgentLoop:
         )
         return AgentResponse(
             text=summary_text,
-            status="answer",
+            status=ResponseStatus.ANSWER,
             actions_taken=[response_action],
             selected_source_paths=[item["url"] for item in serialized_results[:8] if item.get("url")],
             active_context=self._public_active_context(active_context),
@@ -5922,7 +5935,7 @@ class AgentLoop:
             response_action="web_search_retry",
             log_action="web_search_retried",
         )
-        if response.status == "answer":
+        if response.status == ResponseStatus.ANSWER:
             response.text = (
                 "기존 검색 결과가 질문과 어긋나거나 사실 확인이 더 필요해 보여, 상위 링크 우선순위를 낮춰 다시 찾아봤습니다.\n\n"
                 + response.text
@@ -5942,7 +5955,7 @@ class AgentLoop:
         if self.web_search_store is None:
             return AgentResponse(
                 text="이 세션에서 다시 불러올 웹 검색 기록 저장소가 아직 연결되지 않았습니다.",
-                status="answer",
+                status=ResponseStatus.ANSWER,
                 actions_taken=["respond_with_limitations"],
                 response_origin={
                     "provider": "system",
@@ -5973,7 +5986,7 @@ class AgentLoop:
                     if not record_id
                     else "선택한 웹 검색 기록을 찾지 못했습니다. 목록을 새로고침한 뒤 다시 선택해 주세요."
                 ),
-                status="answer",
+                status=ResponseStatus.ANSWER,
                 actions_taken=["respond_with_limitations"],
                 response_origin={
                     "provider": "system",
@@ -5998,7 +6011,7 @@ class AgentLoop:
         if stored_summary_text:
             summary_text = stored_summary_text
         else:
-            stored_intent_kind = "external_fact" if stored_answer_mode == "entity_card" else None
+            stored_intent_kind = SearchIntentKind.EXTERNAL_FACT if stored_answer_mode == AnswerMode.ENTITY_CARD else None
             summary_text = self._summarize_web_search_results(
                 query=query,
                 results=results,
@@ -6042,12 +6055,12 @@ class AgentLoop:
 
         def _infer_reloaded_answer_mode() -> str:
             if claim_coverage:
-                return "entity_card"
-            if stored_answer_mode in ("entity_card", "latest_update"):
+                return AnswerMode.ENTITY_CARD
+            if stored_answer_mode in (AnswerMode.ENTITY_CARD, AnswerMode.LATEST_UPDATE):
                 return stored_answer_mode
             if summary_text.startswith("웹 최신 확인:"):
-                return "latest_update"
-            return "general"
+                return AnswerMode.LATEST_UPDATE
+            return AnswerMode.GENERAL
 
         reloaded_answer_mode = _infer_reloaded_answer_mode()
         record_path = str(record.get("record_path") or "").strip()
@@ -6103,7 +6116,7 @@ class AgentLoop:
                 )
             return AgentResponse(
                 text=f"최근 웹 검색 기록을 다시 불러왔습니다.\n\n{summary_text}",
-                status="answer",
+                status=ResponseStatus.ANSWER,
                 actions_taken=["load_web_search_record"],
                 selected_source_paths=[item.get("url", "") for item in results[:5] if item.get("url")],
                 active_context=self._public_active_context(active_context),
@@ -6155,7 +6168,7 @@ class AgentLoop:
                 "문서 요약 다음인지, 메모 저장 다음인지, 검색 결과 다음인지 한 줄만 더 알려주시면 "
                 "그 흐름에 맞춰 바로 이어서 정리해 드리겠습니다."
             ),
-            status="answer",
+            status=ResponseStatus.ANSWER,
             actions_taken=["respond_with_limitations"],
             response_origin={
                 "provider": "system",
@@ -6508,7 +6521,7 @@ class AgentLoop:
             actions_taken.insert(0, "feedback_retry")
         return AgentResponse(
             text=answer,
-            status="answer",
+            status=ResponseStatus.ANSWER,
             actions_taken=actions_taken,
             selected_source_paths=[str(path) for path in active_context.get("source_paths", [])],
             active_context=self._public_active_context(active_context),
@@ -6617,14 +6630,14 @@ class AgentLoop:
             for event in iterator:
                 if cancel_requested and cancel_requested():
                     raise RequestCancelledError("stream_cancelled")
-                if event.kind == "text_replace":
+                if event.kind == StreamEventType.TEXT_REPLACE:
                     text = event.text
                     if stream_event_callback:
-                        stream_event_callback({"event": "text_replace", "text": event.text})
+                        stream_event_callback({"event": StreamEventType.TEXT_REPLACE, "text": event.text})
                     continue
                 text += event.text
                 if stream_event_callback:
-                    stream_event_callback({"event": "text_delta", "delta": event.text})
+                    stream_event_callback({"event": StreamEventType.TEXT_DELTA, "delta": event.text})
         finally:
             close = getattr(iterator, "close", None)
             if callable(close):
@@ -6784,7 +6797,7 @@ class AgentLoop:
         fields: dict[str, Any] = {}
         if artifact_id:
             fields["artifact_id"] = artifact_id
-            fields["artifact_kind"] = "grounded_brief"
+            fields["artifact_kind"] = ArtifactKind.GROUNDED_BRIEF
         if source_message_id:
             fields["message_id"] = source_message_id
             fields["source_message_id"] = source_message_id
@@ -6801,7 +6814,7 @@ class AgentLoop:
         if not approval_id:
             return AgentResponse(
                 text="승인할 작업 ID가 없습니다.",
-                status="error",
+                status=ResponseStatus.ERROR,
                 actions_taken=["approval_error"],
             )
 
@@ -6809,7 +6822,7 @@ class AgentLoop:
         if approval_record is None:
             return AgentResponse(
                 text="승인 대상을 찾지 못했습니다. 이미 처리되었거나 만료되었을 수 있습니다.",
-                status="error",
+                status=ResponseStatus.ERROR,
                 actions_taken=["approval_error"],
             )
 
@@ -6817,7 +6830,7 @@ class AgentLoop:
         if approval.kind != "save_note":
             return AgentResponse(
                 text=f"지원하지 않는 승인 작업입니다: {approval.kind}",
-                status="error",
+                status=ResponseStatus.ERROR,
                 actions_taken=["approval_error"],
             )
 
@@ -6863,12 +6876,12 @@ class AgentLoop:
             )
         return AgentResponse(
             text=saved_text,
-            status="saved",
+            status=ResponseStatus.SAVED,
             actions_taken=["approval_granted", "write_note"],
             saved_note_path=saved_path,
             selected_source_paths=list(approval.source_paths),
             artifact_id=approval.artifact_id,
-            artifact_kind="grounded_brief" if approval.artifact_id else None,
+            artifact_kind=ArtifactKind.GROUNDED_BRIEF if approval.artifact_id else None,
             source_message_id=approval.source_message_id,
             save_content_source=approval.save_content_source,
         )
@@ -6879,13 +6892,13 @@ class AgentLoop:
         if not approval_id:
             return AgentResponse(
                 text="다시 발급할 승인 작업 ID가 없습니다.",
-                status="error",
+                status=ResponseStatus.ERROR,
                 actions_taken=["approval_error"],
             )
         if not note_path:
             return AgentResponse(
                 text="새 저장 경로를 입력해 주세요.",
-                status="error",
+                status=ResponseStatus.ERROR,
                 actions_taken=["approval_error"],
             )
 
@@ -6893,7 +6906,7 @@ class AgentLoop:
         if approval_record is None:
             return AgentResponse(
                 text="다시 발급할 승인 대상을 찾지 못했습니다. 이미 처리되었거나 만료되었을 수 있습니다.",
-                status="error",
+                status=ResponseStatus.ERROR,
                 actions_taken=["approval_error"],
             )
 
@@ -6901,7 +6914,7 @@ class AgentLoop:
         if approval.kind != "save_note":
             return AgentResponse(
                 text=f"지원하지 않는 승인 작업입니다: {approval.kind}",
-                status="error",
+                status=ResponseStatus.ERROR,
                 actions_taken=["approval_error"],
             )
 
@@ -6917,7 +6930,7 @@ class AgentLoop:
         except (PermissionError, OSError) as exc:
             return AgentResponse(
                 text=str(exc),
-                status="error",
+                status=ResponseStatus.ERROR,
                 actions_taken=["approval_error"],
                 selected_source_paths=list(approval.source_paths),
             )
@@ -6963,7 +6976,7 @@ class AgentLoop:
 
         return AgentResponse(
             text=text,
-            status="needs_approval",
+            status=ResponseStatus.NEEDS_APPROVAL,
             actions_taken=["approval_reissued"],
             requires_approval=True,
             proposed_note_path=reissued.requested_path,
@@ -6971,7 +6984,7 @@ class AgentLoop:
             note_preview=reissued.preview_markdown,
             approval=reissued.to_public_dict(),
             artifact_id=reissued.artifact_id,
-            artifact_kind="grounded_brief" if reissued.artifact_id else None,
+            artifact_kind=ArtifactKind.GROUNDED_BRIEF if reissued.artifact_id else None,
             source_message_id=reissued.source_message_id,
             approval_reason_record=approval_reason_record,
             save_content_source=reissued.save_content_source,
@@ -6982,7 +6995,7 @@ class AgentLoop:
         if not approval_id:
             return AgentResponse(
                 text="취소할 승인 작업 ID가 없습니다.",
-                status="error",
+                status=ResponseStatus.ERROR,
                 actions_taken=["approval_error"],
             )
 
@@ -6990,7 +7003,7 @@ class AgentLoop:
         if approval_record is None:
             return AgentResponse(
                 text="취소 대상을 찾지 못했습니다. 이미 처리되었거나 만료되었을 수 있습니다.",
-                status="error",
+                status=ResponseStatus.ERROR,
                 actions_taken=["approval_error"],
             )
 
@@ -7018,11 +7031,11 @@ class AgentLoop:
         )
         return AgentResponse(
             text="저장 승인을 취소했습니다.",
-            status="answer",
+            status=ResponseStatus.ANSWER,
             actions_taken=["approval_rejected"],
             selected_source_paths=list(approval.source_paths),
             artifact_id=approval.artifact_id,
-            artifact_kind="grounded_brief" if approval.artifact_id else None,
+            artifact_kind=ArtifactKind.GROUNDED_BRIEF if approval.artifact_id else None,
             source_message_id=approval.source_message_id,
             approval_reason_record=approval_reason_record,
             save_content_source=approval.save_content_source,
@@ -7225,7 +7238,7 @@ class AgentLoop:
             uploaded_file = self._extract_uploaded_file(request)
             search_intent = self._classify_search_intent(request.user_text)
             explicit_web_search_query = (
-                search_intent.query if search_intent.kind == "explicit_web" else None
+                search_intent.query if search_intent.kind == SearchIntentKind.EXPLICIT_WEB else None
             )
             explicit_web_search_effective_query = explicit_web_search_query
             explicit_web_search_probe_query: str | None = None
@@ -7234,10 +7247,10 @@ class AgentLoop:
             explicit_web_search_freshness_risk = search_intent.freshness_risk
             implicit_web_search_query = (
                 search_intent.query
-                if requested_web_search_permission == "enabled" and search_intent.kind == "live_latest"
+                if requested_web_search_permission == "enabled" and search_intent.kind == SearchIntentKind.LIVE_LATEST
                 else None
             )
-            external_fact_query = search_intent.query if search_intent.kind == "external_fact" else None
+            external_fact_query = search_intent.query if search_intent.kind == SearchIntentKind.EXTERNAL_FACT else None
             retry_feedback_reason = self._extract_retry_feedback_reason(request)
             load_web_search_record_id = self._extract_load_web_search_record_id(request)
             wants_web_search_record_recall = self._looks_like_web_search_record_recall(request.user_text)
@@ -7253,9 +7266,9 @@ class AgentLoop:
                 active_context=active_context,
                 query=explicit_web_search_query,
             ):
-                explicit_web_search_intent_kind = "external_fact"
-                explicit_web_search_answer_mode = "entity_card"
-                explicit_web_search_freshness_risk = "low"
+                explicit_web_search_intent_kind = SearchIntentKind.EXTERNAL_FACT
+                explicit_web_search_answer_mode = AnswerMode.ENTITY_CARD
+                explicit_web_search_freshness_risk = FreshnessRisk.LOW
                 explicit_web_search_probe_query = explicit_web_search_query
                 explicit_web_search_effective_query = (
                     self._extract_web_search_query_from_context(active_context) or explicit_web_search_query
@@ -7315,7 +7328,7 @@ class AgentLoop:
                     cancel_requested=cancel_requested,
                 )
             elif (
-                search_intent.kind == "none"
+                search_intent.kind == SearchIntentKind.NONE
                 and search_intent.suggestion_query
                 and active_context_mode not in {"document", "mixed"}
                 and not has_search_request
@@ -7464,7 +7477,7 @@ class AgentLoop:
                     text = "현재 문서 문맥이 없습니다. 파일 요약 모드에서 문서를 먼저 읽거나 파일 경로를 직접 입력해 주세요."
                 response = AgentResponse(
                     text=text,
-                    status="error",
+                    status=ResponseStatus.ERROR,
                     actions_taken=["missing_active_context"],
                 )
             elif search_query and (search_root or uploaded_search_files) and "read_file" in self.tools:
@@ -7673,7 +7686,7 @@ class AgentLoop:
                                     ),
                                     search_notice,
                                 ),
-                                status="needs_approval",
+                                status=ResponseStatus.NEEDS_APPROVAL,
                                 actions_taken=[
                                     "search_uploaded_files" if uploaded_search_files else "search_files",
                                     "read_file",
@@ -7726,7 +7739,7 @@ class AgentLoop:
                                     ),
                                     search_notice,
                                 ),
-                                status="saved",
+                                status=ResponseStatus.SAVED,
                                 actions_taken=[
                                     "search_uploaded_files" if uploaded_search_files else "search_files",
                                     "read_file",
@@ -7756,7 +7769,7 @@ class AgentLoop:
                                 f"{summary}\n\n{selected_sources_text}",
                                 search_notice,
                             ),
-                            status="answer",
+                            status=ResponseStatus.ANSWER,
                             actions_taken=["search_uploaded_files", "read_file", "summarize_search_results"] if uploaded_search_files else ["search_files", "read_file", "summarize_search_results"],
                             selected_source_paths=[item.path for item in selected_results],
                             active_context=self._public_active_context(new_active_context),
@@ -7768,7 +7781,7 @@ class AgentLoop:
                                 for item in matches
                             ],
                             artifact_id=artifact_id,
-                            artifact_kind="grounded_brief",
+                            artifact_kind=ArtifactKind.GROUNDED_BRIEF,
                         )
             elif uploaded_file and "read_file" in self.tools:
                 uploaded_name = str(uploaded_file.get("name") or "selected-file")
@@ -7885,7 +7898,7 @@ class AgentLoop:
                                 f"{note_draft.summary}\n\n"
                                 f"요약 노트를 {approval.requested_path}에 저장하려면 승인이 필요합니다."
                             ),
-                            status="needs_approval",
+                            status=ResponseStatus.NEEDS_APPROVAL,
                             actions_taken=["read_uploaded_file", "summarize", "approval_requested"],
                             requires_approval=True,
                             proposed_note_path=approval.requested_path,
@@ -7923,7 +7936,7 @@ class AgentLoop:
                         )
                         response = self._build_grounded_brief_response(
                             text=f"{note_draft.summary}\n\n요약 노트를 {saved_path}에 저장했습니다.",
-                            status="saved",
+                            status=ResponseStatus.SAVED,
                             actions_taken=["read_uploaded_file", "summarize", "write_note"],
                             selected_source_paths=[read_result.resolved_path],
                             active_context=self._public_active_context(new_active_context),
@@ -7941,7 +7954,7 @@ class AgentLoop:
                 else:
                     response = self._build_grounded_brief_response(
                         text=note_draft.summary,
-                        status="answer",
+                        status=ResponseStatus.ANSWER,
                         actions_taken=["read_uploaded_file", "summarize"],
                         selected_source_paths=[read_result.resolved_path],
                         active_context=self._public_active_context(new_active_context),
@@ -7949,7 +7962,7 @@ class AgentLoop:
                         evidence=document_evidence,
                         summary_chunks=summary_chunks,
                         artifact_id=artifact_id,
-                        artifact_kind="grounded_brief",
+                        artifact_kind=ArtifactKind.GROUNDED_BRIEF,
                     )
             elif source_path and "read_file" in self.tools:
                 self._raise_if_cancelled(cancel_requested)
@@ -8061,7 +8074,7 @@ class AgentLoop:
                                 f"{note_draft.summary}\n\n"
                                 f"요약 노트를 {approval.requested_path}에 저장하려면 승인이 필요합니다."
                             ),
-                            status="needs_approval",
+                            status=ResponseStatus.NEEDS_APPROVAL,
                             actions_taken=["read_file", "summarize", "approval_requested"],
                             requires_approval=True,
                             proposed_note_path=approval.requested_path,
@@ -8099,7 +8112,7 @@ class AgentLoop:
                         )
                         response = self._build_grounded_brief_response(
                             text=f"{note_draft.summary}\n\n요약 노트를 {saved_path}에 저장했습니다.",
-                            status="saved",
+                            status=ResponseStatus.SAVED,
                             actions_taken=["read_file", "summarize", "write_note"],
                             selected_source_paths=[read_result.resolved_path],
                             active_context=self._public_active_context(new_active_context),
@@ -8117,7 +8130,7 @@ class AgentLoop:
                 else:
                     response = self._build_grounded_brief_response(
                         text=note_draft.summary,
-                        status="answer",
+                        status=ResponseStatus.ANSWER,
                         actions_taken=["read_file", "summarize"],
                         selected_source_paths=[read_result.resolved_path],
                         active_context=self._public_active_context(new_active_context),
@@ -8125,7 +8138,7 @@ class AgentLoop:
                         evidence=document_evidence,
                         summary_chunks=summary_chunks,
                         artifact_id=artifact_id,
-                        artifact_kind="grounded_brief",
+                        artifact_kind=ArtifactKind.GROUNDED_BRIEF,
                     )
             elif active_context_mode in {"document", "mixed"}:
                 if active_context_mode == "mixed":
@@ -8207,7 +8220,7 @@ class AgentLoop:
                             stream_event_callback=stream_event_callback,
                             cancel_requested=cancel_requested,
                         ),
-                        status="answer",
+                        status=ResponseStatus.ANSWER,
                         actions_taken=["respond"],
                     )
         except RequestCancelledError:
@@ -8230,7 +8243,7 @@ class AgentLoop:
             source_label = source_path or (uploaded_file.get("name") if uploaded_file else None)
             response = AgentResponse(
                 text=self._format_ocr_guidance(source_label, str(exc)),
-                status="error",
+                status=ResponseStatus.ERROR,
                 actions_taken=["ocr_not_supported"],
                 selected_source_paths=[source_label] if source_label else [],
             )
@@ -8245,7 +8258,7 @@ class AgentLoop:
         except Exception as exc:
             response = AgentResponse(
                 text=f"요청을 완료하지 못했습니다: {exc}",
-                status="error",
+                status=ResponseStatus.ERROR,
                 actions_taken=["error"],
             )
             self.task_logger.log(

@@ -27,6 +27,7 @@ from core.contracts import (
     SourceType,
     StreamEventType,
 )
+from core.models import RequestContext, SearchIntentResolution
 from core.request_intents import classify_search_intent
 from core.source_policy import build_source_policy, score_source_for_mode
 from core.web_claims import (
@@ -4426,7 +4427,12 @@ class AgentLoop:
             lines.append("")
             lines.append("단일 출처 확인 정보:")
             for claim in weak_claims:
-                role_label = core_coverage.get(claim.slot).primary_claim.source_role if core_coverage.get(claim.slot) and core_coverage.get(claim.slot).primary_claim else claim.source_role
+                _slot_cov = core_coverage.get(claim.slot)
+                role_label = (
+                    _slot_cov.primary_claim.source_role
+                    if _slot_cov is not None and _slot_cov.primary_claim is not None
+                    else claim.source_role
+                )
                 lines.append(f"- {claim.slot}: {claim.value} (단일 출처, {role_label})")
         if supplemental_claims:
             lines.append("")
@@ -5876,7 +5882,7 @@ class AgentLoop:
             actions_taken=[response_action],
             selected_source_paths=[item["url"] for item in serialized_results[:8] if item.get("url")],
             active_context=self._public_active_context(active_context),
-            follow_up_suggestions=[str(prompt) for prompt in active_context["suggested_prompts"]],
+            follow_up_suggestions=[str(prompt) for prompt in active_context.get("suggested_prompts", [])],
             evidence=self._build_web_search_evidence(
                 serialized_results[:8],
                 pages=fetched_pages,
@@ -6120,7 +6126,7 @@ class AgentLoop:
                 actions_taken=["load_web_search_record"],
                 selected_source_paths=[item.get("url", "") for item in results[:5] if item.get("url")],
                 active_context=self._public_active_context(active_context),
-                follow_up_suggestions=[str(prompt) for prompt in active_context["suggested_prompts"]],
+                follow_up_suggestions=[str(prompt) for prompt in active_context.get("suggested_prompts", [])],
                 evidence=self._build_web_search_evidence(
                     results,
                     pages=pages,
@@ -7228,50 +7234,53 @@ class AgentLoop:
             )
 
         try:
-            search_query = self._extract_search_query(request)
-            search_root = self._extract_search_root(request)
-            uploaded_search_files = self._extract_uploaded_search_files(request)
-            has_search_request = bool(search_query and (search_root or uploaded_search_files))
-            active_context = self.session_store.get_active_context(request.session_id)
-            has_explicit_source_path = self._has_explicit_source_path(request)
-            source_path = self._extract_source_path(request)
-            uploaded_file = self._extract_uploaded_file(request)
-            search_intent = self._classify_search_intent(request.user_text)
-            explicit_web_search_query = (
-                search_intent.query if search_intent.kind == SearchIntentKind.EXPLICIT_WEB else None
-            )
-            explicit_web_search_effective_query = explicit_web_search_query
-            explicit_web_search_probe_query: str | None = None
-            explicit_web_search_intent_kind = search_intent.kind
-            explicit_web_search_answer_mode = search_intent.answer_mode
-            explicit_web_search_freshness_risk = search_intent.freshness_risk
-            implicit_web_search_query = (
-                search_intent.query
-                if requested_web_search_permission == "enabled" and search_intent.kind == SearchIntentKind.LIVE_LATEST
-                else None
-            )
-            external_fact_query = search_intent.query if search_intent.kind == SearchIntentKind.EXTERNAL_FACT else None
-            retry_feedback_reason = self._extract_retry_feedback_reason(request)
-            load_web_search_record_id = self._extract_load_web_search_record_id(request)
-            wants_web_search_record_recall = self._looks_like_web_search_record_recall(request.user_text)
-            follow_up_intent = self._detect_follow_up_intent(request.user_text) if request.user_text.strip() else FOLLOW_UP_INTENT_GENERAL
-            active_context_mode = self._classify_active_context_request(
+            _search_query = self._extract_search_query(request)
+            _search_root = self._extract_search_root(request)
+            _uploaded_search_files = self._extract_uploaded_search_files(request)
+            _has_search_request = bool(_search_query and (_search_root or _uploaded_search_files))
+            _active_context = self.session_store.get_active_context(request.session_id)
+            _has_explicit_source_path = self._has_explicit_source_path(request)
+            _source_path = self._extract_source_path(request)
+            _uploaded_file = self._extract_uploaded_file(request)
+            _follow_up_intent = self._detect_follow_up_intent(request.user_text) if request.user_text.strip() else FOLLOW_UP_INTENT_GENERAL
+            _active_context_mode = self._classify_active_context_request(
                 request=request,
-                active_context=active_context,
-                has_search_request=has_search_request,
-                has_explicit_source_path=has_explicit_source_path,
-                uploaded_file=uploaded_file,
+                active_context=_active_context,
+                has_search_request=_has_search_request,
+                has_explicit_source_path=_has_explicit_source_path,
+                uploaded_file=_uploaded_file,
             )
-            if explicit_web_search_query and self._should_treat_as_entity_reinvestigation(
-                active_context=active_context,
-                query=explicit_web_search_query,
+            rc = RequestContext(
+                user_text=request.user_text,
+                session_id=request.session_id,
+                search_query=_search_query,
+                search_root=_search_root,
+                uploaded_search_files=_uploaded_search_files,
+                has_search_request=_has_search_request,
+                active_context=_active_context,
+                web_search_permission=requested_web_search_permission,
+                has_explicit_source_path=_has_explicit_source_path,
+                source_path=_source_path,
+                uploaded_file=_uploaded_file,
+                retry_feedback_reason=self._extract_retry_feedback_reason(request),
+                load_web_search_record_id=self._extract_load_web_search_record_id(request),
+                wants_web_search_record_recall=self._looks_like_web_search_record_recall(request.user_text),
+                follow_up_intent=_follow_up_intent,
+                active_context_mode=_active_context_mode,
+            )
+            search_intent = self._classify_search_intent(request.user_text)
+            sir = SearchIntentResolution.from_intent(
+                search_intent,
+                web_search_permission=requested_web_search_permission,
+            )
+            if sir.explicit_query and self._should_treat_as_entity_reinvestigation(
+                active_context=rc.active_context,
+                query=sir.explicit_query,
             ):
-                explicit_web_search_intent_kind = SearchIntentKind.EXTERNAL_FACT
-                explicit_web_search_answer_mode = AnswerMode.ENTITY_CARD
-                explicit_web_search_freshness_risk = FreshnessRisk.LOW
-                explicit_web_search_probe_query = explicit_web_search_query
-                explicit_web_search_effective_query = (
-                    self._extract_web_search_query_from_context(active_context) or explicit_web_search_query
+                sir.apply_entity_reinvestigation(
+                    effective_query=(
+                        self._extract_web_search_query_from_context(rc.active_context) or sir.explicit_query
+                    ),
                 )
             self.task_logger.log(
                 session_id=request.session_id,
@@ -7293,16 +7302,16 @@ class AgentLoop:
             )
 
             if (
-                retry_feedback_reason in {"irrelevant_result", "factual_error"}
-                and active_context is not None
-                and not has_search_request
-                and uploaded_file is None
-                and not has_explicit_source_path
+                rc.retry_feedback_reason in {"irrelevant_result", "factual_error"}
+                and rc.active_context is not None
+                and not rc.has_search_request
+                and rc.uploaded_file is None
+                and not rc.has_explicit_source_path
             ):
                 retry_response = self._retry_web_search_after_irrelevant_feedback(
                     request=request,
-                    active_context=active_context,
-                    retry_feedback_reason=retry_feedback_reason,
+                    active_context=rc.active_context,
+                    retry_feedback_reason=rc.retry_feedback_reason,
                     phase_event_callback=phase_event_callback,
                 )
                 if retry_response is not None:
@@ -7315,14 +7324,14 @@ class AgentLoop:
             if response is not None:
                 pass
             elif (
-                (wants_web_search_record_recall or load_web_search_record_id)
-                and not has_search_request
-                and uploaded_file is None
-                and not has_explicit_source_path
+                (rc.wants_web_search_record_recall or rc.load_web_search_record_id)
+                and not rc.has_search_request
+                and rc.uploaded_file is None
+                and not rc.has_explicit_source_path
             ):
                 response = self._reuse_web_search_record(
                     request=request,
-                    record_id=load_web_search_record_id,
+                    record_id=rc.load_web_search_record_id,
                     phase_event_callback=phase_event_callback,
                     stream_event_callback=stream_event_callback,
                     cancel_requested=cancel_requested,
@@ -7330,10 +7339,10 @@ class AgentLoop:
             elif (
                 search_intent.kind == SearchIntentKind.NONE
                 and search_intent.suggestion_query
-                and active_context_mode not in {"document", "mixed"}
-                and not has_search_request
-                and uploaded_file is None
-                and not has_explicit_source_path
+                and rc.active_context_mode not in {"document", "mixed"}
+                and not rc.has_search_request
+                and rc.uploaded_file is None
+                and not rc.has_explicit_source_path
             ):
                 self._emit_phase(
                     phase_event_callback,
@@ -7347,10 +7356,10 @@ class AgentLoop:
                     query=search_intent.suggestion_query,
                 )
             elif (
-                explicit_web_search_query
-                and not has_search_request
-                and uploaded_file is None
-                and not has_explicit_source_path
+                sir.explicit_query
+                and not rc.has_search_request
+                and rc.uploaded_file is None
+                and not rc.has_explicit_source_path
             ):
                 if requested_web_search_permission != "enabled":
                     self._emit_phase(
@@ -7362,25 +7371,25 @@ class AgentLoop:
                     )
                     response = self._build_web_search_permission_response(
                         requested_web_search_permission,
-                        query=explicit_web_search_query,
+                        query=sir.explicit_query,
                     )
                 else:
                     response = self._run_web_search(
                         request=request,
-                        query=explicit_web_search_effective_query or explicit_web_search_query,
-                        intent_kind=explicit_web_search_intent_kind,
-                        answer_mode=explicit_web_search_answer_mode,
-                        freshness_risk=explicit_web_search_freshness_risk,
+                        query=sir.effective_query or sir.explicit_query,
+                        intent_kind=sir.intent_kind,
+                        answer_mode=sir.answer_mode,
+                        freshness_risk=sir.freshness_risk,
                         phase_event_callback=phase_event_callback,
-                        seed_queries=[explicit_web_search_probe_query] if explicit_web_search_probe_query else None,
-                        progress_query=explicit_web_search_probe_query,
+                        seed_queries=[sir.probe_query] if sir.probe_query else None,
+                        progress_query=sir.probe_query,
                     )
             elif (
-                external_fact_query
-                and active_context_mode not in {"document", "mixed"}
-                and not has_search_request
-                and uploaded_file is None
-                and not has_explicit_source_path
+                sir.external_fact_query
+                and rc.active_context_mode not in {"document", "mixed"}
+                and not rc.has_search_request
+                and rc.uploaded_file is None
+                and not rc.has_explicit_source_path
             ):
                 if requested_web_search_permission != "enabled":
                     self._emit_phase(
@@ -7392,56 +7401,56 @@ class AgentLoop:
                     )
                     response = self._build_web_search_permission_response(
                         requested_web_search_permission,
-                        query=external_fact_query,
+                        query=sir.external_fact_query,
                     )
                 else:
                     self._emit_phase(
                         phase_event_callback,
                         phase="web_search_auto",
                         title="외부 사실 확인 검색으로 전환 중",
-                        detail=f"'{external_fact_query}' 설명 요청이어서 웹 검색으로 근거를 먼저 확인하는 중입니다.",
+                        detail=f"'{sir.external_fact_query}' 설명 요청이어서 웹 검색으로 근거를 먼저 확인하는 중입니다.",
                         note="로컬 문서 근거가 없을 때는 외부 사실을 모델이 추측하지 않도록 읽기 전용 검색을 우선 사용합니다.",
                     )
                     response = self._run_web_search(
                         request=request,
-                        query=external_fact_query,
+                        query=sir.external_fact_query,
                         intent_kind=search_intent.kind,
                         answer_mode=search_intent.answer_mode,
                         freshness_risk=search_intent.freshness_risk,
                         phase_event_callback=phase_event_callback,
                     )
             elif (
-                implicit_web_search_query
-                and active_context_mode not in {"document", "mixed"}
-                and not has_search_request
-                and uploaded_file is None
-                and not has_explicit_source_path
+                sir.implicit_web_search_query
+                and rc.active_context_mode not in {"document", "mixed"}
+                and not rc.has_search_request
+                and rc.uploaded_file is None
+                and not rc.has_explicit_source_path
             ):
                 self._emit_phase(
                     phase_event_callback,
                     phase="web_search_auto",
                     title="최신 정보 질문을 웹 검색으로 전환 중",
-                    detail=f"'{implicit_web_search_query}' 관련 최신성 질문이라 읽기 전용 웹 검색을 먼저 실행합니다.",
+                    detail=f"'{sir.implicit_web_search_query}' 관련 최신성 질문이라 읽기 전용 웹 검색을 먼저 실행합니다.",
                     note="웹 검색 권한이 허용된 세션에서만 자동으로 전환합니다.",
                 )
                 response = self._run_web_search(
                     request=request,
-                    query=implicit_web_search_query,
+                    query=sir.implicit_web_search_query,
                     intent_kind=search_intent.kind,
                     answer_mode=search_intent.answer_mode,
                     freshness_risk=search_intent.freshness_risk,
                     phase_event_callback=phase_event_callback,
                 )
-            elif active_context_mode in {"document", "mixed"}:
-                if active_context_mode == "mixed":
+            elif rc.active_context_mode in {"document", "mixed"}:
+                if rc.active_context_mode == "mixed":
                     detail = (
-                        f"현재 문서 '{active_context.get('label') or '문서'}'를 바탕으로 "
+                        f"현재 문서 '{rc.active_context.get('label') or '문서'}'를 바탕으로 "
                         "가벼운 인사와 문서 질문을 함께 정리하는 중입니다."
                     )
                     note = "짧은 대화 톤은 유지하되, 답변 본문은 현재 문서 근거를 우선 사용합니다."
                 else:
                     detail = (
-                        f"현재 문서 '{active_context.get('label') or '문서'}' 문맥으로 "
+                        f"현재 문서 '{rc.active_context.get('label') or '문서'}' 문맥으로 "
                         "후속 질문을 정리하는 중입니다."
                     )
                     note = "문서 요약과 핵심 라인을 바탕으로 응답을 만듭니다."
@@ -7454,18 +7463,18 @@ class AgentLoop:
                 )
                 response = self._respond_with_active_context(
                     request=request,
-                    active_context=active_context,
-                    conversation_mode=active_context_mode,
+                    active_context=rc.active_context,
+                    conversation_mode=rc.active_context_mode,
                     stream_event_callback=stream_event_callback,
                     phase_event_callback=phase_event_callback,
                     cancel_requested=cancel_requested,
                 )
             elif (
-                not active_context
-                and follow_up_intent != FOLLOW_UP_INTENT_GENERAL
-                and uploaded_file is None
-                and not has_explicit_source_path
-                and not has_search_request
+                not rc.active_context
+                and rc.follow_up_intent != FOLLOW_UP_INTENT_GENERAL
+                and rc.uploaded_file is None
+                and not rc.has_explicit_source_path
+                and not rc.has_search_request
             ):
                 if self._contains_small_talk_signal(request.user_text):
                     prefix = self._small_talk_prefix(request.user_text)
@@ -7480,34 +7489,34 @@ class AgentLoop:
                     status=ResponseStatus.ERROR,
                     actions_taken=["missing_active_context"],
                 )
-            elif search_query and (search_root or uploaded_search_files) and "read_file" in self.tools:
-                search_target_label = search_root or self._format_uploaded_search_root_label(uploaded_search_files)
-                search_action_name = "search_uploaded_files" if uploaded_search_files else "search_files"
+            elif rc.search_query and (rc.search_root or rc.uploaded_search_files) and "read_file" in self.tools:
+                search_target_label = rc.search_root or self._format_uploaded_search_root_label(rc.uploaded_search_files)
+                search_action_name = "search_uploaded_files" if rc.uploaded_search_files else "search_files"
                 self._raise_if_cancelled(cancel_requested)
                 self._emit_phase(
                     phase_event_callback,
                     phase="search_started",
                     title="문서 검색 중",
                     detail=(
-                        f"'{search_query}' 검색어로 {search_target_label} 아래 문서를 찾는 중입니다."
-                        if search_root
-                        else f"선택한 폴더 파일들에서 '{search_query}' 검색어를 찾는 중입니다."
+                        f"'{rc.search_query}' 검색어로 {search_target_label} 아래 문서를 찾는 중입니다."
+                        if rc.search_root
+                        else f"선택한 폴더 파일들에서 '{rc.search_query}' 검색어를 찾는 중입니다."
                     ),
                     note="검색 결과 수와 OCR 미지원 파일 여부를 먼저 확인합니다.",
                 )
                 uploaded_read_results_by_path: dict[str, Any] = {}
                 skipped_ocr_paths: list[str] = []
                 failed_uploaded_paths: list[str] = []
-                if uploaded_search_files:
+                if rc.uploaded_search_files:
                     matches, uploaded_read_results_by_path, skipped_ocr_paths, failed_uploaded_paths = self._search_uploaded_files(
-                        uploaded_files=uploaded_search_files,
-                        query=search_query,
+                        uploaded_files=rc.uploaded_search_files,
+                        query=rc.search_query,
                         max_results=self._search_result_limit(request),
                     )
                 else:
                     matches = self.tools["search_files"].run(
-                        root=search_root,
-                        query=search_query,
+                        root=rc.search_root,
+                        query=rc.search_query,
                         max_results=self._search_result_limit(request),
                     )
                     skipped_ocr_paths = self._extract_skipped_ocr_paths()
@@ -7516,9 +7525,9 @@ class AgentLoop:
                     session_id=request.session_id,
                     action=search_action_name,
                     detail={
-                        "search_root": search_root,
-                        "uploaded_root_label": uploaded_search_files[0].get("root_label") if uploaded_search_files else None,
-                        "search_query": search_query,
+                        "search_root": rc.search_root,
+                        "uploaded_root_label": rc.uploaded_search_files[0].get("root_label") if rc.uploaded_search_files else None,
+                        "search_query": rc.search_query,
                         "match_count": len(matches),
                         "skipped_ocr_paths": skipped_ocr_paths,
                         "failed_uploaded_paths": failed_uploaded_paths,
@@ -7540,7 +7549,7 @@ class AgentLoop:
                 if not matches:
                     response = AgentResponse(
                         text=self._append_notice(
-                            f"{search_target_label} 아래에서 '{search_query}' 검색 결과를 찾지 못했습니다.",
+                            f"{search_target_label} 아래에서 '{rc.search_query}' 검색 결과를 찾지 못했습니다.",
                             search_notice,
                         ),
                         actions_taken=[search_action_name],
@@ -7575,7 +7584,7 @@ class AgentLoop:
                     read_results = []
                     for result in selected_results:
                         self._raise_if_cancelled(cancel_requested)
-                        if uploaded_search_files:
+                        if rc.uploaded_search_files:
                             read_result = uploaded_read_results_by_path.get(result.path)
                             if read_result is None:
                                 raise FileNotFoundError(f"선택한 폴더 검색 결과를 다시 찾지 못했습니다: {result.path}")
@@ -7588,7 +7597,7 @@ class AgentLoop:
                         session_id=request.session_id,
                         action="read_search_results",
                         detail={
-                            "search_query": search_query,
+                            "search_query": rc.search_query,
                             "selected_match_count": len(selected_results),
                             "selected_paths": [item.resolved_path for item in read_results],
                             "selected_file_metadata": [
@@ -7611,7 +7620,7 @@ class AgentLoop:
                         note="실제 로컬 모델 응답은 이 단계부터 조금씩 도착할 수 있습니다.",
                     )
                     summary, note_body, summary_chunks = self._build_multi_file_summary(
-                        search_query=search_query,
+                        search_query=rc.search_query,
                         selected_results=selected_results,
                         read_results=read_results,
                         stream_event_callback=stream_event_callback,
@@ -7620,7 +7629,7 @@ class AgentLoop:
                     )
                     self._raise_if_cancelled(cancel_requested)
                     new_active_context = self._build_search_active_context(
-                        search_query=search_query,
+                        search_query=rc.search_query,
                         selected_results=selected_results,
                         read_results=read_results,
                         summary=summary,
@@ -7640,7 +7649,7 @@ class AgentLoop:
                         session_id=request.session_id,
                         action="summarize_search_results",
                         detail={
-                            "search_query": search_query,
+                            "search_query": rc.search_query,
                             "source_count": len(read_results),
                         },
                     )
@@ -7651,13 +7660,13 @@ class AgentLoop:
                             if isinstance(item, dict)
                         ],
                         intent=FOLLOW_UP_INTENT_GENERAL,
-                        user_request=request.user_text or search_query,
+                        user_request=request.user_text or rc.search_query,
                     )
                     artifact_id = self._new_grounded_brief_artifact_id()
                     source_message_id = self._new_message_id()
 
                     if self._wants_summary_save(request) and "write_note" in self.tools:
-                        note_path = self._build_search_note_path(request, search_query)
+                        note_path = self._build_search_note_path(request, rc.search_query)
                         if not request.approved:
                             self._emit_phase(
                                 phase_event_callback,
@@ -7674,7 +7683,7 @@ class AgentLoop:
                                 artifact_id=artifact_id,
                                 source_message_id=source_message_id,
                                 approval_request_detail={
-                                    "search_query": search_query,
+                                    "search_query": rc.search_query,
                                     "source_paths": [item.resolved_path for item in read_results],
                                 },
                             )
@@ -7688,7 +7697,7 @@ class AgentLoop:
                                 ),
                                 status=ResponseStatus.NEEDS_APPROVAL,
                                 actions_taken=[
-                                    "search_uploaded_files" if uploaded_search_files else "search_files",
+                                    "search_uploaded_files" if rc.uploaded_search_files else "search_files",
                                     "read_file",
                                     "summarize_search_results",
                                     "approval_requested",
@@ -7699,7 +7708,7 @@ class AgentLoop:
                                 note_preview=approval.preview_markdown,
                                 approval=approval.to_public_dict(),
                                 active_context=self._public_active_context(new_active_context),
-                                follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
+                                follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
                                 evidence=selected_evidence,
                                 summary_chunks=summary_chunks,
                                 search_results=[
@@ -7725,7 +7734,7 @@ class AgentLoop:
                                 note_body=note_body,
                                 artifact_id=artifact_id,
                                 source_message_id=source_message_id,
-                                write_detail={"search_query": search_query},
+                                write_detail={"search_query": rc.search_query},
                             )
                             corrected_outcome = self._build_accepted_as_is_outcome(
                                 artifact_id=artifact_id,
@@ -7741,14 +7750,14 @@ class AgentLoop:
                                 ),
                                 status=ResponseStatus.SAVED,
                                 actions_taken=[
-                                    "search_uploaded_files" if uploaded_search_files else "search_files",
+                                    "search_uploaded_files" if rc.uploaded_search_files else "search_files",
                                     "read_file",
                                     "summarize_search_results",
                                     "write_note",
                                 ],
                                 selected_source_paths=[item.path for item in selected_results],
                                 active_context=self._public_active_context(new_active_context),
-                                follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
+                                follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
                                 evidence=selected_evidence,
                                 summary_chunks=summary_chunks,
                                 search_results=[
@@ -7770,10 +7779,10 @@ class AgentLoop:
                                 search_notice,
                             ),
                             status=ResponseStatus.ANSWER,
-                            actions_taken=["search_uploaded_files", "read_file", "summarize_search_results"] if uploaded_search_files else ["search_files", "read_file", "summarize_search_results"],
+                            actions_taken=["search_uploaded_files", "read_file", "summarize_search_results"] if rc.uploaded_search_files else ["search_files", "read_file", "summarize_search_results"],
                             selected_source_paths=[item.path for item in selected_results],
                             active_context=self._public_active_context(new_active_context),
-                            follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
+                            follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
                             evidence=selected_evidence,
                             summary_chunks=summary_chunks,
                             search_results=[
@@ -7783,8 +7792,8 @@ class AgentLoop:
                             artifact_id=artifact_id,
                             artifact_kind=ArtifactKind.GROUNDED_BRIEF,
                         )
-            elif uploaded_file and "read_file" in self.tools:
-                uploaded_name = str(uploaded_file.get("name") or "selected-file")
+            elif rc.uploaded_file and "read_file" in self.tools:
+                uploaded_name = str(rc.uploaded_file.get("name") or "selected-file")
                 self._raise_if_cancelled(cancel_requested)
                 self._emit_phase(
                     phase_event_callback,
@@ -7795,8 +7804,8 @@ class AgentLoop:
                 )
                 read_result = self.tools["read_file"].run_uploaded(
                     name=uploaded_name,
-                    content_bytes=bytes(uploaded_file.get("content_bytes") or b""),
-                    mime_type=str(uploaded_file.get("mime_type") or ""),
+                    content_bytes=bytes(rc.uploaded_file.get("content_bytes") or b""),
+                    mime_type=str(rc.uploaded_file.get("mime_type") or ""),
                 )
                 self._raise_if_cancelled(cancel_requested)
                 self.task_logger.log(
@@ -7906,7 +7915,7 @@ class AgentLoop:
                             note_preview=approval.preview_markdown,
                             approval=approval.to_public_dict(),
                             active_context=self._public_active_context(new_active_context),
-                            follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
+                            follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
                             evidence=document_evidence,
                             summary_chunks=summary_chunks,
                             **self._build_grounded_brief_source_response_fields(
@@ -7940,7 +7949,7 @@ class AgentLoop:
                             actions_taken=["read_uploaded_file", "summarize", "write_note"],
                             selected_source_paths=[read_result.resolved_path],
                             active_context=self._public_active_context(new_active_context),
-                            follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
+                            follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
                             evidence=document_evidence,
                             summary_chunks=summary_chunks,
                             **self._build_grounded_brief_source_response_fields(
@@ -7958,22 +7967,22 @@ class AgentLoop:
                         actions_taken=["read_uploaded_file", "summarize"],
                         selected_source_paths=[read_result.resolved_path],
                         active_context=self._public_active_context(new_active_context),
-                        follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
+                        follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
                         evidence=document_evidence,
                         summary_chunks=summary_chunks,
                         artifact_id=artifact_id,
                         artifact_kind=ArtifactKind.GROUNDED_BRIEF,
                     )
-            elif source_path and "read_file" in self.tools:
+            elif rc.source_path and "read_file" in self.tools:
                 self._raise_if_cancelled(cancel_requested)
                 self._emit_phase(
                     phase_event_callback,
                     phase="read_file_started",
                     title="파일 읽는 중",
-                    detail=f"{source_path} 파일을 열어 텍스트를 추출하는 중입니다.",
+                    detail=f"{rc.source_path} 파일을 열어 텍스트를 추출하는 중입니다.",
                     note="PDF나 인코딩 자동 판별이 필요한 문서는 시간이 더 걸릴 수 있습니다.",
                 )
-                read_result = self.tools["read_file"].run(path=source_path)
+                read_result = self.tools["read_file"].run(path=rc.source_path)
                 self._raise_if_cancelled(cancel_requested)
                 self.task_logger.log(
                     session_id=request.session_id,
@@ -8082,7 +8091,7 @@ class AgentLoop:
                             note_preview=approval.preview_markdown,
                             approval=approval.to_public_dict(),
                             active_context=self._public_active_context(new_active_context),
-                            follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
+                            follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
                             evidence=document_evidence,
                             summary_chunks=summary_chunks,
                             **self._build_grounded_brief_source_response_fields(
@@ -8116,7 +8125,7 @@ class AgentLoop:
                             actions_taken=["read_file", "summarize", "write_note"],
                             selected_source_paths=[read_result.resolved_path],
                             active_context=self._public_active_context(new_active_context),
-                            follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
+                            follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
                             evidence=document_evidence,
                             summary_chunks=summary_chunks,
                             **self._build_grounded_brief_source_response_fields(
@@ -8134,21 +8143,21 @@ class AgentLoop:
                         actions_taken=["read_file", "summarize"],
                         selected_source_paths=[read_result.resolved_path],
                         active_context=self._public_active_context(new_active_context),
-                        follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
+                        follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
                         evidence=document_evidence,
                         summary_chunks=summary_chunks,
                         artifact_id=artifact_id,
                         artifact_kind=ArtifactKind.GROUNDED_BRIEF,
                     )
-            elif active_context_mode in {"document", "mixed"}:
-                if active_context_mode == "mixed":
+            elif rc.active_context_mode in {"document", "mixed"}:
+                if rc.active_context_mode == "mixed":
                     detail = (
-                        f"현재 문서 '{active_context.get('label') or '문서'}'를 바탕으로 "
+                        f"현재 문서 '{rc.active_context.get('label') or '문서'}'를 바탕으로 "
                         "가벼운 대화와 문서 답변을 함께 정리하는 중입니다."
                     )
                     note = "대화 톤은 유지하되, 답변 핵심은 현재 문서 근거로 제한합니다."
                 else:
-                    detail = f"현재 문서 '{active_context.get('label') or '문서'}'를 바탕으로 답변하는 중입니다."
+                    detail = f"현재 문서 '{rc.active_context.get('label') or '문서'}'를 바탕으로 답변하는 중입니다."
                     note = "후속 질문 의도에 맞춰 요약이나 액션 항목 형식으로 정리합니다."
                 self._emit_phase(
                     phase_event_callback,
@@ -8159,8 +8168,8 @@ class AgentLoop:
                 )
                 response = self._respond_with_active_context(
                     request=request,
-                    active_context=active_context,
-                    conversation_mode=active_context_mode,
+                    active_context=rc.active_context,
+                    conversation_mode=rc.active_context_mode,
                     stream_event_callback=stream_event_callback,
                     phase_event_callback=phase_event_callback,
                     cancel_requested=cancel_requested,
@@ -8224,23 +8233,20 @@ class AgentLoop:
                         actions_taken=["respond"],
                     )
         except RequestCancelledError:
-            uploaded_file = self._extract_uploaded_file(request)
             self.task_logger.log(
                 session_id=request.session_id,
                 action="request_cancelled",
                 detail={
                     "user_text": request.user_text,
-                    "source_path": request.metadata.get("source_path"),
-                    "uploaded_file_name": uploaded_file.get("name") if uploaded_file else None,
-                    "search_root": request.metadata.get("search_root"),
-                    "search_query": request.metadata.get("search_query"),
+                    "source_path": rc.source_path,
+                    "uploaded_file_name": rc.uploaded_file.get("name") if rc.uploaded_file else None,
+                    "search_root": rc.search_root,
+                    "search_query": rc.search_query,
                 },
             )
             raise
         except OcrRequiredError as exc:
-            source_path = self._extract_source_path(request)
-            uploaded_file = self._extract_uploaded_file(request)
-            source_label = source_path or (uploaded_file.get("name") if uploaded_file else None)
+            source_label = rc.source_path or (rc.uploaded_file.get("name") if rc.uploaded_file else None)
             response = AgentResponse(
                 text=self._format_ocr_guidance(source_label, str(exc)),
                 status=ResponseStatus.ERROR,

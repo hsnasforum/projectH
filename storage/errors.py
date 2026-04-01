@@ -28,3 +28,7 @@ class SessionCorruptError(SessionStoreError):
             f"Session {session_id} was corrupt and quarantined"
             + (f" at {quarantine_path}" if quarantine_path else "")
         )
+
+
+class ArtifactStoreError(RuntimeError):
+    """Base error for artifact store operations."""

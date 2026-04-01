@@ -75,6 +75,8 @@ class WebAppService:
         self.session_store = SessionStore(base_dir=settings.sessions_dir)
         self.task_logger = TaskLogger(path=settings.task_log_path)
         self.web_search_store = WebSearchStore(base_dir=settings.web_search_history_dir)
+        from storage.artifact_store import ArtifactStore
+        self.artifact_store = ArtifactStore(base_dir=settings.artifacts_dir)
         self.template_path = Path(template_path) if template_path else Path(__file__).with_name("templates") / "index.html"
         self._active_stream_requests: dict[str, threading.Event] = {}
         self._active_stream_lock = threading.Lock()
@@ -220,10 +222,21 @@ class WebAppService:
                 },
             )
 
+        artifact_id = str(updated_message.get("artifact_id") or "").strip()
+        if artifact_id and self.artifact_store.get(artifact_id):
+            try:
+                self.artifact_store.append_correction(
+                    artifact_id,
+                    corrected_text=serialized_corrected_text or "",
+                    outcome="corrected",
+                )
+            except Exception:
+                pass
+
         return {
             "ok": True,
             "message_id": message_id,
-            "artifact_id": str(updated_message.get("artifact_id") or "").strip() or None,
+            "artifact_id": artifact_id or None,
             "corrected_text": serialized_corrected_text,
             "corrected_outcome": corrected_outcome,
             "session": self._serialize_session(self.session_store.get_session(session_id)),
@@ -279,10 +292,21 @@ class WebAppService:
                 },
             )
 
+        artifact_id = str(updated_message.get("artifact_id") or "").strip()
+        if artifact_id and self.artifact_store.get(artifact_id):
+            try:
+                self.artifact_store.record_outcome(
+                    artifact_id,
+                    outcome="rejected",
+                    content_verdict="rejected",
+                )
+            except Exception:
+                pass
+
         return {
             "ok": True,
             "message_id": message_id,
-            "artifact_id": str(updated_message.get("artifact_id") or "").strip() or None,
+            "artifact_id": artifact_id or None,
             "content_verdict": content_verdict,
             "corrected_outcome": corrected_outcome,
             "content_reason_record": content_reason_record,
@@ -1198,6 +1222,7 @@ class WebAppService:
                 tools=self._build_tools(),
                 notes_dir=self.settings.notes_dir,
                 web_search_store=self.web_search_store,
+                artifact_store=self.artifact_store,
             )
             response = loop.handle(
                 UserRequest(
@@ -1331,6 +1356,7 @@ class WebAppService:
             tools=self._build_tools(),
             notes_dir=self.settings.notes_dir,
             web_search_store=self.web_search_store,
+            artifact_store=self.artifact_store,
         )
         request = UserRequest(
             user_text=self._build_user_text(

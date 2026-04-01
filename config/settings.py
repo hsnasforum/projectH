@@ -14,6 +14,7 @@ class AppSettings:
     web_port: int = 8765
     model_provider: str = "mock"
     web_search_permission: str = "disabled"
+    artifacts_dir: str = "data/artifacts"
     web_search_history_dir: str = "data/web-search"
     web_search_timeout_seconds: float = 10.0
     ollama_base_url: str = "http://localhost:11434"
@@ -31,6 +32,7 @@ class AppSettings:
             web_port=int(os.getenv("LOCAL_AI_WEB_PORT", "8765")),
             model_provider=os.getenv("LOCAL_AI_MODEL_PROVIDER", "mock"),
             web_search_permission=os.getenv("LOCAL_AI_WEB_SEARCH_PERMISSION", "disabled"),
+            artifacts_dir=os.getenv("LOCAL_AI_ARTIFACTS_DIR", "data/artifacts"),
             web_search_history_dir=os.getenv("LOCAL_AI_WEB_SEARCH_HISTORY_DIR", "data/web-search"),
             web_search_timeout_seconds=float(os.getenv("LOCAL_AI_WEB_SEARCH_TIMEOUT_SECONDS", "10")),
             ollama_base_url=os.getenv("LOCAL_AI_OLLAMA_BASE_URL", "http://localhost:11434"),

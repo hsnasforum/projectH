@@ -105,6 +105,7 @@ class AgentLoop:
         tools: Mapping[str, Any],
         notes_dir: str = "data/notes",
         web_search_store: Any | None = None,
+        artifact_store: Any | None = None,
     ) -> None:
         self.model = model
         self.session_store = session_store
@@ -112,6 +113,7 @@ class AgentLoop:
         self.tools = tools
         self.notes_dir = Path(notes_dir)
         self.web_search_store = web_search_store
+        self.artifact_store = artifact_store
 
     def _new_grounded_brief_artifact_id(self) -> str:
         return f"artifact-{uuid4().hex[:12]}"
@@ -6789,6 +6791,21 @@ class AgentLoop:
                 if isinstance(outcome, dict):
                     corrected_outcome = dict(outcome)
                     self._log_corrected_outcome_recorded(session_id, corrected_outcome)
+        if self.artifact_store and artifact_id:
+            try:
+                self.artifact_store.append_save(
+                    artifact_id,
+                    saved_note_path=saved_path,
+                    save_content_source=save_content_source,
+                    approval_id=approval_id,
+                )
+                if corrected_outcome:
+                    self.artifact_store.record_outcome(
+                        artifact_id,
+                        outcome=corrected_outcome.get("outcome", ""),
+                    )
+            except Exception:
+                pass
         return saved_path, corrected_outcome
 
     def _build_grounded_brief_source_response_fields(
@@ -7125,12 +7142,34 @@ class AgentLoop:
 
     def _finalize_response(self, session_id: str, response: AgentResponse) -> AgentResponse:
         self._append_response_message(session_id, response)
+        self._persist_artifact_if_applicable(session_id, response)
         self.task_logger.log(
             session_id=session_id,
             action="agent_response",
             detail=self._agent_response_log_detail(response),
         )
         return response
+
+    def _persist_artifact_if_applicable(self, session_id: str, response: AgentResponse) -> None:
+        if not self.artifact_store:
+            return
+        if not response.artifact_id or not response.original_response_snapshot:
+            return
+        try:
+            snapshot = response.original_response_snapshot
+            self.artifact_store.create(
+                artifact_id=response.artifact_id,
+                artifact_kind=response.artifact_kind or ArtifactKind.GROUNDED_BRIEF,
+                session_id=session_id,
+                source_message_id=response.message_id or response.source_message_id or "",
+                draft_text=snapshot.get("draft_text", ""),
+                source_paths=snapshot.get("source_paths", []),
+                response_origin=snapshot.get("response_origin"),
+                summary_chunks=snapshot.get("summary_chunks_snapshot", []),
+                evidence=snapshot.get("evidence_snapshot", []),
+            )
+        except Exception:
+            pass  # artifact store failure should not block the response
 
     def _handle_approval_flow(
         self,

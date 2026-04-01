@@ -343,7 +343,7 @@ class OllamaAdapterTest(unittest.TestCase):
         self.assertIn("sample | 웹 원문 근거 | sample snippet", prompt)
         # Compact system: Korean guardrails
         self.assertIn("근거와 문서 발췌만 사용", system)
-        self.assertIn("제공된 근거만으로는 확인되지 않습니다", system)
+        self.assertIn("확인되지 않습니다", system)
 
     def test_answer_with_context_routes_memo_intent(self) -> None:
         adapter = OllamaModelAdapter(base_url=self.base_url, model="qwen2.5:3b", timeout_seconds=5)

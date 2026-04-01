@@ -4512,17 +4512,30 @@ class AgentLoop:
                     continue
                 intro_line = preferred_segments[0]
                 break
-        lines.append("한 줄 정의:")
-        lines.append(f"- {intro_line}")
+        # Assess overall coverage strength
+        _weak_slot_count = sum(
+            1 for cov in core_coverage.values()
+            if cov is not None and str(getattr(cov, "status", "missing")) in ("weak", "missing")
+        )
+        _coverage_is_weak = _weak_slot_count > len(core_coverage) // 2
+
+        if _coverage_is_weak:
+            # When coverage is weak, avoid definitive statements
+            lines.append("한 줄 정의 (교차 확인 부족):")
+            lines.append(f"- {intro_line} (추가 확인 필요)")
+        else:
+            lines.append("한 줄 정의:")
+            lines.append(f"- {intro_line}")
+
         if primary_claims:
             lines.append("")
-            lines.append("사실 카드:")
+            lines.append("확인된 사실:")
             for claim in primary_claims:
                 support_suffix = f" (교차 확인 {claim.support_count}건)" if claim.support_count >= 2 else ""
                 lines.append(f"- {claim.slot}: {claim.value}{support_suffix}")
         if weak_claims:
             lines.append("")
-            lines.append("단일 출처 확인 정보:")
+            lines.append("단일 출처 정보 (교차 확인 필요):")
             for claim in weak_claims:
                 _slot_cov = core_coverage.get(claim.slot)
                 role_label = (
@@ -4530,7 +4543,10 @@ class AgentLoop:
                     if _slot_cov is not None and _slot_cov.primary_claim is not None
                     else claim.source_role
                 )
-                lines.append(f"- {claim.slot}: {claim.value} (단일 출처, {role_label})")
+                # Demote community-only claims
+                is_community = role_label in ("보조 커뮤니티", "보조 포털", "보조 블로그")
+                qualifier = "비공식 출처" if is_community else f"단일 출처, {role_label}"
+                lines.append(f"- {claim.slot}: {claim.value} ({qualifier})")
         if supplemental_claims:
             lines.append("")
             lines.append("보조 사실:")
@@ -4538,7 +4554,7 @@ class AgentLoop:
                 lines.append(f"- {claim.slot}: {claim.value} (교차 확인 {claim.support_count}건)")
         if unresolved_slots:
             lines.append("")
-            lines.append("아직 확인되지 않은 항목:")
+            lines.append("확인되지 않은 항목:")
             for slot in unresolved_slots:
                 lines.append(f"- {slot}: 교차 확인 가능한 근거를 찾지 못했습니다.")
         lines.append("")
@@ -5607,20 +5623,11 @@ class AgentLoop:
                     selected_sources=selected_sources,
                     pages=pages,
                 )
-            for index, source in enumerate(selected_sources, start=1):
-                title = str(source.get("title") or source.get("result_title") or f"결과 {index}").strip()
-                url = str(source.get("url") or "").strip()
-                summary_text = str(source.get("summary_text") or "").strip() or "검색 결과 요약을 만들지 못했습니다."
-                source_label = "원문" if bool(source.get("page_preferred")) else "검색 결과"
-                lines.append(f"{index}. [{source_label}] {title}")
-                lines.append(f"   요약: {summary_text}")
-                if url:
-                    lines.append(f"   링크: {url}")
-            failed_pages = [page for page in pages or [] if str(page.get("fetch_status") or "") != "ok"]
-            if failed_pages:
-                lines.append("")
-                lines.append(f"참고: 원문을 바로 읽지 못한 링크 {len(failed_pages)}건은 검색 결과 요약만 기록했습니다.")
-            return "\n".join(lines)
+            return self._build_structured_web_summary(
+                query=query,
+                selected_sources=selected_sources,
+                pages=pages,
+            )
 
         for index, result in enumerate(results[:3], start=1):
             title = str(result.get("title") or f"결과 {index}").strip()
@@ -5630,6 +5637,112 @@ class AgentLoop:
             lines.append(f"   요약: {snippet}")
             if url:
                 lines.append(f"   링크: {url}")
+        return "\n".join(lines)
+
+    def _build_structured_web_summary(
+        self,
+        *,
+        query: str,
+        selected_sources: list[dict[str, Any]],
+        pages: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """Build a 3-tier web summary: confirmed / conflicting / unverified."""
+        lines = [f"웹 검색 요약: {query}", ""]
+
+        # Collect facts with source role and trust level
+        confirmed: list[str] = []   # 2+ trusted sources agree
+        single_source: list[str] = []  # 1 trusted source only
+        community_only: list[str] = []  # community/blog/portal only
+        source_urls: list[str] = []
+
+        fact_map: dict[str, list[str]] = {}  # rough fact → list of source roles
+
+        for source in selected_sources[:5]:
+            title = str(source.get("title") or source.get("result_title") or "").strip()
+            url = str(source.get("url") or "").strip()
+            summary_text = str(source.get("summary_text") or source.get("snippet") or "").strip()
+            if not summary_text or self._looks_like_noisy_web_segment(summary_text):
+                continue
+
+            role_label = self._web_source_role_label(query=query, source=source)
+            is_trusted = role_label in {"백과 기반", "공식 기반", "데이터 기반", "설명형 출처"}
+            is_news = role_label == "보조 기사"
+
+            # Split into key sentences
+            for segment in self._split_web_page_segments(summary_text)[:3]:
+                compact = " ".join(segment.split()).strip().rstrip(".")
+                if not compact or len(compact) < 10:
+                    continue
+                key = compact[:40].lower()
+                if key not in fact_map:
+                    fact_map[key] = []
+                fact_map[key].append(role_label)
+
+                if is_trusted or is_news:
+                    # Check if already seen from another source
+                    if len(fact_map[key]) >= 2:
+                        entry = f"- {compact}."
+                        if entry not in confirmed:
+                            confirmed.append(entry)
+                    else:
+                        entry = f"- {compact}. [{role_label}]"
+                        if entry not in single_source:
+                            single_source.append(entry)
+                else:
+                    entry = f"- {compact}. [{role_label}]"
+                    if entry not in community_only:
+                        community_only.append(entry)
+
+            if url:
+                source_urls.append(f"- {title}: {url}" if title else f"- {url}")
+
+        # Promote single-source facts that got cross-confirmed
+        still_single: list[str] = []
+        for entry in single_source:
+            core = entry.split(".")[0].lstrip("- ").strip()
+            key = core[:40].lower()
+            if len(fact_map.get(key, [])) >= 2:
+                clean_entry = f"- {core}."
+                if clean_entry not in confirmed:
+                    confirmed.append(clean_entry)
+            else:
+                still_single.append(entry)
+
+        # Build output
+        if confirmed:
+            lines.append("확인된 사실:")
+            lines.extend(confirmed[:5])
+
+        if still_single:
+            lines.append("")
+            lines.append("단일 출처 정보 (교차 확인 필요):")
+            lines.extend(still_single[:4])
+
+        if community_only:
+            lines.append("")
+            lines.append("커뮤니티/비공식 정보 (참고용):")
+            lines.extend(community_only[:3])
+
+        # Unverified notice
+        if not confirmed and not still_single:
+            lines.append("확인된 사실:")
+            lines.append("- 교차 확인된 정보가 충분하지 않습니다.")
+            if community_only:
+                lines.append("")
+                lines.append("참고 정보:")
+                lines.extend(community_only[:3])
+
+        # Source links
+        if source_urls:
+            lines.append("")
+            lines.append("출처:")
+            lines.extend(source_urls[:5])
+
+        failed_pages = [page for page in pages or [] if str(page.get("fetch_status") or "") != "ok"]
+        if failed_pages:
+            lines.append("")
+            lines.append(f"참고: 원문을 바로 읽지 못한 링크 {len(failed_pages)}건은 검색 결과 요약만 기록했습니다.")
+
         return "\n".join(lines)
 
     def _run_web_search(

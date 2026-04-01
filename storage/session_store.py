@@ -14,17 +14,23 @@ from core.approval import (
     normalize_save_content_source,
     normalize_source_message_id,
 )
+from core.contracts import (
+    ALLOWED_CANDIDATE_CONFIRMATION_LABELS,
+    ALLOWED_CONTENT_REASON_LABELS,
+    ALLOWED_CORRECTED_OUTCOMES,
+    ALLOWED_FEEDBACK_LABELS,
+    ALLOWED_FEEDBACK_REASONS,
+    ALLOWED_SESSION_LOCAL_CANDIDATE_FAMILIES,
+    ALLOWED_WEB_SEARCH_PERMISSIONS,
+    CANDIDATE_REVIEW_ACTION_TO_STATUS,
+    WebSearchPermission,
+)
 
 
 SESSION_SCHEMA_VERSION = "1.0"
-ALLOWED_WEB_SEARCH_PERMISSIONS = {"disabled", "approval", "enabled"}
-ALLOWED_FEEDBACK_LABELS = {"helpful", "unclear", "incorrect"}
-ALLOWED_FEEDBACK_REASONS = {"factual_error", "irrelevant_result", "context_miss", "awkward_tone"}
-ALLOWED_CORRECTED_OUTCOMES = {"accepted_as_is", "corrected", "rejected"}
-ALLOWED_CONTENT_REASON_LABELS = {"content_reject": {"explicit_content_rejection"}}
-ALLOWED_SESSION_LOCAL_CANDIDATE_FAMILIES = {"correction_rewrite_preference"}
-ALLOWED_CANDIDATE_CONFIRMATION_LABELS = {"candidate_reuse": {"explicit_reuse_confirmation"}}
-ALLOWED_CANDIDATE_REVIEW_ACTION_TO_STATUS = {"accept": "accepted"}
+
+# Re-export for backward compatibility
+ALLOWED_CANDIDATE_REVIEW_ACTION_TO_STATUS = CANDIDATE_REVIEW_ACTION_TO_STATUS
 
 
 class SessionStore:

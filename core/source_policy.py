@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
 from urllib.parse import urlparse
 
-
-SourceType = Literal["official", "database", "news", "wiki", "community", "general"]
-AnswerMode = Literal["general", "entity_card", "latest_update"]
-FreshnessRisk = Literal["low", "high"]
+from core.contracts import (
+    AnswerMode,
+    FreshnessRisk,
+    SourceRole,
+    SourceType,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,12 +23,12 @@ class SourcePolicyDecision:
 def classify_source_type(url: str) -> SourceType:
     hostname = urlparse(str(url or "").strip()).netloc.lower()
     if not hostname:
-        return "general"
+        return SourceType.GENERAL
     if any(
         hostname == host or hostname.endswith(f".{host}")
         for host in ("namu.wiki", "wikipedia.org", "encykorea.aks.ac.kr", "britannica.com")
     ):
-        return "wiki"
+        return SourceType.WIKI
     if any(
         hostname == host or hostname.endswith(f".{host}")
         for host in (
@@ -39,7 +40,7 @@ def classify_source_type(url: str) -> SourceType:
             "thetvdb.com",
         )
     ):
-        return "database"
+        return SourceType.DATABASE
     news_domain_hosts = (
         "chosun.com",
         "joongang.co.kr",
@@ -126,7 +127,7 @@ def classify_source_type(url: str) -> SourceType:
         hostname == host or hostname.endswith(f".{host}")
         for host in news_domain_hosts
     ):
-        return "news"
+        return SourceType.NEWS
     community_hosts = (
         "naver.com",
         "daum.net",
@@ -149,8 +150,8 @@ def classify_source_type(url: str) -> SourceType:
         "medium.com",
     )
     if any(hostname == host or hostname.endswith(f".{host}") for host in community_hosts):
-        return "community"
-    return "general"
+        return SourceType.COMMUNITY
+    return SourceType.GENERAL
 
 
 def build_source_policy(
@@ -163,35 +164,35 @@ def build_source_policy(
     operational_noise: bool,
     community_domain: bool,
 ) -> SourcePolicyDecision:
-    source_type = "official" if official_domain else classify_source_type(url)
+    source_type = SourceType.OFFICIAL if official_domain else classify_source_type(url)
 
-    if source_type == "wiki":
-        role_label = "백과 기반"
+    if source_type == SourceType.WIKI:
+        role_label = SourceRole.WIKI
         entity_score = 12
         latest_score = 2
         general_score = 5
-    elif source_type == "official":
-        role_label = "공식 기반"
+    elif source_type == SourceType.OFFICIAL:
+        role_label = SourceRole.OFFICIAL
         entity_score = 10 if descriptive_source else 6
         latest_score = 11
         general_score = 7
-    elif source_type == "database":
-        role_label = "데이터 기반"
+    elif source_type == SourceType.DATABASE:
+        role_label = SourceRole.DATABASE
         entity_score = 9
         latest_score = 6
         general_score = 6
-    elif source_type == "news":
-        role_label = "보조 기사"
+    elif source_type == SourceType.NEWS:
+        role_label = SourceRole.NEWS
         entity_score = 1
         latest_score = 9
         general_score = 4
-    elif source_type == "community":
-        role_label = "보조 커뮤니티"
+    elif source_type == SourceType.COMMUNITY:
+        role_label = SourceRole.COMMUNITY
         entity_score = -5
         latest_score = -3
         general_score = -2
     else:
-        role_label = "설명형 출처" if descriptive_source else "보조 출처"
+        role_label = SourceRole.DESCRIPTIVE if descriptive_source else SourceRole.AUXILIARY
         entity_score = 7 if descriptive_source else 4
         latest_score = 4 if descriptive_source else 2
         general_score = 4 if descriptive_source else 2
@@ -208,7 +209,7 @@ def build_source_policy(
         entity_score -= 4
         latest_score -= 3
         general_score -= 3
-    if community_domain and source_type != "community":
+    if community_domain and source_type != SourceType.COMMUNITY:
         entity_score -= 2
         latest_score -= 2
         general_score -= 1
@@ -228,13 +229,13 @@ def score_source_for_mode(
     answer_mode: AnswerMode,
     freshness_risk: FreshnessRisk = "low",
 ) -> int:
-    if answer_mode == "entity_card":
+    if answer_mode == AnswerMode.ENTITY_CARD:
         score = decision.entity_score
-    elif answer_mode == "latest_update":
+    elif answer_mode == AnswerMode.LATEST_UPDATE:
         score = decision.latest_score
     else:
         score = decision.general_score
 
-    if freshness_risk == "high" and decision.source_type == "wiki":
+    if freshness_risk == FreshnessRisk.HIGH and decision.source_type == SourceType.WIKI:
         score -= 3
     return score

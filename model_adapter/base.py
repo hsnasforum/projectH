@@ -4,11 +4,13 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
+from core.contracts import FollowUpIntent, StreamEventType
 
-FOLLOW_UP_INTENT_GENERAL = "general"
-FOLLOW_UP_INTENT_KEY_POINTS = "key_points"
-FOLLOW_UP_INTENT_ACTION_ITEMS = "action_items"
-FOLLOW_UP_INTENT_MEMO = "memo"
+# Re-export for backward compatibility with existing importers
+FOLLOW_UP_INTENT_GENERAL = FollowUpIntent.GENERAL
+FOLLOW_UP_INTENT_KEY_POINTS = FollowUpIntent.KEY_POINTS
+FOLLOW_UP_INTENT_ACTION_ITEMS = FollowUpIntent.ACTION_ITEMS
+FOLLOW_UP_INTENT_MEMO = FollowUpIntent.MEMO
 
 
 @dataclass(slots=True)
@@ -72,10 +74,10 @@ class ModelAdapter(ABC):
         raise NotImplementedError
 
     def stream_respond(self, prompt: str) -> Iterator[ModelStreamEvent]:
-        yield ModelStreamEvent(kind="text_replace", text=self.respond(prompt))
+        yield ModelStreamEvent(kind=StreamEventType.TEXT_REPLACE, text=self.respond(prompt))
 
     def stream_summarize(self, text: str) -> Iterator[ModelStreamEvent]:
-        yield ModelStreamEvent(kind="text_replace", text=self.summarize(text))
+        yield ModelStreamEvent(kind=StreamEventType.TEXT_REPLACE, text=self.summarize(text))
 
     def stream_answer_with_context(
         self,
@@ -89,7 +91,7 @@ class ModelAdapter(ABC):
         evidence_items: list[dict[str, str]] | None = None,
     ) -> Iterator[ModelStreamEvent]:
         yield ModelStreamEvent(
-            kind="text_replace",
+            kind=StreamEventType.TEXT_REPLACE,
             text=self.answer_with_context(
                 intent=intent,
                 user_request=user_request,

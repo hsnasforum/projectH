@@ -1,5 +1,38 @@
-import { useState } from "react";
+import { type ReactNode } from "react";
 import type { Message } from "../types";
+import LinkChip from "./LinkChip";
+
+const URL_REGEX = /(https?:\/\/[^\s<>"')\]]+)/g;
+
+// Matches "링크:" or "링크: " labels right before a URL
+const LINK_LABEL_REGEX = /링크:\s*/g;
+
+/** Split text into plain segments and LinkChip elements, stripping "링크:" labels. */
+function renderTextWithLinks(text: string): ReactNode[] {
+  // First strip "링크:" labels that precede URLs
+  const cleaned = text.replace(
+    new RegExp(`링크:\\s*(https?://[^\\s<>"')\\]]+)`, "g"),
+    "$1",
+  );
+
+  const parts: ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  const regex = new RegExp(URL_REGEX);
+
+  while ((match = regex.exec(cleaned)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(cleaned.slice(lastIndex, match.index));
+    }
+    const url = match[1];
+    parts.push(<LinkChip key={`link-${match.index}`} url={url} />);
+    lastIndex = regex.lastIndex;
+  }
+  if (lastIndex < cleaned.length) {
+    parts.push(cleaned.slice(lastIndex));
+  }
+  return parts;
+}
 
 interface Props {
   message: Message;
@@ -7,7 +40,6 @@ interface Props {
 
 export default function MessageBubble({ message }: Props) {
   const isUser = message.role === "user";
-  const [evidenceOpen, setEvidenceOpen] = useState(false);
 
   return (
     <div className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
@@ -25,11 +57,13 @@ export default function MessageBubble({ message }: Props) {
             rounded-2xl px-4 py-3 text-[15px] leading-[1.75]
             ${isUser
               ? "bg-beige-100 text-ink rounded-br-md"
-              : "bg-transparent text-ink"
+              : "bg-white border border-stone-100 text-ink rounded-bl-md shadow-sm"
             }
           `}
         >
-          <div className="whitespace-pre-wrap break-words">{message.text}</div>
+          <div className="whitespace-pre-wrap break-words">
+            {isUser ? message.text : renderTextWithLinks(message.text)}
+          </div>
         </div>
 
         {/* Meta info */}
@@ -48,43 +82,6 @@ export default function MessageBubble({ message }: Props) {
           </div>
         )}
 
-        {/* Evidence toggle */}
-        {!isUser && message.evidence && message.evidence.length > 0 && (
-          <div className="mt-2 px-1">
-            <button
-              onClick={() => setEvidenceOpen(!evidenceOpen)}
-              className="
-                text-[12px] text-muted hover:text-ink
-                flex items-center gap-1 transition-colors
-              "
-            >
-              <svg
-                width="12" height="12" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="2"
-                className={`transition-transform ${evidenceOpen ? "rotate-90" : ""}`}
-              >
-                <path d="M9 18l6-6-6-6" />
-              </svg>
-              근거 {message.evidence.length}건
-            </button>
-
-            {evidenceOpen && (
-              <div className="mt-2 space-y-2">
-                {message.evidence.map((item, i) => (
-                  <div
-                    key={i}
-                    className="text-[13px] text-muted bg-beige-50 rounded-xl px-3.5 py-2.5 border border-beige-200/50"
-                  >
-                    <span className="font-medium text-ink/80 text-[11px] uppercase tracking-wide">
-                      {item.label}
-                    </span>
-                    <p className="mt-1 leading-relaxed">{item.text}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
 
         {/* Search results */}
         {!isUser && message.search_results && message.search_results.length > 0 && (

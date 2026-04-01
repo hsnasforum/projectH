@@ -99,7 +99,7 @@ class WebSearchTool:
         base_url: str = "https://html.duckduckgo.com/html/",
         timeout_seconds: float = 10.0,
         region: str = "kr-kr",
-        user_agent: str = "local-ai-assistant/0.1",
+        user_agent: str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         max_page_chars: int = 12000,
     ) -> None:
         self.base_url = base_url
@@ -108,29 +108,44 @@ class WebSearchTool:
         self.user_agent = user_agent
         self.max_page_chars = max_page_chars
 
+    _MAX_RETRIES = 2
+    _RETRY_DELAY_SECONDS = 2.0
+
     def search(self, *, query: str, max_results: int = 5) -> list[WebSearchResult]:
         normalized_query = " ".join(query.strip().split())
         if not normalized_query:
             raise WebSearchError("웹 검색어가 비어 있습니다.")
 
-        params = urlencode({"q": normalized_query, "kl": self.region})
-        request = Request(
-            f"{self.base_url}?{params}",
-            headers={
-                "User-Agent": self.user_agent,
-                "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.6",
-            },
-        )
-        try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
-                body = response.read().decode("utf-8", errors="replace")
-        except Exception as exc:
-            raise WebSearchError(f"웹 검색 요청에 실패했습니다: {exc}") from exc
+        last_error: Exception | None = None
+        for attempt in range(1 + self._MAX_RETRIES):
+            if attempt > 0:
+                import time
+                time.sleep(self._RETRY_DELAY_SECONDS * attempt)
 
-        results = self._parse_duckduckgo_results(body, max_results=max_results)
-        if not results:
-            raise WebSearchError("웹 검색 결과를 찾지 못했습니다.")
-        return results
+            params = urlencode({"q": normalized_query, "kl": self.region})
+            req = Request(
+                f"{self.base_url}?{params}",
+                headers={
+                    "User-Agent": self.user_agent,
+                    "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.6",
+                },
+            )
+            try:
+                with urlopen(req, timeout=self.timeout_seconds) as response:
+                    body = response.read().decode("utf-8", errors="replace")
+            except Exception as exc:
+                last_error = exc
+                continue
+
+            results = self._parse_duckduckgo_results(body, max_results=max_results)
+            if results:
+                return results
+            # Status 202 or empty results = rate-limited, retry
+            last_error = None
+
+        if last_error:
+            raise WebSearchError(f"웹 검색 요청에 실패했습니다: {last_error}")
+        raise WebSearchError("웹 검색 결과를 찾지 못했습니다. (DuckDuckGo 일시 제한일 수 있습니다)")
 
     def fetch_page(self, *, url: str, max_chars: int | None = None) -> WebPageContent:
         normalized_url = str(url or "").strip()

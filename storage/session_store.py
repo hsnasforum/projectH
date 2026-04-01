@@ -854,6 +854,25 @@ class SessionStore:
                 )
             return sorted(summaries, key=lambda item: item.get("updated_at", ""), reverse=True)
 
+    def delete_session(self, session_id: str) -> bool:
+        with self._lock:
+            path = self._path(session_id)
+            if path.exists():
+                path.unlink()
+                return True
+            return False
+
+    def delete_all_sessions(self) -> int:
+        with self._lock:
+            count = 0
+            for path in list(self.base_dir.glob("*.json")):
+                try:
+                    path.unlink()
+                    count += 1
+                except OSError:
+                    continue
+            return count
+
     def append_message(self, session_id: str, message: Dict[str, Any]) -> Dict[str, Any]:
         with self._lock:
             data = self.get_session(session_id)

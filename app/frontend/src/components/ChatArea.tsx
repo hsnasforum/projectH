@@ -1,15 +1,24 @@
 import { useRef, useEffect } from "react";
-import type { Message, PendingApproval } from "../types";
+import type { Message, PendingApproval, AppSettings } from "../types";
 import MessageBubble from "./MessageBubble";
 import InputBar from "./InputBar";
 import ApprovalCard from "./ApprovalCard";
 import TypingIndicator from "./TypingIndicator";
 
+const OLLAMA_MODELS = [
+  { value: "qwen2.5:14b", label: "14B" },
+  { value: "qwen2.5:7b", label: "7B" },
+  { value: "qwen2.5:3b", label: "3B" },
+];
+
 interface Props {
   messages: Message[];
   streamingText: string;
   isStreaming: boolean;
+  thinkingStatus: string;
   approval: PendingApproval | null;
+  settings: AppSettings;
+  onSettingsChange: (s: AppSettings) => void;
   onSend: (text: string, opts?: Record<string, unknown>) => void;
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
@@ -22,7 +31,10 @@ export default function ChatArea({
   messages,
   streamingText,
   isStreaming,
+  thinkingStatus,
   approval,
+  settings,
+  onSettingsChange,
   onSend,
   onApprove,
   onReject,
@@ -52,6 +64,24 @@ export default function ChatArea({
         <h1 className="text-[15px] font-semibold text-ink truncate">
           {sessionTitle}
         </h1>
+        <select
+          value={settings.model}
+          onChange={(e) => onSettingsChange({ ...settings, model: e.target.value })}
+          className="
+            shrink-0 text-[13px] text-muted bg-stone-50 border border-stone-200
+            rounded-lg px-2.5 py-1.5 outline-none
+            hover:border-stone-300 focus:border-stone-400
+            transition-colors cursor-pointer
+          "
+        >
+          {settings.provider === "ollama"
+            ? OLLAMA_MODELS.map((m) => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))
+            : <option value={settings.model}>{settings.model || "모델"}</option>
+          }
+        </select>
+        <div className="flex-1" />
       </header>
 
       {/* Messages */}
@@ -89,7 +119,7 @@ export default function ChatArea({
               />
             )}
 
-            {isStreaming && !streamingText && <TypingIndicator />}
+            {isStreaming && !streamingText && <TypingIndicator status={thinkingStatus} />}
 
             {approval && (
               <ApprovalCard

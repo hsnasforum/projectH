@@ -6515,6 +6515,7 @@ class AgentLoop:
                     else str(active_context.get("summary_hint") or "")
                 ),
                 evidence_items=selected_evidence,
+                active_preferences=self._get_active_preferences(),
             ),
             stream_event_callback=stream_event_callback,
             cancel_requested=cancel_requested,
@@ -8276,7 +8277,7 @@ class AgentLoop:
         )
         return AgentResponse(
             text=self._collect_model_stream(
-                self.model.stream_respond(request.user_text),
+                self.model.stream_respond(request.user_text, active_preferences=self._get_active_preferences()),
                 stream_event_callback=stream_event_callback,
                 cancel_requested=cancel_requested,
             ),

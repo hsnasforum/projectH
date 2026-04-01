@@ -75,6 +75,7 @@ class _CaptureContextModel(MockModelAdapter):
         context_excerpt: str,
         summary_hint: str | None = None,
         evidence_items: list[dict[str, str]] | None = None,
+        active_preferences: list[dict[str, str]] | None = None,
     ) -> str:
         self.last_context_call = {
             "intent": intent,

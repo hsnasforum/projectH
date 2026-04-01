@@ -18,8 +18,11 @@ from model_adapter.base import (
 
 
 class MockModelAdapter(ModelAdapter):
-    def respond(self, prompt: str) -> str:
-        return f"[모의 응답] {prompt}"
+    def respond(self, prompt: str, *, active_preferences: list[dict[str, str]] | None = None) -> str:
+        prefix = "[모의 응답]"
+        if active_preferences:
+            prefix = f"[모의 응답, 선호 {len(active_preferences)}건 반영]"
+        return f"{prefix} {prompt}"
 
     def summarize(self, text: str) -> str:
         if "Summary mode: merged_chunk_outline" in text:
@@ -61,6 +64,7 @@ class MockModelAdapter(ModelAdapter):
         context_excerpt: str,
         summary_hint: str | None = None,
         evidence_items: list[dict[str, str]] | None = None,
+        active_preferences: list[dict[str, str]] | None = None,
     ) -> str:
         source_names = ", ".join(Path(path).name for path in source_paths[:3]) or "(출처 없음)"
         compact_excerpt = " ".join(context_excerpt.split())
@@ -129,8 +133,8 @@ class MockModelAdapter(ModelAdapter):
             ]
         )
 
-    def stream_respond(self, prompt: str):
-        yield from self._stream_text(self.respond(prompt))
+    def stream_respond(self, prompt: str, *, active_preferences: list[dict[str, str]] | None = None):
+        yield from self._stream_text(self.respond(prompt, active_preferences=active_preferences))
 
     def stream_summarize(self, text: str):
         yield from self._stream_text(self.summarize(text))
@@ -145,6 +149,7 @@ class MockModelAdapter(ModelAdapter):
         context_excerpt: str,
         summary_hint: str | None = None,
         evidence_items: list[dict[str, str]] | None = None,
+        active_preferences: list[dict[str, str]] | None = None,
     ):
         yield from self._stream_text(
             self.answer_with_context(
@@ -155,6 +160,7 @@ class MockModelAdapter(ModelAdapter):
                 context_excerpt=context_excerpt,
                 summary_hint=summary_hint,
                 evidence_items=evidence_items,
+                active_preferences=active_preferences,
             )
         )
 

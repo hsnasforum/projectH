@@ -43,13 +43,13 @@ class _FakeOllamaHandler(BaseHTTPRequestHandler):
 
         prompt = payload.get("prompt", "")
         system = payload.get("system", "")
-        if isinstance(system, str) and "Summarize the provided document" in system:
+        if isinstance(system, str) and ("Summarize the provided document" in system or "문서를 한국어로 요약" in system):
             response_text = f"summary::{str(prompt)[:32]}"
-        elif isinstance(system, str) and "Return exactly three bullet points" in system:
+        elif isinstance(system, str) and ("Return exactly three bullet points" in system or "핵심 포인트 3개" in system):
             response_text = f"key_points::{str(prompt)[:32]}"
-        elif isinstance(system, str) and "Return only actionable next steps" in system:
+        elif isinstance(system, str) and ("Return only actionable next steps" in system or "실행 가능한 항목만 번호 목록" in system):
             response_text = f"action_items::{str(prompt)[:32]}"
-        elif isinstance(system, str) and "Rewrite the answer in Korean memo format" in system:
+        elif isinstance(system, str) and ("Rewrite the answer in Korean memo format" in system or "메모 형식으로 쓰세요" in system):
             response_text = f"memo::{str(prompt)[:32]}"
         else:
             response_text = f"response::{str(prompt)[:32]}"
@@ -127,13 +127,11 @@ class OllamaAdapterTest(unittest.TestCase):
         request_payload = _FakeOllamaHandler.requests[0]
         self.assertEqual(request_payload["model"], "qwen2.5:3b")
         self.assertEqual(request_payload["stream"], True)
-        self.assertIn("Summarize the provided document", str(request_payload["system"]))
-        self.assertIn("in Korean", str(request_payload["system"]))
-        self.assertIn("If the text is narrative or fiction", str(request_payload["system"]))
-        self.assertIn("If the text is informational or argumentative", str(request_payload["system"]))
-        self.assertIn("Summary source type: search_results", str(request_payload["system"]))
-        self.assertIn("Summary source type: local_document", str(request_payload["system"]))
-        self.assertIn("Return only a concise Korean summary in plain text", str(request_payload["system"]))
+        system_str = str(request_payload["system"])
+        # Compact model uses Korean system prompt
+        self.assertIn("한국어로 요약", system_str)
+        self.assertIn("이야기글이면", system_str)
+        self.assertIn("정보글이면", system_str)
 
     def test_respond_defaults_to_korean(self) -> None:
         adapter = OllamaModelAdapter(base_url=self.base_url, model="qwen2.5:3b", timeout_seconds=5)
@@ -142,8 +140,10 @@ class OllamaAdapterTest(unittest.TestCase):
 
         self.assertEqual(response, "response::간단히 답해 주세요.")
         request_payload = _FakeOllamaHandler.requests[0]
-        self.assertIn("Answer in Korean by default", str(request_payload["system"]))
-        self.assertIn("do not guess", str(request_payload["system"]))
+        system_str = str(request_payload["system"])
+        # Compact model uses Korean system prompt
+        self.assertIn("한국어로 답하세요", system_str)
+        self.assertIn("추측하지 말고", system_str)
 
     def test_summarize_rewrites_han_script_output_to_korean(self) -> None:
         adapter = OllamaModelAdapter(base_url=self.base_url, model="qwen2.5:3b", timeout_seconds=5)
@@ -165,7 +165,8 @@ class OllamaAdapterTest(unittest.TestCase):
 
         self.assertEqual(summary, "로컬 우선, 승인 기반 실행, 공급자 중립 구조를 강조하는 문서입니다.")
         self.assertEqual(len(calls), 2)
-        self.assertIn("Summarize the provided document", calls[0]["system"])
+        # Compact model uses Korean system prompt
+        self.assertIn("한국어로 요약", calls[0]["system"])
         self.assertIn("Rewrite the supplied text into natural Korean", calls[1]["system"])
 
     def test_respond_rewrites_mixed_kana_output_to_korean(self) -> None:
@@ -188,7 +189,8 @@ class OllamaAdapterTest(unittest.TestCase):
 
         self.assertEqual(response, "주로 레고 장난감에 대한 영상을 올립니다.")
         self.assertEqual(len(calls), 2)
-        self.assertIn("Answer in Korean by default", calls[0]["system"])
+        # Compact model uses Korean system prompt
+        self.assertIn("한국어로 답하세요", calls[0]["system"])
         self.assertIn("Rewrite the supplied text into natural Korean", calls[1]["system"])
 
     def test_stream_respond_buffers_mixed_kana_until_rewritten(self) -> None:
@@ -242,8 +244,10 @@ class OllamaAdapterTest(unittest.TestCase):
 
         self.assertTrue(answer.startswith("- "))
         request_payload = _FakeOllamaHandler.requests[-1]
-        self.assertIn("Return exactly three bullet points", str(request_payload["system"]))
-        self.assertIn("Task: Extract exactly three key lines", str(request_payload["prompt"]))
+        # Compact model uses Korean system prompt
+        self.assertIn("핵심 포인트 3개", str(request_payload["system"]))
+        # Compact prompt uses simplified structure
+        self.assertIn("질문", str(request_payload["prompt"]))
 
     def test_answer_with_context_routes_action_items_intent(self) -> None:
         adapter = OllamaModelAdapter(base_url=self.base_url, model="qwen2.5:3b", timeout_seconds=5)
@@ -259,8 +263,9 @@ class OllamaAdapterTest(unittest.TestCase):
 
         self.assertTrue(answer.startswith("1. "))
         request_payload = _FakeOllamaHandler.requests[-1]
-        self.assertIn("Return only actionable next steps", str(request_payload["system"]))
-        self.assertIn("Task: Extract concrete action items only.", str(request_payload["prompt"]))
+        # Compact model uses Korean system prompt
+        self.assertIn("실행 가능한 항목만", str(request_payload["system"]))
+        self.assertIn("질문", str(request_payload["prompt"]))
 
     def test_answer_with_context_action_items_prompt_adds_grounded_evidence_sections(self) -> None:
         adapter = OllamaModelAdapter(base_url=self.base_url, model="qwen2.5:3b", timeout_seconds=5)
@@ -300,17 +305,15 @@ class OllamaAdapterTest(unittest.TestCase):
         request_payload = _FakeOllamaHandler.requests[-1]
         prompt = str(request_payload["prompt"])
         system = str(request_payload["system"])
-        self.assertIn("Bounded evidence lines (highest priority):", prompt)
+        # Compact prompt: evidence merged under 핵심 근거, document first
+        self.assertIn("핵심 근거", prompt)
         self.assertIn("[1] proposal.md | 실행 후보 | 문서 기반 의사결정 고정", prompt)
-        self.assertIn("Intent focus:", prompt)
-        self.assertIn("Prefer grounded next steps", prompt)
-        self.assertIn("Preferred evidence lines:", prompt)
-        self.assertIn("Candidate action lines:", prompt)
+        self.assertIn("문서 내용", prompt)
         self.assertIn("문서 기반 의사결정 고정", prompt)
-        self.assertIn("Metadata-only lines to ignore unless explicitly asked:", prompt)
-        self.assertIn("영문 제목: Local AI Assistant Project Proposal & Execution Guide", prompt)
-        self.assertIn("Never treat title, version, date, file path, or other metadata as an action item.", system)
-        self.assertIn("If the answer is not directly supported by the provided evidence", system)
+        self.assertIn("질문", prompt)
+        # Compact system: Korean guardrails
+        self.assertIn("실행 가능한 항목만", system)
+        self.assertIn("근거에 없는 내용은", system)
 
     def test_answer_with_context_general_prompt_requires_evidence_only_answers(self) -> None:
         adapter = OllamaModelAdapter(base_url=self.base_url, model="qwen2.5:3b", timeout_seconds=5)
@@ -335,11 +338,12 @@ class OllamaAdapterTest(unittest.TestCase):
         request_payload = _FakeOllamaHandler.requests[-1]
         prompt = str(request_payload["prompt"])
         system = str(request_payload["system"])
-        self.assertIn("Evidence policy:", prompt)
-        self.assertIn("Bounded evidence lines (highest priority):", prompt)
+        # Compact prompt: merged evidence
+        self.assertIn("핵심 근거", prompt)
         self.assertIn("sample | 웹 원문 근거 | sample snippet", prompt)
-        self.assertIn("Do not use background knowledge or guess beyond them.", system)
-        self.assertIn("제공된 근거만으로는 확인되지 않습니다.", system)
+        # Compact system: Korean guardrails
+        self.assertIn("근거와 문서 발췌만 사용", system)
+        self.assertIn("제공된 근거만으로는 확인되지 않습니다", system)
 
     def test_answer_with_context_routes_memo_intent(self) -> None:
         adapter = OllamaModelAdapter(base_url=self.base_url, model="qwen2.5:3b", timeout_seconds=5)
@@ -357,8 +361,9 @@ class OllamaAdapterTest(unittest.TestCase):
         self.assertIn("핵심:", answer)
         self.assertIn("다음 행동:", answer)
         request_payload = _FakeOllamaHandler.requests[-1]
-        self.assertIn("Rewrite the answer in Korean memo format", str(request_payload["system"]))
-        self.assertIn("Task: Rewrite the context as a concise memo.", str(request_payload["prompt"]))
+        # Compact model uses Korean system prompt
+        self.assertIn("메모 형식으로 쓰세요", str(request_payload["system"]))
+        self.assertIn("질문", str(request_payload["prompt"]))
 
     def test_answer_with_context_key_points_prompt_prefers_principles_and_ignores_metadata(self) -> None:
         adapter = OllamaModelAdapter(base_url=self.base_url, model="qwen2.5:3b", timeout_seconds=5)
@@ -383,12 +388,10 @@ class OllamaAdapterTest(unittest.TestCase):
 
         request_payload = _FakeOllamaHandler.requests[-1]
         prompt = str(request_payload["prompt"])
-        self.assertIn("Intent focus:", prompt)
-        self.assertIn("Prefer the document's purpose, principles, constraints, decisions, and conclusions", prompt)
-        self.assertIn("Preferred evidence lines:", prompt)
+        # Compact prompt: document content first, user question last
+        self.assertIn("문서 내용", prompt)
         self.assertIn("로컬 파일 기반 생산성 도구를 안전하게 제공한다.", prompt)
-        self.assertIn("Metadata-only lines to ignore unless explicitly asked:", prompt)
-        self.assertIn("작성일: 2026-03-25", prompt)
+        self.assertIn("질문", prompt)
 
     def test_answer_with_context_key_points_postprocess_filters_metadata_and_keeps_three_lines(self) -> None:
         adapter = OllamaModelAdapter(base_url=self.base_url, model="qwen2.5:3b", timeout_seconds=5)

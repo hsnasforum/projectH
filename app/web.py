@@ -79,6 +79,8 @@ class WebAppService:
         self.artifact_store = ArtifactStore(base_dir=settings.artifacts_dir)
         from storage.correction_store import CorrectionStore
         self.correction_store = CorrectionStore(base_dir=settings.corrections_dir)
+        from storage.preference_store import PreferenceStore
+        self.preference_store = PreferenceStore(base_dir=settings.preferences_dir)
         self.template_path = Path(template_path) if template_path else Path(__file__).with_name("templates") / "index.html"
         self._active_stream_requests: dict[str, threading.Event] = {}
         self._active_stream_lock = threading.Lock()
@@ -257,6 +259,17 @@ class WebAppService:
                     )
                 except Exception:
                     pass
+
+        # Auto-promote to preference candidate if cross-session recurrence detected
+        if artifact_id:
+            try:
+                corrections = self.correction_store.find_by_artifact(artifact_id)
+                for c in corrections:
+                    fp = c.get("delta_fingerprint")
+                    if fp:
+                        self.preference_store.promote_from_corrections(fp, self.correction_store)
+            except Exception:
+                pass
 
         return {
             "ok": True,
@@ -1248,6 +1261,7 @@ class WebAppService:
                 notes_dir=self.settings.notes_dir,
                 web_search_store=self.web_search_store,
                 artifact_store=self.artifact_store,
+                preference_store=self.preference_store,
             )
             response = loop.handle(
                 UserRequest(
@@ -1382,6 +1396,7 @@ class WebAppService:
             notes_dir=self.settings.notes_dir,
             web_search_store=self.web_search_store,
             artifact_store=self.artifact_store,
+            preference_store=self.preference_store,
         )
         request = UserRequest(
             user_text=self._build_user_text(

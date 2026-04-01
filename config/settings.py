@@ -16,6 +16,7 @@ class AppSettings:
     web_search_permission: str = "disabled"
     artifacts_dir: str = "data/artifacts"
     corrections_dir: str = "data/corrections"
+    preferences_dir: str = "data/preferences"
     web_search_history_dir: str = "data/web-search"
     web_search_timeout_seconds: float = 10.0
     ollama_base_url: str = "http://localhost:11434"
@@ -35,6 +36,7 @@ class AppSettings:
             web_search_permission=os.getenv("LOCAL_AI_WEB_SEARCH_PERMISSION", "disabled"),
             artifacts_dir=os.getenv("LOCAL_AI_ARTIFACTS_DIR", "data/artifacts"),
             corrections_dir=os.getenv("LOCAL_AI_CORRECTIONS_DIR", "data/corrections"),
+            preferences_dir=os.getenv("LOCAL_AI_PREFERENCES_DIR", "data/preferences"),
             web_search_history_dir=os.getenv("LOCAL_AI_WEB_SEARCH_HISTORY_DIR", "data/web-search"),
             web_search_timeout_seconds=float(os.getenv("LOCAL_AI_WEB_SEARCH_TIMEOUT_SECONDS", "10")),
             ollama_base_url=os.getenv("LOCAL_AI_OLLAMA_BASE_URL", "http://localhost:11434"),

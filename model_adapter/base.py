@@ -44,7 +44,7 @@ class ModelAdapterError(RuntimeError):
 
 class ModelAdapter(ABC):
     @abstractmethod
-    def respond(self, prompt: str) -> str:
+    def respond(self, prompt: str, *, active_preferences: list[dict[str, str]] | None = None) -> str:
         raise NotImplementedError
 
     @abstractmethod
@@ -66,6 +66,7 @@ class ModelAdapter(ABC):
         context_excerpt: str,
         summary_hint: str | None = None,
         evidence_items: list[dict[str, str]] | None = None,
+        active_preferences: list[dict[str, str]] | None = None,
     ) -> str:
         raise NotImplementedError
 
@@ -73,8 +74,8 @@ class ModelAdapter(ABC):
     def health_check(self) -> ModelRuntimeStatus:
         raise NotImplementedError
 
-    def stream_respond(self, prompt: str) -> Iterator[ModelStreamEvent]:
-        yield ModelStreamEvent(kind=StreamEventType.TEXT_REPLACE, text=self.respond(prompt))
+    def stream_respond(self, prompt: str, *, active_preferences: list[dict[str, str]] | None = None) -> Iterator[ModelStreamEvent]:
+        yield ModelStreamEvent(kind=StreamEventType.TEXT_REPLACE, text=self.respond(prompt, active_preferences=active_preferences))
 
     def stream_summarize(self, text: str) -> Iterator[ModelStreamEvent]:
         yield ModelStreamEvent(kind=StreamEventType.TEXT_REPLACE, text=self.summarize(text))
@@ -89,6 +90,7 @@ class ModelAdapter(ABC):
         context_excerpt: str,
         summary_hint: str | None = None,
         evidence_items: list[dict[str, str]] | None = None,
+        active_preferences: list[dict[str, str]] | None = None,
     ) -> Iterator[ModelStreamEvent]:
         yield ModelStreamEvent(
             kind=StreamEventType.TEXT_REPLACE,
@@ -100,5 +102,6 @@ class ModelAdapter(ABC):
                 context_excerpt=context_excerpt,
                 summary_hint=summary_hint,
                 evidence_items=evidence_items,
+                active_preferences=active_preferences,
             ),
         )

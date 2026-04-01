@@ -36,3 +36,7 @@ class ArtifactStoreError(RuntimeError):
 
 class CorrectionStoreError(RuntimeError):
     """Base error for correction store operations."""
+
+
+class PreferenceStoreError(RuntimeError):
+    """Base error for preference store operations."""

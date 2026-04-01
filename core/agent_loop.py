@@ -106,6 +106,7 @@ class AgentLoop:
         notes_dir: str = "data/notes",
         web_search_store: Any | None = None,
         artifact_store: Any | None = None,
+        preference_store: Any | None = None,
     ) -> None:
         self.model = model
         self.session_store = session_store
@@ -114,6 +115,21 @@ class AgentLoop:
         self.notes_dir = Path(notes_dir)
         self.web_search_store = web_search_store
         self.artifact_store = artifact_store
+        self.preference_store = preference_store
+
+    def _get_active_preferences(self) -> list[dict[str, str]] | None:
+        if not self.preference_store:
+            return None
+        try:
+            prefs = self.preference_store.get_active_preferences()
+            if not prefs:
+                return None
+            return [
+                {"description": str(p.get("description", "")), "fingerprint": str(p.get("delta_fingerprint", ""))}
+                for p in prefs[:10]
+            ]
+        except Exception:
+            return None
 
     def _new_grounded_brief_artifact_id(self) -> str:
         return f"artifact-{uuid4().hex[:12]}"

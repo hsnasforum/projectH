@@ -324,3 +324,21 @@ CORRECTION_STATUS_TRANSITIONS: dict[CorrectionStatus, tuple[CorrectionStatus, ..
     CorrectionStatus.PROMOTED: (CorrectionStatus.ACTIVE,),
     CorrectionStatus.ACTIVE: (CorrectionStatus.STOPPED,),
 }
+
+
+# ---------------------------------------------------------------------------
+# Preference lifecycle (cross-session)
+# ---------------------------------------------------------------------------
+
+class PreferenceStatus(StrEnum):
+    CANDIDATE = "candidate"
+    ACTIVE = "active"
+    PAUSED = "paused"
+    REJECTED = "rejected"
+
+
+PREFERENCE_STATUS_TRANSITIONS: dict[PreferenceStatus, tuple[PreferenceStatus, ...]] = {
+    PreferenceStatus.CANDIDATE: (PreferenceStatus.ACTIVE, PreferenceStatus.REJECTED),
+    PreferenceStatus.ACTIVE: (PreferenceStatus.PAUSED, PreferenceStatus.REJECTED),
+    PreferenceStatus.PAUSED: (PreferenceStatus.ACTIVE, PreferenceStatus.REJECTED),
+}

@@ -99,7 +99,7 @@ class WebSearchTool:
         base_url: str = "https://html.duckduckgo.com/html/",
         timeout_seconds: float = 10.0,
         region: str = "kr-kr",
-        user_agent: str = "local-ai-assistant/0.1",
+        user_agent: str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         max_page_chars: int = 12000,
     ) -> None:
         self.base_url = base_url

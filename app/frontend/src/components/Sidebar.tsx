@@ -192,18 +192,34 @@ export default function Sidebar({
             {/* Model */}
             <label className="block">
               <span className="text-[11px] text-sidebar-muted uppercase tracking-wide">모델</span>
-              <input
-                type="text"
-                value={settings.model}
-                onChange={(e) => update({ model: e.target.value })}
-                placeholder="예: llama3.2:latest"
-                className="
-                  mt-1 w-full bg-sidebar-hover border border-white/10 rounded-lg
-                  text-[13px] text-sidebar-text px-3 py-2 outline-none
-                  placeholder:text-sidebar-muted/50
-                  focus:border-white/20 transition-colors
-                "
-              />
+              {settings.provider === "ollama" ? (
+                <select
+                  value={settings.model}
+                  onChange={(e) => update({ model: e.target.value })}
+                  className="
+                    mt-1 w-full bg-sidebar-hover border border-white/10 rounded-lg
+                    text-[13px] text-sidebar-text px-3 py-2 outline-none
+                    focus:border-white/20 transition-colors
+                  "
+                >
+                  <option value="qwen2.5:14b">qwen2.5:14b (추천)</option>
+                  <option value="qwen2.5:7b">qwen2.5:7b (빠름)</option>
+                  <option value="qwen2.5:3b">qwen2.5:3b (경량)</option>
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={settings.model}
+                  onChange={(e) => update({ model: e.target.value })}
+                  placeholder="예: llama3.2:latest"
+                  className="
+                    mt-1 w-full bg-sidebar-hover border border-white/10 rounded-lg
+                    text-[13px] text-sidebar-text px-3 py-2 outline-none
+                    placeholder:text-sidebar-muted/50
+                    focus:border-white/20 transition-colors
+                  "
+                />
+              )}
             </label>
 
             {/* Base URL */}

@@ -94,3 +94,56 @@ export async function postCorrection(
     body: JSON.stringify({ session_id: sessionId, message_id: messageId, corrected_text: correctedText }),
   });
 }
+
+// -- Preferences API --
+
+export interface PreferenceRecord {
+  preference_id: string;
+  delta_fingerprint: string;
+  description: string;
+  status: string;
+  evidence_count: number;
+  cross_session_count: number;
+  activated_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PreferencesPayload {
+  ok: boolean;
+  preferences: PreferenceRecord[];
+  active_count: number;
+  candidate_count: number;
+}
+
+export async function fetchPreferences(): Promise<PreferencesPayload> {
+  const res = await fetch(`${BASE}/api/preferences`);
+  return res.json();
+}
+
+export async function activatePreference(preferenceId: string): Promise<{ ok: boolean; preference: PreferenceRecord }> {
+  const res = await fetch(`${BASE}/api/preferences/activate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ preference_id: preferenceId }),
+  });
+  return res.json();
+}
+
+export async function pausePreference(preferenceId: string): Promise<{ ok: boolean; preference: PreferenceRecord }> {
+  const res = await fetch(`${BASE}/api/preferences/pause`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ preference_id: preferenceId }),
+  });
+  return res.json();
+}
+
+export async function rejectPreference(preferenceId: string): Promise<{ ok: boolean; preference: PreferenceRecord }> {
+  const res = await fetch(`${BASE}/api/preferences/reject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ preference_id: preferenceId }),
+  });
+  return res.json();
+}

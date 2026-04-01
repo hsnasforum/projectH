@@ -408,6 +408,47 @@ class WebAppService:
             "session": self._serialize_session(self.session_store.get_session(session_id)),
         }
 
+    # -- Preference management --
+
+    def list_preferences_payload(self) -> dict[str, Any]:
+        all_prefs = self.preference_store.list_all()
+        return {
+            "ok": True,
+            "preferences": all_prefs,
+            "active_count": sum(1 for p in all_prefs if p.get("status") == "active"),
+            "candidate_count": sum(1 for p in all_prefs if p.get("status") == "candidate"),
+        }
+
+    def activate_preference(self, payload: dict[str, Any]) -> dict[str, Any]:
+        preference_id = self._normalize_optional_text(payload.get("preference_id"))
+        if not preference_id:
+            raise WebApiError(400, "활성화할 선호 ID가 필요합니다.")
+        result = self.preference_store.activate_preference(preference_id)
+        if result is None:
+            raise WebApiError(404, "해당 선호를 찾을 수 없습니다.")
+        self.task_logger.log(session_id="system", action="preference_activated", detail={"preference_id": preference_id})
+        return {"ok": True, "preference": result}
+
+    def pause_preference(self, payload: dict[str, Any]) -> dict[str, Any]:
+        preference_id = self._normalize_optional_text(payload.get("preference_id"))
+        if not preference_id:
+            raise WebApiError(400, "일시중지할 선호 ID가 필요합니다.")
+        result = self.preference_store.pause_preference(preference_id)
+        if result is None:
+            raise WebApiError(404, "해당 선호를 찾을 수 없습니다.")
+        self.task_logger.log(session_id="system", action="preference_paused", detail={"preference_id": preference_id})
+        return {"ok": True, "preference": result}
+
+    def reject_preference(self, payload: dict[str, Any]) -> dict[str, Any]:
+        preference_id = self._normalize_optional_text(payload.get("preference_id"))
+        if not preference_id:
+            raise WebApiError(400, "거부할 선호 ID가 필요합니다.")
+        result = self.preference_store.reject_preference(preference_id)
+        if result is None:
+            raise WebApiError(404, "해당 선호를 찾을 수 없습니다.")
+        self.task_logger.log(session_id="system", action="preference_rejected", detail={"preference_id": preference_id})
+        return {"ok": True, "preference": result}
+
     def submit_candidate_confirmation(self, payload: dict[str, Any]) -> dict[str, Any]:
         session_id = self._normalize_session_id(payload.get("session_id"))
         message_id = self._normalize_optional_text(payload.get("message_id"))
@@ -6636,6 +6677,9 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
         if parsed.path == "/healthz":
             self._send_json(HTTPStatus.OK, {"ok": True})
             return
+        if parsed.path == "/api/preferences":
+            self._send_json(HTTPStatus.OK, self.server.service.list_preferences_payload())
+            return
         if parsed.path.startswith("/static/"):
             self._serve_static(parsed.path)
             return
@@ -6665,6 +6709,9 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             "/api/aggregate-transition-conflict-check",
             "/api/content-verdict",
             "/api/content-reason-note",
+            "/api/preferences/activate",
+            "/api/preferences/pause",
+            "/api/preferences/reject",
         }:
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "요청한 경로를 찾을 수 없습니다."}})
             return
@@ -6718,6 +6765,18 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/content-reason-note":
                 response = self.server.service.submit_content_reason_note(payload)
+                self._send_json(HTTPStatus.OK, response)
+                return
+            if parsed.path == "/api/preferences/activate":
+                response = self.server.service.activate_preference(payload)
+                self._send_json(HTTPStatus.OK, response)
+                return
+            if parsed.path == "/api/preferences/pause":
+                response = self.server.service.pause_preference(payload)
+                self._send_json(HTTPStatus.OK, response)
+                return
+            if parsed.path == "/api/preferences/reject":
+                response = self.server.service.reject_preference(payload)
                 self._send_json(HTTPStatus.OK, response)
                 return
             if parsed.path == "/api/chat/cancel":

@@ -304,3 +304,23 @@ class FollowUpIntent(StrEnum):
 
 class ApprovalKind(StrEnum):
     SAVE_NOTE = "save_note"
+
+
+# ---------------------------------------------------------------------------
+# Correction lifecycle
+# ---------------------------------------------------------------------------
+
+class CorrectionStatus(StrEnum):
+    RECORDED = "recorded"
+    CONFIRMED = "confirmed"
+    PROMOTED = "promoted"
+    ACTIVE = "active"
+    STOPPED = "stopped"
+
+
+CORRECTION_STATUS_TRANSITIONS: dict[CorrectionStatus, tuple[CorrectionStatus, ...]] = {
+    CorrectionStatus.RECORDED: (CorrectionStatus.CONFIRMED,),
+    CorrectionStatus.CONFIRMED: (CorrectionStatus.PROMOTED,),
+    CorrectionStatus.PROMOTED: (CorrectionStatus.ACTIVE,),
+    CorrectionStatus.ACTIVE: (CorrectionStatus.STOPPED,),
+}

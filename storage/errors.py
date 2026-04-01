@@ -32,3 +32,7 @@ class SessionCorruptError(SessionStoreError):
 
 class ArtifactStoreError(RuntimeError):
     """Base error for artifact store operations."""
+
+
+class CorrectionStoreError(RuntimeError):
+    """Base error for correction store operations."""

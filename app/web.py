@@ -77,6 +77,8 @@ class WebAppService:
         self.web_search_store = WebSearchStore(base_dir=settings.web_search_history_dir)
         from storage.artifact_store import ArtifactStore
         self.artifact_store = ArtifactStore(base_dir=settings.artifacts_dir)
+        from storage.correction_store import CorrectionStore
+        self.correction_store = CorrectionStore(base_dir=settings.corrections_dir)
         self.template_path = Path(template_path) if template_path else Path(__file__).with_name("templates") / "index.html"
         self._active_stream_requests: dict[str, threading.Event] = {}
         self._active_stream_lock = threading.Lock()
@@ -232,6 +234,29 @@ class WebAppService:
                 )
             except Exception:
                 pass
+
+        # Record correction pattern in correction store
+        original_snapshot = updated_message.get("original_response_snapshot")
+        if (
+            artifact_id
+            and isinstance(original_snapshot, dict)
+            and serialized_corrected_text
+        ):
+            original_draft = str(original_snapshot.get("draft_text") or "").strip()
+            if original_draft and original_draft != serialized_corrected_text:
+                try:
+                    self.correction_store.record_correction(
+                        artifact_id=artifact_id,
+                        session_id=session_id,
+                        source_message_id=(
+                            corrected_outcome.get("source_message_id")
+                            if corrected_outcome else message_id
+                        ),
+                        original_text=original_draft,
+                        corrected_text=serialized_corrected_text,
+                    )
+                except Exception:
+                    pass
 
         return {
             "ok": True,

@@ -6,6 +6,7 @@ interface Props {
   open: boolean;
   sessions: SessionSummary[];
   currentSessionId: string;
+  backgroundStreaming: Set<string>;
   settings: AppSettings;
   onSelectSession: (id: string) => void;
   onNewSession: () => void;
@@ -29,6 +30,7 @@ export default function Sidebar({
   open,
   sessions,
   currentSessionId,
+  backgroundStreaming,
   settings,
   onSelectSession,
   onNewSession,
@@ -104,7 +106,12 @@ export default function Sidebar({
                 onClick={() => onSelectSession(s.session_id)}
                 className="flex-1 text-left px-3 py-2.5 min-w-0"
               >
-                <div className="truncate font-medium">{s.title}</div>
+                <div className="truncate font-medium flex items-center gap-1.5">
+                  {s.title}
+                  {backgroundStreaming.has(s.session_id) && (
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0" title="처리 중" />
+                  )}
+                </div>
                 <div className="flex items-center gap-2 mt-0.5 text-[11px] opacity-60">
                   <span>{timeAgo(s.updated_at)}</span>
                   <span>&middot;</span>

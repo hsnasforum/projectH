@@ -61,7 +61,7 @@ export default function ChatArea({
             <path d="M3 12h18M3 6h18M3 18h18" />
           </svg>
         </button>
-        <h1 className="text-[15px] font-semibold text-ink truncate flex-1">
+        <h1 className="text-[15px] font-semibold text-ink truncate">
           {sessionTitle}
         </h1>
         <select
@@ -81,6 +81,7 @@ export default function ChatArea({
             : <option value={settings.model}>{settings.model || "모델"}</option>
           }
         </select>
+        <div className="flex-1" />
       </header>
 
       {/* Messages */}

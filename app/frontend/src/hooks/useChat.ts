@@ -1,19 +1,56 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Message, SessionSummary, PendingApproval, AppSettings } from "../types";
-import { fetchSessions, fetchSession, streamChat, postChat, deleteSession as apiDeleteSession, deleteAllSessions as apiDeleteAllSessions } from "../api/client";
+import { fetchSessions, fetchSession, streamChat, deleteSession as apiDeleteSession, deleteAllSessions as apiDeleteAllSessions } from "../api/client";
 
 const DEFAULT_SESSION = "demo-session";
 
+/** Per-session state kept in a Map so background sessions stay alive. */
+interface SessionState {
+  messages: Message[];
+  pendingApproval: PendingApproval | null;
+  streamingText: string;
+  isStreaming: boolean;
+  thinkingStatus: string;
+  title: string;
+  abort: AbortController | null;
+}
+
+function emptyState(title: string): SessionState {
+  return {
+    messages: [],
+    pendingApproval: null,
+    streamingText: "",
+    isStreaming: false,
+    thinkingStatus: "",
+    title,
+    abort: null,
+  };
+}
+
 export function useChat(settings: AppSettings) {
   const [sessionId, setSessionId] = useState(DEFAULT_SESSION);
-  const [sessionTitle, setSessionTitle] = useState(DEFAULT_SESSION);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
-  const [streamingText, setStreamingText] = useState("");
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [thinkingStatus, setThinkingStatus] = useState("");
-  const abortRef = useRef<AbortController | null>(null);
+
+  // Map of session states — survives session switches
+  const statesRef = useRef<Map<string, SessionState>>(new Map());
+  // Force re-render counter
+  const [, setTick] = useState(0);
+  const rerender = useCallback(() => setTick((t) => t + 1), []);
+
+  const getState = useCallback((sid: string): SessionState => {
+    let s = statesRef.current.get(sid);
+    if (!s) {
+      s = emptyState(sid);
+      statesRef.current.set(sid, s);
+    }
+    return s;
+  }, []);
+
+  const updateState = useCallback((sid: string, patch: Partial<SessionState>) => {
+    const s = getState(sid);
+    Object.assign(s, patch);
+    rerender();
+  }, [getState, rerender]);
 
   const loadSessions = useCallback(async () => {
     const list = await fetchSessions();
@@ -22,11 +59,13 @@ export function useChat(settings: AppSettings) {
 
   const loadSession = useCallback(async (sid: string) => {
     const session = await fetchSession(sid);
-    setMessages(session.messages);
-    setSessionTitle(session.title);
     const approvals = session.pending_approvals ?? [];
-    setPendingApproval(approvals.length > 0 ? approvals[approvals.length - 1] : null);
-  }, []);
+    updateState(sid, {
+      messages: session.messages,
+      title: session.title,
+      pendingApproval: approvals.length > 0 ? approvals[approvals.length - 1] : null,
+    });
+  }, [updateState]);
 
   useEffect(() => {
     loadSessions();
@@ -34,15 +73,14 @@ export function useChat(settings: AppSettings) {
   }, [sessionId, loadSessions, loadSession]);
 
   const switchSession = useCallback((sid: string) => {
+    // Don't abort anything — background session keeps running
     setSessionId(sid);
   }, []);
 
   const newSession = useCallback(() => {
     const id = `session-${Date.now().toString(36)}`;
+    statesRef.current.set(id, emptyState(id));
     setSessionId(id);
-    setMessages([]);
-    setPendingApproval(null);
-    setSessionTitle(id);
   }, []);
 
   const send = useCallback(async (text: string, opts?: {
@@ -55,7 +93,11 @@ export function useChat(settings: AppSettings) {
     rejectedApprovalId?: string;
     reissueApprovalId?: string;
     notePath?: string;
+    uploaded_file?: unknown;
   }) => {
+    // Capture the session ID at send time — responses go to THIS session
+    const targetSid = sessionId;
+
     const userMsg: Message = {
       message_id: `tmp-${Date.now()}`,
       role: "user",
@@ -64,17 +106,21 @@ export function useChat(settings: AppSettings) {
     };
 
     if (!opts?.approvedApprovalId && !opts?.rejectedApprovalId && !opts?.reissueApprovalId) {
-      setMessages((prev) => [...prev, userMsg]);
+      updateState(targetSid, {
+        messages: [...getState(targetSid).messages, userMsg],
+      });
     }
 
-    setIsStreaming(true);
-    setStreamingText("");
-    setThinkingStatus("요청 준비 중...");
     const controller = new AbortController();
-    abortRef.current = controller;
+    updateState(targetSid, {
+      isStreaming: true,
+      streamingText: "",
+      thinkingStatus: "요청 준비 중...",
+      abort: controller,
+    });
 
     const payload: Record<string, unknown> = {
-      session_id: sessionId,
+      session_id: targetSid,
       user_text: text,
       provider: settings.provider,
       model: settings.model || undefined,
@@ -110,30 +156,34 @@ export function useChat(settings: AppSettings) {
     try {
       for await (const event of streamChat(payload, controller.signal)) {
         if (event.event === "phase") {
-          setThinkingStatus(event.title || event.detail || "처리 중...");
+          updateState(targetSid, { thinkingStatus: event.title || event.detail || "처리 중..." });
         } else if (event.event === "runtime_status") {
           const reachable = event.reachable;
           const provider = event.provider || "모델";
-          setThinkingStatus(reachable ? `${provider} 연결 확인됨` : `${provider} 연결 확인 중...`);
+          updateState(targetSid, {
+            thinkingStatus: reachable ? `${provider} 연결 확인됨` : `${provider} 연결 확인 중...`,
+          });
         } else if (event.event === "response_origin") {
           const badge = event.badge || event.provider || "";
-          setThinkingStatus(badge ? `${badge} 응답 생성 중...` : "응답 생성 중...");
+          updateState(targetSid, {
+            thinkingStatus: badge ? `${badge} 응답 생성 중...` : "응답 생성 중...",
+          });
         } else if (event.event === "text_delta" && event.text) {
           accumulated += event.text;
-          setStreamingText(accumulated);
-          setThinkingStatus("응답 작성 중...");
+          updateState(targetSid, { streamingText: accumulated, thinkingStatus: "응답 작성 중..." });
         } else if (event.event === "text_replace" && event.text) {
           accumulated = event.text;
-          setStreamingText(accumulated);
-          setThinkingStatus("응답 작성 중...");
+          updateState(targetSid, { streamingText: accumulated, thinkingStatus: "응답 작성 중..." });
         } else if (event.event === "final" && event.data) {
           const resp = event.data.response;
           const session = event.data.session;
           if (session) {
-            setMessages(session.messages);
-            setSessionTitle(session.title);
             const approvals = session.pending_approvals ?? [];
-            setPendingApproval(approvals.length > 0 ? approvals[approvals.length - 1] : null);
+            updateState(targetSid, {
+              messages: session.messages,
+              title: session.title,
+              pendingApproval: approvals.length > 0 ? approvals[approvals.length - 1] : null,
+            });
           } else if (resp) {
             const assistantMsg: Message = {
               message_id: resp.message_id ?? `resp-${Date.now()}`,
@@ -149,7 +199,9 @@ export function useChat(settings: AppSettings) {
               artifact_kind: resp.artifact_kind,
               search_results: resp.search_results,
             };
-            setMessages((prev) => [...prev, assistantMsg]);
+            updateState(targetSid, {
+              messages: [...getState(targetSid).messages, assistantMsg],
+            });
           }
         }
       }
@@ -162,16 +214,20 @@ export function useChat(settings: AppSettings) {
           timestamp: new Date().toISOString(),
           status: "error",
         };
-        setMessages((prev) => [...prev, errorMsg]);
+        updateState(targetSid, {
+          messages: [...getState(targetSid).messages, errorMsg],
+        });
       }
     } finally {
-      setIsStreaming(false);
-      setStreamingText("");
-      setThinkingStatus("");
-      abortRef.current = null;
+      updateState(targetSid, {
+        isStreaming: false,
+        streamingText: "",
+        thinkingStatus: "",
+        abort: null,
+      });
       loadSessions();
     }
-  }, [sessionId, settings, loadSessions]);
+  }, [sessionId, settings, loadSessions, getState, updateState]);
 
   const approve = useCallback((approvalId: string) => {
     send("", { approvedApprovalId: approvalId });
@@ -182,12 +238,13 @@ export function useChat(settings: AppSettings) {
   }, [send]);
 
   const cancel = useCallback(() => {
-    abortRef.current?.abort();
-  }, []);
+    getState(sessionId).abort?.abort();
+  }, [sessionId, getState]);
 
   const deleteSession = useCallback(async (targetId?: string) => {
     const sid = targetId || sessionId;
     await apiDeleteSession(sid);
+    statesRef.current.delete(sid);
     if (sid === sessionId) {
       newSession();
     }
@@ -196,19 +253,30 @@ export function useChat(settings: AppSettings) {
 
   const deleteAll = useCallback(async () => {
     await apiDeleteAllSessions();
+    statesRef.current.clear();
     newSession();
     setSessions([]);
   }, [newSession]);
 
+  // Current session state (for rendering)
+  const current = getState(sessionId);
+
+  // Which sessions are streaming in background?
+  const backgroundStreaming = new Set<string>();
+  statesRef.current.forEach((s, sid) => {
+    if (sid !== sessionId && s.isStreaming) backgroundStreaming.add(sid);
+  });
+
   return {
     sessionId,
-    sessionTitle,
+    sessionTitle: current.title,
     sessions,
-    messages,
-    pendingApproval,
-    streamingText,
-    isStreaming,
-    thinkingStatus,
+    messages: current.messages,
+    pendingApproval: current.pendingApproval,
+    streamingText: current.streamingText,
+    isStreaming: current.isStreaming,
+    thinkingStatus: current.thinkingStatus,
+    backgroundStreaming,
     send,
     approve,
     reject,

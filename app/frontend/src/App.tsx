@@ -26,6 +26,7 @@ export default function App() {
         open={sidebarOpen}
         sessions={chat.sessions}
         currentSessionId={chat.sessionId}
+        backgroundStreaming={chat.backgroundStreaming}
         settings={settings}
         onSelectSession={chat.switchSession}
         onNewSession={chat.newSession}

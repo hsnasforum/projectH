@@ -156,7 +156,7 @@ _EXPLICIT_WEB_SEARCH_SUFFIX_RE = re.compile(
 )
 
 _EXPLICIT_WEB_SEARCH_CLEANUP_PATTERNS = [
-    r"웹\s*검색(을|좀)?\s*",
+    r"웹\s*검색(을|좀)?\s*:?\s*",
     r"인터넷에서\s*",
     r"온라인에서\s*",
     r"검색\s*좀\s*해(?:봐|줘|주세요|요|줄래|주실래)?$",

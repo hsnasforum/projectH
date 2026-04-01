@@ -29,7 +29,7 @@ export default function App() {
         settings={settings}
         onSelectSession={chat.switchSession}
         onNewSession={chat.newSession}
-        onDeleteSession={chat.deleteCurrentSession}
+        onDeleteSession={chat.deleteSession}
         onDeleteAll={chat.deleteAll}
         onSettingsChange={setSettings}
       />

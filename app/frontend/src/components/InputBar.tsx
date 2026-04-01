@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, type KeyboardEvent, type FormEvent } from "react";
+import { useState, useRef, useCallback, type KeyboardEvent, type FormEvent, type DragEvent } from "react";
 
 interface Props {
   onSend: (text: string, opts?: Record<string, unknown>) => void;
@@ -8,8 +8,10 @@ interface Props {
 
 export default function InputBar({ onSend, isStreaming, onCancel }: Props) {
   const [text, setText] = useState("");
-  const [filePath, setFilePath] = useState("");
+  const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const autoResize = useCallback(() => {
     const el = textareaRef.current;
@@ -18,25 +20,48 @@ export default function InputBar({ onSend, isStreaming, onCancel }: Props) {
     el.style.height = Math.min(el.scrollHeight, 160) + "px";
   }, []);
 
+  const handleFile = useCallback((file: File) => {
+    setAttachedFile(file);
+  }, []);
+
   const handleSubmit = useCallback(
-    (e?: FormEvent) => {
+    async (e?: FormEvent) => {
       e?.preventDefault();
       const trimmed = text.trim();
-      if (!trimmed && !filePath.trim()) return;
+      if (!trimmed && !attachedFile) return;
       if (isStreaming) return;
 
       const opts: Record<string, unknown> = {};
-      if (filePath.trim()) {
-        opts.sourcePath = filePath.trim();
+
+      if (attachedFile) {
+        // Read file content as base64 for upload
+        const reader = new FileReader();
+        const content = await new Promise<string>((resolve) => {
+          reader.onload = () => {
+            const result = reader.result as string;
+            // Extract base64 part after data:...;base64,
+            const base64 = result.split(",")[1] || "";
+            resolve(base64);
+          };
+          reader.readAsDataURL(attachedFile);
+        });
+
+        opts.uploaded_file = {
+          name: attachedFile.name,
+          content_base64: content,
+          size_bytes: attachedFile.size,
+          mime_type: attachedFile.type || "text/plain",
+        };
       }
+
       onSend(trimmed || "이 파일을 요약해 주세요.", opts);
       setText("");
-      setFilePath("");
+      setAttachedFile(null);
       if (textareaRef.current) {
         textareaRef.current.style.height = "auto";
       }
     },
-    [text, filePath, isStreaming, onSend],
+    [text, attachedFile, isStreaming, onSend],
   );
 
   const handleKeyDown = useCallback(
@@ -49,24 +74,71 @@ export default function InputBar({ onSend, isStreaming, onCancel }: Props) {
     [handleSubmit],
   );
 
+  // Drag and drop handlers
+  const handleDragOver = useCallback((e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback((e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      handleFile(files[0]);
+    }
+  }, [handleFile]);
+
+  const handleFileInputChange = useCallback(() => {
+    const file = fileInputRef.current?.files?.[0];
+    if (file) {
+      handleFile(file);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }, [handleFile]);
+
   return (
-    <div className="shrink-0 border-t border-stone-100 bg-warm-50">
+    <div
+      className={`
+        shrink-0 border-t bg-warm-50 transition-colors
+        ${isDragOver ? "border-accent bg-accent/5" : "border-stone-100"}
+      `}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Drag overlay */}
+      {isDragOver && (
+        <div className="text-center py-3 text-[13px] text-accent font-medium">
+          여기에 파일을 놓으세요
+        </div>
+      )}
+
       <form
         onSubmit={handleSubmit}
         className="max-w-[800px] mx-auto px-4 py-3 md:px-6"
       >
-        {/* File path input (subtle) */}
-        {filePath && (
-          <div className="flex items-center gap-2 mb-2 px-1">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted/50">
+        {/* Attached file indicator */}
+        {attachedFile && (
+          <div className="flex items-center gap-2 mb-2 px-1 py-1.5 bg-beige-50 rounded-lg">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-accent shrink-0">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
               <path d="M14 2v6h6" />
             </svg>
-            <span className="text-[13px] text-muted truncate">{filePath}</span>
+            <span className="text-[13px] text-ink truncate flex-1">{attachedFile.name}</span>
+            <span className="text-[11px] text-muted/50">{(attachedFile.size / 1024).toFixed(1)}KB</span>
             <button
               type="button"
-              onClick={() => setFilePath("")}
-              className="text-muted/40 hover:text-muted transition-colors"
+              onClick={() => setAttachedFile(null)}
+              className="text-muted/40 hover:text-red-400 transition-colors p-0.5"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M18 6L6 18M6 6l12 12" />
@@ -74,6 +146,15 @@ export default function InputBar({ onSend, isStreaming, onCancel }: Props) {
             </button>
           </div>
         )}
+
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          className="hidden"
+          accept=".txt,.md,.pdf,.json,.csv,.log,.yaml,.yml,.toml,.ini,.py,.ts,.tsx,.js,.jsx,.html,.xml"
+          onChange={handleFileInputChange}
+        />
 
         {/* Main input row */}
         <div className="
@@ -85,18 +166,15 @@ export default function InputBar({ onSend, isStreaming, onCancel }: Props) {
           focus-within:border-stone-300 focus-within:shadow-md
           transition-all duration-150
         ">
-          {/* Attach button */}
+          {/* Attach button — opens file explorer */}
           <button
             type="button"
-            onClick={() => {
-              const path = prompt("파일 경로를 입력하세요:");
-              if (path) setFilePath(path);
-            }}
+            onClick={() => fileInputRef.current?.click()}
             className="
               p-1.5 rounded-lg text-muted/50 hover:text-muted
               hover:bg-stone-50 transition-colors shrink-0 mb-0.5
             "
-            title="파일 첨부"
+            title="파일 첨부 (클릭) 또는 드래그 앤 드롭"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
               <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
@@ -109,7 +187,7 @@ export default function InputBar({ onSend, isStreaming, onCancel }: Props) {
             value={text}
             onChange={(e) => { setText(e.target.value); autoResize(); }}
             onKeyDown={handleKeyDown}
-            placeholder="메시지를 입력하세요..."
+            placeholder={attachedFile ? "파일에 대해 질문하세요..." : "메시지를 입력하세요..."}
             rows={1}
             className="
               flex-1 resize-none outline-none
@@ -140,7 +218,7 @@ export default function InputBar({ onSend, isStreaming, onCancel }: Props) {
           ) : (
             <button
               type="submit"
-              disabled={!text.trim() && !filePath.trim()}
+              disabled={!text.trim() && !attachedFile}
               className="
                 w-9 h-9 rounded-full shrink-0
                 flex items-center justify-center
@@ -159,7 +237,7 @@ export default function InputBar({ onSend, isStreaming, onCancel }: Props) {
 
         {/* Subtle hint */}
         <p className="text-center text-[11px] text-muted/30 mt-2">
-          로컬에서 실행 &middot; Enter로 전송 &middot; Shift+Enter로 줄바꿈
+          로컬에서 실행 &middot; Enter로 전송 &middot; Shift+Enter로 줄바꿈 &middot; 파일 드래그 앤 드롭 가능
         </p>
       </form>
     </div>

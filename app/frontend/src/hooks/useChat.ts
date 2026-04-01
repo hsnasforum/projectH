@@ -86,6 +86,10 @@ export function useChat(settings: AppSettings) {
       payload.source_path = opts.sourcePath;
       payload.request_mode = "file";
     }
+    if (opts?.uploaded_file) {
+      payload.uploaded_file = opts.uploaded_file;
+      payload.request_mode = "file";
+    }
     if (opts?.searchRoot) {
       payload.search_root = opts.searchRoot;
       payload.search_query = opts.searchQuery ?? text;
@@ -167,10 +171,13 @@ export function useChat(settings: AppSettings) {
     abortRef.current?.abort();
   }, []);
 
-  const deleteCurrentSession = useCallback(async () => {
-    await apiDeleteSession(sessionId);
-    newSession();
-    loadSessions();
+  const deleteSession = useCallback(async (targetId?: string) => {
+    const sid = targetId || sessionId;
+    await apiDeleteSession(sid);
+    if (sid === sessionId) {
+      newSession();
+    }
+    await loadSessions();
   }, [sessionId, newSession, loadSessions]);
 
   const deleteAll = useCallback(async () => {
@@ -193,7 +200,7 @@ export function useChat(settings: AppSettings) {
     cancel,
     switchSession,
     newSession,
-    deleteCurrentSession,
+    deleteSession,
     deleteAll,
     loadSession,
   };

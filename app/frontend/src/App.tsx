@@ -2,10 +2,13 @@ import { useState, useCallback } from "react";
 import Sidebar from "./components/Sidebar";
 import ChatArea from "./components/ChatArea";
 import { useChat } from "./hooks/useChat";
+import { DEFAULT_SETTINGS } from "./types";
+import type { AppSettings } from "./types";
 
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const chat = useChat();
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const chat = useChat(settings);
 
   const toggleSidebar = useCallback(() => setSidebarOpen((v) => !v), []);
 
@@ -23,8 +26,10 @@ export default function App() {
         open={sidebarOpen}
         sessions={chat.sessions}
         currentSessionId={chat.sessionId}
+        settings={settings}
         onSelectSession={chat.switchSession}
         onNewSession={chat.newSession}
+        onSettingsChange={setSettings}
       />
 
       <ChatArea

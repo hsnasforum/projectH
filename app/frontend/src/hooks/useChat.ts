@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { Message, SessionSummary, PendingApproval } from "../types";
+import type { Message, SessionSummary, PendingApproval, AppSettings } from "../types";
 import { fetchSessions, fetchSession, streamChat, postChat } from "../api/client";
 
 const DEFAULT_SESSION = "demo-session";
 
-export function useChat() {
+export function useChat(settings: AppSettings) {
   const [sessionId, setSessionId] = useState(DEFAULT_SESSION);
   const [sessionTitle, setSessionTitle] = useState(DEFAULT_SESSION);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -74,9 +74,14 @@ export function useChat() {
     const payload: Record<string, unknown> = {
       session_id: sessionId,
       user_text: text,
-      provider: "mock",
-      web_search_permission: opts?.webSearchPermission ?? "disabled",
+      provider: settings.provider,
+      model: settings.model || undefined,
+      base_url: settings.baseUrl || undefined,
+      search_limit: settings.searchLimit,
+      web_search_permission: opts?.webSearchPermission ?? settings.webSearchPermission,
+      skip_preflight: settings.skipPreflight || undefined,
     };
+    if (settings.notePath) payload.note_path = settings.notePath;
     if (opts?.sourcePath) {
       payload.source_path = opts.sourcePath;
       payload.request_mode = "file";

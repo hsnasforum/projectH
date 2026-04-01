@@ -133,3 +133,23 @@ export interface StreamEvent {
   kind?: string;
   answer_mode?: string;
 }
+
+export interface AppSettings {
+  provider: string;
+  model: string;
+  baseUrl: string;
+  searchLimit: number;
+  notePath: string;
+  webSearchPermission: string;
+  skipPreflight: boolean;
+}
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  provider: "mock",
+  model: "",
+  baseUrl: "http://localhost:11434",
+  searchLimit: 3,
+  notePath: "",
+  webSearchPermission: "disabled",
+  skipPreflight: false,
+};

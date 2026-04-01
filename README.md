@@ -26,10 +26,11 @@
 - local web shell (`python3 -m app.web`)
 - recent sessions / conversation timeline with per-message timestamps
 - file summary / document search / general chat
+- document search responses include a structured search result preview panel below the text body, showing each matched file's name (with full path tooltip), match type badge (`파일명 일치` / `내용 일치`), and a content snippet; both search-only and search-plus-summary responses carry the same `search_results` data
 - approval-based save with default notes directory shown in the save-path placeholder
 - reissue approval flow
 - evidence / source panel with source-role trust labels on each evidence item
-- source filename and summary source-type label (`문서 요약` / `선택 결과 요약`) in quick-meta bar, and source filename in transcript meta when a single source document is used
+- summary source-type label (`문서 요약` for local document summary, `선택 결과 요약` for selected search results) in both quick-meta bar and transcript message meta; single-source responses show basename-based `출처 <filename>` in both surfaces, multi-source responses show count-based `출처 N개` instead of raw filenames; general chat responses carry no source-type label
 - summary span / applied-range panel
 - response origin badge with separate answer-mode badge for web investigation (`설명 카드` / `최신 확인`), source-role trust labels, and verification strength tags in origin detail
 - copy-to-clipboard buttons: `응답 복사`, `저장 경로 복사`, `승인 경로 복사`, `검색 기록 경로 복사` (shared helper shows clipboard-specific failure notice on both success-path rejection and fallback failure)
@@ -37,7 +38,7 @@
 - response feedback capture
 - grounded-brief artifact trace anchor on summary responses, save approvals, and relevant local traces
 - normalized original-response snapshot, minimum `accepted_as_is` / `corrected` content-outcome capture, and minimum reject / reissue approval reason capture on grounded-brief traces
-- small grounded-brief correction editor seeded with the current draft text, with explicit correction submit kept separate from save approval
+- small grounded-brief correction editor seeded with the current draft text, with explicit correction submit kept separate from save approval; correction submit also updates the session `active_context.summary_hint` so that subsequent follow-up responses and re-summaries in the same session use the corrected text as their basis
 - current save approvals and save/write traces now expose `save_content_source = original_draft | corrected_text` plus explicit `source_message_id` anchoring to the original grounded-brief source message
 - minimum corrected-save bridge action that stays always visible inside the correction area, stays disabled until a recorded `corrected_text` exists, creates a fresh approval from that recorded text, freezes the approval snapshot under a new `approval_id`, and reuses the same `artifact_id` / `source_message_id` with `save_content_source = corrected_text`
 - one small candidate-linked confirmation action on the grounded-brief response card that appears only when the current `session_local_candidate` exists and persists one separate source-message `candidate_confirmation_record`
@@ -45,7 +46,8 @@
 - one separate aggregate-level `검토 메모 적용 후보` section fed only by current same-session `recurrence_aggregate_candidates`, shown adjacent to `검토 후보` only when aggregates exist, with one visible-but-disabled `검토 메모 적용 시작` action per aggregate card plus blocked helper copy only
 - short-summary and long-summary prompts, plus the internal `summary_chunks` anchor-selection heuristic, now all reuse the same truthful source boundary already known to current call sites, so local file or uploaded-document summaries keep document-flow and narrative-friendly guidance with a strict source-anchored faithfulness rule (no fabricated events, no term substitution, no conclusions beyond what the text shows) while selected local search-result summaries keep source-backed synthesis guidance without adding a new mode toggle or classifier
 - PDF text-layer reading with OCR-not-supported guidance
-- permission-gated web investigation with local JSON history, answer-mode badges, color-coded verification-strength badges, and color-coded source-role trust badges in history cards
+- uploaded folder search shows a count-only partial-failure notice when some files cannot be read, while still returning results from successfully read files
+- permission-gated web investigation with local JSON history, answer-mode badges, color-coded verification-strength badges (entity-card verification badge is downgraded from strong when no claim slot has cross-verified status), and color-coded source-role trust badges in history cards
 - claim coverage panel with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`), actionable hints for weak or unresolved slots, source role with trust level labels, and a color-coded fact-strength summary bar above the response text for web investigation
 
 ## Chosen Next-Phase Artifact
@@ -77,9 +79,9 @@
 ## Playwright Smoke Coverage
 
 Current smoke scenarios:
-1. file summary renders evidence, summary-range panels, per-message timestamps in the transcript, response copy button state with clipboard write verification, source filename in quick-meta, and note-path default-directory placeholder
-2. browser file picker summary flow
-3. browser folder picker search flow
+1. file summary renders evidence, summary-range panels, per-message timestamps in the transcript, response copy button state with clipboard write verification, source filename in quick-meta and transcript meta, note-path default-directory placeholder, and `문서 요약` source-type label in both quick-meta and transcript meta
+2. browser file picker summary flow with source filename and `문서 요약` source-type label in both quick-meta and transcript meta
+3. browser folder picker search flow with `선택 결과 요약` source-type label and multi-source count-based metadata (`출처 2개`) in both quick-meta and transcript meta
 4. approval reissue with changed save path
 5. approval-backed note save
 6. late flip after explicit original-draft save keeps saved history while latest content verdict changes
@@ -89,6 +91,10 @@ Current smoke scenarios:
 10. candidate-linked explicit confirmation path stays outside approval UI, remains distinct from save support on the same source message, records `candidate_confirmation_record`, surfaces one `검토 후보` with `검토 수락`, records source-message `candidate_review_record`, removes the pending queue item without applying user-level memory, and clears the current-source traces again after a later correction
 11. same-session recurrence aggregate path renders one separate `검토 메모 적용 후보` section only after an aggregate exists, keeps `검토 메모 적용 시작` visible but disabled, keeps the queue-side `검토 수락` separate, and preserves `reviewed_memory_transition_record` absence
 12. streaming cancel
+13. general chat negative source-type label contract (no `문서 요약` / `선택 결과 요약` in quick-meta or transcript meta)
+14. claim-coverage panel rendering contract with `[교차 확인]`, `[단일 출처]`, `[미확인]` leading status tags and actionable hints
+15. web-search history card header badges: answer-mode badge (`설명 카드` / `최신 확인`), verification-strength badge (`검증 강` / `검증 중` / `검증 약` with CSS class), source-role trust badge compact label (`공식 기반(높음)` / `보조 기사(보통)` / `보조 커뮤니티(낮음)` with trust class)
+16. history-card `다시 불러오기` 클릭 후 reloaded response의 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail 유지 확인
 
 `make e2e-test` launches a dedicated Playwright web server for smoke with inherited `LOCAL_AI_MODEL_PROVIDER` / `LOCAL_AI_OLLAMA_MODEL` overrides cleared, `LOCAL_AI_MODEL_PROVIDER=mock` reapplied, and existing servers on the smoke port not reused. Shell overrides such as `LOCAL_AI_MODEL_PROVIDER=ollama` therefore do not change the automated baseline. Other runtimes remain optional and are validated separately.
 
@@ -96,7 +102,7 @@ Current smoke scenarios:
 
 - local-first by default
 - write actions require explicit approval
-- overwrite is rejected by default
+- overwrite is rejected by default; when a save target already exists, the approval card shows an overwrite warning and the user can explicitly approve the overwrite, which then replaces the existing file
 - web search is permission-gated, read-only, and logged
 - OCR is not enabled in the current MVP
 - structured correction / preference memory is not yet implemented; the current memory foundation is limited to grounded-brief trace anchoring, normalized original-response snapshots, explicit `corrected_text` submission plus minimum `accepted_as_is` / `corrected` / `rejected` outcome capture on the source message, one source-message `content_reason_record` for explicit `내용 거절` plus optional same-card reject-note updates, and approval-linked `approval_reason_record` traces for reject / reissue

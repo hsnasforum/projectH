@@ -18,8 +18,7 @@
   - evidence/source panel with source-role trust labels (`[공식 기반(높음)]`, `[보조 기사(보통)]`, etc.) on each evidence item
   - summary-range panel
   - response origin badge
-  - source filename in the quick-meta bar when a single source document is used
-  - summary source-type label in the quick-meta bar (`문서 요약` for local document, `선택 결과 요약` for selected search results)
+  - summary source-type label (`문서 요약` for local document summary, `선택 결과 요약` for selected search results) in both the quick-meta bar and transcript message meta; single-source responses show basename-based `출처 <filename>` in both surfaces, multi-source responses show count-based `출처 N개` instead of raw filenames; general chat responses carry no source-type label
   - claim coverage or verification state where applicable, with status tag (`[교차 확인]`, `[단일 출처]`, `[미확인]`) leading each slot line, actionable hints for weak or unresolved slots, and a color-coded fact-strength summary bar above the response text when claim coverage data exists
 - Long summaries can keep `summary_chunks` visible while still reducing chunk notes into one final Korean summary.
 - Narrative or fiction-like text should be summarized by prioritizing characters, key events, conflict changes, and ending state over isolated memorable lines. Summary prompts enforce a strict source-anchored rule: only events, facts, and conclusions explicitly present in the source text are included; adding fabricated events, substituting specific terms with different words, or stating relationship outcomes beyond what the text shows is prohibited.
@@ -27,7 +26,9 @@
 - Streaming requests show progress and can be cancelled.
 - PDF files with a text layer can be read.
 - Image-only/scanned PDFs return OCR-not-supported guidance instead of silently failing.
-- Web investigation history is saved locally and can be reloaded in-session. History cards show answer-mode, verification-strength, and source-role trust badges in the header for quick scanning.
+- Uploaded folder search shows a count-only partial-failure notice when some files cannot be read, while still returning results from successfully read files. This is separate from the OCR-not-supported guidance path.
+- Document search responses (both search-only and search-plus-summary) include a structured search result preview panel below the text body. Each preview card shows the matched file's name (with full path tooltip), a match type badge (`파일명 일치` / `내용 일치`), and a content snippet. The underlying `search_results` array carries `path`, `matched_on`, and `snippet` for each match.
+- Web investigation history is saved locally and can be reloaded in-session. History cards show answer-mode, verification-strength, and source-role trust badges in the header for quick scanning. Entity-card verification badge is downgraded from strong (`설명형 다중 출처 합의`) when no claim slot has cross-verified (`strong`) status, preventing header badge from overstating actual fact coverage.
 - Copy-to-clipboard buttons with purpose-specific labels: `응답 복사`, `저장 경로 복사`, `승인 경로 복사`, `검색 기록 경로 복사`. All share one `copyTextValue()` helper. Both the success path (`navigator.clipboard.writeText` rejection) and the fallback path (`execCommand("copy")` failure) show a clipboard-specific failure notice instead of a generic error or false success. The response copy success path happy case is covered by Playwright scenario-1 assertions for button state gating and actual clipboard write verification. The rejection and fallback failure branches are verified by code review only (not reachable in current Chromium-based Playwright baseline).
 - Assistant responses can store a feedback label and optional reason.
 - Grounded-brief summary responses can persist one stable `artifact_id` plus `artifact_kind = grounded_brief`.
@@ -49,7 +50,6 @@
 
 ### Not Implemented
 - OCR execution
-- overwrite approval execution
 - SQLite persistence
 - autonomous background behavior
 - correction / approval / preference memory
@@ -58,13 +58,13 @@
 
 ### Implemented
 - Approval is required before file write.
-- Save path reissue does not silently overwrite.
+- Save path reissue does not silently overwrite; when the reissued path points to an existing file, the pending approval carries `overwrite: true` and the approval card shows an overwrite warning.
+- Explicit overwrite approval execution replaces the existing file with the new note content. The overwrite is logged with `overwrite: true` in the `approval_granted` task-log entry.
 - Writes outside approved roots fail.
 - Risky actions remain auditable through local logs.
 
 ### Open Questions
 - Should some save targets require stronger path validation UX?
-- Should overwrite ever become an explicit future approval path?
 - Richer reject / reissue labels should stay future until the UI has an explicit input surface that can truthfully distinguish them.
 
 ## Session And Trace Gates
@@ -178,6 +178,7 @@ These are placeholders for the next phase design target and its immediate follow
   - explicit submit persists `corrected_text` on the original grounded-brief source message
   - the same submit persists `corrected_outcome.outcome = corrected` on that same source message
   - unchanged submit must fail validation instead of becoming `accepted_as_is`
+  - when the session has an `active_context`, correction submit also updates `active_context.summary_hint` to the corrected text so that subsequent same-session follow-up responses use the corrected version as their basis
 - The corrected-outcome source of truth is the original grounded-brief assistant message.
   - direct approved save responses may expose the same object because the response is that same source message
   - correction-submit responses and session payloads expose the updated `corrected_text` / `corrected_outcome` from that same source message
@@ -1309,10 +1310,10 @@ These are placeholders for the next phase design target and its immediate follow
 ### Current Gates
 - Unit/service regression uses `python3 -m unittest -v`.
 - Playwright webServer launch clears inherited provider/model overrides, forces `LOCAL_AI_MODEL_PROVIDER=mock`, and does not reuse an already running smoke-port server, so operator shell state must not change the automated smoke baseline.
-- Playwright smoke covers 12 core browser scenarios:
-  - file summary with panels
-  - browser file picker
-  - browser folder picker
+- Playwright smoke covers 16 core browser scenarios:
+  - file summary with panels, source filename assertion in both quick-meta and transcript meta, and `문서 요약` source-type label assertion in both quick-meta and transcript meta
+  - browser file picker with source filename and `문서 요약` source-type label assertion in both quick-meta and transcript meta
+  - browser folder picker with `선택 결과 요약` source-type label and multi-source count-based metadata (`출처 2개`) assertion in both quick-meta and transcript meta
   - approval reissue
   - approval-backed save
   - late flip after explicit original-draft save keeps saved history while latest content verdict changes
@@ -1322,6 +1323,10 @@ These are placeholders for the next phase design target and its immediate follow
   - candidate-linked explicit confirmation path stays outside approval UI, remains distinct from save support on the same source message, records `candidate_confirmation_record`, surfaces one local read-only `검토 후보`, and clears both the source-message projection and the queue item from current state after a later correction
   - same-session recurrence aggregate path renders one separate local read-only `검토 메모 적용 후보` section, shows `검토 메모 적용 시작` enabled with a mandatory reason textarea when `capability_outcome = unblocked_all_required` (disabled while blocked or while the textarea is empty), keeps that action distinct from `검토 수락`, emits one `reviewed_memory_transition_record` with `record_stage = emitted_record_only_not_applied` on enabled submit, then shows `검토 메모 적용 실행` after emission and moves that same record to `applied_pending_result` with `applied_at` set on apply-boundary click, then shows `결과 확정` after the apply boundary and moves `record_stage` to `applied_with_result` with one `apply_result` object (`result_version = first_reviewed_memory_apply_result_v1`, `applied_effect_kind = reviewed_memory_correction_pattern`, `result_stage = result_recorded_effect_pending`, `result_at`) on confirm click, confirming the memory effect on future responses is now active (`result_stage = effect_active`) with active effects stored on the session as `reviewed_memory_active_effects` and future responses including a `[검토 메모 활성]` prefix
   - streaming cancel
+  - general chat negative source-type label contract (no `문서 요약` / `선택 결과 요약` in quick-meta or transcript meta)
+  - claim-coverage panel rendering contract with `[교차 확인]`, `[단일 출처]`, `[미확인]` leading status tags and actionable hints
+  - web-search history card header badges: answer-mode badge, verification-strength badge with CSS class, source-role trust badge compact label with trust class
+  - history-card `다시 불러오기` click → reloaded response `WEB` badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail 유지
 
 ### In Progress
 - Improve regression fixtures for weak-slot reinvestigation and source consensus.

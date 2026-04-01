@@ -677,6 +677,52 @@
       font-size: 12px;
     }
 
+    .search-preview-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin: 8px 0;
+      padding: 0;
+    }
+
+    .search-preview-item {
+      border: 1px solid var(--border, #333);
+      border-radius: 6px;
+      padding: 8px 10px;
+      background: var(--card-bg, #1a1a2e);
+    }
+
+    .search-preview-name {
+      font-weight: 600;
+      font-size: 13px;
+      margin-bottom: 2px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .search-preview-match {
+      display: inline-block;
+      font-size: 11px;
+      color: var(--muted, #888);
+      background: var(--badge-bg, #2a2a3e);
+      border-radius: 3px;
+      padding: 1px 5px;
+      margin-bottom: 4px;
+    }
+
+    .search-preview-snippet {
+      font-size: 12px;
+      color: var(--muted, #ccc);
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.4;
+      margin-top: 4px;
+      padding: 4px 6px;
+      background: var(--snippet-bg, #111122);
+      border-radius: 3px;
+    }
+
     .message .meta {
       color: var(--muted);
       font-size: 12px;
@@ -2062,7 +2108,7 @@
       newSessionButton.disabled = busy;
       refreshSessionButton.disabled = busy;
       loadSessionButton.disabled = busy;
-      approveButton.disabled = busy || !state.currentApproval || Boolean(state.currentApproval?.overwrite);
+      approveButton.disabled = busy || !state.currentApproval;
       reissueButton.disabled = busy || !state.currentApproval || !approvalPathInput.value.trim();
       rejectButton.disabled = busy || !state.currentApproval;
       approvalPathInput.disabled = busy || !state.currentApproval;
@@ -2541,8 +2587,38 @@
         body.textContent = message.text || "";
         card.appendChild(body);
 
+        if (Array.isArray(message.search_results) && message.search_results.length > 0) {
+          const previewPanel = document.createElement("div");
+          previewPanel.className = "search-preview-panel";
+          message.search_results.forEach(function(sr, idx) {
+            const item = document.createElement("div");
+            item.className = "search-preview-item";
+            const fileName = String(sr.path || "").split(/[\\/]/).filter(Boolean).pop() || "(파일명 없음)";
+            const matchLabel = sr.matched_on === "filename" ? "파일명 일치" : "내용 일치";
+            const nameEl = document.createElement("div");
+            nameEl.className = "search-preview-name";
+            nameEl.textContent = (idx + 1) + ". " + fileName;
+            nameEl.title = sr.path || "";
+            item.appendChild(nameEl);
+            const matchEl = document.createElement("span");
+            matchEl.className = "search-preview-match";
+            matchEl.textContent = matchLabel;
+            item.appendChild(matchEl);
+            if (sr.snippet) {
+              const snippetEl = document.createElement("div");
+              snippetEl.className = "search-preview-snippet";
+              snippetEl.textContent = sr.snippet;
+              item.appendChild(snippetEl);
+            }
+            previewPanel.appendChild(item);
+          });
+          card.appendChild(previewPanel);
+        }
+
         const metaLines = [];
         if (message.status) metaLines.push(`상태 ${compactStatusLabel(message.status)}`);
+        const srcLabel = getSourceTypeLabel(message);
+        if (srcLabel) metaLines.push(srcLabel);
         if (Array.isArray(message.selected_source_paths) && message.selected_source_paths.length === 1) {
           const sourceName = String(message.selected_source_paths[0] || "").split(/[\\/]/).filter(Boolean).pop() || "출처 1개";
           metaLines.push(`출처 ${sourceName}`);
@@ -2584,6 +2660,7 @@
         if (metaLines.length > 0) {
           const meta = document.createElement("div");
           meta.className = "meta";
+          meta.dataset.testid = "transcript-meta";
           meta.textContent = metaLines.join(" · ");
           card.appendChild(meta);
         }
@@ -2715,6 +2792,13 @@
         counts[sourceName] = (counts[sourceName] || 0) + 1;
       });
       return counts;
+    }
+
+    function getSourceTypeLabel(obj) {
+      const kind = String(obj?.active_context?.kind || "").trim();
+      if (kind === "search") return "선택 결과 요약";
+      if (kind === "document" && (obj?.summary_chunks?.length || obj?.evidence?.length)) return "문서 요약";
+      return null;
     }
 
     function compactStatusLabel(status) {
@@ -3123,12 +3207,8 @@
       const responseStatus = response?.status || "";
       const parts = [];
       if (responseStatus) parts.push(`상태 ${compactStatusLabel(responseStatus)}`);
-      const contextKind = String(response?.active_context?.kind || "").trim();
-      if (contextKind === "search") {
-        parts.push("선택 결과 요약");
-      } else if (contextKind === "document" && (response?.summary_chunks?.length || response?.evidence?.length)) {
-        parts.push("문서 요약");
-      }
+      const srcLabel = getSourceTypeLabel(response);
+      if (srcLabel) parts.push(srcLabel);
       if (response?.selected_source_paths?.length === 1) {
         const sourceName = String(response.selected_source_paths[0] || "").split(/[\\/]/).filter(Boolean).pop() || "출처 1개";
         parts.push(`출처 ${sourceName}`);
@@ -4528,13 +4608,13 @@
         lines.push("기록된 수정본은 이 승인 카드에 자동으로 반영되지 않습니다. 수정본 저장은 응답 카드의 별도 저장 요청으로만 진행됩니다.");
       }
       if (approval.overwrite) {
-        lines.push("현재 MVP에서는 기존 파일 덮어쓰기를 지원하지 않습니다. 다른 저장 경로로 다시 요청해 주세요.");
+        lines.push("⚠ 이 경로에 기존 파일이 있습니다. 승인하면 기존 파일을 덮어씁니다.");
       }
 
       approvalMeta.innerHTML = lines.map((line) => `<span>${line}</span>`).join("");
       approvalPathInput.value = approval.requested_path || "";
       approvalPreview.textContent = approval.preview_markdown || "";
-      approveButton.disabled = state.isBusy || Boolean(approval.overwrite);
+      approveButton.disabled = state.isBusy;
       reissueButton.disabled = state.isBusy || !approvalPathInput.value.trim();
       approvalCopyPathButton.disabled = !approval.requested_path;
       updateContentVerdictState();

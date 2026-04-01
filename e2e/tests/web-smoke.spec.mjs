@@ -95,7 +95,7 @@ function ensureLongFixture() {
   );
   fs.writeFileSync(
     searchFixtureMemoPath,
-    ["# Memo", "", "other notes"].join("\n"),
+    ["# Memo", "", "other notes", "budget reference"].join("\n"),
     "utf-8"
   );
   fs.mkdirSync(path.dirname(correctedBridgeNotePath), { recursive: true });
@@ -123,9 +123,12 @@ test("파일 요약 후 근거와 요약 구간이 보입니다", async ({ page 
 
   await expect(page.getByTestId("response-box")).toContainText("중간 섹션 핵심 결정은 승인 기반 저장을 유지하는 것입니다.");
   await expect(page.locator("#response-quick-meta-text")).toContainText("long-summary-fixture.md");
+  await expect(page.locator("#response-quick-meta-text")).toContainText("문서 요약");
   await expect(page.getByTestId("response-copy-text")).toBeVisible();
   await expect(page.locator("#transcript .message-when")).toHaveCount(2);
   await expect(page.locator("#transcript .message-when").first()).not.toBeEmpty();
+  await expect(page.locator('#transcript [data-testid="transcript-meta"]').last()).toContainText("문서 요약");
+  await expect(page.locator('#transcript [data-testid="transcript-meta"]').last()).toContainText("long-summary-fixture.md");
   await expect(page.getByTestId("evidence-box")).toBeVisible();
   await expect(page.getByTestId("summary-chunks-box")).toBeVisible();
 
@@ -170,6 +173,10 @@ test("브라우저 파일 선택으로도 파일 요약이 됩니다", async ({ 
 
   await expect(page.getByTestId("response-box")).toContainText("중간 섹션 핵심 결정은 승인 기반 저장을 유지하는 것입니다.");
   await expect(page.locator("#context-box")).toContainText("long-summary-fixture.md");
+  await expect(page.locator("#response-quick-meta-text")).toContainText("long-summary-fixture.md");
+  await expect(page.locator("#response-quick-meta-text")).toContainText("문서 요약");
+  await expect(page.locator('#transcript [data-testid="transcript-meta"]').last()).toContainText("long-summary-fixture.md");
+  await expect(page.locator('#transcript [data-testid="transcript-meta"]').last()).toContainText("문서 요약");
 });
 
 test("브라우저 폴더 선택으로도 문서 검색이 됩니다", async ({ page }) => {
@@ -182,6 +189,14 @@ test("브라우저 폴더 선택으로도 문서 검색이 됩니다", async ({ 
   await page.getByTestId("submit-request").click();
 
   await expect(page.getByTestId("response-box")).toContainText("[모의 요약]");
+  await expect(page.locator("#response-quick-meta-text")).toContainText("선택 결과 요약");
+  await expect(page.locator("#response-quick-meta-text")).toContainText("출처 2개");
+  await expect(page.locator("#response-quick-meta-text")).not.toContainText(/출처\s+budget-plan\.md/);
+  await expect(page.locator("#response-quick-meta-text")).not.toContainText(/출처\s+memo\.md/);
+  await expect(page.locator('#transcript [data-testid="transcript-meta"]').last()).toContainText("선택 결과 요약");
+  await expect(page.locator('#transcript [data-testid="transcript-meta"]').last()).toContainText("출처 2개");
+  await expect(page.locator('#transcript [data-testid="transcript-meta"]').last()).not.toContainText(/출처\s+budget-plan\.md/);
+  await expect(page.locator('#transcript [data-testid="transcript-meta"]').last()).not.toContainText(/출처\s+memo\.md/);
   await expect(page.locator("#selected-text")).toContainText("budget-plan.md");
 });
 
@@ -782,4 +797,233 @@ test("스트리밍 중 취소 버튼이 동작합니다", async ({ page }) => {
   await page.getByTestId("cancel-request").click();
 
   await expect(page.locator("#notice-box")).toContainText("요청을 취소했습니다.");
+});
+
+test("일반 채팅 응답에는 source-type label이 붙지 않습니다", async ({ page }) => {
+  await prepareSession(page, "general-chat");
+  await page.locator('input[name="request_mode"][value="chat"]').check();
+  await page.locator("#user-text").fill("안녕하세요");
+  await page.getByTestId("submit-request").click();
+
+  await expect(page.getByTestId("response-box")).not.toBeEmpty();
+  const quickMetaText = await page.locator("#response-quick-meta-text").textContent();
+  expect(quickMetaText).not.toContain("문서 요약");
+  expect(quickMetaText).not.toContain("선택 결과 요약");
+  const transcriptMeta = page.locator('#transcript [data-testid="transcript-meta"]').last();
+  if (await transcriptMeta.count() > 0) {
+    const metaText = await transcriptMeta.textContent();
+    expect(metaText).not.toContain("문서 요약");
+    expect(metaText).not.toContain("선택 결과 요약");
+  }
+});
+
+test("claim-coverage panel은 status tag와 행동 힌트를 올바르게 렌더링합니다", async ({ page }) => {
+  await prepareSession(page, "claim-coverage");
+
+  await page.evaluate(() => {
+    // @ts-ignore — renderClaimCoverage is defined in the page scope
+    renderClaimCoverage([
+      { slot: "출생일", status_label: "교차 확인", value: "1990년 3월 15일", support_count: 2 },
+      { slot: "소속", status_label: "단일 출처", value: "A 대학교", support_count: 1 },
+      { slot: "수상 이력", status_label: "미확인", value: "", support_count: 0 },
+    ]);
+  });
+
+  const box = page.getByTestId("claim-coverage-box");
+  await expect(box).toBeVisible();
+
+  const text = page.locator("#claim-coverage-text");
+  await expect(text).toContainText("[교차 확인] 출생일");
+  await expect(text).toContainText("[단일 출처] 소속");
+  await expect(text).toContainText("[미확인] 수상 이력");
+  await expect(text).toContainText("1개 출처만 확인됨. 교차 검증이 권장됩니다.");
+  await expect(text).toContainText("추가 출처가 필요합니다.");
+
+  const hint = page.locator("#claim-coverage-hint");
+  await expect(hint).toContainText("교차 확인은 여러 출처 합의");
+  await expect(hint).toContainText("단일 출처는 신뢰 가능한 1개 출처 기준");
+  await expect(hint).toContainText("미확인은 추가 조사 필요 상태입니다");
+});
+
+test("web-search history card header badges는 answer-mode, verification-strength, source-role trust를 올바르게 렌더링합니다", async ({ page }) => {
+  await prepareSession(page, "search-history-badges");
+
+  await page.evaluate(() => {
+    // @ts-ignore — renderSearchHistory is defined in the page scope
+    renderSearchHistory([
+      {
+        query: "대통령 출생일",
+        answer_mode: "entity_card",
+        verification_label: "공식+기사 교차 확인",
+        source_roles: ["공식 기반", "보조 기사"],
+        result_count: 5,
+        page_count: 3,
+        created_at: new Date().toISOString(),
+      },
+      {
+        query: "최근 경제 동향",
+        answer_mode: "latest_update",
+        verification_label: "설명형 단일 출처",
+        source_roles: ["설명형 출처"],
+        result_count: 3,
+        page_count: 1,
+        created_at: new Date().toISOString(),
+      },
+      {
+        query: "일반 검색어",
+        answer_mode: "general",
+        verification_label: "보조 커뮤니티 참고",
+        source_roles: ["보조 커뮤니티"],
+        result_count: 2,
+        page_count: 0,
+        created_at: new Date().toISOString(),
+      },
+      {
+        query: "테스트게임",
+        answer_mode: "entity_card",
+        verification_label: "설명형 단일 출처",
+        source_roles: ["백과 기반"],
+        result_count: 2,
+        page_count: 0,
+        created_at: new Date().toISOString(),
+      },
+    ]);
+  });
+
+  const historyBox = page.locator("#search-history-box");
+  await expect(historyBox).toBeVisible();
+
+  const cards = historyBox.locator(".history-item");
+  await expect(cards).toHaveCount(4);
+
+  // Card 1: entity_card — answer-mode badge, strong verification, high+medium source roles
+  const card1 = cards.nth(0);
+  const card1Badges = card1.locator(".history-badge-row");
+  await expect(card1Badges.locator(".answer-mode-badge")).toHaveText("설명 카드");
+  await expect(card1Badges.locator(".verification-badge")).toHaveText("검증 강");
+  await expect(card1Badges.locator(".verification-badge")).toHaveClass(/ver-strong/);
+  const card1Roles = card1Badges.locator(".source-role-badge");
+  await expect(card1Roles).toHaveCount(2);
+  await expect(card1Roles.nth(0)).toHaveText("공식 기반(높음)");
+  await expect(card1Roles.nth(0)).toHaveClass(/trust-high/);
+  await expect(card1Roles.nth(1)).toHaveText("보조 기사(보통)");
+  await expect(card1Roles.nth(1)).toHaveClass(/trust-medium/);
+
+  // Card 2: latest_update — answer-mode badge, medium verification, medium source role
+  const card2 = cards.nth(1);
+  const card2Badges = card2.locator(".history-badge-row");
+  await expect(card2Badges.locator(".answer-mode-badge")).toHaveText("최신 확인");
+  await expect(card2Badges.locator(".verification-badge")).toHaveText("검증 중");
+  await expect(card2Badges.locator(".verification-badge")).toHaveClass(/ver-medium/);
+  const card2Roles = card2Badges.locator(".source-role-badge");
+  await expect(card2Roles).toHaveCount(1);
+  await expect(card2Roles.nth(0)).toHaveText("설명형 출처(보통)");
+  await expect(card2Roles.nth(0)).toHaveClass(/trust-medium/);
+
+  // Card 3: general — no answer-mode badge (not investigation), weak verification, low source role
+  const card3 = cards.nth(2);
+  const card3Badges = card3.locator(".history-badge-row");
+  await expect(card3Badges.locator(".answer-mode-badge")).toHaveCount(0);
+  await expect(card3Badges.locator(".verification-badge")).toHaveText("검증 약");
+  await expect(card3Badges.locator(".verification-badge")).toHaveClass(/ver-weak/);
+  const card3Roles = card3Badges.locator(".source-role-badge");
+  await expect(card3Roles).toHaveCount(1);
+  await expect(card3Roles.nth(0)).toHaveText("보조 커뮤니티(낮음)");
+  await expect(card3Roles.nth(0)).toHaveClass(/trust-low/);
+
+  // Card 4: entity_card with zero-strong-slot — answer-mode badge, medium (not strong) verification, high source role
+  const card4 = cards.nth(3);
+  const card4Badges = card4.locator(".history-badge-row");
+  await expect(card4Badges.locator(".answer-mode-badge")).toHaveText("설명 카드");
+  await expect(card4Badges.locator(".verification-badge")).toHaveText("검증 중");
+  await expect(card4Badges.locator(".verification-badge")).toHaveClass(/ver-medium/);
+  const card4Roles = card4Badges.locator(".source-role-badge");
+  await expect(card4Roles).toHaveCount(1);
+  await expect(card4Roles.nth(0)).toHaveText("백과 기반(높음)");
+  await expect(card4Roles.nth(0)).toHaveClass(/trust-high/);
+});
+
+test("history-card 다시 불러오기 클릭 후 response origin badge와 answer-mode badge가 유지됩니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "history-card-reload");
+
+  // Pre-seed a web search record on disk so the server can load it
+  const recordId = `websearch-e2etest${Date.now().toString(36)}`;
+  const recordDir = path.join(repoRoot, "data", "web-search", sessionId);
+  const recordPath = path.join(recordDir, `붉은사막-${recordId}.json`);
+  fs.mkdirSync(recordDir, { recursive: true });
+  const record = {
+    record_id: recordId,
+    session_id: sessionId,
+    query: "붉은사막",
+    permission: "enabled",
+    created_at: new Date().toISOString(),
+    result_count: 1,
+    page_count: 0,
+    results: [
+      {
+        title: "붉은사막 - 나무위키",
+        url: "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+        snippet: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+      },
+    ],
+    pages: [],
+    summary_text: "웹 검색 요약: 붉은사막",
+    response_origin: {},
+    claim_coverage: [],
+  };
+  fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
+
+  // Render the history card in the browser with the pre-seeded record_id
+  await page.evaluate(
+    ({ items }) => {
+      // @ts-ignore — renderSearchHistory is defined in the page scope
+      renderSearchHistory(items);
+    },
+    {
+      items: [
+        {
+          record_id: recordId,
+          query: "붉은사막",
+          answer_mode: "entity_card",
+          verification_label: "설명형 단일 출처",
+          source_roles: ["백과 기반"],
+          result_count: 1,
+          page_count: 0,
+          created_at: record.created_at,
+          record_path: recordPath,
+        },
+      ],
+    }
+  );
+
+  const historyBox = page.locator("#search-history-box");
+  await expect(historyBox).toBeVisible();
+  const reloadButton = historyBox.locator(".history-item-actions button.secondary").first();
+  await expect(reloadButton).toHaveText("다시 불러오기");
+
+  // Click "다시 불러오기" — triggers loadWebSearchRecord(recordId)
+  await reloadButton.click();
+
+  // Wait for the response to render with a WEB badge
+  const originBadge = page.locator("#response-origin-badge");
+  await expect(originBadge).toHaveText("WEB");
+  await expect(originBadge).toHaveClass(/web/);
+
+  // Answer-mode badge should show "설명 카드" for entity_card
+  const answerModeBadge = page.locator("#response-answer-mode-badge");
+  await expect(answerModeBadge).toBeVisible();
+  await expect(answerModeBadge).toHaveText("설명 카드");
+
+  // Origin detail should contain verification label and source role info
+  const originDetail = page.locator("#response-origin-detail");
+  await expect(originDetail).toContainText("설명형 단일 출처");
+  await expect(originDetail).toContainText("백과 기반");
+
+  // Clean up the pre-seeded record
+  try {
+    fs.unlinkSync(recordPath);
+    fs.rmdirSync(recordDir);
+  } catch (_) {
+    // best-effort cleanup
+  }
 });

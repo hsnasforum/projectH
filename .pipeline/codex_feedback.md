@@ -1,54 +1,32 @@
-## Claude에게 전달할 지시사항
-
 STATUS: implement
 
-직전 **narrative faithfulness prompt-family regression**은 이번 verify에서 `ready`로 닫혔습니다. 이번 라운드는 test completeness를 더 파지 말고, **이미 구현된 summary source-type boundary를 response quick-meta에 작은 label 1개로 드러내는 user-visible clarity slice**만 구현하세요.
+완료 슬라이스: `overwrite approval execution only`
 
-반드시 먼저 읽을 파일:
-- `verify/3/31/2026-03-31-narrative-faithfulness-prompt-regression-verification.md`
-- `work/3/31/2026-03-31-narrative-faithfulness-prompt-regression.md`
-- `AGENTS.md`
-- `work/README.md`
-- `verify/README.md`
-- `.pipeline/README.md`
-- `app/templates/index.html`
-- `core/agent_loop.py`
+근거 pair:
+- latest `/work`: `work/4/1/2026-04-01-overwrite-approval-execution.md`
+- latest same-day `/verify`: `verify/4/1/2026-04-01-overwrite-approval-execution-verification.md`
+
+이번 verify 결론:
+- 코드 변경과 테스트 추가는 `/work` 주장대로 실제로 들어가 있습니다.
+- rerun 검증: `python3 -m py_compile tools/write_note.py core/agent_loop.py`, `python3 -m unittest -v tests.test_write_note tests.test_smoke tests.test_web_app` (`286 tests OK`), `git diff --check -- tools/write_note.py core/agent_loop.py app/templates/index.html tests/test_write_note.py tests/test_web_app.py`, `make e2e-test` (`16 passed (3.7m)`)
+- 기능과 browser contract는 현재 기준으로 통과했습니다.
+
+다음 Claude 작업:
+- `overwrite approval execution docs sync only`
+
+이번 slice 범위:
 - `README.md`
 - `docs/PRODUCT_SPEC.md`
 - `docs/ACCEPTANCE_CRITERIA.md`
-- `CLAUDE.md`
+- `docs/NEXT_STEPS.md`
+- `docs/TASK_BACKLOG.md`
 
-이번 라운드 단일 슬라이스:
-- response quick-meta에 summary source-type label 1개를 추가하세요.
-- local file / uploaded document summary면 user가 바로 알아볼 수 있게 `문서 요약` 성격의 label을 보여 주세요.
-- selected local search-result summary면 user가 바로 알아볼 수 있게 `검색 결과 요약` 성격의 label을 보여 주세요.
-- exact copy는 현재 UI 톤에 맞게 조금 다듬어도 되지만, **원문 문서 요약인지 / 선택 검색 결과 종합인지 즉시 구분된다**는 계약은 유지해 주세요.
+반영해야 할 사실:
+- overwrite는 기본값으로는 계속 거부되지만, explicit overwrite approval 경로에서는 승인 실행 후 실제 덮어쓰기가 이제 shipped behavior입니다.
+- existing path로 reissue되더라도 즉시 write하지 않고, pending approval에 `overwrite`가 표시된 뒤 별도 explicit approval 실행에서만 저장됩니다.
+- approval preview / warning copy와 승인 버튼 동작은 현재 shipped UI에 맞게 문서화해야 합니다.
+- stale `Not Implemented` / `Explicitly Deferred` / future-only wording은 제거하거나 현재 contract에 맞게 고쳐야 합니다.
 
-왜 이 슬라이스가 지금 맞는지:
-- latest `/verify`가 이미 지적했듯이, summary source-type split은 docs와 internal regression에는 정직하지만 user-visible UI에는 아직 직접 드러나지 않습니다.
-- 이 라운드는 summary behavior를 다시 건드리는 게 아니라, 이미 shipped truth를 사용자에게 얇게 드러내는 작은 clarity 개선입니다.
-
-정확한 범위 제한:
-- `app/templates/index.html` 중심으로 해결하는 쪽을 먼저 보세요.
-- 현재 payload에 source-type 구분이 없어서 꼭 필요할 때만 `app/web.py`를 최소 범위로 만지세요.
-- summary behavior 자체, prompt wording, reviewed-memory, approval flow, investigation UI, unrelated dirty file 정리 금지.
-- 새 mode toggle, 설정, classifier, 추가 필터 금지.
-- current shipped source-type split을 visible clarity로만 드러내세요.
-- UI behavior가 바뀌면 관련 root docs를 같은 라운드에 truth-sync 하세요.
-- 최소 smoke/assertion이 필요하면 current browser contract에 직접 닿는 범위만 추가하세요.
-
-검증 원칙:
-- browser-visible contract가 바뀌므로 필요한 최소 browser verification을 포함하세요.
-- 기본 후보:
-  - `python3 -m py_compile app/web.py` if touched
-  - focused `python3 -m unittest -v ...` if touched service logic
-  - `make e2e-test`
-  - `git diff --check`
-
-dirty worktree 경고:
-- 현재 worktree에는 unrelated dirty changes가 넓게 섞여 있습니다.
-- unrelated 변경은 절대 되돌리거나 한 라운드에 섞지 마세요.
-
-마무리:
-- `/work` closeout을 남기세요.
-- 응답은 한국어 존댓말로 작성하세요.
+검증:
+- docs-only round로 유지하고 `git diff --check -- README.md docs/PRODUCT_SPEC.md docs/ACCEPTANCE_CRITERIA.md docs/NEXT_STEPS.md docs/TASK_BACKLOG.md`만 실행하세요.
+- 새 코드 변경이나 새 verification slice로 넓히지 마세요.

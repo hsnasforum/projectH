@@ -101,6 +101,7 @@ And if helper-agent or repo-skill files changed, also sync:
 - Meaningful verification-backed handoff or rerun-check work should leave a verification note at `verify/<month>/<day>/YYYY-MM-DD-<slug>.md`.
 - `.pipeline/codex_feedback.md` is the primary rolling latest-slot handoff file for automation and may be overwritten; it does not replace `/work` or `/verify`.
 - `.pipeline/codex_feedback.md` should explicitly say either `STATUS: implement` or `STATUS: needs_operator`.
+- If it says `STATUS: needs_operator`, the file should still include the stop reason, the latest `/work` and `/verify` references behind that stop, and the operator decision still needed before implementation can resume.
 - `.pipeline/gpt_prompt.md` may remain as an optional or legacy scratch slot, but it is no longer part of the canonical single-Codex flow.
 - Before a new round, read today's newest note first; if none exists, use the newest note from the previous day.
 - Before a new verification-backed handoff round, read the newest `work/` note first and then the newest same-day `verify/` note if one exists.
@@ -111,6 +112,8 @@ And if helper-agent or repo-skill files changed, also sync:
 - Codex = round verification and handoff lane: reads latest `/work` and `/verify`, reruns the checks needed to review that round, updates `/verify`, then writes `.pipeline/codex_feedback.md`.
 - `STATUS: implement` means the next slice is already fixed and should be implemented as written.
 - `STATUS: needs_operator` means the next slice is intentionally not fixed yet; do not start a new implementation round from that handoff.
+- A `needs_operator` handoff should never be interpreted as "choose your own next slice." It is a stopped state with an explained reason, not an invitation to improvise.
+- Codex may auto-fix the next slice without operator intervention when the latest `/work` and `/verify` already closed one family and one smaller same-family current-risk reduction clearly remains.
 - In automation, the status line is the control signal. A prose change without a status change should not be treated as a stop/go override.
 - `gpt_prompt.md` is optional or legacy and should not be treated as required for the canonical flow.
 - If `.pipeline` contents disagree with persistent notes, trust `/work` and `/verify`.
@@ -125,6 +128,7 @@ And if helper-agent or repo-skill files changed, also sync:
 - If watcher delivered the handoff but your lane is busy, interrupted, or mid-response, that is a session-state issue rather than a handoff-policy change.
 - Do not widen a reviewed-memory slice only because more internal layers or route-level regressions remain.
 - If the handoff appears to pull the work toward route-by-route completeness rather than user-visible value, prefer the smallest user-visible or current-risk-reducing interpretation that still fits the written instruction.
+- If Codex selected the slice through the same-family current-risk-first tie-break, treat that as the intended plan and do not reopen a broader comparison yourself.
 - Browser or end-to-end checks are not default for every round; use them when the current change actually touches browser-visible behavior or when the handoff explicitly requires a ready or release decision.
 - For current planning purposes, treat the reviewed-memory user-visible loop through effect activation plus explicit stop as the default anchor; later reversal or conflict-visibility layers may exist, but they are not the automatic next slice.
 

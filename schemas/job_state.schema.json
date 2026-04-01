@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "JobState",
+  "description": "watcher_core.py v2.0 상태 파일 스키마",
+  "type": "object",
+  "required": [
+    "schema_version", "job_id", "status", "artifact_path",
+    "round", "created_at", "updated_at"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "job_id": {
+      "type": "string",
+      "description": "YYYYMMDD-<safe_stem>-<path_hash8>"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "NEW_ARTIFACT", "STABILIZING",
+        "VERIFY_PENDING", "VERIFY_RUNNING", "VERIFY_DONE",
+        "COUNTER_PENDING", "COUNTER_RUNNING",
+        "DECISION_PENDING",
+        "RETRY_PENDING", "RETRY_RUNNING",
+        "ISOLATED", "FINALIZED"
+      ]
+    },
+    "artifact_path":      { "type": "string" },
+    "artifact_hash":      { "type": "string" },
+    "artifact_size":      { "type": "integer", "minimum": 0 },
+    "artifact_mtime":     { "type": "number" },
+    "stabilized_at":      { "type": "number" },
+    "round":              { "type": "integer", "minimum": 1 },
+    "retry_budget":       { "type": "integer", "minimum": 0 },
+    "last_dispatch_at":   { "type": "number" },
+    "last_dispatch_slot": { "type": "string" },
+    "verify_manifest_path": {
+      "type": "string",
+      "description": ".pipeline/manifests/<job_id>/round-<n>.verify.json 경로"
+    },
+    "verify_completed_at": {
+      "type": "number",
+      "description": "VERIFY_DONE 전이 시각 Unix timestamp"
+    },
+    "validation_score": {
+      "type": "number",
+      "description": "passed_checks / required_checks. -1 = 미수집"
+    },
+    "blocker_count": {
+      "type": "integer",
+      "description": "critical severity blocker 수. -1 = 미수집"
+    },
+    "verify_result": {
+      "type": "string",
+      "enum": ["", "passed", "failed", "invalid_manifest"],
+      "description": "passed: blocker 0 / failed: blocker > 0 / invalid_manifest: 스키마·일치 오류"
+    },
+    "created_at":  { "type": "number" },
+    "updated_at":  { "type": "number" },
+    "history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["from", "to", "at"],
+        "properties": {
+          "from":   { "type": "string" },
+          "to":     { "type": "string" },
+          "at":     { "type": "number" },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

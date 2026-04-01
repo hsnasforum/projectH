@@ -167,6 +167,10 @@ Current source-of-truth docs live in the root `docs/` directory.
   - `STATUS: needs_operator`
 - `STATUS: implement` means Codex already fixed one exact next slice and Claude should implement that slice only.
 - `STATUS: needs_operator` means Codex did not truthfully fix one next slice yet; Claude must not self-select a slice from that handoff.
+- `STATUS: needs_operator` must not be left as a bare stop line alone. It should also record:
+  - why automation is stopping now
+  - which latest `/work` and `/verify` pair the stop is based on
+  - what the operator must decide before the file can return to `STATUS: implement`
 - In automation, the status line itself is the control signal. If the operator wants to stop automatic Claude execution, change `STATUS`, not just the surrounding prose.
 - `.pipeline/gpt_prompt.md` may remain as an optional or legacy scratch slot, but it is no longer required for the canonical flow.
 - Persistent truth still lives in `/work` and `/verify`; if `.pipeline` disagrees with them, trust the latest `/work` and `/verify`.
@@ -184,6 +188,13 @@ Current source-of-truth docs live in the root `docs/` directory.
 - After that review, Codex should either:
   - choose one exact next slice and write `STATUS: implement`, or
   - explicitly stop automation with `STATUS: needs_operator`
+- When the latest `/work` and `/verify` already closed one family truthfully, prefer automatic next-slice selection over `needs_operator` if one smaller same-family follow-up remains.
+- Default automatic tie-break order is:
+  - same-family current-risk reduction
+  - same-family user-visible improvement
+  - new quality axis
+  - internal cleanup
+- If Codex writes `STATUS: needs_operator`, the handoff should still explain the stop reason and the missing operator decision instead of leaving the rolling slot empty.
 - Do not push slice selection back onto Claude with wording such as "continue only if you can find a good slice."
 - Use a broader whole-project audit only when explicitly requested or when a milestone, release, or trajectory check is needed.
 - When a broader audit is needed, record it under `report/` so it does not overwrite the meaning of `/verify`.
@@ -197,6 +208,15 @@ Current source-of-truth docs live in the root `docs/` directory.
 - Do not choose the next slice only because a route, helper, contract family, or handler-level regression is still incomplete.
 - Do not let uncovered verification gaps alone drive roadmap priority unless they block a currently shipped user flow.
 - Prefer slices that the user can see, feel, or directly benefit from over internal completeness work.
+- If the latest round already closed one family truthfully, prefer the next smallest same-family current-risk reduction before opening a different quality axis.
+- When multiple plausible slices remain, choose in this order unless a newer `/verify` gives a stronger reason otherwise:
+  - current-risk reduction
+  - same-family user-visible improvement
+  - new quality axis
+  - internal cleanup
+- Use `STATUS: needs_operator` only when:
+  - two or more candidates remain genuinely tied after the order above, or
+  - approval-record or truth-sync work must happen before any new implementation slice can start.
 
 ## Reviewed-Memory Planning Boundary
 

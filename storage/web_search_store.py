@@ -209,6 +209,7 @@ class WebSearchStore:
         pages: list[dict[str, Any]] | None = None,
         response_origin: dict[str, Any] | None = None,
         claim_coverage: list[dict[str, Any]] | None = None,
+        claim_coverage_progress_summary: str | None = None,
     ) -> dict[str, Any]:
         timestamp = datetime.now(timezone.utc).isoformat()
         slug = re.sub(r"[^a-zA-Z0-9가-힣]+", "-", query).strip("-").lower() or "search"
@@ -237,6 +238,7 @@ class WebSearchStore:
             "summary_text": summary_text,
             "response_origin": dict(response_origin or {}),
             "claim_coverage": [dict(item) for item in claim_coverage or [] if isinstance(item, dict)],
+            "claim_coverage_progress_summary": str(claim_coverage_progress_summary or "").strip(),
         }
         path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
         return {

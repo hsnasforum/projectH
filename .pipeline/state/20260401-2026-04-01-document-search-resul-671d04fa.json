@@ -1,0 +1,48 @@
+{
+  "job_id": "20260401-2026-04-01-document-search-resul-671d04fa",
+  "status": "VERIFY_DONE",
+  "artifact_path": "work/4/1/2026-04-01-document-search-result-preview.md",
+  "schema_version": 1,
+  "artifact_hash": "471749beb3ed07f5f0471747ed59524f1821a5845304965fd6b6ab741d9d1ee8",
+  "artifact_size": 2105,
+  "artifact_mtime": 1775016946.3755035,
+  "stabilized_at": 1775016951.128594,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 1775016952.6424398,
+  "last_dispatch_slot": "slot_verify",
+  "feedback_baseline_sig": "1775016924198454831:798:83c375167b7baaa9ffdf8f62656f2870f9570978e220a51cd05ec222d0977f08",
+  "verify_manifest_path": "",
+  "verify_completed_at": 1775017073.1418538,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "timeout",
+  "created_at": 1775016947.1124322,
+  "updated_at": 1775017073.141987,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1775016947.1127079,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1775016951.1285968,
+      "reason": "artifact stabilized"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "VERIFY_RUNNING",
+      "at": 1775016952.642492,
+      "reason": "dispatched to slot_verify"
+    },
+    {
+      "from": "VERIFY_RUNNING",
+      "to": "VERIFY_DONE",
+      "at": 1775017073.141987,
+      "reason": "timeout after 120s"
+    }
+  ]
+}

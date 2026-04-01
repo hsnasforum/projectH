@@ -44,6 +44,9 @@
 - `/work`가 구현 closeout, `/verify`가 검증 결과라는 경계가 바뀌면 두 README를 같은 라운드에서 함께 갱신합니다.
 - `.pipeline/codex_feedback.md`는 자동화용 rolling 최신 슬롯입니다. 구현 truth는 항상 최신 `/work`에 남기고, `.pipeline`은 그 내용을 넘겨주기 위한 보조 수단으로만 씁니다.
 - Claude는 보통 `.pipeline/codex_feedback.md`가 `STATUS: implement`일 때만 새 구현 `/work`를 남깁니다. `STATUS: needs_operator`일 때는 새 `/work` closeout을 억지로 만들지 않습니다.
+- `STATUS: needs_operator`는 bare stop line 하나로 끝내지 않는 편이 맞습니다. 최소한 왜 멈췄는지와 operator가 다음에 무엇을 정해야 하는지는 `.pipeline/codex_feedback.md`에 남겨야, Claude가 멈춘 이유를 나중에 다시 추적할 수 있습니다.
+- Codex는 latest `/work`와 `/verify`가 한 family를 truthfully 닫았을 때 같은 family의 가장 작은 current-risk reduction을 먼저 자동 확정할 수 있습니다. 다음 슬라이스를 매번 operator가 직접 고를 필요는 없습니다.
+- 따라서 `/work` closeout도 다음 우선순위를 설명할 때는 같은 family 안의 더 작은 risk를 먼저 닫는지, 아니면 왜 새 quality axis로 넘어가야 하는지를 짧게 드러내는 편이 좋습니다.
 - `.pipeline/gpt_prompt.md`는 optional/legacy scratch 슬롯로 남길 수 있지만, canonical single-Codex 흐름의 필수 단계는 아닙니다.
 - single-Codex tmux 흐름에서도 Claude가 `/work`를 남긴 뒤 Codex가 검증과 handoff를 처리하더라도, 구현의 canonical closeout은 계속 `/work`입니다.
 - 현재 helper-agent 표면에는 `trace-implementer`가 포함되며, 이 역할은 grounded-brief trace/memory foundation의 작은 구현 슬라이스를 맡는 전용 구현 서브에이전트입니다.

@@ -44,6 +44,22 @@ class WriteNoteToolTest(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 tool.run(path=str(target), text="# New", approved=True)
 
+    def test_allows_overwrite_when_explicitly_approved(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            notes_dir = root / "notes"
+            notes_dir.mkdir(parents=True, exist_ok=True)
+            target = notes_dir / "demo.md"
+            target.write_text("# Old", encoding="utf-8")
+            tool = WriteNoteTool(allowed_roots=[str(notes_dir)])
+
+            info = tool.inspect_target(path=str(target))
+            self.assertTrue(info["overwrite"])
+
+            saved = tool.run(path=str(target), text="# New Content", approved=True, allow_overwrite=True)
+            self.assertEqual(saved, str(target.resolve()))
+            self.assertEqual(target.read_text(encoding="utf-8"), "# New Content")
+
 
 if __name__ == "__main__":
     unittest.main()

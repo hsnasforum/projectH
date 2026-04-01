@@ -26,13 +26,13 @@ class WriteNoteTool(Tool):
             "overwrite": resolved_path.exists(),
         }
 
-    def run(self, *, path: str, text: str, approved: bool = False) -> str:
+    def run(self, *, path: str, text: str, approved: bool = False, allow_overwrite: bool = False) -> str:
         if not approved:
             raise PermissionError("Explicit approval is required before writing a note.")
 
         output_path = normalize_local_path_input(path).resolve()
         self._ensure_allowed(output_path)
-        if output_path.exists():
+        if output_path.exists() and not allow_overwrite:
             raise FileExistsError("Refusing to overwrite an existing file by default.")
         if output_path.suffix == "":
             raise IsADirectoryError("A file path with an extension is required for note output.")

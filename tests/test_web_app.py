@@ -11,6 +11,7 @@ from unittest.mock import patch
 from app.web import LocalAssistantHandler, LocalOnlyHTTPServer, WebAppService, WebApiError
 from config.settings import AppSettings
 from model_adapter.base import ModelAdapter, ModelRuntimeStatus, ModelStreamEvent, SummaryNoteDraft
+from storage.web_search_store import WebSearchStore
 from tools.file_reader import FileReaderTool
 from tools.file_search import FileSearchTool
 from tools.write_note import WriteNoteTool
@@ -5770,6 +5771,12 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("team-docs/budget-plan.md", payload["response"]["text"])
             self.assertEqual(payload["response"]["selected_source_paths"], ["team-docs/budget-plan.md"])
             self.assertIsNone(payload["runtime_status"])
+            sr = payload["response"]["search_results"]
+            self.assertIsInstance(sr, list)
+            self.assertEqual(len(sr), 1)
+            self.assertEqual(sr[0]["path"], "team-docs/budget-plan.md")
+            self.assertIn(sr[0]["matched_on"], ("filename", "content"))
+            self.assertIsInstance(sr[0]["snippet"], str)
 
     def test_handle_chat_search_uploaded_folder_can_summarize_results(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -5816,6 +5823,93 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("team-docs/budget-plan.md", payload["response"]["selected_source_paths"])
             self.assertEqual(payload["response"]["active_context"]["kind"], "search")
             self.assertEqual(payload["runtime_status"]["provider"], "mock")
+            sr = payload["response"]["search_results"]
+            self.assertIsInstance(sr, list)
+            self.assertGreaterEqual(len(sr), 1)
+            self.assertTrue(any("budget-plan.md" in item["path"] for item in sr))
+
+    def test_handle_chat_search_summary_save_request_includes_search_results(self) -> None:
+        """search+요약+저장승인요청(needs_approval) 응답에 search_results가 포함되는지 확인."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            budget_bytes = "# Budget\n\nbudget plan details".encode("utf-8")
+
+            payload = service.handle_chat(
+                {
+                    "session_id": "search-save-request-sr-session",
+                    "provider": "mock",
+                    "search_query": "budget",
+                    "save_summary": True,
+                    "uploaded_search_files": [
+                        {
+                            "name": "budget-plan.md",
+                            "relative_path": "team-docs/budget-plan.md",
+                            "root_label": "team-docs",
+                            "mime_type": "text/markdown",
+                            "size_bytes": len(budget_bytes),
+                            "content_base64": base64.b64encode(budget_bytes).decode("ascii"),
+                        },
+                    ],
+                }
+            )
+
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["response"]["status"], "needs_approval")
+            sr = payload["response"]["search_results"]
+            self.assertIsInstance(sr, list)
+            self.assertGreaterEqual(len(sr), 1)
+            self.assertTrue(any("budget-plan.md" in item["path"] for item in sr))
+            self.assertIn(sr[0]["matched_on"], ("filename", "content"))
+            self.assertIsInstance(sr[0]["snippet"], str)
+
+    def test_handle_chat_search_summary_approved_save_includes_search_results(self) -> None:
+        """search+요약+승인저장(saved) 응답에 search_results가 포함되는지 확인."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            budget_bytes = "# Budget\n\nbudget plan details".encode("utf-8")
+
+            payload = service.handle_chat(
+                {
+                    "session_id": "search-approved-save-sr-session",
+                    "provider": "mock",
+                    "search_query": "budget",
+                    "save_summary": True,
+                    "approved": True,
+                    "uploaded_search_files": [
+                        {
+                            "name": "budget-plan.md",
+                            "relative_path": "team-docs/budget-plan.md",
+                            "root_label": "team-docs",
+                            "mime_type": "text/markdown",
+                            "size_bytes": len(budget_bytes),
+                            "content_base64": base64.b64encode(budget_bytes).decode("ascii"),
+                        },
+                    ],
+                }
+            )
+
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["response"]["status"], "saved")
+            sr = payload["response"]["search_results"]
+            self.assertIsInstance(sr, list)
+            self.assertGreaterEqual(len(sr), 1)
+            self.assertTrue(any("budget-plan.md" in item["path"] for item in sr))
+            self.assertIn(sr[0]["matched_on"], ("filename", "content"))
+            self.assertIsInstance(sr[0]["snippet"], str)
 
     def test_handle_chat_long_summary_returns_summary_chunks(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -6369,6 +6463,58 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("이미 파일이 있으므로", second["response"]["text"])
             self.assertEqual(second["session"]["pending_approvals"][0]["requested_path"], str(existing_note_path))
             self.assertEqual(existing_note_path.read_text(encoding="utf-8"), "existing")
+
+    def test_handle_chat_overwrite_approval_execution_replaces_existing_file(self) -> None:
+        """overwrite 승인 실행 시 기존 파일을 덮어쓰고 저장하는지 확인."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            existing_note_path = tmp_path / "notes" / "existing-note.md"
+            requested_note_path = tmp_path / "notes" / "requested-note.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+            existing_note_path.parent.mkdir(parents=True, exist_ok=True)
+            existing_note_path.write_text("old content", encoding="utf-8")
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            first = service.handle_chat(
+                {
+                    "session_id": "overwrite-exec-session",
+                    "source_path": str(source_path),
+                    "save_summary": True,
+                    "note_path": str(requested_note_path),
+                    "provider": "mock",
+                }
+            )
+
+            reissued = service.handle_chat(
+                {
+                    "session_id": "overwrite-exec-session",
+                    "reissue_approval_id": first["response"]["approval"]["approval_id"],
+                    "note_path": str(existing_note_path),
+                }
+            )
+
+            self.assertTrue(reissued["response"]["approval"]["overwrite"])
+            overwrite_approval_id = reissued["response"]["approval"]["approval_id"]
+
+            result = service.handle_chat(
+                {
+                    "session_id": "overwrite-exec-session",
+                    "approved_approval_id": overwrite_approval_id,
+                }
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["response"]["status"], "saved")
+            self.assertIn("덮어쓰고", result["response"]["text"])
+            self.assertNotEqual(existing_note_path.read_text(encoding="utf-8"), "old content")
 
     def test_stream_chat_emits_final_event_for_approval(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -7666,6 +7812,185 @@ class WebAppServiceTest(unittest.TestCase):
         handler._send_json(200, {"ok": True})
 
 
+    def test_handler_returns_400_for_malformed_utf8_request_body(self) -> None:
+        """malformed UTF-8 요청 본문이 500이 아닌 400으로 응답됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            server = LocalOnlyHTTPServer(("127.0.0.1", 0), service)
+            port = server.server_address[1]
+
+            import http.client
+            import threading
+
+            thread = threading.Thread(target=server.handle_request, daemon=True)
+            thread.start()
+
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                malformed_body = b'\x80\x81\x82\x83'
+                conn.request(
+                    "POST",
+                    "/api/chat",
+                    body=malformed_body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Content-Length": str(len(malformed_body)),
+                        "Host": f"127.0.0.1:{port}",
+                        "Origin": f"http://127.0.0.1:{port}",
+                    },
+                )
+                resp = conn.getresponse()
+                resp_body = json.loads(resp.read().decode("utf-8"))
+                conn.close()
+            finally:
+                server.server_close()
+                thread.join(timeout=5)
+
+            self.assertEqual(resp.status, 400)
+            self.assertFalse(resp_body.get("ok", True))
+            self.assertIn("UTF-8", resp_body["error"]["message"])
+
+    def test_handler_returns_400_for_malformed_json_syntax_request_body(self) -> None:
+        """valid UTF-8이지만 JSON 문법이 깨진 요청 본문이 400으로 응답됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            server = LocalOnlyHTTPServer(("127.0.0.1", 0), service)
+            port = server.server_address[1]
+
+            import http.client
+            import threading
+
+            thread = threading.Thread(target=server.handle_request, daemon=True)
+            thread.start()
+
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                invalid_json_body = b'{"session_id": "test", broken}'
+                conn.request(
+                    "POST",
+                    "/api/chat",
+                    body=invalid_json_body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Content-Length": str(len(invalid_json_body)),
+                        "Host": f"127.0.0.1:{port}",
+                        "Origin": f"http://127.0.0.1:{port}",
+                    },
+                )
+                resp = conn.getresponse()
+                resp_body = json.loads(resp.read().decode("utf-8"))
+                conn.close()
+            finally:
+                server.server_close()
+                thread.join(timeout=5)
+
+            self.assertEqual(resp.status, 400)
+            self.assertFalse(resp_body.get("ok", True))
+            self.assertIn("JSON", resp_body["error"]["message"])
+
+    def test_handler_returns_400_for_empty_request_body(self) -> None:
+        """빈 요청 본문이 400으로 응답됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            server = LocalOnlyHTTPServer(("127.0.0.1", 0), service)
+            port = server.server_address[1]
+
+            import http.client
+            import threading
+
+            thread = threading.Thread(target=server.handle_request, daemon=True)
+            thread.start()
+
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                conn.request(
+                    "POST",
+                    "/api/chat",
+                    body=b"",
+                    headers={
+                        "Content-Type": "application/json",
+                        "Content-Length": "0",
+                        "Host": f"127.0.0.1:{port}",
+                        "Origin": f"http://127.0.0.1:{port}",
+                    },
+                )
+                resp = conn.getresponse()
+                resp_body = json.loads(resp.read().decode("utf-8"))
+                conn.close()
+            finally:
+                server.server_close()
+                thread.join(timeout=5)
+
+            self.assertEqual(resp.status, 400)
+            self.assertFalse(resp_body.get("ok", True))
+            self.assertIn("요청 본문", resp_body["error"]["message"])
+
+    def test_handler_returns_400_for_non_object_json_request_body(self) -> None:
+        """JSON array 같은 non-object 본문이 400으로 응답됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            server = LocalOnlyHTTPServer(("127.0.0.1", 0), service)
+            port = server.server_address[1]
+
+            import http.client
+            import threading
+
+            thread = threading.Thread(target=server.handle_request, daemon=True)
+            thread.start()
+
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                array_body = b'["not", "an", "object"]'
+                conn.request(
+                    "POST",
+                    "/api/chat",
+                    body=array_body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Content-Length": str(len(array_body)),
+                        "Host": f"127.0.0.1:{port}",
+                        "Origin": f"http://127.0.0.1:{port}",
+                    },
+                )
+                resp = conn.getresponse()
+                resp_body = json.loads(resp.read().decode("utf-8"))
+                conn.close()
+            finally:
+                server.server_close()
+                thread.join(timeout=5)
+
+            self.assertEqual(resp.status, 400)
+            self.assertFalse(resp_body.get("ok", True))
+            self.assertIn("객체 형태", resp_body["error"]["message"])
+
     def test_get_config_includes_notes_dir(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             notes_path = str(Path(tmp_dir) / "custom_notes")
@@ -7680,6 +8005,6930 @@ class WebAppServiceTest(unittest.TestCase):
             service = WebAppService(settings=settings)
             config = service.get_config()
             self.assertEqual(config["notes_dir"], notes_path)
+
+
+    def test_handle_chat_web_search_history_exact_badge_fields(self) -> None:
+        """handle_chat → session.web_search_history 경로에서 latest_update와
+        entity_card의 verification_label, source_roles가 exact하게 직렬화되는지
+        통합 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            # --- latest_update 1건 ---
+            service_lu = WebAppService(settings=settings)
+            service_lu._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="서울 날씨 - 예보",
+                            url="https://example.com/seoul-weather",
+                            snippet="서울은 맑고 낮 최고 17도, 밤 최저 7도로 예보되었습니다.",
+                        )
+                    ],
+                    pages={
+                        "https://example.com/seoul-weather": {
+                            "title": "서울 날씨 - 예보",
+                            "text": "서울은 맑고 낮 최고 17도.\n미세먼지 보통.",
+                            "excerpt": "서울은 맑고 낮 최고 17도.",
+                        }
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+            payload_lu = service_lu.handle_chat(
+                {
+                    "session_id": "badge-exact-session",
+                    "user_text": "서울 날씨 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(payload_lu["ok"])
+            lu_history = payload_lu["session"]["web_search_history"]
+            self.assertEqual(len(lu_history), 1)
+            self.assertEqual(lu_history[0]["answer_mode"], "latest_update")
+            self.assertEqual(lu_history[0]["verification_label"], "단일 출처 참고")
+            self.assertEqual(lu_history[0]["source_roles"], ["보조 출처"])
+
+            # --- entity_card 1건 (별도 세션) ---
+            service_ec = WebAppService(settings=settings)
+            service_ec._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ]
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+            payload_ec = service_ec.handle_chat(
+                {
+                    "session_id": "badge-exact-entity-session",
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(payload_ec["ok"])
+            ec_history = payload_ec["session"]["web_search_history"]
+            self.assertEqual(len(ec_history), 1)
+            self.assertEqual(ec_history[0]["answer_mode"], "entity_card")
+            self.assertEqual(ec_history[0]["verification_label"], "설명형 단일 출처")
+            self.assertEqual(ec_history[0]["source_roles"], ["백과 기반"])
+
+    def test_handle_chat_mixed_source_latest_update_badge_ordering(self) -> None:
+        """handle_chat → session.web_search_history 경로에서 official-domain 1건 +
+        news-domain 1건이 섞인 latest_update 결과의 verification_label과
+        source_roles ordering이 exact하게 직렬화되는지 통합 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="Steam 여름 할인 - Steam Store",
+                            url="https://store.steampowered.com/sale/summer2026",
+                            snippet="Steam 여름 할인이 시작되었습니다. 수천 개 게임이 최대 90% 할인됩니다.",
+                        ),
+                        SimpleNamespace(
+                            title="스팀 여름 할인 시작 - 게임뉴스",
+                            url="https://www.yna.co.kr/view/AKR20260401000100017",
+                            snippet="스팀이 2026년 여름 할인을 시작했다. 주요 타이틀 할인 목록을 정리했다.",
+                        ),
+                    ],
+                    pages={
+                        "https://store.steampowered.com/sale/summer2026": {
+                            "title": "Steam 여름 할인 - Steam Store",
+                            "text": "Steam 여름 할인이 시작되었습니다.\n수천 개 게임이 최대 90% 할인됩니다.",
+                            "excerpt": "Steam 여름 할인이 시작되었습니다.",
+                        },
+                        "https://www.yna.co.kr/view/AKR20260401000100017": {
+                            "title": "스팀 여름 할인 시작 - 게임뉴스",
+                            "text": "스팀이 2026년 여름 할인을 시작했다.\n주요 타이틀 할인 목록을 정리했다.",
+                            "excerpt": "스팀이 2026년 여름 할인을 시작했다.",
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+            payload = service.handle_chat(
+                {
+                    "session_id": "mixed-source-latest-session",
+                    "user_text": "최신 스팀 할인 소식 검색해줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(payload["ok"])
+            history = payload["session"]["web_search_history"]
+            self.assertEqual(len(history), 1)
+            self.assertEqual(history[0]["answer_mode"], "latest_update")
+            self.assertEqual(history[0]["verification_label"], "공식+기사 교차 확인")
+            self.assertEqual(history[0]["source_roles"], ["보조 기사", "공식 기반"])
+
+    def test_handle_chat_mixed_source_latest_update_reload_exact_fields(self) -> None:
+        """handle_chat 두 번 호출: initial mixed-source latest_update 검색 →
+        같은 세션에서 '방금 검색한 결과 다시 보여줘' reload.
+        reload 응답의 actions_taken, web_search_record_path, response_origin
+        exact field가 initial과 일관되게 유지되는지 통합 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="Steam 여름 할인 - Steam Store",
+                            url="https://store.steampowered.com/sale/summer2026",
+                            snippet="Steam 여름 할인이 시작되었습니다. 수천 개 게임이 최대 90% 할인됩니다.",
+                        ),
+                        SimpleNamespace(
+                            title="스팀 여름 할인 시작 - 게임뉴스",
+                            url="https://www.yna.co.kr/view/AKR20260401000100017",
+                            snippet="스팀이 2026년 여름 할인을 시작했다. 주요 타이틀 할인 목록을 정리했다.",
+                        ),
+                    ],
+                    pages={
+                        "https://store.steampowered.com/sale/summer2026": {
+                            "title": "Steam 여름 할인 - Steam Store",
+                            "text": "Steam 여름 할인이 시작되었습니다.\n수천 개 게임이 최대 90% 할인됩니다.",
+                            "excerpt": "Steam 여름 할인이 시작되었습니다.",
+                        },
+                        "https://www.yna.co.kr/view/AKR20260401000100017": {
+                            "title": "스팀 여름 할인 시작 - 게임뉴스",
+                            "text": "스팀이 2026년 여름 할인을 시작했다.\n주요 타이틀 할인 목록을 정리했다.",
+                            "excerpt": "스팀이 2026년 여름 할인을 시작했다.",
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: initial mixed-source latest_update 검색 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "reload-mixed-session",
+                    "user_text": "최신 스팀 할인 소식 검색해줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_record_path = first["response"]["web_search_record_path"]
+            self.assertTrue(first_record_path)
+
+            # --- 둘째 호출: 같은 세션에서 reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": "reload-mixed-session",
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
+            reload_origin = second["response"]["response_origin"]
+            self.assertIsNotNone(reload_origin)
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertEqual(reload_origin["verification_label"], "공식+기사 교차 확인")
+            self.assertEqual(reload_origin["source_roles"], ["보조 기사", "공식 기반"])
+
+    def test_handle_chat_single_source_latest_update_reload_exact_fields(self) -> None:
+        """handle_chat 두 번 호출: single-source latest_update 검색 →
+        같은 세션에서 '방금 검색한 결과 다시 보여줘' reload.
+        reload 응답의 actions_taken, web_search_record_path, response_origin
+        exact field가 single-source contract과 일관되게 유지되는지 통합 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="서울 날씨 - 예보",
+                            url="https://example.com/seoul-weather",
+                            snippet="서울은 맑고 낮 최고 17도, 밤 최저 7도로 예보되었습니다.",
+                        )
+                    ],
+                    pages={
+                        "https://example.com/seoul-weather": {
+                            "title": "서울 날씨 - 예보",
+                            "text": "서울은 맑고 낮 최고 17도.\n미세먼지 보통.",
+                            "excerpt": "서울은 맑고 낮 최고 17도.",
+                        }
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: single-source latest_update 검색 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "reload-single-session",
+                    "user_text": "서울 날씨 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_record_path = first["response"]["web_search_record_path"]
+            self.assertTrue(first_record_path)
+
+            # --- 둘째 호출: 같은 세션에서 reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": "reload-single-session",
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
+            reload_origin = second["response"]["response_origin"]
+            self.assertIsNotNone(reload_origin)
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertEqual(reload_origin["verification_label"], "단일 출처 참고")
+            self.assertEqual(reload_origin["source_roles"], ["보조 출처"])
+
+    def test_handle_chat_load_web_search_record_id_single_source_latest_update_exact_fields(self) -> None:
+        """load_web_search_record_id를 직접 전달하는 history-card 선택 경로에서
+        single-source latest_update record의 response_origin exact field가
+        유지되는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="서울 날씨 - 예보",
+                            url="https://example.com/seoul-weather",
+                            snippet="서울은 맑고 낮 최고 17도, 밤 최저 7도로 예보되었습니다.",
+                        )
+                    ],
+                    pages={
+                        "https://example.com/seoul-weather": {
+                            "title": "서울 날씨 - 예보",
+                            "text": "서울은 맑고 낮 최고 17도.\n미세먼지 보통.",
+                            "excerpt": "서울은 맑고 낮 최고 17도.",
+                        }
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: single-source latest_update 검색 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "reload-by-id-single-session",
+                    "user_text": "서울 날씨 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_record_path = first["response"]["web_search_record_path"]
+            self.assertTrue(first_record_path)
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # --- 둘째 호출: load_web_search_record_id만 전달 ---
+            second = service.handle_chat(
+                {
+                    "session_id": "reload-by-id-single-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
+            reload_origin = second["response"]["response_origin"]
+            self.assertIsNotNone(reload_origin)
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertEqual(reload_origin["verification_label"], "단일 출처 참고")
+            self.assertEqual(reload_origin["source_roles"], ["보조 출처"])
+
+    def test_handle_chat_load_web_search_record_id_mixed_source_latest_update_exact_fields(self) -> None:
+        """load_web_search_record_id를 직접 전달하는 history-card 선택 경로에서
+        mixed-source (official + news) latest_update record의 response_origin
+        exact field가 유지되는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="Steam 여름 할인 - Steam Store",
+                            url="https://store.steampowered.com/sale/summer2026",
+                            snippet="Steam 여름 할인이 시작되었습니다. 수천 개 게임이 최대 90% 할인됩니다.",
+                        ),
+                        SimpleNamespace(
+                            title="스팀 여름 할인 시작 - 게임뉴스",
+                            url="https://www.yna.co.kr/view/AKR20260401000100017",
+                            snippet="스팀이 2026년 여름 할인을 시작했다. 주요 타이틀 할인 목록을 정리했다.",
+                        ),
+                    ],
+                    pages={
+                        "https://store.steampowered.com/sale/summer2026": {
+                            "title": "Steam 여름 할인 - Steam Store",
+                            "text": "Steam 여름 할인이 시작되었습니다.\n수천 개 게임이 최대 90% 할인됩니다.",
+                            "excerpt": "Steam 여름 할인이 시작되었습니다.",
+                        },
+                        "https://www.yna.co.kr/view/AKR20260401000100017": {
+                            "title": "스팀 여름 할인 시작 - 게임뉴스",
+                            "text": "스팀이 2026년 여름 할인을 시작했다.\n주요 타이틀 할인 목록을 정리했다.",
+                            "excerpt": "스팀이 2026년 여름 할인을 시작했다.",
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: mixed-source latest_update 검색 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "reload-by-id-mixed-session",
+                    "user_text": "최신 스팀 할인 소식 검색해줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_record_path = first["response"]["web_search_record_path"]
+            self.assertTrue(first_record_path)
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # --- 둘째 호출: load_web_search_record_id만 전달 ---
+            second = service.handle_chat(
+                {
+                    "session_id": "reload-by-id-mixed-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
+            reload_origin = second["response"]["response_origin"]
+            self.assertIsNotNone(reload_origin)
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertEqual(reload_origin["verification_label"], "공식+기사 교차 확인")
+            self.assertEqual(reload_origin["source_roles"], ["보조 기사", "공식 기반"])
+
+    def test_handle_chat_load_web_search_record_id_entity_card_exact_fields(self) -> None:
+        """load_web_search_record_id를 직접 전달하는 history-card 선택 경로에서
+        entity_card record의 response_origin exact field가
+        유지되는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: entity-card 검색 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "reload-by-id-entity-session",
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_record_path = first["response"]["web_search_record_path"]
+            self.assertTrue(first_record_path)
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # --- 둘째 호출: load_web_search_record_id만 전달 ---
+            second = service.handle_chat(
+                {
+                    "session_id": "reload-by-id-entity-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
+            reload_origin = second["response"]["response_origin"]
+            self.assertIsNotNone(reload_origin)
+            self.assertEqual(reload_origin["answer_mode"], "entity_card")
+            self.assertEqual(reload_origin["verification_label"], "설명형 단일 출처")
+            self.assertEqual(reload_origin["source_roles"], ["백과 기반"])
+
+    def test_handle_chat_entity_card_dual_probe_reload_preserves_active_context_source_paths(self) -> None:
+        """entity-card dual-probe record를 reload했을 때
+        active_context.source_paths에 두 probe URL이 모두 보존됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "dual-probe-reload-session"
+
+            # dual-probe entity-card record를 직접 저장
+            store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {"title": "붉은사막 - 나무위키", "url": "https://namu.wiki/w/test", "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.", "matched_query": "붉은사막"},
+                    {"title": "붉은사막 | 플랫폼 - 공식", "url": "https://www.pearlabyss.com/200", "snippet": "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.", "matched_query": "붉은사막 공식 플랫폼"},
+                    {"title": "붉은사막 | 서비스 - 공식", "url": "https://www.pearlabyss.com/300", "snippet": "붉은사막은 펄어비스가 운영하는 게임이다.", "matched_query": "붉은사막 서비스 공식"},
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+            )
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool([]),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            records = store.list_session_record_summaries(session_id)
+            record_id = records[0]["record_id"]
+
+            result = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+
+            self.assertTrue(result["ok"])
+            source_paths = result["session"]["active_context"]["source_paths"]
+            self.assertIn("https://www.pearlabyss.com/200", source_paths)
+            self.assertIn("https://www.pearlabyss.com/300", source_paths)
+
+    def test_handle_chat_actual_entity_search_dual_probe_reload_preserves_active_context_source_paths(self) -> None:
+        """실제 entity search → stored record → load_web_search_record_id reload 경로에서
+        dual probe가 active_context.source_paths에 보존됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    {
+                        "붉은사막에 대해 알려줘": [
+                            SimpleNamespace(
+                                title="붉은사막 - 나무위키",
+                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                        ],
+                        "붉은사막": [
+                            SimpleNamespace(
+                                title="붉은사막 - 나무위키",
+                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                        ],
+                        "붉은사막 공식 플랫폼": [
+                            SimpleNamespace(
+                                title="붉은사막 | 플랫폼 - 공식",
+                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200",
+                                snippet="붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.",
+                            ),
+                        ],
+                        "붉은사막 서비스 공식": [
+                            SimpleNamespace(
+                                title="붉은사막 | 서비스 - 공식",
+                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300",
+                                snippet="붉은사막은 펄어비스가 운영하는 게임이다.",
+                            ),
+                        ],
+                    },
+                    pages={
+                        "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200": {
+                            "title": "붉은사막 | 플랫폼 - 공식",
+                            "text": "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이며 펄어비스가 개발 중입니다.",
+                            "excerpt": "PC와 콘솔 플랫폼으로 출시 예정",
+                        },
+                        "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300": {
+                            "title": "붉은사막 | 서비스 - 공식",
+                            "text": "붉은사막은 펄어비스가 운영하는 게임이며 배급도 펄어비스가 담당합니다.",
+                            "excerpt": "붉은사막은 펄어비스가 운영하는 게임입니다.",
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: 실제 entity search → record 저장 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "actual-dual-probe-reload-session",
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # --- 둘째 호출: history-card reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": "actual-dual-probe-reload-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            reload_source_paths = second["session"]["active_context"]["source_paths"]
+            self.assertIn("https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200", reload_source_paths)
+            self.assertIn("https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300", reload_source_paths)
+
+    def test_handle_chat_actual_entity_search_dual_probe_natural_reload_preserves_source_paths(self) -> None:
+        """실제 entity search → 자연어 recent-record recall 경로에서
+        dual probe가 active_context.source_paths에 보존됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    {
+                        "붉은사막에 대해 알려줘": [
+                            SimpleNamespace(
+                                title="붉은사막 - 나무위키",
+                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                        ],
+                        "붉은사막": [
+                            SimpleNamespace(
+                                title="붉은사막 - 나무위키",
+                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                        ],
+                        "붉은사막 공식 플랫폼": [
+                            SimpleNamespace(
+                                title="붉은사막 | 플랫폼 - 공식",
+                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200",
+                                snippet="붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.",
+                            ),
+                        ],
+                        "붉은사막 서비스 공식": [
+                            SimpleNamespace(
+                                title="붉은사막 | 서비스 - 공식",
+                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300",
+                                snippet="붉은사막은 펄어비스가 운영하는 게임이다.",
+                            ),
+                        ],
+                    },
+                    pages={
+                        "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200": {
+                            "title": "붉은사막 | 플랫폼 - 공식",
+                            "text": "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이며 펄어비스가 개발 중입니다.",
+                            "excerpt": "PC와 콘솔 플랫폼으로 출시 예정",
+                        },
+                        "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300": {
+                            "title": "붉은사막 | 서비스 - 공식",
+                            "text": "붉은사막은 펄어비스가 운영하는 게임이며 배급도 펄어비스가 담당합니다.",
+                            "excerpt": "붉은사막은 펄어비스가 운영하는 게임입니다.",
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: 실제 entity search ---
+            first = service.handle_chat(
+                {
+                    "session_id": "natural-dual-probe-reload-session",
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+
+            # --- 둘째 호출: 자연어 recent-record recall ---
+            second = service.handle_chat(
+                {
+                    "session_id": "natural-dual-probe-reload-session",
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            reload_source_paths = second["session"]["active_context"]["source_paths"]
+            self.assertIn("https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200", reload_source_paths)
+            self.assertIn("https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300", reload_source_paths)
+
+    def test_handle_chat_actual_entity_search_natural_reload_exact_fields(self) -> None:
+        """실제 entity search → 자연어 recent-record recall 경로에서
+        response_origin의 answer_mode, verification_label, source_roles와
+        web_search_record_path가 initial 결과와 일관되게 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: entity search ---
+            first = service.handle_chat(
+                {
+                    "session_id": "entity-natural-reload-exact-session",
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            first_record_path = first["response"]["web_search_record_path"]
+
+            # --- 둘째 호출: 자연어 reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": "entity-natural-reload-exact-session",
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "entity_card")
+            self.assertEqual(reload_origin["verification_label"], first_origin["verification_label"])
+            self.assertEqual(reload_origin["source_roles"], first_origin["source_roles"])
+            self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
+
+    def test_handle_chat_dual_probe_entity_search_natural_reload_exact_fields(self) -> None:
+        """실제 dual-probe entity search → 자연어 reload 경로에서
+        response_origin의 answer_mode, verification_label, source_roles와
+        web_search_record_path가 initial과 일관되게 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    {
+                        "붉은사막에 대해 알려줘": [
+                            SimpleNamespace(
+                                title="붉은사막 - 나무위키",
+                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                        ],
+                        "붉은사막": [
+                            SimpleNamespace(
+                                title="붉은사막 - 나무위키",
+                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                        ],
+                        "붉은사막 공식 플랫폼": [
+                            SimpleNamespace(
+                                title="붉은사막 | 플랫폼 - 공식",
+                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200",
+                                snippet="붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.",
+                            ),
+                        ],
+                        "붉은사막 서비스 공식": [
+                            SimpleNamespace(
+                                title="붉은사막 | 서비스 - 공식",
+                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300",
+                                snippet="붉은사막은 펄어비스가 운영하는 게임이다.",
+                            ),
+                        ],
+                    },
+                    pages={
+                        "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200": {
+                            "title": "붉은사막 | 플랫폼 - 공식",
+                            "text": "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이며 펄어비스가 개발 중입니다.",
+                            "excerpt": "PC와 콘솔 플랫폼으로 출시 예정",
+                        },
+                        "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300": {
+                            "title": "붉은사막 | 서비스 - 공식",
+                            "text": "붉은사막은 펄어비스가 운영하는 게임이며 배급도 펄어비스가 담당합니다.",
+                            "excerpt": "붉은사막은 펄어비스가 운영하는 게임입니다.",
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: dual-probe entity search ---
+            first = service.handle_chat(
+                {
+                    "session_id": "dual-probe-exact-reload-session",
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            first_record_path = first["response"]["web_search_record_path"]
+            self.assertEqual(first_origin["answer_mode"], "entity_card")
+
+            # --- 둘째 호출: 자연어 reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": "dual-probe-exact-reload-session",
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "entity_card")
+            self.assertEqual(reload_origin["verification_label"], first_origin["verification_label"])
+            self.assertEqual(reload_origin["source_roles"], first_origin["source_roles"])
+            self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
+
+    def test_handle_chat_dual_probe_entity_search_history_card_reload_exact_fields(self) -> None:
+        """실제 dual-probe entity search → load_web_search_record_id reload에서
+        response_origin exact field가 initial과 일관되게 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    {
+                        "붉은사막에 대해 알려줘": [
+                            SimpleNamespace(
+                                title="붉은사막 - 나무위키",
+                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                        ],
+                        "붉은사막": [
+                            SimpleNamespace(
+                                title="붉은사막 - 나무위키",
+                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                        ],
+                        "붉은사막 공식 플랫폼": [
+                            SimpleNamespace(
+                                title="붉은사막 | 플랫폼 - 공식",
+                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200",
+                                snippet="붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.",
+                            ),
+                        ],
+                        "붉은사막 서비스 공식": [
+                            SimpleNamespace(
+                                title="붉은사막 | 서비스 - 공식",
+                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300",
+                                snippet="붉은사막은 펄어비스가 운영하는 게임이다.",
+                            ),
+                        ],
+                    },
+                    pages={
+                        "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200": {
+                            "title": "붉은사막 | 플랫폼 - 공식",
+                            "text": "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이며 펄어비스가 개발 중입니다.",
+                            "excerpt": "PC와 콘솔 플랫폼으로 출시 예정",
+                        },
+                        "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300": {
+                            "title": "붉은사막 | 서비스 - 공식",
+                            "text": "붉은사막은 펄어비스가 운영하는 게임이며 배급도 펄어비스가 담당합니다.",
+                            "excerpt": "붉은사막은 펄어비스가 운영하는 게임입니다.",
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: dual-probe entity search ---
+            first = service.handle_chat(
+                {
+                    "session_id": "dual-probe-hcard-exact-session",
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            first_record_path = first["response"]["web_search_record_path"]
+            self.assertEqual(first_origin["answer_mode"], "entity_card")
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # --- 둘째 호출: history-card reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": "dual-probe-hcard-exact-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "entity_card")
+            self.assertEqual(reload_origin["verification_label"], first_origin["verification_label"])
+            self.assertEqual(reload_origin["source_roles"], first_origin["source_roles"])
+            self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
+
+    def test_handle_chat_zero_strong_slot_entity_card_history_badge_serialization(self) -> None:
+        """zero-strong-slot entity-card가 저장될 때 history-card header의
+        verification_label이 downgraded non-strong label로 직렬화됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="테스트게임 - 나무위키",
+                            url="https://namu.wiki/w/testgame",
+                            snippet="테스트게임은 알 수 없는 개발사의 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="테스트게임 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/testgame",
+                            snippet="테스트게임은 정보가 부족한 게임이다.",
+                        ),
+                    ],
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            payload = service.handle_chat(
+                {
+                    "session_id": "zero-strong-history-session",
+                    "user_text": "테스트게임에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+
+            self.assertTrue(payload["ok"])
+            history = payload["session"]["web_search_history"]
+            self.assertGreaterEqual(len(history), 1)
+            self.assertEqual(history[0]["answer_mode"], "entity_card")
+            self.assertNotEqual(history[0]["verification_label"], "설명형 다중 출처 합의")
+            self.assertTrue(history[0]["verification_label"])
+            self.assertIsInstance(history[0]["source_roles"], list)
+            self.assertGreaterEqual(len(history[0]["source_roles"]), 1)
+
+    def test_handle_chat_zero_strong_slot_entity_card_history_card_reload_exact_fields(self) -> None:
+        """zero-strong-slot entity-card record를 load_web_search_record_id로
+        reload했을 때 downgraded verification_label과 exact field가 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="테스트게임 - 나무위키",
+                            url="https://namu.wiki/w/testgame",
+                            snippet="테스트게임은 알 수 없는 개발사의 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="테스트게임 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/testgame",
+                            snippet="테스트게임은 정보가 부족한 게임이다.",
+                        ),
+                    ],
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: zero-strong-slot entity search ---
+            first = service.handle_chat(
+                {
+                    "session_id": "zero-strong-hcard-reload-session",
+                    "user_text": "테스트게임에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            first_record_path = first["response"]["web_search_record_path"]
+            self.assertEqual(first_origin["answer_mode"], "entity_card")
+            self.assertNotEqual(first_origin["verification_label"], "설명형 다중 출처 합의")
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # --- 둘째 호출: history-card reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": "zero-strong-hcard-reload-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "entity_card")
+            self.assertEqual(reload_origin["verification_label"], first_origin["verification_label"])
+            self.assertEqual(reload_origin["source_roles"], first_origin["source_roles"])
+            self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
+
+    def test_handle_chat_zero_strong_slot_entity_card_natural_reload_exact_fields(self) -> None:
+        """zero-strong-slot entity-card record를 자연어 reload했을 때
+        downgraded verification_label과 exact field가 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="테스트게임 - 나무위키",
+                            url="https://namu.wiki/w/testgame",
+                            snippet="테스트게임은 알 수 없는 개발사의 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="테스트게임 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/testgame",
+                            snippet="테스트게임은 정보가 부족한 게임이다.",
+                        ),
+                    ],
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: zero-strong-slot entity search ---
+            first = service.handle_chat(
+                {
+                    "session_id": "zero-strong-natural-reload-session",
+                    "user_text": "테스트게임에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            first_record_path = first["response"]["web_search_record_path"]
+            self.assertEqual(first_origin["answer_mode"], "entity_card")
+            self.assertNotEqual(first_origin["verification_label"], "설명형 다중 출처 합의")
+
+            # --- 둘째 호출: 자연어 reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": "zero-strong-natural-reload-session",
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "entity_card")
+            self.assertEqual(reload_origin["verification_label"], first_origin["verification_label"])
+            self.assertEqual(reload_origin["source_roles"], first_origin["source_roles"])
+            self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
+
+    def test_handle_chat_entity_card_separates_weak_and_missing_slot_sections(self) -> None:
+        """entity-card 응답 본문에서 '단일 출처 확인 정보:'(단일 출처 weak slot)와
+        '아직 확인되지 않은 항목:'(근거 없는 missing slot)가 분리되어 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            payload = service.handle_chat(
+                {
+                    "session_id": "weak-vs-missing-section-session",
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+
+            self.assertTrue(payload["ok"])
+            text = payload["response"]["text"]
+            # weak slot (단일 출처)과 missing slot이 별도 섹션으로 분리
+            self.assertIn("단일 출처 확인 정보:", text)
+            self.assertIn("아직 확인되지 않은 항목:", text)
+            # weak slot은 "단일 출처" 문구 포함
+            uncertain_start = text.index("단일 출처 확인 정보:")
+            needs_check_start = text.index("아직 확인되지 않은 항목:")
+            uncertain_section = text[uncertain_start:needs_check_start]
+            self.assertIn("단일 출처", uncertain_section)
+            # missing slot은 "교차 확인 가능한 근거를 찾지 못했습니다" 문구 포함
+            needs_check_section = text[needs_check_start:]
+            self.assertIn("교차 확인 가능한 근거를 찾지 못했습니다", needs_check_section)
+
+    def test_handle_chat_entity_card_weak_vs_missing_slot_retained_after_history_card_reload(self) -> None:
+        """entity-card 검색 → load_web_search_record_id reload 후에도
+        '단일 출처 확인 정보:'와 '아직 확인되지 않은 항목:' 섹션이 분리되어 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: entity search ---
+            first = service.handle_chat(
+                {
+                    "session_id": "weak-missing-reload-session",
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # --- 둘째 호출: history-card reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": "weak-missing-reload-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            text = second["response"]["text"]
+            # weak/missing 섹션 분리 유지
+            self.assertIn("단일 출처 확인 정보:", text)
+            self.assertIn("아직 확인되지 않은 항목:", text)
+            uncertain_start = text.index("단일 출처 확인 정보:")
+            needs_check_start = text.index("아직 확인되지 않은 항목:")
+            self.assertIn("단일 출처", text[uncertain_start:needs_check_start])
+            self.assertIn("교차 확인 가능한 근거를 찾지 못했습니다", text[needs_check_start:])
+            # claim_coverage에 weak + missing 모두 존재
+            coverage = second["response"]["claim_coverage"]
+            weak_items = [c for c in coverage if isinstance(c, dict) and c.get("status") == "weak"]
+            missing_items = [c for c in coverage if isinstance(c, dict) and c.get("status") == "missing"]
+            self.assertGreaterEqual(len(weak_items), 1)
+            self.assertGreaterEqual(len(missing_items), 1)
+
+    def test_handle_chat_entity_card_weak_vs_missing_slot_retained_after_natural_reload(self) -> None:
+        """entity-card 검색 → 자연어 recent-record reload 후에도
+        '단일 출처 확인 정보:'와 '아직 확인되지 않은 항목:' 섹션이 분리되어 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "weak-missing-natural-reload-session",
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+
+            second = service.handle_chat(
+                {
+                    "session_id": "weak-missing-natural-reload-session",
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            text = second["response"]["text"]
+            self.assertIn("단일 출처 확인 정보:", text)
+            self.assertIn("아직 확인되지 않은 항목:", text)
+            uncertain_start = text.index("단일 출처 확인 정보:")
+            needs_check_start = text.index("아직 확인되지 않은 항목:")
+            self.assertIn("단일 출처", text[uncertain_start:needs_check_start])
+            self.assertIn("교차 확인 가능한 근거를 찾지 못했습니다", text[needs_check_start:])
+            coverage = second["response"]["claim_coverage"]
+            weak_items = [c for c in coverage if isinstance(c, dict) and c.get("status") == "weak"]
+            missing_items = [c for c in coverage if isinstance(c, dict) and c.get("status") == "missing"]
+            self.assertGreaterEqual(len(weak_items), 1)
+            self.assertGreaterEqual(len(missing_items), 1)
+
+    def test_web_search_store_badge_data_contract_serializes_exact_fields(self) -> None:
+        """WebSearchStore.save → list_session_record_summaries가 answer_mode,
+        verification_label, source_roles를 exact하게 직렬화하는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            store = WebSearchStore(base_dir=str(Path(tmp_dir) / "web-search"))
+            session_id = "badge-contract-session"
+
+            # entity_card — 공식+기사 교차 확인, 복수 source_roles
+            store.save(
+                session_id=session_id,
+                query="대통령 출생일",
+                permission="enabled",
+                results=[{"url": "https://example.com/a", "snippet": "결과 A"}],
+                summary_text="entity card summary",
+                pages=[{"url": "https://example.com/a", "fetch_status": "ok", "text": "본문"}],
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "entity_card",
+                    "verification_label": "공식+기사 교차 확인",
+                    "source_roles": ["공식 기반", "보조 기사"],
+                },
+            )
+
+            # latest_update — 설명형 단일 출처, 단일 source_role
+            store.save(
+                session_id=session_id,
+                query="최근 경제 동향",
+                permission="enabled",
+                results=[{"url": "https://example.com/b", "snippet": "결과 B"}],
+                summary_text="latest update summary",
+                pages=[{"url": "https://example.com/b", "fetch_status": "ok", "text": "본문"}],
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "latest_update",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["설명형 출처"],
+                },
+            )
+
+            # general — 보조 커뮤니티 참고, response_origin 없음 (fallback)
+            store.save(
+                session_id=session_id,
+                query="일반 검색어",
+                permission="enabled",
+                results=[{"url": "https://example.com/c", "snippet": "결과 C"}],
+                summary_text="general summary",
+                pages=[],
+                response_origin=None,
+            )
+
+            summaries = store.list_session_record_summaries(session_id)
+            self.assertEqual(len(summaries), 3)
+
+            by_query = {s["query"]: s for s in summaries}
+
+            # entity_card
+            entity = by_query["대통령 출생일"]
+            self.assertEqual(entity["answer_mode"], "entity_card")
+            self.assertEqual(entity["verification_label"], "공식+기사 교차 확인")
+            self.assertEqual(entity["source_roles"], ["공식 기반", "보조 기사"])
+
+            # latest_update
+            latest = by_query["최근 경제 동향"]
+            self.assertEqual(latest["answer_mode"], "latest_update")
+            self.assertEqual(latest["verification_label"], "설명형 단일 출처")
+            self.assertEqual(latest["source_roles"], ["설명형 출처"])
+
+            # general (no response_origin → fallback defaults)
+            general = by_query["일반 검색어"]
+            self.assertEqual(general["answer_mode"], "general")
+            self.assertEqual(general["verification_label"], "")
+            self.assertEqual(general["source_roles"], [])
+
+
+    def test_handle_chat_entity_card_multi_source_agreement_retained_after_history_card_reload(self) -> None:
+        """multi-source entity-card에서 agreement-backed 사실 카드 텍스트가
+        load_web_search_record_id reload 후에도 유지되고,
+        noisy single-source claim이 다시 노출되지 않는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            # noisy single-source: 블로그 boilerplate가 섞인 페이지.
+            # "출시일"/"2025" 는 이 소스에만 있는 고유 claim.
+            noisy_page_text = (
+                "붉은사막 출시일은 2025년 12월로 예정되어 있다. "
+                "로그인 회원가입 구독 광고 전체메뉴 기사제보 "
+                "이용약관 개인정보 쿠키 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="붉은사막 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="붉은사막 출시일 정보",
+                            url="https://blog.example.com/crimson-desert",
+                            snippet="붉은사막 출시일은 2025년 12월로 예정되어 있다.",
+                        ),
+                    ],
+                    pages={
+                        "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89": {
+                            "title": "붉은사막 - 나무위키",
+                            "text": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        },
+                        "https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89": {
+                            "title": "붉은사막 - 위키백과",
+                            "text": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        },
+                        "https://blog.example.com/crimson-desert": {
+                            "title": "붉은사막 출시일 정보",
+                            "text": noisy_page_text,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: multi-source entity-card 검색 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "multi-source-agreement-reload-session",
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_text = first["response"]["text"]
+            first_coverage = first["response"]["claim_coverage"]
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # 첫 응답: agreement-backed strong slot 존재
+            strong_items = [c for c in first_coverage if isinstance(c, dict) and c.get("status") == "strong"]
+            self.assertGreaterEqual(len(strong_items), 1, "첫 응답에 strong slot이 최소 1개 존재해야 합니다")
+
+            # 첫 응답: agreement-backed fact가 텍스트에 포함
+            self.assertIn("사실 카드:", first_text)
+            self.assertIn("교차 확인", first_text)
+
+            # 첫 응답: noisy single-source claim 미노출
+            self.assertNotIn("출시일", first_text, "noisy single-source의 '출시일' claim이 첫 응답에 노출되면 안 됩니다")
+            self.assertNotIn("2025", first_text, "noisy single-source의 '2025' claim이 첫 응답에 노출되면 안 됩니다")
+
+            # --- 둘째 호출: load_web_search_record_id reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": "multi-source-agreement-reload-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            reload_text = second["response"]["text"]
+            reload_coverage = second["response"]["claim_coverage"]
+
+            # reload: agreement-backed strong slot 유지
+            reload_strong = [c for c in reload_coverage if isinstance(c, dict) and c.get("status") == "strong"]
+            self.assertGreaterEqual(len(reload_strong), 1, "reload 후에도 strong slot이 최소 1개 유지되어야 합니다")
+            first_strong_slots = {c["slot"] for c in strong_items}
+            reload_strong_slots = {c["slot"] for c in reload_strong}
+            self.assertTrue(
+                first_strong_slots.issubset(reload_strong_slots),
+                f"첫 응답의 strong slot {first_strong_slots}이 reload에서도 strong이어야 합니다 (reload: {reload_strong_slots})",
+            )
+
+            # reload: 사실 카드 섹션 유지
+            self.assertIn("사실 카드:", reload_text, "reload 후에도 사실 카드 섹션이 유지되어야 합니다")
+            self.assertIn("교차 확인", reload_text)
+
+            # reload: noisy single-source claim 미노출
+            self.assertNotIn("출시일", reload_text, "noisy single-source의 '출시일' claim이 reload에 다시 노출되면 안 됩니다")
+            self.assertNotIn("2025", reload_text, "noisy single-source의 '2025' claim이 reload에 다시 노출되면 안 됩니다")
+
+
+    def test_handle_chat_entity_card_multi_source_agreement_over_noise_natural_reload(self) -> None:
+        """multi-source entity-card 검색 → 자연어 recent-record reload 후에도
+        agreement-backed 사실 카드는 유지되고 noisy single-source claim은
+        다시 노출되지 않는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_page_text = (
+                "붉은사막 출시일은 2025년 12월로 예정되어 있다. "
+                "로그인 회원가입 구독 광고 전체메뉴 기사제보 "
+                "이용약관 개인정보 쿠키 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="붉은사막 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="붉은사막 출시일 정보",
+                            url="https://blog.example.com/crimson-desert",
+                            snippet="붉은사막 출시일은 2025년 12월로 예정되어 있다.",
+                        ),
+                    ],
+                    pages={
+                        "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89": {
+                            "title": "붉은사막 - 나무위키",
+                            "text": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        },
+                        "https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89": {
+                            "title": "붉은사막 - 위키백과",
+                            "text": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        },
+                        "https://blog.example.com/crimson-desert": {
+                            "title": "붉은사막 출시일 정보",
+                            "text": noisy_page_text,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: multi-source entity-card 검색 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "agreement-noise-natural-reload-session",
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_text = first["response"]["text"]
+
+            # 첫 응답: agreement-backed fact 유지, noisy claim 미노출
+            self.assertIn("사실 카드:", first_text)
+            self.assertIn("교차 확인", first_text)
+            self.assertNotIn("출시일", first_text)
+            self.assertNotIn("2025", first_text)
+
+            # 첫 응답: source_roles에 noisy single-source role 미포함
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["source_roles"], ["백과 기반"])
+            self.assertNotIn("설명형 출처", first_origin["source_roles"])
+
+            # 첫 응답: history badge에도 noisy role 미포함
+            first_history = first["session"]["web_search_history"][0]
+            self.assertEqual(first_history["source_roles"], ["백과 기반"])
+
+            # --- 둘째 호출: 자연어 recent-record reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": "agreement-noise-natural-reload-session",
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            reload_text = second["response"]["text"]
+
+            # reload: agreement-backed 사실 카드 유지
+            self.assertIn("사실 카드:", reload_text, "자연어 reload 후에도 사실 카드 섹션이 유지되어야 합니다")
+            self.assertIn("교차 확인", reload_text)
+
+            # reload: noisy single-source claim 미노출
+            self.assertNotIn("출시일", reload_text, "noisy single-source의 '출시일' claim이 자연어 reload에 노출되면 안 됩니다")
+            self.assertNotIn("2025", reload_text, "noisy single-source의 '2025' claim이 자연어 reload에 노출되면 안 됩니다")
+
+            # reload: source_roles에 noisy single-source role 미포함
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["source_roles"], ["백과 기반"])
+            self.assertNotIn("설명형 출처", reload_origin["source_roles"])
+
+
+    def test_handle_chat_latest_update_noisy_source_excluded_from_body_and_badge(self) -> None:
+        """latest_update 검색에서 noisy community source가 본문, source_roles,
+        history badge에 노출되지 않고, 자연어 reload에서도 유지되는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 한국경제",
+                            url="https://www.hankyung.com/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.hankyung.com/economy/2025": {
+                            "title": "기준금리 속보 - 한국경제",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: latest_update 검색 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "latest-update-noisy-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            first_text = first["response"]["text"]
+
+            # latest_update 모드 확인
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+
+            # 첫 응답: noisy community source 미노출
+            self.assertNotIn("보조 커뮤니티", str(first_origin["source_roles"]))
+            self.assertNotIn("brunch", first_text)
+
+            # 첫 응답: history badge에도 noisy role 미포함
+            first_history = first["session"]["web_search_history"][0]
+            self.assertNotIn("보조 커뮤니티", str(first_history.get("source_roles", [])))
+
+            # --- 둘째 호출: 자연어 reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": "latest-update-noisy-session",
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            reload_text = second["response"]["text"]
+            reload_origin = second["response"]["response_origin"]
+
+            # reload: noisy community source 미노출
+            self.assertNotIn("보조 커뮤니티", str(reload_origin["source_roles"]))
+            self.assertNotIn("brunch", reload_text)
+
+
+    def test_handle_chat_latest_update_noisy_source_excluded_after_history_card_reload(self) -> None:
+        """latest_update 검색 → load_web_search_record_id history-card reload 후에도
+        noisy community source가 본문·source_roles에 다시 노출되지 않는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 한국경제",
+                            url="https://www.hankyung.com/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.hankyung.com/economy/2025": {
+                            "title": "기준금리 속보 - 한국경제",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: latest_update 검색 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "latest-update-noisy-reload-by-id-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            self.assertEqual(first["response"]["response_origin"]["answer_mode"], "latest_update")
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # --- 둘째 호출: load_web_search_record_id reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": "latest-update-noisy-reload-by-id-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            reload_origin = second["response"]["response_origin"]
+            reload_text = second["response"]["text"]
+
+            # reload: latest_update 모드 유지
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+
+            # reload: noisy community source 미노출
+            self.assertNotIn("보조 커뮤니티", str(reload_origin["source_roles"]))
+            self.assertNotIn("brunch", reload_text)
+
+
+    def test_handle_chat_latest_update_single_source_verification_label_retained_after_history_card_reload(self) -> None:
+        """뉴스 1건 + noisy community 1건 latest_update에서
+        verification_label이 초기 응답·history badge·load_web_search_record_id reload
+        모두 동일하게 유지되는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 한국경제",
+                            url="https://www.hankyung.com/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.hankyung.com/economy/2025": {
+                            "title": "기준금리 속보 - 한국경제",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: latest_update 검색 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "latest-update-vlabel-parity-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+
+            # 첫 응답: single-source verification_label
+            first_label = first_origin["verification_label"]
+            self.assertEqual(first_label, "단일 출처 참고")
+
+            # history badge: 동일 label
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], first_label)
+            record_id = hist["record_id"]
+
+            # --- 둘째 호출: load_web_search_record_id reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": "latest-update-vlabel-parity-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            reload_origin = second["response"]["response_origin"]
+
+            # reload: verification_label parity
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertEqual(
+                reload_origin["verification_label"],
+                first_label,
+                f"reload verification_label이 초기 응답과 동일해야 합니다 (expected: {first_label}, got: {reload_origin['verification_label']})",
+            )
+
+
+    def test_handle_chat_latest_update_dual_news_noisy_community_badge_contract(self) -> None:
+        """기사 2건(hankyung + mk) + noisy community 1건 latest_update에서
+        source_roles가 '보조 기사'이고 verification_label이 '기사 교차 확인'인지,
+        load_web_search_record_id reload 후에도 유지되는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 한국경제",
+                            url="https://www.hankyung.com/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.hankyung.com/economy/2025": {
+                            "title": "기준금리 속보 - 한국경제",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: latest_update 검색 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "dual-news-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+
+            # 첫 응답: 기사 role과 교차 확인 label
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            # history badge
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            # --- 둘째 호출: load_web_search_record_id reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": "dual-news-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            reload_origin = second["response"]["response_origin"]
+
+            # reload: 동일 label 유지
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+
+    def test_handle_chat_latest_update_edaily_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(edaily + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 이데일리",
+                            url="https://www.edaily.co.kr/news/2025",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.edaily.co.kr/news/2025": {
+                            "title": "기준금리 속보 - 이데일리",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "edaily-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "edaily-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+
+    def test_handle_chat_latest_update_etoday_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(etoday + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 이투데이",
+                            url="https://www.etoday.co.kr/news/2025",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.etoday.co.kr/news/2025": {
+                            "title": "기준금리 속보 - 이투데이",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "etoday-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "etoday-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+
+    def test_handle_chat_latest_update_herald_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(herald + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 헤럴드경제",
+                            url="https://news.heraldcorp.com/view/2025",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://news.heraldcorp.com/view/2025": {
+                            "title": "기준금리 속보 - 헤럴드경제",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "herald-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "herald-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+
+    def test_handle_chat_latest_update_zdnet_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(zdnet + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - ZDNet Korea",
+                            url="https://zdnet.co.kr/view/2025",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://zdnet.co.kr/view/2025": {
+                            "title": "기준금리 속보 - ZDNet Korea",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "zdnet-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "zdnet-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+
+    def test_handle_chat_latest_update_dt_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(dt + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 디지털타임스",
+                            url="https://www.dt.co.kr/contents/2025",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.dt.co.kr/contents/2025": {
+                            "title": "기준금리 속보 - 디지털타임스",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "dt-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "dt-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+
+    def test_handle_chat_latest_update_seoul_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(seoul + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 서울신문",
+                            url="https://www.seoul.co.kr/news/2025",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.seoul.co.kr/news/2025": {
+                            "title": "기준금리 속보 - 서울신문",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "seoul-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "seoul-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+
+    def test_handle_chat_latest_update_newdaily_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(newdaily + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 뉴데일리경제",
+                            url="https://biz.newdaily.co.kr/news/2025",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://biz.newdaily.co.kr/news/2025": {
+                            "title": "기준금리 속보 - 뉴데일리경제",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "newdaily-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "newdaily-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+
+    def test_handle_chat_latest_update_moneytoday_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(moneytoday + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 머니투데이",
+                            url="https://www.moneytoday.co.kr/news/2025",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.moneytoday.co.kr/news/2025": {
+                            "title": "기준금리 속보 - 머니투데이",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "moneytoday-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "moneytoday-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+
+    def test_handle_chat_latest_update_segye_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(segye + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 세계일보",
+                            url="https://www.segye.com/newsView/202603310001",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.segye.com/newsView/202603310001": {
+                            "title": "기준금리 속보 - 세계일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "segye-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "segye-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+
+    def test_handle_chat_latest_update_sisajournal_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(sisajournal + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 시사저널",
+                            url="https://www.sisajournal.com/news/articleView.html?idxno=123456",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.sisajournal.com/news/articleView.html?idxno=123456": {
+                            "title": "기준금리 속보 - 시사저널",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "sisajournal-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "sisajournal-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_kyeonggi_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(kyeonggi + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 경기일보",
+                            url="https://www.kyeonggi.com/article/202603310001",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.kyeonggi.com/article/202603310001": {
+                            "title": "기준금리 속보 - 경기일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "kyeonggi-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "kyeonggi-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_sisafocus_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(sisafocus + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 시사포커스",
+                            url="https://www.sisafocus.co.kr/news/articleView.html?idxno=123456",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.sisafocus.co.kr/news/articleView.html?idxno=123456": {
+                            "title": "기준금리 속보 - 시사포커스",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "sisafocus-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "sisafocus-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_ikbc_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(ikbc + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - KBC",
+                            url="https://www.ikbc.co.kr/article/view/kbc202603310001",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.ikbc.co.kr/article/view/kbc202603310001": {
+                            "title": "기준금리 속보 - KBC",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "ikbc-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "ikbc-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_kado_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(kado + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 강원도민일보",
+                            url="https://www.kado.net/news/articleView.html?idxno=123456",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.kado.net/news/articleView.html?idxno=123456": {
+                            "title": "기준금리 속보 - 강원도민일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "kado-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "kado-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_ggilbo_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(ggilbo + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 금강일보",
+                            url="https://www.ggilbo.com/news/articleView.html?idxno=1032100",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.ggilbo.com/news/articleView.html?idxno=1032100": {
+                            "title": "기준금리 속보 - 금강일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "ggilbo-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "ggilbo-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_idaegu_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(idaegu + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 대구신문",
+                            url="https://www.idaegu.com/news/articleView.html?idxno=123456",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.idaegu.com/news/articleView.html?idxno=123456": {
+                            "title": "기준금리 속보 - 대구신문",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "idaegu-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "idaegu-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_kyeongin_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(kyeongin + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 경인일보",
+                            url="https://www.kyeongin.com/article/1735821",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.kyeongin.com/article/1735821": {
+                            "title": "기준금리 속보 - 경인일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "kyeongin-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "kyeongin-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_yeongnam_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(yeongnam + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 영남일보",
+                            url="https://www.yeongnam.com/web/view.php?key=202603310001",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.yeongnam.com/web/view.php?key=202603310001": {
+                            "title": "기준금리 속보 - 영남일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "yeongnam-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "yeongnam-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_jemin_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(jemin + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 제민일보",
+                            url="https://www.jemin.com/news/articleView.html?idxno=775221",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.jemin.com/news/articleView.html?idxno=775221": {
+                            "title": "기준금리 속보 - 제민일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "jemin-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "jemin-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_jeonmae_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(jeonmae + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 전매일보",
+                            url="https://www.jeonmae.co.kr/news/articleView.html?idxno=1020304",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.jeonmae.co.kr/news/articleView.html?idxno=1020304": {
+                            "title": "기준금리 속보 - 전매일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "jeonmae-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "jeonmae-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_gndomin_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(gndomin + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 경남도민일보",
+                            url="https://www.gndomin.com/news/articleView.html?idxno=123456",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.gndomin.com/news/articleView.html?idxno=123456": {
+                            "title": "기준금리 속보 - 경남도민일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "gndomin-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "gndomin-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_kwangju_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(kwangju + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 광주일보",
+                            url="https://www.kwangju.co.kr/article.php?aid=1711111111111",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.kwangju.co.kr/article.php?aid=1711111111111": {
+                            "title": "기준금리 속보 - 광주일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "kwangju-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "kwangju-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_ksilbo_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(ksilbo + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 기호일보",
+                            url="https://www.ksilbo.co.kr/news/articleView.html?idxno=123456",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.ksilbo.co.kr/news/articleView.html?idxno=123456": {
+                            "title": "기준금리 속보 - 기호일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "ksilbo-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "ksilbo-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_imaeil_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(imaeil + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 매일신문",
+                            url="https://www.imaeil.com/page/view/2026033112000000000",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.imaeil.com/page/view/2026033112000000000": {
+                            "title": "기준금리 속보 - 매일신문",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "imaeil-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "imaeil-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_kookje_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(kookje + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 국제신문",
+                            url="https://www.kookje.co.kr/news2011/asp/newsbody.asp?code=0300&key=20260331.99099009999",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.kookje.co.kr/news2011/asp/newsbody.asp?code=0300&key=20260331.99099009999": {
+                            "title": "기준금리 속보 - 국제신문",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "kookje-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "kookje-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_jnilbo_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(jnilbo + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 전남일보",
+                            url="https://www.jnilbo.com/76543212345",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.jnilbo.com/76543212345": {
+                            "title": "기준금리 속보 - 전남일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "jnilbo-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "jnilbo-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_jjan_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(jjan + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 전북일보",
+                            url="https://www.jjan.kr/article/20260331500001",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.jjan.kr/article/20260331500001": {
+                            "title": "기준금리 속보 - 전북일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "jjan-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "jjan-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_iusm_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(iusm + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 울산매일",
+                            url="https://www.iusm.co.kr/news/articleView.html?idxno=987654",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.iusm.co.kr/news/articleView.html?idxno=987654": {
+                            "title": "기준금리 속보 - 울산매일",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "iusm-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "iusm-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_mdilbo_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(mdilbo + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 무등일보",
+                            url="https://www.mdilbo.com/detail/c3QycN/740000",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.mdilbo.com/detail/c3QycN/740000": {
+                            "title": "기준금리 속보 - 무등일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "mdilbo-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "mdilbo-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_idaebae_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(idaebae + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 대전일보",
+                            url="https://www.idaebae.com/news/articleView.html?idxno=123456",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.idaebae.com/news/articleView.html?idxno=123456": {
+                            "title": "기준금리 속보 - 대전일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "idaebae-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "idaebae-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_kbsm_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(kbsm + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - KBSM",
+                            url="https://www.kbsm.net/news/articleView.html?idxno=123456",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.kbsm.net/news/articleView.html?idxno=123456": {
+                            "title": "기준금리 속보 - KBSM",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "kbsm-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "kbsm-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_incheonilbo_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(incheonilbo + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 인천일보",
+                            url="https://www.incheonilbo.com/news/articleView.html?idxno=123456",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.incheonilbo.com/news/articleView.html?idxno=123456": {
+                            "title": "기준금리 속보 - 인천일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "incheonilbo-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "incheonilbo-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_daejonilbo_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(daejonilbo + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 대전일보",
+                            url="https://www.daejonilbo.com/news/articleView.html?idxno=123456",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.daejonilbo.com/news/articleView.html?idxno=123456": {
+                            "title": "기준금리 속보 - 대전일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "daejonilbo-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "daejonilbo-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_kihoilbo_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(kihoilbo + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 기호일보",
+                            url="https://www.kihoilbo.co.kr/news/articleView.html?idxno=123456",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.kihoilbo.co.kr/news/articleView.html?idxno=123456": {
+                            "title": "기준금리 속보 - 기호일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "kihoilbo-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "kihoilbo-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_kyeongbuk_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(kyeongbuk + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 경북일보",
+                            url="https://www.kyeongbuk.co.kr/news/articleView.html?idxno=123456",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.kyeongbuk.co.kr/news/articleView.html?idxno=123456": {
+                            "title": "기준금리 속보 - 경북일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "kyeongbuk-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "kyeongbuk-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_goodmorningcc_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(goodmorningcc + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 충청투데이",
+                            url="https://www.goodmorningcc.com/news/articleView.html?idxno=123456",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.goodmorningcc.com/news/articleView.html?idxno=123456": {
+                            "title": "기준금리 속보 - 충청투데이",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "goodmorningcc-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "goodmorningcc-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_cctoday_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(cctoday + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 충청투데이",
+                            url="https://www.cctoday.co.kr/news/articleView.html?idxno=123456",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.cctoday.co.kr/news/articleView.html?idxno=123456": {
+                            "title": "기준금리 속보 - 충청투데이",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "cctoday-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "cctoday-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_chungnamilbo_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(chungnamilbo + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 충남일보",
+                            url="https://www.chungnamilbo.co.kr/news/articleView.html?idxno=123456",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.chungnamilbo.co.kr/news/articleView.html?idxno=123456": {
+                            "title": "기준금리 속보 - 충남일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "chungnamilbo-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "chungnamilbo-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_daejeonilbo_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(daejeonilbo + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 대전일보",
+                            url="https://www.daejeonilbo.com/news/articleView.html?idxno=123456",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.daejeonilbo.com/news/articleView.html?idxno=123456": {
+                            "title": "기준금리 속보 - 대전일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "daejeonilbo-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "daejeonilbo-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_joongdo_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(joongdo + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 중도일보",
+                            url="https://www.joongdo.co.kr/web/view.php?key=20260401010000123",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.joongdo.co.kr/web/view.php?key=20260401010000123": {
+                            "title": "기준금리 속보 - 중도일보",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "joongdo-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "joongdo-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_newsis_mk_noisy_community_badge_contract(self) -> None:
+        """broader sweep 대표: newsis + mk + noisy community latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 뉴시스",
+                            url="https://www.newsis.com/view/NISX20260401_0001",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.newsis.com/view/NISX20260401_0001": {
+                            "title": "기준금리 속보 - 뉴시스",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "newsis-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "newsis-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_unknown_news_host_not_promoted_to_article_role(self) -> None:
+        """unknownlocalnews.kr이 general로 분류돼 news article role로 승격되지 않음을 잠급니다.
+        mk 1건만 news이므로 기사 교차 확인이 아닌 verification_label이 나와야 합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 알수없는뉴스",
+                            url="https://www.unknownlocalnews.kr/article/1",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://www.unknownlocalnews.kr/article/1": {
+                            "title": "기준금리 속보 - 알수없는뉴스",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "unknown-news-not-promoted-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            # unknownlocalnews.kr은 general이므로 기사 교차 확인이 아니어야 함
+            self.assertNotEqual(first_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_news_subdomain_not_promoted_to_article_role(self) -> None:
+        """news.example.com이 general로 분류돼 news article role로 승격되지 않음을 잠급니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - Example News",
+                            url="https://news.example.com/article/1",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://news.example.com/article/1": {
+                            "title": "기준금리 속보 - Example News",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "news-example-not-promoted-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            # news.example.com은 general이므로 기사 교차 확인이 아니어야 함
+            self.assertNotEqual(first_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_naver_news_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(news.naver.com + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 네이버뉴스",
+                            url="https://news.naver.com/main/read.naver?oid=001&aid=0000001",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://news.naver.com/main/read.naver?oid=001&aid=0000001": {
+                            "title": "기준금리 속보 - 네이버뉴스",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "naver-news-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "naver-news-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_daum_v_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(v.daum.net + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 다음뉴스",
+                            url="https://v.daum.net/v/20260401120000001",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://v.daum.net/v/20260401120000001": {
+                            "title": "기준금리 속보 - 다음뉴스",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "daum-v-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "daum-v-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_daum_news_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(news.daum.net + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 다음뉴스",
+                            url="https://news.daum.net/v/20260401120000001",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://news.daum.net/v/20260401120000001": {
+                            "title": "기준금리 속보 - 다음뉴스",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "daum-news-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "daum-news-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_nate_news_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(news.nate.com + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 네이트뉴스",
+                            url="https://news.nate.com/view/20260401n00123",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://news.nate.com/view/20260401n00123": {
+                            "title": "기준금리 속보 - 네이트뉴스",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "nate-news-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "nate-news-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_zum_news_mk_noisy_community_badge_contract(self) -> None:
+        """기사 2건(news.zum.com + mk) + noisy community 1건 latest_update에서
+        source_roles가 generic '보조 출처'를 포함하지 않고
+        verification_label이 '기사 교차 확인'인지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - ZUM뉴스",
+                            url="https://news.zum.com/articles/97600001",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://news.zum.com/articles/97600001": {
+                            "title": "기준금리 속보 - ZUM뉴스",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "zum-news-mk-noisy-latest-update-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", first_origin["source_roles"])
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+
+            hist = first["session"]["web_search_history"][0]
+            self.assertEqual(hist["verification_label"], "기사 교차 확인")
+            record_id = hist["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "zum-news-mk-noisy-latest-update-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertNotIn("보조 출처", reload_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_fake_portal_news_host_not_promoted(self) -> None:
+        """notnews.nate.com이 news로 승격되지 않아 기사 교차 확인이 아님을 잠급니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 가짜뉴스",
+                            url="https://notnews.nate.com/view/1",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://notnews.nate.com/view/1": {
+                            "title": "기준금리 속보 - 가짜뉴스",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "fake-portal-news-not-promoted-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotEqual(first_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_fake_dotted_news_host_not_promoted(self) -> None:
+        """foo-yna.co.kr이 news로 승격되지 않아 기사 교차 확인이 아님을 잠급니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 가짜연합",
+                            url="https://foo-yna.co.kr/article/1",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://foo-yna.co.kr/article/1": {
+                            "title": "기준금리 속보 - 가짜연합",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "fake-dotted-news-not-promoted-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotEqual(first_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_latest_update_fake_fragment_host_not_promoted(self) -> None:
+        """mychosun.com이 news로 승격되지 않아 기사 교차 확인이 아님을 잠급니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = (
+                "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 "
+                "이용약관 개인정보 facebook twitter"
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 마이조선",
+                            url="https://mychosun.com/article/1",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 커뮤니티",
+                            url="https://brunch.co.kr/economy",
+                            snippet=noisy_snippet,
+                        ),
+                    ],
+                    pages={
+                        "https://mychosun.com/article/1": {
+                            "title": "기준금리 속보 - 마이조선",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                        "https://brunch.co.kr/economy": {
+                            "title": "기준금리 커뮤니티",
+                            "text": noisy_snippet,
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "fake-fragment-host-not-promoted-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertNotEqual(first_origin["verification_label"], "기사 교차 확인")
+
+    def test_handle_chat_entity_card_reload_preserves_claim_coverage_progress_summary(self) -> None:
+        """entity-card 검색 → load_web_search_record_id reload에서
+        claim_coverage와 claim_coverage_progress_summary가 stored 값 그대로 보존됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    {
+                        "붉은사막에 대해 알려줘": [
+                            SimpleNamespace(
+                                title="붉은사막 - 나무위키",
+                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                        ],
+                        "붉은사막": [
+                            SimpleNamespace(
+                                title="붉은사막 - 나무위키",
+                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                        ],
+                        "붉은사막 공식 플랫폼": [
+                            SimpleNamespace(
+                                title="붉은사막 | 플랫폼 - 공식",
+                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200",
+                                snippet="붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.",
+                            ),
+                        ],
+                        "붉은사막 서비스 공식": [
+                            SimpleNamespace(
+                                title="붉은사막 | 서비스 - 공식",
+                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300",
+                                snippet="붉은사막은 펄어비스가 운영하는 게임이다.",
+                            ),
+                        ],
+                    },
+                    pages={
+                        "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200": {
+                            "title": "붉은사막 | 플랫폼 - 공식",
+                            "text": "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이며 펄어비스가 개발 중입니다.",
+                            "excerpt": "PC와 콘솔 플랫폼으로 출시 예정",
+                        },
+                        "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300": {
+                            "title": "붉은사막 | 서비스 - 공식",
+                            "text": "붉은사막은 펄어비스가 운영하는 게임이며 배급도 펄어비스가 담당합니다.",
+                            "excerpt": "붉은사막은 펄어비스가 운영하는 게임입니다.",
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: entity search → record 저장 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "entity-claim-progress-reload-session",
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["answer_mode"], "entity_card")
+            first_coverage = first["response"]["claim_coverage"]
+            first_progress = first["response"].get("claim_coverage_progress_summary", "")
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # --- 둘째 호출: history-card reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": "entity-claim-progress-reload-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_coverage = second["response"]["claim_coverage"]
+            reload_progress = second["response"].get("claim_coverage_progress_summary", "")
+
+            # claim_coverage가 stored 값 그대로 보존
+            first_slots = {str(item.get("slot", "")) for item in first_coverage if isinstance(item, dict)}
+            reload_slots = {str(item.get("slot", "")) for item in reload_coverage if isinstance(item, dict)}
+            self.assertEqual(first_slots, reload_slots)
+
+            # claim_coverage_progress_summary가 보존 (둘 다 빈 문자열이거나 둘 다 같은 내용)
+            self.assertEqual(first_progress, reload_progress)
+
+    def test_handle_chat_entity_card_reload_preserves_stored_summary_text(self) -> None:
+        """entity-card 검색 → load_web_search_record_id reload에서
+        show-only 응답 본문이 initial stored summary_text를 그대로 포함합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    {
+                        "붉은사막에 대해 알려줘": [
+                            SimpleNamespace(
+                                title="붉은사막 - 나무위키",
+                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                        ],
+                        "붉은사막": [
+                            SimpleNamespace(
+                                title="붉은사막 - 나무위키",
+                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                        ],
+                        "붉은사막 공식 플랫폼": [
+                            SimpleNamespace(
+                                title="붉은사막 | 플랫폼 - 공식",
+                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200",
+                                snippet="붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.",
+                            ),
+                        ],
+                        "붉은사막 서비스 공식": [
+                            SimpleNamespace(
+                                title="붉은사막 | 서비스 - 공식",
+                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300",
+                                snippet="붉은사막은 펄어비스가 운영하는 게임이다.",
+                            ),
+                        ],
+                    },
+                    pages={
+                        "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200": {
+                            "title": "붉은사막 | 플랫폼 - 공식",
+                            "text": "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이며 펄어비스가 개발 중입니다.",
+                            "excerpt": "PC와 콘솔 플랫폼으로 출시 예정",
+                        },
+                        "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300": {
+                            "title": "붉은사막 | 서비스 - 공식",
+                            "text": "붉은사막은 펄어비스가 운영하는 게임이며 배급도 펄어비스가 담당합니다.",
+                            "excerpt": "붉은사막은 펄어비스가 운영하는 게임입니다.",
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: entity search → record 저장 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "entity-summary-reload-session",
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            # stored summary_text를 record에서 직접 읽음
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+            record = service.web_search_store.get_session_record(
+                "entity-summary-reload-session", record_id
+            )
+            stored_summary = record["summary_text"]
+            self.assertTrue(len(stored_summary) > 0)
+
+            # --- 둘째 호출: history-card reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": "entity-summary-reload-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            # reload 응답 본문에 stored summary text가 그대로 포함
+            self.assertIn(stored_summary, second["response"]["text"])
+
+    def test_handle_chat_entity_card_reload_preserves_stored_response_origin(self) -> None:
+        """entity-card 검색 → load_web_search_record_id reload에서
+        response_origin의 answer_mode, verification_label, source_roles가
+        initial stored 값 그대로 보존됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    {
+                        "붉은사막에 대해 알려줘": [
+                            SimpleNamespace(
+                                title="붉은사막 - 나무위키",
+                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                        ],
+                        "붉은사막": [
+                            SimpleNamespace(
+                                title="붉은사막 - 나무위키",
+                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                        ],
+                        "붉은사막 공식 플랫폼": [
+                            SimpleNamespace(
+                                title="붉은사막 | 플랫폼 - 공식",
+                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200",
+                                snippet="붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.",
+                            ),
+                        ],
+                        "붉은사막 서비스 공식": [
+                            SimpleNamespace(
+                                title="붉은사막 | 서비스 - 공식",
+                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300",
+                                snippet="붉은사막은 펄어비스가 운영하는 게임이다.",
+                            ),
+                        ],
+                    },
+                    pages={
+                        "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200": {
+                            "title": "붉은사막 | 플랫폼 - 공식",
+                            "text": "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이며 펄어비스가 개발 중입니다.",
+                            "excerpt": "PC와 콘솔 플랫폼으로 출시 예정",
+                        },
+                        "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300": {
+                            "title": "붉은사막 | 서비스 - 공식",
+                            "text": "붉은사막은 펄어비스가 운영하는 게임이며 배급도 펄어비스가 담당합니다.",
+                            "excerpt": "붉은사막은 펄어비스가 운영하는 게임입니다.",
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: entity search → record 저장 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "entity-origin-reload-session",
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # --- 둘째 호출: history-card reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": "entity-origin-reload-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+
+            # stored response_origin exact fields 보존
+            self.assertEqual(reload_origin["answer_mode"], first_origin["answer_mode"])
+            self.assertEqual(reload_origin["verification_label"], first_origin["verification_label"])
+            self.assertEqual(reload_origin["source_roles"], first_origin["source_roles"])
+            self.assertEqual(reload_origin.get("badge"), first_origin.get("badge"))
+            self.assertEqual(reload_origin.get("provider"), first_origin.get("provider"))
+
+    def test_handle_chat_entity_card_reload_follow_up_preserves_stored_response_origin(self) -> None:
+        """entity-card 검색 → load_web_search_record_id + user_text follow-up에서
+        response_origin이 stored 값으로 보존되거나 runtime default로 drift하지 않습니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    {
+                        "붉은사막에 대해 알려줘": [
+                            SimpleNamespace(
+                                title="붉은사막 - 나무위키",
+                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                        ],
+                        "붉은사막": [
+                            SimpleNamespace(
+                                title="붉은사막 - 나무위키",
+                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                        ],
+                        "붉은사막 공식 플랫폼": [
+                            SimpleNamespace(
+                                title="붉은사막 | 플랫폼 - 공식",
+                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200",
+                                snippet="붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.",
+                            ),
+                        ],
+                        "붉은사막 서비스 공식": [
+                            SimpleNamespace(
+                                title="붉은사막 | 서비스 - 공식",
+                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300",
+                                snippet="붉은사막은 펄어비스가 운영하는 게임이다.",
+                            ),
+                        ],
+                    },
+                    pages={
+                        "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200": {
+                            "title": "붉은사막 | 플랫폼 - 공식",
+                            "text": "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이며 펄어비스가 개발 중입니다.",
+                            "excerpt": "PC와 콘솔 플랫폼으로 출시 예정",
+                        },
+                        "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300": {
+                            "title": "붉은사막 | 서비스 - 공식",
+                            "text": "붉은사막은 펄어비스가 운영하는 게임이며 배급도 펄어비스가 담당합니다.",
+                            "excerpt": "붉은사막은 펄어비스가 운영하는 게임입니다.",
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: entity search → record 저장 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "entity-followup-origin-session",
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # --- 둘째 호출: reload-follow-up (non-show-only) ---
+            second = service.handle_chat(
+                {
+                    "session_id": "entity-followup-origin-session",
+                    "user_text": "이 검색 결과 요약해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+
+            # response_origin이 존재하고 WEB provider 계열을 유지
+            self.assertIsNotNone(reload_origin)
+            # answer_mode가 stored 값이거나 최소한 entity_card가 유지됨
+            self.assertIn(reload_origin.get("answer_mode", ""), ("entity_card", first_origin["answer_mode"]))
 
 
 if __name__ == "__main__":

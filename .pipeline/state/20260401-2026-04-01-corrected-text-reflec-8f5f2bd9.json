@@ -1,0 +1,48 @@
+{
+  "job_id": "20260401-2026-04-01-corrected-text-reflec-8f5f2bd9",
+  "status": "VERIFY_DONE",
+  "artifact_path": "work/4/1/2026-04-01-corrected-text-reflected-in-next-summary.md",
+  "schema_version": 1,
+  "artifact_hash": "bfcba30c215e57079ffa20617de61888b69a2664a942c984004c9de42f4cb601",
+  "artifact_size": 1965,
+  "artifact_mtime": 1775019753.8825982,
+  "stabilized_at": 1775019758.5146596,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 1775019760.0314357,
+  "last_dispatch_slot": "slot_verify",
+  "feedback_baseline_sig": "1775018342993621536:1334:5a293c030d07276824adc48bf9b96795377ff91eea1dcb7dbf66d6e3fc93e1d5",
+  "verify_manifest_path": "",
+  "verify_completed_at": 1775019766.5636506,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "passed_by_feedback",
+  "created_at": 1775019754.4986486,
+  "updated_at": 1775019766.5637777,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1775019754.4995105,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1775019758.5146618,
+      "reason": "artifact stabilized"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "VERIFY_RUNNING",
+      "at": 1775019760.0315228,
+      "reason": "dispatched to slot_verify"
+    },
+    {
+      "from": "VERIFY_RUNNING",
+      "to": "VERIFY_DONE",
+      "at": 1775019766.5637777,
+      "reason": "codex_feedback.md signature changed after dispatch"
+    }
+  ]
+}

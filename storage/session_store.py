@@ -944,6 +944,16 @@ class SessionStore:
                 return None
 
             data["messages"] = messages
+
+            active_context = data.get("active_context")
+            if isinstance(active_context, dict) and "summary_hint" in active_context:
+                compact = " ".join(normalized_corrected_text.split())
+                max_hint = 240
+                active_context["summary_hint"] = (
+                    compact if len(compact) <= max_hint else compact[:max_hint].rstrip() + "..."
+                )
+                data["active_context"] = active_context
+
             self._save(session_id, data)
             return updated_message
 

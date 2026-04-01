@@ -1,0 +1,48 @@
+{
+  "job_id": "20260401-2026-04-01-overwrite-approval-ex-05edd773",
+  "status": "VERIFY_DONE",
+  "artifact_path": "work/4/1/2026-04-01-overwrite-approval-execution-docs-sync.md",
+  "schema_version": 1,
+  "artifact_hash": "79520a24b6b4217435550689e2486a13832c19c28023f59151703b0d96d1831a",
+  "artifact_size": 2097,
+  "artifact_mtime": 1775022254.4279006,
+  "stabilized_at": 1775022258.5798326,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 1775022260.0918927,
+  "last_dispatch_slot": "slot_verify",
+  "feedback_baseline_sig": "1775022041077831811:1900:7a2035baee39c224790f983cb0e15d88040aba919d304f63a04bd6ac92a97008",
+  "verify_manifest_path": "",
+  "verify_completed_at": 1775022380.5585582,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "timeout",
+  "created_at": 1775022254.5638945,
+  "updated_at": 1775022380.55868,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1775022254.564155,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1775022258.579835,
+      "reason": "artifact stabilized"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "VERIFY_RUNNING",
+      "at": 1775022260.0919402,
+      "reason": "dispatched to slot_verify"
+    },
+    {
+      "from": "VERIFY_RUNNING",
+      "to": "VERIFY_DONE",
+      "at": 1775022380.55868,
+      "reason": "timeout after 120s"
+    }
+  ]
+}

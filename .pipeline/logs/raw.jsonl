@@ -1,0 +1,221 @@
+{"event": "initial_turn", "path": "", "job_id": "startup", "at": 1774958106.315009, "turn": "claude"}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774958106.352327, "reason": "startup_turn_claude"}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774958492.9792032, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-multi-source-agreement-reload-retention.md", "job_id": "20260331-2026-03-31-multi-source-agreemen-3a1d161f", "at": 1774958872.8812604}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-multi-source-agreement-reload-retention.md", "job_id": "20260331-2026-03-31-multi-source-agreemen-3a1d161f", "at": 1774958877.9155025, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774959013.5564542, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-multi-source-agreement-over-noise-reload-lock.md", "job_id": "20260331-2026-03-31-multi-source-agreemen-5e6033eb", "at": 1774959164.1904006}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-multi-source-agreement-over-noise-reload-lock.md", "job_id": "20260331-2026-03-31-multi-source-agreemen-5e6033eb", "at": 1774959169.2414677, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774959330.4713311, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-multi-source-agreement-over-noise-natural-reload-lock.md", "job_id": "20260331-2026-03-31-multi-source-agreemen-6ddd872e", "at": 1774959404.4920099}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-multi-source-agreement-over-noise-natural-reload-lock.md", "job_id": "20260331-2026-03-31-multi-source-agreemen-6ddd872e", "at": 1774959409.5612886, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774959602.8141575, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-entity-card-source-roles-noisy-role-filter.md", "job_id": "20260331-2026-03-31-entity-card-source-ro-c65281ca", "at": 1774959799.4869156}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-entity-card-source-roles-noisy-role-filter.md", "job_id": "20260331-2026-03-31-entity-card-source-ro-c65281ca", "at": 1774959804.51455, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774959976.5152817, "reason": "feedback_updated"}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774960813.382339, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-latest-update-noisy-source-filtering.md", "job_id": "20260331-2026-03-31-latest-update-noisy-s-7feecceb", "at": 1774960831.2448754}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-latest-update-noisy-source-filtering.md", "job_id": "20260331-2026-03-31-latest-update-noisy-s-7feecceb", "at": 1774960836.3056152, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774960992.3302429, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-latest-update-noisy-history-card-reload-lock.md", "job_id": "20260331-2026-03-31-latest-update-noisy-h-9aa5e3ba", "at": 1774961053.866027}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-latest-update-noisy-history-card-reload-lock.md", "job_id": "20260331-2026-03-31-latest-update-noisy-h-9aa5e3ba", "at": 1774961058.9045088, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774961295.8537092, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-latest-update-verification-label-reload-parity.md", "job_id": "20260331-2026-03-31-latest-update-verific-af4e6bb5", "at": 1774961427.3537536}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-latest-update-verification-label-reload-parity.md", "job_id": "20260331-2026-03-31-latest-update-verific-af4e6bb5", "at": 1774961432.3849964, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774961625.9554415, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-hankyung-news-domain-coverage.md", "job_id": "20260331-2026-03-31-hankyung-news-domain--14bff0eb", "at": 1774961746.7166383}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-hankyung-news-domain-coverage.md", "job_id": "20260331-2026-03-31-hankyung-news-domain--14bff0eb", "at": 1774961751.9538794, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774961899.6518002, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-edaily-news-domain-coverage.md", "job_id": "20260331-2026-03-31-edaily-news-domain-co-e65dfe5a", "at": 1774961970.7556584}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-edaily-news-domain-coverage.md", "job_id": "20260331-2026-03-31-edaily-news-domain-co-e65dfe5a", "at": 1774961975.8327563, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774962107.5655117, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-etoday-news-domain-coverage.md", "job_id": "20260331-2026-03-31-etoday-news-domain-co-ceda90f0", "at": 1774962194.2291808}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-etoday-news-domain-coverage.md", "job_id": "20260331-2026-03-31-etoday-news-domain-co-ceda90f0", "at": 1774962199.273, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774962409.4807358, "reason": "feedback_updated"}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774962426.2295914, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-heraldcorp-news-domain-coverage.md", "job_id": "20260331-2026-03-31-heraldcorp-news-domai-f944a8f8", "at": 1774962482.2777984}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-heraldcorp-news-domain-coverage.md", "job_id": "20260331-2026-03-31-heraldcorp-news-domai-f944a8f8", "at": 1774962487.5083885, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774962596.3177621, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-zdnet-news-domain-coverage.md", "job_id": "20260331-2026-03-31-zdnet-news-domain-cov-447499cf", "at": 1774962670.9774787}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-zdnet-news-domain-coverage.md", "job_id": "20260331-2026-03-31-zdnet-news-domain-cov-447499cf", "at": 1774962676.0135424, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774962797.61158, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-dt-news-domain-coverage.md", "job_id": "20260331-2026-03-31-dt-news-domain-covera-6d1e6b3a", "at": 1774962864.0347652}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-dt-news-domain-coverage.md", "job_id": "20260331-2026-03-31-dt-news-domain-covera-6d1e6b3a", "at": 1774962869.0755248, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774962964.9046764, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-seoul-news-domain-coverage.md", "job_id": "20260331-2026-03-31-seoul-news-domain-cov-a2e6d2ab", "at": 1774963027.3376102}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-seoul-news-domain-coverage.md", "job_id": "20260331-2026-03-31-seoul-news-domain-cov-a2e6d2ab", "at": 1774963032.3762324, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774963122.018497, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-newdaily-news-domain-coverage.md", "job_id": "20260331-2026-03-31-newdaily-news-domain--5a6ce72f", "at": 1774963201.47759}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-newdaily-news-domain-coverage.md", "job_id": "20260331-2026-03-31-newdaily-news-domain--5a6ce72f", "at": 1774963206.5064943, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774963357.6853461, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-moneytoday-news-domain-coverage.md", "job_id": "20260331-2026-03-31-moneytoday-news-domai-c7f720ff", "at": 1774963434.1734896}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-moneytoday-news-domain-coverage.md", "job_id": "20260331-2026-03-31-moneytoday-news-domai-c7f720ff", "at": 1774963439.2198718, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774964342.8512197, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-sisajournal-news-domain-coverage.md", "job_id": "20260331-2026-03-31-sisajournal-news-doma-737bb18c", "at": 1774964447.052376}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-sisajournal-news-domain-coverage.md", "job_id": "20260331-2026-03-31-sisajournal-news-doma-737bb18c", "at": 1774964452.0832028, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774964579.8786237, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-kyeonggi-news-domain-coverage.md", "job_id": "20260331-2026-03-31-kyeonggi-news-domain--bd662e09", "at": 1774964655.3132987}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-kyeonggi-news-domain-coverage.md", "job_id": "20260331-2026-03-31-kyeonggi-news-domain--bd662e09", "at": 1774964660.4463792, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774964776.0595214, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-sisafocus-news-domain-coverage.md", "job_id": "20260331-2026-03-31-sisafocus-news-domain-45c94ad3", "at": 1774964845.516521}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-sisafocus-news-domain-coverage.md", "job_id": "20260331-2026-03-31-sisafocus-news-domain-45c94ad3", "at": 1774964850.538445, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774965035.3478017, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-ikbc-news-domain-coverage.md", "job_id": "20260331-2026-03-31-ikbc-news-domain-cove-179ed028", "at": 1774965113.993011}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-ikbc-news-domain-coverage.md", "job_id": "20260331-2026-03-31-ikbc-news-domain-cove-179ed028", "at": 1774965119.1048183, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774965214.5701168, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-kado-news-domain-coverage.md", "job_id": "20260331-2026-03-31-kado-news-domain-cove-5e4b1a40", "at": 1774965296.8208454}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-kado-news-domain-coverage.md", "job_id": "20260331-2026-03-31-kado-news-domain-cove-5e4b1a40", "at": 1774965301.9401193, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774965389.4873614, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-ggilbo-news-domain-coverage.md", "job_id": "20260331-2026-03-31-ggilbo-news-domain-co-cb24192b", "at": 1774965461.932597}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-ggilbo-news-domain-coverage.md", "job_id": "20260331-2026-03-31-ggilbo-news-domain-co-cb24192b", "at": 1774965467.0327883, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774965558.572149, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-idaegu-news-domain-coverage.md", "job_id": "20260331-2026-03-31-idaegu-news-domain-co-5b5c6d19", "at": 1774965630.8114438}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-idaegu-news-domain-coverage.md", "job_id": "20260331-2026-03-31-idaegu-news-domain-co-5b5c6d19", "at": 1774965636.0746367, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774965743.6895351, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-kyeongin-news-domain-coverage.md", "job_id": "20260331-2026-03-31-kyeongin-news-domain--00d369d4", "at": 1774965817.4998822}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-kyeongin-news-domain-coverage.md", "job_id": "20260331-2026-03-31-kyeongin-news-domain--00d369d4", "at": 1774965822.533561, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774965995.246796, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-yeongnam-news-domain-coverage.md", "job_id": "20260331-2026-03-31-yeongnam-news-domain--f91ca38d", "at": 1774966075.600614}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-yeongnam-news-domain-coverage.md", "job_id": "20260331-2026-03-31-yeongnam-news-domain--f91ca38d", "at": 1774966080.6405468, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774966178.339713, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-jemin-news-domain-coverage.md", "job_id": "20260331-2026-03-31-jemin-news-domain-cov-d3d947b5", "at": 1774966251.5530145}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-jemin-news-domain-coverage.md", "job_id": "20260331-2026-03-31-jemin-news-domain-cov-d3d947b5", "at": 1774966256.5798492, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774966350.850107, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-jeonmae-news-domain-coverage.md", "job_id": "20260331-2026-03-31-jeonmae-news-domain-c-3d75667d", "at": 1774966427.8963346}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-jeonmae-news-domain-coverage.md", "job_id": "20260331-2026-03-31-jeonmae-news-domain-c-3d75667d", "at": 1774966432.9592357, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774966519.112015, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-gndomin-news-domain-coverage.md", "job_id": "20260331-2026-03-31-gndomin-news-domain-c-822b3389", "at": 1774966597.4177763}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-gndomin-news-domain-coverage.md", "job_id": "20260331-2026-03-31-gndomin-news-domain-c-822b3389", "at": 1774966602.4539647, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774966681.7139242, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-kwangju-news-domain-coverage.md", "job_id": "20260331-2026-03-31-kwangju-news-domain-c-5e515965", "at": 1774966753.9189389}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-kwangju-news-domain-coverage.md", "job_id": "20260331-2026-03-31-kwangju-news-domain-c-5e515965", "at": 1774966758.989437, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774966948.9997742, "reason": "feedback_updated"}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774966958.5455654, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-ksilbo-news-domain-coverage.md", "job_id": "20260331-2026-03-31-ksilbo-news-domain-co-57410991", "at": 1774967020.6163228}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-ksilbo-news-domain-coverage.md", "job_id": "20260331-2026-03-31-ksilbo-news-domain-co-57410991", "at": 1774967025.6385915, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774967129.2600377, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-imaeil-news-domain-coverage.md", "job_id": "20260331-2026-03-31-imaeil-news-domain-co-a2b3dc1d", "at": 1774967205.8405328}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-imaeil-news-domain-coverage.md", "job_id": "20260331-2026-03-31-imaeil-news-domain-co-a2b3dc1d", "at": 1774967210.8908305, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774967293.6357462, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-kookje-news-domain-coverage.md", "job_id": "20260331-2026-03-31-kookje-news-domain-co-6e57c406", "at": 1774967367.975411}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-kookje-news-domain-coverage.md", "job_id": "20260331-2026-03-31-kookje-news-domain-co-6e57c406", "at": 1774967373.0859253, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774967447.1070075, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-jnilbo-news-domain-coverage.md", "job_id": "20260331-2026-03-31-jnilbo-news-domain-co-454e07d8", "at": 1774967517.352285}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-jnilbo-news-domain-coverage.md", "job_id": "20260331-2026-03-31-jnilbo-news-domain-co-454e07d8", "at": 1774967522.4054582, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774967614.6271627, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-jjan-news-domain-coverage.md", "job_id": "20260331-2026-03-31-jjan-news-domain-cove-f8a13f4b", "at": 1774967682.748405}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-jjan-news-domain-coverage.md", "job_id": "20260331-2026-03-31-jjan-news-domain-cove-f8a13f4b", "at": 1774967687.7789574, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774967767.8980525, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-iusm-news-domain-coverage.md", "job_id": "20260331-2026-03-31-iusm-news-domain-cove-009ca981", "at": 1774967840.0436802}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-iusm-news-domain-coverage.md", "job_id": "20260331-2026-03-31-iusm-news-domain-cove-009ca981", "at": 1774967845.1059823, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774967989.4289496, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-mdilbo-news-domain-coverage.md", "job_id": "20260331-2026-03-31-mdilbo-news-domain-co-e2583c5c", "at": 1774968063.632991}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-mdilbo-news-domain-coverage.md", "job_id": "20260331-2026-03-31-mdilbo-news-domain-co-e2583c5c", "at": 1774968068.7075164, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774968160.8433084, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-mdilbo-news-domain-coverage.md", "job_id": "20260401-2026-03-31-mdilbo-news-domain-co-e2583c5c", "at": 1774969200.9177282}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-mdilbo-news-domain-coverage.md", "job_id": "20260401-2026-03-31-mdilbo-news-domain-co-e2583c5c", "at": 1774969203.989453, "slot": "slot_verify", "round": 1}
+{"event": "artifact_seen", "path": "work/3/31/2026-03-31-idaebae-news-domain-coverage.md", "job_id": "20260401-2026-03-31-idaebae-news-domain-c-132846d0", "at": 1774969382.472321}
+{"event": "dispatch_candidate", "path": "work/3/31/2026-03-31-idaebae-news-domain-coverage.md", "job_id": "20260401-2026-03-31-idaebae-news-domain-c-132846d0", "at": 1774969387.5040696, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774969458.0481193, "reason": "feedback_updated"}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774970166.7660828, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-kbsm-news-domain-coverage.md", "job_id": "20260401-2026-04-01-kbsm-news-domain-cove-0b054410", "at": 1774970255.4386306}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-kbsm-news-domain-coverage.md", "job_id": "20260401-2026-04-01-kbsm-news-domain-cove-0b054410", "at": 1774970258.3718045, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774970449.0531824, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-incheonilbo-news-domain-coverage.md", "job_id": "20260401-2026-04-01-incheonilbo-news-doma-0c05fc33", "at": 1774970523.0781708}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-incheonilbo-news-domain-coverage.md", "job_id": "20260401-2026-04-01-incheonilbo-news-doma-0c05fc33", "at": 1774970528.1855533, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774970725.2215488, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-daejonilbo-news-domain-coverage.md", "job_id": "20260401-2026-04-01-daejonilbo-news-domai-a78a9bc7", "at": 1774970802.7184627}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-daejonilbo-news-domain-coverage.md", "job_id": "20260401-2026-04-01-daejonilbo-news-domai-a78a9bc7", "at": 1774970807.6275373, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774970900.7498183, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-kihoilbo-news-domain-coverage.md", "job_id": "20260401-2026-04-01-kihoilbo-news-domain--5b5c16db", "at": 1774970986.070569}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-kihoilbo-news-domain-coverage.md", "job_id": "20260401-2026-04-01-kihoilbo-news-domain--5b5c16db", "at": 1774970991.0740938, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774971088.258324, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-kyeongbuk-news-domain-coverage.md", "job_id": "20260401-2026-04-01-kyeongbuk-news-domain-aa7ad265", "at": 1774971163.8637097}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-kyeongbuk-news-domain-coverage.md", "job_id": "20260401-2026-04-01-kyeongbuk-news-domain-aa7ad265", "at": 1774971168.934886, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774971253.8406634, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-goodmorningcc-news-domain-coverage.md", "job_id": "20260401-2026-04-01-goodmorningcc-news-do-0a40fb75", "at": 1774971330.3512175}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-goodmorningcc-news-domain-coverage.md", "job_id": "20260401-2026-04-01-goodmorningcc-news-do-0a40fb75", "at": 1774971335.4526787, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774971426.341306, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-cctoday-news-domain-coverage.md", "job_id": "20260401-2026-04-01-cctoday-news-domain-c-ffa9e50e", "at": 1774971500.27342}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-cctoday-news-domain-coverage.md", "job_id": "20260401-2026-04-01-cctoday-news-domain-c-ffa9e50e", "at": 1774971505.2580519, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774971590.3417428, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-chungnamilbo-news-domain-coverage.md", "job_id": "20260401-2026-04-01-chungnamilbo-news-dom-5e586a56", "at": 1774971665.419846}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-chungnamilbo-news-domain-coverage.md", "job_id": "20260401-2026-04-01-chungnamilbo-news-dom-5e586a56", "at": 1774971670.4517426, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774971753.3178062, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-daejeonilbo-news-domain-coverage.md", "job_id": "20260401-2026-04-01-daejeonilbo-news-doma-343ffe12", "at": 1774971830.09776}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-daejeonilbo-news-domain-coverage.md", "job_id": "20260401-2026-04-01-daejeonilbo-news-doma-343ffe12", "at": 1774971835.213628, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774971978.9868193, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-joongdo-news-domain-coverage.md", "job_id": "20260401-2026-04-01-joongdo-news-domain-c-c478946f", "at": 1774972054.592838}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-joongdo-news-domain-coverage.md", "job_id": "20260401-2026-04-01-joongdo-news-domain-c-c478946f", "at": 1774972059.016215, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774972192.1366174, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-broader-news-domain-sweep.md", "job_id": "20260401-2026-04-01-broader-news-domain-s-deef9489", "at": 1774972522.4251423}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-broader-news-domain-sweep.md", "job_id": "20260401-2026-04-01-broader-news-domain-s-deef9489", "at": 1774972527.4571342, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774972668.8524222, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-news-substring-false-positive-fix.md", "job_id": "20260401-2026-04-01-news-substring-false--3cad0b28", "at": 1774972855.0867941}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-news-substring-false-positive-fix.md", "job_id": "20260401-2026-04-01-news-substring-false--3cad0b28", "at": 1774972860.1135652, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774972983.1409068, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-news-subdomain-false-positive-fix.md", "job_id": "20260401-2026-04-01-news-subdomain-false--6439fee9", "at": 1774973116.2210827}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-news-subdomain-false-positive-fix.md", "job_id": "20260401-2026-04-01-news-subdomain-false--6439fee9", "at": 1774973121.2404149, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774973248.2406585, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-naver-news-community-exception.md", "job_id": "20260401-2026-04-01-naver-news-community--64f544d7", "at": 1774973362.1820931}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-naver-news-community-exception.md", "job_id": "20260401-2026-04-01-naver-news-community--64f544d7", "at": 1774973366.197929, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774973541.426337, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-daum-v-community-exception.md", "job_id": "20260401-2026-04-01-daum-v-community-exce-1829afc2", "at": 1774973626.2813766}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-daum-v-community-exception.md", "job_id": "20260401-2026-04-01-daum-v-community-exce-1829afc2", "at": 1774973631.3006737, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774973722.2044458, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-daum-news-community-exception.md", "job_id": "20260401-2026-04-01-daum-news-community-e-76c79ae8", "at": 1774973813.0733202}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-daum-news-community-exception.md", "job_id": "20260401-2026-04-01-daum-news-community-e-76c79ae8", "at": 1774973818.0938034, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774973917.015751, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-nate-news-community-exception.md", "job_id": "20260401-2026-04-01-nate-news-community-e-012bcdf2", "at": 1774974779.853513}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-nate-news-community-exception.md", "job_id": "20260401-2026-04-01-nate-news-community-e-012bcdf2", "at": 1774974784.8760426, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774974929.9779649, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-zum-news-community-exception.md", "job_id": "20260401-2026-04-01-zum-news-community-ex-047ac8fe", "at": 1774975007.7903345}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-zum-news-community-exception.md", "job_id": "20260401-2026-04-01-zum-news-community-ex-047ac8fe", "at": 1774975012.8108912, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774975143.8318434, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-explicit-portal-news-host-boundary-fix.md", "job_id": "20260401-2026-04-01-explicit-portal-news--fed32ff4", "at": 1774975252.75535}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-explicit-portal-news-host-boundary-fix.md", "job_id": "20260401-2026-04-01-explicit-portal-news--fed32ff4", "at": 1774975257.7749777, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774975391.804024, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-dotted-news-host-boundary-fix.md", "job_id": "20260401-2026-04-01-dotted-news-host-boun-9d754d76", "at": 1774975526.8322933}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-dotted-news-host-boundary-fix.md", "job_id": "20260401-2026-04-01-dotted-news-host-boun-9d754d76", "at": 1774975531.8534627, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774975647.812349, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-fragment-news-hint-boundary-fix.md", "job_id": "20260401-2026-04-01-fragment-news-hint-bo-f83a653d", "at": 1774975761.7808907}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-fragment-news-hint-boundary-fix.md", "job_id": "20260401-2026-04-01-fragment-news-hint-bo-f83a653d", "at": 1774975766.8012044, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774975970.1341472, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-web-search-news-noise-host-boundary-fix.md", "job_id": "20260401-2026-04-01-web-search-news-noise-c97563f6", "at": 1774976065.0116282}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-web-search-news-noise-host-boundary-fix.md", "job_id": "20260401-2026-04-01-web-search-news-noise-c97563f6", "at": 1774976070.0324178, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774976223.1438363, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-web-search-portal-news-noise-host-fix.md", "job_id": "20260401-2026-04-01-web-search-portal-new-f710d80e", "at": 1774976287.9643216}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-web-search-portal-news-noise-host-fix.md", "job_id": "20260401-2026-04-01-web-search-portal-new-f710d80e", "at": 1774976292.9944892, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774976443.2049463, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-web-search-national-news-noise-host-fix.md", "job_id": "20260401-2026-04-01-web-search-national-n-96237825", "at": 1774976516.0655394}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-web-search-national-news-noise-host-fix.md", "job_id": "20260401-2026-04-01-web-search-national-n-96237825", "at": 1774976521.0906842, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774976623.0684547, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-web-search-broadcast-news-noise-host-fix.md", "job_id": "20260401-2026-04-01-web-search-broadcast--bd0ee01d", "at": 1774976691.8964636}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-web-search-broadcast-news-noise-host-fix.md", "job_id": "20260401-2026-04-01-web-search-broadcast--bd0ee01d", "at": 1774976696.9174283, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774976947.434786, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-web-search-sisajournal-news-noise-host-fix.md", "job_id": "20260401-2026-04-01-web-search-sisajourna-3ff967f1", "at": 1774977012.1929355}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-web-search-sisajournal-news-noise-host-fix.md", "job_id": "20260401-2026-04-01-web-search-sisajourna-3ff967f1", "at": 1774977017.2146394, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774977106.090704, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-web-search-broader-news-noise-host-sweep.md", "job_id": "20260401-2026-04-01-web-search-broader-ne-36b33149", "at": 1774977214.0170279}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-web-search-broader-news-noise-host-sweep.md", "job_id": "20260401-2026-04-01-web-search-broader-ne-36b33149", "at": 1774977219.036854, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774977356.106248, "reason": "feedback_updated"}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774977853.5543618, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-generic-news-substring-false-positive-reduction.md", "job_id": "20260401-2026-04-01-generic-news-substrin-5d5b030c", "at": 1774977944.4259644}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-generic-news-substring-false-positive-reduction.md", "job_id": "20260401-2026-04-01-generic-news-substrin-5d5b030c", "at": 1774977949.446924, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774978071.4419649, "reason": "feedback_updated"}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774978633.1979883, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-web-search-entity-reload-claim-progress-retention.md", "job_id": "20260401-2026-04-01-web-search-entity-rel-65e5a529", "at": 1774978840.519477}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-web-search-entity-reload-claim-progress-retention.md", "job_id": "20260401-2026-04-01-web-search-entity-rel-65e5a529", "at": 1774978845.5404353, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774978981.5982482, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-web-search-reload-stored-summary-retention.md", "job_id": "20260401-2026-04-01-web-search-reload-sto-7396f631", "at": 1774979078.4883797}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-web-search-reload-stored-summary-retention.md", "job_id": "20260401-2026-04-01-web-search-reload-sto-7396f631", "at": 1774979083.5089464, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774979165.3428075, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-web-search-reload-stored-response-origin-retention.md", "job_id": "20260401-2026-04-01-web-search-reload-sto-56caa9fa", "at": 1774979266.2544248}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-web-search-reload-stored-response-origin-retention.md", "job_id": "20260401-2026-04-01-web-search-reload-sto-56caa9fa", "at": 1774979271.2769673, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774979489.679481, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-web-search-reload-follow-up-response-origin-retention.md", "job_id": "20260401-2026-04-01-web-search-reload-fol-314b319c", "at": 1774979604.667205}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-web-search-reload-follow-up-response-origin-retention.md", "job_id": "20260401-2026-04-01-web-search-reload-fol-314b319c", "at": 1774979609.6905391, "slot": "slot_verify", "round": 1}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774979787.0118327, "reason": "feedback_updated"}
+{"event": "claude_notify", "path": ".pipeline/codex_feedback.md", "job_id": "turn_signal", "at": 1774980273.6951003, "reason": "feedback_updated"}
+{"event": "artifact_seen", "path": "work/4/1/2026-04-01-entity-card-weak-vs-missing-clarity.md", "job_id": "20260401-2026-04-01-entity-card-weak-vs-m-1cd8730a", "at": 1774980904.344434}
+{"event": "dispatch_candidate", "path": "work/4/1/2026-04-01-entity-card-weak-vs-missing-clarity.md", "job_id": "20260401-2026-04-01-entity-card-weak-vs-m-1cd8730a", "at": 1774980909.3754575, "slot": "slot_verify", "round": 1}

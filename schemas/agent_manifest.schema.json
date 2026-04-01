@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AgentManifest",
+  "description": "각 에이전트(slot)가 라운드 완료 후 저장하는 기계용 결과 파일 스키마 (v1.1)",
+  "type": "object",
+  "required": ["schema_version", "job_id", "round", "role", "artifact_hash", "created_at"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "스키마 버전. job_state.schema.json과 동일 버전 체계 유지"
+    },
+    "job_id": {
+      "type": "string"
+    },
+    "round": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "role": {
+      "type": "string",
+      "enum": ["slot_gen", "slot_verify", "slot_counter"],
+      "description": "벤더명이 아닌 역할 기반 슬롯 식별자"
+    },
+    "artifact_hash": {
+      "type": "string",
+      "description": "처리 대상 산출물의 sha256. trust 계산 시 동일성 확인에 사용"
+    },
+
+    "checked_claims": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "검증 대상 주장 수 (slot_verify/slot_counter 전용)"
+    },
+    "supported_claims": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "low_conflicts": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "severity=low 충돌 수. trust 계산의 conflict_penalty 입력값"
+    },
+    "medium_conflicts": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "critical_conflicts": {
+      "type": "integer",
+      "minimum": 0
+    },
+
+    "required_checks": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "실행 검증 항목 수"
+    },
+    "passed_checks": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timeouts": {
+      "type": "integer",
+      "minimum": 0
+    },
+
+    "blockers": {
+      "type": "array",
+      "description": "치명적 문제 목록. critical_blocker 카운트에 사용",
+      "items": {
+        "type": "object",
+        "required": ["severity", "code", "message"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["low", "medium", "critical"]
+          },
+          "code":    { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    },
+
+    "recommended_next_action": {
+      "type": "string",
+      "enum": ["finalize", "counter", "retry", "isolate"],
+      "description": "에이전트 자체 권고. 최종 결정은 watcher의 상태머신이 한다"
+    },
+
+    "feedback_path": {
+      "type": "string",
+      "description": "사람용 .md 피드백 파일 경로"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 타임스탬프"
+    }
+  },
+  "additionalProperties": false
+}

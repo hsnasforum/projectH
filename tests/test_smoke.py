@@ -953,7 +953,7 @@ class SmokeTest(unittest.TestCase):
             self.assertIn("메이플스토리는 넥슨이 서비스하거나 배급하는 액션 RPG 게임입니다.", response.text)
             self.assertIn("이용 형태는 온라인입니다.", response.text)
             self.assertIn("한 줄 정의:", response.text)
-            self.assertIn("불확실 정보:", response.text)
+            self.assertIn("단일 출처 확인 정보:", response.text)
             self.assertNotIn("협업 이벤트", response.text)
             self.assertEqual(response.active_context["source_paths"][0], "https://namu.wiki/w/%EB%A9%94%EC%9D%B4%ED%94%8C%EC%8A%A4%ED%86%A0%EB%A6%AC")
 
@@ -1027,7 +1027,7 @@ class SmokeTest(unittest.TestCase):
             self.assertIn("사실 카드:", response.text)
             self.assertIn("서비스/배급: 넥슨", response.text)
             self.assertIn("이용 형태: 온라인", response.text)
-            self.assertIn("불확실 정보:", response.text)
+            self.assertIn("단일 출처 확인 정보:", response.text)
             self.assertIn("장르/성격: 액션 RPG 게임", response.text)
             self.assertIn("[백과 기반]", response.text)
             self.assertNotIn("영상 더보기", response.text)
@@ -1380,13 +1380,13 @@ class SmokeTest(unittest.TestCase):
 
             self.assertEqual(response.actions_taken, ["web_search"])
             self.assertIn("한 줄 정의:", response.text)
-            self.assertIn("불확실 정보:", response.text)
-            self.assertIn("추가 확인 필요:", response.text)
+            self.assertIn("단일 출처 확인 정보:", response.text)
+            self.assertIn("아직 확인되지 않은 항목:", response.text)
             self.assertIn("개발: 펄어비스 (단일 출처, 백과 기반)", response.text)
             self.assertIn("장르/성격: 오픈월드 액션 어드벤처 게임 (단일 출처, 백과 기반)", response.text)
             self.assertIn("상태: 개발 중 (단일 출처, 백과 기반)", response.text)
-            self.assertIn("서비스/배급: 교차 확인 가능한 근거가 더 필요합니다.", response.text)
-            self.assertIn("이용 형태: 교차 확인 가능한 근거가 더 필요합니다.", response.text)
+            self.assertIn("서비스/배급: 교차 확인 가능한 근거를 찾지 못했습니다.", response.text)
+            self.assertIn("이용 형태: 교차 확인 가능한 근거를 찾지 못했습니다.", response.text)
             self.assertGreaterEqual(len(response.claim_coverage), 5)
             coverage_by_slot = {
                 str(item.get("slot") or ""): dict(item)
@@ -1470,6 +1470,404 @@ class SmokeTest(unittest.TestCase):
                     "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=123",
                 ],
             )
+
+    def test_web_search_entity_source_type_diversity_caps_same_type_at_two(self) -> None:
+        """3개 wiki 도메인 + 1개 official 도메인이 있을 때,
+        wiki가 2개까지만 선택되고 official이 포함되어 source_type 다양성을 확보합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": _FakeWebSearchTool(
+                        [
+                            SimpleNamespace(
+                                title="붉은사막 - 나무위키",
+                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                            SimpleNamespace(
+                                title="붉은사막 - 위키백과",
+                                url="https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                                snippet="붉은사막은 펄어비스가 개발하는 액션 어드벤처 게임이다.",
+                            ),
+                            SimpleNamespace(
+                                title="붉은사막 - Britannica",
+                                url="https://www.britannica.com/topic/CrimsonDesert",
+                                snippet="붉은사막은 한국 개발사 펄어비스의 오픈월드 액션 게임이다.",
+                            ),
+                            SimpleNamespace(
+                                title="Crimson Desert | Pearl Abyss",
+                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=123",
+                                snippet="붉은사막은 파이웰 대륙을 배경으로 한 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                        ]
+                    ),
+                },
+                notes_dir=str(tmp_path / "notes"),
+                web_search_store=WebSearchStore(base_dir=str(tmp_path / "web-search")),
+            )
+
+            response = loop.handle(
+                UserRequest(
+                    user_text="붉은사막에 대해 알려줘",
+                    session_id="crimson-desert-type-diversity-session",
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+
+            self.assertEqual(response.actions_taken, ["web_search"])
+            source_paths = response.active_context["source_paths"][:3]
+            # wiki 2개 + official 1개가 선택되어야 함
+            self.assertIn("https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=123", source_paths)
+            wiki_count = sum(
+                1 for url in source_paths
+                if "namu.wiki" in url or "wikipedia.org" in url or "britannica.com" in url
+            )
+            self.assertEqual(wiki_count, 2)
+            self.assertIn("[공식 기반]", response.text)
+
+    def test_web_search_entity_probe_replaces_same_domain_generic_official(self) -> None:
+        """same-domain official overview와 slot-targeted official probe가
+        함께 있을 때, probe가 hostname dedupe에 막히지 않고 generic을
+        대체하여 missing slot을 메웁니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+
+            search_tool = _FakeWebSearchTool(
+                {
+                    "붉은사막에 대해 알려줘": [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="Crimson Desert | Pearl Abyss",
+                            url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=100",
+                            snippet="붉은사막은 파이웰 대륙을 배경으로 한 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                    "붉은사막": [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="Crimson Desert | Pearl Abyss",
+                            url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=100",
+                            snippet="붉은사막은 파이웰 대륙을 배경으로 한 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                    "붉은사막 공식 플랫폼 검색해봐": [
+                        SimpleNamespace(
+                            title="붉은사막 | 플랫폼 - 공식",
+                            url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200",
+                            snippet="붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.",
+                        ),
+                    ],
+                    "붉은사막 공식 플랫폼": [
+                        SimpleNamespace(
+                            title="붉은사막 | 플랫폼 - 공식",
+                            url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200",
+                            snippet="붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.",
+                        ),
+                    ],
+                },
+                pages={
+                    "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200": {
+                        "title": "붉은사막 | 플랫폼 - 공식",
+                        "text": "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이며 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임입니다.",
+                        "excerpt": "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정입니다.",
+                    },
+                },
+            )
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": search_tool,
+                },
+                notes_dir=str(tmp_path / "notes"),
+                web_search_store=WebSearchStore(base_dir=str(tmp_path / "web-search")),
+            )
+
+            response = loop.handle(
+                UserRequest(
+                    user_text="붉은사막에 대해 알려줘",
+                    session_id="probe-replaces-generic-session",
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+
+            self.assertEqual(response.actions_taken, ["web_search"])
+            source_paths = response.active_context["source_paths"][:3]
+            # probe page(boardNo=200)가 generic overview(boardNo=100)를 대체하여 선택되어야 함
+            self.assertIn("https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200", source_paths)
+            self.assertNotIn("https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=100", source_paths)
+
+    def test_web_search_entity_dual_probe_different_slots_coexist_on_same_domain(self) -> None:
+        """같은 official domain에서 서로 다른 slot을 메우는 probe 2개가
+        hostname dedupe에 막히지 않고 공존합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+
+            search_tool = _FakeWebSearchTool(
+                {
+                    "붉은사막에 대해 알려줘": [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                    "붉은사막": [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                    "붉은사막 공식 플랫폼 검색해봐": [
+                        SimpleNamespace(
+                            title="붉은사막 | 플랫폼 - 공식",
+                            url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200",
+                            snippet="붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.",
+                        ),
+                    ],
+                    "붉은사막 공식 플랫폼": [
+                        SimpleNamespace(
+                            title="붉은사막 | 플랫폼 - 공식",
+                            url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200",
+                            snippet="붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.",
+                        ),
+                    ],
+                    "붉은사막 서비스 공식 검색해봐": [
+                        SimpleNamespace(
+                            title="붉은사막 | 서비스 - 공식",
+                            url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300",
+                            snippet="붉은사막은 펄어비스가 운영하는 게임이다.",
+                        ),
+                    ],
+                    "붉은사막 서비스 공식": [
+                        SimpleNamespace(
+                            title="붉은사막 | 서비스 - 공식",
+                            url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300",
+                            snippet="붉은사막은 펄어비스가 운영하는 게임이다.",
+                        ),
+                    ],
+                },
+                pages={
+                    "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200": {
+                        "title": "붉은사막 | 플랫폼 - 공식",
+                        "text": "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이며 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임입니다.",
+                        "excerpt": "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정입니다.",
+                    },
+                    "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300": {
+                        "title": "붉은사막 | 서비스 - 공식",
+                        "text": "붉은사막은 펄어비스가 운영하는 게임이며 배급도 펄어비스가 담당합니다.",
+                        "excerpt": "붉은사막은 펄어비스가 운영하는 게임입니다.",
+                    },
+                },
+            )
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": search_tool,
+                },
+                notes_dir=str(tmp_path / "notes"),
+                web_search_store=WebSearchStore(base_dir=str(tmp_path / "web-search")),
+            )
+
+            response = loop.handle(
+                UserRequest(
+                    user_text="붉은사막에 대해 알려줘",
+                    session_id="dual-probe-coexist-session",
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+
+            self.assertEqual(response.actions_taken, ["web_search"])
+            source_paths = response.active_context["source_paths"]
+            # entity claims selection + active_context source_paths 모두에서 두 probe가 공존해야 함
+            self.assertIn("https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200", source_paths)
+            self.assertIn("https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300", source_paths)
+
+    def test_entity_card_zero_strong_slot_downgrades_verification_label(self) -> None:
+        """strong-reference source 2개(wiki+wiki)가 있어도 claim_coverage에
+        strong slot이 0개이면 verification_label이 '설명형 다중 출처 합의'가 아닌
+        non-strong label로 내려갑니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": _FakeWebSearchTool(
+                        [
+                            SimpleNamespace(
+                                title="테스트게임 - 나무위키",
+                                url="https://namu.wiki/w/testgame",
+                                snippet="테스트게임은 알 수 없는 개발사의 게임이다.",
+                            ),
+                            SimpleNamespace(
+                                title="테스트게임 - 위키백과",
+                                url="https://ko.wikipedia.org/wiki/testgame",
+                                snippet="테스트게임은 정보가 부족한 게임이다.",
+                            ),
+                        ]
+                    ),
+                },
+                notes_dir=str(tmp_path / "notes"),
+                web_search_store=WebSearchStore(base_dir=str(tmp_path / "web-search")),
+            )
+
+            response = loop.handle(
+                UserRequest(
+                    user_text="테스트게임에 대해 알려줘",
+                    session_id="zero-strong-slot-session",
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+
+            self.assertEqual(response.actions_taken, ["web_search"])
+            self.assertEqual(response.response_origin["answer_mode"], "entity_card")
+            # strong slot이 0개이므로 '설명형 다중 출처 합의'가 아니어야 함
+            self.assertNotEqual(response.response_origin["verification_label"], "설명형 다중 출처 합의")
+            # claim_coverage에 strong이 없는지 확인
+            strong_items = [
+                item for item in response.claim_coverage
+                if isinstance(item, dict) and str(item.get("status") or "") == "strong"
+            ]
+            self.assertEqual(len(strong_items), 0)
+
+    def test_web_search_entity_agreement_prefers_trusted_peer_over_low_trust_peer(self) -> None:
+        """같은 사실에 합의하는 peer가 있을 때, high-trust peer(wiki)와 합의한
+        소스가 low-trust peer(커뮤니티)와만 합의한 소스보다 우선 선택됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": _FakeWebSearchTool(
+                        [
+                            SimpleNamespace(
+                                title="붉은사막 - 나무위키",
+                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                            SimpleNamespace(
+                                title="붉은사막 정보 - 게임 커뮤니티",
+                                url="https://www.inven.co.kr/webzine/news/?news=234567",
+                                snippet="붉은사막은 펄어비스가 개발하는 오픈월드 액션 게임이다.",
+                            ),
+                            SimpleNamespace(
+                                title="Crimson Desert | Pearl Abyss",
+                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=123",
+                                snippet="붉은사막은 파이웰 대륙을 배경으로 한 오픈월드 액션 어드벤처 게임이다.",
+                            ),
+                        ]
+                    ),
+                },
+                notes_dir=str(tmp_path / "notes"),
+                web_search_store=WebSearchStore(base_dir=str(tmp_path / "web-search")),
+            )
+
+            response = loop.handle(
+                UserRequest(
+                    user_text="붉은사막에 대해 알려줘",
+                    session_id="trust-weighted-agreement-session",
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+
+            self.assertEqual(response.actions_taken, ["web_search"])
+            source_paths = response.active_context["source_paths"][:3]
+            # wiki(trust 12)와 사실이 일치하는 official(trust 10)이
+            # community(trust -5)보다 우선 선택되어야 함
+            self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            self.assertIn("https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=123", source_paths)
+            self.assertIn("[백과 기반]", response.text)
+            self.assertIn("[공식 기반]", response.text)
+            # community 소스는 선택되지 않아야 함
+            self.assertNotIn("https://www.inven.co.kr/webzine/news/?news=234567", source_paths)
+
+    def test_reuse_web_search_record_uses_stored_answer_mode_over_summary_prefix(self) -> None:
+        """_reuse_web_search_record가 summary_text 접두사가 아닌
+        저장된 response_origin.answer_mode를 기준으로 reloaded answer_mode를
+        결정하여 추론 불안정을 방지합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "stored-origin-reload-session"
+
+            # latest_update 검색 결과를 직접 저장 — summary_text를 의도적으로
+            # "웹 최신 확인:" 접두사 없이 저장하여 접두사 기반 추론이 실패하는 상황 재현
+            store.save(
+                session_id=session_id,
+                query="서울 날씨",
+                permission="enabled",
+                results=[{"title": "서울 날씨", "url": "https://example.com/weather", "snippet": "서울 맑음 17도"}],
+                summary_text="서울은 맑고 낮 최고 17도입니다.",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "badge": "WEB",
+                    "label": "외부 웹 최신 확인",
+                    "answer_mode": "latest_update",
+                    "verification_label": "단일 출처 참고",
+                    "source_roles": ["보조 출처"],
+                },
+            )
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": _FakeWebSearchTool([]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+                web_search_store=store,
+            )
+
+            response = loop.handle(
+                UserRequest(
+                    user_text="방금 검색한 결과 다시 보여줘",
+                    session_id=session_id,
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+
+            self.assertEqual(response.actions_taken, ["load_web_search_record"])
+            self.assertEqual(response.response_origin["answer_mode"], "latest_update")
+            self.assertEqual(response.response_origin["verification_label"], "단일 출처 참고")
 
     def test_entity_reinvestigation_query_reports_claim_progress(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -2129,6 +2527,64 @@ class SmokeTest(unittest.TestCase):
             self.assertEqual(response.status, "answer")
             self.assertIn("[모의 요약]", response.text)
             self.assertEqual(response.selected_source_paths, ["picked-source.md"])
+
+    def test_uploaded_folder_search_surfaces_failed_file_notice(self) -> None:
+        """업로드 검색 중 일부 파일 읽기가 실패하면 응답에
+        실패 건수를 알리는 참고 문구가 포함됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+
+            class _FailingReaderTool(FileReaderTool):
+                def run_uploaded(self, *, name, content_bytes, mime_type=None):
+                    if "corrupt" in name:
+                        raise RuntimeError("simulated read failure")
+                    return super().run_uploaded(name=name, content_bytes=content_bytes, mime_type=mime_type)
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": _FailingReaderTool(),
+                    "write_note": WriteNoteTool(),
+                },
+                notes_dir=str(tmp_path / "notes"),
+            )
+
+            response = loop.handle(
+                UserRequest(
+                    user_text="선택한 폴더에서 budget를 검색해 주세요.",
+                    session_id="uploaded-search-failure-session",
+                    metadata={
+                        "search_query": "budget",
+                        "search_only": True,
+                        "uploaded_search_files": [
+                            {
+                                "name": "budget-plan.md",
+                                "relative_path": "team-docs/budget-plan.md",
+                                "root_label": "team-docs",
+                                "mime_type": "text/markdown",
+                                "size_bytes": len(b"budget discussion"),
+                                "content_bytes": b"budget discussion",
+                            },
+                            {
+                                "name": "corrupt-file.md",
+                                "relative_path": "team-docs/corrupt-file.md",
+                                "root_label": "team-docs",
+                                "mime_type": "text/markdown",
+                                "size_bytes": 10,
+                                "content_bytes": b"irrelevant",
+                            },
+                        ],
+                    },
+                )
+            )
+
+            self.assertEqual(response.status, "answer")
+            self.assertIn("검색 결과:", response.text)
+            self.assertIn("budget-plan.md", response.text)
+            self.assertIn("1건", response.text)
+            self.assertIn("읽지 못해 검색에서 제외", response.text)
 
     def test_uploaded_folder_search_only_works_without_search_root(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -3708,6 +4164,92 @@ class SmokeTest(unittest.TestCase):
             self.assertEqual(source_messages[-1]["corrected_text"], "수정한 요약입니다.\n핵심만 남겼습니다.")
             self.assertEqual(source_messages[-1]["corrected_outcome"]["outcome"], "corrected")
             self.assertEqual(source_messages[-1]["corrected_outcome"]["source_message_id"], stored_message["message_id"])
+
+    def test_correction_updates_active_context_summary_hint(self) -> None:
+        """교정 제출 후 active_context의 summary_hint가 corrected_text로 갱신되는지 확인."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+            store = SessionStore(base_dir=str(tmp_path / "sessions"))
+
+            store.append_message("session-hint-update", {"role": "user", "text": "요약해줘"})
+            stored_message = store.append_message(
+                "session-hint-update",
+                {
+                    "role": "assistant",
+                    "text": "원본 요약입니다.",
+                    "status": "answer",
+                    "artifact_id": "artifact-hint",
+                    "artifact_kind": "grounded_brief",
+                    "selected_source_paths": [str(source_path)],
+                    "evidence": [
+                        {
+                            "source_path": str(source_path),
+                            "source_name": "source.md",
+                            "label": "본문 근거",
+                            "snippet": "hello world",
+                        }
+                    ],
+                },
+            )
+
+            store.set_active_context(
+                "session-hint-update",
+                {
+                    "kind": "document",
+                    "label": "source.md 요약",
+                    "source_paths": [str(source_path)],
+                    "excerpt": "hello world",
+                    "summary_hint": "원본 요약입니다.",
+                    "suggested_prompts": [],
+                    "evidence_pool": [],
+                    "retrieval_chunks": [],
+                },
+            )
+
+            ctx_before = store.get_active_context("session-hint-update")
+            self.assertEqual(ctx_before["summary_hint"], "원본 요약입니다.")
+
+            store.record_correction_for_message(
+                "session-hint-update",
+                message_id=stored_message["message_id"],
+                corrected_text="수정한 요약입니다. 핵심만 남겼습니다.",
+            )
+
+            ctx_after = store.get_active_context("session-hint-update")
+            self.assertIsNotNone(ctx_after)
+            self.assertEqual(ctx_after["summary_hint"], "수정한 요약입니다. 핵심만 남겼습니다.")
+
+    def test_correction_without_active_context_does_not_fail(self) -> None:
+        """active_context가 없는 상태에서 교정해도 에러 없이 동작하는지 확인."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            source_path.write_text("# Test", encoding="utf-8")
+            store = SessionStore(base_dir=str(tmp_path / "sessions"))
+
+            store.append_message("session-no-ctx", {"role": "user", "text": "요약해줘"})
+            stored_message = store.append_message(
+                "session-no-ctx",
+                {
+                    "role": "assistant",
+                    "text": "원본 요약.",
+                    "status": "answer",
+                    "artifact_id": "artifact-no-ctx",
+                    "artifact_kind": "grounded_brief",
+                    "selected_source_paths": [str(source_path)],
+                    "evidence": [{"source_path": str(source_path), "source_name": "source.md", "label": "근거", "snippet": "Test"}],
+                },
+            )
+
+            updated = store.record_correction_for_message(
+                "session-no-ctx",
+                message_id=stored_message["message_id"],
+                corrected_text="수정된 요약.",
+            )
+            self.assertIsNotNone(updated)
+            self.assertIsNone(store.get_active_context("session-no-ctx"))
 
     def test_rejected_content_verdict_records_reason_and_is_cleared_by_later_correction(self) -> None:
         with TemporaryDirectory() as tmp_dir:

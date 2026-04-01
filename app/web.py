@@ -1650,6 +1650,14 @@ class WebAppService:
             "claim_coverage_progress_summary": localize_text(
                 str(response.claim_coverage_progress_summary or "")
             ).strip(),
+            "search_results": [
+                {
+                    "path": item.get("path", ""),
+                    "matched_on": item.get("matched_on", ""),
+                    "snippet": item.get("snippet", ""),
+                }
+                for item in (response.search_results or [])
+            ],
         }
 
     def _serialize_session(self, session: dict[str, Any]) -> dict[str, Any]:
@@ -6659,7 +6667,14 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             raise WebApiError(HTTPStatus.BAD_REQUEST, "요청 본문이 필요합니다.")
 
         body = self.rfile.read(content_length)
-        payload = json.loads(body.decode("utf-8"))
+        try:
+            decoded = body.decode("utf-8")
+        except (UnicodeDecodeError, ValueError):
+            raise WebApiError(HTTPStatus.BAD_REQUEST, "요청 본문이 올바른 UTF-8 형식이 아닙니다.")
+        try:
+            payload = json.loads(decoded)
+        except (json.JSONDecodeError, ValueError):
+            raise WebApiError(HTTPStatus.BAD_REQUEST, "JSON 요청 본문 형식이 올바르지 않습니다.")
         if not isinstance(payload, dict):
             raise WebApiError(HTTPStatus.BAD_REQUEST, "JSON 본문은 객체 형태여야 합니다.")
         return payload

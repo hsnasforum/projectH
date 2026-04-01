@@ -1,0 +1,48 @@
+{
+  "job_id": "20260401-2026-04-01-overwrite-approval-ex-68d50650",
+  "status": "VERIFY_DONE",
+  "artifact_path": "work/4/1/2026-04-01-overwrite-approval-execution.md",
+  "schema_version": 1,
+  "artifact_hash": "65f70c6e9af3ff64abab52e920e1991aec30cd27d93af0b4baed5650df52b54f",
+  "artifact_size": 2627,
+  "artifact_mtime": 1775021536.9625192,
+  "stabilized_at": 1775021541.2719626,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 1775021542.784223,
+  "last_dispatch_slot": "slot_verify",
+  "feedback_baseline_sig": "1775020236635108930:1295:bdcdf1063b297c2cc0cc4b8db09c4131a2a79c176e932a2f6c988077f6d0c90c",
+  "verify_manifest_path": "",
+  "verify_completed_at": 1775021546.3041005,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "passed_by_feedback",
+  "created_at": 1775021537.2543714,
+  "updated_at": 1775021546.3042092,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1775021537.2546222,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1775021541.2719753,
+      "reason": "artifact stabilized"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "VERIFY_RUNNING",
+      "at": 1775021542.78427,
+      "reason": "dispatched to slot_verify"
+    },
+    {
+      "from": "VERIFY_RUNNING",
+      "to": "VERIFY_DONE",
+      "at": 1775021546.3042092,
+      "reason": "codex_feedback.md signature changed after dispatch"
+    }
+  ]
+}

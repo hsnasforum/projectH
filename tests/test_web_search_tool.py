@@ -339,5 +339,400 @@ class WebSearchToolTest(unittest.TestCase):
         self.assertNotIn("공감", page.text)
 
 
+    def test_fetch_page_news_noise_filter_exact_boundary(self) -> None:
+        """news boilerplate 필터가 exact-or-subdomain boundary만 적용되는지 확인합니다.
+        fake host(mychosun.com, foo-yna.co.kr, notmk.co.kr, news.google.com)에서는
+        boilerplate가 제거되지 않아야 합니다."""
+        html = """
+        <html>
+          <head><title>기준금리 속보</title></head>
+          <body>
+            <div>입력 2026.04.01 09:00</div>
+            <div>김철수 기자</div>
+            <article>
+              <p>한국은행이 기준금리를 동결했다고 밝혔다.</p>
+            </article>
+            <div>무단전재 및 재배포 금지</div>
+          </body>
+        </html>
+        """.encode("utf-8")
+
+        class _FakeHeaders:
+            def get(self, key: str, default=None):
+                if key.lower() == "content-type":
+                    return "text/html; charset=utf-8"
+                return default
+
+            def get_content_charset(self):
+                return "utf-8"
+
+        class _FakeResponse:
+            headers = _FakeHeaders()
+
+            def read(self):
+                return html
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        tool = WebSearchTool()
+
+        # positive: real news host → boilerplate 제거
+        with patch("tools.web_search.urlopen", return_value=_FakeResponse()):
+            page = tool.fetch_page(url="https://www.chosun.com/economy/2025")
+        self.assertNotIn("무단전재", page.text)
+        self.assertNotIn("김철수 기자", page.text)
+
+        with patch("tools.web_search.urlopen", return_value=_FakeResponse()):
+            page = tool.fetch_page(url="https://www.yna.co.kr/view/AKR20260401")
+        self.assertNotIn("무단전재", page.text)
+
+        with patch("tools.web_search.urlopen", return_value=_FakeResponse()):
+            page = tool.fetch_page(url="https://www.mk.co.kr/economy/2025")
+        self.assertNotIn("무단전재", page.text)
+
+        # negative: fake host → boilerplate 유지 (제거되지 않음)
+        with patch("tools.web_search.urlopen", return_value=_FakeResponse()):
+            page = tool.fetch_page(url="https://mychosun.com/article/1")
+        self.assertIn("무단전재", page.text)
+
+        with patch("tools.web_search.urlopen", return_value=_FakeResponse()):
+            page = tool.fetch_page(url="https://foo-yna.co.kr/article/1")
+        self.assertIn("무단전재", page.text)
+
+        with patch("tools.web_search.urlopen", return_value=_FakeResponse()):
+            page = tool.fetch_page(url="https://notmk.co.kr/article/1")
+        self.assertIn("무단전재", page.text)
+
+        with patch("tools.web_search.urlopen", return_value=_FakeResponse()):
+            page = tool.fetch_page(url="https://news.google.com/articles/1")
+        self.assertIn("무단전재", page.text)
+
+    def test_fetch_page_portal_news_host_boilerplate_boundary(self) -> None:
+        """portal news host 5건은 boilerplate 제거 대상이고,
+        news.google.com, blog.naver.com, cafe.daum.net은 대상이 아님을 잠급니다."""
+        html = """
+        <html>
+          <head><title>기준금리 속보</title></head>
+          <body>
+            <div>입력 2026.04.01 09:00</div>
+            <div>김철수 기자</div>
+            <article>
+              <p>한국은행이 기준금리를 동결했다고 밝혔다.</p>
+            </article>
+            <div>무단전재 및 재배포 금지</div>
+          </body>
+        </html>
+        """.encode("utf-8")
+
+        class _FakeHeaders:
+            def get(self, key: str, default=None):
+                if key.lower() == "content-type":
+                    return "text/html; charset=utf-8"
+                return default
+
+            def get_content_charset(self):
+                return "utf-8"
+
+        class _FakeResponse:
+            headers = _FakeHeaders()
+
+            def read(self):
+                return html
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        tool = WebSearchTool()
+
+        # positive: portal news host → boilerplate 제거
+        for url in (
+            "https://news.naver.com/main/read.naver?oid=001&aid=0000001",
+            "https://v.daum.net/v/20260401120000001",
+            "https://news.daum.net/v/20260401120000001",
+            "https://news.nate.com/view/20260401n00123",
+            "https://news.zum.com/articles/97600001",
+        ):
+            with patch("tools.web_search.urlopen", return_value=_FakeResponse()):
+                page = tool.fetch_page(url=url)
+            self.assertNotIn("무단전재", page.text, f"boilerplate should be removed for {url}")
+
+        # negative: non-news portal/community host → boilerplate 유지
+        for url in (
+            "https://news.google.com/articles/1",
+            "https://blog.naver.com/example/1",
+            "https://cafe.daum.net/example/1",
+        ):
+            with patch("tools.web_search.urlopen", return_value=_FakeResponse()):
+                page = tool.fetch_page(url=url)
+            self.assertIn("무단전재", page.text, f"boilerplate should NOT be removed for {url}")
+
+    def test_fetch_page_national_news_host_boilerplate_boundary(self) -> None:
+        """national-news host 11건은 boilerplate 제거 대상이고,
+        news.google.com, blog.naver.com, cafe.daum.net은 대상이 아님을 잠급니다."""
+        html = """
+        <html>
+          <head><title>기준금리 속보</title></head>
+          <body>
+            <div>입력 2026.04.01 09:00</div>
+            <div>김철수 기자</div>
+            <article>
+              <p>한국은행이 기준금리를 동결했다고 밝혔다.</p>
+            </article>
+            <div>무단전재 및 재배포 금지</div>
+          </body>
+        </html>
+        """.encode("utf-8")
+
+        class _FakeHeaders:
+            def get(self, key: str, default=None):
+                if key.lower() == "content-type":
+                    return "text/html; charset=utf-8"
+                return default
+
+            def get_content_charset(self):
+                return "utf-8"
+
+        class _FakeResponse:
+            headers = _FakeHeaders()
+
+            def read(self):
+                return html
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        tool = WebSearchTool()
+
+        # positive: national news host → boilerplate 제거
+        for url in (
+            "https://www.hankyung.com/economy/2025",
+            "https://www.edaily.co.kr/news/2025",
+            "https://www.etoday.co.kr/news/2025",
+            "https://news.heraldcorp.com/view/2025",
+            "https://zdnet.co.kr/view/2025",
+            "https://www.dt.co.kr/contents/2025",
+            "https://www.seoul.co.kr/news/2025",
+            "https://biz.newdaily.co.kr/news/2025",
+            "https://www.moneytoday.co.kr/news/2025",
+            "https://www.segye.com/newsView/202604010001",
+            "https://www.newsis.com/view/NISX20260401_0001",
+        ):
+            with patch("tools.web_search.urlopen", return_value=_FakeResponse()):
+                page = tool.fetch_page(url=url)
+            self.assertNotIn("무단전재", page.text, f"boilerplate should be removed for {url}")
+
+        # negative: non-news host → boilerplate 유지
+        for url in (
+            "https://news.google.com/articles/1",
+            "https://blog.naver.com/example/1",
+            "https://cafe.daum.net/example/1",
+        ):
+            with patch("tools.web_search.urlopen", return_value=_FakeResponse()):
+                page = tool.fetch_page(url=url)
+            self.assertIn("무단전재", page.text, f"boilerplate should NOT be removed for {url}")
+
+    def test_fetch_page_broadcast_news_host_boilerplate_boundary(self) -> None:
+        """broadcast/newsroom host 7건은 boilerplate 제거 대상이고,
+        news.google.com, blog.naver.com, cafe.daum.net은 대상이 아님을 잠급니다."""
+        html = """
+        <html>
+          <head><title>기준금리 속보</title></head>
+          <body>
+            <div>입력 2026.04.01 09:00</div>
+            <div>김철수 기자</div>
+            <article>
+              <p>한국은행이 기준금리를 동결했다고 밝혔다.</p>
+            </article>
+            <div>무단전재 및 재배포 금지</div>
+          </body>
+        </html>
+        """.encode("utf-8")
+
+        class _FakeHeaders:
+            def get(self, key: str, default=None):
+                if key.lower() == "content-type":
+                    return "text/html; charset=utf-8"
+                return default
+
+            def get_content_charset(self):
+                return "utf-8"
+
+        class _FakeResponse:
+            headers = _FakeHeaders()
+
+            def read(self):
+                return html
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        tool = WebSearchTool()
+
+        # positive: broadcast news host → boilerplate 제거
+        for url in (
+            "https://www.mbn.co.kr/news/economy/5000001",
+            "https://news.sbs.co.kr/news/endPage.do?news_id=N1001",
+            "https://news.kbs.co.kr/news/pc/view/view.do?ncd=8000001",
+            "https://www.ytn.co.kr/_ln/0102_202604010001",
+            "https://news.jtbc.co.kr/article/article.aspx?news_id=NB12100001",
+            "https://www.ichannela.com/news/main/news_detail.do?publishId=000000001",
+            "https://news.tvchosun.com/site/data/html_dir/2026/04/01/2026040100001.html",
+        ):
+            with patch("tools.web_search.urlopen", return_value=_FakeResponse()):
+                page = tool.fetch_page(url=url)
+            self.assertNotIn("무단전재", page.text, f"boilerplate should be removed for {url}")
+
+        # negative: non-news host → boilerplate 유지
+        for url in (
+            "https://news.google.com/articles/1",
+            "https://blog.naver.com/example/1",
+            "https://cafe.daum.net/example/1",
+        ):
+            with patch("tools.web_search.urlopen", return_value=_FakeResponse()):
+                page = tool.fetch_page(url=url)
+            self.assertIn("무단전재", page.text, f"boilerplate should NOT be removed for {url}")
+
+    def test_fetch_page_sisajournal_boilerplate_boundary(self) -> None:
+        """sisajournal.com은 boilerplate 제거 대상이고,
+        news.google.com, blog.naver.com, cafe.daum.net은 대상이 아님을 잠급니다."""
+        html = """
+        <html>
+          <head><title>기준금리 속보</title></head>
+          <body>
+            <div>입력 2026.04.01 09:00</div>
+            <div>김철수 기자</div>
+            <article>
+              <p>한국은행이 기준금리를 동결했다고 밝혔다.</p>
+            </article>
+            <div>무단전재 및 재배포 금지</div>
+          </body>
+        </html>
+        """.encode("utf-8")
+
+        class _FakeHeaders:
+            def get(self, key: str, default=None):
+                if key.lower() == "content-type":
+                    return "text/html; charset=utf-8"
+                return default
+
+            def get_content_charset(self):
+                return "utf-8"
+
+        class _FakeResponse:
+            headers = _FakeHeaders()
+
+            def read(self):
+                return html
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        tool = WebSearchTool()
+
+        # positive: sisajournal.com → boilerplate 제거
+        with patch("tools.web_search.urlopen", return_value=_FakeResponse()):
+            page = tool.fetch_page(url="https://www.sisajournal.com/news/articleView.html?idxno=123456")
+        self.assertNotIn("무단전재", page.text)
+
+        # negative: non-news host → boilerplate 유지
+        for url in (
+            "https://news.google.com/articles/1",
+            "https://blog.naver.com/example/1",
+            "https://cafe.daum.net/example/1",
+        ):
+            with patch("tools.web_search.urlopen", return_value=_FakeResponse()):
+                page = tool.fetch_page(url=url)
+            self.assertIn("무단전재", page.text, f"boilerplate should NOT be removed for {url}")
+
+    def test_fetch_page_broader_news_host_sweep_boilerplate(self) -> None:
+        """broader sweep: IT전문지, 독립매체, 지역신문 대표 host들이
+        boilerplate 제거 대상인지 확인합니다."""
+        html = """
+        <html>
+          <head><title>기준금리 속보</title></head>
+          <body>
+            <div>입력 2026.04.01 09:00</div>
+            <div>김철수 기자</div>
+            <article>
+              <p>한국은행이 기준금리를 동결했다고 밝혔다.</p>
+            </article>
+            <div>무단전재 및 재배포 금지</div>
+          </body>
+        </html>
+        """.encode("utf-8")
+
+        class _FakeHeaders:
+            def get(self, key: str, default=None):
+                if key.lower() == "content-type":
+                    return "text/html; charset=utf-8"
+                return default
+
+            def get_content_charset(self):
+                return "utf-8"
+
+        class _FakeResponse:
+            headers = _FakeHeaders()
+
+            def read(self):
+                return html
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        tool = WebSearchTool()
+
+        # positive: cluster별 대표 host → boilerplate 제거
+        for url in (
+            # IT/전문지
+            "https://www.etnews.com/20260401000001",
+            "https://www.bloter.net/news/articleView.html?idxno=123456",
+            # 독립/시사
+            "https://www.ohmynews.com/NWS_Web/View/at_pg.aspx?CNTN_CD=A0001",
+            "https://www.pressian.com/pages/articles/2026040100001",
+            "https://www.nocutnews.co.kr/news/6100001",
+            "https://www.news1.kr/articles/?5000001",
+            # 지역신문 대표
+            "https://www.kyeonggi.com/article/1",
+            "https://www.kado.net/news/articleView.html?idxno=123456",
+            "https://www.yeongnam.com/web/view.php?key=202604010001",
+            "https://www.kookje.co.kr/news2011/asp/newsbody.asp?code=0300&key=1",
+            "https://www.jjan.kr/article/20260401500001",
+            "https://www.incheonilbo.com/news/articleView.html?idxno=123456",
+            "https://www.jejunews.com/news/articleView.html?idxno=123456",
+        ):
+            with patch("tools.web_search.urlopen", return_value=_FakeResponse()):
+                page = tool.fetch_page(url=url)
+            self.assertNotIn("무단전재", page.text, f"boilerplate should be removed for {url}")
+
+        # negative: non-news host → boilerplate 유지
+        for url in (
+            "https://news.google.com/articles/1",
+            "https://blog.naver.com/example/1",
+            "https://cafe.daum.net/example/1",
+        ):
+            with patch("tools.web_search.urlopen", return_value=_FakeResponse()):
+                page = tool.fetch_page(url=url)
+            self.assertIn("무단전재", page.text, f"boilerplate should NOT be removed for {url}")
+
+
 if __name__ == "__main__":
     unittest.main()

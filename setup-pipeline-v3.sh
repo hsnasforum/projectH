@@ -30,7 +30,7 @@ else
     echo -e "${GREEN}[확인] tmux $(tmux -V) 이미 설치됨${NC}"
 fi
 
-# 2. .pipeline 폴더 초기화 (codex_feedback.md 만 유지)
+# 2. .pipeline 폴더 초기화
 PIPELINE_DIR="$PROJECT_ROOT/.pipeline"
 mkdir -p "$PIPELINE_DIR"
 [ ! -f "$PIPELINE_DIR/codex_feedback.md" ] && echo "" > "$PIPELINE_DIR/codex_feedback.md"
@@ -40,36 +40,43 @@ echo -e "${GREEN}[확인] .pipeline 폴더 준비됨${NC}"
 tmux kill-session -t "$SESSION" 2>/dev/null && \
     echo -e "${YELLOW}[정리] 기존 세션 종료${NC}"
 
-# 4. tmux 세션 생성
-echo -e "${YELLOW}[생성] tmux 세션 구성 중...${NC}"
+# 4. 현재 터미널 크기 감지
+TERM_COLS=$(tput cols 2>/dev/null || echo 300)
+TERM_ROWS=$(tput lines 2>/dev/null || echo 80)
 
-tmux new-session -d -s "$SESSION" -x 220 -y 50
+echo -e "${YELLOW}[생성] tmux 세션 구성 중... (${TERM_COLS}x${TERM_ROWS})${NC}"
+
+# 세션 생성
+tmux new-session -d -s "$SESSION" -x "$TERM_COLS" -y "$TERM_ROWS"
 tmux rename-window -t "$SESSION" "pipeline"
 
-# pane 분할 (3개)
-# 좌: Claude / 우상: Codex / 우하: Watcher
+# pane 3개 생성
 tmux split-window -t "$SESSION:0.0" -h
 tmux split-window -t "$SESSION:0.1" -v
+
+# even-horizontal 레이아웃 적용
+tmux select-layout -t "$SESSION" even-horizontal
 
 # 5. tmux 옵션
 tmux set-option -t "$SESSION" remain-on-exit on
 tmux set-option -t "$SESSION" mouse on
+tmux set-option -t "$SESSION" aggressive-resize on
 
 # 6. 각 pane 초기화
 
-# pane 0: Claude CLI (좌측 전체)
+# pane 0: Claude CLI
 tmux send-keys -t "$SESSION:0.0" "cd $PROJECT_ROOT" Enter
 sleep 0.8
-tmux send-keys -t "$SESSION:0.0" "echo '=== Claude (구현) ===' && claude" Enter
+tmux send-keys -t "$SESSION:0.0" "echo '=== Claude (구현) ===' && claude --dangerously-skip-permissions" Enter
 sleep 1.5
 
-# pane 1: Codex (우상단 - 교차분석 + 검증 + 지시문 작성)
+# pane 1: Codex
 tmux send-keys -t "$SESSION:0.1" "cd $PROJECT_ROOT" Enter
 sleep 0.8
 tmux send-keys -t "$SESSION:0.1" "echo '=== Codex (검증) ===' && codex" Enter
 sleep 1.5
 
-# pane 2: Watcher (우하단)
+# pane 2: Watcher
 tmux send-keys -t "$SESSION:0.2" "cd $PROJECT_ROOT" Enter
 sleep 0.8
 tmux send-keys -t "$SESSION:0.2" "echo '=== Pipeline Watcher ===' && ./pipeline-watcher-v3.sh $PROJECT_ROOT" Enter
@@ -80,15 +87,11 @@ echo -e "${GREEN}============================================${NC}"
 echo -e "${GREEN}  셋업 완료!${NC}"
 echo -e "${GREEN}============================================${NC}"
 echo ""
-echo -e "  레이아웃:"
-echo -e "${CYAN}  ┌───────────────┬───────────────┐${NC}"
-echo -e "${CYAN}  │               │  pane 1       │${NC}"
-echo -e "${CYAN}  │  pane 0       │  Codex        │${NC}"
-echo -e "${CYAN}  │  Claude       │  (검증)       │${NC}"
-echo -e "${CYAN}  │  (구현)       ├───────────────┤${NC}"
-echo -e "${CYAN}  │               │  pane 2       │${NC}"
-echo -e "${CYAN}  │               │  Watcher      │${NC}"
-echo -e "${CYAN}  └───────────────┴───────────────┘${NC}"
+echo -e "  레이아웃 (even-horizontal):"
+echo -e "${CYAN}  ┌──────────────┬──────────────┬──────────────┐${NC}"
+echo -e "${CYAN}  │  Claude      │  Codex       │  Watcher     │${NC}"
+echo -e "${CYAN}  │  (구현)      │  (검증)      │  (파일감시)  │${NC}"
+echo -e "${CYAN}  └──────────────┴──────────────┴──────────────┘${NC}"
 echo ""
 echo -e "  단축키:"
 echo -e "${GRAY}    마우스 클릭      : pane 이동${NC}"

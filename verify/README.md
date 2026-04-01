@@ -51,8 +51,16 @@
 - Codex는 `.pipeline/codex_feedback.md`를 쓸 때 항상 다음 둘 중 하나를 명시합니다.
   - `STATUS: implement` = 다음 단일 슬라이스 확정
   - `STATUS: needs_operator` = 다음 단일 슬라이스 미확정, 자동 진행 금지
+- `STATUS: needs_operator`를 쓸 때는 bare stop line만 남기지 말고, 최소한 stop reason, 근거가 된 latest `/work`와 `/verify`, 그리고 operator가 다음에 무엇을 정해야 하는지를 같이 남깁니다.
 - `/verify`의 1차 목적은 현재 truth를 정직하게 다시 맞추는 것입니다. 다음 슬라이스 제안은 가능하지만, 단순한 uncovered regression 채우기보다 현재 MVP 우선순위를 먼저 통과해야 합니다.
 - `/verify`의 1차 목적은 repo 전체 상태를 새로 재판정하는 것이 아니라, 최신 Claude 라운드가 truthful한지 확인하고 그 범위 안에서 다음 한 슬라이스를 좁게 제안하는 것입니다.
+- latest `/work`와 `/verify`가 한 family를 truthfully 닫았다면, 다음 슬라이스 제안은 보통 같은 family의 가장 작은 current-risk reduction부터 검토하는 편이 맞습니다.
+- 자동 제안 우선순위는 보통 다음과 같습니다.
+  - same-family current-risk reduction
+  - same-family user-visible improvement
+  - new quality axis
+  - internal cleanup
 - 따라서 `/verify`에서 바로 다음 단일 슬라이스를 고르지 못했다면, Claude에게 선택권을 넘기지 말고 `.pipeline/codex_feedback.md`를 `STATUS: needs_operator`로 남기는 편이 맞습니다.
+- 다만 그 경우에도 `.pipeline/codex_feedback.md`는 빈 정지 신호가 아니라, 사람이 다시 읽었을 때 즉시 맥락을 복원할 수 있는 stop handoff여야 합니다.
 - focused regression만 다시 돌렸다면 그 이유를 적고, full browser 또는 end-to-end verification을 생략했다면 왜 이번 변경과 직접 관련이 없었는지 분명히 적습니다.
 - `route-level`, `handler-level`, `helper-level` completeness 공백은 현재 shipped user flow를 지키는 경우가 아니라면 기본적으로 리스크 메모에 가깝게 다루고, 다음 기능 슬라이스의 자동 기본값으로 승격하지 않습니다.

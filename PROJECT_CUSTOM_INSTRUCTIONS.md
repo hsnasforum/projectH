@@ -80,6 +80,10 @@
   - `STATUS: needs_operator`
 - `STATUS: implement`이면 Codex가 이미 다음 단일 슬라이스를 확정한 상태이고, Claude는 그 한 슬라이스만 구현합니다.
 - `STATUS: needs_operator`이면 Codex가 아직 truthful하게 다음 단일 슬라이스를 확정하지 못한 상태이며, Claude는 새 구현을 시작하지 않고 대기합니다.
+- `STATUS: needs_operator`는 한 줄짜리 bare stop signal로 끝내지 않습니다. 최소한 아래를 같이 남깁니다.
+  - 왜 지금 자동 진행을 멈추는지
+  - 어떤 최신 `/work`와 `/verify`를 근거로 멈췄는지
+  - operator가 무엇을 정하면 다시 `STATUS: implement`로 돌아갈 수 있는지
 - 자동화 기준으로는 `STATUS` 줄 자체가 stop/go 제어 신호입니다. 멈추고 싶으면 본문 설명을 조금 바꾸는 대신 `STATUS`를 바꿔야 합니다.
 - `.pipeline/gpt_prompt.md`는 필요하면 scratch나 legacy 호환용으로 남길 수 있지만, canonical 흐름의 필수 단계는 아닙니다.
 - rolling 슬롯 파일은 매 라운드 덮어써도 되지만, 영속 truth는 항상 `/work`와 `/verify`에 남겨야 합니다.
@@ -109,7 +113,14 @@
 - reviewed-memory 작업도 계속 가능하지만, 다음 슬라이스는 user-visible reviewed-memory clarity, actual document workflow improvement, approval/evidence/search/summary quality 중 무엇을 직접 개선하는지 먼저 설명할 수 있어야 합니다.
 - 현재 planning anchor는 reviewed-memory가 사용자에게 보이고, effect가 활성화되며, 사용자가 그 effect를 명시적으로 중단할 수 있는 지점까지입니다. 그 이후 deeper reversal, conflict-visibility, route-by-route completeness는 자동 기본값으로 이어지지 않습니다.
 - `/verify`는 이 다음 슬라이스를 제안할 수 있지만, 그 제안은 "이번 Claude 작업 검수 결과"에서 자연스럽게 이어지는 범위여야 하며, 별도 요청 없는 전체 roadmap 재설계로 확장되면 안 됩니다.
+- 같은 family를 truthfully 닫은 직후라면, Codex는 다음 슬라이스를 아래 순서로 자동 선택하는 편이 맞습니다.
+  - 같은 family의 가장 작은 current-risk reduction
+  - 같은 family의 가장 작은 user-visible improvement
+  - 그 다음 새로운 quality axis
+  - 마지막으로 internal cleanup
+- `STATUS: needs_operator`는 위 순서로도 한 후보를 truthful하게 못 고를 때나, approval-record / truth-sync 문제가 새 구현보다 먼저일 때만 사용합니다.
 - 따라서 `.pipeline/codex_feedback.md`는 기본적으로 "단일 슬라이스 확정" 문서여야 하며, 확정하지 못했을 때만 `STATUS: needs_operator`로 멈춥니다.
+- 다만 `STATUS: needs_operator`로 멈출 때도, operator가 다음 결정을 내릴 수 있도록 최소한의 stop reason과 next decision context를 남겨야 합니다.
 
 ## 7. 제품 방향 정리 원칙
 - 현재 단계의 핵심은 `문서 작업`입니다.

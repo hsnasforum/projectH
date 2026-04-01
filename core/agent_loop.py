@@ -75,6 +75,7 @@ class AgentResponse:
     corrected_outcome: dict[str, Any] | None = None
     approval_reason_record: dict[str, Any] | None = None
     save_content_source: str | None = None
+    search_results: list[dict[str, str]] = field(default_factory=list)
 
 
 class RequestCancelledError(RuntimeError):
@@ -637,10 +638,11 @@ class AgentLoop:
         uploaded_files: list[dict[str, Any]],
         query: str,
         max_results: int,
-    ) -> tuple[list[FileSearchResult], dict[str, Any], list[str]]:
+    ) -> tuple[list[FileSearchResult], dict[str, Any], list[str], list[str]]:
         matches: list[FileSearchResult] = []
         read_results_by_path: dict[str, Any] = {}
         skipped_ocr_paths: list[str] = []
+        failed_paths: list[str] = []
         lowered_query = query.lower()
 
         for uploaded_file in uploaded_files:
@@ -657,6 +659,7 @@ class AgentLoop:
                 skipped_ocr_paths.append(relative_path)
                 continue
             except Exception:
+                failed_paths.append(relative_path)
                 continue
 
             read_results_by_path[relative_path] = read_result
@@ -679,7 +682,7 @@ class AgentLoop:
             if len(matches) >= max_results:
                 break
 
-        return sorted(matches, key=lambda item: item.path), read_results_by_path, skipped_ocr_paths
+        return sorted(matches, key=lambda item: item.path), read_results_by_path, skipped_ocr_paths, failed_paths
 
     def _append_notice(self, text: str, notice: str | None) -> str:
         if not notice:
@@ -2802,24 +2805,92 @@ class AgentLoop:
             return "blog"
         if hostname.startswith("search.") or hostname in {"www.google.com", "google.com", "search.naver.com"}:
             return "portal"
-        news_host_hints = (
-            "news",
+        news_domain_hosts = (
+            "chosun.com",
+            "joongang.co.kr",
+            "donga.com",
             "yna.co.kr",
-            "chosun",
-            "joongang",
-            "donga",
+            "dt.co.kr",
+            "edaily.co.kr",
+            "etoday.co.kr",
             "hani.co.kr",
+            "hankyung.com",
+            "heraldcorp.com",
             "khan.co.kr",
             "mk.co.kr",
+            "moneytoday.co.kr",
+            "newdaily.co.kr",
             "sedaily.com",
+            "seoul.co.kr",
             "mt.co.kr",
             "sportsseoul.com",
             "sportschosun.com",
             "newsen.com",
             "xportsnews.com",
+            "zdnet.co.kr",
             "dispatch.co.kr",
+            "segye.com",
+            "sisajournal.com",
+            "kyeonggi.com",
+            "sisafocus.co.kr",
+            "ikbc.co.kr",
+            "kado.net",
+            "ggilbo.com",
+            "idaegu.com",
+            "kyeongin.com",
+            "yeongnam.com",
+            "jemin.com",
+            "jeonmae.co.kr",
+            "gndomin.com",
+            "kwangju.co.kr",
+            "ksilbo.co.kr",
+            "imaeil.com",
+            "kookje.co.kr",
+            "jnilbo.com",
+            "jjan.kr",
+            "iusm.co.kr",
+            "mdilbo.com",
+            "idaebae.com",
+            "kbsm.net",
+            "incheonilbo.com",
+            "daejonilbo.com",
+            "kihoilbo.co.kr",
+            "kyeongbuk.co.kr",
+            "goodmorningcc.com",
+            "cctoday.co.kr",
+            "chungnamilbo.co.kr",
+            "daejeonilbo.com",
+            "joongdo.co.kr",
+            "dynews.co.kr",
+            "ccdailynews.com",
+            "jbnews.com",
+            "gjdream.com",
+            "jejunews.com",
+            "headlinejeju.co.kr",
+            "ohmynews.com",
+            "pressian.com",
+            "nocutnews.co.kr",
+            "newsis.com",
+            "news1.kr",
+            "mbn.co.kr",
+            "sbs.co.kr",
+            "kbs.co.kr",
+            "ytn.co.kr",
+            "jtbc.co.kr",
+            "ichannela.com",
+            "tvchosun.com",
+            "etnews.com",
+            "bloter.net",
+            "news.naver.com",
+            "v.daum.net",
+            "news.daum.net",
+            "news.nate.com",
+            "news.zum.com",
         )
-        if any(hint in hostname for hint in news_host_hints):
+        if any(
+            hostname == host or hostname.endswith(f".{host}")
+            for host in news_domain_hosts
+        ):
             return "news"
         return "general"
 
@@ -3578,11 +3649,12 @@ class AgentLoop:
         source_index: int,
         sources: list[dict[str, Any]],
         fact_bullets_by_index: dict[int, list[str]],
+        trust_score_by_index: dict[int, int] | None = None,
     ) -> int:
         source_bullets = fact_bullets_by_index.get(source_index) or []
         if not source_bullets:
             return 0
-        support_by_label: dict[str, int] = {}
+        peers_by_label: dict[str, list[int]] = {}
         parsed_source = [self._split_entity_fact_bullet(bullet) for bullet in source_bullets]
         parsed_source = [item for item in parsed_source if item]
         for peer_index, peer_source in enumerate(sources):
@@ -3603,17 +3675,24 @@ class AgentLoop:
                     matched_labels.add(source_label)
                     break
             for label in matched_labels:
-                support_by_label[label] = support_by_label.get(label, 0) + 1
-        if not support_by_label:
+                if label not in peers_by_label:
+                    peers_by_label[label] = []
+                peers_by_label[label].append(peer_index)
+        if not peers_by_label:
             return 0
         agreement_score = 0
-        for label, count in support_by_label.items():
+        for label, peer_indices in peers_by_label.items():
+            count = len(peer_indices)
             agreement_score += 4
+            if trust_score_by_index:
+                best_peer_trust = max(trust_score_by_index.get(idx, 0) for idx in peer_indices)
+                if best_peer_trust >= 7:
+                    agreement_score += 2
             if count >= 2:
                 agreement_score += 2
             if self._entity_fact_sort_key(label)[0] <= 4:
                 agreement_score += 1
-        if len(support_by_label) >= 2:
+        if len(peers_by_label) >= 2:
             agreement_score += 3
         return agreement_score
 
@@ -4332,7 +4411,7 @@ class AgentLoop:
                 lines.append(f"- {claim.slot}: {claim.value}{support_suffix}")
         if weak_claims:
             lines.append("")
-            lines.append("불확실 정보:")
+            lines.append("단일 출처 확인 정보:")
             for claim in weak_claims:
                 role_label = core_coverage.get(claim.slot).primary_claim.source_role if core_coverage.get(claim.slot) and core_coverage.get(claim.slot).primary_claim else claim.source_role
                 lines.append(f"- {claim.slot}: {claim.value} (단일 출처, {role_label})")
@@ -4343,9 +4422,9 @@ class AgentLoop:
                 lines.append(f"- {claim.slot}: {claim.value} (교차 확인 {claim.support_count}건)")
         if unresolved_slots:
             lines.append("")
-            lines.append("추가 확인 필요:")
+            lines.append("아직 확인되지 않은 항목:")
             for slot in unresolved_slots:
-                lines.append(f"- {slot}: 교차 확인 가능한 근거가 더 필요합니다.")
+                lines.append(f"- {slot}: 교차 확인 가능한 근거를 찾지 못했습니다.")
         lines.append("")
         lines.append("근거 출처:")
         lines.extend(
@@ -4613,7 +4692,7 @@ class AgentLoop:
         if query_profile == "entity":
             threshold = max(4, top_score - 7)
         elif query_profile == "live":
-            threshold = max(2, top_score - 9)
+            threshold = max(2, top_score - 12)
         else:
             threshold = max(1, top_score - 8)
 
@@ -4659,11 +4738,10 @@ class AgentLoop:
             matched_query = str(source.get("matched_query") or "").strip()
             if self._entity_slot_from_search_query(query=query, matched_query=matched_query):
                 candidates.append(source)
-        if len(candidates) < max_items:
-            for source in ranked_sources:
-                if source in candidates:
-                    continue
-                candidates.append(source)
+        for source in ranked_sources:
+            if source in candidates:
+                continue
+            candidates.append(source)
         if not candidates:
             return []
 
@@ -4685,13 +4763,19 @@ class AgentLoop:
             for index, source in enumerate(candidates)
         }
 
+        trust_score_by_index = {
+            index: _entity_trust_score(source)
+            for index, source in enumerate(candidates)
+        }
+
         decorated: list[tuple[int, int, int, int, int, dict[str, Any]]] = []
         for index, source in enumerate(candidates):
-            trust_score = _entity_trust_score(source)
+            trust_score = trust_score_by_index.get(index, 0)
             agreement_score = self._entity_source_fact_agreement_score(
                 source_index=index,
                 sources=candidates,
                 fact_bullets_by_index=fact_bullets_by_index,
+                trust_score_by_index=trust_score_by_index,
             )
             probe_bonus = probe_bonus_by_index.get(index, 0)
             rank_score = int(source.get("score") or 0)
@@ -4710,6 +4794,7 @@ class AgentLoop:
         chosen: list[dict[str, Any]] = []
         seen_domains: set[str] = set()
         source_kind_counts: dict[str, int] = {}
+        evicted_source_ids: set[int] = set()
 
         def _push(source: dict[str, Any]) -> bool:
             hostname = self._source_hostname(str(source.get("url") or "").strip())
@@ -4725,10 +4810,56 @@ class AgentLoop:
             trust_score = _entity_trust_score(source)
             probe_bonus = probe_bonus_by_source_id.get(id(source), 0)
             if hostname and hostname in seen_domains:
-                return False
+                if probe_bonus <= 0:
+                    domain_has_probe = any(
+                        self._source_hostname(str(item.get("url") or "").strip()) == hostname
+                        and probe_bonus_by_source_id.get(id(item), 0) > 0
+                        for item in chosen
+                    )
+                    if domain_has_probe:
+                        evicted_source_ids.add(id(source))
+                    return False
+                existing = [item for item in chosen if self._source_hostname(str(item.get("url") or "").strip()) == hostname]
+                if existing and all(probe_bonus_by_source_id.get(id(item), 0) <= 0 for item in existing):
+                    for item in existing:
+                        evicted_source_ids.add(id(item))
+                    chosen[:] = [item for item in chosen if item not in existing]
+                    for item in existing:
+                        item_hostname = self._source_hostname(str(item.get("url") or "").strip())
+                        if item_hostname:
+                            seen_domains.discard(item_hostname)
+                        item_policy = self._build_source_policy_decision(
+                            query=query,
+                            url=str(item.get("url") or "").strip(),
+                            title=str(item.get("title") or item.get("result_title") or "").strip(),
+                            summary_text=str(item.get("summary_text") or item.get("snippet") or "").strip(),
+                        )
+                        source_kind_counts[item_policy.source_type] = max(0, source_kind_counts.get(item_policy.source_type, 1) - 1)
+                else:
+                    new_slot = self._entity_slot_from_search_query(
+                        query=query,
+                        matched_query=str(source.get("matched_query") or "").strip(),
+                    )
+                    if new_slot:
+                        existing_slots = {
+                            self._entity_slot_from_search_query(
+                                query=query,
+                                matched_query=str(item.get("matched_query") or "").strip(),
+                            )
+                            for item in existing
+                            if probe_bonus_by_source_id.get(id(item), 0) > 0
+                        }
+                        if new_slot not in existing_slots:
+                            pass
+                        else:
+                            return False
+                    else:
+                        return False
             if any(_entity_trust_score(item) >= 7 for item in chosen) and trust_score < 4 and probe_bonus <= 0:
                 return False
             if source_policy.source_type == "community" and source_kind_counts.get(source_policy.source_type, 0) >= 1:
+                return False
+            if source_kind_counts.get(source_policy.source_type, 0) >= 2:
                 return False
             if (
                 self._looks_like_event_or_campaign_source(title=source_title, summary_text=source_summary)
@@ -4765,7 +4896,7 @@ class AgentLoop:
             for source in candidates:
                 if len(chosen) >= max_items:
                     break
-                if source in chosen:
+                if source in chosen or id(source) in evicted_source_ids:
                     continue
                 trust_score = _entity_trust_score(source)
                 source_url = str(source.get("url") or "").strip()
@@ -4992,17 +5123,36 @@ class AgentLoop:
         answer_mode: str | None = None,
         selected_sources: list[dict[str, Any]] | None = None,
         query: str | None = None,
+        claim_coverage: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         mode_label = "웹 검색 결과"
         if answer_mode == "entity_card":
             mode_label = "외부 웹 설명 카드"
         elif answer_mode == "latest_update":
             mode_label = "외부 웹 최신 확인"
-        source_roles = self._summarize_web_source_roles(query=query or "", sources=selected_sources or [])
+        role_sources = list(selected_sources or [])
+        if answer_mode == "entity_card" and role_sources:
+            role_sources = [
+                s for s in role_sources
+                if self._extract_entity_source_fact_bullets(query=query or "", source=s)
+            ]
+            if not role_sources:
+                role_sources = list(selected_sources or [])
+        elif answer_mode == "latest_update" and role_sources:
+            role_sources = [
+                s for s in role_sources
+                if not self._looks_like_noisy_web_segment(
+                    str(s.get("summary_text") or s.get("snippet") or "").strip()
+                )
+            ]
+            if not role_sources:
+                role_sources = list(selected_sources or [])
+        source_roles = self._summarize_web_source_roles(query=query or "", sources=role_sources)
         verification_label = self._build_web_verification_label(
             query=query or "",
-            sources=selected_sources or [],
+            sources=role_sources,
             answer_mode=answer_mode,
+            claim_coverage=claim_coverage,
         )
         return {
             "provider": "web",
@@ -5029,6 +5179,7 @@ class AgentLoop:
         query: str,
         sources: list[dict[str, Any]],
         answer_mode: str | None,
+        claim_coverage: list[dict[str, Any]] | None = None,
     ) -> str:
         if not sources:
             return ""
@@ -5068,7 +5219,12 @@ class AgentLoop:
             return "단일 출처 참고"
 
         if answer_mode == "entity_card":
-            if strong_reference_count >= 2:
+            has_strong_slot = any(
+                str(item.get("status") or "").strip() == "strong"
+                for item in (claim_coverage or [])
+                if isinstance(item, dict)
+            )
+            if strong_reference_count >= 2 and has_strong_slot:
                 return "설명형 다중 출처 합의"
             if official_count >= 1:
                 return "공식 단일 출처"
@@ -5092,7 +5248,13 @@ class AgentLoop:
             sources=selected_sources,
             answer_mode="latest_update",
         )
-        source_roles = self._summarize_web_source_roles(query=query, sources=selected_sources)
+        non_noisy_sources = [
+            s for s in selected_sources
+            if not self._looks_like_noisy_web_segment(
+                str(s.get("summary_text") or s.get("snippet") or "").strip()
+            )
+        ] or selected_sources
+        source_roles = self._summarize_web_source_roles(query=query, sources=non_noisy_sources)
         lines = [
             f"웹 최신 확인: {query}",
             "",
@@ -5149,6 +5311,7 @@ class AgentLoop:
         summary_text: str,
         pages: list[dict[str, Any]] | None = None,
         ranked_sources: list[dict[str, Any]] | None = None,
+        pre_selected_sources: list[dict[str, Any]] | None = None,
         intent_kind: str | None = None,
         answer_mode: str | None = None,
         freshness_risk: str | None = None,
@@ -5160,25 +5323,28 @@ class AgentLoop:
         evidence_pool: list[dict[str, str]] = []
         retrieval_chunks: list[dict[str, str]] = []
         source_paths: list[str] = []
-        ranked = list(
-            ranked_sources
-            or self._rank_web_search_sources(
+        if pre_selected_sources is not None:
+            selected_sources = list(pre_selected_sources)
+        else:
+            ranked = list(
+                ranked_sources
+                or self._rank_web_search_sources(
+                    query=query,
+                    intent_kind=intent_kind,
+                    answer_mode=answer_mode,
+                    freshness_risk=freshness_risk,
+                    results=results,
+                    pages=pages,
+                )
+            )
+            selected_sources = self._select_ranked_web_sources(
                 query=query,
                 intent_kind=intent_kind,
                 answer_mode=answer_mode,
                 freshness_risk=freshness_risk,
-                results=results,
-                pages=pages,
+                ranked_sources=ranked,
+                max_items=5,
             )
-        )
-        selected_sources = self._select_ranked_web_sources(
-            query=query,
-            intent_kind=intent_kind,
-            answer_mode=answer_mode,
-            freshness_risk=freshness_risk,
-            ranked_sources=ranked,
-            max_items=5,
-        )
         total_chunks = 0
         for source in selected_sources:
             context_text = str(source.get("context_text") or "").strip()
@@ -5581,6 +5747,7 @@ class AgentLoop:
                     pages=fetched_pages,
                 )
         claim_coverage: list[dict[str, Any]] = []
+        entity_sources: list[dict[str, Any]] | None = None
         query_profile = self._infer_web_query_profile(
             query=query,
             intent_kind=intent_kind,
@@ -5648,6 +5815,7 @@ class AgentLoop:
                 max_items=3,
             ),
             query=query,
+            claim_coverage=claim_coverage,
         )
         record_info = self.web_search_store.save(
             session_id=request.session_id,
@@ -5658,6 +5826,7 @@ class AgentLoop:
             pages=fetched_pages,
             response_origin=response_origin,
             claim_coverage=claim_coverage,
+            claim_coverage_progress_summary=claim_coverage_progress_summary,
         )
         record_path = str(record_info["record_path"])
         active_context = self._build_web_search_active_context(
@@ -5666,6 +5835,7 @@ class AgentLoop:
             summary_text=summary_text,
             pages=fetched_pages,
             ranked_sources=ranked_sources,
+            pre_selected_sources=entity_sources,
             intent_kind=intent_kind,
             answer_mode=effective_answer_mode,
             freshness_risk=freshness_risk,
@@ -5815,6 +5985,8 @@ class AgentLoop:
             )
 
         query = str(record.get("query") or "최근 검색").strip()
+        stored_origin = record.get("response_origin") or {}
+        stored_answer_mode = str(stored_origin.get("answer_mode") or "").strip()
         results = [dict(item) for item in record.get("results", []) if isinstance(item, dict)]
         pages = [dict(item) for item in record.get("pages", []) if isinstance(item, dict)]
         ranked_sources = self._rank_web_search_sources(
@@ -5822,34 +5994,62 @@ class AgentLoop:
             results=results,
             pages=pages,
         )
-        summary_text = self._summarize_web_search_results(
-            query=query,
-            results=results,
-            pages=pages,
-            ranked_sources=ranked_sources,
-        )
-        claim_coverage: list[dict[str, Any]] = []
-        query_profile = self._infer_web_query_profile(query=query)
-        if query_profile == "entity":
-            entity_sources = self._select_ranked_web_sources(
+        stored_summary_text = str(record.get("summary_text") or "").strip()
+        if stored_summary_text:
+            summary_text = stored_summary_text
+        else:
+            stored_intent_kind = "external_fact" if stored_answer_mode == "entity_card" else None
+            summary_text = self._summarize_web_search_results(
                 query=query,
+                results=results,
+                pages=pages,
                 ranked_sources=ranked_sources,
-                max_items=3,
+                intent_kind=stored_intent_kind,
+                answer_mode=stored_answer_mode or None,
             )
-            entity_claim_records = self._build_entity_claim_records(
-                query=query,
-                selected_sources=entity_sources,
-            )
-            entity_core_coverage = summarize_slot_coverage(entity_claim_records, slots=CORE_ENTITY_SLOTS)
-            primary_claims, weak_claims, _, _ = self._select_entity_fact_card_claims(
-                query=query,
-                claim_records=entity_claim_records,
-            )
-            claim_coverage = self._build_entity_claim_coverage_items(
-                core_coverage=entity_core_coverage,
-                primary_claims=primary_claims,
-                weak_claims=weak_claims,
-            )
+        stored_claim_coverage = [
+            dict(item) for item in record.get("claim_coverage", []) if isinstance(item, dict)
+        ]
+        stored_progress_summary = str(record.get("claim_coverage_progress_summary") or "").strip()
+        claim_coverage: list[dict[str, Any]] = []
+        claim_coverage_progress_summary: str | None = None
+        entity_sources: list[dict[str, Any]] | None = None
+        if stored_claim_coverage:
+            claim_coverage = stored_claim_coverage
+            claim_coverage_progress_summary = stored_progress_summary or None
+        else:
+            query_profile = self._infer_web_query_profile(query=query)
+            if query_profile == "entity":
+                entity_sources = self._select_ranked_web_sources(
+                    query=query,
+                    ranked_sources=ranked_sources,
+                    max_items=3,
+                )
+                entity_claim_records = self._build_entity_claim_records(
+                    query=query,
+                    selected_sources=entity_sources,
+                )
+                entity_core_coverage = summarize_slot_coverage(entity_claim_records, slots=CORE_ENTITY_SLOTS)
+                primary_claims, weak_claims, _, _ = self._select_entity_fact_card_claims(
+                    query=query,
+                    claim_records=entity_claim_records,
+                )
+                claim_coverage = self._build_entity_claim_coverage_items(
+                    core_coverage=entity_core_coverage,
+                    primary_claims=primary_claims,
+                    weak_claims=weak_claims,
+                )
+
+        def _infer_reloaded_answer_mode() -> str:
+            if claim_coverage:
+                return "entity_card"
+            if stored_answer_mode in ("entity_card", "latest_update"):
+                return stored_answer_mode
+            if summary_text.startswith("웹 최신 확인:"):
+                return "latest_update"
+            return "general"
+
+        reloaded_answer_mode = _infer_reloaded_answer_mode()
         record_path = str(record.get("record_path") or "").strip()
         active_context = self._build_web_search_active_context(
             query=query,
@@ -5857,8 +6057,10 @@ class AgentLoop:
             summary_text=summary_text,
             pages=pages,
             ranked_sources=ranked_sources,
-            answer_mode="entity_card" if claim_coverage else ("latest_update" if summary_text.startswith("웹 최신 확인:") else "general"),
+            pre_selected_sources=entity_sources,
+            answer_mode=reloaded_answer_mode,
             claim_coverage=claim_coverage,
+            claim_coverage_progress_summary=claim_coverage_progress_summary,
             record_path=record_path or None,
         )
         self.session_store.set_active_context(request.session_id, active_context)
@@ -5889,7 +6091,16 @@ class AgentLoop:
             ]
         )
         if show_only:
-            reloaded_answer_mode = "entity_card" if claim_coverage else ("latest_update" if summary_text.startswith("웹 최신 확인:") else "general")
+            reload_origin: dict[str, Any]
+            if stored_origin and stored_origin.get("answer_mode"):
+                reload_origin = dict(stored_origin)
+            else:
+                reload_origin = self._build_web_search_origin(
+                    answer_mode=reloaded_answer_mode,
+                    selected_sources=ranked_sources[:3],
+                    query=query,
+                    claim_coverage=claim_coverage,
+                )
             return AgentResponse(
                 text=f"최근 웹 검색 기록을 다시 불러왔습니다.\n\n{summary_text}",
                 status="answer",
@@ -5903,11 +6114,7 @@ class AgentLoop:
                     ranked_sources=ranked_sources,
                 ),
                 claim_coverage=claim_coverage,
-                response_origin=self._build_web_search_origin(
-                    answer_mode=reloaded_answer_mode,
-                    selected_sources=ranked_sources[:3],
-                    query=query,
-                ),
+                response_origin=reload_origin,
                 web_search_record_path=record_path or None,
             )
 
@@ -5921,6 +6128,8 @@ class AgentLoop:
         )
         response.actions_taken = ["load_web_search_record", *response.actions_taken]
         response.web_search_record_path = record_path or None
+        if stored_origin and stored_origin.get("answer_mode") and response.response_origin is None:
+            response.response_origin = dict(stored_origin)
         return response
 
     def _looks_like_underspecified_next_step_request(self, user_request: str) -> bool:
@@ -6507,11 +6716,13 @@ class AgentLoop:
         write_detail: dict[str, Any] | None = None,
         record_accepted_as_is: bool = False,
         preserve_existing_corrected_outcome: bool = False,
+        allow_overwrite: bool = False,
     ) -> tuple[str, dict[str, Any] | None]:
         saved_path = self.tools["write_note"].run(
             path=note_path,
             text=note_body,
             approved=True,
+            allow_overwrite=allow_overwrite,
         )
         detail = {
             "artifact_id": artifact_id,
@@ -6617,6 +6828,7 @@ class AgentLoop:
                 "approval_id": approval.approval_id,
                 "kind": approval.kind,
                 "requested_path": approval.requested_path,
+                "overwrite": approval.overwrite,
                 "artifact_id": approval.artifact_id,
                 "source_message_id": approval.source_message_id,
                 "save_content_source": approval.save_content_source,
@@ -6639,8 +6851,11 @@ class AgentLoop:
             preserve_existing_corrected_outcome=(
                 (approval.save_content_source or "").strip() == SAVE_CONTENT_SOURCE_CORRECTED_TEXT
             ),
+            allow_overwrite=approval.overwrite,
         )
         saved_text = f"요약 노트를 {saved_path}에 저장했습니다."
+        if approval.overwrite:
+            saved_text = f"기존 파일을 덮어쓰고 {saved_path}에 저장했습니다."
         if (approval.save_content_source or "").strip() == SAVE_CONTENT_SOURCE_CORRECTED_TEXT:
             saved_text = (
                 f"승인 시점에 고정된 수정본을 {saved_path}에 저장했습니다. "
@@ -7269,8 +7484,9 @@ class AgentLoop:
                 )
                 uploaded_read_results_by_path: dict[str, Any] = {}
                 skipped_ocr_paths: list[str] = []
+                failed_uploaded_paths: list[str] = []
                 if uploaded_search_files:
-                    matches, uploaded_read_results_by_path, skipped_ocr_paths = self._search_uploaded_files(
+                    matches, uploaded_read_results_by_path, skipped_ocr_paths, failed_uploaded_paths = self._search_uploaded_files(
                         uploaded_files=uploaded_search_files,
                         query=search_query,
                         max_results=self._search_result_limit(request),
@@ -7292,6 +7508,7 @@ class AgentLoop:
                         "search_query": search_query,
                         "match_count": len(matches),
                         "skipped_ocr_paths": skipped_ocr_paths,
+                        "failed_uploaded_paths": failed_uploaded_paths,
                         "matches": [
                             {
                                 "path": item.path,
@@ -7303,6 +7520,9 @@ class AgentLoop:
                     },
                 )
                 search_notice = self._format_search_ocr_notice(skipped_ocr_paths)
+                if failed_uploaded_paths:
+                    failed_notice = f"일부 파일({len(failed_uploaded_paths)}건)을 읽지 못해 검색에서 제외되었습니다."
+                    search_notice = f"{search_notice}\n{failed_notice}".strip() if search_notice else failed_notice
 
                 if not matches:
                     response = AgentResponse(
@@ -7317,6 +7537,10 @@ class AgentLoop:
                         text=self._append_notice(self._format_search_results(matches), search_notice),
                         actions_taken=[search_action_name],
                         selected_source_paths=[item.path for item in matches],
+                        search_results=[
+                            {"path": item.path, "matched_on": item.matched_on, "snippet": item.snippet}
+                            for item in matches
+                        ],
                     )
                 else:
                     self._emit_phase(
@@ -7465,6 +7689,10 @@ class AgentLoop:
                                 follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
                                 evidence=selected_evidence,
                                 summary_chunks=summary_chunks,
+                                search_results=[
+                                    {"path": item.path, "matched_on": item.matched_on, "snippet": item.snippet}
+                                    for item in matches
+                                ],
                                 **self._build_grounded_brief_source_response_fields(
                                     artifact_id=artifact_id,
                                     source_message_id=source_message_id,
@@ -7510,6 +7738,10 @@ class AgentLoop:
                                 follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
                                 evidence=selected_evidence,
                                 summary_chunks=summary_chunks,
+                                search_results=[
+                                    {"path": item.path, "matched_on": item.matched_on, "snippet": item.snippet}
+                                    for item in matches
+                                ],
                                 **self._build_grounded_brief_source_response_fields(
                                     artifact_id=artifact_id,
                                     source_message_id=source_message_id,
@@ -7531,6 +7763,10 @@ class AgentLoop:
                             follow_up_suggestions=[str(prompt) for prompt in new_active_context["suggested_prompts"]],
                             evidence=selected_evidence,
                             summary_chunks=summary_chunks,
+                            search_results=[
+                                {"path": item.path, "matched_on": item.matched_on, "snippet": item.snippet}
+                                for item in matches
+                            ],
                             artifact_id=artifact_id,
                             artifact_kind="grounded_brief",
                         )

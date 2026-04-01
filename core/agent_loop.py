@@ -28,7 +28,7 @@ from core.contracts import (
     StreamEventType,
 )
 from core.models import RequestContext, SearchIntentResolution
-from core.request_intents import classify_search_intent
+from core.request_intents import SearchIntentDecision, classify_search_intent
 from core.source_policy import build_source_policy, score_source_for_mode
 from core.web_claims import (
     CORE_ENTITY_SLOTS,
@@ -7123,6 +7123,1281 @@ class AgentLoop:
             "summary_chunk_count": len(response.summary_chunks),
         }
 
+    def _finalize_response(self, session_id: str, response: AgentResponse) -> AgentResponse:
+        self._append_response_message(session_id, response)
+        self.task_logger.log(
+            session_id=session_id,
+            action="agent_response",
+            detail=self._agent_response_log_detail(response),
+        )
+        return response
+
+    def _handle_approval_flow(
+        self,
+        request: UserRequest,
+        *,
+        phase_event_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> AgentResponse | None:
+        if request.metadata.get("corrected_save_message_id"):
+            self._emit_phase(
+                phase_event_callback,
+                phase="approval_prepared",
+                title="수정본 저장 승인 카드 준비 중",
+                detail="기록된 수정본으로 새 저장 승인 스냅샷을 만드는 중입니다.",
+                note="현재 편집 중인 텍스트는 포함되지 않으며, 승인 미리보기는 요청 시점 그대로 고정됩니다.",
+            )
+            return self._request_corrected_save_bridge(request)
+
+        if request.reissue_approval_id:
+            self._emit_phase(
+                phase_event_callback,
+                phase="approval_reissue",
+                title="저장 승인 경로 다시 준비 중",
+                detail="기존 승인 요청의 본문과 출처를 유지한 채 새 저장 경로로 승인 객체를 다시 만드는 중입니다.",
+                note="실제 파일은 아직 저장하지 않습니다.",
+            )
+            return self._reissue_pending_approval(request)
+
+        if request.approved_approval_id:
+            self._emit_phase(
+                phase_event_callback,
+                phase="approval_execute",
+                title="승인된 작업 실행 중",
+                detail="승인된 저장 작업을 확인하고 실제 파일 쓰기를 준비하는 중입니다.",
+                note="기존 승인 객체만 실행합니다.",
+            )
+            return self._execute_pending_approval(request)
+
+        if request.rejected_approval_id:
+            self._emit_phase(
+                phase_event_callback,
+                phase="approval_reject",
+                title="승인 취소 처리 중",
+                detail="승인 대기 중인 저장 작업을 취소하는 중입니다.",
+                note="파일은 저장되지 않습니다.",
+            )
+            return self._reject_pending_approval(request)
+
+        return None
+
+    def _prepare_request_state(
+        self,
+        request: UserRequest,
+        *,
+        web_search_permission: str,
+    ) -> tuple[RequestContext, SearchIntentResolution, SearchIntentDecision]:
+        _search_query = self._extract_search_query(request)
+        _search_root = self._extract_search_root(request)
+        _uploaded_search_files = self._extract_uploaded_search_files(request)
+        _has_search_request = bool(_search_query and (_search_root or _uploaded_search_files))
+        _active_context = self.session_store.get_active_context(request.session_id)
+        _has_explicit_source_path = self._has_explicit_source_path(request)
+        _source_path = self._extract_source_path(request)
+        _uploaded_file = self._extract_uploaded_file(request)
+        _follow_up_intent = self._detect_follow_up_intent(request.user_text) if request.user_text.strip() else FOLLOW_UP_INTENT_GENERAL
+        _active_context_mode = self._classify_active_context_request(
+            request=request,
+            active_context=_active_context,
+            has_search_request=_has_search_request,
+            has_explicit_source_path=_has_explicit_source_path,
+            uploaded_file=_uploaded_file,
+        )
+        rc = RequestContext(
+            user_text=request.user_text,
+            session_id=request.session_id,
+            search_query=_search_query,
+            search_root=_search_root,
+            uploaded_search_files=_uploaded_search_files,
+            has_search_request=_has_search_request,
+            active_context=_active_context,
+            web_search_permission=web_search_permission,
+            has_explicit_source_path=_has_explicit_source_path,
+            source_path=_source_path,
+            uploaded_file=_uploaded_file,
+            retry_feedback_reason=self._extract_retry_feedback_reason(request),
+            load_web_search_record_id=self._extract_load_web_search_record_id(request),
+            wants_web_search_record_recall=self._looks_like_web_search_record_recall(request.user_text),
+            follow_up_intent=_follow_up_intent,
+            active_context_mode=_active_context_mode,
+        )
+        search_intent = self._classify_search_intent(request.user_text)
+        sir = SearchIntentResolution.from_intent(
+            search_intent,
+            web_search_permission=web_search_permission,
+        )
+        if sir.explicit_query and self._should_treat_as_entity_reinvestigation(
+            active_context=rc.active_context,
+            query=sir.explicit_query,
+        ):
+            sir.apply_entity_reinvestigation(
+                effective_query=(
+                    self._extract_web_search_query_from_context(rc.active_context) or sir.explicit_query
+                ),
+            )
+        return rc, sir, search_intent
+
+    def _log_intent_classification(
+        self,
+        session_id: str,
+        rc: RequestContext,
+        sir: SearchIntentResolution,
+        search_intent: SearchIntentDecision,
+    ) -> None:
+        self.task_logger.log(
+            session_id=session_id,
+            action="request_intent_classified",
+            detail={
+                "kind": search_intent.kind,
+                "query": search_intent.query,
+                "score": search_intent.score,
+                "reasons": list(search_intent.reasons),
+                "freshness_risk": search_intent.freshness_risk,
+                "answer_mode": search_intent.answer_mode,
+                "suggestion_kind": search_intent.suggestion_kind,
+                "suggestion_query": search_intent.suggestion_query,
+                "suggestion_score": search_intent.suggestion_score,
+                "suggestion_reasons": list(search_intent.suggestion_reasons),
+                "suggestion_freshness_risk": search_intent.suggestion_freshness_risk,
+                "suggestion_answer_mode": search_intent.suggestion_answer_mode,
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # Dispatch handlers (extracted from handle())
+    # ------------------------------------------------------------------
+
+    def _handle_retry_feedback(
+        self,
+        request: UserRequest,
+        rc: RequestContext,
+        *,
+        phase_event_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> AgentResponse | None:
+        retry_response = self._retry_web_search_after_irrelevant_feedback(
+            request=request,
+            active_context=rc.active_context,
+            retry_feedback_reason=rc.retry_feedback_reason,
+            phase_event_callback=phase_event_callback,
+        )
+        return retry_response
+
+    def _handle_web_record_recall(
+        self,
+        request: UserRequest,
+        rc: RequestContext,
+        *,
+        phase_event_callback: Callable[[dict[str, Any]], None] | None = None,
+        stream_event_callback: Callable[[dict[str, Any]], None] | None = None,
+        cancel_requested: Callable[[], bool] | None = None,
+    ) -> AgentResponse:
+        return self._reuse_web_search_record(
+            request=request,
+            record_id=rc.load_web_search_record_id,
+            phase_event_callback=phase_event_callback,
+            stream_event_callback=stream_event_callback,
+            cancel_requested=cancel_requested,
+        )
+
+    def _handle_search_suggestion(
+        self,
+        request: UserRequest,
+        rc: RequestContext,
+        search_intent: SearchIntentDecision,
+        *,
+        phase_event_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> AgentResponse:
+        self._emit_phase(
+            phase_event_callback,
+            phase="web_search_suggestion",
+            title="검색 제안 준비 중",
+            detail=f"'{search_intent.suggestion_query}' 쪽으로 검색하면 도움이 될 수 있어 제안 버튼을 준비하는 중입니다.",
+            note="확신이 낮은 질문은 자동 검색 대신 명시적 제안으로 먼저 보여드립니다.",
+        )
+        return self._build_web_search_suggestion_response(
+            rc.web_search_permission,
+            query=search_intent.suggestion_query,
+        )
+
+    def _handle_explicit_web_search(
+        self,
+        request: UserRequest,
+        rc: RequestContext,
+        sir: SearchIntentResolution,
+        *,
+        phase_event_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> AgentResponse:
+        if rc.web_search_permission != "enabled":
+            self._emit_phase(
+                phase_event_callback,
+                phase="web_search_blocked",
+                title="웹 검색 권한 확인 중",
+                detail="명시적으로 웹 검색을 요청했지만 현재 세션 권한으로는 바로 실행할 수 없습니다.",
+                note="고급 설정의 외부 웹 검색 권한을 확인해 주세요.",
+            )
+            return self._build_web_search_permission_response(
+                rc.web_search_permission,
+                query=sir.explicit_query,
+            )
+        return self._run_web_search(
+            request=request,
+            query=sir.effective_query or sir.explicit_query,
+            intent_kind=sir.intent_kind,
+            answer_mode=sir.answer_mode,
+            freshness_risk=sir.freshness_risk,
+            phase_event_callback=phase_event_callback,
+            seed_queries=[sir.probe_query] if sir.probe_query else None,
+            progress_query=sir.probe_query,
+        )
+
+    def _handle_external_fact_search(
+        self,
+        request: UserRequest,
+        rc: RequestContext,
+        sir: SearchIntentResolution,
+        search_intent: SearchIntentDecision,
+        *,
+        phase_event_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> AgentResponse:
+        if rc.web_search_permission != "enabled":
+            self._emit_phase(
+                phase_event_callback,
+                phase="web_search_blocked",
+                title="외부 사실 확인 경로 안내 중",
+                detail="외부 사실 설명 요청이지만 현재 세션 권한으로는 읽기 전용 웹 검색을 바로 실행할 수 없습니다.",
+                note="고급 설정에서 외부 웹 검색 권한을 허용으로 바꾸면 검색 기반으로 답할 수 있습니다.",
+            )
+            return self._build_web_search_permission_response(
+                rc.web_search_permission,
+                query=sir.external_fact_query,
+            )
+        self._emit_phase(
+            phase_event_callback,
+            phase="web_search_auto",
+            title="외부 사실 확인 검색으로 전환 중",
+            detail=f"'{sir.external_fact_query}' 설명 요청이어서 웹 검색으로 근거를 먼저 확인하는 중입니다.",
+            note="로컬 문서 근거가 없을 때는 외부 사실을 모델이 추측하지 않도록 읽기 전용 검색을 우선 사용합니다.",
+        )
+        return self._run_web_search(
+            request=request,
+            query=sir.external_fact_query,
+            intent_kind=search_intent.kind,
+            answer_mode=search_intent.answer_mode,
+            freshness_risk=search_intent.freshness_risk,
+            phase_event_callback=phase_event_callback,
+        )
+
+    def _handle_implicit_web_search(
+        self,
+        request: UserRequest,
+        rc: RequestContext,
+        sir: SearchIntentResolution,
+        search_intent: SearchIntentDecision,
+        *,
+        phase_event_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> AgentResponse:
+        self._emit_phase(
+            phase_event_callback,
+            phase="web_search_auto",
+            title="최신 정보 질문을 웹 검색으로 전환 중",
+            detail=f"'{sir.implicit_web_search_query}' 관련 최신성 질문이라 읽기 전용 웹 검색을 먼저 실행합니다.",
+            note="웹 검색 권한이 허용된 세션에서만 자동으로 전환합니다.",
+        )
+        return self._run_web_search(
+            request=request,
+            query=sir.implicit_web_search_query,
+            intent_kind=search_intent.kind,
+            answer_mode=search_intent.answer_mode,
+            freshness_risk=search_intent.freshness_risk,
+            phase_event_callback=phase_event_callback,
+        )
+
+    def _handle_active_context_response(
+        self,
+        request: UserRequest,
+        rc: RequestContext,
+        *,
+        variant: str,
+        stream_event_callback: Callable[[dict[str, Any]], None] | None = None,
+        phase_event_callback: Callable[[dict[str, Any]], None] | None = None,
+        cancel_requested: Callable[[], bool] | None = None,
+    ) -> AgentResponse:
+        if variant == "primary":
+            if rc.active_context_mode == "mixed":
+                detail = (
+                    f"현재 문서 '{rc.active_context.get('label') or '문서'}'를 바탕으로 "
+                    "가벼운 인사와 문서 질문을 함께 정리하는 중입니다."
+                )
+                note = "짧은 대화 톤은 유지하되, 답변 본문은 현재 문서 근거를 우선 사용합니다."
+            else:
+                detail = (
+                    f"현재 문서 '{rc.active_context.get('label') or '문서'}' 문맥으로 "
+                    "후속 질문을 정리하는 중입니다."
+                )
+                note = "문서 요약과 핵심 라인을 바탕으로 응답을 만듭니다."
+        else:
+            if rc.active_context_mode == "mixed":
+                detail = (
+                    f"현재 문서 '{rc.active_context.get('label') or '문서'}'를 바탕으로 "
+                    "가벼운 대화와 문서 답변을 함께 정리하는 중입니다."
+                )
+                note = "대화 톤은 유지하되, 답변 핵심은 현재 문서 근거로 제한합니다."
+            else:
+                detail = f"현재 문서 '{rc.active_context.get('label') or '문서'}'를 바탕으로 답변하는 중입니다."
+                note = "후속 질문 의도에 맞춰 요약이나 액션 항목 형식으로 정리합니다."
+        self._emit_phase(
+            phase_event_callback,
+            phase="context_answer_started",
+            title="문서 문맥 응답 준비 중",
+            detail=detail,
+            note=note,
+        )
+        return self._respond_with_active_context(
+            request=request,
+            active_context=rc.active_context,
+            conversation_mode=rc.active_context_mode,
+            stream_event_callback=stream_event_callback,
+            phase_event_callback=phase_event_callback,
+            cancel_requested=cancel_requested,
+        )
+
+    def _handle_missing_context_followup(
+        self,
+        request: UserRequest,
+        rc: RequestContext,
+    ) -> AgentResponse:
+        if self._contains_small_talk_signal(request.user_text):
+            prefix = self._small_talk_prefix(request.user_text)
+            text = (
+                f"{prefix} 다만 아직 참고할 현재 문서 문맥이 없습니다. "
+                "파일 요약 모드에서 문서를 먼저 읽거나 파일 경로를 직접 입력해 주세요."
+            )
+        else:
+            text = "현재 문서 문맥이 없습니다. 파일 요약 모드에서 문서를 먼저 읽거나 파일 경로를 직접 입력해 주세요."
+        return AgentResponse(
+            text=text,
+            status=ResponseStatus.ERROR,
+            actions_taken=["missing_active_context"],
+        )
+
+    def _handle_search_and_summarize(
+        self,
+        request: UserRequest,
+        rc: RequestContext,
+        *,
+        stream_event_callback: Callable[[dict[str, Any]], None] | None = None,
+        phase_event_callback: Callable[[dict[str, Any]], None] | None = None,
+        cancel_requested: Callable[[], bool] | None = None,
+    ) -> AgentResponse:
+        search_target_label = rc.search_root or self._format_uploaded_search_root_label(rc.uploaded_search_files)
+        search_action_name = "search_uploaded_files" if rc.uploaded_search_files else "search_files"
+        self._raise_if_cancelled(cancel_requested)
+        self._emit_phase(
+            phase_event_callback,
+            phase="search_started",
+            title="문서 검색 중",
+            detail=(
+                f"'{rc.search_query}' 검색어로 {search_target_label} 아래 문서를 찾는 중입니다."
+                if rc.search_root
+                else f"선택한 폴더 파일들에서 '{rc.search_query}' 검색어를 찾는 중입니다."
+            ),
+            note="검색 결과 수와 OCR 미지원 파일 여부를 먼저 확인합니다.",
+        )
+        uploaded_read_results_by_path: dict[str, Any] = {}
+        skipped_ocr_paths: list[str] = []
+        failed_uploaded_paths: list[str] = []
+        if rc.uploaded_search_files:
+            matches, uploaded_read_results_by_path, skipped_ocr_paths, failed_uploaded_paths = self._search_uploaded_files(
+                uploaded_files=rc.uploaded_search_files,
+                query=rc.search_query,
+                max_results=self._search_result_limit(request),
+            )
+        else:
+            matches = self.tools["search_files"].run(
+                root=rc.search_root,
+                query=rc.search_query,
+                max_results=self._search_result_limit(request),
+            )
+            skipped_ocr_paths = self._extract_skipped_ocr_paths()
+        self._raise_if_cancelled(cancel_requested)
+        self.task_logger.log(
+            session_id=request.session_id,
+            action=search_action_name,
+            detail={
+                "search_root": rc.search_root,
+                "uploaded_root_label": rc.uploaded_search_files[0].get("root_label") if rc.uploaded_search_files else None,
+                "search_query": rc.search_query,
+                "match_count": len(matches),
+                "skipped_ocr_paths": skipped_ocr_paths,
+                "failed_uploaded_paths": failed_uploaded_paths,
+                "matches": [
+                    {
+                        "path": item.path,
+                        "matched_on": item.matched_on,
+                        "snippet": item.snippet,
+                    }
+                    for item in matches
+                ],
+            },
+        )
+        search_notice = self._format_search_ocr_notice(skipped_ocr_paths)
+        if failed_uploaded_paths:
+            failed_notice = f"일부 파일({len(failed_uploaded_paths)}건)을 읽지 못해 검색에서 제외되었습니다."
+            search_notice = f"{search_notice}\n{failed_notice}".strip() if search_notice else failed_notice
+
+        if not matches:
+            return AgentResponse(
+                text=self._append_notice(
+                    f"{search_target_label} 아래에서 '{rc.search_query}' 검색 결과를 찾지 못했습니다.",
+                    search_notice,
+                ),
+                actions_taken=[search_action_name],
+            )
+        if self._wants_search_only(request):
+            return AgentResponse(
+                text=self._append_notice(self._format_search_results(matches), search_notice),
+                actions_taken=[search_action_name],
+                selected_source_paths=[item.path for item in matches],
+                search_results=[
+                    {"path": item.path, "matched_on": item.matched_on, "snippet": item.snippet}
+                    for item in matches
+                ],
+            )
+
+        self._emit_phase(
+            phase_event_callback,
+            phase="search_results_selected",
+            title="검색 결과 정리 중",
+            detail=f"검색 결과 {len(matches)}개 중 요약할 출처를 고르는 중입니다.",
+            note="선택 경로나 검색 순번이 있으면 그 기준으로 추립니다.",
+        )
+        selected_results = self._select_search_results(results=matches, request=request)
+        self._raise_if_cancelled(cancel_requested)
+        self._emit_phase(
+            phase_event_callback,
+            phase="read_sources_started",
+            title="선택 문서 읽는 중",
+            detail=f"선택된 문서 {len(selected_results)}개를 열어 요약 준비를 하는 중입니다.",
+            note="PDF나 큰 문서는 여기서 시간이 조금 걸릴 수 있습니다.",
+        )
+        read_results = []
+        for result in selected_results:
+            self._raise_if_cancelled(cancel_requested)
+            if rc.uploaded_search_files:
+                read_result = uploaded_read_results_by_path.get(result.path)
+                if read_result is None:
+                    raise FileNotFoundError(f"선택한 폴더 검색 결과를 다시 찾지 못했습니다: {result.path}")
+                read_results.append(read_result)
+            else:
+                read_results.append(self.tools["read_file"].run(path=result.path))
+        self._raise_if_cancelled(cancel_requested)
+
+        self.task_logger.log(
+            session_id=request.session_id,
+            action="read_search_results",
+            detail={
+                "search_query": rc.search_query,
+                "selected_match_count": len(selected_results),
+                "selected_paths": [item.resolved_path for item in read_results],
+                "selected_file_metadata": [
+                    {
+                        "resolved_path": item.resolved_path,
+                        "content_format": item.content_format,
+                        "extraction_method": item.extraction_method,
+                        "encoding_used": item.encoding_used,
+                    }
+                    for item in read_results
+                ],
+            },
+        )
+
+        self._emit_phase(
+            phase_event_callback,
+            phase="summarize_started",
+            title="검색 결과 요약 생성 중",
+            detail=f"선택된 문서 {len(read_results)}개를 묶어 하나의 요약으로 정리하는 중입니다.",
+            note="실제 로컬 모델 응답은 이 단계부터 조금씩 도착할 수 있습니다.",
+        )
+        summary, note_body, summary_chunks = self._build_multi_file_summary(
+            search_query=rc.search_query,
+            selected_results=selected_results,
+            read_results=read_results,
+            stream_event_callback=stream_event_callback,
+            phase_event_callback=phase_event_callback,
+            cancel_requested=cancel_requested,
+        )
+        self._raise_if_cancelled(cancel_requested)
+        new_active_context = self._build_search_active_context(
+            search_query=rc.search_query,
+            selected_results=selected_results,
+            read_results=read_results,
+            summary=summary,
+        )
+        self.session_store.set_active_context(request.session_id, new_active_context)
+        self.task_logger.log(
+            session_id=request.session_id,
+            action="document_context_updated",
+            detail={
+                "kind": new_active_context["kind"],
+                "label": new_active_context["label"],
+                "source_paths": new_active_context["source_paths"],
+            },
+        )
+        selected_sources_text = self._format_selected_sources(selected_results)
+        self.task_logger.log(
+            session_id=request.session_id,
+            action="summarize_search_results",
+            detail={
+                "search_query": rc.search_query,
+                "source_count": len(read_results),
+            },
+        )
+        selected_evidence = self._select_evidence_items(
+            evidence_pool=[
+                dict(item)
+                for item in new_active_context.get("evidence_pool", [])
+                if isinstance(item, dict)
+            ],
+            intent=FOLLOW_UP_INTENT_GENERAL,
+            user_request=request.user_text or rc.search_query,
+        )
+        artifact_id = self._new_grounded_brief_artifact_id()
+        source_message_id = self._new_message_id()
+
+        if self._wants_summary_save(request) and "write_note" in self.tools:
+            note_path = self._build_search_note_path(request, rc.search_query)
+            if not request.approved:
+                self._emit_phase(
+                    phase_event_callback,
+                    phase="approval_prepared",
+                    title="저장 승인 카드 준비 중",
+                    detail=f"검색 요약 노트를 {note_path}에 저장할 수 있도록 승인 미리보기를 만드는 중입니다.",
+                    note="승인 전에는 실제 파일을 쓰지 않습니다.",
+                )
+                approval = self._request_save_note_approval(
+                    session_id=request.session_id,
+                    note_path=note_path,
+                    note_body=note_body,
+                    source_paths=[item.path for item in selected_results],
+                    artifact_id=artifact_id,
+                    source_message_id=source_message_id,
+                    approval_request_detail={
+                        "search_query": rc.search_query,
+                        "source_paths": [item.resolved_path for item in read_results],
+                    },
+                )
+                return self._build_grounded_brief_response(
+                    text=self._append_notice(
+                        (
+                            f"{summary}\n\n{selected_sources_text}\n\n"
+                            f"검색 요약 노트를 {approval.requested_path}에 저장하려면 승인이 필요합니다."
+                        ),
+                        search_notice,
+                    ),
+                    status=ResponseStatus.NEEDS_APPROVAL,
+                    actions_taken=[
+                        "search_uploaded_files" if rc.uploaded_search_files else "search_files",
+                        "read_file",
+                        "summarize_search_results",
+                        "approval_requested",
+                    ],
+                    requires_approval=True,
+                    proposed_note_path=approval.requested_path,
+                    selected_source_paths=[item.path for item in selected_results],
+                    note_preview=approval.preview_markdown,
+                    approval=approval.to_public_dict(),
+                    active_context=self._public_active_context(new_active_context),
+                    follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
+                    evidence=selected_evidence,
+                    summary_chunks=summary_chunks,
+                    search_results=[
+                        {"path": item.path, "matched_on": item.matched_on, "snippet": item.snippet}
+                        for item in matches
+                    ],
+                    **self._build_grounded_brief_source_response_fields(
+                        artifact_id=artifact_id,
+                        source_message_id=source_message_id,
+                    ),
+                )
+            else:
+                self._emit_phase(
+                    phase_event_callback,
+                    phase="write_started",
+                    title="검색 요약 노트 저장 중",
+                    detail=f"{note_path} 경로에 검색 요약 노트를 쓰는 중입니다.",
+                    note="승인된 경로에만 새 파일을 만듭니다.",
+                )
+                saved_path, _ = self._execute_save_note_write(
+                    session_id=request.session_id,
+                    note_path=note_path,
+                    note_body=note_body,
+                    artifact_id=artifact_id,
+                    source_message_id=source_message_id,
+                    write_detail={"search_query": rc.search_query},
+                )
+                corrected_outcome = self._build_accepted_as_is_outcome(
+                    artifact_id=artifact_id,
+                    saved_note_path=saved_path,
+                )
+                return self._build_grounded_brief_response(
+                    text=self._append_notice(
+                        (
+                            f"{summary}\n\n{selected_sources_text}\n\n"
+                            f"검색 요약 노트를 {saved_path}에 저장했습니다."
+                        ),
+                        search_notice,
+                    ),
+                    status=ResponseStatus.SAVED,
+                    actions_taken=[
+                        "search_uploaded_files" if rc.uploaded_search_files else "search_files",
+                        "read_file",
+                        "summarize_search_results",
+                        "write_note",
+                    ],
+                    selected_source_paths=[item.path for item in selected_results],
+                    active_context=self._public_active_context(new_active_context),
+                    follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
+                    evidence=selected_evidence,
+                    summary_chunks=summary_chunks,
+                    search_results=[
+                        {"path": item.path, "matched_on": item.matched_on, "snippet": item.snippet}
+                        for item in matches
+                    ],
+                    **self._build_grounded_brief_source_response_fields(
+                        artifact_id=artifact_id,
+                        source_message_id=source_message_id,
+                        saved_note_path=saved_path,
+                        save_content_source=SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT,
+                        corrected_outcome=corrected_outcome,
+                    ),
+                )
+        return self._build_grounded_brief_response(
+            text=self._append_notice(
+                f"{summary}\n\n{selected_sources_text}",
+                search_notice,
+            ),
+            status=ResponseStatus.ANSWER,
+            actions_taken=["search_uploaded_files", "read_file", "summarize_search_results"] if rc.uploaded_search_files else ["search_files", "read_file", "summarize_search_results"],
+            selected_source_paths=[item.path for item in selected_results],
+            active_context=self._public_active_context(new_active_context),
+            follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
+            evidence=selected_evidence,
+            summary_chunks=summary_chunks,
+            search_results=[
+                {"path": item.path, "matched_on": item.matched_on, "snippet": item.snippet}
+                for item in matches
+            ],
+            artifact_id=artifact_id,
+            artifact_kind=ArtifactKind.GROUNDED_BRIEF,
+        )
+
+    def _handle_uploaded_file(
+        self,
+        request: UserRequest,
+        rc: RequestContext,
+        *,
+        stream_event_callback: Callable[[dict[str, Any]], None] | None = None,
+        phase_event_callback: Callable[[dict[str, Any]], None] | None = None,
+        cancel_requested: Callable[[], bool] | None = None,
+    ) -> AgentResponse:
+        uploaded_name = str(rc.uploaded_file.get("name") or "selected-file")
+        self._raise_if_cancelled(cancel_requested)
+        self._emit_phase(
+            phase_event_callback,
+            phase="read_uploaded_file_started",
+            title="선택 파일 읽는 중",
+            detail=f"{uploaded_name} 선택 파일을 브라우저에서 받아 텍스트를 추출하는 중입니다.",
+            note="사용자가 직접 고른 파일만 로컬 서버로 전달합니다.",
+        )
+        read_result = self.tools["read_file"].run_uploaded(
+            name=uploaded_name,
+            content_bytes=bytes(rc.uploaded_file.get("content_bytes") or b""),
+            mime_type=str(rc.uploaded_file.get("mime_type") or ""),
+        )
+        self._raise_if_cancelled(cancel_requested)
+        self.task_logger.log(
+            session_id=request.session_id,
+            action="read_uploaded_file",
+            detail={
+                "requested_name": uploaded_name,
+                "resolved_path": read_result.resolved_path,
+                "size_bytes": read_result.size_bytes,
+                "content_format": read_result.content_format,
+                "extraction_method": read_result.extraction_method,
+                "encoding_used": read_result.encoding_used,
+            },
+        )
+
+        self._emit_phase(
+            phase_event_callback,
+            phase="summarize_started",
+            title="문서 요약 생성 중",
+            detail=f"{Path(read_result.resolved_path).name} 내용을 요약하는 중입니다.",
+            note="실제 로컬 모델 응답은 이 단계부터 조금씩 도착할 수 있습니다.",
+        )
+        summary, summary_chunks = self._summarize_text_with_chunking(
+            text=read_result.text,
+            source_label=Path(read_result.resolved_path).name,
+            source_path=read_result.resolved_path,
+            stream_event_callback=stream_event_callback,
+            phase_event_callback=phase_event_callback,
+            cancel_requested=cancel_requested,
+        )
+        self._raise_if_cancelled(cancel_requested)
+        title = f"{Path(read_result.resolved_path).name} 요약"
+        note_body = "\n".join(
+            [
+                f"# {title}",
+                "",
+                f"원본 파일: {read_result.resolved_path}",
+                "",
+                "## 요약",
+                summary,
+            ]
+        )
+        note_draft = SummaryNoteDraft(title=title, summary=summary, note_body=note_body)
+        new_active_context = self._build_file_active_context(
+            resolved_path=read_result.resolved_path,
+            text=read_result.text,
+            summary=note_draft.summary,
+        )
+        self.session_store.set_active_context(request.session_id, new_active_context)
+        self.task_logger.log(
+            session_id=request.session_id,
+            action="document_context_updated",
+            detail={
+                "kind": new_active_context["kind"],
+                "label": new_active_context["label"],
+                "source_paths": new_active_context["source_paths"],
+            },
+        )
+        self.task_logger.log(
+            session_id=request.session_id,
+            action="summarize_uploaded_file",
+            detail={
+                "source_name": read_result.resolved_path,
+                "title": note_draft.title,
+            },
+        )
+        document_evidence = self._select_evidence_items(
+            evidence_pool=self._extract_text_evidence_items(
+                source_path=read_result.resolved_path,
+                text=read_result.text,
+            ),
+            intent=FOLLOW_UP_INTENT_GENERAL,
+            user_request=request.user_text or read_result.resolved_path,
+        )
+        artifact_id = self._new_grounded_brief_artifact_id()
+        source_message_id = self._new_message_id()
+
+        if self._wants_summary_save(request) and "write_note" in self.tools:
+            note_path = self._build_note_path(request, read_result.resolved_path)
+            if not request.approved:
+                self._emit_phase(
+                    phase_event_callback,
+                    phase="approval_prepared",
+                    title="저장 승인 카드 준비 중",
+                    detail=f"요약 노트를 {note_path}에 저장할 수 있도록 승인 미리보기를 만드는 중입니다.",
+                    note="승인 전에는 실제 파일을 쓰지 않습니다.",
+                )
+                approval = self._request_save_note_approval(
+                    session_id=request.session_id,
+                    note_path=note_path,
+                    note_body=note_draft.note_body,
+                    source_paths=[read_result.resolved_path],
+                    artifact_id=artifact_id,
+                    source_message_id=source_message_id,
+                    approval_request_detail={"source_path": read_result.resolved_path},
+                )
+                return self._build_grounded_brief_response(
+                    text=(
+                        f"{note_draft.summary}\n\n"
+                        f"요약 노트를 {approval.requested_path}에 저장하려면 승인이 필요합니다."
+                    ),
+                    status=ResponseStatus.NEEDS_APPROVAL,
+                    actions_taken=["read_uploaded_file", "summarize", "approval_requested"],
+                    requires_approval=True,
+                    proposed_note_path=approval.requested_path,
+                    selected_source_paths=[read_result.resolved_path],
+                    note_preview=approval.preview_markdown,
+                    approval=approval.to_public_dict(),
+                    active_context=self._public_active_context(new_active_context),
+                    follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
+                    evidence=document_evidence,
+                    summary_chunks=summary_chunks,
+                    **self._build_grounded_brief_source_response_fields(
+                        artifact_id=artifact_id,
+                        source_message_id=source_message_id,
+                    ),
+                )
+            else:
+                self._emit_phase(
+                    phase_event_callback,
+                    phase="write_started",
+                    title="요약 노트 저장 중",
+                    detail=f"{note_path} 경로에 요약 노트를 쓰는 중입니다.",
+                    note="승인된 경로에만 새 파일을 만듭니다.",
+                )
+                saved_path, _ = self._execute_save_note_write(
+                    session_id=request.session_id,
+                    note_path=note_path,
+                    note_body=note_draft.note_body,
+                    artifact_id=artifact_id,
+                    source_message_id=source_message_id,
+                    write_detail={"source_path": read_result.resolved_path},
+                )
+                corrected_outcome = self._build_accepted_as_is_outcome(
+                    artifact_id=artifact_id,
+                    saved_note_path=saved_path,
+                )
+                return self._build_grounded_brief_response(
+                    text=f"{note_draft.summary}\n\n요약 노트를 {saved_path}에 저장했습니다.",
+                    status=ResponseStatus.SAVED,
+                    actions_taken=["read_uploaded_file", "summarize", "write_note"],
+                    selected_source_paths=[read_result.resolved_path],
+                    active_context=self._public_active_context(new_active_context),
+                    follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
+                    evidence=document_evidence,
+                    summary_chunks=summary_chunks,
+                    **self._build_grounded_brief_source_response_fields(
+                        artifact_id=artifact_id,
+                        source_message_id=source_message_id,
+                        saved_note_path=saved_path,
+                        save_content_source=SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT,
+                        corrected_outcome=corrected_outcome,
+                    ),
+                )
+        return self._build_grounded_brief_response(
+            text=note_draft.summary,
+            status=ResponseStatus.ANSWER,
+            actions_taken=["read_uploaded_file", "summarize"],
+            selected_source_paths=[read_result.resolved_path],
+            active_context=self._public_active_context(new_active_context),
+            follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
+            evidence=document_evidence,
+            summary_chunks=summary_chunks,
+            artifact_id=artifact_id,
+            artifact_kind=ArtifactKind.GROUNDED_BRIEF,
+        )
+
+    def _handle_source_path(
+        self,
+        request: UserRequest,
+        rc: RequestContext,
+        *,
+        stream_event_callback: Callable[[dict[str, Any]], None] | None = None,
+        phase_event_callback: Callable[[dict[str, Any]], None] | None = None,
+        cancel_requested: Callable[[], bool] | None = None,
+    ) -> AgentResponse:
+        self._raise_if_cancelled(cancel_requested)
+        self._emit_phase(
+            phase_event_callback,
+            phase="read_file_started",
+            title="파일 읽는 중",
+            detail=f"{rc.source_path} 파일을 열어 텍스트를 추출하는 중입니다.",
+            note="PDF나 인코딩 자동 판별이 필요한 문서는 시간이 더 걸릴 수 있습니다.",
+        )
+        read_result = self.tools["read_file"].run(path=rc.source_path)
+        self._raise_if_cancelled(cancel_requested)
+        self.task_logger.log(
+            session_id=request.session_id,
+            action="read_file",
+            detail={
+                "requested_path": read_result.requested_path,
+                "resolved_path": read_result.resolved_path,
+                "size_bytes": read_result.size_bytes,
+                "content_format": read_result.content_format,
+                "extraction_method": read_result.extraction_method,
+                "encoding_used": read_result.encoding_used,
+            },
+        )
+
+        self._emit_phase(
+            phase_event_callback,
+            phase="summarize_started",
+            title="문서 요약 생성 중",
+            detail=f"{Path(read_result.resolved_path).name} 내용을 요약하는 중입니다.",
+            note="실제 로컬 모델 응답은 이 단계부터 조금씩 도착할 수 있습니다.",
+        )
+        summary, summary_chunks = self._summarize_text_with_chunking(
+            text=read_result.text,
+            source_label=Path(read_result.resolved_path).name,
+            source_path=read_result.resolved_path,
+            stream_event_callback=stream_event_callback,
+            phase_event_callback=phase_event_callback,
+            cancel_requested=cancel_requested,
+        )
+        self._raise_if_cancelled(cancel_requested)
+        title = f"{Path(read_result.resolved_path).name} 요약"
+        note_body = "\n".join(
+            [
+                f"# {title}",
+                "",
+                f"원본 파일: {read_result.resolved_path}",
+                "",
+                "## 요약",
+                summary,
+            ]
+        )
+        note_draft = SummaryNoteDraft(title=title, summary=summary, note_body=note_body)
+        new_active_context = self._build_file_active_context(
+            resolved_path=read_result.resolved_path,
+            text=read_result.text,
+            summary=note_draft.summary,
+        )
+        self.session_store.set_active_context(request.session_id, new_active_context)
+        self.task_logger.log(
+            session_id=request.session_id,
+            action="document_context_updated",
+            detail={
+                "kind": new_active_context["kind"],
+                "label": new_active_context["label"],
+                "source_paths": new_active_context["source_paths"],
+            },
+        )
+        self.task_logger.log(
+            session_id=request.session_id,
+            action="summarize_file",
+            detail={
+                "source_path": read_result.resolved_path,
+                "title": note_draft.title,
+            },
+        )
+        document_evidence = self._select_evidence_items(
+            evidence_pool=self._extract_text_evidence_items(
+                source_path=read_result.resolved_path,
+                text=read_result.text,
+            ),
+            intent=FOLLOW_UP_INTENT_GENERAL,
+            user_request=request.user_text or read_result.resolved_path,
+        )
+        artifact_id = self._new_grounded_brief_artifact_id()
+        source_message_id = self._new_message_id()
+
+        if self._wants_summary_save(request) and "write_note" in self.tools:
+            note_path = self._build_note_path(request, read_result.resolved_path)
+            if not request.approved:
+                self._emit_phase(
+                    phase_event_callback,
+                    phase="approval_prepared",
+                    title="저장 승인 카드 준비 중",
+                    detail=f"요약 노트를 {note_path}에 저장할 수 있도록 승인 미리보기를 만드는 중입니다.",
+                    note="승인 전에는 실제 파일을 쓰지 않습니다.",
+                )
+                approval = self._request_save_note_approval(
+                    session_id=request.session_id,
+                    note_path=note_path,
+                    note_body=note_draft.note_body,
+                    source_paths=[read_result.resolved_path],
+                    artifact_id=artifact_id,
+                    source_message_id=source_message_id,
+                    approval_request_detail={"source_path": read_result.resolved_path},
+                )
+                return self._build_grounded_brief_response(
+                    text=(
+                        f"{note_draft.summary}\n\n"
+                        f"요약 노트를 {approval.requested_path}에 저장하려면 승인이 필요합니다."
+                    ),
+                    status=ResponseStatus.NEEDS_APPROVAL,
+                    actions_taken=["read_file", "summarize", "approval_requested"],
+                    requires_approval=True,
+                    proposed_note_path=approval.requested_path,
+                    selected_source_paths=[read_result.resolved_path],
+                    note_preview=approval.preview_markdown,
+                    approval=approval.to_public_dict(),
+                    active_context=self._public_active_context(new_active_context),
+                    follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
+                    evidence=document_evidence,
+                    summary_chunks=summary_chunks,
+                    **self._build_grounded_brief_source_response_fields(
+                        artifact_id=artifact_id,
+                        source_message_id=source_message_id,
+                    ),
+                )
+            else:
+                self._emit_phase(
+                    phase_event_callback,
+                    phase="write_started",
+                    title="요약 노트 저장 중",
+                    detail=f"{note_path} 경로에 요약 노트를 쓰는 중입니다.",
+                    note="승인된 경로에만 새 파일을 만듭니다.",
+                )
+                saved_path, _ = self._execute_save_note_write(
+                    session_id=request.session_id,
+                    note_path=note_path,
+                    note_body=note_draft.note_body,
+                    artifact_id=artifact_id,
+                    source_message_id=source_message_id,
+                    write_detail={"source_path": read_result.resolved_path},
+                )
+                corrected_outcome = self._build_accepted_as_is_outcome(
+                    artifact_id=artifact_id,
+                    saved_note_path=saved_path,
+                )
+                return self._build_grounded_brief_response(
+                    text=f"{note_draft.summary}\n\n요약 노트를 {saved_path}에 저장했습니다.",
+                    status=ResponseStatus.SAVED,
+                    actions_taken=["read_file", "summarize", "write_note"],
+                    selected_source_paths=[read_result.resolved_path],
+                    active_context=self._public_active_context(new_active_context),
+                    follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
+                    evidence=document_evidence,
+                    summary_chunks=summary_chunks,
+                    **self._build_grounded_brief_source_response_fields(
+                        artifact_id=artifact_id,
+                        source_message_id=source_message_id,
+                        saved_note_path=saved_path,
+                        save_content_source=SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT,
+                        corrected_outcome=corrected_outcome,
+                    ),
+                )
+        return self._build_grounded_brief_response(
+            text=note_draft.summary,
+            status=ResponseStatus.ANSWER,
+            actions_taken=["read_file", "summarize"],
+            selected_source_paths=[read_result.resolved_path],
+            active_context=self._public_active_context(new_active_context),
+            follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
+            evidence=document_evidence,
+            summary_chunks=summary_chunks,
+            artifact_id=artifact_id,
+            artifact_kind=ArtifactKind.GROUNDED_BRIEF,
+        )
+
+    def _handle_general_response(
+        self,
+        request: UserRequest,
+        rc: RequestContext,
+        *,
+        stream_event_callback: Callable[[dict[str, Any]], None] | None = None,
+        phase_event_callback: Callable[[dict[str, Any]], None] | None = None,
+        cancel_requested: Callable[[], bool] | None = None,
+    ) -> AgentResponse:
+        if self._looks_like_unverified_external_fact_request(request.user_text):
+            self._emit_phase(
+                phase_event_callback,
+                phase="respond_limited",
+                title="확인 범위 안내 중",
+                detail="외부 사실 확인이 필요한 질문이라 로컬 문서 근거 범위를 먼저 안내합니다.",
+                note="관련 문서나 텍스트를 주시면 그 범위에서 다시 정리할 수 있습니다.",
+            )
+            return self._build_unverified_external_fact_response_for_permission(
+                self._extract_web_search_permission(request)
+            )
+        if self._looks_like_personal_experience_request(request.user_text):
+            self._emit_phase(
+                phase_event_callback,
+                phase="respond_limited",
+                title="경험 기반 질문 안내 중",
+                detail="직접 경험 여부를 묻는 질문이라 시스템 한계를 먼저 안내합니다.",
+                note="관련 텍스트나 문서를 주시면 그 범위에서 설명할 수 있습니다.",
+            )
+            return self._build_personal_experience_response()
+        if self._looks_like_live_info_request(request.user_text):
+            self._emit_phase(
+                phase_event_callback,
+                phase="respond_limited",
+                title="실시간 정보 범위 안내 중",
+                detail="실시간 외부 조회가 필요한 질문이라 현재 연결 범위를 먼저 안내합니다.",
+                note="실시간 API나 관련 텍스트가 연결되면 그 범위에서 다시 정리할 수 있습니다.",
+            )
+            return self._build_live_info_response_for_permission(
+                self._extract_web_search_permission(request)
+            )
+        if self._looks_like_underspecified_next_step_request(request.user_text):
+            self._emit_phase(
+                phase_event_callback,
+                phase="respond_limited",
+                title="맥락 확인 안내 중",
+                detail="다음 단계 질문이지만 어떤 흐름인지 아직 부족해서 맥락을 먼저 요청합니다.",
+                note="문서 요약, 검색, 메모 저장 중 어느 흐름인지 알려주시면 바로 이어집니다.",
+            )
+            return self._build_underspecified_next_step_response()
+        self._emit_phase(
+            phase_event_callback,
+            phase="respond_started",
+            title="일반 응답 생성 중",
+            detail="일반 질문에 대한 응답을 생성하는 중입니다.",
+            note="선택된 문맥이 없으면 일반 대화 응답으로 처리합니다.",
+        )
+        return AgentResponse(
+            text=self._collect_model_stream(
+                self.model.stream_respond(request.user_text),
+                stream_event_callback=stream_event_callback,
+                cancel_requested=cancel_requested,
+            ),
+            status=ResponseStatus.ANSWER,
+            actions_taken=["respond"],
+        )
+
+    def _dispatch_request(
+        self,
+        request: UserRequest,
+        rc: RequestContext,
+        sir: SearchIntentResolution,
+        search_intent: SearchIntentDecision,
+        *,
+        stream_event_callback: Callable[[dict[str, Any]], None] | None = None,
+        phase_event_callback: Callable[[dict[str, Any]], None] | None = None,
+        cancel_requested: Callable[[], bool] | None = None,
+    ) -> AgentResponse:
+        # 1. Retry feedback (may fall through if no result)
+        if (
+            rc.retry_feedback_reason in {"irrelevant_result", "factual_error"}
+            and rc.active_context is not None
+            and not rc.has_search_request
+            and rc.uploaded_file is None
+            and not rc.has_explicit_source_path
+        ):
+            response = self._handle_retry_feedback(
+                request, rc, phase_event_callback=phase_event_callback,
+            )
+            if response is not None:
+                return response
+
+        # 2. Web record recall
+        if (
+            (rc.wants_web_search_record_recall or rc.load_web_search_record_id)
+            and not rc.has_search_request
+            and rc.uploaded_file is None
+            and not rc.has_explicit_source_path
+        ):
+            return self._handle_web_record_recall(
+                request, rc,
+                phase_event_callback=phase_event_callback,
+                stream_event_callback=stream_event_callback,
+                cancel_requested=cancel_requested,
+            )
+
+        # 3. Search suggestion
+        if (
+            search_intent.kind == SearchIntentKind.NONE
+            and search_intent.suggestion_query
+            and rc.active_context_mode not in {"document", "mixed"}
+            and not rc.has_search_request
+            and rc.uploaded_file is None
+            and not rc.has_explicit_source_path
+        ):
+            return self._handle_search_suggestion(
+                request, rc, search_intent,
+                phase_event_callback=phase_event_callback,
+            )
+
+        # 4. Explicit web search
+        if (
+            sir.explicit_query
+            and not rc.has_search_request
+            and rc.uploaded_file is None
+            and not rc.has_explicit_source_path
+        ):
+            return self._handle_explicit_web_search(
+                request, rc, sir,
+                phase_event_callback=phase_event_callback,
+            )
+
+        # 5. External fact search
+        if (
+            sir.external_fact_query
+            and rc.active_context_mode not in {"document", "mixed"}
+            and not rc.has_search_request
+            and rc.uploaded_file is None
+            and not rc.has_explicit_source_path
+        ):
+            return self._handle_external_fact_search(
+                request, rc, sir, search_intent,
+                phase_event_callback=phase_event_callback,
+            )
+
+        # 6. Implicit web search
+        if (
+            sir.implicit_web_search_query
+            and rc.active_context_mode not in {"document", "mixed"}
+            and not rc.has_search_request
+            and rc.uploaded_file is None
+            and not rc.has_explicit_source_path
+        ):
+            return self._handle_implicit_web_search(
+                request, rc, sir, search_intent,
+                phase_event_callback=phase_event_callback,
+            )
+
+        # 7. Active context response (primary)
+        if rc.active_context_mode in {"document", "mixed"}:
+            return self._handle_active_context_response(
+                request, rc, variant="primary",
+                stream_event_callback=stream_event_callback,
+                phase_event_callback=phase_event_callback,
+                cancel_requested=cancel_requested,
+            )
+
+        # 8. Missing context followup
+        if (
+            not rc.active_context
+            and rc.follow_up_intent != FOLLOW_UP_INTENT_GENERAL
+            and rc.uploaded_file is None
+            and not rc.has_explicit_source_path
+            and not rc.has_search_request
+        ):
+            return self._handle_missing_context_followup(request, rc)
+
+        # 9. Search and summarize
+        if rc.search_query and (rc.search_root or rc.uploaded_search_files) and "read_file" in self.tools:
+            return self._handle_search_and_summarize(
+                request, rc,
+                stream_event_callback=stream_event_callback,
+                phase_event_callback=phase_event_callback,
+                cancel_requested=cancel_requested,
+            )
+
+        # 10. Uploaded file
+        if rc.uploaded_file and "read_file" in self.tools:
+            return self._handle_uploaded_file(
+                request, rc,
+                stream_event_callback=stream_event_callback,
+                phase_event_callback=phase_event_callback,
+                cancel_requested=cancel_requested,
+            )
+
+        # 11. Source path
+        if rc.source_path and "read_file" in self.tools:
+            return self._handle_source_path(
+                request, rc,
+                stream_event_callback=stream_event_callback,
+                phase_event_callback=phase_event_callback,
+                cancel_requested=cancel_requested,
+            )
+
+        # 12. Active context response (fallback)
+        if rc.active_context_mode in {"document", "mixed"}:
+            return self._handle_active_context_response(
+                request, rc, variant="fallback",
+                stream_event_callback=stream_event_callback,
+                phase_event_callback=phase_event_callback,
+                cancel_requested=cancel_requested,
+            )
+
+        # 13. General response
+        return self._handle_general_response(
+            request, rc,
+            stream_event_callback=stream_event_callback,
+            phase_event_callback=phase_event_callback,
+            cancel_requested=cancel_requested,
+        )
+
+    def _sync_web_search_permission(self, request: UserRequest) -> str:
+        requested = self._extract_web_search_permission(request)
+        existing = self.session_store.get_permissions(request.session_id)
+        if existing.get("web_search") != requested:
+            self.session_store.set_permissions(
+                request.session_id,
+                {"web_search": requested},
+            )
+            self.task_logger.log(
+                session_id=request.session_id,
+                action="permissions_updated",
+                detail={"web_search": requested},
+            )
+        return requested
+
     def handle(
         self,
         request: UserRequest,
@@ -7151,1087 +8426,25 @@ class AgentLoop:
                 "retry_target_message_id": request.metadata.get("retry_target_message_id"),
             },
         )
-        if request.metadata.get("corrected_save_message_id"):
-            self._emit_phase(
-                phase_event_callback,
-                phase="approval_prepared",
-                title="수정본 저장 승인 카드 준비 중",
-                detail="기록된 수정본으로 새 저장 승인 스냅샷을 만드는 중입니다.",
-                note="현재 편집 중인 텍스트는 포함되지 않으며, 승인 미리보기는 요청 시점 그대로 고정됩니다.",
-            )
-            response = self._request_corrected_save_bridge(request)
-            self._append_response_message(request.session_id, response)
-            self.task_logger.log(
-                session_id=request.session_id,
-                action="agent_response",
-                detail=self._agent_response_log_detail(response),
-            )
-            return response
-
-        if request.reissue_approval_id:
-            self._emit_phase(
-                phase_event_callback,
-                phase="approval_reissue",
-                title="저장 승인 경로 다시 준비 중",
-                detail="기존 승인 요청의 본문과 출처를 유지한 채 새 저장 경로로 승인 객체를 다시 만드는 중입니다.",
-                note="실제 파일은 아직 저장하지 않습니다.",
-            )
-            response = self._reissue_pending_approval(request)
-            self._append_response_message(request.session_id, response)
-            self.task_logger.log(
-                session_id=request.session_id,
-                action="agent_response",
-                detail=self._agent_response_log_detail(response),
-            )
-            return response
-
-        if request.approved_approval_id:
-            self._emit_phase(
-                phase_event_callback,
-                phase="approval_execute",
-                title="승인된 작업 실행 중",
-                detail="승인된 저장 작업을 확인하고 실제 파일 쓰기를 준비하는 중입니다.",
-                note="기존 승인 객체만 실행합니다.",
-            )
-            response = self._execute_pending_approval(request)
-            self._append_response_message(request.session_id, response)
-            self.task_logger.log(
-                session_id=request.session_id,
-                action="agent_response",
-                detail=self._agent_response_log_detail(response),
-            )
-            return response
-
-        if request.rejected_approval_id:
-            self._emit_phase(
-                phase_event_callback,
-                phase="approval_reject",
-                title="승인 취소 처리 중",
-                detail="승인 대기 중인 저장 작업을 취소하는 중입니다.",
-                note="파일은 저장되지 않습니다.",
-            )
-            response = self._reject_pending_approval(request)
-            self._append_response_message(request.session_id, response)
-            self.task_logger.log(
-                session_id=request.session_id,
-                action="agent_response",
-                detail=self._agent_response_log_detail(response),
-            )
-            return response
+        approval_response = self._handle_approval_flow(request, phase_event_callback=phase_event_callback)
+        if approval_response is not None:
+            return self._finalize_response(request.session_id, approval_response)
 
         self.session_store.append_message(request.session_id, {"role": "user", "text": request.user_text})
-        requested_web_search_permission = self._extract_web_search_permission(request)
-        existing_permissions = self.session_store.get_permissions(request.session_id)
-        if existing_permissions.get("web_search") != requested_web_search_permission:
-            self.session_store.set_permissions(
-                request.session_id,
-                {"web_search": requested_web_search_permission},
-            )
-            self.task_logger.log(
-                session_id=request.session_id,
-                action="permissions_updated",
-                detail={"web_search": requested_web_search_permission},
-            )
+        requested_web_search_permission = self._sync_web_search_permission(request)
 
         try:
-            _search_query = self._extract_search_query(request)
-            _search_root = self._extract_search_root(request)
-            _uploaded_search_files = self._extract_uploaded_search_files(request)
-            _has_search_request = bool(_search_query and (_search_root or _uploaded_search_files))
-            _active_context = self.session_store.get_active_context(request.session_id)
-            _has_explicit_source_path = self._has_explicit_source_path(request)
-            _source_path = self._extract_source_path(request)
-            _uploaded_file = self._extract_uploaded_file(request)
-            _follow_up_intent = self._detect_follow_up_intent(request.user_text) if request.user_text.strip() else FOLLOW_UP_INTENT_GENERAL
-            _active_context_mode = self._classify_active_context_request(
-                request=request,
-                active_context=_active_context,
-                has_search_request=_has_search_request,
-                has_explicit_source_path=_has_explicit_source_path,
-                uploaded_file=_uploaded_file,
+            rc, sir, search_intent = self._prepare_request_state(
+                request, web_search_permission=requested_web_search_permission,
             )
-            rc = RequestContext(
-                user_text=request.user_text,
-                session_id=request.session_id,
-                search_query=_search_query,
-                search_root=_search_root,
-                uploaded_search_files=_uploaded_search_files,
-                has_search_request=_has_search_request,
-                active_context=_active_context,
-                web_search_permission=requested_web_search_permission,
-                has_explicit_source_path=_has_explicit_source_path,
-                source_path=_source_path,
-                uploaded_file=_uploaded_file,
-                retry_feedback_reason=self._extract_retry_feedback_reason(request),
-                load_web_search_record_id=self._extract_load_web_search_record_id(request),
-                wants_web_search_record_recall=self._looks_like_web_search_record_recall(request.user_text),
-                follow_up_intent=_follow_up_intent,
-                active_context_mode=_active_context_mode,
+            self._log_intent_classification(request.session_id, rc, sir, search_intent)
+
+            response = self._dispatch_request(
+                request, rc, sir, search_intent,
+                stream_event_callback=stream_event_callback,
+                phase_event_callback=phase_event_callback,
+                cancel_requested=cancel_requested,
             )
-            search_intent = self._classify_search_intent(request.user_text)
-            sir = SearchIntentResolution.from_intent(
-                search_intent,
-                web_search_permission=requested_web_search_permission,
-            )
-            if sir.explicit_query and self._should_treat_as_entity_reinvestigation(
-                active_context=rc.active_context,
-                query=sir.explicit_query,
-            ):
-                sir.apply_entity_reinvestigation(
-                    effective_query=(
-                        self._extract_web_search_query_from_context(rc.active_context) or sir.explicit_query
-                    ),
-                )
-            self.task_logger.log(
-                session_id=request.session_id,
-                action="request_intent_classified",
-                detail={
-                    "kind": search_intent.kind,
-                    "query": search_intent.query,
-                    "score": search_intent.score,
-                    "reasons": list(search_intent.reasons),
-                    "freshness_risk": search_intent.freshness_risk,
-                    "answer_mode": search_intent.answer_mode,
-                    "suggestion_kind": search_intent.suggestion_kind,
-                    "suggestion_query": search_intent.suggestion_query,
-                    "suggestion_score": search_intent.suggestion_score,
-                    "suggestion_reasons": list(search_intent.suggestion_reasons),
-                    "suggestion_freshness_risk": search_intent.suggestion_freshness_risk,
-                    "suggestion_answer_mode": search_intent.suggestion_answer_mode,
-                },
-            )
-
-            if (
-                rc.retry_feedback_reason in {"irrelevant_result", "factual_error"}
-                and rc.active_context is not None
-                and not rc.has_search_request
-                and rc.uploaded_file is None
-                and not rc.has_explicit_source_path
-            ):
-                retry_response = self._retry_web_search_after_irrelevant_feedback(
-                    request=request,
-                    active_context=rc.active_context,
-                    retry_feedback_reason=rc.retry_feedback_reason,
-                    phase_event_callback=phase_event_callback,
-                )
-                if retry_response is not None:
-                    response = retry_response
-                else:
-                    response = None
-            else:
-                response = None
-
-            if response is not None:
-                pass
-            elif (
-                (rc.wants_web_search_record_recall or rc.load_web_search_record_id)
-                and not rc.has_search_request
-                and rc.uploaded_file is None
-                and not rc.has_explicit_source_path
-            ):
-                response = self._reuse_web_search_record(
-                    request=request,
-                    record_id=rc.load_web_search_record_id,
-                    phase_event_callback=phase_event_callback,
-                    stream_event_callback=stream_event_callback,
-                    cancel_requested=cancel_requested,
-                )
-            elif (
-                search_intent.kind == SearchIntentKind.NONE
-                and search_intent.suggestion_query
-                and rc.active_context_mode not in {"document", "mixed"}
-                and not rc.has_search_request
-                and rc.uploaded_file is None
-                and not rc.has_explicit_source_path
-            ):
-                self._emit_phase(
-                    phase_event_callback,
-                    phase="web_search_suggestion",
-                    title="검색 제안 준비 중",
-                    detail=f"'{search_intent.suggestion_query}' 쪽으로 검색하면 도움이 될 수 있어 제안 버튼을 준비하는 중입니다.",
-                    note="확신이 낮은 질문은 자동 검색 대신 명시적 제안으로 먼저 보여드립니다.",
-                )
-                response = self._build_web_search_suggestion_response(
-                    requested_web_search_permission,
-                    query=search_intent.suggestion_query,
-                )
-            elif (
-                sir.explicit_query
-                and not rc.has_search_request
-                and rc.uploaded_file is None
-                and not rc.has_explicit_source_path
-            ):
-                if requested_web_search_permission != "enabled":
-                    self._emit_phase(
-                        phase_event_callback,
-                        phase="web_search_blocked",
-                        title="웹 검색 권한 확인 중",
-                        detail="명시적으로 웹 검색을 요청했지만 현재 세션 권한으로는 바로 실행할 수 없습니다.",
-                        note="고급 설정의 외부 웹 검색 권한을 확인해 주세요.",
-                    )
-                    response = self._build_web_search_permission_response(
-                        requested_web_search_permission,
-                        query=sir.explicit_query,
-                    )
-                else:
-                    response = self._run_web_search(
-                        request=request,
-                        query=sir.effective_query or sir.explicit_query,
-                        intent_kind=sir.intent_kind,
-                        answer_mode=sir.answer_mode,
-                        freshness_risk=sir.freshness_risk,
-                        phase_event_callback=phase_event_callback,
-                        seed_queries=[sir.probe_query] if sir.probe_query else None,
-                        progress_query=sir.probe_query,
-                    )
-            elif (
-                sir.external_fact_query
-                and rc.active_context_mode not in {"document", "mixed"}
-                and not rc.has_search_request
-                and rc.uploaded_file is None
-                and not rc.has_explicit_source_path
-            ):
-                if requested_web_search_permission != "enabled":
-                    self._emit_phase(
-                        phase_event_callback,
-                        phase="web_search_blocked",
-                        title="외부 사실 확인 경로 안내 중",
-                        detail="외부 사실 설명 요청이지만 현재 세션 권한으로는 읽기 전용 웹 검색을 바로 실행할 수 없습니다.",
-                        note="고급 설정에서 외부 웹 검색 권한을 허용으로 바꾸면 검색 기반으로 답할 수 있습니다.",
-                    )
-                    response = self._build_web_search_permission_response(
-                        requested_web_search_permission,
-                        query=sir.external_fact_query,
-                    )
-                else:
-                    self._emit_phase(
-                        phase_event_callback,
-                        phase="web_search_auto",
-                        title="외부 사실 확인 검색으로 전환 중",
-                        detail=f"'{sir.external_fact_query}' 설명 요청이어서 웹 검색으로 근거를 먼저 확인하는 중입니다.",
-                        note="로컬 문서 근거가 없을 때는 외부 사실을 모델이 추측하지 않도록 읽기 전용 검색을 우선 사용합니다.",
-                    )
-                    response = self._run_web_search(
-                        request=request,
-                        query=sir.external_fact_query,
-                        intent_kind=search_intent.kind,
-                        answer_mode=search_intent.answer_mode,
-                        freshness_risk=search_intent.freshness_risk,
-                        phase_event_callback=phase_event_callback,
-                    )
-            elif (
-                sir.implicit_web_search_query
-                and rc.active_context_mode not in {"document", "mixed"}
-                and not rc.has_search_request
-                and rc.uploaded_file is None
-                and not rc.has_explicit_source_path
-            ):
-                self._emit_phase(
-                    phase_event_callback,
-                    phase="web_search_auto",
-                    title="최신 정보 질문을 웹 검색으로 전환 중",
-                    detail=f"'{sir.implicit_web_search_query}' 관련 최신성 질문이라 읽기 전용 웹 검색을 먼저 실행합니다.",
-                    note="웹 검색 권한이 허용된 세션에서만 자동으로 전환합니다.",
-                )
-                response = self._run_web_search(
-                    request=request,
-                    query=sir.implicit_web_search_query,
-                    intent_kind=search_intent.kind,
-                    answer_mode=search_intent.answer_mode,
-                    freshness_risk=search_intent.freshness_risk,
-                    phase_event_callback=phase_event_callback,
-                )
-            elif rc.active_context_mode in {"document", "mixed"}:
-                if rc.active_context_mode == "mixed":
-                    detail = (
-                        f"현재 문서 '{rc.active_context.get('label') or '문서'}'를 바탕으로 "
-                        "가벼운 인사와 문서 질문을 함께 정리하는 중입니다."
-                    )
-                    note = "짧은 대화 톤은 유지하되, 답변 본문은 현재 문서 근거를 우선 사용합니다."
-                else:
-                    detail = (
-                        f"현재 문서 '{rc.active_context.get('label') or '문서'}' 문맥으로 "
-                        "후속 질문을 정리하는 중입니다."
-                    )
-                    note = "문서 요약과 핵심 라인을 바탕으로 응답을 만듭니다."
-                self._emit_phase(
-                    phase_event_callback,
-                    phase="context_answer_started",
-                    title="문서 문맥 응답 준비 중",
-                    detail=detail,
-                    note=note,
-                )
-                response = self._respond_with_active_context(
-                    request=request,
-                    active_context=rc.active_context,
-                    conversation_mode=rc.active_context_mode,
-                    stream_event_callback=stream_event_callback,
-                    phase_event_callback=phase_event_callback,
-                    cancel_requested=cancel_requested,
-                )
-            elif (
-                not rc.active_context
-                and rc.follow_up_intent != FOLLOW_UP_INTENT_GENERAL
-                and rc.uploaded_file is None
-                and not rc.has_explicit_source_path
-                and not rc.has_search_request
-            ):
-                if self._contains_small_talk_signal(request.user_text):
-                    prefix = self._small_talk_prefix(request.user_text)
-                    text = (
-                        f"{prefix} 다만 아직 참고할 현재 문서 문맥이 없습니다. "
-                        "파일 요약 모드에서 문서를 먼저 읽거나 파일 경로를 직접 입력해 주세요."
-                    )
-                else:
-                    text = "현재 문서 문맥이 없습니다. 파일 요약 모드에서 문서를 먼저 읽거나 파일 경로를 직접 입력해 주세요."
-                response = AgentResponse(
-                    text=text,
-                    status=ResponseStatus.ERROR,
-                    actions_taken=["missing_active_context"],
-                )
-            elif rc.search_query and (rc.search_root or rc.uploaded_search_files) and "read_file" in self.tools:
-                search_target_label = rc.search_root or self._format_uploaded_search_root_label(rc.uploaded_search_files)
-                search_action_name = "search_uploaded_files" if rc.uploaded_search_files else "search_files"
-                self._raise_if_cancelled(cancel_requested)
-                self._emit_phase(
-                    phase_event_callback,
-                    phase="search_started",
-                    title="문서 검색 중",
-                    detail=(
-                        f"'{rc.search_query}' 검색어로 {search_target_label} 아래 문서를 찾는 중입니다."
-                        if rc.search_root
-                        else f"선택한 폴더 파일들에서 '{rc.search_query}' 검색어를 찾는 중입니다."
-                    ),
-                    note="검색 결과 수와 OCR 미지원 파일 여부를 먼저 확인합니다.",
-                )
-                uploaded_read_results_by_path: dict[str, Any] = {}
-                skipped_ocr_paths: list[str] = []
-                failed_uploaded_paths: list[str] = []
-                if rc.uploaded_search_files:
-                    matches, uploaded_read_results_by_path, skipped_ocr_paths, failed_uploaded_paths = self._search_uploaded_files(
-                        uploaded_files=rc.uploaded_search_files,
-                        query=rc.search_query,
-                        max_results=self._search_result_limit(request),
-                    )
-                else:
-                    matches = self.tools["search_files"].run(
-                        root=rc.search_root,
-                        query=rc.search_query,
-                        max_results=self._search_result_limit(request),
-                    )
-                    skipped_ocr_paths = self._extract_skipped_ocr_paths()
-                self._raise_if_cancelled(cancel_requested)
-                self.task_logger.log(
-                    session_id=request.session_id,
-                    action=search_action_name,
-                    detail={
-                        "search_root": rc.search_root,
-                        "uploaded_root_label": rc.uploaded_search_files[0].get("root_label") if rc.uploaded_search_files else None,
-                        "search_query": rc.search_query,
-                        "match_count": len(matches),
-                        "skipped_ocr_paths": skipped_ocr_paths,
-                        "failed_uploaded_paths": failed_uploaded_paths,
-                        "matches": [
-                            {
-                                "path": item.path,
-                                "matched_on": item.matched_on,
-                                "snippet": item.snippet,
-                            }
-                            for item in matches
-                        ],
-                    },
-                )
-                search_notice = self._format_search_ocr_notice(skipped_ocr_paths)
-                if failed_uploaded_paths:
-                    failed_notice = f"일부 파일({len(failed_uploaded_paths)}건)을 읽지 못해 검색에서 제외되었습니다."
-                    search_notice = f"{search_notice}\n{failed_notice}".strip() if search_notice else failed_notice
-
-                if not matches:
-                    response = AgentResponse(
-                        text=self._append_notice(
-                            f"{search_target_label} 아래에서 '{rc.search_query}' 검색 결과를 찾지 못했습니다.",
-                            search_notice,
-                        ),
-                        actions_taken=[search_action_name],
-                    )
-                elif self._wants_search_only(request):
-                    response = AgentResponse(
-                        text=self._append_notice(self._format_search_results(matches), search_notice),
-                        actions_taken=[search_action_name],
-                        selected_source_paths=[item.path for item in matches],
-                        search_results=[
-                            {"path": item.path, "matched_on": item.matched_on, "snippet": item.snippet}
-                            for item in matches
-                        ],
-                    )
-                else:
-                    self._emit_phase(
-                        phase_event_callback,
-                        phase="search_results_selected",
-                        title="검색 결과 정리 중",
-                        detail=f"검색 결과 {len(matches)}개 중 요약할 출처를 고르는 중입니다.",
-                        note="선택 경로나 검색 순번이 있으면 그 기준으로 추립니다.",
-                    )
-                    selected_results = self._select_search_results(results=matches, request=request)
-                    self._raise_if_cancelled(cancel_requested)
-                    self._emit_phase(
-                        phase_event_callback,
-                        phase="read_sources_started",
-                        title="선택 문서 읽는 중",
-                        detail=f"선택된 문서 {len(selected_results)}개를 열어 요약 준비를 하는 중입니다.",
-                        note="PDF나 큰 문서는 여기서 시간이 조금 걸릴 수 있습니다.",
-                    )
-                    read_results = []
-                    for result in selected_results:
-                        self._raise_if_cancelled(cancel_requested)
-                        if rc.uploaded_search_files:
-                            read_result = uploaded_read_results_by_path.get(result.path)
-                            if read_result is None:
-                                raise FileNotFoundError(f"선택한 폴더 검색 결과를 다시 찾지 못했습니다: {result.path}")
-                            read_results.append(read_result)
-                        else:
-                            read_results.append(self.tools["read_file"].run(path=result.path))
-                    self._raise_if_cancelled(cancel_requested)
-
-                    self.task_logger.log(
-                        session_id=request.session_id,
-                        action="read_search_results",
-                        detail={
-                            "search_query": rc.search_query,
-                            "selected_match_count": len(selected_results),
-                            "selected_paths": [item.resolved_path for item in read_results],
-                            "selected_file_metadata": [
-                                {
-                                    "resolved_path": item.resolved_path,
-                                    "content_format": item.content_format,
-                                    "extraction_method": item.extraction_method,
-                                    "encoding_used": item.encoding_used,
-                                }
-                                for item in read_results
-                            ],
-                        },
-                    )
-
-                    self._emit_phase(
-                        phase_event_callback,
-                        phase="summarize_started",
-                        title="검색 결과 요약 생성 중",
-                        detail=f"선택된 문서 {len(read_results)}개를 묶어 하나의 요약으로 정리하는 중입니다.",
-                        note="실제 로컬 모델 응답은 이 단계부터 조금씩 도착할 수 있습니다.",
-                    )
-                    summary, note_body, summary_chunks = self._build_multi_file_summary(
-                        search_query=rc.search_query,
-                        selected_results=selected_results,
-                        read_results=read_results,
-                        stream_event_callback=stream_event_callback,
-                        phase_event_callback=phase_event_callback,
-                        cancel_requested=cancel_requested,
-                    )
-                    self._raise_if_cancelled(cancel_requested)
-                    new_active_context = self._build_search_active_context(
-                        search_query=rc.search_query,
-                        selected_results=selected_results,
-                        read_results=read_results,
-                        summary=summary,
-                    )
-                    self.session_store.set_active_context(request.session_id, new_active_context)
-                    self.task_logger.log(
-                        session_id=request.session_id,
-                        action="document_context_updated",
-                        detail={
-                            "kind": new_active_context["kind"],
-                            "label": new_active_context["label"],
-                            "source_paths": new_active_context["source_paths"],
-                        },
-                    )
-                    selected_sources_text = self._format_selected_sources(selected_results)
-                    self.task_logger.log(
-                        session_id=request.session_id,
-                        action="summarize_search_results",
-                        detail={
-                            "search_query": rc.search_query,
-                            "source_count": len(read_results),
-                        },
-                    )
-                    selected_evidence = self._select_evidence_items(
-                        evidence_pool=[
-                            dict(item)
-                            for item in new_active_context.get("evidence_pool", [])
-                            if isinstance(item, dict)
-                        ],
-                        intent=FOLLOW_UP_INTENT_GENERAL,
-                        user_request=request.user_text or rc.search_query,
-                    )
-                    artifact_id = self._new_grounded_brief_artifact_id()
-                    source_message_id = self._new_message_id()
-
-                    if self._wants_summary_save(request) and "write_note" in self.tools:
-                        note_path = self._build_search_note_path(request, rc.search_query)
-                        if not request.approved:
-                            self._emit_phase(
-                                phase_event_callback,
-                                phase="approval_prepared",
-                                title="저장 승인 카드 준비 중",
-                                detail=f"검색 요약 노트를 {note_path}에 저장할 수 있도록 승인 미리보기를 만드는 중입니다.",
-                                note="승인 전에는 실제 파일을 쓰지 않습니다.",
-                            )
-                            approval = self._request_save_note_approval(
-                                session_id=request.session_id,
-                                note_path=note_path,
-                                note_body=note_body,
-                                source_paths=[item.path for item in selected_results],
-                                artifact_id=artifact_id,
-                                source_message_id=source_message_id,
-                                approval_request_detail={
-                                    "search_query": rc.search_query,
-                                    "source_paths": [item.resolved_path for item in read_results],
-                                },
-                            )
-                            response = self._build_grounded_brief_response(
-                                text=self._append_notice(
-                                    (
-                                        f"{summary}\n\n{selected_sources_text}\n\n"
-                                        f"검색 요약 노트를 {approval.requested_path}에 저장하려면 승인이 필요합니다."
-                                    ),
-                                    search_notice,
-                                ),
-                                status=ResponseStatus.NEEDS_APPROVAL,
-                                actions_taken=[
-                                    "search_uploaded_files" if rc.uploaded_search_files else "search_files",
-                                    "read_file",
-                                    "summarize_search_results",
-                                    "approval_requested",
-                                ],
-                                requires_approval=True,
-                                proposed_note_path=approval.requested_path,
-                                selected_source_paths=[item.path for item in selected_results],
-                                note_preview=approval.preview_markdown,
-                                approval=approval.to_public_dict(),
-                                active_context=self._public_active_context(new_active_context),
-                                follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
-                                evidence=selected_evidence,
-                                summary_chunks=summary_chunks,
-                                search_results=[
-                                    {"path": item.path, "matched_on": item.matched_on, "snippet": item.snippet}
-                                    for item in matches
-                                ],
-                                **self._build_grounded_brief_source_response_fields(
-                                    artifact_id=artifact_id,
-                                    source_message_id=source_message_id,
-                                ),
-                            )
-                        else:
-                            self._emit_phase(
-                                phase_event_callback,
-                                phase="write_started",
-                                title="검색 요약 노트 저장 중",
-                                detail=f"{note_path} 경로에 검색 요약 노트를 쓰는 중입니다.",
-                                note="승인된 경로에만 새 파일을 만듭니다.",
-                            )
-                            saved_path, _ = self._execute_save_note_write(
-                                session_id=request.session_id,
-                                note_path=note_path,
-                                note_body=note_body,
-                                artifact_id=artifact_id,
-                                source_message_id=source_message_id,
-                                write_detail={"search_query": rc.search_query},
-                            )
-                            corrected_outcome = self._build_accepted_as_is_outcome(
-                                artifact_id=artifact_id,
-                                saved_note_path=saved_path,
-                            )
-                            response = self._build_grounded_brief_response(
-                                text=self._append_notice(
-                                    (
-                                        f"{summary}\n\n{selected_sources_text}\n\n"
-                                        f"검색 요약 노트를 {saved_path}에 저장했습니다."
-                                    ),
-                                    search_notice,
-                                ),
-                                status=ResponseStatus.SAVED,
-                                actions_taken=[
-                                    "search_uploaded_files" if rc.uploaded_search_files else "search_files",
-                                    "read_file",
-                                    "summarize_search_results",
-                                    "write_note",
-                                ],
-                                selected_source_paths=[item.path for item in selected_results],
-                                active_context=self._public_active_context(new_active_context),
-                                follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
-                                evidence=selected_evidence,
-                                summary_chunks=summary_chunks,
-                                search_results=[
-                                    {"path": item.path, "matched_on": item.matched_on, "snippet": item.snippet}
-                                    for item in matches
-                                ],
-                                **self._build_grounded_brief_source_response_fields(
-                                    artifact_id=artifact_id,
-                                    source_message_id=source_message_id,
-                                    saved_note_path=saved_path,
-                                    save_content_source=SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT,
-                                    corrected_outcome=corrected_outcome,
-                                ),
-                            )
-                    else:
-                        response = self._build_grounded_brief_response(
-                            text=self._append_notice(
-                                f"{summary}\n\n{selected_sources_text}",
-                                search_notice,
-                            ),
-                            status=ResponseStatus.ANSWER,
-                            actions_taken=["search_uploaded_files", "read_file", "summarize_search_results"] if rc.uploaded_search_files else ["search_files", "read_file", "summarize_search_results"],
-                            selected_source_paths=[item.path for item in selected_results],
-                            active_context=self._public_active_context(new_active_context),
-                            follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
-                            evidence=selected_evidence,
-                            summary_chunks=summary_chunks,
-                            search_results=[
-                                {"path": item.path, "matched_on": item.matched_on, "snippet": item.snippet}
-                                for item in matches
-                            ],
-                            artifact_id=artifact_id,
-                            artifact_kind=ArtifactKind.GROUNDED_BRIEF,
-                        )
-            elif rc.uploaded_file and "read_file" in self.tools:
-                uploaded_name = str(rc.uploaded_file.get("name") or "selected-file")
-                self._raise_if_cancelled(cancel_requested)
-                self._emit_phase(
-                    phase_event_callback,
-                    phase="read_uploaded_file_started",
-                    title="선택 파일 읽는 중",
-                    detail=f"{uploaded_name} 선택 파일을 브라우저에서 받아 텍스트를 추출하는 중입니다.",
-                    note="사용자가 직접 고른 파일만 로컬 서버로 전달합니다.",
-                )
-                read_result = self.tools["read_file"].run_uploaded(
-                    name=uploaded_name,
-                    content_bytes=bytes(rc.uploaded_file.get("content_bytes") or b""),
-                    mime_type=str(rc.uploaded_file.get("mime_type") or ""),
-                )
-                self._raise_if_cancelled(cancel_requested)
-                self.task_logger.log(
-                    session_id=request.session_id,
-                    action="read_uploaded_file",
-                    detail={
-                        "requested_name": uploaded_name,
-                        "resolved_path": read_result.resolved_path,
-                        "size_bytes": read_result.size_bytes,
-                        "content_format": read_result.content_format,
-                        "extraction_method": read_result.extraction_method,
-                        "encoding_used": read_result.encoding_used,
-                    },
-                )
-
-                self._emit_phase(
-                    phase_event_callback,
-                    phase="summarize_started",
-                    title="문서 요약 생성 중",
-                    detail=f"{Path(read_result.resolved_path).name} 내용을 요약하는 중입니다.",
-                    note="실제 로컬 모델 응답은 이 단계부터 조금씩 도착할 수 있습니다.",
-                )
-                summary, summary_chunks = self._summarize_text_with_chunking(
-                    text=read_result.text,
-                    source_label=Path(read_result.resolved_path).name,
-                    source_path=read_result.resolved_path,
-                    stream_event_callback=stream_event_callback,
-                    phase_event_callback=phase_event_callback,
-                    cancel_requested=cancel_requested,
-                )
-                self._raise_if_cancelled(cancel_requested)
-                title = f"{Path(read_result.resolved_path).name} 요약"
-                note_body = "\n".join(
-                    [
-                        f"# {title}",
-                        "",
-                        f"원본 파일: {read_result.resolved_path}",
-                        "",
-                        "## 요약",
-                        summary,
-                    ]
-                )
-                note_draft = SummaryNoteDraft(title=title, summary=summary, note_body=note_body)
-                new_active_context = self._build_file_active_context(
-                    resolved_path=read_result.resolved_path,
-                    text=read_result.text,
-                    summary=note_draft.summary,
-                )
-                self.session_store.set_active_context(request.session_id, new_active_context)
-                self.task_logger.log(
-                    session_id=request.session_id,
-                    action="document_context_updated",
-                    detail={
-                        "kind": new_active_context["kind"],
-                        "label": new_active_context["label"],
-                        "source_paths": new_active_context["source_paths"],
-                    },
-                )
-                self.task_logger.log(
-                    session_id=request.session_id,
-                    action="summarize_uploaded_file",
-                    detail={
-                        "source_name": read_result.resolved_path,
-                        "title": note_draft.title,
-                    },
-                )
-                document_evidence = self._select_evidence_items(
-                    evidence_pool=self._extract_text_evidence_items(
-                        source_path=read_result.resolved_path,
-                        text=read_result.text,
-                    ),
-                    intent=FOLLOW_UP_INTENT_GENERAL,
-                    user_request=request.user_text or read_result.resolved_path,
-                )
-                artifact_id = self._new_grounded_brief_artifact_id()
-                source_message_id = self._new_message_id()
-
-                if self._wants_summary_save(request) and "write_note" in self.tools:
-                    note_path = self._build_note_path(request, read_result.resolved_path)
-                    if not request.approved:
-                        self._emit_phase(
-                            phase_event_callback,
-                            phase="approval_prepared",
-                            title="저장 승인 카드 준비 중",
-                            detail=f"요약 노트를 {note_path}에 저장할 수 있도록 승인 미리보기를 만드는 중입니다.",
-                            note="승인 전에는 실제 파일을 쓰지 않습니다.",
-                        )
-                        approval = self._request_save_note_approval(
-                            session_id=request.session_id,
-                            note_path=note_path,
-                            note_body=note_draft.note_body,
-                            source_paths=[read_result.resolved_path],
-                            artifact_id=artifact_id,
-                            source_message_id=source_message_id,
-                            approval_request_detail={"source_path": read_result.resolved_path},
-                        )
-                        response = self._build_grounded_brief_response(
-                            text=(
-                                f"{note_draft.summary}\n\n"
-                                f"요약 노트를 {approval.requested_path}에 저장하려면 승인이 필요합니다."
-                            ),
-                            status=ResponseStatus.NEEDS_APPROVAL,
-                            actions_taken=["read_uploaded_file", "summarize", "approval_requested"],
-                            requires_approval=True,
-                            proposed_note_path=approval.requested_path,
-                            selected_source_paths=[read_result.resolved_path],
-                            note_preview=approval.preview_markdown,
-                            approval=approval.to_public_dict(),
-                            active_context=self._public_active_context(new_active_context),
-                            follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
-                            evidence=document_evidence,
-                            summary_chunks=summary_chunks,
-                            **self._build_grounded_brief_source_response_fields(
-                                artifact_id=artifact_id,
-                                source_message_id=source_message_id,
-                            ),
-                        )
-                    else:
-                        self._emit_phase(
-                            phase_event_callback,
-                            phase="write_started",
-                            title="요약 노트 저장 중",
-                            detail=f"{note_path} 경로에 요약 노트를 쓰는 중입니다.",
-                            note="승인된 경로에만 새 파일을 만듭니다.",
-                        )
-                        saved_path, _ = self._execute_save_note_write(
-                            session_id=request.session_id,
-                            note_path=note_path,
-                            note_body=note_draft.note_body,
-                            artifact_id=artifact_id,
-                            source_message_id=source_message_id,
-                            write_detail={"source_path": read_result.resolved_path},
-                        )
-                        corrected_outcome = self._build_accepted_as_is_outcome(
-                            artifact_id=artifact_id,
-                            saved_note_path=saved_path,
-                        )
-                        response = self._build_grounded_brief_response(
-                            text=f"{note_draft.summary}\n\n요약 노트를 {saved_path}에 저장했습니다.",
-                            status=ResponseStatus.SAVED,
-                            actions_taken=["read_uploaded_file", "summarize", "write_note"],
-                            selected_source_paths=[read_result.resolved_path],
-                            active_context=self._public_active_context(new_active_context),
-                            follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
-                            evidence=document_evidence,
-                            summary_chunks=summary_chunks,
-                            **self._build_grounded_brief_source_response_fields(
-                                artifact_id=artifact_id,
-                                source_message_id=source_message_id,
-                                saved_note_path=saved_path,
-                                save_content_source=SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT,
-                                corrected_outcome=corrected_outcome,
-                            ),
-                        )
-                else:
-                    response = self._build_grounded_brief_response(
-                        text=note_draft.summary,
-                        status=ResponseStatus.ANSWER,
-                        actions_taken=["read_uploaded_file", "summarize"],
-                        selected_source_paths=[read_result.resolved_path],
-                        active_context=self._public_active_context(new_active_context),
-                        follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
-                        evidence=document_evidence,
-                        summary_chunks=summary_chunks,
-                        artifact_id=artifact_id,
-                        artifact_kind=ArtifactKind.GROUNDED_BRIEF,
-                    )
-            elif rc.source_path and "read_file" in self.tools:
-                self._raise_if_cancelled(cancel_requested)
-                self._emit_phase(
-                    phase_event_callback,
-                    phase="read_file_started",
-                    title="파일 읽는 중",
-                    detail=f"{rc.source_path} 파일을 열어 텍스트를 추출하는 중입니다.",
-                    note="PDF나 인코딩 자동 판별이 필요한 문서는 시간이 더 걸릴 수 있습니다.",
-                )
-                read_result = self.tools["read_file"].run(path=rc.source_path)
-                self._raise_if_cancelled(cancel_requested)
-                self.task_logger.log(
-                    session_id=request.session_id,
-                    action="read_file",
-                    detail={
-                        "requested_path": read_result.requested_path,
-                        "resolved_path": read_result.resolved_path,
-                        "size_bytes": read_result.size_bytes,
-                        "content_format": read_result.content_format,
-                        "extraction_method": read_result.extraction_method,
-                        "encoding_used": read_result.encoding_used,
-                    },
-                )
-
-                self._emit_phase(
-                    phase_event_callback,
-                    phase="summarize_started",
-                    title="문서 요약 생성 중",
-                    detail=f"{Path(read_result.resolved_path).name} 내용을 요약하는 중입니다.",
-                    note="실제 로컬 모델 응답은 이 단계부터 조금씩 도착할 수 있습니다.",
-                )
-                summary, summary_chunks = self._summarize_text_with_chunking(
-                    text=read_result.text,
-                    source_label=Path(read_result.resolved_path).name,
-                    source_path=read_result.resolved_path,
-                    stream_event_callback=stream_event_callback,
-                    phase_event_callback=phase_event_callback,
-                    cancel_requested=cancel_requested,
-                )
-                self._raise_if_cancelled(cancel_requested)
-                title = f"{Path(read_result.resolved_path).name} 요약"
-                note_body = "\n".join(
-                    [
-                        f"# {title}",
-                        "",
-                        f"원본 파일: {read_result.resolved_path}",
-                        "",
-                        "## 요약",
-                        summary,
-                    ]
-                )
-                note_draft = SummaryNoteDraft(title=title, summary=summary, note_body=note_body)
-                new_active_context = self._build_file_active_context(
-                    resolved_path=read_result.resolved_path,
-                    text=read_result.text,
-                    summary=note_draft.summary,
-                )
-                self.session_store.set_active_context(request.session_id, new_active_context)
-                self.task_logger.log(
-                    session_id=request.session_id,
-                    action="document_context_updated",
-                    detail={
-                        "kind": new_active_context["kind"],
-                        "label": new_active_context["label"],
-                        "source_paths": new_active_context["source_paths"],
-                    },
-                )
-                self.task_logger.log(
-                    session_id=request.session_id,
-                    action="summarize_file",
-                    detail={
-                        "source_path": read_result.resolved_path,
-                        "title": note_draft.title,
-                    },
-                )
-                document_evidence = self._select_evidence_items(
-                    evidence_pool=self._extract_text_evidence_items(
-                        source_path=read_result.resolved_path,
-                        text=read_result.text,
-                    ),
-                    intent=FOLLOW_UP_INTENT_GENERAL,
-                    user_request=request.user_text or read_result.resolved_path,
-                )
-                artifact_id = self._new_grounded_brief_artifact_id()
-                source_message_id = self._new_message_id()
-
-                if self._wants_summary_save(request) and "write_note" in self.tools:
-                    note_path = self._build_note_path(request, read_result.resolved_path)
-                    if not request.approved:
-                        self._emit_phase(
-                            phase_event_callback,
-                            phase="approval_prepared",
-                            title="저장 승인 카드 준비 중",
-                            detail=f"요약 노트를 {note_path}에 저장할 수 있도록 승인 미리보기를 만드는 중입니다.",
-                            note="승인 전에는 실제 파일을 쓰지 않습니다.",
-                        )
-                        approval = self._request_save_note_approval(
-                            session_id=request.session_id,
-                            note_path=note_path,
-                            note_body=note_draft.note_body,
-                            source_paths=[read_result.resolved_path],
-                            artifact_id=artifact_id,
-                            source_message_id=source_message_id,
-                            approval_request_detail={"source_path": read_result.resolved_path},
-                        )
-                        response = self._build_grounded_brief_response(
-                            text=(
-                                f"{note_draft.summary}\n\n"
-                                f"요약 노트를 {approval.requested_path}에 저장하려면 승인이 필요합니다."
-                            ),
-                            status=ResponseStatus.NEEDS_APPROVAL,
-                            actions_taken=["read_file", "summarize", "approval_requested"],
-                            requires_approval=True,
-                            proposed_note_path=approval.requested_path,
-                            selected_source_paths=[read_result.resolved_path],
-                            note_preview=approval.preview_markdown,
-                            approval=approval.to_public_dict(),
-                            active_context=self._public_active_context(new_active_context),
-                            follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
-                            evidence=document_evidence,
-                            summary_chunks=summary_chunks,
-                            **self._build_grounded_brief_source_response_fields(
-                                artifact_id=artifact_id,
-                                source_message_id=source_message_id,
-                            ),
-                        )
-                    else:
-                        self._emit_phase(
-                            phase_event_callback,
-                            phase="write_started",
-                            title="요약 노트 저장 중",
-                            detail=f"{note_path} 경로에 요약 노트를 쓰는 중입니다.",
-                            note="승인된 경로에만 새 파일을 만듭니다.",
-                        )
-                        saved_path, _ = self._execute_save_note_write(
-                            session_id=request.session_id,
-                            note_path=note_path,
-                            note_body=note_draft.note_body,
-                            artifact_id=artifact_id,
-                            source_message_id=source_message_id,
-                            write_detail={"source_path": read_result.resolved_path},
-                        )
-                        corrected_outcome = self._build_accepted_as_is_outcome(
-                            artifact_id=artifact_id,
-                            saved_note_path=saved_path,
-                        )
-                        response = self._build_grounded_brief_response(
-                            text=f"{note_draft.summary}\n\n요약 노트를 {saved_path}에 저장했습니다.",
-                            status=ResponseStatus.SAVED,
-                            actions_taken=["read_file", "summarize", "write_note"],
-                            selected_source_paths=[read_result.resolved_path],
-                            active_context=self._public_active_context(new_active_context),
-                            follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
-                            evidence=document_evidence,
-                            summary_chunks=summary_chunks,
-                            **self._build_grounded_brief_source_response_fields(
-                                artifact_id=artifact_id,
-                                source_message_id=source_message_id,
-                                saved_note_path=saved_path,
-                                save_content_source=SAVE_CONTENT_SOURCE_ORIGINAL_DRAFT,
-                                corrected_outcome=corrected_outcome,
-                            ),
-                        )
-                else:
-                    response = self._build_grounded_brief_response(
-                        text=note_draft.summary,
-                        status=ResponseStatus.ANSWER,
-                        actions_taken=["read_file", "summarize"],
-                        selected_source_paths=[read_result.resolved_path],
-                        active_context=self._public_active_context(new_active_context),
-                        follow_up_suggestions=[str(prompt) for prompt in new_active_context.get("suggested_prompts", [])],
-                        evidence=document_evidence,
-                        summary_chunks=summary_chunks,
-                        artifact_id=artifact_id,
-                        artifact_kind=ArtifactKind.GROUNDED_BRIEF,
-                    )
-            elif rc.active_context_mode in {"document", "mixed"}:
-                if rc.active_context_mode == "mixed":
-                    detail = (
-                        f"현재 문서 '{rc.active_context.get('label') or '문서'}'를 바탕으로 "
-                        "가벼운 대화와 문서 답변을 함께 정리하는 중입니다."
-                    )
-                    note = "대화 톤은 유지하되, 답변 핵심은 현재 문서 근거로 제한합니다."
-                else:
-                    detail = f"현재 문서 '{rc.active_context.get('label') or '문서'}'를 바탕으로 답변하는 중입니다."
-                    note = "후속 질문 의도에 맞춰 요약이나 액션 항목 형식으로 정리합니다."
-                self._emit_phase(
-                    phase_event_callback,
-                    phase="context_answer_started",
-                    title="문서 문맥 응답 준비 중",
-                    detail=detail,
-                    note=note,
-                )
-                response = self._respond_with_active_context(
-                    request=request,
-                    active_context=rc.active_context,
-                    conversation_mode=rc.active_context_mode,
-                    stream_event_callback=stream_event_callback,
-                    phase_event_callback=phase_event_callback,
-                    cancel_requested=cancel_requested,
-                )
-            else:
-                if self._looks_like_unverified_external_fact_request(request.user_text):
-                    self._emit_phase(
-                        phase_event_callback,
-                        phase="respond_limited",
-                        title="확인 범위 안내 중",
-                        detail="외부 사실 확인이 필요한 질문이라 로컬 문서 근거 범위를 먼저 안내합니다.",
-                        note="관련 문서나 텍스트를 주시면 그 범위에서 다시 정리할 수 있습니다.",
-                    )
-                    response = self._build_unverified_external_fact_response_for_permission(
-                        self._extract_web_search_permission(request)
-                    )
-                elif self._looks_like_personal_experience_request(request.user_text):
-                    self._emit_phase(
-                        phase_event_callback,
-                        phase="respond_limited",
-                        title="경험 기반 질문 안내 중",
-                        detail="직접 경험 여부를 묻는 질문이라 시스템 한계를 먼저 안내합니다.",
-                        note="관련 텍스트나 문서를 주시면 그 범위에서 설명할 수 있습니다.",
-                    )
-                    response = self._build_personal_experience_response()
-                elif self._looks_like_live_info_request(request.user_text):
-                    self._emit_phase(
-                        phase_event_callback,
-                        phase="respond_limited",
-                        title="실시간 정보 범위 안내 중",
-                        detail="실시간 외부 조회가 필요한 질문이라 현재 연결 범위를 먼저 안내합니다.",
-                        note="실시간 API나 관련 텍스트가 연결되면 그 범위에서 다시 정리할 수 있습니다.",
-                    )
-                    response = self._build_live_info_response_for_permission(
-                        self._extract_web_search_permission(request)
-                    )
-                elif self._looks_like_underspecified_next_step_request(request.user_text):
-                    self._emit_phase(
-                        phase_event_callback,
-                        phase="respond_limited",
-                        title="맥락 확인 안내 중",
-                        detail="다음 단계 질문이지만 어떤 흐름인지 아직 부족해서 맥락을 먼저 요청합니다.",
-                        note="문서 요약, 검색, 메모 저장 중 어느 흐름인지 알려주시면 바로 이어집니다.",
-                    )
-                    response = self._build_underspecified_next_step_response()
-                else:
-                    self._emit_phase(
-                        phase_event_callback,
-                        phase="respond_started",
-                        title="일반 응답 생성 중",
-                        detail="일반 질문에 대한 응답을 생성하는 중입니다.",
-                        note="선택된 문맥이 없으면 일반 대화 응답으로 처리합니다.",
-                    )
-                    response = AgentResponse(
-                        text=self._collect_model_stream(
-                            self.model.stream_respond(request.user_text),
-                            stream_event_callback=stream_event_callback,
-                            cancel_requested=cancel_requested,
-                        ),
-                        status=ResponseStatus.ANSWER,
-                        actions_taken=["respond"],
-                    )
         except RequestCancelledError:
             self.task_logger.log(
                 session_id=request.session_id,
@@ -8273,10 +8486,4 @@ class AgentLoop:
                 detail={"error": str(exc)},
             )
 
-        self._append_response_message(request.session_id, response)
-        self.task_logger.log(
-            session_id=request.session_id,
-            action="agent_response",
-            detail=self._agent_response_log_detail(response),
-        )
-        return response
+        return self._finalize_response(request.session_id, response)

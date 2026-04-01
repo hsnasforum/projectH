@@ -1,9 +1,15 @@
 import { useRef, useEffect } from "react";
-import type { Message, PendingApproval } from "../types";
+import type { Message, PendingApproval, AppSettings } from "../types";
 import MessageBubble from "./MessageBubble";
 import InputBar from "./InputBar";
 import ApprovalCard from "./ApprovalCard";
 import TypingIndicator from "./TypingIndicator";
+
+const OLLAMA_MODELS = [
+  { value: "qwen2.5:14b", label: "14B" },
+  { value: "qwen2.5:7b", label: "7B" },
+  { value: "qwen2.5:3b", label: "3B" },
+];
 
 interface Props {
   messages: Message[];
@@ -11,6 +17,8 @@ interface Props {
   isStreaming: boolean;
   thinkingStatus: string;
   approval: PendingApproval | null;
+  settings: AppSettings;
+  onSettingsChange: (s: AppSettings) => void;
   onSend: (text: string, opts?: Record<string, unknown>) => void;
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
@@ -25,6 +33,8 @@ export default function ChatArea({
   isStreaming,
   thinkingStatus,
   approval,
+  settings,
+  onSettingsChange,
   onSend,
   onApprove,
   onReject,
@@ -51,9 +61,25 @@ export default function ChatArea({
             <path d="M3 12h18M3 6h18M3 18h18" />
           </svg>
         </button>
-        <h1 className="text-[15px] font-semibold text-ink truncate">
+        <h1 className="text-[15px] font-semibold text-ink truncate flex-1">
           {sessionTitle}
         </h1>
+        {settings.provider === "ollama" && (
+          <select
+            value={settings.model}
+            onChange={(e) => onSettingsChange({ ...settings, model: e.target.value })}
+            className="
+              text-[13px] text-muted bg-stone-50 border border-stone-200
+              rounded-lg px-2.5 py-1.5 outline-none
+              hover:border-stone-300 focus:border-stone-400
+              transition-colors cursor-pointer
+            "
+          >
+            {OLLAMA_MODELS.map((m) => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </select>
+        )}
       </header>
 
       {/* Messages */}

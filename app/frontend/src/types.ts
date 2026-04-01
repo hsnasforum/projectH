@@ -150,6 +150,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   baseUrl: "http://localhost:11434",
   searchLimit: 3,
   notePath: "",
-  webSearchPermission: "approval",
+  webSearchPermission: "enabled",
   skipPreflight: false,
 };

@@ -40,6 +40,8 @@ export default function App() {
         isStreaming={chat.isStreaming}
         thinkingStatus={chat.thinkingStatus}
         approval={chat.pendingApproval}
+        settings={settings}
+        onSettingsChange={setSettings}
         onSend={chat.send}
         onApprove={chat.approve}
         onReject={chat.reject}

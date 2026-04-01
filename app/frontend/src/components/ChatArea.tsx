@@ -9,6 +9,7 @@ interface Props {
   messages: Message[];
   streamingText: string;
   isStreaming: boolean;
+  thinkingStatus: string;
   approval: PendingApproval | null;
   onSend: (text: string, opts?: Record<string, unknown>) => void;
   onApprove: (id: string) => void;
@@ -22,6 +23,7 @@ export default function ChatArea({
   messages,
   streamingText,
   isStreaming,
+  thinkingStatus,
   approval,
   onSend,
   onApprove,
@@ -89,7 +91,7 @@ export default function ChatArea({
               />
             )}
 
-            {isStreaming && !streamingText && <TypingIndicator />}
+            {isStreaming && !streamingText && <TypingIndicator status={thinkingStatus} />}
 
             {approval && (
               <ApprovalCard

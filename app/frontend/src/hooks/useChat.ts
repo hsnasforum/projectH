@@ -12,6 +12,7 @@ export function useChat(settings: AppSettings) {
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const [streamingText, setStreamingText] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [thinkingStatus, setThinkingStatus] = useState("");
   const abortRef = useRef<AbortController | null>(null);
 
   const loadSessions = useCallback(async () => {
@@ -68,6 +69,7 @@ export function useChat(settings: AppSettings) {
 
     setIsStreaming(true);
     setStreamingText("");
+    setThinkingStatus("요청 준비 중...");
     const controller = new AbortController();
     abortRef.current = controller;
 
@@ -107,12 +109,23 @@ export function useChat(settings: AppSettings) {
 
     try {
       for await (const event of streamChat(payload, controller.signal)) {
-        if (event.event === "text_delta" && event.text) {
+        if (event.event === "phase") {
+          setThinkingStatus(event.title || event.detail || "처리 중...");
+        } else if (event.event === "runtime_status") {
+          const reachable = event.reachable;
+          const provider = event.provider || "모델";
+          setThinkingStatus(reachable ? `${provider} 연결 확인됨` : `${provider} 연결 확인 중...`);
+        } else if (event.event === "response_origin") {
+          const badge = event.badge || event.provider || "";
+          setThinkingStatus(badge ? `${badge} 응답 생성 중...` : "응답 생성 중...");
+        } else if (event.event === "text_delta" && event.text) {
           accumulated += event.text;
           setStreamingText(accumulated);
+          setThinkingStatus("응답 작성 중...");
         } else if (event.event === "text_replace" && event.text) {
           accumulated = event.text;
           setStreamingText(accumulated);
+          setThinkingStatus("응답 작성 중...");
         } else if (event.event === "final" && event.data) {
           const resp = event.data.response;
           const session = event.data.session;
@@ -154,6 +167,7 @@ export function useChat(settings: AppSettings) {
     } finally {
       setIsStreaming(false);
       setStreamingText("");
+      setThinkingStatus("");
       abortRef.current = null;
       loadSessions();
     }
@@ -194,6 +208,7 @@ export function useChat(settings: AppSettings) {
     pendingApproval,
     streamingText,
     isStreaming,
+    thinkingStatus,
     send,
     approve,
     reject,

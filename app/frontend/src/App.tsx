@@ -38,6 +38,7 @@ export default function App() {
         messages={chat.messages}
         streamingText={chat.streamingText}
         isStreaming={chat.isStreaming}
+        thinkingStatus={chat.thinkingStatus}
         approval={chat.pendingApproval}
         onSend={chat.send}
         onApprove={chat.approve}

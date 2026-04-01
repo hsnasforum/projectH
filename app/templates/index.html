@@ -1593,6 +1593,47 @@
   </div>
 
   <script>
+    // Shared contracts — generated from core/contracts.py
+    const C = Object.freeze({
+      ResponseStatus: Object.freeze({ ANSWER: "answer", ERROR: "error", NEEDS_APPROVAL: "needs_approval", SAVED: "saved" }),
+      ArtifactKind: Object.freeze({ GROUNDED_BRIEF: "grounded_brief" }),
+      SaveContentSource: Object.freeze({ ORIGINAL_DRAFT: "original_draft", CORRECTED_TEXT: "corrected_text" }),
+      RecordStage: Object.freeze({
+        EMITTED: "emitted_record_only_not_applied",
+        APPLIED_PENDING: "applied_pending_result",
+        APPLIED_WITH_RESULT: "applied_with_result",
+        STOPPED: "stopped",
+        REVERSED: "reversed",
+        CONFLICT_CHECKED: "conflict_visibility_checked",
+      }),
+      ResultStage: Object.freeze({
+        RESULT_RECORDED_EFFECT_PENDING: "result_recorded_effect_pending",
+        EFFECT_ACTIVE: "effect_active",
+        EFFECT_STOPPED: "effect_stopped",
+        EFFECT_REVERSED: "effect_reversed",
+      }),
+      AnswerMode: Object.freeze({ GENERAL: "general", ENTITY_CARD: "entity_card", LATEST_UPDATE: "latest_update" }),
+      SourceRole: Object.freeze({
+        WIKI: "백과 기반", OFFICIAL: "공식 기반", DATABASE: "데이터 기반",
+        DESCRIPTIVE: "설명형 출처", NEWS: "보조 기사", AUXILIARY: "보조 출처",
+        COMMUNITY: "보조 커뮤니티", PORTAL: "보조 포털", BLOG: "보조 블로그",
+      }),
+      CoverageStatus: Object.freeze({ STRONG: "strong", WEAK: "weak", MISSING: "missing" }),
+      SearchIntentKind: Object.freeze({ NONE: "none", EXPLICIT_WEB: "explicit_web", LIVE_LATEST: "live_latest", EXTERNAL_FACT: "external_fact" }),
+      WebSearchPermission: Object.freeze({ DISABLED: "disabled", APPROVAL: "approval", ENABLED: "enabled" }),
+      StreamEventType: Object.freeze({
+        PHASE: "phase", RUNTIME_STATUS: "runtime_status", RESPONSE_ORIGIN: "response_origin",
+        TEXT_DELTA: "text_delta", TEXT_REPLACE: "text_replace", FINAL: "final",
+        CANCELLED: "cancelled", ERROR: "error", SEARCH_PREVIEW: "search_preview",
+      }),
+      ResponseOriginKind: Object.freeze({ APPROVAL: "approval", ASSISTANT: "assistant" }),
+      CorrectedOutcome: Object.freeze({ ACCEPTED_AS_IS: "accepted_as_is", CORRECTED: "corrected", REJECTED: "rejected" }),
+      ContentVerdict: Object.freeze({ REJECTED: "rejected" }),
+      CandidateFamily: Object.freeze({ CORRECTION_REWRITE: "correction_rewrite_preference" }),
+    });
+  </script>
+
+  <script>
     const transcriptEl = document.getElementById("transcript");
     const requestForm = document.getElementById("request-form");
     const sessionListEl = document.getElementById("session-list");
@@ -1803,13 +1844,13 @@
       const verificationLabel = String(origin.verification_label || "").trim();
 
       const answerModeLabel = formatAnswerModeLabel(answerMode);
-      const isInvestigation = answerMode === "entity_card" || answerMode === "latest_update";
+      const isInvestigation = answerMode === C.AnswerMode.ENTITY_CARD || answerMode === C.AnswerMode.LATEST_UPDATE;
 
       const detailParts = [label];
       if (verificationLabel) detailParts.push(formatVerificationLabel(verificationLabel));
       if (model) detailParts.push(`모델 ${model}`);
       if (sourceRoles.length > 0) detailParts.push(`출처 유형 ${sourceRoles.map(formatSourceRoleCompact).join(", ")}`);
-      if (kind === "approval") detailParts.push("승인/취소 처리");
+      if (kind === C.ResponseOriginKind.APPROVAL) detailParts.push("승인/취소 처리");
       return {
         provider,
         badge,
@@ -1834,16 +1875,16 @@
 
     function normalizeWebSearchPermission(value) {
       const normalized = String(value || "").trim().toLowerCase();
-      if (normalized === "approval" || normalized === "enabled") return normalized;
-      return "disabled";
+      if (normalized === C.WebSearchPermission.APPROVAL || normalized === C.WebSearchPermission.ENABLED) return normalized;
+      return C.WebSearchPermission.DISABLED;
     }
 
     function formatWebSearchPermissionLabel(permission) {
       const normalized = normalizeWebSearchPermission(permission);
-      if (normalized === "approval") {
+      if (normalized === C.WebSearchPermission.APPROVAL) {
         return state.webSearchToolConnected ? "승인 필요" : "승인 필요 · 도구 미연결";
       }
-      if (normalized === "enabled") {
+      if (normalized === C.WebSearchPermission.ENABLED) {
         return state.webSearchToolConnected ? "허용" : "허용 · 도구 미연결";
       }
       return state.webSearchToolConnected ? "차단" : "차단 · 도구 미연결";
@@ -2209,34 +2250,34 @@
 
     function processStreamEvent(event, finalPayloadRef) {
       if (!event || typeof event !== "object") return;
-      if (event.event === "phase") {
+      if (event.event === C.StreamEventType.PHASE) {
         applyPhaseEvent(event);
         return;
       }
-      if (event.event === "runtime_status") {
+      if (event.event === C.StreamEventType.RUNTIME_STATUS) {
         renderRuntime(event.runtime_status || null);
         return;
       }
-      if (event.event === "response_origin") {
+      if (event.event === C.StreamEventType.RESPONSE_ORIGIN) {
         renderResponseOrigin(event.response_origin || null);
         return;
       }
-      if (event.event === "text_delta") {
+      if (event.event === C.StreamEventType.TEXT_DELTA) {
         const current = responseText.textContent === "아직 보낸 요청이 없습니다." ? "" : responseText.textContent;
         responseText.textContent = `${current}${event.delta || ""}`;
         showElement(responseCopyTextButton, true);
         return;
       }
-      if (event.event === "text_replace") {
+      if (event.event === C.StreamEventType.TEXT_REPLACE) {
         responseText.textContent = event.text || "";
         showElement(responseCopyTextButton, Boolean(event.text));
         return;
       }
-      if (event.event === "final") {
+      if (event.event === C.StreamEventType.FINAL) {
         finalPayloadRef.value = event.data || null;
         return;
       }
-      if (event.event === "cancelled") {
+      if (event.event === C.StreamEventType.CANCELLED) {
         finalPayloadRef.value = {
           ok: true,
           cancelled: true,
@@ -2245,7 +2286,7 @@
         };
         return;
       }
-      if (event.event === "error") {
+      if (event.event === C.StreamEventType.ERROR) {
         throw new Error(event.error?.message || "요청을 처리하지 못했습니다.");
       }
     }
@@ -2847,7 +2888,7 @@
 
     function formatAggregateCandidateFamilyLabel(value) {
       const normalized = String(value || "").trim().toLowerCase();
-      if (normalized === "correction_rewrite_preference") return "반복 교정 묶음";
+      if (normalized === C.CandidateFamily.CORRECTION_REWRITE) return "반복 교정 묶음";
       return normalized || "검토 메모 적용 후보";
     }
 
@@ -2887,7 +2928,7 @@
         message
         && message.role !== "user"
         && message.message_id
-        && message.artifact_kind === "grounded_brief"
+        && message.artifact_kind === C.ArtifactKind.GROUNDED_BRIEF
         && message.original_response_snapshot
       );
     }
@@ -2901,11 +2942,11 @@
     }
 
     function usesCorrectedSaveSnapshot(item) {
-      return String(item?.save_content_source || "").trim() === "corrected_text";
+      return String(item?.save_content_source || "").trim() === C.SaveContentSource.CORRECTED_TEXT;
     }
 
     function usesRejectedContentVerdict(item) {
-      return String(item?.corrected_outcome?.outcome || "").trim().toLowerCase() === "rejected";
+      return String(item?.corrected_outcome?.outcome || "").trim().toLowerCase() === C.ContentVerdict.REJECTED;
     }
 
     function hasSavedHistoryForArtifact(artifactId) {
@@ -3562,7 +3603,7 @@
         startProgress("corrected_save", "system", "승인 워크플로");
         responseText.textContent = "";
         showElement(responseCopyTextButton, false);
-        renderResponseOrigin({ provider: "system", badge: "SYSTEM", label: "시스템 응답", kind: "approval" });
+        renderResponseOrigin({ provider: "system", badge: "SYSTEM", label: "시스템 응답", kind: C.ResponseOriginKind.APPROVAL });
         const data = await submitStreamPayload({
           session_id: state.currentSessionId,
           corrected_save_message_id: state.latestCorrectionMessageId,
@@ -3703,9 +3744,9 @@
       const counts = { strong: 0, weak: 0, missing: 0 };
       items.forEach((item) => {
         const status = String(item.status || "").trim();
-        if (status === "strong") counts.strong += 1;
-        else if (status === "weak") counts.weak += 1;
-        else if (status === "missing") counts.missing += 1;
+        if (status === C.CoverageStatus.STRONG) counts.strong += 1;
+        else if (status === C.CoverageStatus.WEAK) counts.weak += 1;
+        else if (status === C.CoverageStatus.MISSING) counts.missing += 1;
       });
       return counts;
     }
@@ -3770,9 +3811,9 @@
     }
 
     function formatAnswerModeLabel(answerMode) {
-      const normalized = String(answerMode || "general").trim();
-      if (normalized === "entity_card") return "설명 카드";
-      if (normalized === "latest_update") return "최신 확인";
+      const normalized = String(answerMode || C.AnswerMode.GENERAL).trim();
+      if (normalized === C.AnswerMode.ENTITY_CARD) return "설명 카드";
+      if (normalized === C.AnswerMode.LATEST_UPDATE) return "최신 확인";
       return "일반 검색";
     }
 
@@ -4120,11 +4161,11 @@
           ? item.reviewed_memory_conflict_visibility_record
           : null;
         const recordStage = transitionRecord ? String(transitionRecord.record_stage || "").trim() : "";
-        const hasEmittedRecord = recordStage === "emitted_record_only_not_applied";
-        const hasAppliedPending = recordStage === "applied_pending_result";
-        const hasAppliedResult = recordStage === "applied_with_result";
-        const hasStopped = recordStage === "stopped";
-        const hasReversed = recordStage === "reversed";
+        const hasEmittedRecord = recordStage === C.RecordStage.EMITTED;
+        const hasAppliedPending = recordStage === C.RecordStage.APPLIED_PENDING;
+        const hasAppliedResult = recordStage === C.RecordStage.APPLIED_WITH_RESULT;
+        const hasStopped = recordStage === C.RecordStage.STOPPED;
+        const hasReversed = recordStage === C.RecordStage.REVERSED;
 
         const helper = document.createElement("div");
         helper.className = "history-item-summary";
@@ -4407,7 +4448,7 @@
         title.textContent = item.query || "검색 기록";
         titleWrap.appendChild(title);
         const answerMode = String(item.answer_mode || "").trim();
-        const isInvestigation = answerMode === "entity_card" || answerMode === "latest_update";
+        const isInvestigation = answerMode === C.AnswerMode.ENTITY_CARD || answerMode === C.AnswerMode.LATEST_UPDATE;
         const badgeRow = document.createElement("div");
         badgeRow.className = "history-badge-row";
         let hasBadges = false;
@@ -4785,7 +4826,7 @@
         startProgress("approve", "system", "승인 워크플로");
         responseText.textContent = "";
         showElement(responseCopyTextButton, false);
-        renderResponseOrigin({ provider: "system", badge: "SYSTEM", label: "시스템 응답", kind: "approval" });
+        renderResponseOrigin({ provider: "system", badge: "SYSTEM", label: "시스템 응답", kind: C.ResponseOriginKind.APPROVAL });
         const data = await submitStreamPayload({
           session_id: state.currentSessionId,
           approved_approval_id: state.currentApproval.approval_id
@@ -4814,7 +4855,7 @@
         startProgress("reissue", "system", "승인 워크플로");
         responseText.textContent = "";
         showElement(responseCopyTextButton, false);
-        renderResponseOrigin({ provider: "system", badge: "SYSTEM", label: "시스템 응답", kind: "approval" });
+        renderResponseOrigin({ provider: "system", badge: "SYSTEM", label: "시스템 응답", kind: C.ResponseOriginKind.APPROVAL });
         const data = await submitStreamPayload({
           session_id: state.currentSessionId,
           reissue_approval_id: state.currentApproval.approval_id,
@@ -4838,7 +4879,7 @@
         startProgress("reject", "system", "승인 워크플로");
         responseText.textContent = "";
         showElement(responseCopyTextButton, false);
-        renderResponseOrigin({ provider: "system", badge: "SYSTEM", label: "시스템 응답", kind: "approval" });
+        renderResponseOrigin({ provider: "system", badge: "SYSTEM", label: "시스템 응답", kind: C.ResponseOriginKind.APPROVAL });
         const data = await submitStreamPayload({
           session_id: state.currentSessionId,
           rejected_approval_id: state.currentApproval.approval_id

@@ -1,5 +1,32 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { Message } from "../types";
+import LinkChip from "./LinkChip";
+
+const URL_REGEX = /(https?:\/\/[^\s<>"')\]]+)/g;
+
+/** Split text into plain segments and LinkChip elements. */
+function renderTextWithLinks(text: string): ReactNode[] {
+  const parts: ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  const regex = new RegExp(URL_REGEX);
+
+  while ((match = regex.exec(text)) !== null) {
+    // Text before the URL
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    const url = match[1];
+    // Check if this URL is preceded by "링크:" label — skip the label too
+    parts.push(<LinkChip key={`link-${match.index}`} url={url} />);
+    lastIndex = regex.lastIndex;
+  }
+  // Remaining text
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+  return parts;
+}
 
 interface Props {
   message: Message;
@@ -29,7 +56,9 @@ export default function MessageBubble({ message }: Props) {
             }
           `}
         >
-          <div className="whitespace-pre-wrap break-words">{message.text}</div>
+          <div className="whitespace-pre-wrap break-words">
+            {isUser ? message.text : renderTextWithLinks(message.text)}
+          </div>
         </div>
 
         {/* Meta info */}

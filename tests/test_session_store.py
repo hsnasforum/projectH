@@ -1,9 +1,11 @@
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from core.approval import ApprovalRequest
-from storage.session_store import SessionStore
+from storage.session_store import MAX_MESSAGES_PER_SESSION, SessionStore
 
 
 class SessionStoreTest(unittest.TestCase):
@@ -106,8 +108,77 @@ class SessionStoreTest(unittest.TestCase):
             self.assertTrue(session_path.exists())
             saved = session_path.read_text(encoding="utf-8")
             self.assertIn('"session_id": "demo"', saved)
-            backups = list(Path(tmp_dir).glob("demo.corrupt-*.json"))
+            quarantine_dir = Path(tmp_dir) / ".quarantine"
+            self.assertTrue(quarantine_dir.is_dir())
+            backups = list(quarantine_dir.glob("demo.corrupt-*.json"))
             self.assertEqual(len(backups), 1)
+
+    def test_corrupt_json_goes_to_quarantine_directory(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            store = SessionStore(base_dir=tmp_dir)
+            session_path = Path(tmp_dir) / "broken.json"
+            session_path.write_text("{invalid json", encoding="utf-8")
+
+            session = store.get_session("broken")
+
+            self.assertEqual(session["session_id"], "broken")
+            quarantine_dir = Path(tmp_dir) / ".quarantine"
+            self.assertTrue(quarantine_dir.is_dir())
+            quarantined = list(quarantine_dir.glob("broken.corrupt-*.json"))
+            self.assertEqual(len(quarantined), 1)
+            content = quarantined[0].read_text(encoding="utf-8")
+            self.assertEqual(content, "{invalid json")
+
+    def test_save_cleans_up_temp_file_on_write_failure(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            store = SessionStore(base_dir=tmp_dir)
+            session = store._default_session("cleanup")
+
+            with patch("pathlib.Path.write_text", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    store._save("cleanup", session)
+
+            tmp_files = list(Path(tmp_dir).glob("*.tmp"))
+            self.assertEqual(len(tmp_files), 0, "Temp file should be cleaned up after write failure")
+
+    def test_version_increments_on_each_save(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            store = SessionStore(base_dir=tmp_dir)
+
+            session = store.get_session("versioned")
+            self.assertEqual(session.get("_version", 0), 0)
+
+            store.append_message("versioned", {"role": "user", "text": "first"})
+            session = store.get_session("versioned")
+            version_after_first = session["_version"]
+            self.assertGreaterEqual(version_after_first, 1)
+
+            store.append_message("versioned", {"role": "user", "text": "second"})
+            session = store.get_session("versioned")
+            version_after_second = session["_version"]
+            self.assertGreater(version_after_second, version_after_first)
+
+    def test_messages_trimmed_to_max_limit(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            store = SessionStore(base_dir=tmp_dir)
+            over_limit = MAX_MESSAGES_PER_SESSION + 50
+            messages = [
+                {"role": "user", "text": f"msg-{i}", "message_id": f"id-{i}"}
+                for i in range(over_limit)
+            ]
+            raw_session = store._default_session("big")
+            raw_session["messages"] = messages
+
+            session_path = Path(tmp_dir) / "big.json"
+            session_path.write_text(
+                json.dumps(raw_session, ensure_ascii=False), encoding="utf-8"
+            )
+
+            session = store.get_session("big")
+
+            self.assertEqual(len(session["messages"]), MAX_MESSAGES_PER_SESSION)
+            self.assertEqual(session["messages"][0]["text"], f"msg-{over_limit - MAX_MESSAGES_PER_SESSION}")
+            self.assertEqual(session["messages"][-1]["text"], f"msg-{over_limit - 1}")
 
 
 if __name__ == "__main__":

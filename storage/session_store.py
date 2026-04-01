@@ -14,6 +14,7 @@ from core.approval import (
     normalize_save_content_source,
     normalize_source_message_id,
 )
+from storage.errors import SaveConflictError, SessionCorruptError
 from core.contracts import (
     ALLOWED_CANDIDATE_CONFIRMATION_LABELS,
     ALLOWED_CONTENT_REASON_LABELS,
@@ -28,6 +29,7 @@ from core.contracts import (
 
 
 SESSION_SCHEMA_VERSION = "1.0"
+MAX_MESSAGES_PER_SESSION = 500
 
 # Re-export for backward compatibility
 ALLOWED_CANDIDATE_REVIEW_ACTION_TO_STATUS = CANDIDATE_REVIEW_ACTION_TO_STATUS
@@ -55,6 +57,7 @@ class SessionStore:
             "pending_approvals": [],
             "permissions": {"web_search": "disabled"},
             "active_context": None,
+            "_version": 0,
             "created_at": now,
             "updated_at": now,
         }
@@ -753,6 +756,8 @@ class SessionStore:
             for message in messages
             if isinstance(message, dict)
         ]
+        if len(normalized["messages"]) > MAX_MESSAGES_PER_SESSION:
+            normalized["messages"] = normalized["messages"][-MAX_MESSAGES_PER_SESSION:]
         artifact_source_message_ids = self._build_artifact_source_message_ids(normalized["messages"])
         normalized["pending_approvals"] = [
             normalized_approval
@@ -785,20 +790,29 @@ class SessionStore:
         with self._lock:
             path = self._path(session_id)
             temp_path = path.with_name(f"{path.name}.{uuid4().hex[:8]}.tmp")
+            data["_version"] = data.get("_version", 0) + 1
             data["updated_at"] = self._now()
             encoded = json.dumps(data, ensure_ascii=False, indent=2)
-            temp_path.write_text(encoded, encoding="utf-8")
-            temp_path.replace(path)
+            try:
+                temp_path.write_text(encoded, encoding="utf-8")
+                temp_path.replace(path)
+            except BaseException:
+                temp_path.unlink(missing_ok=True)
+                raise
 
-    def _backup_corrupt_session_file(self, path: Path) -> None:
+    def _backup_corrupt_session_file(self, path: Path) -> Path | None:
         if not path.exists():
-            return
+            return None
+        quarantine_dir = self.base_dir / ".quarantine"
+        quarantine_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
-        backup_path = path.with_name(f"{path.stem}.corrupt-{timestamp}{path.suffix}")
+        quarantine_path = quarantine_dir / f"{path.stem}.corrupt-{timestamp}{path.suffix}"
         try:
-            path.replace(backup_path)
+            path.replace(quarantine_path)
+            return quarantine_path
         except OSError:
             path.unlink(missing_ok=True)
+            return None
 
     def get_session(self, session_id: str) -> Dict[str, Any]:
         with self._lock:

@@ -7,6 +7,7 @@ import hashlib
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import mimetypes
 from pathlib import Path
 import queue
 import threading
@@ -6569,6 +6570,9 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
         if parsed.path == "/healthz":
             self._send_json(HTTPStatus.OK, {"ok": True})
             return
+        if parsed.path.startswith("/static/"):
+            self._serve_static(parsed.path)
+            return
         self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "요청한 경로를 찾을 수 없습니다."}})
 
     def do_POST(self) -> None:
@@ -6698,6 +6702,31 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             raise WebApiError(HTTPStatus.BAD_REQUEST, "JSON 본문은 객체 형태여야 합니다.")
         return payload
+
+    _STATIC_DIR = Path(__file__).with_name("static")
+
+    def _serve_static(self, url_path: str) -> None:
+        relative = url_path[len("/static/"):]
+        if not relative or ".." in relative or relative.startswith("/"):
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "요청한 경로를 찾을 수 없습니다."}})
+            return
+        file_path = self._STATIC_DIR / relative
+        if not file_path.is_file():
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "요청한 경로를 찾을 수 없습니다."}})
+            return
+        content_type, _ = mimetypes.guess_type(file_path.name)
+        if content_type is None:
+            content_type = "application/octet-stream"
+        try:
+            data = file_path.read_bytes()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "public, max-age=3600")
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def _send_html(self, status: HTTPStatus, body: str) -> None:
         encoded = body.encode("utf-8")

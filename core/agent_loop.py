@@ -96,6 +96,16 @@ class RequestCancelledError(RuntimeError):
     pass
 
 
+class _NoOpContext:
+    """Context manager that does nothing — used when no model router is active."""
+    def __init__(self, model: Any) -> None:
+        self._model = model
+    def __enter__(self) -> Any:
+        return self._model
+    def __exit__(self, *_: object) -> None:
+        pass
+
+
 class AgentLoop:
     def __init__(
         self,
@@ -107,6 +117,7 @@ class AgentLoop:
         web_search_store: Any | None = None,
         artifact_store: Any | None = None,
         preference_store: Any | None = None,
+        model_router: Any | None = None,
     ) -> None:
         self.model = model
         self.session_store = session_store
@@ -116,8 +127,76 @@ class AgentLoop:
         self.web_search_store = web_search_store
         self.artifact_store = artifact_store
         self.preference_store = preference_store
+        self._model_router = model_router  # (ModelConfig, route func) or None
 
-    def _get_active_preferences(self) -> list[dict[str, str]] | None:
+    def _route_model(self, hint: Any) -> Any:
+        """Apply model routing if router is configured. Returns a context manager."""
+        if self._model_router is None:
+            return _NoOpContext(self.model)
+        try:
+            from model_adapter.router import route as route_fn, ModelConfig
+            from model_adapter.ollama import OllamaModelAdapter
+            config, = self._model_router if isinstance(self._model_router, tuple) else (self._model_router,)
+            if not isinstance(config, ModelConfig):
+                return _NoOpContext(self.model)
+            tier = route_fn(hint)
+            resolved = config.resolve(tier)
+            if isinstance(self.model, OllamaModelAdapter):
+                return self.model.use_model(resolved)
+            return _NoOpContext(self.model)
+        except Exception:
+            return _NoOpContext(self.model)
+
+    def _get_preference_budget(self, hint: Any = None) -> int:
+        """Max preferences to inject based on routing tier."""
+        if self._model_router is None or hint is None:
+            return 10
+        try:
+            from model_adapter.router import route as route_fn, ModelConfig, PREFERENCE_BUDGET
+            config = self._model_router if not isinstance(self._model_router, tuple) else self._model_router[0]
+            if not isinstance(config, ModelConfig):
+                return 10
+            tier = route_fn(hint)
+            return PREFERENCE_BUDGET.get(tier, 10)
+        except Exception:
+            return 10
+
+    def _routed_model(self, task: str = "respond", **kwargs: Any) -> Any:
+        """Return a context manager that sets the right model for this task."""
+        if self._model_router is None:
+            return _NoOpContext(self.model)
+        try:
+            from model_adapter.router import route, RoutingHint, ModelConfig
+            from model_adapter.ollama import OllamaModelAdapter
+            config = self._model_router
+            if not isinstance(config, ModelConfig):
+                return _NoOpContext(self.model)
+            hint = RoutingHint(task=task, **kwargs)
+            tier = route(hint)
+            resolved = config.resolve(tier)
+            if isinstance(self.model, OllamaModelAdapter):
+                return self.model.use_model(resolved)
+        except Exception:
+            pass
+        return _NoOpContext(self.model)
+
+    def _routed_preferences(self, task: str = "respond", **kwargs: Any) -> list[dict[str, str]] | None:
+        """Get active preferences with budget based on routing tier."""
+        if self._model_router is None:
+            return self._get_active_preferences(10)
+        try:
+            from model_adapter.router import route, RoutingHint, ModelConfig, PREFERENCE_BUDGET
+            config = self._model_router
+            if not isinstance(config, ModelConfig):
+                return self._get_active_preferences(10)
+            hint = RoutingHint(task=task, **kwargs)
+            tier = route(hint)
+            budget = PREFERENCE_BUDGET.get(tier, 10)
+            return self._get_active_preferences(budget)
+        except Exception:
+            return self._get_active_preferences(10)
+
+    def _get_active_preferences(self, budget: int = 10) -> list[dict[str, str]] | None:
         if not self.preference_store:
             return None
         try:
@@ -126,7 +205,7 @@ class AgentLoop:
                 return None
             return [
                 {"description": str(p.get("description", "")), "fingerprint": str(p.get("delta_fingerprint", ""))}
-                for p in prefs[:10]
+                for p in prefs[:budget]
             ]
         except Exception:
             return None
@@ -6502,6 +6581,16 @@ class AgentLoop:
             ),
             note="모델에는 선택된 근거와 짧은 보조 문맥만 넘겨 추측을 줄입니다.",
         )
+        _is_web = active_context.get("kind") == "web_search"
+        _routing_kwargs = dict(
+            task="answer_context",
+            answer_mode=str(active_context.get("answer_mode", "general")),
+            intent=intent,
+            source_count=len(selected_evidence or []),
+            has_web_sources=_is_web,
+        )
+        with self._routed_model(**_routing_kwargs):
+            pass  # sets model on adapter
         answer = self._collect_model_stream(
             self.model.stream_answer_with_context(
                 intent=intent,
@@ -6515,7 +6604,7 @@ class AgentLoop:
                     else str(active_context.get("summary_hint") or "")
                 ),
                 evidence_items=selected_evidence,
-                active_preferences=self._get_active_preferences(),
+                active_preferences=self._routed_preferences(**_routing_kwargs),
             ),
             stream_event_callback=stream_event_callback,
             cancel_requested=cancel_requested,
@@ -8277,7 +8366,7 @@ class AgentLoop:
         )
         return AgentResponse(
             text=self._collect_model_stream(
-                self.model.stream_respond(request.user_text, active_preferences=self._get_active_preferences()),
+                self.model.stream_respond(request.user_text, active_preferences=self._routed_preferences(task="respond")),
                 stream_event_callback=stream_event_callback,
                 cancel_requested=cancel_requested,
             ),

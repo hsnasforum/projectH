@@ -26,12 +26,13 @@ class OllamaModelAdapter(ModelAdapter):
         self,
         *,
         base_url: str = "http://localhost:11434",
-        model: str = "qwen2.5:3b",
+        model: str = "qwen2.5:7b",
         timeout_seconds: float = 180.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout_seconds = timeout_seconds
+        self._active_model: str | None = None  # per-call override
 
     # Models at or below this parameter threshold get simplified Korean-first prompts.
     _COMPACT_MODEL_PATTERNS = re.compile(
@@ -39,14 +40,25 @@ class OllamaModelAdapter(ModelAdapter):
     )
 
     @property
-    def _is_compact_model(self) -> bool:
+    def _effective_model(self) -> str:
+        return self._active_model or self.model
+
+    def _is_compact(self, model_name: str | None = None) -> bool:
         """Return True for models ≤ 14B where Korean-first prompts help."""
-        m = self._COMPACT_MODEL_PATTERNS.search(self.model)
+        name = model_name or self._effective_model
+        m = self._COMPACT_MODEL_PATTERNS.search(name)
         if m:
             size = float(m.group(1) or m.group(2))
             return size <= 14
-        # If size is not detectable, assume compact for safety.
         return True
+
+    @property
+    def _is_compact_model(self) -> bool:
+        return self._is_compact()
+
+    def use_model(self, model_name: str) -> "_ModelOverrideContext":
+        """Context manager to temporarily override the model for a call."""
+        return _ModelOverrideContext(self, model_name)
 
     @staticmethod
     def _format_preference_block(active_preferences: list[dict[str, str]] | None, *, korean: bool = False) -> str:
@@ -1093,7 +1105,7 @@ class OllamaModelAdapter(ModelAdapter):
 
     def _iter_generate_raw(self, *, prompt: str, system: str):
         payload = {
-            "model": self.model,
+            "model": self._effective_model,
             "prompt": prompt,
             "system": system,
             "stream": True,
@@ -1252,3 +1264,20 @@ class OllamaModelAdapter(ModelAdapter):
     def _is_localhost_base_url(self) -> bool:
         hostname = (urlparse(self.base_url).hostname or "").lower()
         return hostname in {"localhost", "127.0.0.1", "::1"}
+
+
+class _ModelOverrideContext:
+    """Temporarily override the active model on an OllamaModelAdapter."""
+
+    def __init__(self, adapter: OllamaModelAdapter, model: str) -> None:
+        self._adapter = adapter
+        self._model = model
+        self._previous: str | None = None
+
+    def __enter__(self) -> OllamaModelAdapter:
+        self._previous = self._adapter._active_model
+        self._adapter._active_model = self._model
+        return self._adapter
+
+    def __exit__(self, *_: object) -> None:
+        self._adapter._active_model = self._previous

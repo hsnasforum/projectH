@@ -146,7 +146,7 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   provider: "ollama",
-  model: "qwen2.5:14b",
+  model: "auto",
   baseUrl: "http://localhost:11434",
   searchLimit: 3,
   notePath: "",

@@ -1397,6 +1397,9 @@ class WebAppService:
             and not load_web_search_record_id
         )
 
+        # "auto" means router decides per-task; use medium (7B) as base model
+        if model_name == "auto" and provider == "ollama":
+            model_name = "qwen2.5:7b"
         if provider == "ollama" and needs_model and not model_name:
             raise WebApiError(400, "Ollama를 사용할 때는 모델명을 입력해야 합니다.")
 
@@ -1447,6 +1450,7 @@ class WebAppService:
                 }
             )
 
+        model_router = self._build_model_router()
         loop = AgentLoop(
             model=model,
             session_store=self.session_store,
@@ -1456,6 +1460,7 @@ class WebAppService:
             web_search_store=self.web_search_store,
             artifact_store=self.artifact_store,
             preference_store=self.preference_store,
+            model_router=model_router,
         )
         request = UserRequest(
             user_text=self._build_user_text(
@@ -1557,6 +1562,16 @@ class WebAppService:
             stream_event_callback({"event": StreamEventType.TEXT_REPLACE, "text": updated_text})
 
         return response
+
+    def _build_model_router(self) -> Any:
+        """Build model router config if provider is ollama."""
+        if self.settings.model_provider != "ollama":
+            return None
+        try:
+            from model_adapter.router import ModelConfig
+            return ModelConfig()  # uses defaults: 3b/7b/14b
+        except Exception:
+            return None
 
     def _build_tools(self) -> dict[str, Any]:
         reader = FileReaderTool()

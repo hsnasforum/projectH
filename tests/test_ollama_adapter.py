@@ -603,3 +603,42 @@ class OllamaAdapterTest(unittest.TestCase):
         adapter = OllamaModelAdapter(base_url=self.base_url, model="qwen2.5:3b", timeout_seconds=5)
         prompt = adapter._COMPACT_SYSTEM_RESPOND
         self.assertIn("유보적 표현", prompt)
+
+    def test_follow_up_intent_prompts_specify_density_bounds(self) -> None:
+        adapter = OllamaModelAdapter(base_url=self.base_url, model="qwen2.5:14b", timeout_seconds=5)
+        from model_adapter.base import (
+            FOLLOW_UP_INTENT_KEY_POINTS, FOLLOW_UP_INTENT_ACTION_ITEMS,
+            FOLLOW_UP_INTENT_MEMO, FOLLOW_UP_INTENT_GENERAL,
+        )
+        # key_points: exactly 3
+        kp_sys = adapter._intent_system_prompt(FOLLOW_UP_INTENT_KEY_POINTS)
+        self.assertIn("three bullet points", kp_sys)
+        # action_items: 2 to 5
+        ai_sys = adapter._intent_system_prompt(FOLLOW_UP_INTENT_ACTION_ITEMS)
+        self.assertIn("2 to 5 items", ai_sys)
+        ai_contract = adapter._intent_output_contract(FOLLOW_UP_INTENT_ACTION_ITEMS)
+        self.assertIn("2 to 5", ai_contract)
+        # memo: section item counts
+        memo_sys = adapter._intent_system_prompt(FOLLOW_UP_INTENT_MEMO)
+        self.assertIn("2~3", memo_sys)
+        self.assertIn("1~3", memo_sys)
+        memo_contract = adapter._intent_output_contract(FOLLOW_UP_INTENT_MEMO)
+        self.assertIn("2~3", memo_contract)
+        # general: sentence count
+        gen_sys = adapter._intent_system_prompt(FOLLOW_UP_INTENT_GENERAL)
+        self.assertIn("2~4", gen_sys)
+        gen_contract = adapter._intent_output_contract(FOLLOW_UP_INTENT_GENERAL)
+        self.assertIn("2~4", gen_contract)
+
+    def test_compact_follow_up_intent_prompts_specify_density_bounds(self) -> None:
+        adapter = OllamaModelAdapter(base_url=self.base_url, model="qwen2.5:3b", timeout_seconds=5)
+        from model_adapter.base import (
+            FOLLOW_UP_INTENT_ACTION_ITEMS, FOLLOW_UP_INTENT_MEMO,
+            FOLLOW_UP_INTENT_GENERAL,
+        )
+        ai_sys = adapter._compact_intent_system_prompt(FOLLOW_UP_INTENT_ACTION_ITEMS)
+        self.assertIn("2~5", ai_sys)
+        memo_sys = adapter._compact_intent_system_prompt(FOLLOW_UP_INTENT_MEMO)
+        self.assertIn("2~3", memo_sys)
+        gen_sys = adapter._compact_intent_system_prompt(FOLLOW_UP_INTENT_GENERAL)
+        self.assertIn("2~4", gen_sys)

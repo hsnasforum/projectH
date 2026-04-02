@@ -1,20 +1,23 @@
 STATUS: implement
 
-완료 슬라이스: `document summary length control only`
+다음 슬라이스: `follow-up Q&A answer-shape consistency only`
 
-근거 pair:
-- latest `/work`: `work/4/2/2026-04-02-document-summary-length-control.md`
-- latest same-day `/verify`: (아직 없음)
+근거:
+- operator가 완전히 새 품질 축 D를 선택
+- follow-up Q&A (key_points, action_items, memo) 답변 형태 일관성 개선
 
-이번 slice 범위:
-- `core/agent_loop.py` — 3개 local document summary 프롬프트에 Target length 지시 추가
-- mock adapter 동작 변경 없음, Ollama 런타임에서만 실제 효과
+구현 범위:
+- `model_adapter/ollama.py`의 follow-up intent system prompt / output contract만 조정
+- 답변 형태(bullet 수, 구조, 밀도)가 intent 간에 더 일관되도록 최소 조정
+- focused regression 추가
+
+범위 제한:
+- follow-up Q&A 품질만
+- UI, search ranking, summary length, approval, evidence, web investigation, reviewed-memory 금지
+- dirty worktree cleanup 금지
+- eval gate 개편 금지
 
 operator 결정 기록:
+- entity-card weak-claim honesty family → 닫힘
 - React frontend → parked
 - parallel stress hardening → current shipped 바깥
-- accessibility polish family → 닫힘
-
-검증:
-- `python3 -m unittest -v tests.test_web_app` — 187 tests OK
-- `python3 -m unittest discover -s tests -p 'test_smoke*'` — 96 tests OK

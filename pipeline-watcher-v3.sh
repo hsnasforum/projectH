@@ -9,8 +9,9 @@ WORK_DIR="$PROJECT_ROOT/work"
 PIPELINE_DIR="$PROJECT_ROOT/.pipeline"
 CODEX_FEEDBACK="$PIPELINE_DIR/codex_feedback.md"
 
-PANE_CLAUDE="$SESSION:0.0"
-PANE_CODEX="$SESSION:0.1"
+# Accept pane IDs as arguments (from start-pipeline.sh), fallback to index
+PANE_CLAUDE="${2:-$SESSION:0.0}"
+PANE_CODEX="${3:-$SESSION:0.1}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

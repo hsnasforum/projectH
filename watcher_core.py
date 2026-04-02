@@ -24,10 +24,13 @@ watcher_core.py  –  Pipeline Watcher v2.0
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
 import logging
+import os
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field, asdict
 from enum import Enum
@@ -105,6 +108,9 @@ class JobState:
     created_at:           float = field(default_factory=time.time)
     updated_at:           float = field(default_factory=time.time)
     history:              list  = field(default_factory=list)
+    # Activity-based idle detection (persisted)
+    last_pane_snapshot:   str   = ""
+    last_activity_at:     float = 0.0
 
     # ------------------------------------------------------------------
     def transition(self, new_status: JobStatus, reason: str = "") -> None:
@@ -538,96 +544,122 @@ def _wait_for_input_ready(
     return False
 
 
-def tmux_send_keys(pane_target: str, command: str, dry_run: bool = False) -> bool:
-    log.info("send-keys target=%s dry_run=%s", pane_target, dry_run)
+# Prompt temp file cleanup list (cleaned at exit)
+_prompt_cleanup_list: list[str] = []
+
+
+def _cleanup_prompt_files() -> None:
+    for path in _prompt_cleanup_list:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+atexit.register(_cleanup_prompt_files)
+
+
+def _is_pane_dead(pane_target: str) -> bool:
+    """Check if a tmux pane is in dead (exited) state."""
+    try:
+        result = subprocess.run(
+            ["tmux", "display-message", "-t", pane_target, "-p", "#{pane_dead}"],
+            check=True, capture_output=True, text=True,
+        )
+        return result.stdout.strip() == "1"
+    except subprocess.CalledProcessError:
+        return True
+
+
+def _respawn_pane(pane_target: str) -> None:
+    """Respawn a dead tmux pane back to a bash shell."""
+    log.info("respawning dead pane: %s", pane_target)
+    subprocess.run(
+        ["tmux", "respawn-pane", "-k", "-t", pane_target],
+        check=False, capture_output=True,
+    )
+    time.sleep(1.0)
+
+
+def _write_prompt_file(command: str) -> str:
+    """Write prompt to a temp file. Registered for cleanup at exit."""
+    fd = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".txt", prefix="prompt-", delete=False, dir="/tmp",
+    )
+    fd.write(command)
+    fd.close()
+    _prompt_cleanup_list.append(fd.name)
+    return fd.name
+
+
+def tmux_send_keys(
+    pane_target: str,
+    command: str,
+    dry_run: bool = False,
+    pane_type: str = "claude",
+) -> bool:
+    """Send a prompt to a tmux pane.
+
+    pane_type: "codex" — write prompt to file, run `codex "$(cat file)"`
+               "claude" — paste-buffer + Enter retry
+    """
+    log.info("send-keys target=%s pane_type=%s dry_run=%s", pane_target, pane_type, dry_run)
     if dry_run:
         return True
     try:
-        # Phase 1: wait for pane output to settle (stop changing)
+        # Dead pane check — respawn if needed
+        if _is_pane_dead(pane_target):
+            _respawn_pane(pane_target)
+            time.sleep(2.0)
+
+        # Wait for pane to settle
         settled = wait_for_pane_settle(pane_target)
         if not settled:
-            log.warning("pane did not fully settle before dispatch: target=%s", pane_target)
+            log.warning("pane did not fully settle: target=%s", pane_target)
 
-        # Phase 2: wait for input prompt to appear (CLI ready for input)
-        input_ready = _wait_for_input_ready(pane_target, timeout_sec=30.0)
-        if not input_ready:
-            log.warning("pane input prompt not detected, proceeding anyway: target=%s", pane_target)
-
-        # Phase 3: Write prompt to a temp file, then execute via shell.
-        #
-        # Codex/Claude CLIs use raw terminal mode, so tmux paste-buffer +
-        # Enter often fails: the text lands in the input line but Enter is
-        # not consumed as "submit". This is a known issue with TUI apps
-        # that use readline-like input handlers in raw mode.
-        #
-        # Reliable workaround: write prompt to a temp file, then send a
-        # short shell command that pipes it into the CLI.
-        import tempfile
-        prompt_file = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", prefix="prompt-", delete=False,
-            dir="/tmp",
-        )
-        prompt_file.write(command)
-        prompt_file.close()
-        prompt_path = prompt_file.name
-
-        # First interrupt any stuck state (Ctrl+C), then send the prompt
-        # via `codex exec` for Codex or paste for Claude.
-        # Detect pane type: if pane has bash prompt ($) → codex exec mode
-        # If pane has Claude prompt (>) → paste-buffer mode
-        pane_text = _capture_pane_text(pane_target)
-        pane_lines = [l.strip() for l in pane_text.strip().splitlines() if l.strip()]
-        last_line = pane_lines[-1] if pane_lines else ""
-        is_codex = last_line.endswith("$") or "codex" in pane_text.lower() or "openai" in pane_text.lower()
-
-        if is_codex:
-            # Codex interactive mode does not reliably accept pasted text + Enter.
-            # Solution: run `codex "prompt"` from bash shell each time.
-            #
-            # If codex is already running (2nd+ dispatch), kill it first.
-            # If this is first dispatch (bash prompt), skip cleanup.
-            pane_last = _capture_pane_text(pane_target).strip().splitlines()
-            pane_last_line = pane_last[-1].strip() if pane_last else ""
-            if not pane_last_line.endswith("$"):
-                # Codex is running — send Ctrl+C and /exit to get back to bash
-                subprocess.run(["tmux", "send-keys", "-t", pane_target, "C-c"], check=False, capture_output=True)
-                time.sleep(0.5)
-                subprocess.run(["tmux", "send-keys", "-t", pane_target, "/exit", "Enter"], check=False, capture_output=True)
-                time.sleep(1.5)
-            # Launch codex interactive with prompt from file
-            shell_cmd = f"codex --ask-for-approval never \"$(cat '{prompt_path}')\""
-            subprocess.run(
-                ["tmux", "send-keys", "-t", pane_target, shell_cmd, "Enter"],
-                check=True, capture_output=True,
-            )
-            log.info("codex interactive dispatched with prompt file: %s", prompt_path)
+        if pane_type == "codex":
+            _dispatch_codex(pane_target, command)
         else:
-            # For Claude: paste-buffer approach works better
-            subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
-            subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
-            time.sleep(1.0)
-            for attempt in range(3):
-                subprocess.run(["tmux", "send-keys", "-t", pane_target, "Enter"], check=True, capture_output=True)
-                time.sleep(1.5)
-                if not _pane_has_input_cursor(pane_target):
-                    log.info("prompt consumed after Enter attempt %d", attempt + 1)
-                    break
-
-        # Cleanup temp file after a delay (let shell read it first)
-        import threading
-        def _cleanup():
-            time.sleep(10)
-            try:
-                import os
-                os.unlink(prompt_path)
-            except OSError:
-                pass
-        threading.Thread(target=_cleanup, daemon=True).start()
+            _dispatch_claude(pane_target, command)
 
         return True
     except subprocess.CalledProcessError as e:
         log.error("send-keys failed: %s", e.stderr.decode().strip())
         return False
+
+
+def _dispatch_codex(pane_target: str, command: str) -> None:
+    """Dispatch to Codex pane via codex 'prompt' command."""
+    prompt_path = _write_prompt_file(command)
+
+    # If Codex is running (no bash $ prompt), kill it first
+    pane_lines = _capture_pane_text(pane_target).strip().splitlines()
+    last_line = (pane_lines[-1].strip() if pane_lines else "")
+    if not last_line.endswith("$"):
+        subprocess.run(["tmux", "send-keys", "-t", pane_target, "C-c"], check=False, capture_output=True)
+        time.sleep(0.5)
+        subprocess.run(["tmux", "send-keys", "-t", pane_target, "/exit", "Enter"], check=False, capture_output=True)
+        time.sleep(1.5)
+
+    shell_cmd = f"codex --ask-for-approval never \"$(cat '{prompt_path}')\""
+    subprocess.run(
+        ["tmux", "send-keys", "-t", pane_target, shell_cmd, "Enter"],
+        check=True, capture_output=True,
+    )
+    log.info("codex dispatched: %s", prompt_path)
+
+
+def _dispatch_claude(pane_target: str, command: str) -> None:
+    """Dispatch to Claude pane via paste-buffer + Enter."""
+    subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
+    subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
+    time.sleep(1.0)
+    for attempt in range(3):
+        subprocess.run(["tmux", "send-keys", "-t", pane_target, "Enter"], check=True, capture_output=True)
+        time.sleep(1.5)
+        if not _pane_has_input_cursor(pane_target):
+            log.info("claude prompt consumed: attempt %d", attempt + 1)
+            break
 
 
 # ---------------------------------------------------------------------------
@@ -714,7 +746,7 @@ class StateMachine:
         prompt = self.verify_prompt_template.format(
             job_id=job.job_id, round=job.round, artifact_path=job.artifact_path,
         )
-        ok = tmux_send_keys(self.verify_pane_target, prompt, self.dry_run)
+        ok = tmux_send_keys(self.verify_pane_target, prompt, self.dry_run, pane_type="codex")
 
         if ok:
             self.dedupe.mark_dispatch(
@@ -765,15 +797,14 @@ class StateMachine:
             # Activity-based timeout: only timeout if pane output hasn't changed.
             # If pane is still producing output, the task is still running.
             elapsed = time.time() - job.last_dispatch_at
-            pane_target = getattr(job, '_pane_target', None) or self.verify_pane_target
-            current_pane = _capture_pane_text(pane_target)
-            last_snapshot = getattr(job, '_last_pane_snapshot', None)
-            last_activity = getattr(job, '_last_activity_at', job.last_dispatch_at)
+            current_pane = _capture_pane_text(self.verify_pane_target)
+            last_activity = job.last_activity_at or job.last_dispatch_at
 
-            if current_pane != last_snapshot:
+            if current_pane != job.last_pane_snapshot:
                 # Pane changed — task is still active, reset activity timer
-                job._last_pane_snapshot = current_pane  # type: ignore[attr-defined]
-                job._last_activity_at = time.time()  # type: ignore[attr-defined]
+                job.last_pane_snapshot = current_pane
+                job.last_activity_at = time.time()
+                job.save(self.state_dir)
             else:
                 # Pane unchanged — check idle timeout (5 min idle = timeout)
                 idle_sec = time.time() - last_activity
@@ -986,7 +1017,7 @@ class WatcherCore:
         log.info("notify_claude: reason=%s target=%s", reason, self.claude_pane_target)
         self._log_raw("claude_notify", str(self.feedback_path), "turn_signal",
                        {"reason": reason})
-        tmux_send_keys(self.claude_pane_target, self.claude_prompt, self.dry_run)
+        tmux_send_keys(self.claude_pane_target, self.claude_prompt, self.dry_run, pane_type="claude")
 
     # ------------------------------------------------------------------
     def _read_feedback_status(self) -> Optional[str]:

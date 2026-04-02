@@ -54,8 +54,7 @@ done
 for pattern in \
     "$SCRIPT_DIR/watcher_core.py" \
     "$SCRIPT_DIR/pipeline-watcher-v3.sh" \
-    "$SCRIPT_DIR/pipeline-watcher-v3-logged.sh" \
-    "$SCRIPT_DIR/pipeline-watcher-tmux.sh"
+    "$SCRIPT_DIR/pipeline-watcher-v3-logged.sh"
 do
     pids="$(pgrep -f "$pattern" || true)"
     if [ -n "$pids" ]; then

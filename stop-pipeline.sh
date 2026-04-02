@@ -26,6 +26,18 @@ if [ -f "$PROJECT_ROOT/.pipeline/experimental.pid" ]; then
     echo -e "${GREEN}  experimental watcher 종료${NC}"
 fi
 
+# pid 파일 밖에 남은 watcher도 함께 정리
+for pattern in \
+    "$PROJECT_ROOT/watcher_core.py" \
+    "$PROJECT_ROOT/pipeline-watcher-v3.sh" \
+    "$PROJECT_ROOT/pipeline-watcher-v3-logged.sh"
+do
+    pids="$(pgrep -f "$pattern" || true)"
+    if [ -n "$pids" ]; then
+        kill $pids 2>/dev/null || true
+    fi
+done
+
 # tmux 세션 종료
 if tmux has-session -t "$SESSION" 2>/dev/null; then
     tmux kill-session -t "$SESSION"

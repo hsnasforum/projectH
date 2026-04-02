@@ -14,8 +14,9 @@ RAW_LOG="$LOG_DIR/raw.jsonl"
 SUPPRESSED_LOG="$LOG_DIR/suppressed.jsonl"
 DISPATCH_LOG="$LOG_DIR/dispatch.jsonl"
 
-PANE_CLAUDE="$SESSION:0.0"
-PANE_CODEX="$SESSION:0.1"
+# Accept pane IDs as arguments, fallback to index
+PANE_CLAUDE="${2:-$SESSION:0.0}"
+PANE_CODEX="${3:-$SESSION:0.1}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

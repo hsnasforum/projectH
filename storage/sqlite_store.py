@@ -345,6 +345,29 @@ class SQLiteTaskLogger:
         )
         self._db.commit()
 
+    def iter_session_records(self, session_id: str) -> list[dict[str, Any]]:
+        normalized = (session_id or "").strip() or None
+        if normalized is None:
+            return []
+        rows = self._db.execute(
+            "SELECT session_id, action, detail, logged_at FROM task_log WHERE session_id = ? ORDER BY rowid",
+            (normalized,),
+        ).fetchall()
+        records: list[dict[str, Any]] = []
+        for row in rows:
+            detail = row[2]
+            try:
+                parsed_detail = json.loads(detail) if isinstance(detail, str) else detail
+            except (json.JSONDecodeError, TypeError):
+                parsed_detail = {}
+            records.append({
+                "session_id": row[0],
+                "action": row[1],
+                "detail": parsed_detail,
+                "ts": row[3],
+            })
+        return records
+
 
 # ── SQLite Artifact Store ─────────────────────────────────────────
 

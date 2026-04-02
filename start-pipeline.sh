@@ -90,16 +90,23 @@ fi
 echo -e "${GREEN}[2/4] tmux 세션 생성 중...${NC}"
 
 tmux new-session -d -s "$SESSION"
+
+# Capture pane IDs for reliable targeting (pane index can shift)
+CLAUDE_PANE=$(tmux display-message -t "$SESSION:0.0" -p '#{pane_id}')
 tmux split-window -h -t "$SESSION:0"
-tmux send-keys -t "$SESSION:0.0" "cd '$PROJECT_ROOT' && claude --dangerously-skip-permissions" Enter
-tmux send-keys -t "$SESSION:0.1" "cd '$PROJECT_ROOT' && codex" Enter
+CODEX_PANE=$(tmux display-message -t "$SESSION:0.1" -p '#{pane_id}')
 
-echo -e "${GRAY}  tmux: $SESSION (0.0=Claude / 0.1=Codex)${NC}"
+echo -e "${GRAY}  Claude pane: $CLAUDE_PANE  Codex pane: $CODEX_PANE${NC}"
 
-# Codex/Claude CLI가 초기화를 마치고 입력 프롬프트(>)를 띄울 때까지 대기
+tmux send-keys -t "$CLAUDE_PANE" "cd '$PROJECT_ROOT' && claude --dangerously-skip-permissions" Enter
+tmux send-keys -t "$CODEX_PANE" "cd '$PROJECT_ROOT' && codex" Enter
+
+echo -e "${GRAY}  tmux: $SESSION (Claude=$CLAUDE_PANE / Codex=$CODEX_PANE)${NC}"
+
+# Codex CLI가 입력 프롬프트(>)를 띄울 때까지 대기
 echo -e "${GRAY}  CLI 초기화 대기 중 (최대 30초)...${NC}"
 for i in $(seq 1 30); do
-    PANE_TEXT=$(tmux capture-pane -pt "$SESSION:0.1" -S -5 2>/dev/null || true)
+    PANE_TEXT=$(tmux capture-pane -pt "$CODEX_PANE" -S -5 2>/dev/null || true)
     if echo "$PANE_TEXT" | grep -q ">"; then
         echo -e "${GRAY}  Codex 준비 완료 (${i}초)${NC}"
         break
@@ -108,7 +115,7 @@ for i in $(seq 1 30); do
 done
 
 # 빈 Enter로 prompt 상태 확인 (priming)
-tmux send-keys -t "$SESSION:0.1" Enter
+tmux send-keys -t "$CODEX_PANE" Enter
 sleep 2
 
 # ------------------------------------------------------------
@@ -131,8 +138,8 @@ if [ "$MODE" = "experimental" ] || [ "$MODE" = "both" ]; then
     python3 "$SCRIPT_DIR/watcher_core.py" \
         --watch-dir "$PROJECT_ROOT/work" \
         --base-dir "$PROJECT_ROOT/.pipeline" \
-        --verify-pane-target "$SESSION:0.1" \
-        --claude-pane-target "$SESSION:0.0" \
+        --verify-pane-target "$CODEX_PANE" \
+        --claude-pane-target "$CLAUDE_PANE" \
         --verify-prompt "$VERIFY_PROMPT" \
         --claude-prompt "$CLAUDE_PROMPT" \
         --startup-grace 8 \

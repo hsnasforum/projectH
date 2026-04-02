@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from app.web import WebApiError
+from app.errors import WebApiError
 from core.contracts import (
     CandidateConfirmationScope,
     CandidateReviewAction,

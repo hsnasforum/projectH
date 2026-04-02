@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -25,22 +24,13 @@ from storage.task_log import TaskLogger
 from storage.web_search_store import WebSearchStore
 
 
+from app.errors import WebApiError
+from app.handlers.aggregate import AggregateHandlerMixin
+from app.handlers.feedback import FeedbackHandlerMixin
+from app.handlers.preferences import PreferenceHandlerMixin
+from app.handlers.chat import ChatHandlerMixin
+
 DEFAULT_SESSION_ID = "demo-session"
-
-
-@dataclass(slots=True)
-class WebApiError(RuntimeError):
-    status_code: int
-    message: str
-
-    def __str__(self) -> str:
-        return self.message
-
-
-from app.handlers.aggregate import AggregateHandlerMixin  # noqa: E402  # after WebApiError
-from app.handlers.feedback import FeedbackHandlerMixin  # noqa: E402  # after WebApiError
-from app.handlers.preferences import PreferenceHandlerMixin  # noqa: E402  # after WebApiError
-from app.handlers.chat import ChatHandlerMixin  # noqa: E402  # after WebApiError
 
 
 class WebAppService(ChatHandlerMixin, AggregateHandlerMixin, FeedbackHandlerMixin, PreferenceHandlerMixin, SerializerMixin):

@@ -38,7 +38,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
   - local file ingest by path or browser picker
   - document summary with evidence and summary chunks
   - chunked long-document summary reduction that rewrites per-chunk notes into one final Korean summary instead of only echoing isolated lines
-  - source-type-aware short-summary, per-chunk, and reduce prompt split plus source-type-aware `summary_chunks` selection heuristics that keep local file or uploaded-document summaries narrative-friendly and document-oriented while keeping selected local search-result summaries focused on shared facts, differences, actions, and conclusion
+  - source-type-aware short-summary, per-chunk, and reduce prompt split plus source-type-aware `summary_chunks` selection heuristics that keep local file or uploaded-document summaries narrative-friendly and document-oriented while keeping selected local search-result summaries on source-backed synthesis: multi-result summaries prioritize shared facts, meaningful differences, actions, and conclusion, while single-result summaries use non-comparative wording focused on main facts, actions, and grounded conclusion without cross-result comparison
   - narrative/fiction summary guidance that prioritizes characters, key events, conflict changes, and ending state over memorable wording, with a strict source-anchored faithfulness rule (no fabricated events, no term substitution, no conclusions beyond what the text shows)
   - active document context for follow-up Q&A
   - approval-gated save of summary notes with default notes directory shown in the save-path placeholder
@@ -131,8 +131,8 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - search a local folder or browser-picked folder
 - search responses include a structured search result preview panel below the text body; each card shows the matched file's name (with full path tooltip), a match type badge (`파일명 일치` / `내용 일치`), and a content snippet; both search-only and search-plus-summary responses carry the same `search_results` data
 - summarize selected results
-- when selected results are short enough to avoid chunking, the current short-summary prompt stays search-result-oriented and prioritizes shared facts, meaningful differences, key actions or decisions, and grounded conclusion over narrative retelling
-- when selected results are long enough to trigger chunking and reduce, the current chunk-note and reduce prompts stay search-result-oriented and prioritize shared facts, meaningful differences, key actions or decisions, and grounded conclusion over narrative retelling
+- when multiple selected results are short enough to avoid chunking, the current short-summary prompt stays search-result-oriented and prioritizes shared facts, meaningful differences, key actions or decisions, and grounded conclusion over narrative retelling; when only a single result is selected, the short-summary prompt uses non-comparative wording focused on main facts, actions, and grounded conclusion without cross-result comparison
+- when multiple selected results are long enough to trigger chunking and reduce, the reduce prompt stays search-result-oriented and prioritizes shared facts, meaningful differences, key actions or decisions, and grounded conclusion over narrative retelling; when only a single result triggers chunking, the reduce prompt uses non-comparative wording focused on main facts, actions, and grounded conclusion without cross-result comparison
 - attach evidence and summary-range metadata
 - optionally request approval-gated save
 

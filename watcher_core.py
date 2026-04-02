@@ -553,39 +553,73 @@ def tmux_send_keys(pane_target: str, command: str, dry_run: bool = False) -> boo
         if not input_ready:
             log.warning("pane input prompt not detected, proceeding anyway: target=%s", pane_target)
 
-        # Phase 3: Write prompt to temp file, then use tmux to run
-        # `codex "prompt"` or paste+enter depending on CLI type.
+        # Phase 3: Write prompt to a temp file, then execute via shell.
         #
-        # For Codex CLI: interactive paste often fails because the CLI's
-        # input handler doesn't consume Enter reliably after paste.
-        # Strategy: write to temp file → send `cat /tmp/prompt | xargs -0 codex`
-        # But this breaks interactive session continuity.
+        # Codex/Claude CLIs use raw terminal mode, so tmux paste-buffer +
+        # Enter often fails: the text lands in the input line but Enter is
+        # not consumed as "submit". This is a known issue with TUI apps
+        # that use readline-like input handlers in raw mode.
         #
-        # Simpler: use set-buffer + paste-buffer + multiple Enter attempts.
-        subprocess.run(
-            ["tmux", "set-buffer", command],
-            check=True, capture_output=True,
+        # Reliable workaround: write prompt to a temp file, then send a
+        # short shell command that pipes it into the CLI.
+        import tempfile
+        prompt_file = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", prefix="prompt-", delete=False,
+            dir="/tmp",
         )
-        subprocess.run(
-            ["tmux", "paste-buffer", "-t", pane_target],
-            check=True, capture_output=True,
-        )
-        time.sleep(1.0)
+        prompt_file.write(command)
+        prompt_file.close()
+        prompt_path = prompt_file.name
 
-        # Send Enter multiple times with delays — CLI may need the buffer
-        # to fully register before Enter is interpreted as submit.
-        for attempt in range(3):
+        # First interrupt any stuck state (Ctrl+C), then send the prompt
+        # via `codex exec` for Codex or paste for Claude.
+        # Detect pane type: if pane has bash prompt ($) → codex exec mode
+        # If pane has Claude prompt (>) → paste-buffer mode
+        pane_text = _capture_pane_text(pane_target)
+        pane_lines = [l.strip() for l in pane_text.strip().splitlines() if l.strip()]
+        last_line = pane_lines[-1] if pane_lines else ""
+        is_codex = last_line.endswith("$") or "codex" in pane_text.lower() or "openai" in pane_text.lower()
+
+        if is_codex:
+            # For Codex: interactive mode does not reliably accept pasted text + Enter.
+            # Instead: exit interactive mode → run `codex exec` with prompt from file.
+            # Ctrl+C twice to clear any stuck state
+            subprocess.run(["tmux", "send-keys", "-t", pane_target, "C-c"], check=False, capture_output=True)
+            time.sleep(0.3)
+            subprocess.run(["tmux", "send-keys", "-t", pane_target, "C-c"], check=False, capture_output=True)
+            time.sleep(0.3)
+            # /exit or Ctrl+D to leave interactive codex (if still running)
+            subprocess.run(["tmux", "send-keys", "-t", pane_target, "/exit", "Enter"], check=False, capture_output=True)
+            time.sleep(1.5)
+            # Now at bash prompt — run codex exec with prompt file
+            shell_cmd = f"codex exec \"$(cat '{prompt_path}')\""
             subprocess.run(
-                ["tmux", "send-keys", "-t", pane_target, "Enter"],
+                ["tmux", "send-keys", "-t", pane_target, shell_cmd, "Enter"],
                 check=True, capture_output=True,
             )
-            time.sleep(1.5)
-            if not _pane_has_input_cursor(pane_target):
-                log.info("prompt consumed after Enter attempt %d", attempt + 1)
-                break
-            log.warning("Enter attempt %d: pane still shows input cursor", attempt + 1)
+            log.info("codex exec dispatched via file: %s", prompt_path)
         else:
-            log.error("all Enter attempts failed for target=%s", pane_target)
+            # For Claude: paste-buffer approach works better
+            subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
+            subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
+            time.sleep(1.0)
+            for attempt in range(3):
+                subprocess.run(["tmux", "send-keys", "-t", pane_target, "Enter"], check=True, capture_output=True)
+                time.sleep(1.5)
+                if not _pane_has_input_cursor(pane_target):
+                    log.info("prompt consumed after Enter attempt %d", attempt + 1)
+                    break
+
+        # Cleanup temp file after a delay (let shell read it first)
+        import threading
+        def _cleanup():
+            time.sleep(10)
+            try:
+                import os
+                os.unlink(prompt_path)
+            except OSError:
+                pass
+        threading.Thread(target=_cleanup, daemon=True).start()
 
         return True
     except subprocess.CalledProcessError as e:

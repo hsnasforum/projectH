@@ -5499,7 +5499,7 @@ class WebAppServiceTest(unittest.TestCase):
                 "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
             }
 
-            with patch("app.web.build_model_adapter", return_value=_NoPreflightModel()):
+            with patch("app.handlers.chat.build_model_adapter", return_value=_NoPreflightModel()):
                 payload = service.handle_chat(
                     {
                         "session_id": "explicit-web-search-with-ollama",
@@ -5542,7 +5542,7 @@ class WebAppServiceTest(unittest.TestCase):
                 "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
             }
 
-            with patch("app.web.build_model_adapter", return_value=_NoPreflightModel()):
+            with patch("app.handlers.chat.build_model_adapter", return_value=_NoPreflightModel()):
                 payload = service.handle_chat(
                     {
                         "session_id": "live-info-web-search-with-ollama",
@@ -6003,7 +6003,7 @@ class WebAppServiceTest(unittest.TestCase):
             )
             service = WebAppService(settings=settings)
 
-            with patch("app.web.build_model_adapter", return_value=_SlowStreamingModel()):
+            with patch("app.handlers.chat.build_model_adapter", return_value=_SlowStreamingModel()):
                 stream = service.stream_chat(
                     {
                         "session_id": "cancel-stream-session",
@@ -7149,7 +7149,7 @@ class WebAppServiceTest(unittest.TestCase):
                 )
             )
 
-            with patch("app.web.build_model_adapter", return_value=fake_model):
+            with patch("app.handlers.chat.build_model_adapter", return_value=fake_model):
                 with self.assertRaises(WebApiError) as context:
                     service.handle_chat(
                         {

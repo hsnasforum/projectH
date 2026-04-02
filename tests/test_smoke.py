@@ -3840,6 +3840,46 @@ class SmokeTest(unittest.TestCase):
             for label, prompt in [("search_chunk", search_chunk), ("search_short", search_short), ("search_reduce", search_reduce)]:
                 self.assertNotIn("STRICT:", prompt, f"{label} must NOT contain STRICT rule")
 
+    def test_target_length_guidance_only_in_local_document_prompts(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+            )
+            local_chunk = loop._build_individual_chunk_summary_prompt(
+                source_label="doc.txt", chunk_text="내용입니다.", summary_source_type="local_document",
+            )
+            search_chunk = loop._build_individual_chunk_summary_prompt(
+                source_label="res.txt", chunk_text="결과입니다.", summary_source_type="search_results",
+            )
+            local_short = loop._build_short_summary_prompt(
+                source_label="doc.txt", text="내용입니다.", summary_source_type="local_document",
+            )
+            search_short = loop._build_short_summary_prompt(
+                source_label="res.txt", text="결과입니다.", summary_source_type="search_results",
+            )
+            local_reduce = loop._build_chunk_summary_reduce_prompt(
+                source_label="doc.txt",
+                chunk_summaries=[{"summary": "요약", "chunk_id": "c1", "index": 1, "source_path": "doc.txt"}],
+                reduce_source_type="local_document",
+            )
+            search_reduce = loop._build_chunk_summary_reduce_prompt(
+                source_label="res.txt",
+                chunk_summaries=[{"summary": "요약", "chunk_id": "c1", "index": 1, "source_path": "res.txt"}],
+                reduce_source_type="search_results",
+            )
+            for label, prompt in [("local_chunk", local_chunk), ("local_short", local_short), ("local_reduce", local_reduce)]:
+                self.assertIn("Target length:", prompt, f"{label} must contain Target length guidance")
+            for label, prompt in [("search_chunk", search_chunk), ("search_short", search_short), ("search_reduce", search_reduce)]:
+                self.assertNotIn("Target length:", prompt, f"{label} must NOT contain Target length guidance")
+
     def test_long_search_summary_reduce_uses_search_result_synthesis_prompt(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

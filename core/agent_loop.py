@@ -932,11 +932,11 @@ class AgentLoop:
                     "If the text is narrative or fiction, summarize major characters or actors, key events, conflict changes, and the ending state of this part.",
                     "If the text is informational or argumentative, summarize the topic, main points, decisions or actions, and conclusion of this part.",
                     "STRICT: Only include events, facts, and conclusions that appear explicitly in the excerpt. Do not add events that did not happen, substitute different words for specific terms (e.g. replacing '전시' with '공연'), or state relationship outcomes or plot conclusions beyond what the text actually shows.",
+                    "Target length: 1~2 sentences (50~150 Korean characters). Do not exceed 3 sentences.",
                 ]
             )
         lines.extend(
             [
-                "Target length: 1~2 sentences (50~150 Korean characters). Do not exceed 3 sentences.",
                 "Return only concise Korean plain text with no heading or bullet label.",
                 "Do not mention chunk numbers.",
                 "",
@@ -978,11 +978,11 @@ class AgentLoop:
                     "If the text is narrative or fiction, summarize major characters or actors, key events, conflict changes, and the ending state in order.",
                     "If the text is informational or argumentative, summarize the topic, main points, decisions or actions, and conclusion.",
                     "STRICT: Only include events, facts, and conclusions that appear explicitly in the text. Do not add events that did not happen, substitute different words for specific terms (e.g. replacing '전시' with '공연'), or state relationship outcomes or plot conclusions beyond what the text actually shows.",
+                    "Target length: 3~5 sentences (200~400 Korean characters). Shorter documents may use 2~3 sentences. Do not exceed 8 sentences.",
                 ]
             )
         lines.extend(
             [
-                "Target length: 3~5 sentences (200~400 Korean characters). Shorter documents may use 2~3 sentences. Do not exceed 8 sentences.",
                 "Return only concise Korean plain text with no heading or bullet label.",
                 "Do not describe the task itself or mention an artificial mode.",
                 "",
@@ -1022,11 +1022,11 @@ class AgentLoop:
                     "If the text is narrative or fiction, summarize major characters or actors, key events, conflict changes, and the ending state in order.",
                     "If the text is informational or argumentative, summarize the topic, main points, decisions or actions, and conclusion.",
                     "STRICT: Only include events, facts, and conclusions that appear in the chunk notes. Do not add events that did not happen, substitute different words for specific terms, or state relationship outcomes or plot conclusions beyond what the notes actually contain.",
+                    f"Target length: 5~8 sentences (400~700 Korean characters) covering all {len(chunk_summaries)} chunk notes. Do not exceed 10 sentences.",
                 ]
             )
         lines.extend(
             [
-            f"Target length: 5~8 sentences (400~700 Korean characters) covering all {len(chunk_summaries)} chunk notes. Do not exceed 10 sentences.",
             "Do not mention chunk numbers or describe the task itself.",
             "",
             ]

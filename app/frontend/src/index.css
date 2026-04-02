@@ -38,3 +38,13 @@
 .animate-slide-down {
   animation: slide-down 0.25s ease-out;
 }
+
+/* Responsive: constrain ultra-wide message width */
+@media (min-width: 1440px) {
+  .max-w-\[85\%\] { max-width: 720px; }
+}
+
+/* Responsive: mobile approval card */
+@media (max-width: 640px) {
+  .max-w-\[85\%\] { max-width: 95%; }
+}

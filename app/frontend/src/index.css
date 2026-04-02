@@ -14,6 +14,22 @@
     @apply bg-warm-50 text-ink;
   }
 
+  .dark body,
+  html.dark body {
+    @apply bg-stone-900 text-stone-100;
+  }
+
+  html.dark .bg-warm-50 { background-color: #1c1917; }
+  html.dark .bg-white { background-color: #292524; }
+  html.dark .bg-beige-100 { background-color: #44403c; }
+  html.dark .bg-beige-50 { background-color: #292524; }
+  html.dark .bg-stone-50 { background-color: #292524; }
+  html.dark .text-ink { color: #e7e5e4; }
+  html.dark .text-muted { color: #a8a29e; }
+  html.dark .border-stone-100 { border-color: #44403c; }
+  html.dark .border-stone-200 { border-color: #57534e; }
+  html.dark .shadow-sm { box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+
   ::selection {
     @apply bg-accent-light;
   }

@@ -1,6 +1,13 @@
-import { useState, useRef, useEffect, type ReactNode } from "react";
+import { useState, useRef, useEffect, useMemo, type ReactNode } from "react";
+import { marked } from "marked";
 import type { Message } from "../types";
 import LinkChip from "./LinkChip";
+
+// Configure marked for safe rendering
+marked.setOptions({
+  breaks: true,
+  gfm: true,
+});
 
 const URL_REGEX = /(https?:\/\/[^\s<>"')\]]+)/g;
 
@@ -42,6 +49,7 @@ export default function MessageBubble({ message, onCorrection, onFeedback }: Pro
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState("");
   const [showDiff, setShowDiff] = useState(false);
+  const [copied, setCopied] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -131,9 +139,24 @@ export default function MessageBubble({ message, onCorrection, onFeedback }: Pro
           ) : (
             /* Normal display */
             <>
-              <div className="whitespace-pre-wrap break-words">
-                {isUser ? message.text : renderTextWithLinks(message.text)}
-              </div>
+              {isUser ? (
+              <div className="whitespace-pre-wrap break-words">{message.text}</div>
+            ) : (
+              <div
+                className="prose-sm prose-stone max-w-none break-words
+                  [&_a]:text-accent [&_a]:underline [&_a]:underline-offset-2
+                  [&_code]:bg-stone-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[13px]
+                  [&_pre]:bg-stone-50 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:overflow-x-auto [&_pre]:text-[13px]
+                  [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5
+                  [&_h1]:text-lg [&_h1]:font-bold [&_h1]:mt-3 [&_h1]:mb-1
+                  [&_h2]:text-base [&_h2]:font-bold [&_h2]:mt-2 [&_h2]:mb-1
+                  [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:mt-2 [&_h3]:mb-1
+                  [&_p]:my-1 [&_li]:my-0.5
+                  [&_blockquote]:border-l-2 [&_blockquote]:border-stone-300 [&_blockquote]:pl-3 [&_blockquote]:text-muted
+                "
+                dangerouslySetInnerHTML={{ __html: marked.parse(message.text) as string }}
+              />
+            )}
               {/* Corrected indicator + diff toggle */}
               {message.corrected_text && (
                 <div className="mt-2 pt-2 border-t border-stone-100">
@@ -166,6 +189,22 @@ export default function MessageBubble({ message, onCorrection, onFeedback }: Pro
           {/* Action buttons on hover — assistant messages only */}
           {!isUser && !editing && hovered && (
             <div className="absolute -top-3 -right-2 flex items-center gap-1">
+              {/* Copy */}
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(message.text);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1500);
+                }}
+                className="w-7 h-7 rounded-full bg-white border border-stone-200 shadow-sm flex items-center justify-center text-muted/40 hover:text-stone-600 hover:border-stone-300 transition-all"
+                title="복사"
+              >
+                {copied ? (
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="2"><path d="M20 6L9 17l-5-5" /></svg>
+                ) : (
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+                )}
+              </button>
               {/* Helpful */}
               {onFeedback && !message.feedback && (
                 <button

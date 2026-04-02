@@ -11,6 +11,7 @@
     const cancelRequestButton = document.getElementById("cancel-request");
     const responseBox = document.getElementById("response-box");
     const responseText = document.getElementById("response-text");
+    const responseSearchPreview = document.getElementById("response-search-preview");
     const factStrengthBar = document.getElementById("fact-strength-bar");
     const responseOriginGroup = document.getElementById("response-origin-group");
     const responseOriginBadge = document.getElementById("response-origin-badge");
@@ -1170,6 +1171,41 @@
       const items = Array.isArray(selected) ? selected : [];
       showElement(selectedBox, items.length > 0);
       selectedText.textContent = items.join("\n");
+    }
+
+    function renderResponseSearchPreview(searchResults, textValue) {
+      responseSearchPreview.innerHTML = "";
+      var isSearchOnly = Array.isArray(searchResults) && searchResults.length > 0
+        && typeof textValue === "string" && textValue.startsWith("검색 결과:");
+      if (isSearchOnly) {
+        responseText.hidden = true;
+        responseSearchPreview.hidden = false;
+        searchResults.forEach(function(sr, idx) {
+          var item = document.createElement("div");
+          item.className = "search-preview-item";
+          var fileName = String(sr.path || "").split(/[\\/]/).filter(Boolean).pop() || "(파일명 없음)";
+          var matchLabel = sr.matched_on === "filename" ? "파일명 일치" : "내용 일치";
+          var nameEl = document.createElement("div");
+          nameEl.className = "search-preview-name";
+          nameEl.textContent = (idx + 1) + ". " + fileName;
+          nameEl.title = sr.path || "";
+          item.appendChild(nameEl);
+          var matchEl = document.createElement("span");
+          matchEl.className = "search-preview-match";
+          matchEl.textContent = matchLabel;
+          item.appendChild(matchEl);
+          if (sr.snippet) {
+            var snippetEl = document.createElement("div");
+            snippetEl.className = "search-preview-snippet";
+            snippetEl.textContent = sr.snippet;
+            item.appendChild(snippetEl);
+          }
+          responseSearchPreview.appendChild(item);
+        });
+      } else {
+        responseText.hidden = false;
+        responseSearchPreview.hidden = true;
+      }
     }
 
     function renderPreview(preview) {
@@ -3067,6 +3103,7 @@
       if (latestAssistantMessage) {
         responseText.textContent = latestAssistantMessage.text || "응답 본문이 없습니다.";
         showElement(responseCopyTextButton, Boolean(latestAssistantMessage.text));
+        renderResponseSearchPreview(latestAssistantMessage.search_results || [], latestAssistantMessage.text || "");
         renderResponseOrigin(latestAssistantMessage.response_origin || null);
         renderResponseSummary(latestAssistantMessage, null);
         renderResponseFeedback(latestAssistantMessage, latestAssistantContext.userText);
@@ -3083,6 +3120,7 @@
       } else {
         responseText.textContent = "아직 보낸 요청이 없습니다.";
         showElement(responseCopyTextButton, false);
+        renderResponseSearchPreview([], "");
         renderResponseOrigin(null);
         renderResponseSummary(null, null);
         renderResponseFeedback(null);
@@ -3108,6 +3146,7 @@
       showElement(responseBox, true);
       responseText.textContent = data.response?.text || "응답 본문이 없습니다.";
       showElement(responseCopyTextButton, Boolean(data.response?.text));
+      renderResponseSearchPreview(data.response?.search_results || [], data.response?.text || "");
       renderResponseOrigin(data.response?.response_origin || null);
       renderResponseSummary(data.response || null, data.runtime_status || null);
       const latestAssistantContext = findLatestAssistantContext(data.session?.messages || []);

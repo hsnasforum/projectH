@@ -210,8 +210,11 @@ test("검색만 응답은 transcript에서 preview cards만 보이고 본문 텍
 
   await page.getByTestId("submit-request").click();
 
-  // response detail box still shows the search result text
-  await expect(page.getByTestId("response-box")).toContainText("검색 결과:");
+  // response detail box shows preview cards instead of raw text
+  await expect(page.getByTestId("response-search-preview")).toBeVisible();
+  await expect(page.locator("#response-search-preview .search-preview-item")).toHaveCount(2);
+  await expect(page.locator("#response-search-preview .search-preview-name").first()).toContainText("budget-plan.md");
+  await expect(page.getByTestId("response-text")).toBeHidden();
   await expect(page.locator("#selected-text")).toContainText("budget-plan.md");
 
   // transcript preview cards are visible

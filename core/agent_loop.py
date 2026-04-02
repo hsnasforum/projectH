@@ -936,6 +936,7 @@ class AgentLoop:
             )
         lines.extend(
             [
+                "Target length: 1~2 sentences (50~150 Korean characters). Do not exceed 3 sentences.",
                 "Return only concise Korean plain text with no heading or bullet label.",
                 "Do not mention chunk numbers.",
                 "",
@@ -981,6 +982,7 @@ class AgentLoop:
             )
         lines.extend(
             [
+                "Target length: 3~5 sentences (200~400 Korean characters). Shorter documents may use 2~3 sentences. Do not exceed 8 sentences.",
                 "Return only concise Korean plain text with no heading or bullet label.",
                 "Do not describe the task itself or mention an artificial mode.",
                 "",
@@ -1024,6 +1026,7 @@ class AgentLoop:
             )
         lines.extend(
             [
+            f"Target length: 5~8 sentences (400~700 Korean characters) covering all {len(chunk_summaries)} chunk notes. Do not exceed 10 sentences.",
             "Do not mention chunk numbers or describe the task itself.",
             "",
             ]

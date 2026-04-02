@@ -581,23 +581,23 @@ def tmux_send_keys(pane_target: str, command: str, dry_run: bool = False) -> boo
         is_codex = last_line.endswith("$") or "codex" in pane_text.lower() or "openai" in pane_text.lower()
 
         if is_codex:
-            # For Codex: interactive mode does not reliably accept pasted text + Enter.
-            # Instead: exit interactive mode → run `codex exec` with prompt from file.
-            # Ctrl+C twice to clear any stuck state
+            # Codex interactive mode does not reliably accept pasted text + Enter.
+            # Solution: kill current codex process, then restart with prompt as argument.
+            # `codex "prompt"` launches interactive mode WITH the initial prompt,
+            # showing full working progress (file reads, edits, etc).
             subprocess.run(["tmux", "send-keys", "-t", pane_target, "C-c"], check=False, capture_output=True)
             time.sleep(0.3)
             subprocess.run(["tmux", "send-keys", "-t", pane_target, "C-c"], check=False, capture_output=True)
             time.sleep(0.3)
-            # /exit or Ctrl+D to leave interactive codex (if still running)
             subprocess.run(["tmux", "send-keys", "-t", pane_target, "/exit", "Enter"], check=False, capture_output=True)
             time.sleep(1.5)
-            # Now at bash prompt — run codex exec with prompt file
-            shell_cmd = f"codex exec \"$(cat '{prompt_path}')\""
+            # Launch codex interactive with prompt from file as initial argument
+            shell_cmd = f"codex \"$(cat '{prompt_path}')\""
             subprocess.run(
                 ["tmux", "send-keys", "-t", pane_target, shell_cmd, "Enter"],
                 check=True, capture_output=True,
             )
-            log.info("codex exec dispatched via file: %s", prompt_path)
+            log.info("codex interactive dispatched with prompt file: %s", prompt_path)
         else:
             # For Claude: paste-buffer approach works better
             subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)

@@ -118,6 +118,7 @@
 
     const state = {
       currentSessionId: APP_CONFIG.DEFAULT_SESSION_ID,
+      _lastRenderedSessionUpdatedAt: "",
       defaultWebSearchPermission: APP_CONFIG.DEFAULT_WEB_SEARCH_PERMISSION,
       webSearchToolConnected: false,
       currentApproval: null,
@@ -3032,6 +3033,17 @@
     }
 
     function renderSession(session) {
+      const incomingId = session.session_id || "";
+      const incomingUpdatedAt = session.updated_at || "";
+      if (
+        incomingId === state.currentSessionId
+        && incomingUpdatedAt
+        && state._lastRenderedSessionUpdatedAt
+        && incomingUpdatedAt < state._lastRenderedSessionUpdatedAt
+      ) {
+        return;
+      }
+      state._lastRenderedSessionUpdatedAt = incomingUpdatedAt;
       state.currentSessionId = session.session_id;
       state.currentSessionMessages = Array.isArray(session.messages) ? session.messages : [];
       sessionIdInput.value = state.currentSessionId;

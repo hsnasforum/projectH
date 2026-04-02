@@ -37,5 +37,15 @@ output/playwright/*
 output/playwright/fixtures/*
 !output/playwright/fixtures/long-summary-fixture.md
 
+# Pipeline runtime (logs, state, locks, pid)
+.pipeline/logs/
+.pipeline/state/
+.pipeline/locks/
+.pipeline/manifests/
+.pipeline/*.pid
+
+# Superpowers brainstorm sessions
+.superpowers/
+
 # Windows metadata
 *:Zone.Identifier

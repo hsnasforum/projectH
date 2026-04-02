@@ -3879,7 +3879,7 @@ class SmokeTest(unittest.TestCase):
             for label, prompt in [("search_chunk", search_chunk), ("search_short", search_short), ("search_reduce", search_reduce)]:
                 self.assertNotIn("STRICT:", prompt, f"{label} must NOT contain STRICT rule")
 
-    def test_target_length_guidance_only_in_local_document_prompts(self) -> None:
+    def test_target_length_guidance_in_all_summary_prompts(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             loop = AgentLoop(
@@ -3917,11 +3917,9 @@ class SmokeTest(unittest.TestCase):
             # local_document: all three prompts must have Target length guidance
             for label, prompt in [("local_chunk", local_chunk), ("local_short", local_short), ("local_reduce", local_reduce)]:
                 self.assertIn("Target length:", prompt, f"{label} must contain Target length guidance")
-            # search_results: final summary prompts (short_summary, merged_chunk_outline) now have Target length guidance
-            for label, prompt in [("search_short", search_short), ("search_reduce", search_reduce)]:
+            # search_results: all three prompts now have Target length guidance
+            for label, prompt in [("search_chunk", search_chunk), ("search_short", search_short), ("search_reduce", search_reduce)]:
                 self.assertIn("Target length:", prompt, f"{label} must contain Target length guidance")
-            # search_results: chunk-note prompt stays without Target length guidance (not this slice)
-            self.assertNotIn("Target length:", search_chunk, "search_chunk must NOT contain Target length guidance")
 
     def test_long_search_summary_reduce_uses_search_result_synthesis_prompt(self) -> None:
         with TemporaryDirectory() as tmp_dir:

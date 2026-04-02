@@ -921,6 +921,7 @@ class AgentLoop:
                     "Treat it as one source-backed evidence chunk within a larger search-result synthesis.",
                     "Prioritize source-backed facts, meaningful differences, and explicit actions or decisions visible in this excerpt.",
                     "Do not retell it like a narrative scene or describe the task itself.",
+                    "Target length: 1~2 sentences (50~150 Korean characters). Do not exceed 3 sentences.",
                 ]
             )
         else:

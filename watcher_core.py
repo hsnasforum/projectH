@@ -801,10 +801,27 @@ class StateMachine:
                 job.save(self.state_dir)
                 return job
 
-            # Activity-based timeout: only timeout if pane output hasn't changed.
-            # If pane is still producing output, the task is still running.
-            elapsed = time.time() - job.last_dispatch_at
+            # Check if Codex finished: pane shows "›" prompt (interactive idle)
+            # or bash "$" prompt (codex exited). Either means task is done.
             current_pane = _capture_pane_text(self.verify_pane_target)
+            pane_lines = [l.strip() for l in current_pane.strip().splitlines() if l.strip()]
+            last_pane_line = pane_lines[-1] if pane_lines else ""
+            codex_idle = last_pane_line.startswith("›") or last_pane_line.endswith("$")
+            elapsed_since_dispatch = time.time() - job.last_dispatch_at
+            # Only check after at least 10 seconds (avoid false positive during startup)
+            if codex_idle and elapsed_since_dispatch > 10:
+                log.info("codex task completed (pane idle): job=%s elapsed=%.0fs",
+                         job.job_id, elapsed_since_dispatch)
+                job.verify_result = "completed"
+                job.verify_completed_at = time.time()
+                self.lease.release("slot_verify")
+                job.transition(JobStatus.VERIFY_DONE,
+                               f"codex idle after {elapsed_since_dispatch:.0f}s")
+                job.save(self.state_dir)
+                return job
+
+            # Activity-based timeout: only timeout if pane output hasn't changed.
+            elapsed = time.time() - job.last_dispatch_at
             last_activity = job.last_activity_at or job.last_dispatch_at
 
             if current_pane != job.last_pane_snapshot:

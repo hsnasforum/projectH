@@ -4570,25 +4570,9 @@ class SerializerMixin:
 
     def _iter_task_log_records(self, *, session_id: str) -> list[dict[str, Any]]:
         normalized_session_id = self._normalize_optional_text(session_id)
-        if normalized_session_id is None or not self.task_logger.path.exists():
+        if normalized_session_id is None:
             return []
-
-        records: list[dict[str, Any]] = []
-        with self.task_logger.path.open("r", encoding="utf-8") as handle:
-            for raw_line in handle:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                try:
-                    loaded = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(loaded, dict):
-                    continue
-                if self._normalize_optional_text(loaded.get("session_id")) != normalized_session_id:
-                    continue
-                records.append(loaded)
-        return records
+        return self.task_logger.iter_session_records(normalized_session_id)
 
     def _build_superseded_reject_signal_index(
         self,

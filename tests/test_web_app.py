@@ -197,6 +197,24 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(payload["session"]["web_search_history"], [])
             self.assertEqual(payload["session"]["schema_version"], "1.0")
 
+    def test_get_session_payload_works_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            db_path = str(Path(tmp_dir) / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(Path(tmp_dir) / "corrections"),
+                notes_dir=str(Path(tmp_dir) / "notes"),
+                web_search_history_dir=str(Path(tmp_dir) / "web-search"),
+            )
+            service = WebAppService(settings=settings)
+
+            payload = service.get_session_payload("sqlite-session")
+
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["session"]["session_id"], "sqlite-session")
+            self.assertEqual(payload["session"]["messages"], [])
+
     def test_get_session_payload_serializes_claim_coverage(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             settings = AppSettings(

@@ -4120,6 +4120,82 @@ class SmokeTest(unittest.TestCase):
                 "multi-result search chunk_note must NOT use single-result wording",
             )
 
+    def test_long_search_summary_single_result_uses_non_comparative_chunk_note_prompt(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            single_path = tmp_path / "single-report.md"
+            single_path.write_text(
+                "\n".join(
+                    [
+                        "# 단일 보고서",
+                        *["승인 기반 저장 유지와 비용 절감 계획을 상세히 설명합니다." for _ in range(220)],
+                        "이번 분기 보고서는 비용 초과 방지에 초점을 둡니다.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            model = _SearchReduceModel()
+            loop = AgentLoop(
+                model=model,
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+            )
+            selected_results = [
+                FileSearchResult(
+                    path=str(single_path),
+                    matched_on="content",
+                    snippet="승인 기반 저장 유지와 비용 절감 계획을 설명합니다.",
+                ),
+            ]
+            read_results = [loop.tools["read_file"].run(path=str(single_path))]
+
+            summary, note_body, summary_chunks = loop._build_multi_file_summary(
+                search_query="cost",
+                selected_results=selected_results,
+                read_results=read_results,
+            )
+
+            self.assertGreaterEqual(len(summary_chunks), 1, "chunking must actually occur for long single-result input")
+            chunk_prompts = [
+                prompt
+                for prompt in model.summary_inputs
+                if "Summary mode: chunk_note" in prompt
+            ]
+            self.assertTrue(chunk_prompts, "at least one chunk_note prompt must be emitted")
+            self.assertTrue(
+                all(
+                    "Do not invent cross-result agreement or differences" in prompt
+                    for prompt in chunk_prompts
+                ),
+                "all single-result chunk_note prompts must use non-comparative wording",
+            )
+            self.assertTrue(
+                all(
+                    "meaningful differences" not in prompt
+                    for prompt in chunk_prompts
+                ),
+                "single-result chunk_note prompts must NOT use comparative wording",
+            )
+            reduce_prompts = [
+                prompt
+                for prompt in model.summary_inputs
+                if "Summary mode: merged_chunk_outline" in prompt
+            ]
+            self.assertTrue(reduce_prompts, "at least one reduce prompt must be emitted")
+            self.assertTrue(
+                all(
+                    "Do not invent cross-result agreement or differences" in prompt
+                    for prompt in reduce_prompts
+                ),
+                "single-result reduce prompt must use non-comparative wording",
+            )
+
     def test_long_search_summary_reduce_uses_search_result_synthesis_prompt(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

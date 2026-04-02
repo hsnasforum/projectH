@@ -130,38 +130,6 @@ class AgentLoop:
         self.preference_store = preference_store
         self._model_router = model_router  # (ModelConfig, route func) or None
 
-    def _route_model(self, hint: Any) -> Any:
-        """Apply model routing if router is configured. Returns a context manager."""
-        if self._model_router is None:
-            return _NoOpContext(self.model)
-        try:
-            from model_adapter.router import route as route_fn, ModelConfig
-            from model_adapter.ollama import OllamaModelAdapter
-            config, = self._model_router if isinstance(self._model_router, tuple) else (self._model_router,)
-            if not isinstance(config, ModelConfig):
-                return _NoOpContext(self.model)
-            tier = route_fn(hint)
-            resolved = config.resolve(tier)
-            if isinstance(self.model, OllamaModelAdapter):
-                return self.model.use_model(resolved)
-            return _NoOpContext(self.model)
-        except Exception:
-            return _NoOpContext(self.model)
-
-    def _get_preference_budget(self, hint: Any = None) -> int:
-        """Max preferences to inject based on routing tier."""
-        if self._model_router is None or hint is None:
-            return 10
-        try:
-            from model_adapter.router import route as route_fn, ModelConfig, PREFERENCE_BUDGET
-            config = self._model_router if not isinstance(self._model_router, tuple) else self._model_router[0]
-            if not isinstance(config, ModelConfig):
-                return 10
-            tier = route_fn(hint)
-            return PREFERENCE_BUDGET.get(tier, 10)
-        except Exception:
-            return 10
-
     def _routed_model(self, task: str = "respond", **kwargs: Any) -> Any:
         """Return a context manager that sets the right model for this task."""
         if self._model_router is None:

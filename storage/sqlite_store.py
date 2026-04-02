@@ -80,14 +80,7 @@ CREATE TABLE IF NOT EXISTS task_log (
 );
 CREATE INDEX IF NOT EXISTS idx_task_log_session ON task_log(session_id);
 
-CREATE TABLE IF NOT EXISTS web_search_records (
-    record_id   TEXT PRIMARY KEY,
-    session_id  TEXT NOT NULL,
-    query       TEXT NOT NULL,
-    data        TEXT NOT NULL DEFAULT '{}',
-    created_at  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_web_search_session ON web_search_records(session_id);
+-- web_search_records: deferred — WebSearchStore stays JSON-based for now.
 """
 
 
@@ -100,60 +93,69 @@ def _new_id() -> str:
 
 
 class SQLiteDatabase:
-    """Shared SQLite connection manager with thread-safe access."""
+    """Thread-safe SQLite connection manager using per-thread connections.
+
+    Each thread gets its own connection via threading.local(), avoiding lock
+    contention under concurrent web requests. WAL mode allows concurrent readers.
+    """
 
     def __init__(self, db_path: str = "data/projecth.db") -> None:
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.RLock()
-        self._conn: sqlite3.Connection | None = None
+        self._local = threading.local()
         self._init_schema()
 
     def _get_conn(self) -> sqlite3.Connection:
-        if self._conn is None:
-            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA foreign_keys=ON")
-        return self._conn
+        conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
+        if conn is not None:
+            # Health check: verify connection is still usable
+            try:
+                conn.execute("SELECT 1")
+                return conn
+            except Exception:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                conn = None
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        self._local.conn = conn
+        return conn
 
     def _init_schema(self) -> None:
-        with self._lock:
-            conn = self._get_conn()
-            conn.executescript(_SCHEMA_SQL)
-            conn.execute(
-                "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
-                ("schema_version", str(SCHEMA_VERSION)),
-            )
-            conn.commit()
+        conn = self._get_conn()
+        conn.executescript(_SCHEMA_SQL)
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
+            ("schema_version", str(SCHEMA_VERSION)),
+        )
+        conn.commit()
 
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
-        with self._lock:
-            return self._get_conn().execute(sql, params)
+        return self._get_conn().execute(sql, params)
 
     def executemany(self, sql: str, params_list: list[tuple]) -> sqlite3.Cursor:
-        with self._lock:
-            return self._get_conn().executemany(sql, params_list)
+        return self._get_conn().executemany(sql, params_list)
 
     def commit(self) -> None:
-        with self._lock:
-            self._get_conn().commit()
+        self._get_conn().commit()
 
     def fetchone(self, sql: str, params: tuple = ()) -> dict[str, Any] | None:
-        with self._lock:
-            row = self._get_conn().execute(sql, params).fetchone()
-            return dict(row) if row else None
+        row = self._get_conn().execute(sql, params).fetchone()
+        return dict(row) if row else None
 
     def fetchall(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
-        with self._lock:
-            rows = self._get_conn().execute(sql, params).fetchall()
-            return [dict(r) for r in rows]
+        rows = self._get_conn().execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
 
     def close(self) -> None:
-        with self._lock:
-            if self._conn:
-                self._conn.close()
-                self._conn = None
+        conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
+        if conn:
+            conn.close()
+            self._local.conn = None
 
 
 # ── SQLite Session Store ──────────────────────────────────────────
@@ -453,9 +455,23 @@ def migrate_json_to_sqlite(
     preferences_dir: str = "data/preferences",
     db_path: str = "data/projecth.db",
 ) -> dict[str, int]:
-    """Migrate JSON file stores to SQLite. Returns counts per table."""
+    """Migrate JSON file stores to SQLite. Returns counts per table.
+
+    NOTE: Corrections are NOT migrated (CorrectionStore stays JSON-based).
+    The corrections_dir parameter is accepted for future use but currently ignored.
+    """
+    import sys
+
     db = SQLiteDatabase(db_path)
     counts: dict[str, int] = {}
+    errors: list[str] = []
+
+    # Corrections: explicitly not migrated
+    corrections_path = Path(corrections_dir)
+    if corrections_path.is_dir() and list(corrections_path.glob("*.json")):
+        msg = f"WARNING: corrections ({corrections_dir}) are NOT migrated — CorrectionStore stays JSON-based."
+        print(msg, file=sys.stderr)
+        errors.append(msg)
 
     # Sessions
     sessions_path = Path(sessions_dir)
@@ -468,7 +484,8 @@ def migrate_json_to_sqlite(
                 store = SQLiteSessionStore(db)
                 store._save(sid, data)
                 count += 1
-            except Exception:
+            except Exception as exc:
+                errors.append(f"session {f.name}: {exc}")
                 continue
     counts["sessions"] = count
 
@@ -485,7 +502,8 @@ def migrate_json_to_sqlite(
                     (data["artifact_id"], data.get("artifact_kind", "grounded_brief"), data.get("session_id", ""), data.get("source_message_id", ""), json.dumps(data, ensure_ascii=False, default=str), now, now),
                 )
                 count += 1
-            except Exception:
+            except Exception as exc:
+                errors.append(f"artifact {f.name}: {exc}")
                 continue
     db.commit()
     counts["artifacts"] = count
@@ -503,10 +521,14 @@ def migrate_json_to_sqlite(
                     (data["preference_id"], data.get("delta_fingerprint", ""), data.get("description", ""), data.get("status", "candidate"), json.dumps(data, ensure_ascii=False, default=str), now, now, data.get("activated_at")),
                 )
                 count += 1
-            except Exception:
+            except Exception as exc:
+                errors.append(f"preference {f.name}: {exc}")
                 continue
     db.commit()
     counts["preferences"] = count
+
+    if errors:
+        counts["_errors"] = errors  # type: ignore[assignment]
 
     db.close()
     return counts

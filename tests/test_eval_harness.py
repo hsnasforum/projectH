@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from model_adapter.mock import MockModelAdapter
@@ -210,7 +211,7 @@ class ReportTest(unittest.TestCase):
             report = EvalReport(adapter_provider="mock")
             path = report.save(results_dir=tmp)
             self.assertTrue(path.endswith(".json"))
-            content = json.loads(open(path, encoding="utf-8").read())
+            content = json.loads(Path(path).read_text(encoding="utf-8"))
             self.assertEqual(content["adapter_provider"], "mock")
 
     def test_summary_has_categories(self) -> None:

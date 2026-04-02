@@ -11,3 +11,6 @@ requires-python = ">=3.11"
 dependencies = [
     "pypdf>=4,<7",
 ]
+
+[project.optional-dependencies]
+search = ["duckduckgo-search>=6,<9"]

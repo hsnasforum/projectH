@@ -33,9 +33,10 @@ function renderTextWithLinks(text: string): ReactNode[] {
 interface Props {
   message: Message;
   onCorrection?: (messageId: string, correctedText: string) => void;
+  onFeedback?: (messageId: string, label: string) => void;
 }
 
-export default function MessageBubble({ message, onCorrection }: Props) {
+export default function MessageBubble({ message, onCorrection, onFeedback }: Props) {
   const isUser = message.role === "user";
   const [hovered, setHovered] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -144,24 +145,56 @@ export default function MessageBubble({ message, onCorrection }: Props) {
             </>
           )}
 
-          {/* Edit button on hover — assistant messages only */}
-          {!isUser && !editing && hovered && onCorrection && (
-            <button
-              onClick={startEdit}
-              className="
-                absolute -top-2 -right-2
-                w-7 h-7 rounded-full bg-white border border-stone-200 shadow-sm
-                flex items-center justify-center
-                text-muted/50 hover:text-accent hover:border-accent/30
-                transition-all
-              "
-              title="수정"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-              </svg>
-            </button>
+          {/* Action buttons on hover — assistant messages only */}
+          {!isUser && !editing && hovered && (
+            <div className="absolute -top-3 -right-2 flex items-center gap-1">
+              {/* Helpful */}
+              {onFeedback && !message.feedback && (
+                <button
+                  onClick={() => onFeedback(message.message_id, "helpful")}
+                  className="w-7 h-7 rounded-full bg-white border border-stone-200 shadow-sm flex items-center justify-center text-muted/40 hover:text-emerald-500 hover:border-emerald-200 transition-all"
+                  title="도움이 됨"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
+                  </svg>
+                </button>
+              )}
+              {/* Not helpful */}
+              {onFeedback && !message.feedback && (
+                <button
+                  onClick={() => onFeedback(message.message_id, "incorrect")}
+                  className="w-7 h-7 rounded-full bg-white border border-stone-200 shadow-sm flex items-center justify-center text-muted/40 hover:text-red-400 hover:border-red-200 transition-all"
+                  title="부정확함"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17" />
+                  </svg>
+                </button>
+              )}
+              {/* Edit */}
+              {onCorrection && (
+                <button
+                  onClick={startEdit}
+                  className="w-7 h-7 rounded-full bg-white border border-stone-200 shadow-sm flex items-center justify-center text-muted/40 hover:text-accent hover:border-accent/30 transition-all"
+                  title="수정"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                  </svg>
+                </button>
+              )}
+              {/* Feedback already given indicator */}
+              {message.feedback && (
+                <span className={`
+                  text-[10px] px-2 py-0.5 rounded-full
+                  ${message.feedback === "helpful" ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-500"}
+                `}>
+                  {message.feedback === "helpful" ? "도움됨" : "부정확"}
+                </span>
+              )}
+            </div>
           )}
         </div>
 

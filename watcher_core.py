@@ -629,24 +629,31 @@ def tmux_send_keys(
 
 
 def _dispatch_codex(pane_target: str, command: str) -> None:
-    """Dispatch to Codex pane via codex 'prompt' command."""
-    prompt_path = _write_prompt_file(command)
+    """Dispatch to Codex pane.
 
-    # If Codex is running (no bash $ prompt), kill it first
-    pane_lines = _capture_pane_text(pane_target).strip().splitlines()
-    last_line = (pane_lines[-1].strip() if pane_lines else "")
-    if not last_line.endswith("$"):
-        subprocess.run(["tmux", "send-keys", "-t", pane_target, "C-c"], check=False, capture_output=True)
-        time.sleep(0.5)
-        subprocess.run(["tmux", "send-keys", "-t", pane_target, "/exit", "Enter"], check=False, capture_output=True)
-        time.sleep(1.5)
+    First dispatch (bash $ prompt): launch codex interactive with prompt as argument.
+    Subsequent dispatches (codex > prompt): paste-buffer into running interactive session.
+    """
+    pane_text = _capture_pane_text(pane_target)
+    pane_lines = [l.strip() for l in pane_text.strip().splitlines() if l.strip()]
+    last_line = pane_lines[-1] if pane_lines else ""
 
-    shell_cmd = f"codex --ask-for-approval never \"$(cat '{prompt_path}')\""
-    subprocess.run(
-        ["tmux", "send-keys", "-t", pane_target, shell_cmd, "Enter"],
-        check=True, capture_output=True,
-    )
-    log.info("codex dispatched: %s", prompt_path)
+    if last_line.endswith("$"):
+        # Bash prompt → first dispatch: launch codex interactive with initial prompt
+        prompt_path = _write_prompt_file(command)
+        shell_cmd = f"codex --ask-for-approval never \"$(cat '{prompt_path}')\""
+        subprocess.run(
+            ["tmux", "send-keys", "-t", pane_target, shell_cmd, "Enter"],
+            check=True, capture_output=True,
+        )
+        log.info("codex first dispatch (interactive launch): %s", prompt_path)
+    else:
+        # Codex interactive already running → paste-buffer + Enter
+        subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
+        subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
+        time.sleep(1.0)
+        subprocess.run(["tmux", "send-keys", "-t", pane_target, "Enter"], check=True, capture_output=True)
+        log.info("codex subsequent dispatch (paste to interactive)")
 
 
 def _dispatch_claude(pane_target: str, command: str) -> None:

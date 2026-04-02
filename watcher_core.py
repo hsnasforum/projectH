@@ -631,15 +631,14 @@ def tmux_send_keys(
 def _dispatch_codex(pane_target: str, command: str) -> None:
     """Dispatch to Codex pane.
 
-    First dispatch (bash $): launch codex with prompt argument.
-    Subsequent dispatches (codex ›): Escape to clear suggestion → paste → Enter.
+    First dispatch (bash $): launch codex interactive with prompt argument.
+    Subsequent dispatches: same as Claude — paste-buffer + Enter.
     """
     pane_lines = [l.strip() for l in _capture_pane_text(pane_target).strip().splitlines() if l.strip()]
     last_line = pane_lines[-1] if pane_lines else ""
-
     is_bash = last_line.rstrip().endswith("$") or "$ " in last_line
+
     if is_bash:
-        # Bash prompt → first launch
         prompt_path = _write_prompt_file(command)
         shell_cmd = f"codex --ask-for-approval never \"$(cat '{prompt_path}')\""
         subprocess.run(
@@ -648,33 +647,9 @@ def _dispatch_codex(pane_target: str, command: str) -> None:
         )
         log.info("codex first dispatch: %s", prompt_path)
     else:
-        # Codex interactive running — wait for idle (› prompt) before sending
-        # If Codex is working, DO NOT send anything (Escape = interrupt)
-        idle = False
-        for _ in range(60):  # wait up to 60 seconds for idle
-            check_lines = [l.strip() for l in _capture_pane_text(pane_target).strip().splitlines() if l.strip()]
-            check_last = check_lines[-1] if check_lines else ""
-            if check_last.startswith("›"):
-                idle = True
-                break
-            time.sleep(1.0)
-
-        if not idle:
-            log.warning("codex not idle after 60s, forcing new instance")
-            subprocess.run(["tmux", "send-keys", "-t", pane_target, "/exit", "Enter"], check=False, capture_output=True)
-            time.sleep(2.0)
-            prompt_path = _write_prompt_file(command)
-            shell_cmd = f"codex --ask-for-approval never \"$(cat '{prompt_path}')\""
-            subprocess.run(["tmux", "send-keys", "-t", pane_target, shell_cmd, "Enter"], check=True, capture_output=True)
-            log.info("codex forced new instance: %s", prompt_path)
-            return
-
-        # Codex idle → paste prompt
-        subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
-        subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
-        time.sleep(1.0)
-        subprocess.run(["tmux", "send-keys", "-t", pane_target, "Enter"], check=True, capture_output=True)
-        log.info("codex subsequent dispatch (paste to idle)")
+        # Same as Claude: paste-buffer + Enter
+        _dispatch_claude(pane_target, command)
+        log.info("codex subsequent dispatch (same as claude)")
 
 
 def _dispatch_claude(pane_target: str, command: str) -> None:

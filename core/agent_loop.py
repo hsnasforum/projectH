@@ -4528,7 +4528,7 @@ class AgentLoop:
                 lines.append(f"- {claim.slot}: {claim.value}{support_suffix}")
         if weak_claims:
             lines.append("")
-            lines.append("단일 출처 정보 (교차 확인 필요):")
+            lines.append("단일 출처 정보 (교차 확인 부족, 추가 확인 필요):")
             for claim in weak_claims:
                 _slot_cov = core_coverage.get(claim.slot)
                 role_label = (
@@ -4538,7 +4538,7 @@ class AgentLoop:
                 )
                 # Demote community-only claims
                 is_community = role_label in ("보조 커뮤니티", "보조 포털", "보조 블로그")
-                qualifier = "비공식 출처" if is_community else f"단일 출처, {role_label}"
+                qualifier = "비공식 출처, 확정 금지" if is_community else f"단일 출처, {role_label}, 확정 표현 주의"
                 lines.append(f"- {claim.slot}: {claim.value} ({qualifier})")
         if supplemental_claims:
             lines.append("")

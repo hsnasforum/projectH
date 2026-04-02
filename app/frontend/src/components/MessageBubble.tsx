@@ -60,6 +60,10 @@ export default function MessageBubble({ message, onCorrection, onFeedback }: Pro
     }
   }, [editing]);
 
+  const isSearchOnly = !isUser
+    && (message.search_results?.length ?? 0) > 0
+    && message.text.startsWith("검색 결과:");
+
   const startEdit = () => {
     setEditText(message.text);
     setEditing(true);
@@ -141,7 +145,7 @@ export default function MessageBubble({ message, onCorrection, onFeedback }: Pro
             <>
               {isUser ? (
               <div className="whitespace-pre-wrap break-words">{message.text}</div>
-            ) : (
+            ) : isSearchOnly ? null : (
               <div
                 className="prose-sm prose-stone max-w-none break-words
                   [&_a]:text-accent [&_a]:underline [&_a]:underline-offset-2

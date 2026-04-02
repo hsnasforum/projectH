@@ -994,9 +994,13 @@
 
         card.appendChild(header);
 
-        const body = document.createElement("pre");
-        body.textContent = message.text || "";
-        card.appendChild(body);
+        var isSearchOnly = Array.isArray(message.search_results) && message.search_results.length > 0
+          && typeof message.text === "string" && message.text.startsWith("검색 결과:");
+        if (!isSearchOnly) {
+          const body = document.createElement("pre");
+          body.textContent = message.text || "";
+          card.appendChild(body);
+        }
 
         if (Array.isArray(message.search_results) && message.search_results.length > 0) {
           const previewPanel = document.createElement("div");

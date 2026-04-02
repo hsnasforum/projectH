@@ -26,7 +26,7 @@
 - local web shell (`python3 -m app.web`)
 - recent sessions / conversation timeline with per-message timestamps
 - file summary / document search / general chat
-- document search responses include a structured search result preview panel below the text body, showing each matched file's name (with full path tooltip), match type badge (`파일명 일치` / `내용 일치`), and a content snippet; both search-only and search-plus-summary responses carry the same `search_results` data
+- document search responses include a structured search result preview panel showing each matched file's name (with full path tooltip), match type badge (`파일명 일치` / `내용 일치`), and a content snippet; both search-only and search-plus-summary responses carry the same `search_results` data; search-only responses hide the redundant text body in the transcript and let the preview cards serve as the primary surface
 - approval-based save with default notes directory shown in the save-path placeholder
 - reissue approval flow
 - evidence / source panel with source-role trust labels on each evidence item

@@ -6,10 +6,19 @@ interface Props {
   onCancel: () => void;
 }
 
+const SLASH_COMMANDS = [
+  { command: "/검색", description: "웹에서 검색합니다", prefix: "웹검색: " },
+  { command: "/요약", description: "문서를 요약합니다", prefix: "" },
+  { command: "/메모", description: "메모 형식으로 정리합니다", prefix: "" },
+];
+
 export default function InputBar({ onSend, isStreaming, onCancel }: Props) {
   const [text, setText] = useState("");
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [slashFilter, setSlashFilter] = useState("");
+  const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -158,7 +167,7 @@ export default function InputBar({ onSend, isStreaming, onCancel }: Props) {
 
         {/* Main input row */}
         <div className="
-          flex items-end gap-2
+          relative flex items-end gap-2
           bg-white rounded-[20px]
           border border-stone-200/80
           shadow-sm
@@ -181,13 +190,91 @@ export default function InputBar({ onSend, isStreaming, onCancel }: Props) {
             </svg>
           </button>
 
+          {/* Slash command dropdown */}
+          {showSlashMenu && (
+            <div className="absolute bottom-full left-0 right-0 mb-1 mx-4 md:mx-6 z-50">
+              <div className="max-w-[800px] mx-auto">
+                <div className="bg-white border border-stone-200 rounded-xl shadow-lg overflow-hidden">
+                  {SLASH_COMMANDS
+                    .filter((c) => c.command.includes(slashFilter) || !slashFilter)
+                    .map((cmd, i) => (
+                      <button
+                        key={cmd.command}
+                        type="button"
+                        className={`
+                          w-full text-left px-4 py-2.5 flex items-center gap-3 transition-colors
+                          ${i === slashSelectedIndex ? "bg-stone-50" : "hover:bg-stone-50"}
+                        `}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          const rest = text.replace(/^\/\S*/, "").trim();
+                          const newText = cmd.prefix ? `${cmd.prefix}${rest}` : rest;
+                          setText(newText);
+                          setShowSlashMenu(false);
+                          textareaRef.current?.focus();
+                        }}
+                      >
+                        <span className="text-[14px] font-semibold text-accent">{cmd.command}</span>
+                        <span className="text-[13px] text-muted">{cmd.description}</span>
+                      </button>
+                    ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Textarea */}
           <textarea
             ref={textareaRef}
             value={text}
-            onChange={(e) => { setText(e.target.value); autoResize(); }}
-            onKeyDown={handleKeyDown}
-            placeholder={attachedFile ? "파일에 대해 질문하세요..." : "메시지를 입력하세요..."}
+            onChange={(e) => {
+              const val = e.target.value;
+              setText(val);
+              autoResize();
+              // Slash command detection
+              if (val.startsWith("/")) {
+                const match = val.match(/^\/(\S*)$/);
+                if (match) {
+                  setSlashFilter("/" + match[1]);
+                  setShowSlashMenu(true);
+                  setSlashSelectedIndex(0);
+                  return;
+                }
+              }
+              setShowSlashMenu(false);
+            }}
+            onKeyDown={(e) => {
+              if (showSlashMenu) {
+                const filtered = SLASH_COMMANDS.filter((c) => c.command.includes(slashFilter) || !slashFilter);
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setSlashSelectedIndex((i) => Math.min(i + 1, filtered.length - 1));
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setSlashSelectedIndex((i) => Math.max(i - 1, 0));
+                  return;
+                }
+                if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+                  e.preventDefault();
+                  const cmd = filtered[slashSelectedIndex];
+                  if (cmd) {
+                    const rest = text.replace(/^\/\S*/, "").trim();
+                    setText(cmd.prefix ? `${cmd.prefix}${rest}` : rest);
+                  }
+                  setShowSlashMenu(false);
+                  return;
+                }
+                if (e.key === "Escape") {
+                  setShowSlashMenu(false);
+                  return;
+                }
+              }
+              handleKeyDown(e);
+            }}
+            onBlur={() => { setTimeout(() => setShowSlashMenu(false), 150); }}
+            placeholder={attachedFile ? "파일에 대해 질문하세요..." : "메시지를 입력하세요... ( / 로 명령어)"}
             rows={1}
             className="
               flex-1 resize-none outline-none
@@ -237,7 +324,7 @@ export default function InputBar({ onSend, isStreaming, onCancel }: Props) {
 
         {/* Subtle hint */}
         <p className="text-center text-[11px] text-muted/30 mt-2">
-          로컬에서 실행 &middot; Enter로 전송 &middot; Shift+Enter로 줄바꿈 &middot; 파일 드래그 앤 드롭 가능
+          /검색으로 웹 검색 &middot; Enter로 전송 &middot; Shift+Enter로 줄바꿈 &middot; 파일 드래그 앤 드롭
         </p>
       </form>
     </div>

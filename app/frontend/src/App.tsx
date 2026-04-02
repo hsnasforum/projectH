@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import Sidebar from "./components/Sidebar";
 import ChatArea from "./components/ChatArea";
 import { useChat } from "./hooks/useChat";
+import { postCorrection } from "./api/client";
 import { DEFAULT_SETTINGS } from "./types";
 import type { AppSettings } from "./types";
 
@@ -11,6 +12,11 @@ export default function App() {
   const chat = useChat(settings);
 
   const toggleSidebar = useCallback(() => setSidebarOpen((v) => !v), []);
+
+  const handleCorrection = useCallback(async (messageId: string, correctedText: string) => {
+    await postCorrection(chat.sessionId, messageId, correctedText);
+    await chat.loadSession(chat.sessionId);
+  }, [chat.sessionId, chat.loadSession]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-warm-50">
@@ -79,6 +85,7 @@ export default function App() {
         onApprove={chat.approve}
         onReject={chat.reject}
         onCancel={chat.cancel}
+        onCorrection={handleCorrection}
         onToggleSidebar={toggleSidebar}
         sessionTitle={chat.sessionTitle}
       />

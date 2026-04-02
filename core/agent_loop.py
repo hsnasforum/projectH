@@ -7359,6 +7359,8 @@ class AgentLoop:
             message["approval_reason_record"] = dict(response.approval_reason_record)
         if response.save_content_source:
             message["save_content_source"] = response.save_content_source
+        if response.search_results:
+            message["search_results"] = [dict(item) for item in response.search_results if isinstance(item, dict)]
         return message
 
     def _agent_response_log_detail(self, response: AgentResponse) -> dict[str, Any]:

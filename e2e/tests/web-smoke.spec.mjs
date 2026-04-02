@@ -200,6 +200,30 @@ test("브라우저 폴더 선택으로도 문서 검색이 됩니다", async ({ 
   await expect(page.locator("#selected-text")).toContainText("budget-plan.md");
 });
 
+test("검색만 응답은 transcript에서 preview cards만 보이고 본문 텍스트는 숨겨집니다", async ({ page }) => {
+  await prepareSession(page, "search-only");
+  await page.locator('input[name="request_mode"][value="search"]').check();
+  await page.getByTestId("browser-folder-input").setInputFiles(searchFixtureDir);
+  await expect(page.locator("#picked-folder-name")).toContainText("2개 파일");
+  await page.getByTestId("search-query").fill("budget");
+  await page.locator("#search-only").check();
+
+  await page.getByTestId("submit-request").click();
+
+  // response detail box still shows the search result text
+  await expect(page.getByTestId("response-box")).toContainText("검색 결과:");
+  await expect(page.locator("#selected-text")).toContainText("budget-plan.md");
+
+  // transcript preview cards are visible
+  const lastAssistant = page.locator("#transcript .message.assistant").last();
+  await expect(lastAssistant.locator(".search-preview-panel")).toBeVisible();
+  await expect(lastAssistant.locator(".search-preview-item")).toHaveCount(2);
+  await expect(lastAssistant.locator(".search-preview-name").first()).toContainText("budget-plan.md");
+
+  // transcript body text (pre) should be hidden for search-only
+  await expect(lastAssistant.locator("pre")).toHaveCount(0);
+});
+
 test("저장 요청 후 승인 경로를 다시 발급할 수 있습니다", async ({ page }) => {
   await prepareSession(page, "reissue");
   await page.getByTestId("source-path").fill(longFixturePath);

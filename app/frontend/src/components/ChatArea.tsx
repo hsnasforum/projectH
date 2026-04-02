@@ -24,6 +24,7 @@ interface Props {
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
   onCancel: () => void;
+  onCorrection?: (messageId: string, correctedText: string) => void;
   onToggleSidebar: () => void;
   sessionTitle: string;
 }
@@ -40,6 +41,7 @@ export default function ChatArea({
   onApprove,
   onReject,
   onCancel,
+  onCorrection,
   onToggleSidebar,
   sessionTitle,
 }: Props) {
@@ -106,7 +108,7 @@ export default function ChatArea({
 
           <div className="space-y-6">
             {messages.map((msg) => (
-              <MessageBubble key={msg.message_id} message={msg} />
+              <MessageBubble key={msg.message_id} message={msg} onCorrection={onCorrection} />
             ))}
 
             {isStreaming && streamingText && (

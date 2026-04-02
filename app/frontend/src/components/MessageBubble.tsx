@@ -1,15 +1,11 @@
-import { type ReactNode } from "react";
+import { useState, useRef, useEffect, type ReactNode } from "react";
 import type { Message } from "../types";
 import LinkChip from "./LinkChip";
 
 const URL_REGEX = /(https?:\/\/[^\s<>"')\]]+)/g;
 
-// Matches "링크:" or "링크: " labels right before a URL
-const LINK_LABEL_REGEX = /링크:\s*/g;
-
 /** Split text into plain segments and LinkChip elements, stripping "링크:" labels. */
 function renderTextWithLinks(text: string): ReactNode[] {
-  // First strip "링크:" labels that precede URLs
   const cleaned = text.replace(
     new RegExp(`링크:\\s*(https?://[^\\s<>"')\\]]+)`, "g"),
     "$1",
@@ -36,13 +32,47 @@ function renderTextWithLinks(text: string): ReactNode[] {
 
 interface Props {
   message: Message;
+  onCorrection?: (messageId: string, correctedText: string) => void;
 }
 
-export default function MessageBubble({ message }: Props) {
+export default function MessageBubble({ message, onCorrection }: Props) {
   const isUser = message.role === "user";
+  const [hovered, setHovered] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (editing && textareaRef.current) {
+      textareaRef.current.focus();
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = textareaRef.current.scrollHeight + "px";
+    }
+  }, [editing]);
+
+  const startEdit = () => {
+    setEditText(message.text);
+    setEditing(true);
+  };
+
+  const submitEdit = () => {
+    const trimmed = editText.trim();
+    if (trimmed && trimmed !== message.text && onCorrection) {
+      onCorrection(message.message_id, trimmed);
+    }
+    setEditing(false);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+  };
 
   return (
-    <div className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
+    <div
+      className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       {/* Avatar */}
       {!isUser && (
         <div className="w-8 h-8 rounded-full bg-beige-100 flex items-center justify-center shrink-0 mt-0.5">
@@ -54,16 +84,85 @@ export default function MessageBubble({ message }: Props) {
         {/* Message body */}
         <div
           className={`
-            rounded-2xl px-4 py-3 text-[15px] leading-[1.75]
+            relative rounded-2xl px-4 py-3 text-[15px] leading-[1.75]
             ${isUser
               ? "bg-beige-100 text-ink rounded-br-md"
               : "bg-white border border-stone-100 text-ink rounded-bl-md shadow-sm"
             }
           `}
         >
-          <div className="whitespace-pre-wrap break-words">
-            {isUser ? message.text : renderTextWithLinks(message.text)}
-          </div>
+          {editing ? (
+            /* Inline edit mode */
+            <div>
+              <textarea
+                ref={textareaRef}
+                value={editText}
+                onChange={(e) => {
+                  setEditText(e.target.value);
+                  e.target.style.height = "auto";
+                  e.target.style.height = e.target.scrollHeight + "px";
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") cancelEdit();
+                  if (e.key === "Enter" && e.ctrlKey) submitEdit();
+                }}
+                className="
+                  w-full resize-none outline-none text-[15px] leading-[1.75]
+                  text-ink bg-transparent min-h-[60px]
+                "
+              />
+              <div className="flex items-center gap-2 mt-2 pt-2 border-t border-stone-100">
+                <button
+                  onClick={submitEdit}
+                  className="text-[12px] px-3 py-1 rounded-lg bg-accent text-white hover:bg-accent/90 transition-colors"
+                >
+                  교정 제출 (Ctrl+Enter)
+                </button>
+                <button
+                  onClick={cancelEdit}
+                  className="text-[12px] px-3 py-1 rounded-lg text-muted hover:text-ink transition-colors"
+                >
+                  취소 (Esc)
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* Normal display */
+            <>
+              <div className="whitespace-pre-wrap break-words">
+                {isUser ? message.text : renderTextWithLinks(message.text)}
+              </div>
+              {/* Corrected indicator */}
+              {message.corrected_text && (
+                <div className="mt-2 pt-2 border-t border-stone-100 text-[11px] text-emerald-600/70 flex items-center gap-1">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M20 6L9 17l-5-5" />
+                  </svg>
+                  교정 완료
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Edit button on hover — assistant messages only */}
+          {!isUser && !editing && hovered && onCorrection && (
+            <button
+              onClick={startEdit}
+              className="
+                absolute -top-2 -right-2
+                w-7 h-7 rounded-full bg-white border border-stone-200 shadow-sm
+                flex items-center justify-center
+                text-muted/50 hover:text-accent hover:border-accent/30
+                transition-all
+              "
+              title="수정"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+              </svg>
+            </button>
+          )}
         </div>
 
         {/* Meta info */}
@@ -89,7 +188,6 @@ export default function MessageBubble({ message }: Props) {
             )}
           </div>
         )}
-
 
         {/* Search results */}
         {!isUser && message.search_results && message.search_results.length > 0 && (

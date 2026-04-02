@@ -631,8 +631,11 @@
         return;
       }
       if (event.event === C.StreamEventType.TEXT_DELTA) {
-        const current = responseText.textContent === "아직 보낸 요청이 없습니다." ? "" : responseText.textContent;
-        responseText.textContent = `${current}${event.delta || ""}`;
+        if (!finalPayloadRef._streamStarted) {
+          finalPayloadRef._streamStarted = true;
+          responseText.textContent = "";
+        }
+        responseText.textContent += event.delta || "";
         showElement(responseCopyTextButton, true);
         return;
       }
@@ -763,7 +766,6 @@
         applyMode("chat");
         document.getElementById("user-text").value = promptText;
         startProgress("follow_up", currentProvider(), currentModel());
-        responseText.textContent = "";
         showElement(responseCopyTextButton, false);
         renderResponseOrigin(null);
         const data = await submitStreamPayload({
@@ -792,7 +794,6 @@
       if (state.isBusy) return null;
       try {
         startProgress(progressMode, currentProvider(), currentModel());
-        responseText.textContent = "";
         showElement(responseCopyTextButton, false);
         renderResponseOrigin(null);
         const data = await submitStreamPayload({
@@ -3085,7 +3086,6 @@
 
     function renderResult(data) {
       clearError();
-      clearNotice();
       if (data.session) {
         renderSession(data.session);
       }

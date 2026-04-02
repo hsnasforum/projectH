@@ -553,9 +553,15 @@ def tmux_send_keys(pane_target: str, command: str, dry_run: bool = False) -> boo
         if not input_ready:
             log.warning("pane input prompt not detected, proceeding anyway: target=%s", pane_target)
 
-        # Phase 3: use tmux set-buffer + paste-buffer for reliable long text input.
-        # send-keys -l with long text can overflow terminal line buffers or get
-        # misinterpreted by CLI paste-bracket detection.
+        # Phase 3: Write prompt to temp file, then use tmux to run
+        # `codex "prompt"` or paste+enter depending on CLI type.
+        #
+        # For Codex CLI: interactive paste often fails because the CLI's
+        # input handler doesn't consume Enter reliably after paste.
+        # Strategy: write to temp file → send `cat /tmp/prompt | xargs -0 codex`
+        # But this breaks interactive session continuity.
+        #
+        # Simpler: use set-buffer + paste-buffer + multiple Enter attempts.
         subprocess.run(
             ["tmux", "set-buffer", command],
             check=True, capture_output=True,
@@ -564,28 +570,22 @@ def tmux_send_keys(pane_target: str, command: str, dry_run: bool = False) -> boo
             ["tmux", "paste-buffer", "-t", pane_target],
             check=True, capture_output=True,
         )
-        time.sleep(1.5)
-        subprocess.run(
-            ["tmux", "send-keys", "-t", pane_target, "Enter"],
-            check=True, capture_output=True,
-        )
+        time.sleep(1.0)
 
-        # Phase 4: verify the prompt was consumed (pane should change)
-        time.sleep(2.0)
-        if _pane_has_input_cursor(pane_target):
-            log.warning("pane still shows input cursor after Enter, retrying submit")
+        # Send Enter multiple times with delays — CLI may need the buffer
+        # to fully register before Enter is interpreted as submit.
+        for attempt in range(3):
             subprocess.run(
                 ["tmux", "send-keys", "-t", pane_target, "Enter"],
                 check=True, capture_output=True,
             )
-            time.sleep(1.0)
-            if _pane_has_input_cursor(pane_target):
-                # Last resort: Ctrl+M (carriage return) which some CLIs handle differently
-                log.warning("second Enter also stuck, sending C-m as last resort")
-                subprocess.run(
-                    ["tmux", "send-keys", "-t", pane_target, "C-m"],
-                    check=True, capture_output=True,
-                )
+            time.sleep(1.5)
+            if not _pane_has_input_cursor(pane_target):
+                log.info("prompt consumed after Enter attempt %d", attempt + 1)
+                break
+            log.warning("Enter attempt %d: pane still shows input cursor", attempt + 1)
+        else:
+            log.error("all Enter attempts failed for target=%s", pane_target)
 
         return True
     except subprocess.CalledProcessError as e:

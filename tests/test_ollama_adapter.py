@@ -649,3 +649,48 @@ class OllamaAdapterTest(unittest.TestCase):
         self.assertIn("2~4", gen_sys)
         gen_contract = adapter._compact_intent_output_contract(FOLLOW_UP_INTENT_GENERAL)
         self.assertIn("2~4", gen_contract)
+
+    def test_general_postprocess_filters_metadata_and_clamps_sentences(self) -> None:
+        adapter = OllamaModelAdapter(base_url=self.base_url, model="qwen2.5:3b", timeout_seconds=5)
+        adapter._generate = lambda **kwargs: (  # type: ignore[method-assign]
+            "작성일: 2026-03-25. "
+            "로컬 파일 기반 생산성 도구를 제공합니다. "
+            "승인 기반 안전 구조를 갖추고 있습니다. "
+            "독자 모델로 확장 가능한 구조입니다. "
+            "향후 프로그램 제어도 가능합니다. "
+            "브랜드 리스크를 줄입니다."
+        )
+
+        answer = adapter.answer_with_context(
+            intent="general",
+            user_request="이 문서의 핵심이 뭔가요?",
+            context_label="demo.md",
+            source_paths=["/tmp/demo.md"],
+            context_excerpt="demo excerpt",
+            summary_hint=None,
+        )
+
+        # metadata sentence filtered
+        self.assertNotIn("작성일", answer)
+        # clamped to at most 4 sentences
+        sentences = [s.strip() for s in answer.split(". ") if s.strip()]
+        self.assertLessEqual(len(sentences), 4)
+        self.assertGreaterEqual(len(sentences), 2)
+
+    def test_general_postprocess_preserves_short_answer(self) -> None:
+        adapter = OllamaModelAdapter(base_url=self.base_url, model="qwen2.5:3b", timeout_seconds=5)
+        adapter._generate = lambda **kwargs: (  # type: ignore[method-assign]
+            "로컬 파일 기반 생산성 도구입니다. 승인 기반 안전 구조를 갖추고 있습니다."
+        )
+
+        answer = adapter.answer_with_context(
+            intent="general",
+            user_request="이 문서가 뭔가요?",
+            context_label="demo.md",
+            source_paths=["/tmp/demo.md"],
+            context_excerpt="demo excerpt",
+            summary_hint=None,
+        )
+
+        self.assertIn("로컬 파일 기반", answer)
+        self.assertIn("승인 기반", answer)

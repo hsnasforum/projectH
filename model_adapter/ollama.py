@@ -620,7 +620,19 @@ class OllamaModelAdapter(ModelAdapter):
                 context_label=context_label,
                 context_cues=context_cues,
             )
-        return raw_answer.strip()
+        return self._postprocess_general(raw_answer=raw_answer)
+
+    def _postprocess_general(self, *, raw_answer: str) -> str:
+        """Clamp general follow-up output to 2~4 sentences, filtering metadata."""
+        sentences = self._split_sentences(raw_answer)
+        filtered = [s for s in sentences if not self._looks_like_metadata(s)]
+        if not filtered:
+            filtered = sentences  # fallback: keep original if everything filtered
+        if not filtered:
+            return raw_answer.strip()
+        # Clamp to 2~4 sentences
+        clamped = filtered[:4]
+        return " ".join(clamped)
 
     def _postprocess_key_points(self, *, raw_answer: str, context_cues: dict[str, list[str]]) -> str:
         candidate_lines = self._extract_list_like_lines(raw_answer)

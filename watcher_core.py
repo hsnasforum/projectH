@@ -592,7 +592,8 @@ def tmux_send_keys(pane_target: str, command: str, dry_run: bool = False) -> boo
             subprocess.run(["tmux", "send-keys", "-t", pane_target, "/exit", "Enter"], check=False, capture_output=True)
             time.sleep(1.5)
             # Launch codex interactive with prompt from file as initial argument
-            shell_cmd = f"codex \"$(cat '{prompt_path}')\""
+            # --ask-for-approval never: prevent approval prompts from blocking/exiting
+            shell_cmd = f"codex --ask-for-approval never \"$(cat '{prompt_path}')\""
             subprocess.run(
                 ["tmux", "send-keys", "-t", pane_target, shell_cmd, "Enter"],
                 check=True, capture_output=True,

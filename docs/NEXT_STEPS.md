@@ -552,7 +552,7 @@
 
 ## Explicitly Deferred
 - OCR implementation
-- SQLite migration
+- SQLite default rollout and corrections migration (opt-in SQLite backend seam exists for session/artifact/preference/task-log, but JSON remains default and corrections store is still JSON-only)
 - proprietary model training
 - review actions implementation
 - user-level memory implementation

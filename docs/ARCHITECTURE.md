@@ -1299,10 +1299,12 @@ The next phase should standardize one `grounded brief` artifact.
 - separate `grounded brief` artifact store
 - correction / approval / preference memory store
 - OCR
-- SQLite migration
 - background automation
 - proprietary model training
 - local operator surface
+
+### Partial / Opt-In
+- SQLite backend (`storage_backend='sqlite'`): opt-in storage seam for session, artifact, preference, task-log tables. JSON backend remains default. Corrections store stays JSON-only. `storage/migrate.py` provides a JSON→SQLite migration CLI. Default rollout is deferred.
 
 ### Open Questions
 - What is the narrowest future explicit confirmation signal shape that stays candidate-linked without being mistaken for save approval?

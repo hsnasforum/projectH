@@ -239,7 +239,10 @@
 
       <!-- Panels (evidence, summary-chunks, claim-coverage, etc.) -->
       <div id="selected-box" class="panel hidden">
-        <strong class="section-title">선택된 출처</strong>
+        <div class="panel-header">
+          <strong class="section-title">선택된 출처</strong>
+          <button id="selected-copy" data-testid="selected-copy" class="copy-button subtle" type="button">경로 복사</button>
+        </div>
         <pre id="selected-text"></pre>
       </div>
 

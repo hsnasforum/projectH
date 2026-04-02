@@ -62,6 +62,7 @@
     const searchHistoryList = document.getElementById("search-history-list");
     const selectedBox = document.getElementById("selected-box");
     const selectedText = document.getElementById("selected-text");
+    const selectedCopyButton = document.getElementById("selected-copy");
     const evidenceBox = document.getElementById("evidence-box");
     const evidenceBody = document.getElementById("evidence-body");
     const evidenceHint = document.getElementById("evidence-hint");
@@ -3431,6 +3432,9 @@
     });
     responseCopyTextButton.addEventListener("click", () => {
       copyTextValue(responseText.textContent || "", "본문을 복사했습니다.").catch(renderError);
+    });
+    selectedCopyButton.addEventListener("click", () => {
+      copyTextValue(selectedText.textContent || "", "선택 경로를 복사했습니다.").catch(renderError);
     });
     responseCopySearchRecordButton.addEventListener("click", () => {
       copyTextValue(responseCopySearchRecordButton.dataset.path || "", "검색 기록 경로를 복사했습니다.").catch(renderError);

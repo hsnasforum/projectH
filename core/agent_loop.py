@@ -1017,6 +1017,8 @@ class AgentLoop:
                     f"Target length: 4~7 sentences (300~600 Korean characters) covering all {len(chunk_summaries)} search-result notes. Do not exceed 8 sentences.",
                 ]
             )
+            if len(chunk_summaries) == 2:
+                lines.append("For two-note input, 3~5 sentences (220~420 Korean characters) are acceptable.")
         else:
             lines.extend(
                 [

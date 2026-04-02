@@ -3943,6 +3943,47 @@ class SmokeTest(unittest.TestCase):
                 "search_results short_summary must contain sparse-input escape hatch with character range",
             )
 
+    def test_search_reduce_two_note_target_length_escape_hatch(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+            )
+            two_note_reduce = loop._build_chunk_summary_reduce_prompt(
+                source_label="res.txt",
+                chunk_summaries=[
+                    {"summary": "첫 번째 검색 결과 요약", "chunk_id": "c1", "index": 1, "source_path": "res.txt"},
+                    {"summary": "두 번째 검색 결과 요약", "chunk_id": "c2", "index": 2, "source_path": "res.txt"},
+                ],
+                reduce_source_type="search_results",
+            )
+            self.assertIn(
+                "For two-note input, 3~5 sentences (220~420 Korean characters) are acceptable",
+                two_note_reduce,
+                "search_results reduce prompt with 2 chunks must contain two-note escape hatch",
+            )
+            three_note_reduce = loop._build_chunk_summary_reduce_prompt(
+                source_label="res.txt",
+                chunk_summaries=[
+                    {"summary": "요약1", "chunk_id": "c1", "index": 1, "source_path": "res.txt"},
+                    {"summary": "요약2", "chunk_id": "c2", "index": 2, "source_path": "res.txt"},
+                    {"summary": "요약3", "chunk_id": "c3", "index": 3, "source_path": "res.txt"},
+                ],
+                reduce_source_type="search_results",
+            )
+            self.assertNotIn(
+                "two-note input",
+                three_note_reduce,
+                "search_results reduce prompt with 3 chunks must NOT contain two-note escape hatch",
+            )
+
     def test_long_search_summary_reduce_uses_search_result_synthesis_prompt(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

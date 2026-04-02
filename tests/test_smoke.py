@@ -4078,6 +4078,48 @@ class SmokeTest(unittest.TestCase):
                 "multi-result search reduce must NOT use single-result wording",
             )
 
+    def test_search_chunk_note_single_result_non_comparative(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+            )
+            single = loop._build_individual_chunk_summary_prompt(
+                source_label="res.txt", chunk_text="검색 결과입니다.",
+                summary_source_type="search_results", selected_result_count=1,
+            )
+            self.assertIn(
+                "Do not invent cross-result agreement or differences",
+                single,
+                "single-result search chunk_note must use non-comparative wording",
+            )
+            self.assertNotIn(
+                "meaningful differences",
+                single,
+                "single-result search chunk_note must NOT use comparative wording",
+            )
+            multi = loop._build_individual_chunk_summary_prompt(
+                source_label="res.txt", chunk_text="검색 결과입니다.",
+                summary_source_type="search_results", selected_result_count=3,
+            )
+            self.assertIn(
+                "meaningful differences",
+                multi,
+                "multi-result search chunk_note must keep comparative wording",
+            )
+            self.assertNotIn(
+                "Do not invent cross-result agreement or differences",
+                multi,
+                "multi-result search chunk_note must NOT use single-result wording",
+            )
+
     def test_long_search_summary_reduce_uses_search_result_synthesis_prompt(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

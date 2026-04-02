@@ -906,6 +906,7 @@ class AgentLoop:
         source_label: str,
         chunk_text: str,
         summary_source_type: str = "local_document",
+        selected_result_count: int | None = None,
     ) -> str:
         normalized_summary_source_type = self._normalize_summary_source_type(summary_source_type)
         excerpt_label = "Selected search-result excerpt:" if normalized_summary_source_type == "search_results" else "Document excerpt:"
@@ -915,11 +916,14 @@ class AgentLoop:
             f"Source label: {source_label}",
         ]
         if normalized_summary_source_type == "search_results":
+            is_single_result = selected_result_count == 1
             lines.extend(
                 [
                     "Write one concise Korean chunk note from the selected search-result excerpt below.",
                     "Treat it as one source-backed evidence chunk within a larger search-result synthesis.",
-                    "Prioritize source-backed facts, meaningful differences, and explicit actions or decisions visible in this excerpt.",
+                    "Prioritize the main facts, explicit actions or decisions, and the grounded takeaway visible in this excerpt. Do not invent cross-result agreement or differences."
+                    if is_single_result
+                    else "Prioritize source-backed facts, meaningful differences, and explicit actions or decisions visible in this excerpt.",
                     "Do not retell it like a narrative scene or describe the task itself.",
                     "Target length: 1~2 sentences (50~150 Korean characters). Do not exceed 3 sentences.",
                 ]
@@ -1482,6 +1486,7 @@ class AgentLoop:
                 source_label=source_label,
                 chunk_text=str(chunk.get("text") or ""),
                 summary_source_type=reduce_source_type,
+                selected_result_count=selected_result_count,
             )
             chunk_summary = self._collect_model_stream(
                 self.model.stream_summarize(chunk_summary_prompt),

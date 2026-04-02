@@ -725,8 +725,9 @@ class WatcherCore:
         self.claude_pane_target  = config.get("claude_pane_target", "ai-pipeline:0.0")
         self.claude_prompt       = config.get(
             "claude_prompt",
-            "AGENTS.md, work/README.md, .pipeline/codex_feedback.md를 읽고 "
-            "다음 작업을 진행해줘.",
+            "CLAUDE.md, AGENTS.md, verify/README.md, work/README.md, .pipeline/README.md, "
+            ".pipeline/codex_feedback.md를 읽고, STATUS가 implement일 때만 그 지시대로 한 슬라이스만 "
+            "구현해줘. STATUS가 needs_operator면 새 구현을 시작하지 말고 기다려줘.",
         )
 
         # feedback 파일 시그니처 추적 (mtime_ns + size + hash)
@@ -838,13 +839,32 @@ class WatcherCore:
         tmux_send_keys(self.claude_pane_target, self.claude_prompt, self.dry_run)
 
     # ------------------------------------------------------------------
+    def _read_feedback_status(self) -> Optional[str]:
+        """feedback 파일의 첫 STATUS: 줄을 읽어 값을 반환."""
+        try:
+            with self.feedback_path.open() as f:
+                for line in f:
+                    stripped = line.strip()
+                    if stripped.startswith("STATUS:"):
+                        return stripped.split(":", 1)[1].strip().lower()
+        except OSError:
+            return None
+        return None
+
     def _check_feedback_update(self) -> None:
-        """feedback 파일 시그니처가 바뀌면 Claude에 알림."""
+        """feedback 파일 시그니처가 바뀌면 STATUS를 확인하고 implement일 때만 Claude에 알림."""
         current_sig = self._get_feedback_sig()
         if current_sig and current_sig != self._last_feedback_sig:
             self._last_feedback_sig = current_sig
-            log.info("feedback updated: signature changed → Claude 차례")
-            self._notify_claude("feedback_updated")
+            status = self._read_feedback_status()
+            if status == "implement":
+                log.info("feedback updated: STATUS=implement → Claude 차례")
+                self._notify_claude("feedback_updated")
+            else:
+                reason = status or "missing"
+                log.info("feedback updated: STATUS=%s → Claude notify 건너뜀", reason)
+                self._log_raw("claude_notify_skipped", str(self.feedback_path),
+                              "turn_signal", {"status": reason})
 
     # ------------------------------------------------------------------
     def _log_raw(self, event: str, path: str, job_id: str,

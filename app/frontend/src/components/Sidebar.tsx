@@ -335,6 +335,20 @@ export default function Sidebar({
               />
               <span className="text-[12px] text-sidebar-muted">런타임 사전 확인 건너뛰기</span>
             </label>
+
+            {/* Dark mode */}
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={document.documentElement.classList.contains("dark")}
+                onChange={(e) => {
+                  document.documentElement.classList.toggle("dark", e.target.checked);
+                  localStorage.setItem("theme", e.target.checked ? "dark" : "light");
+                }}
+                className="w-3.5 h-3.5 rounded accent-accent"
+              />
+              <span className="text-[12px] text-sidebar-muted">다크모드</span>
+            </label>
           </div>
         )}
       </div>

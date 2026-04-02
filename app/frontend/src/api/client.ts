@@ -127,6 +127,11 @@ export interface PreferenceRecord {
   activated_at: string | null;
   created_at: string;
   updated_at: string;
+  delta_summary?: {
+    additions?: string[];
+    removals?: string[];
+    replacements?: Array<{ from: string; to: string }>;
+  };
 }
 
 export interface PreferencesPayload {

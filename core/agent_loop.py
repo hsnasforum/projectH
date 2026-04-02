@@ -87,6 +87,7 @@ class AgentResponse:
     artifact_kind: str | None = None
     original_response_snapshot: dict[str, Any] | None = None
     corrected_outcome: dict[str, Any] | None = None
+    applied_preferences: list[dict[str, str]] | None = None
     approval_reason_record: dict[str, Any] | None = None
     save_content_source: str | None = None
     search_results: list[dict[str, str]] = field(default_factory=list)
@@ -6748,7 +6749,7 @@ class AgentLoop:
                     else str(active_context.get("summary_hint") or "")
                 ),
                 evidence_items=selected_evidence,
-                active_preferences=self._routed_preferences(**_routing_kwargs),
+                active_preferences=(_ctx_prefs := self._routed_preferences(**_routing_kwargs)),
             ),
             stream_event_callback=stream_event_callback,
             cancel_requested=cancel_requested,
@@ -6786,6 +6787,7 @@ class AgentLoop:
             follow_up_suggestions=[str(prompt) for prompt in active_context.get("suggested_prompts", [])],
             evidence=selected_evidence,
             web_search_record_path=str(active_context.get("record_path") or "") or None,
+            applied_preferences=_ctx_prefs,
         )
 
     def _emit_phase(
@@ -8508,14 +8510,16 @@ class AgentLoop:
             detail="일반 질문에 대한 응답을 생성하는 중입니다.",
             note="선택된 문맥이 없으면 일반 대화 응답으로 처리합니다.",
         )
+        _prefs = self._routed_preferences(task="respond")
         return AgentResponse(
             text=self._collect_model_stream(
-                self.model.stream_respond(request.user_text, active_preferences=self._routed_preferences(task="respond")),
+                self.model.stream_respond(request.user_text, active_preferences=_prefs),
                 stream_event_callback=stream_event_callback,
                 cancel_requested=cancel_requested,
             ),
             status=ResponseStatus.ANSWER,
             actions_taken=["respond"],
+            applied_preferences=_prefs,
         )
 
     def _dispatch_request(

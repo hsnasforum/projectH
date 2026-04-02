@@ -25,6 +25,7 @@ export interface Message {
   source_type_label?: string;
   source_filename_label?: string;
   search_results?: SearchResult[];
+  applied_preferences?: { description: string; fingerprint: string }[];
 }
 
 export interface ResponseOrigin {

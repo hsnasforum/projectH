@@ -209,6 +209,7 @@ export function useChat(settings: AppSettings) {
               artifact_id: resp.artifact_id,
               artifact_kind: resp.artifact_kind,
               search_results: resp.search_results,
+              applied_preferences: resp.applied_preferences,
             };
             updateState(targetSid, {
               messages: [...getState(targetSid).messages, assistantMsg],

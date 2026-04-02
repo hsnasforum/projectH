@@ -1800,6 +1800,7 @@ class WebAppService:
             "active_context": self._serialize_active_context(response.active_context),
             "follow_up_suggestions": [localize_text(str(item)) for item in response.follow_up_suggestions],
             "response_origin": self._serialize_response_origin(response.response_origin),
+            "applied_preferences": response.applied_preferences,
             "evidence": self._serialize_evidence(response.evidence),
             "summary_chunks": self._serialize_summary_chunks(response.summary_chunks),
             "original_response_snapshot": self._serialize_original_response_snapshot(response.original_response_snapshot),

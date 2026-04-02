@@ -995,11 +995,13 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _determine_initial_turn(self) -> str:
         """
-        시작 시 턴 판단 — work/ vs verify/ 최신 .md 날짜 비교:
-          - work가 더 최신 → Codex 차례 (Claude가 작업 완료, 검증 필요)
-          - verify가 더 최신 → Claude 차례 (Codex가 검증 완료, 구현 필요)
-          - 둘 다 없음 → Codex 차례 (초기 상태, 검증부터)
+        시작 시 턴 판단 — feedback.md vs work/*.md mtime 비교:
+          - feedback가 더 최신 → Claude 차례 (Codex가 마지막으로 작업한 것)
+          - work가 더 최신 → Codex 차례 (Claude가 마지막으로 작업한 것)
+          - 둘 다 없음 → Claude 차례 (초기 상태)
         """
+        feedback_mtime = self._get_feedback_mtime()
+
         work_mtime = 0.0
         for md in self.watch_dir.rglob("*.md"):
             try:
@@ -1009,22 +1011,11 @@ class WatcherCore:
             except OSError:
                 continue
 
-        verify_dir = self.watch_dir.parent / "verify"
-        verify_mtime = 0.0
-        if verify_dir.is_dir():
-            for md in verify_dir.rglob("*.md"):
-                try:
-                    mt = md.stat().st_mtime
-                    if mt > verify_mtime:
-                        verify_mtime = mt
-                except OSError:
-                    continue
-
-        if work_mtime == 0.0 and verify_mtime == 0.0:
-            return "codex"   # 초기 상태 → 검증부터
-        if work_mtime > verify_mtime:
-            return "codex"   # work가 최신 → Codex 차례 (검증 필요)
-        return "claude"      # verify가 최신 → Claude 차례 (구현 필요)
+        if feedback_mtime == 0.0 and work_mtime == 0.0:
+            return "claude"  # 초기 상태
+        if feedback_mtime >= work_mtime:
+            return "claude"  # Codex가 마지막 → Claude 차례
+        return "codex"       # Claude가 마지막 → Codex 차례
 
     # ------------------------------------------------------------------
     def _notify_claude(self, reason: str) -> None:

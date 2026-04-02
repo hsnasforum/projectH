@@ -474,22 +474,106 @@ class ManifestCollector:
 # ---------------------------------------------------------------------------
 # tmux 전송 헬퍼
 # ---------------------------------------------------------------------------
+def _capture_pane_text(pane_target: str) -> str:
+    try:
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-pt", pane_target],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout
+    except subprocess.CalledProcessError:
+        return ""
+
+
+def wait_for_pane_settle(
+    pane_target: str,
+    timeout_sec: float = 12.0,
+    quiet_sec: float = 1.0,
+    poll_sec: float = 0.25,
+) -> bool:
+    """
+    pane 출력이 잠잠해질 때까지 기다린다.
+    fresh CLI lane에서 startup 로그나 MCP 초기화 출력이 계속 나오는 동안
+    첫 handoff를 보내면 텍스트만 남고 submit이 누락될 수 있다.
+    """
+    deadline = time.time() + timeout_sec
+    last_snapshot = None
+    last_change_at = time.time()
+
+    while time.time() < deadline:
+        snapshot = _capture_pane_text(pane_target)
+        if snapshot != last_snapshot:
+            last_snapshot = snapshot
+            last_change_at = time.time()
+        elif time.time() - last_change_at >= quiet_sec:
+            return True
+        time.sleep(poll_sec)
+    return False
+
+
+def _pane_has_input_cursor(pane_target: str) -> bool:
+    """Check if the pane shows an input prompt (> or $) on the last non-empty line."""
+    text = _capture_pane_text(pane_target)
+    lines = [l for l in text.strip().splitlines() if l.strip()]
+    if not lines:
+        return False
+    last = lines[-1].strip()
+    # Codex shows "> " prompt, Claude shows "> " or "$"
+    return last.endswith(">") or last.endswith("$") or "> " in last
+
+
+def _wait_for_input_ready(
+    pane_target: str,
+    timeout_sec: float = 30.0,
+    poll_sec: float = 1.0,
+) -> bool:
+    """Wait until the pane shows an input prompt, meaning the CLI is ready."""
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        if _pane_has_input_cursor(pane_target):
+            return True
+        time.sleep(poll_sec)
+    return False
+
+
 def tmux_send_keys(pane_target: str, command: str, dry_run: bool = False) -> bool:
     log.info("send-keys target=%s dry_run=%s", pane_target, dry_run)
     if dry_run:
         return True
     try:
-        # baseline과 동일하게: 텍스트 먼저, 잠깐 대기, Enter 따로
+        # Phase 1: wait for pane output to settle (stop changing)
+        settled = wait_for_pane_settle(pane_target)
+        if not settled:
+            log.warning("pane did not fully settle before dispatch: target=%s", pane_target)
+
+        # Phase 2: wait for input prompt to appear (CLI ready for input)
+        input_ready = _wait_for_input_ready(pane_target, timeout_sec=30.0)
+        if not input_ready:
+            log.warning("pane input prompt not detected, proceeding anyway: target=%s", pane_target)
+
+        # Phase 3: literal paste + delay + Enter
         subprocess.run(
-            ["tmux", "send-keys", "-t", pane_target, command, ""],
+            ["tmux", "send-keys", "-t", pane_target, "-l", command],
             check=True, capture_output=True,
         )
-        import time as _time
-        _time.sleep(0.5)
+        time.sleep(2.0)  # longer delay for CLI to register the pasted text
         subprocess.run(
-            ["tmux", "send-keys", "-t", pane_target, "", "Enter"],
+            ["tmux", "send-keys", "-t", pane_target, "Enter"],
             check=True, capture_output=True,
         )
+
+        # Phase 4: verify the prompt was consumed (pane should change)
+        time.sleep(1.5)
+        if _pane_has_input_cursor(pane_target):
+            # Still showing input prompt = Enter may not have been consumed
+            log.warning("pane still shows input cursor after Enter, sending retry Enter")
+            subprocess.run(
+                ["tmux", "send-keys", "-t", pane_target, "Enter"],
+                check=True, capture_output=True,
+            )
+
         return True
     except subprocess.CalledProcessError as e:
         log.error("send-keys failed: %s", e.stderr.decode().strip())
@@ -719,6 +803,8 @@ class WatcherCore:
 
         self.poll_interval = config.get("poll_interval", 1.0)
         self.dry_run       = config.get("dry_run", False)
+        self.startup_grace_sec = float(config.get("startup_grace_sec", 8.0))
+        self.started_at = time.time()
 
         # feedback 파일 경로 및 Claude pane 타겟
         self.feedback_path       = base / "codex_feedback.md"
@@ -904,9 +990,9 @@ class WatcherCore:
     def run(self) -> None:
         log.info(
             "WatcherCore v2.1 started  watch_dir=%s  dry_run=%s  poll=%.1fs  "
-            "jsonschema=%s  claude_pane=%s",
+            "startup_grace=%.1fs  jsonschema=%s  claude_pane=%s",
             self.watch_dir, self.dry_run, self.poll_interval,
-            _JSONSCHEMA_AVAILABLE, self.claude_pane_target,
+            self.startup_grace_sec, _JSONSCHEMA_AVAILABLE, self.claude_pane_target,
         )
         last_report_at = time.time()
         report_interval_sec = 60.0
@@ -945,6 +1031,13 @@ class WatcherCore:
     def _poll(self) -> None:
         if not self.watch_dir.exists():
             return
+
+        # 새 tmux lane이 막 떠 있는 동안 초기 dispatch가 삼켜지지 않도록
+        # startup grace가 끝날 때까지 초기 turn 판정을 보류한다.
+        if not self._initial_turn_checked:
+            elapsed = time.time() - self.started_at
+            if elapsed < self.startup_grace_sec:
+                return
 
         # --- 시작 시 1회: 턴 판단 ---
         if not self._initial_turn_checked:
@@ -1046,6 +1139,7 @@ def main() -> None:
     parser.add_argument("--dry-run",              action="store_true")
     parser.add_argument("--poll",                 type=float, default=1.0)
     parser.add_argument("--settle",               type=float, default=3.0)
+    parser.add_argument("--startup-grace",        type=float, default=8.0)
     parser.add_argument("--lease-ttl",            type=int,   default=900)
     parser.add_argument("--verify-prompt",         default="",
                         help="Codex pane에 보낼 프롬프트 (기본: 내부 job ID 형식)")
@@ -1061,6 +1155,7 @@ def main() -> None:
         "dry_run":            args.dry_run,
         "poll_interval":      args.poll,
         "settle_sec":         args.settle,
+        "startup_grace_sec":  args.startup_grace,
         "lease_ttl":          args.lease_ttl,
     }
     if args.verify_prompt:

@@ -1312,7 +1312,13 @@ class OllamaModelAdapter(ModelAdapter):
 
 
 class _ModelOverrideContext:
-    """Temporarily override the active model on an OllamaModelAdapter."""
+    """Temporarily override the active model on an OllamaModelAdapter.
+
+    Thread safety: This context manager mutates adapter._active_model directly.
+    It is safe ONLY when each request creates its own adapter instance (current
+    behavior in web.py via build_model_adapter). Do NOT use with shared/singleton
+    adapters across threads.
+    """
 
     def __init__(self, adapter: OllamaModelAdapter, model: str) -> None:
         self._adapter = adapter

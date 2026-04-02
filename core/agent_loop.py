@@ -953,6 +953,7 @@ class AgentLoop:
         source_label: str,
         text: str,
         summary_source_type: str = "local_document",
+        selected_result_count: int | None = None,
     ) -> str:
         normalized_summary_source_type = self._normalize_summary_source_type(summary_source_type)
         excerpt_label = "Selected search-result text:" if normalized_summary_source_type == "search_results" else "Document text:"
@@ -962,11 +963,14 @@ class AgentLoop:
             f"Source label: {source_label}",
         ]
         if normalized_summary_source_type == "search_results":
+            is_single_result = selected_result_count == 1
             lines.extend(
                 [
                     "Write one concise Korean synthesis from the selected search-result text below.",
                     "Treat it as a summary of selected local search results, not as one narrative document.",
-                    "Prioritize shared facts, meaningful differences, explicit actions or decisions, and the grounded conclusion supported by the selected results.",
+                    "Prioritize the main facts, explicit actions or decisions, and the grounded conclusion from the selected result. Do not invent cross-result agreement or differences."
+                    if is_single_result
+                    else "Prioritize shared facts, meaningful differences, explicit actions or decisions, and the grounded conclusion supported by the selected results.",
                     "Do not retell it like a narrative scene or describe the task itself.",
                     "Target length: 3~5 sentences (200~400 Korean characters). For sparse or single-result input, 2~3 sentences (120~250 Korean characters) are acceptable. Do not exceed 6 sentences.",
                 ]
@@ -1000,6 +1004,7 @@ class AgentLoop:
         source_label: str,
         chunk_summaries: list[dict[str, Any]],
         reduce_source_type: str = "local_document",
+        selected_result_count: int | None = None,
     ) -> str:
         normalized_reduce_source_type = self._normalize_summary_source_type(reduce_source_type)
         lines = [
@@ -1008,10 +1013,13 @@ class AgentLoop:
             f"Source label: {source_label}",
         ]
         if normalized_reduce_source_type == "search_results":
+            is_single_result = selected_result_count == 1
             lines.extend(
                 [
                     "Write one concise Korean synthesis from the selected search-result notes below.",
-                    "Prioritize shared facts, meaningful differences, key actions or decisions, and the grounded conclusion across the selected results.",
+                    "Prioritize the main facts, explicit actions or decisions, and the grounded conclusion across the notes from the selected result. Do not invent cross-result agreement or differences."
+                    if is_single_result
+                    else "Prioritize shared facts, meaningful differences, key actions or decisions, and the grounded conclusion across the selected results.",
                     "Treat the notes as source-backed search findings, not as scenes in a narrative.",
                     "Prefer source-backed synthesis over vivid wording or isolated lines.",
                     f"Target length: 4~7 sentences (300~600 Korean characters) covering all {len(chunk_summaries)} search-result notes. Do not exceed 8 sentences.",
@@ -1419,6 +1427,7 @@ class AgentLoop:
         source_label: str,
         source_path: str | None = None,
         reduce_source_type: str = "local_document",
+        selected_result_count: int | None = None,
         stream_event_callback: Callable[[dict[str, Any]], None] | None = None,
         phase_event_callback: Callable[[dict[str, Any]], None] | None = None,
         cancel_requested: Callable[[], bool] | None = None,
@@ -1429,6 +1438,7 @@ class AgentLoop:
                 source_label=source_label,
                 text=text,
                 summary_source_type=reduce_source_type,
+                selected_result_count=selected_result_count,
             )
             return (
                 self._collect_model_stream(
@@ -1446,6 +1456,7 @@ class AgentLoop:
                 source_label=source_label,
                 text=text,
                 summary_source_type=reduce_source_type,
+                selected_result_count=selected_result_count,
             )
             return (
                 self._collect_model_stream(
@@ -1507,6 +1518,7 @@ class AgentLoop:
             source_label=source_label,
             chunk_summaries=chunk_summaries,
             reduce_source_type=reduce_source_type,
+            selected_result_count=selected_result_count,
         )
         final_summary = ""
         if reduce_prompt:
@@ -6834,6 +6846,7 @@ class AgentLoop:
             source_label=f"'{search_query}' 검색 결과",
             source_path=f"'{search_query}' 검색 결과",
             reduce_source_type="search_results",
+            selected_result_count=len(selected_results),
             stream_event_callback=stream_event_callback,
             phase_event_callback=phase_event_callback,
             cancel_requested=cancel_requested,

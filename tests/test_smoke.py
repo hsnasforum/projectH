@@ -3914,10 +3914,14 @@ class SmokeTest(unittest.TestCase):
                 chunk_summaries=[{"summary": "요약", "chunk_id": "c1", "index": 1, "source_path": "res.txt"}],
                 reduce_source_type="search_results",
             )
+            # local_document: all three prompts must have Target length guidance
             for label, prompt in [("local_chunk", local_chunk), ("local_short", local_short), ("local_reduce", local_reduce)]:
                 self.assertIn("Target length:", prompt, f"{label} must contain Target length guidance")
-            for label, prompt in [("search_chunk", search_chunk), ("search_short", search_short), ("search_reduce", search_reduce)]:
-                self.assertNotIn("Target length:", prompt, f"{label} must NOT contain Target length guidance")
+            # search_results: final summary prompts (short_summary, merged_chunk_outline) now have Target length guidance
+            for label, prompt in [("search_short", search_short), ("search_reduce", search_reduce)]:
+                self.assertIn("Target length:", prompt, f"{label} must contain Target length guidance")
+            # search_results: chunk-note prompt stays without Target length guidance (not this slice)
+            self.assertNotIn("Target length:", search_chunk, "search_chunk must NOT contain Target length guidance")
 
     def test_long_search_summary_reduce_uses_search_result_synthesis_prompt(self) -> None:
         with TemporaryDirectory() as tmp_dir:

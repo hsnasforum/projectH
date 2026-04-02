@@ -967,6 +967,7 @@ class AgentLoop:
                     "Treat it as a summary of selected local search results, not as one narrative document.",
                     "Prioritize shared facts, meaningful differences, explicit actions or decisions, and the grounded conclusion supported by the selected results.",
                     "Do not retell it like a narrative scene or describe the task itself.",
+                    "Target length: 3~5 sentences (200~400 Korean characters). Do not exceed 6 sentences.",
                 ]
             )
         else:
@@ -1012,6 +1013,7 @@ class AgentLoop:
                     "Prioritize shared facts, meaningful differences, key actions or decisions, and the grounded conclusion across the selected results.",
                     "Treat the notes as source-backed search findings, not as scenes in a narrative.",
                     "Prefer source-backed synthesis over vivid wording or isolated lines.",
+                    f"Target length: 4~7 sentences (300~600 Korean characters) covering all {len(chunk_summaries)} search-result notes. Do not exceed 8 sentences.",
                 ]
             )
         else:

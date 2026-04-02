@@ -41,6 +41,7 @@ export default function MessageBubble({ message, onCorrection, onFeedback }: Pro
   const [hovered, setHovered] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState("");
+  const [showDiff, setShowDiff] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -133,13 +134,30 @@ export default function MessageBubble({ message, onCorrection, onFeedback }: Pro
               <div className="whitespace-pre-wrap break-words">
                 {isUser ? message.text : renderTextWithLinks(message.text)}
               </div>
-              {/* Corrected indicator */}
+              {/* Corrected indicator + diff toggle */}
               {message.corrected_text && (
-                <div className="mt-2 pt-2 border-t border-stone-100 text-[11px] text-emerald-600/70 flex items-center gap-1">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M20 6L9 17l-5-5" />
-                  </svg>
-                  교정 완료
+                <div className="mt-2 pt-2 border-t border-stone-100">
+                  <button
+                    onClick={() => setShowDiff(!showDiff)}
+                    className="text-[11px] text-emerald-600/70 flex items-center gap-1 hover:text-emerald-700 transition-colors"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M20 6L9 17l-5-5" />
+                    </svg>
+                    교정 완료 {showDiff ? "▲" : "▼"}
+                  </button>
+                  {showDiff && (
+                    <div className="mt-2 space-y-2 text-[12px]">
+                      <div className="bg-red-50/50 border border-red-100 rounded-lg px-3 py-2">
+                        <span className="text-[10px] font-medium text-red-400 uppercase">원본</span>
+                        <p className="mt-1 text-red-700/60 line-through whitespace-pre-wrap">{message.text}</p>
+                      </div>
+                      <div className="bg-emerald-50/50 border border-emerald-100 rounded-lg px-3 py-2">
+                        <span className="text-[10px] font-medium text-emerald-500 uppercase">수정</span>
+                        <p className="mt-1 text-emerald-800/70 whitespace-pre-wrap">{message.corrected_text}</p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </>

@@ -131,6 +131,8 @@ class OllamaModelAdapter(ModelAdapter):
         "Keep answers concise, grounded, and safe for file-based productivity workflows. "
         "If the user asks about a real-world person, channel, brand, product, company, or other external fact without giving a supporting source, "
         "do not guess. State that you cannot verify it from the current local context and ask for a local document or source text. "
+        "When evidence exists but is not cross-verified or comes from a single source, use hedging expressions such as "
+        "'~로 알려져 있습니다', '~한 것으로 보입니다', or '~일 가능성이 있습니다' instead of stating it as confirmed fact. "
         "Never claim personal experiences such as having watched, read, visited, used, or tried something yourself."
     )
 

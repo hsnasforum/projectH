@@ -591,3 +591,15 @@ class OllamaAdapterTest(unittest.TestCase):
 
         self.assertIn("timed out after 12 seconds", str(context.exception))
         self.assertIn("LOCAL_AI_OLLAMA_TIMEOUT_SECONDS", str(context.exception))
+
+    def test_full_system_respond_contains_hedging_instruction(self) -> None:
+        adapter = OllamaModelAdapter(base_url=self.base_url, model="qwen2.5:14b", timeout_seconds=5)
+        prompt = adapter._FULL_SYSTEM_RESPOND
+        self.assertIn("hedging expressions", prompt)
+        self.assertIn("알려져 있습니다", prompt)
+        self.assertIn("confirmed fact", prompt)
+
+    def test_compact_system_respond_contains_hedging_instruction(self) -> None:
+        adapter = OllamaModelAdapter(base_url=self.base_url, model="qwen2.5:3b", timeout_seconds=5)
+        prompt = adapter._COMPACT_SYSTEM_RESPOND
+        self.assertIn("유보적 표현", prompt)

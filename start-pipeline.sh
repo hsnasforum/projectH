@@ -91,6 +91,10 @@ echo -e "${GREEN}[2/4] tmux 세션 생성 중...${NC}"
 
 tmux new-session -d -s "$SESSION"
 
+# Prevent tmux from killing session when panes exit
+tmux set-option -t "$SESSION" remain-on-exit on
+tmux set-option -t "$SESSION" destroy-unattached off
+
 # Capture pane IDs for reliable targeting (pane index can shift)
 CLAUDE_PANE=$(tmux display-message -t "$SESSION:0.0" -p '#{pane_id}')
 tmux split-window -h -t "$SESSION:0"

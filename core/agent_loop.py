@@ -968,7 +968,7 @@ class AgentLoop:
                     "Treat it as a summary of selected local search results, not as one narrative document.",
                     "Prioritize shared facts, meaningful differences, explicit actions or decisions, and the grounded conclusion supported by the selected results.",
                     "Do not retell it like a narrative scene or describe the task itself.",
-                    "Target length: 3~5 sentences (200~400 Korean characters). For sparse or single-result input, 2~3 sentences are acceptable. Do not exceed 6 sentences.",
+                    "Target length: 3~5 sentences (200~400 Korean characters). For sparse or single-result input, 2~3 sentences (120~250 Korean characters) are acceptable. Do not exceed 6 sentences.",
                 ]
             )
         else:

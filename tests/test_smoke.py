@@ -3938,9 +3938,9 @@ class SmokeTest(unittest.TestCase):
                 source_label="res.txt", text="결과입니다.", summary_source_type="search_results",
             )
             self.assertIn(
-                "For sparse or single-result input, 2~3 sentences are acceptable",
+                "For sparse or single-result input, 2~3 sentences (120~250 Korean characters) are acceptable",
                 search_short,
-                "search_results short_summary must contain sparse-input escape hatch",
+                "search_results short_summary must contain sparse-input escape hatch with character range",
             )
 
     def test_long_search_summary_reduce_uses_search_result_synthesis_prompt(self) -> None:

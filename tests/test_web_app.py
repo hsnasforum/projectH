@@ -9215,10 +9215,10 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(payload["ok"])
             text = payload["response"]["text"]
             # weak slot (단일 출처)과 missing slot이 별도 섹션으로 분리
-            self.assertIn("단일 출처 정보 (교차 확인 필요):", text)
+            self.assertIn("단일 출처 정보 (교차 확인 부족, 추가 확인 필요):", text)
             self.assertIn("확인되지 않은 항목:", text)
             # weak slot은 "단일 출처" 문구 포함
-            uncertain_start = text.index("단일 출처 정보 (교차 확인 필요):")
+            uncertain_start = text.index("단일 출처 정보 (교차 확인 부족, 추가 확인 필요):")
             needs_check_start = text.index("확인되지 않은 항목:")
             uncertain_section = text[uncertain_start:needs_check_start]
             self.assertIn("단일 출처", uncertain_section)
@@ -9279,9 +9279,9 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
             text = second["response"]["text"]
             # weak/missing 섹션 분리 유지
-            self.assertIn("단일 출처 정보 (교차 확인 필요):", text)
+            self.assertIn("단일 출처 정보 (교차 확인 부족, 추가 확인 필요):", text)
             self.assertIn("확인되지 않은 항목:", text)
-            uncertain_start = text.index("단일 출처 정보 (교차 확인 필요):")
+            uncertain_start = text.index("단일 출처 정보 (교차 확인 부족, 추가 확인 필요):")
             needs_check_start = text.index("확인되지 않은 항목:")
             self.assertIn("단일 출처", text[uncertain_start:needs_check_start])
             self.assertIn("교차 확인 가능한 근거를 찾지 못했습니다", text[needs_check_start:])
@@ -9341,9 +9341,9 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(second["ok"])
             self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
             text = second["response"]["text"]
-            self.assertIn("단일 출처 정보 (교차 확인 필요):", text)
+            self.assertIn("단일 출처 정보 (교차 확인 부족, 추가 확인 필요):", text)
             self.assertIn("확인되지 않은 항목:", text)
-            uncertain_start = text.index("단일 출처 정보 (교차 확인 필요):")
+            uncertain_start = text.index("단일 출처 정보 (교차 확인 부족, 추가 확인 필요):")
             needs_check_start = text.index("확인되지 않은 항목:")
             self.assertIn("단일 출처", text[uncertain_start:needs_check_start])
             self.assertIn("교차 확인 가능한 근거를 찾지 못했습니다", text[needs_check_start:])

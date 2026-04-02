@@ -40,11 +40,13 @@ export default function Sidebar({
   onDeleteAll,
   onSettingsChange,
 }: Props) {
-  // Sort: most recently updated first
-  const sortedSessions = [...sessions].sort(
-    (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-  );
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Sort: most recently updated first, then filter by search
+  const sortedSessions = [...sessions]
+    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+    .filter((s) => !searchQuery || s.title.toLowerCase().includes(searchQuery.toLowerCase()));
 
   const update = (patch: Partial<AppSettings>) =>
     onSettingsChange({ ...settings, ...patch });
@@ -96,6 +98,22 @@ export default function Sidebar({
             </button>
           )}
         </div>
+        {sessions.length > 3 && (
+          <div className="px-1 pb-2">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="세션 검색..."
+              className="
+                w-full bg-sidebar-hover/50 border border-white/5 rounded-lg
+                text-[12px] text-sidebar-text px-2.5 py-1.5 outline-none
+                placeholder:text-sidebar-muted/40
+                focus:border-white/15 transition-colors
+              "
+            />
+          </div>
+        )}
         <div className="space-y-0.5">
           {sortedSessions.map((s) => (
             <div

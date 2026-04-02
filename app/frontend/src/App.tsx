@@ -1,6 +1,8 @@
 import { useState, useCallback } from "react";
 import Sidebar from "./components/Sidebar";
 import ChatArea from "./components/ChatArea";
+import Toast from "./components/Toast";
+import type { ToastItem } from "./components/Toast";
 import { useChat } from "./hooks/useChat";
 import { postCorrection, postFeedback } from "./api/client";
 import { DEFAULT_SETTINGS } from "./types";
@@ -9,19 +11,38 @@ import type { AppSettings } from "./types";
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
   const chat = useChat(settings);
 
   const toggleSidebar = useCallback(() => setSidebarOpen((v) => !v), []);
 
+  const addToast = useCallback((type: ToastItem["type"], message: string) => {
+    const id = `toast-${Date.now()}`;
+    setToasts((prev) => [...prev, { id, type, message }]);
+  }, []);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
   const handleCorrection = useCallback(async (messageId: string, correctedText: string) => {
-    await postCorrection(chat.sessionId, messageId, correctedText);
-    await chat.loadSession(chat.sessionId);
-  }, [chat.sessionId, chat.loadSession]);
+    try {
+      await postCorrection(chat.sessionId, messageId, correctedText);
+      await chat.loadSession(chat.sessionId);
+      addToast("success", "교정이 제출되었습니다.");
+    } catch {
+      addToast("error", "교정 제출에 실패했습니다.");
+    }
+  }, [chat.sessionId, chat.loadSession, addToast]);
 
   const handleFeedback = useCallback(async (messageId: string, label: string) => {
-    await postFeedback(chat.sessionId, messageId, label);
-    await chat.loadSession(chat.sessionId);
-  }, [chat.sessionId, chat.loadSession]);
+    try {
+      await postFeedback(chat.sessionId, messageId, label);
+      await chat.loadSession(chat.sessionId);
+    } catch {
+      addToast("error", "피드백 제출에 실패했습니다.");
+    }
+  }, [chat.sessionId, chat.loadSession, addToast]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-warm-50">
@@ -96,6 +117,9 @@ export default function App() {
         sessionTitle={chat.sessionTitle}
         reviewQueueCount={chat.reviewQueueCount}
       />
+
+      {/* Error/success toasts — bottom right */}
+      <Toast toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

@@ -3386,7 +3386,7 @@
       copyTextValue(responseCopyPathButton.dataset.path || "", "저장 경로를 복사했습니다.").catch(renderError);
     });
     responseCopyTextButton.addEventListener("click", () => {
-      copyTextValue(responseText.textContent || "", "응답 텍스트를 복사했습니다.").catch(renderError);
+      copyTextValue(responseText.textContent || "", "본문을 복사했습니다.").catch(renderError);
     });
     responseCopySearchRecordButton.addEventListener("click", () => {
       copyTextValue(responseCopySearchRecordButton.dataset.path || "", "검색 기록 경로를 복사했습니다.").catch(renderError);

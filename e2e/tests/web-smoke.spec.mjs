@@ -159,7 +159,7 @@ test("파일 요약 후 근거와 요약 구간이 보입니다", async ({ page 
 
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.getByTestId("response-copy-text").click();
-  await expect(page.locator("#notice-box")).toContainText("응답 텍스트를 복사했습니다.");
+  await expect(page.locator("#notice-box")).toContainText("본문을 복사했습니다.");
   const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
   expect(clipboardText).toContain(middleSignal);
 });

@@ -694,3 +694,50 @@ class OllamaAdapterTest(unittest.TestCase):
 
         self.assertIn("로컬 파일 기반", answer)
         self.assertIn("승인 기반", answer)
+
+    def test_stream_general_follow_up_clamps_via_text_replace(self) -> None:
+        """Streaming general follow-up must emit text_replace with metadata filtered and ≤4 sentences."""
+        adapter = OllamaModelAdapter(base_url=self.base_url, model="qwen2.5:3b", timeout_seconds=5)
+
+        raw_body = (
+            "작성일: 2026-04-01. "
+            "로컬 파일 기반 생산성 도구를 제공합니다. "
+            "승인 기반 안전 구조를 갖추고 있습니다. "
+            "독자 모델로 확장 가능한 구조입니다. "
+            "향후 프로그램 제어도 가능합니다. "
+            "브랜드 리스크를 줄입니다."
+        )
+
+        def fake_iter_generate_raw(*, prompt: str, system: str):
+            # Yield Korean text in two chunks so _stream_generate doesn't trigger Korean rewrite
+            mid = len(raw_body) // 2
+            yield raw_body[:mid]
+            yield raw_body[mid:]
+
+        adapter._iter_generate_raw = fake_iter_generate_raw  # type: ignore[method-assign]
+
+        events = list(adapter.stream_answer_with_context(
+            intent="general",
+            user_request="이 문서의 핵심이 뭔가요?",
+            context_label="demo.md",
+            source_paths=["/tmp/demo.md"],
+            context_excerpt="demo excerpt",
+            summary_hint=None,
+        ))
+
+        # Track final accumulated text through all events
+        final_text = ""
+        for event in events:
+            final_text = adapter._apply_stream_event(final_text, event)
+
+        # Must have emitted at least one text_replace event for the clamp
+        text_replace_events = [e for e in events if e.kind == "text_replace"]
+        self.assertTrue(len(text_replace_events) >= 1, "Expected text_replace event for clamp")
+
+        # Metadata sentence must be filtered out
+        self.assertNotIn("작성일", final_text)
+
+        # Final text must be clamped to at most 4 sentences
+        sentences = [s.strip() for s in final_text.split(". ") if s.strip()]
+        self.assertLessEqual(len(sentences), 4)
+        self.assertGreaterEqual(len(sentences), 2)

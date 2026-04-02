@@ -1381,11 +1381,10 @@ class SmokeTest(unittest.TestCase):
 
             self.assertEqual(response.actions_taken, ["web_search"])
             self.assertTrue("한 줄 정의:" in response.text or "한 줄 정의 (교차 확인 부족):" in response.text)
-            self.assertEqual(response.actions_taken, ["web_search"])
-            self.assertTrue("한 줄 정의:" in response.text or "한 줄 정의 (교차 확인 부족):" in response.text)
             self.assertIn("단일 출처 정보 (교차 확인 부족, 추가 확인 필요):", response.text)
             self.assertIn("확인되지 않은 항목:", response.text)
-            self.assertIn("개발: 펄어비스", response.text)
+            # Exact qualifier wording for trusted single-source claims
+            self.assertIn("개발: 펄어비스 (단일 출처, 백과 기반, 확정 표현 주의)", response.text)
             self.assertIn("서비스/배급: 교차 확인 가능한 근거를 찾지 못했습니다.", response.text)
             self.assertIn("이용 형태: 교차 확인 가능한 근거를 찾지 못했습니다.", response.text)
             self.assertGreaterEqual(len(response.claim_coverage), 5)
@@ -2020,6 +2019,41 @@ class SmokeTest(unittest.TestCase):
             self.assertIn("https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=777", response.text)
             self.assertNotIn("https://blog.example.com/crimson-desert-review", response.text)
             self.assertNotIn("생존 제작 RPG", response.text)
+
+    def test_entity_card_community_weak_claim_shows_확정_금지_qualifier(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": _FakeWebSearchTool(
+                        [
+                            SimpleNamespace(
+                                title="붉은사막 후기 블로그",
+                                url="https://blog.example.com/crimson-desert",
+                                snippet="붉은사막은 생존 제작 RPG로 블로그에서 소개되고 있다. 개발사는 펄어비스다.",
+                            ),
+                        ]
+                    ),
+                },
+                notes_dir=str(tmp_path / "notes"),
+                web_search_store=WebSearchStore(base_dir=str(tmp_path / "web-search")),
+            )
+            response = loop.handle(
+                UserRequest(
+                    user_text="붉은사막에 대해 알려줘",
+                    session_id="community-qualifier-session",
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+            # Community-source weak claims must show "확정 금지" qualifier
+            if "단일 출처 정보" in response.text:
+                self.assertIn("비공식 출처, 확정 금지", response.text)
+                self.assertNotIn("확정 표현 주의", response.text)
 
     def test_web_search_entity_summary_avoids_single_source_feature_when_core_facts_agree(self) -> None:
         with TemporaryDirectory() as tmp_dir:

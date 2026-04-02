@@ -762,17 +762,31 @@ class StateMachine:
                 job.save(self.state_dir)
                 return job
 
-            # lease 타임아웃 체크
+            # Activity-based timeout: only timeout if pane output hasn't changed.
+            # If pane is still producing output, the task is still running.
             elapsed = time.time() - job.last_dispatch_at
-            if elapsed > self.lease.default_ttl:
-                log.warning("verify timeout: job=%s elapsed=%.0fs", job.job_id, elapsed)
-                job.verify_result = "timeout"
-                job.verify_completed_at = time.time()
-                self.lease.release("slot_verify")
-                job.transition(JobStatus.VERIFY_DONE,
-                               f"timeout after {elapsed:.0f}s")
-                job.save(self.state_dir)
-                return job
+            pane_target = getattr(job, '_pane_target', None) or self.verify_pane_target
+            current_pane = _capture_pane_text(pane_target)
+            last_snapshot = getattr(job, '_last_pane_snapshot', None)
+            last_activity = getattr(job, '_last_activity_at', job.last_dispatch_at)
+
+            if current_pane != last_snapshot:
+                # Pane changed — task is still active, reset activity timer
+                job._last_pane_snapshot = current_pane  # type: ignore[attr-defined]
+                job._last_activity_at = time.time()  # type: ignore[attr-defined]
+            else:
+                # Pane unchanged — check idle timeout (5 min idle = timeout)
+                idle_sec = time.time() - last_activity
+                if idle_sec > 300:
+                    log.warning("verify idle timeout: job=%s idle=%.0fs total=%.0fs",
+                                job.job_id, idle_sec, elapsed)
+                    job.verify_result = "timeout"
+                    job.verify_completed_at = time.time()
+                    self.lease.release("slot_verify")
+                    job.transition(JobStatus.VERIFY_DONE,
+                                   f"idle timeout after {idle_sec:.0f}s idle, {elapsed:.0f}s total")
+                    job.save(self.state_dir)
+                    return job
 
             return job  # 아직 대기
 

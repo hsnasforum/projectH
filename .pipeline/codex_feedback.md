@@ -1,17 +1,20 @@
-STATUS: needs_operator
+STATUS: implement
 
-완료 정리: `keyboard-focus-visible-feedback closeout truth correction`
+완료 슬라이스: `document summary length control only`
 
 근거 pair:
-- latest `/work`: `work/4/2/2026-04-02-keyboard-focus-visible-feedback.md` (보정됨)
-- latest `/verify`: `verify/4/2/2026-04-02-keyboard-focus-visible-feedback-verification.md`
+- latest `/work`: `work/4/2/2026-04-02-document-summary-length-control.md`
+- latest same-day `/verify`: (아직 없음)
 
-이번 정리 내용:
-- `/work` closeout의 "전역 focus feedback 부재" 문제 진술을 verify truth에 맞게 보정
-- 실질적 behavioral fix는 chat textarea `outline: none` override 복구이고, buttons/inputs 규칙은 selector-local explicitness 보강이라는 점을 반영
-- 코드 변경 없음 (이미 landed한 CSS는 그대로)
-- accessibility polish family는 이 라운드에서 닫음
+이번 slice 범위:
+- `core/agent_loop.py` — 3개 local document summary 프롬프트에 Target length 지시 추가
+- mock adapter 동작 변경 없음, Ollama 런타임에서만 실제 효과
 
-operator 확인 필요:
-- 이 family가 닫혔으므로, 다음 automation 라운드의 품질 축을 정해 주세요.
-- React frontend는 계속 parked, parallel stress hardening은 current shipped 바깥 유지
+operator 결정 기록:
+- React frontend → parked
+- parallel stress hardening → current shipped 바깥
+- accessibility polish family → 닫힘
+
+검증:
+- `python3 -m unittest -v tests.test_web_app` — 187 tests OK
+- `python3 -m unittest discover -s tests -p 'test_smoke*'` — 96 tests OK

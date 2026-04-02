@@ -693,12 +693,15 @@
 ## Not Implemented
 
 1. OCR
-2. SQLite persistence
-3. separate grounded-brief artifact store beyond the current source-message outcome and content-verdict capture
-5. structured correction-memory schema
-6. durable preference memory
-7. approval-gated local program operation
-8. personalized local model training
+2. separate grounded-brief artifact store beyond the current source-message outcome and content-verdict capture
+3. structured correction-memory schema
+4. durable preference memory
+5. approval-gated local program operation
+6. personalized local model training
+
+## Partial / Opt-In
+
+1. SQLite backend (`storage_backend='sqlite'`): opt-in seam for session, artifact, preference, task-log stores. JSON backend remains default. Corrections store is still JSON-only. Full migration and default rollout are deferred.
 
 ## Do Not Build Now
 

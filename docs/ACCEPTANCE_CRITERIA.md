@@ -50,9 +50,11 @@
 
 ### Not Implemented
 - OCR execution
-- SQLite persistence
 - autonomous background behavior
 - correction / approval / preference memory
+
+### Partial / Opt-In
+- SQLite backend (`storage_backend='sqlite'`): opt-in seam for session, artifact, preference, task-log stores. JSON backend remains default. Corrections store is still JSON-only. Full migration and default rollout are deferred.
 
 ## Approval And Safety Gates
 

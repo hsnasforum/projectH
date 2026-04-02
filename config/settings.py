@@ -22,6 +22,8 @@ class AppSettings:
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = ""
     ollama_timeout_seconds: float = 180.0
+    storage_backend: str = "json"  # "json" | "sqlite"
+    sqlite_db_path: str = "data/projecth.db"
 
     @classmethod
     def from_env(cls) -> "AppSettings":
@@ -44,4 +46,6 @@ class AppSettings:
             ollama_timeout_seconds=float(
                 os.getenv("LOCAL_AI_OLLAMA_TIMEOUT_SECONDS", "180")
             ),
+            storage_backend=os.getenv("LOCAL_AI_STORAGE_BACKEND", "json"),
+            sqlite_db_path=os.getenv("LOCAL_AI_SQLITE_DB_PATH", "data/projecth.db"),
         )

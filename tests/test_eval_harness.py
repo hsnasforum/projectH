@@ -7,8 +7,11 @@ import unittest
 from tempfile import TemporaryDirectory
 
 from model_adapter.mock import MockModelAdapter
-from eval.scenarios import EvalScenario, BUILTIN_SCENARIOS
-from eval.metrics import measure_adherence, measure_ab_delta, measure_consistency
+from eval.scenarios import EvalScenario, BUILTIN_SCENARIOS, MOCK_SCENARIOS, ROUTING_SCENARIOS
+from eval.metrics import (
+    measure_adherence, measure_ab_delta, measure_consistency,
+    measure_routing, measure_uncertainty_honesty, measure_response_quality,
+)
 from eval.harness import EvalHarness
 from eval.report import EvalReport
 
@@ -89,13 +92,45 @@ class MetricsTest(unittest.TestCase):
         )
         self.assertAlmostEqual(result["consistency_rate"], 2 / 3, places=3)
 
+    # -- New metric tests --
+
+    def test_routing_correct_tier(self) -> None:
+        result = measure_routing({"task": "rewrite"}, "light")
+        self.assertTrue(result["pass"])
+        self.assertEqual(result["actual_tier"], "light")
+
+    def test_routing_wrong_tier(self) -> None:
+        result = measure_routing({"task": "respond"}, "light")
+        self.assertFalse(result["pass"])
+        self.assertEqual(result["actual_tier"], "medium")
+
+    def test_uncertainty_honesty_with_hedge(self) -> None:
+        result = measure_uncertainty_honesty("확인되지 않은 정보입니다.")
+        self.assertTrue(result["has_hedge"])
+        self.assertEqual(result["score"], 1.0)
+
+    def test_uncertainty_honesty_no_hedge(self) -> None:
+        result = measure_uncertainty_honesty("매출은 100억입니다.")
+        self.assertFalse(result["has_hedge"])
+        self.assertLess(result["score"], 1.0)
+
+    def test_response_quality_korean(self) -> None:
+        result = measure_response_quality("이것은 한국어 응답입니다.")
+        self.assertTrue(result["is_korean"])
+        self.assertFalse(result["is_empty"])
+        self.assertGreater(result["hangul_ratio"], 0.3)
+
+    def test_response_quality_empty(self) -> None:
+        result = measure_response_quality("")
+        self.assertTrue(result["is_empty"])
+
 
 class HarnessTest(unittest.TestCase):
 
-    def test_run_mock_scenario(self) -> None:
+    def test_run_mock_preference_plumbing(self) -> None:
         adapter = MockModelAdapter()
         harness = EvalHarness(adapter, provider_name="mock")
-        scenario = BUILTIN_SCENARIOS[0]  # mock-preference-plumbing
+        scenario = MOCK_SCENARIOS[0]  # mock-preference-plumbing
         result = harness.run_scenario(scenario)
         self.assertTrue(result.adherence["pass"])
         self.assertIn("선호 1건 반영", result.response)
@@ -103,14 +138,14 @@ class HarnessTest(unittest.TestCase):
     def test_run_mock_baseline(self) -> None:
         adapter = MockModelAdapter()
         harness = EvalHarness(adapter, provider_name="mock")
-        scenario = BUILTIN_SCENARIOS[1]  # mock-no-preference-baseline
+        scenario = MOCK_SCENARIOS[1]  # mock-no-preference-baseline
         result = harness.run_scenario(scenario)
         self.assertTrue(result.adherence["pass"])
 
     def test_run_ab_scenario(self) -> None:
         adapter = MockModelAdapter()
         harness = EvalHarness(adapter, provider_name="mock")
-        scenario = BUILTIN_SCENARIOS[0]
+        scenario = MOCK_SCENARIOS[0]
         ab = harness.run_ab_scenario(scenario)
         self.assertIn("선호 1건 반영", ab.response_with)
         self.assertNotIn("선호", ab.response_without)
@@ -125,9 +160,34 @@ class HarnessTest(unittest.TestCase):
     def test_run_context_scenario(self) -> None:
         adapter = MockModelAdapter()
         harness = EvalHarness(adapter, provider_name="mock")
-        scenario = BUILTIN_SCENARIOS[3]  # mock-context-preference
+        scenario = MOCK_SCENARIOS[3]  # mock-context-preference
         result = harness.run_scenario(scenario)
         self.assertTrue(result.adherence["pass"])
+
+    def test_run_routing_scenarios(self) -> None:
+        adapter = MockModelAdapter()
+        harness = EvalHarness(adapter, provider_name="mock")
+        for scenario in ROUTING_SCENARIOS:
+            result = harness.run_scenario(scenario)
+            self.assertTrue(
+                result.adherence["pass"],
+                f"{scenario.scenario_id}: expected {scenario.expected_tier}, got {result.adherence.get('actual_tier')}",
+            )
+
+    def test_run_release_gate_mock(self) -> None:
+        adapter = MockModelAdapter()
+        harness = EvalHarness(adapter, provider_name="mock")
+        passed, report = harness.run_release_gate()
+        self.assertTrue(passed, f"Release gate failed: {report.summary}")
+
+    def test_scenario_count_at_least_25(self) -> None:
+        self.assertGreaterEqual(len(BUILTIN_SCENARIOS), 25, "Need 25+ scenarios for release gate")
+
+    def test_category_filter(self) -> None:
+        adapter = MockModelAdapter()
+        harness = EvalHarness(adapter, provider_name="mock")
+        report = harness.run_all(category_filter="routing")
+        self.assertEqual(len(report.scenario_results), len(ROUTING_SCENARIOS))
 
 
 class ReportTest(unittest.TestCase):
@@ -152,6 +212,14 @@ class ReportTest(unittest.TestCase):
             self.assertTrue(path.endswith(".json"))
             content = json.loads(open(path, encoding="utf-8").read())
             self.assertEqual(content["adapter_provider"], "mock")
+
+    def test_summary_has_categories(self) -> None:
+        adapter = MockModelAdapter()
+        harness = EvalHarness(adapter, provider_name="mock")
+        report = harness.run_all(provider_filter="mock")
+        s = report.summary
+        self.assertIn("categories", s)
+        self.assertGreater(len(s["categories"]), 0)
 
     def test_summary_counts(self) -> None:
         adapter = MockModelAdapter()

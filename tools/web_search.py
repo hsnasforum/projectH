@@ -108,21 +108,32 @@ class WebSearchTool:
         self.user_agent = user_agent
         self.max_page_chars = max_page_chars
 
-    _MAX_RETRIES = 2
-    _RETRY_DELAY_SECONDS = 2.0
+    _MAX_RETRIES = 1
+    _RETRY_DELAY_SECONDS = 1.5
 
     def search(self, *, query: str, max_results: int = 5) -> list[WebSearchResult]:
         normalized_query = " ".join(query.strip().split())
         if not normalized_query:
             raise WebSearchError("웹 검색어가 비어 있습니다.")
 
-        last_error: Exception | None = None
+        # Try DuckDuckGo HTML first
+        results = self._search_duckduckgo(normalized_query, max_results=max_results)
+        if results:
+            return results
+
+        # Fallback: duckduckgo-search package (uses DDG API, different endpoint)
+        results = self._search_ddgs_package(normalized_query, max_results=max_results)
+        if results:
+            return results
+
+        raise WebSearchError("웹 검색 결과를 찾지 못했습니다.")
+
+    def _search_duckduckgo(self, query: str, *, max_results: int) -> list[WebSearchResult]:
         for attempt in range(1 + self._MAX_RETRIES):
             if attempt > 0:
                 import time
                 time.sleep(self._RETRY_DELAY_SECONDS * attempt)
-
-            params = urlencode({"q": normalized_query, "kl": self.region})
+            params = urlencode({"q": query, "kl": self.region})
             req = Request(
                 f"{self.base_url}?{params}",
                 headers={
@@ -133,19 +144,31 @@ class WebSearchTool:
             try:
                 with urlopen(req, timeout=self.timeout_seconds) as response:
                     body = response.read().decode("utf-8", errors="replace")
-            except Exception as exc:
-                last_error = exc
+            except Exception:
                 continue
-
             results = self._parse_duckduckgo_results(body, max_results=max_results)
             if results:
                 return results
-            # Status 202 or empty results = rate-limited, retry
-            last_error = None
+        return []
 
-        if last_error:
-            raise WebSearchError(f"웹 검색 요청에 실패했습니다: {last_error}")
-        raise WebSearchError("웹 검색 결과를 찾지 못했습니다. (DuckDuckGo 일시 제한일 수 있습니다)")
+    def _search_ddgs_package(self, query: str, *, max_results: int) -> list[WebSearchResult]:
+        """Fallback using duckduckgo-search package (DDG API endpoint)."""
+        try:
+            from duckduckgo_search import DDGS
+        except ImportError:
+            return []
+        try:
+            raw = DDGS().text(query, region=self.region, max_results=max_results)
+            results: list[WebSearchResult] = []
+            for item in raw:
+                title = str(item.get("title", "")).strip()
+                url = str(item.get("href", "")).strip()
+                snippet = str(item.get("body", "")).strip()
+                if title and url:
+                    results.append(WebSearchResult(title=title, url=url, snippet=snippet))
+            return results
+        except Exception:
+            return []
 
     def fetch_page(self, *, url: str, max_chars: int | None = None) -> WebPageContent:
         normalized_url = str(url or "").strip()

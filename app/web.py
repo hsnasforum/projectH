@@ -72,15 +72,29 @@ class WebAppService:
         template_path: str | None = None,
     ) -> None:
         self.settings = settings
-        self.session_store = SessionStore(base_dir=settings.sessions_dir)
-        self.task_logger = TaskLogger(path=settings.task_log_path)
+        if settings.storage_backend == "sqlite":
+            from storage.sqlite_store import (
+                SQLiteDatabase, SQLiteSessionStore, SQLiteTaskLogger,
+                SQLiteArtifactStore, SQLitePreferenceStore,
+            )
+            db = SQLiteDatabase(db_path=settings.sqlite_db_path)
+            self.session_store = SQLiteSessionStore(db)  # type: ignore[assignment]
+            self.task_logger = SQLiteTaskLogger(db)  # type: ignore[assignment]
+            self.artifact_store = SQLiteArtifactStore(db)  # type: ignore[assignment]
+            self.preference_store = SQLitePreferenceStore(db)  # type: ignore[assignment]
+            # Correction store stays JSON for now (complex lifecycle)
+            from storage.correction_store import CorrectionStore
+            self.correction_store = CorrectionStore(base_dir=settings.corrections_dir)
+        else:
+            self.session_store = SessionStore(base_dir=settings.sessions_dir)
+            self.task_logger = TaskLogger(path=settings.task_log_path)
+            from storage.artifact_store import ArtifactStore
+            self.artifact_store = ArtifactStore(base_dir=settings.artifacts_dir)
+            from storage.correction_store import CorrectionStore
+            self.correction_store = CorrectionStore(base_dir=settings.corrections_dir)
+            from storage.preference_store import PreferenceStore
+            self.preference_store = PreferenceStore(base_dir=settings.preferences_dir)
         self.web_search_store = WebSearchStore(base_dir=settings.web_search_history_dir)
-        from storage.artifact_store import ArtifactStore
-        self.artifact_store = ArtifactStore(base_dir=settings.artifacts_dir)
-        from storage.correction_store import CorrectionStore
-        self.correction_store = CorrectionStore(base_dir=settings.corrections_dir)
-        from storage.preference_store import PreferenceStore
-        self.preference_store = PreferenceStore(base_dir=settings.preferences_dir)
         self.template_path = Path(template_path) if template_path else Path(__file__).with_name("templates") / "index.html"
         self._active_stream_requests: dict[str, threading.Event] = {}
         self._active_stream_lock = threading.Lock()
@@ -1397,6 +1411,9 @@ class WebAppService:
             and not load_web_search_record_id
         )
 
+        # "auto" means router decides per-task; use medium (7B) as base model
+        if model_name == "auto" and provider == "ollama":
+            model_name = "qwen2.5:7b"
         if provider == "ollama" and needs_model and not model_name:
             raise WebApiError(400, "Ollama를 사용할 때는 모델명을 입력해야 합니다.")
 
@@ -1447,6 +1464,7 @@ class WebAppService:
                 }
             )
 
+        model_router = self._build_model_router()
         loop = AgentLoop(
             model=model,
             session_store=self.session_store,
@@ -1456,6 +1474,7 @@ class WebAppService:
             web_search_store=self.web_search_store,
             artifact_store=self.artifact_store,
             preference_store=self.preference_store,
+            model_router=model_router,
         )
         request = UserRequest(
             user_text=self._build_user_text(
@@ -1557,6 +1576,16 @@ class WebAppService:
             stream_event_callback({"event": StreamEventType.TEXT_REPLACE, "text": updated_text})
 
         return response
+
+    def _build_model_router(self) -> Any:
+        """Build model router config if provider is ollama."""
+        if self.settings.model_provider != "ollama":
+            return None
+        try:
+            from model_adapter.router import ModelConfig
+            return ModelConfig()  # uses defaults: 3b/7b/14b
+        except Exception:
+            return None
 
     def _build_tools(self) -> dict[str, Any]:
         reader = FileReaderTool()
@@ -1785,6 +1814,7 @@ class WebAppService:
             "active_context": self._serialize_active_context(response.active_context),
             "follow_up_suggestions": [localize_text(str(item)) for item in response.follow_up_suggestions],
             "response_origin": self._serialize_response_origin(response.response_origin),
+            "applied_preferences": response.applied_preferences,
             "evidence": self._serialize_evidence(response.evidence),
             "summary_chunks": self._serialize_summary_chunks(response.summary_chunks),
             "original_response_snapshot": self._serialize_original_response_snapshot(response.original_response_snapshot),

@@ -67,9 +67,9 @@ export default function MessageBubble({ message }: Props) {
         </div>
 
         {/* Meta info */}
-        {!isUser && message.response_origin && (
-          <div className="flex items-center gap-2 mt-1.5 px-1">
-            {message.response_origin.badge && (
+        {!isUser && (message.response_origin || (message.applied_preferences && message.applied_preferences.length > 0)) && (
+          <div className="flex items-center gap-2 mt-1.5 px-1 flex-wrap">
+            {message.response_origin?.badge && (
               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted/60 bg-stone-100 px-2 py-0.5 rounded-full">
                 {message.response_origin.badge}
               </span>
@@ -77,6 +77,14 @@ export default function MessageBubble({ message }: Props) {
             {message.source_type_label && (
               <span className="text-[11px] text-muted/50">
                 {message.source_type_label}
+              </span>
+            )}
+            {message.applied_preferences && message.applied_preferences.length > 0 && (
+              <span
+                className="text-[10px] font-medium text-violet-600/70 bg-violet-50 px-2 py-0.5 rounded-full cursor-help"
+                title={message.applied_preferences.map(p => p.description).join('\n')}
+              >
+                선호 {message.applied_preferences.length}건 반영
               </span>
             )}
           </div>

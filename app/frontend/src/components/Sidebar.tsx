@@ -220,9 +220,10 @@ export default function Sidebar({
                     focus:border-white/20 transition-colors
                   "
                 >
-                  <option value="qwen2.5:14b">qwen2.5:14b (추천)</option>
-                  <option value="qwen2.5:7b">qwen2.5:7b (빠름)</option>
-                  <option value="qwen2.5:3b">qwen2.5:3b (경량)</option>
+                  <option value="auto">자동 (라우팅)</option>
+                  <option value="qwen2.5:3b">속도 (3B)</option>
+                  <option value="qwen2.5:7b">균형 (7B)</option>
+                  <option value="qwen2.5:14b">정확 (14B)</option>
                 </select>
               ) : (
                 <input

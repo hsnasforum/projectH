@@ -25,6 +25,7 @@ export interface Message {
   source_type_label?: string;
   source_filename_label?: string;
   search_results?: SearchResult[];
+  applied_preferences?: { description: string; fingerprint: string }[];
 }
 
 export interface ResponseOrigin {
@@ -146,7 +147,7 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   provider: "ollama",
-  model: "qwen2.5:14b",
+  model: "auto",
   baseUrl: "http://localhost:11434",
   searchLimit: 3,
   notePath: "",

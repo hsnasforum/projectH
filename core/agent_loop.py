@@ -87,6 +87,7 @@ class AgentResponse:
     artifact_kind: str | None = None
     original_response_snapshot: dict[str, Any] | None = None
     corrected_outcome: dict[str, Any] | None = None
+    applied_preferences: list[dict[str, str]] | None = None
     approval_reason_record: dict[str, Any] | None = None
     save_content_source: str | None = None
     search_results: list[dict[str, str]] = field(default_factory=list)
@@ -94,6 +95,16 @@ class AgentResponse:
 
 class RequestCancelledError(RuntimeError):
     pass
+
+
+class _NoOpContext:
+    """Context manager that does nothing — used when no model router is active."""
+    def __init__(self, model: Any) -> None:
+        self._model = model
+    def __enter__(self) -> Any:
+        return self._model
+    def __exit__(self, *_: object) -> None:
+        pass
 
 
 class AgentLoop:
@@ -107,6 +118,7 @@ class AgentLoop:
         web_search_store: Any | None = None,
         artifact_store: Any | None = None,
         preference_store: Any | None = None,
+        model_router: Any | None = None,
     ) -> None:
         self.model = model
         self.session_store = session_store
@@ -116,8 +128,97 @@ class AgentLoop:
         self.web_search_store = web_search_store
         self.artifact_store = artifact_store
         self.preference_store = preference_store
+        self._model_router = model_router  # (ModelConfig, route func) or None
 
-    def _get_active_preferences(self) -> list[dict[str, str]] | None:
+    def _route_model(self, hint: Any) -> Any:
+        """Apply model routing if router is configured. Returns a context manager."""
+        if self._model_router is None:
+            return _NoOpContext(self.model)
+        try:
+            from model_adapter.router import route as route_fn, ModelConfig
+            from model_adapter.ollama import OllamaModelAdapter
+            config, = self._model_router if isinstance(self._model_router, tuple) else (self._model_router,)
+            if not isinstance(config, ModelConfig):
+                return _NoOpContext(self.model)
+            tier = route_fn(hint)
+            resolved = config.resolve(tier)
+            if isinstance(self.model, OllamaModelAdapter):
+                return self.model.use_model(resolved)
+            return _NoOpContext(self.model)
+        except Exception:
+            return _NoOpContext(self.model)
+
+    def _get_preference_budget(self, hint: Any = None) -> int:
+        """Max preferences to inject based on routing tier."""
+        if self._model_router is None or hint is None:
+            return 10
+        try:
+            from model_adapter.router import route as route_fn, ModelConfig, PREFERENCE_BUDGET
+            config = self._model_router if not isinstance(self._model_router, tuple) else self._model_router[0]
+            if not isinstance(config, ModelConfig):
+                return 10
+            tier = route_fn(hint)
+            return PREFERENCE_BUDGET.get(tier, 10)
+        except Exception:
+            return 10
+
+    def _routed_model(self, task: str = "respond", **kwargs: Any) -> Any:
+        """Return a context manager that sets the right model for this task."""
+        if self._model_router is None:
+            return _NoOpContext(self.model)
+        try:
+            from model_adapter.router import route, RoutingHint, ModelConfig
+            from model_adapter.ollama import OllamaModelAdapter
+            config = self._model_router
+            if not isinstance(config, ModelConfig):
+                return _NoOpContext(self.model)
+            hint = RoutingHint(task=task, **kwargs)
+            tier = route(hint)
+            resolved = config.resolve(tier)
+            if isinstance(self.model, OllamaModelAdapter):
+                return self.model.use_model(resolved)
+        except Exception:
+            pass
+        return _NoOpContext(self.model)
+
+    def _routed_preferences(self, task: str = "respond", **kwargs: Any) -> list[dict[str, str]] | None:
+        """Get active preferences with budget based on routing tier."""
+        if self._model_router is None:
+            return self._get_active_preferences(10)
+        try:
+            from model_adapter.router import route, RoutingHint, ModelConfig, PREFERENCE_BUDGET
+            config = self._model_router
+            if not isinstance(config, ModelConfig):
+                return self._get_active_preferences(10)
+            hint = RoutingHint(task=task, **kwargs)
+            tier = route(hint)
+            budget = PREFERENCE_BUDGET.get(tier, 10)
+            return self._get_active_preferences(budget)
+        except Exception:
+            return self._get_active_preferences(10)
+
+    def _maybe_review_response(
+        self,
+        *,
+        draft: str,
+        user_request: str,
+        context_hint: str = "",
+        should_review: bool = False,
+    ) -> str:
+        """If 2-stage review is enabled and should_review is True, send draft to 14B for review."""
+        if not should_review or not draft or self._model_router is None:
+            return draft
+        try:
+            reviewed = self.model.review_draft(
+                draft=draft,
+                user_request=user_request,
+                context_hint=context_hint,
+            )
+            return reviewed if reviewed else draft
+        except Exception:
+            return draft
+
+    def _get_active_preferences(self, budget: int = 10) -> list[dict[str, str]] | None:
         if not self.preference_store:
             return None
         try:
@@ -126,7 +227,7 @@ class AgentLoop:
                 return None
             return [
                 {"description": str(p.get("description", "")), "fingerprint": str(p.get("delta_fingerprint", ""))}
-                for p in prefs[:10]
+                for p in prefs[:budget]
             ]
         except Exception:
             return None
@@ -4433,17 +4534,30 @@ class AgentLoop:
                     continue
                 intro_line = preferred_segments[0]
                 break
-        lines.append("한 줄 정의:")
-        lines.append(f"- {intro_line}")
+        # Assess overall coverage strength
+        _weak_slot_count = sum(
+            1 for cov in core_coverage.values()
+            if cov is not None and str(getattr(cov, "status", "missing")) in ("weak", "missing")
+        )
+        _coverage_is_weak = _weak_slot_count > len(core_coverage) // 2
+
+        if _coverage_is_weak:
+            # When coverage is weak, avoid definitive statements
+            lines.append("한 줄 정의 (교차 확인 부족):")
+            lines.append(f"- {intro_line} (추가 확인 필요)")
+        else:
+            lines.append("한 줄 정의:")
+            lines.append(f"- {intro_line}")
+
         if primary_claims:
             lines.append("")
-            lines.append("사실 카드:")
+            lines.append("확인된 사실:")
             for claim in primary_claims:
                 support_suffix = f" (교차 확인 {claim.support_count}건)" if claim.support_count >= 2 else ""
                 lines.append(f"- {claim.slot}: {claim.value}{support_suffix}")
         if weak_claims:
             lines.append("")
-            lines.append("단일 출처 확인 정보:")
+            lines.append("단일 출처 정보 (교차 확인 필요):")
             for claim in weak_claims:
                 _slot_cov = core_coverage.get(claim.slot)
                 role_label = (
@@ -4451,7 +4565,10 @@ class AgentLoop:
                     if _slot_cov is not None and _slot_cov.primary_claim is not None
                     else claim.source_role
                 )
-                lines.append(f"- {claim.slot}: {claim.value} (단일 출처, {role_label})")
+                # Demote community-only claims
+                is_community = role_label in ("보조 커뮤니티", "보조 포털", "보조 블로그")
+                qualifier = "비공식 출처" if is_community else f"단일 출처, {role_label}"
+                lines.append(f"- {claim.slot}: {claim.value} ({qualifier})")
         if supplemental_claims:
             lines.append("")
             lines.append("보조 사실:")
@@ -4459,7 +4576,7 @@ class AgentLoop:
                 lines.append(f"- {claim.slot}: {claim.value} (교차 확인 {claim.support_count}건)")
         if unresolved_slots:
             lines.append("")
-            lines.append("아직 확인되지 않은 항목:")
+            lines.append("확인되지 않은 항목:")
             for slot in unresolved_slots:
                 lines.append(f"- {slot}: 교차 확인 가능한 근거를 찾지 못했습니다.")
         lines.append("")
@@ -5528,20 +5645,11 @@ class AgentLoop:
                     selected_sources=selected_sources,
                     pages=pages,
                 )
-            for index, source in enumerate(selected_sources, start=1):
-                title = str(source.get("title") or source.get("result_title") or f"결과 {index}").strip()
-                url = str(source.get("url") or "").strip()
-                summary_text = str(source.get("summary_text") or "").strip() or "검색 결과 요약을 만들지 못했습니다."
-                source_label = "원문" if bool(source.get("page_preferred")) else "검색 결과"
-                lines.append(f"{index}. [{source_label}] {title}")
-                lines.append(f"   요약: {summary_text}")
-                if url:
-                    lines.append(f"   링크: {url}")
-            failed_pages = [page for page in pages or [] if str(page.get("fetch_status") or "") != "ok"]
-            if failed_pages:
-                lines.append("")
-                lines.append(f"참고: 원문을 바로 읽지 못한 링크 {len(failed_pages)}건은 검색 결과 요약만 기록했습니다.")
-            return "\n".join(lines)
+            return self._build_structured_web_summary(
+                query=query,
+                selected_sources=selected_sources,
+                pages=pages,
+            )
 
         for index, result in enumerate(results[:3], start=1):
             title = str(result.get("title") or f"결과 {index}").strip()
@@ -5551,6 +5659,112 @@ class AgentLoop:
             lines.append(f"   요약: {snippet}")
             if url:
                 lines.append(f"   링크: {url}")
+        return "\n".join(lines)
+
+    def _build_structured_web_summary(
+        self,
+        *,
+        query: str,
+        selected_sources: list[dict[str, Any]],
+        pages: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """Build a 3-tier web summary: confirmed / conflicting / unverified."""
+        lines = [f"웹 검색 요약: {query}", ""]
+
+        # Collect facts with source role and trust level
+        confirmed: list[str] = []   # 2+ trusted sources agree
+        single_source: list[str] = []  # 1 trusted source only
+        community_only: list[str] = []  # community/blog/portal only
+        source_urls: list[str] = []
+
+        fact_map: dict[str, list[str]] = {}  # rough fact → list of source roles
+
+        for source in selected_sources[:5]:
+            title = str(source.get("title") or source.get("result_title") or "").strip()
+            url = str(source.get("url") or "").strip()
+            summary_text = str(source.get("summary_text") or source.get("snippet") or "").strip()
+            if not summary_text or self._looks_like_noisy_web_segment(summary_text):
+                continue
+
+            role_label = self._web_source_role_label(query=query, source=source)
+            is_trusted = role_label in {"백과 기반", "공식 기반", "데이터 기반", "설명형 출처"}
+            is_news = role_label == "보조 기사"
+
+            # Split into key sentences
+            for segment in self._split_web_page_segments(summary_text)[:3]:
+                compact = " ".join(segment.split()).strip().rstrip(".")
+                if not compact or len(compact) < 10:
+                    continue
+                key = compact[:40].lower()
+                if key not in fact_map:
+                    fact_map[key] = []
+                fact_map[key].append(role_label)
+
+                if is_trusted or is_news:
+                    # Check if already seen from another source
+                    if len(fact_map[key]) >= 2:
+                        entry = f"- {compact}."
+                        if entry not in confirmed:
+                            confirmed.append(entry)
+                    else:
+                        entry = f"- {compact}. [{role_label}]"
+                        if entry not in single_source:
+                            single_source.append(entry)
+                else:
+                    entry = f"- {compact}. [{role_label}]"
+                    if entry not in community_only:
+                        community_only.append(entry)
+
+            if url:
+                source_urls.append(f"- {title}: {url}" if title else f"- {url}")
+
+        # Promote single-source facts that got cross-confirmed
+        still_single: list[str] = []
+        for entry in single_source:
+            core = entry.split(".")[0].lstrip("- ").strip()
+            key = core[:40].lower()
+            if len(fact_map.get(key, [])) >= 2:
+                clean_entry = f"- {core}."
+                if clean_entry not in confirmed:
+                    confirmed.append(clean_entry)
+            else:
+                still_single.append(entry)
+
+        # Build output
+        if confirmed:
+            lines.append("확인된 사실:")
+            lines.extend(confirmed[:5])
+
+        if still_single:
+            lines.append("")
+            lines.append("단일 출처 정보 (교차 확인 필요):")
+            lines.extend(still_single[:4])
+
+        if community_only:
+            lines.append("")
+            lines.append("커뮤니티/비공식 정보 (참고용):")
+            lines.extend(community_only[:3])
+
+        # Unverified notice
+        if not confirmed and not still_single:
+            lines.append("확인된 사실:")
+            lines.append("- 교차 확인된 정보가 충분하지 않습니다.")
+            if community_only:
+                lines.append("")
+                lines.append("참고 정보:")
+                lines.extend(community_only[:3])
+
+        # Source links
+        if source_urls:
+            lines.append("")
+            lines.append("출처:")
+            lines.extend(source_urls[:5])
+
+        failed_pages = [page for page in pages or [] if str(page.get("fetch_status") or "") != "ok"]
+        if failed_pages:
+            lines.append("")
+            lines.append(f"참고: 원문을 바로 읽지 못한 링크 {len(failed_pages)}건은 검색 결과 요약만 기록했습니다.")
+
         return "\n".join(lines)
 
     def _run_web_search(
@@ -5840,6 +6054,16 @@ class AgentLoop:
             results=serialized_results[:8],
             pages=fetched_pages,
             ranked_sources=ranked_sources,
+        )
+        # 2-stage review: let 14B check for unsupported claims in web synthesis
+        summary_text = self._maybe_review_response(
+            draft=summary_text,
+            user_request=query,
+            context_hint="웹 검색 결과 합성",
+            should_review=(
+                effective_answer_mode in (AnswerMode.ENTITY_CARD, AnswerMode.LATEST_UPDATE)
+                or len(serialized_results) >= 3
+            ),
         )
         response_origin = self._build_web_search_origin(
             answer_mode=effective_answer_mode,
@@ -6502,6 +6726,16 @@ class AgentLoop:
             ),
             note="모델에는 선택된 근거와 짧은 보조 문맥만 넘겨 추측을 줄입니다.",
         )
+        _is_web = active_context.get("kind") == "web_search"
+        _routing_kwargs = dict(
+            task="answer_context",
+            answer_mode=str(active_context.get("answer_mode", "general")),
+            intent=intent,
+            source_count=len(selected_evidence or []),
+            has_web_sources=_is_web,
+        )
+        with self._routed_model(**_routing_kwargs):
+            pass  # sets model on adapter
         answer = self._collect_model_stream(
             self.model.stream_answer_with_context(
                 intent=intent,
@@ -6515,7 +6749,7 @@ class AgentLoop:
                     else str(active_context.get("summary_hint") or "")
                 ),
                 evidence_items=selected_evidence,
-                active_preferences=self._get_active_preferences(),
+                active_preferences=(_ctx_prefs := self._routed_preferences(**_routing_kwargs)),
             ),
             stream_event_callback=stream_event_callback,
             cancel_requested=cancel_requested,
@@ -6553,6 +6787,7 @@ class AgentLoop:
             follow_up_suggestions=[str(prompt) for prompt in active_context.get("suggested_prompts", [])],
             evidence=selected_evidence,
             web_search_record_path=str(active_context.get("record_path") or "") or None,
+            applied_preferences=_ctx_prefs,
         )
 
     def _emit_phase(
@@ -8275,14 +8510,16 @@ class AgentLoop:
             detail="일반 질문에 대한 응답을 생성하는 중입니다.",
             note="선택된 문맥이 없으면 일반 대화 응답으로 처리합니다.",
         )
+        _prefs = self._routed_preferences(task="respond")
         return AgentResponse(
             text=self._collect_model_stream(
-                self.model.stream_respond(request.user_text, active_preferences=self._get_active_preferences()),
+                self.model.stream_respond(request.user_text, active_preferences=_prefs),
                 stream_event_callback=stream_event_callback,
                 cancel_requested=cancel_requested,
             ),
             status=ResponseStatus.ANSWER,
             actions_taken=["respond"],
+            applied_preferences=_prefs,
         )
 
     def _dispatch_request(

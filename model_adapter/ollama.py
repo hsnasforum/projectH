@@ -26,12 +26,13 @@ class OllamaModelAdapter(ModelAdapter):
         self,
         *,
         base_url: str = "http://localhost:11434",
-        model: str = "qwen2.5:3b",
+        model: str = "qwen2.5:7b",
         timeout_seconds: float = 180.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout_seconds = timeout_seconds
+        self._active_model: str | None = None  # per-call override
 
     # Models at or below this parameter threshold get simplified Korean-first prompts.
     _COMPACT_MODEL_PATTERNS = re.compile(
@@ -39,14 +40,66 @@ class OllamaModelAdapter(ModelAdapter):
     )
 
     @property
-    def _is_compact_model(self) -> bool:
+    def _effective_model(self) -> str:
+        return self._active_model or self.model
+
+    def _is_compact(self, model_name: str | None = None) -> bool:
         """Return True for models ≤ 14B where Korean-first prompts help."""
-        m = self._COMPACT_MODEL_PATTERNS.search(self.model)
+        name = model_name or self._effective_model
+        m = self._COMPACT_MODEL_PATTERNS.search(name)
         if m:
             size = float(m.group(1) or m.group(2))
             return size <= 14
-        # If size is not detectable, assume compact for safety.
         return True
+
+    @property
+    def _is_compact_model(self) -> bool:
+        return self._is_compact()
+
+    def use_model(self, model_name: str) -> "_ModelOverrideContext":
+        """Context manager to temporarily override the model for a call."""
+        return _ModelOverrideContext(self, model_name)
+
+    _REVIEW_SYSTEM_PROMPT = (
+        "당신은 사실 확인 검토자입니다. 아래 초안을 검토하세요.\n"
+        "검토 기준:\n"
+        "1. 근거 없이 확정적으로 서술한 문장이 있으면 '~로 알려져 있습니다' 등 유보적 표현으로 수정\n"
+        "2. 출처 간 정보가 충돌하면 '출처에 따라 다릅니다'를 추가\n"
+        "3. 교차 확인 안 된 단일 출처 정보에 확정 표현이 있으면 수정\n"
+        "4. 사실이 아닌 내용(hallucination)이 보이면 해당 문장을 '확인되지 않은 정보입니다'로 교체\n"
+        "\n"
+        "수정이 필요 없으면 'OK'만 출력하세요.\n"
+        "수정이 필요하면 수정된 전체 텍스트만 출력하세요. 설명은 쓰지 마세요."
+    )
+
+    def review_draft(self, *, draft: str, user_request: str, context_hint: str = "") -> str | None:
+        """Use the heavy model (14B) to review a draft for unsupported claims."""
+        from model_adapter.router import ModelConfig
+        config = ModelConfig()
+        heavy_model = config.heavy
+
+        prompt_parts = [
+            "=== 사용자 질문 ===",
+            user_request,
+        ]
+        if context_hint:
+            prompt_parts.extend(["", "=== 맥락 ===", context_hint])
+        prompt_parts.extend(["", "=== 검토할 초안 ===", draft])
+
+        with self.use_model(heavy_model):
+            result = self._generate(
+                prompt="\n".join(prompt_parts),
+                system=self._REVIEW_SYSTEM_PROMPT,
+                enforce_korean=False,
+            )
+
+        cleaned = result.strip()
+        if not cleaned or cleaned.upper() == "OK" or cleaned == draft.strip():
+            return None
+        # Only accept if the review actually looks like a revision (not meta-commentary)
+        if len(cleaned) < len(draft) // 3:
+            return None
+        return cleaned
 
     @staticmethod
     def _format_preference_block(active_preferences: list[dict[str, str]] | None, *, korean: bool = False) -> str:
@@ -68,7 +121,8 @@ class OllamaModelAdapter(ModelAdapter):
         "규칙:\n"
         "- 간결하고 정확하게 답하세요.\n"
         "- 확인할 수 없는 사실은 추측하지 말고 '확인할 수 없습니다'라고 하세요.\n"
-        "- 직접 경험한 것처럼 말하지 마세요."
+        "- 직접 경험한 것처럼 말하지 마세요.\n"
+        "- 불확실한 내용은 '~로 알려져 있습니다' 등 유보적 표현을 쓰세요."
     )
 
     _FULL_SYSTEM_RESPOND = (
@@ -374,8 +428,11 @@ class OllamaModelAdapter(ModelAdapter):
             "당신은 로컬 문서 어시스턴트입니다.\n"
             "규칙:\n"
             "- 아래 제공된 근거와 문서 발췌만 사용하세요.\n"
-            "- 근거에 없는 내용은 '제공된 근거만으로는 확인되지 않습니다'라고 하세요.\n"
+            "- 근거에 없는 내용은 '확인되지 않습니다'라고 하세요.\n"
             "- 사실, 일정, 원인을 지어내지 마세요.\n"
+            "- 출처 간 정보가 다르면 '출처에 따라 다릅니다'라고 밝히세요.\n"
+            "- 단일 출처 정보는 '~로 알려져 있으나 교차 확인 필요'라고 쓰세요.\n"
+            "- 커뮤니티/블로그 출처만 있으면 확정적으로 말하지 마세요.\n"
             "- 한국어로 답하세요."
         )
         if intent == FOLLOW_UP_INTENT_KEY_POINTS:
@@ -1093,7 +1150,7 @@ class OllamaModelAdapter(ModelAdapter):
 
     def _iter_generate_raw(self, *, prompt: str, system: str):
         payload = {
-            "model": self.model,
+            "model": self._effective_model,
             "prompt": prompt,
             "system": system,
             "stream": True,
@@ -1252,3 +1309,20 @@ class OllamaModelAdapter(ModelAdapter):
     def _is_localhost_base_url(self) -> bool:
         hostname = (urlparse(self.base_url).hostname or "").lower()
         return hostname in {"localhost", "127.0.0.1", "::1"}
+
+
+class _ModelOverrideContext:
+    """Temporarily override the active model on an OllamaModelAdapter."""
+
+    def __init__(self, adapter: OllamaModelAdapter, model: str) -> None:
+        self._adapter = adapter
+        self._model = model
+        self._previous: str | None = None
+
+    def __enter__(self) -> OllamaModelAdapter:
+        self._previous = self._adapter._active_model
+        self._adapter._active_model = self._model
+        return self._adapter
+
+    def __exit__(self, *_: object) -> None:
+        self._adapter._active_model = self._previous

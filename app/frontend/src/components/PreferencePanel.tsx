@@ -124,10 +124,24 @@ export default function PreferencePanel() {
                 </span>
               </div>
 
-              {/* Description (truncated) */}
-              <p className="text-[11px] text-sidebar-text/80 leading-snug mb-1.5 line-clamp-2">
+              {/* Description */}
+              <p className="text-[11px] text-sidebar-text/80 leading-snug mb-1 line-clamp-2">
                 {pref.description}
               </p>
+
+              {/* Promotion reason (delta summary) */}
+              {pref.delta_summary && (
+                <p className="text-[9px] text-sidebar-muted/50 mb-1.5 line-clamp-1">
+                  {pref.delta_summary.replacements?.length
+                    ? `교정: ${pref.delta_summary.replacements.map(r => `${r.from}→${r.to}`).join(', ')}`
+                    : pref.delta_summary.additions?.length
+                      ? `추가: ${pref.delta_summary.additions.join(', ')}`
+                      : pref.delta_summary.removals?.length
+                        ? `제거: ${pref.delta_summary.removals.join(', ')}`
+                        : `${pref.cross_session_count}개 세션에서 반복 감지`
+                  }
+                </p>
+              )}
 
               {/* Compact actions */}
               <div className="flex items-center gap-1">

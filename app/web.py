@@ -72,15 +72,29 @@ class WebAppService:
         template_path: str | None = None,
     ) -> None:
         self.settings = settings
-        self.session_store = SessionStore(base_dir=settings.sessions_dir)
-        self.task_logger = TaskLogger(path=settings.task_log_path)
+        if settings.storage_backend == "sqlite":
+            from storage.sqlite_store import (
+                SQLiteDatabase, SQLiteSessionStore, SQLiteTaskLogger,
+                SQLiteArtifactStore, SQLitePreferenceStore,
+            )
+            db = SQLiteDatabase(db_path=settings.sqlite_db_path)
+            self.session_store = SQLiteSessionStore(db)  # type: ignore[assignment]
+            self.task_logger = SQLiteTaskLogger(db)  # type: ignore[assignment]
+            self.artifact_store = SQLiteArtifactStore(db)  # type: ignore[assignment]
+            self.preference_store = SQLitePreferenceStore(db)  # type: ignore[assignment]
+            # Correction store stays JSON for now (complex lifecycle)
+            from storage.correction_store import CorrectionStore
+            self.correction_store = CorrectionStore(base_dir=settings.corrections_dir)
+        else:
+            self.session_store = SessionStore(base_dir=settings.sessions_dir)
+            self.task_logger = TaskLogger(path=settings.task_log_path)
+            from storage.artifact_store import ArtifactStore
+            self.artifact_store = ArtifactStore(base_dir=settings.artifacts_dir)
+            from storage.correction_store import CorrectionStore
+            self.correction_store = CorrectionStore(base_dir=settings.corrections_dir)
+            from storage.preference_store import PreferenceStore
+            self.preference_store = PreferenceStore(base_dir=settings.preferences_dir)
         self.web_search_store = WebSearchStore(base_dir=settings.web_search_history_dir)
-        from storage.artifact_store import ArtifactStore
-        self.artifact_store = ArtifactStore(base_dir=settings.artifacts_dir)
-        from storage.correction_store import CorrectionStore
-        self.correction_store = CorrectionStore(base_dir=settings.corrections_dir)
-        from storage.preference_store import PreferenceStore
-        self.preference_store = PreferenceStore(base_dir=settings.preferences_dir)
         self.template_path = Path(template_path) if template_path else Path(__file__).with_name("templates") / "index.html"
         self._active_stream_requests: dict[str, threading.Event] = {}
         self._active_stream_lock = threading.Lock()

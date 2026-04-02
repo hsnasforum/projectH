@@ -526,8 +526,8 @@ def _pane_has_input_cursor(pane_target: str) -> bool:
     if not lines:
         return False
     last = lines[-1].strip()
-    # Codex shows "> " or "›" prompt, Claude shows "> " or "$", bash shows "user@host:path$"
-    return last.endswith(">") or last.rstrip().endswith("$") or "> " in last or "$ " in last
+    # Codex shows "> " prompt, Claude shows "> " or "$"
+    return last.endswith(">") or last.endswith("$") or "> " in last
 
 
 def _wait_for_input_ready(
@@ -607,16 +607,6 @@ def tmux_send_keys(
     if dry_run:
         return True
     try:
-        # Dead pane check — respawn if needed
-        if _is_pane_dead(pane_target):
-            _respawn_pane(pane_target)
-            time.sleep(2.0)
-
-        # Wait for pane to settle
-        settled = wait_for_pane_settle(pane_target)
-        if not settled:
-            log.warning("pane did not fully settle: target=%s", pane_target)
-
         if pane_type == "codex":
             _dispatch_codex(pane_target, command)
         else:
@@ -791,13 +781,7 @@ class StateMachine:
             current_pane = _capture_pane_text(self.verify_pane_target)
             pane_lines = [l.strip() for l in current_pane.strip().splitlines() if l.strip()]
             last_pane_line = pane_lines[-1] if pane_lines else ""
-            stripped_last = last_pane_line.rstrip()
-            codex_idle = (
-                stripped_last.startswith("›")
-                or stripped_last.endswith("$")
-                or "$ " in stripped_last  # colored bash prompt: user@host:path$
-                or stripped_last.startswith("xpdlqj")  # user's bash prompt line
-            )
+            codex_idle = last_pane_line.startswith("›") or last_pane_line.endswith("$")
             elapsed_since_dispatch = time.time() - job.last_dispatch_at
             # Only check after at least 10 seconds (avoid false positive during startup)
             if codex_idle and elapsed_since_dispatch > 10:

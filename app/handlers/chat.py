@@ -13,6 +13,7 @@ from app.localization import localize_runtime_status_payload, localize_text
 from app.web import WebApiError
 from core.agent_loop import AgentLoop, AgentResponse, RequestCancelledError, UserRequest
 from core.contracts import (
+    ArtifactKind,
     ResponseOriginKind,
     ResponseOriginProvider,
     SearchIntentKind,
@@ -678,3 +679,58 @@ class ChatHandlerMixin:
             "size_bytes": size_bytes_raw,
             "content_bytes": content_bytes,
         }
+
+    def _build_response_origin(
+        self,
+        *,
+        provider: str,
+        model_name: str | None,
+        response_kind: str,
+    ) -> dict[str, Any]:
+        normalized_provider = (provider or ResponseOriginProvider.SYSTEM).strip().lower()
+        if normalized_provider == ResponseOriginProvider.OLLAMA:
+            return {
+                "provider": ResponseOriginProvider.OLLAMA,
+                "badge": "OLLAMA",
+                "label": "실제 로컬 모델 응답",
+                "model": model_name or "선택형 로컬 모델",
+                "kind": response_kind,
+            }
+        if normalized_provider == ResponseOriginProvider.MOCK:
+            return {
+                "provider": ResponseOriginProvider.MOCK,
+                "badge": "MOCK",
+                "label": "모의 데모 응답",
+                "model": model_name or "내장 모의 어댑터",
+                "kind": response_kind,
+            }
+        return {
+            "provider": ResponseOriginProvider.SYSTEM,
+            "badge": "SYSTEM",
+            "label": "시스템 응답",
+            "model": None,
+            "kind": response_kind,
+        }
+
+    def _synchronize_original_response_snapshot(self, response: AgentResponse) -> dict[str, Any] | None:
+        if (
+            response.original_response_snapshot is None
+            and (
+                response.artifact_kind != ArtifactKind.GROUNDED_BRIEF
+                or not response.artifact_id
+                or (not response.evidence and not response.summary_chunks)
+            )
+        ):
+            return None
+
+        snapshot = {
+            "artifact_id": response.artifact_id,
+            "artifact_kind": response.artifact_kind,
+            "draft_text": response.text,
+            "source_paths": [str(path) for path in response.selected_source_paths if str(path).strip()],
+            "response_origin": dict(response.response_origin) if isinstance(response.response_origin, dict) else None,
+            "summary_chunks_snapshot": [dict(item) for item in response.summary_chunks if isinstance(item, dict)],
+            "evidence_snapshot": [dict(item) for item in response.evidence if isinstance(item, dict)],
+        }
+        response.original_response_snapshot = snapshot
+        return snapshot

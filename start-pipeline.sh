@@ -81,9 +81,9 @@ if [ "$MODE" = "experimental" ] || [ "$MODE" = "both" ]; then
     : > "$PROJECT_ROOT/.pipeline/logs/experimental/raw.jsonl"
     : > "$PROJECT_ROOT/.pipeline/logs/experimental/dispatch.jsonl"
     # Clean state/locks/manifests
-    rm -f "$PROJECT_ROOT/.pipeline/state/"*.json 2>/dev/null
-    rm -f "$PROJECT_ROOT/.pipeline/locks/"*.json 2>/dev/null
-    rm -f "$PROJECT_ROOT/.pipeline/manifests/"*.json 2>/dev/null
+    rm -f "$PROJECT_ROOT/.pipeline/state/"* 2>/dev/null
+    rm -f "$PROJECT_ROOT/.pipeline/locks/"* 2>/dev/null
+    rm -f "$PROJECT_ROOT/.pipeline/manifests/"* 2>/dev/null
     # Clean Zone.Identifier files (WSL artifacts)
     find "$PROJECT_ROOT/.pipeline" -name "*:Zone.Identifier" -delete 2>/dev/null
     echo -e "${GRAY}  experimental 로그/state/locks/manifests 초기화${NC}"

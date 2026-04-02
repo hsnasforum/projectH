@@ -142,7 +142,7 @@ if [ "$MODE" = "experimental" ] || [ "$MODE" = "both" ]; then
         --verify-prompt "$VERIFY_PROMPT" \
         --claude-prompt "$CLAUDE_PROMPT" \
         --startup-grace 8 \
-        --lease-ttl 120 \
+        --lease-ttl 600 \
         > "$PROJECT_ROOT/.pipeline/logs/experimental/watcher.log" 2>&1 &
     echo $! > "$PROJECT_ROOT/.pipeline/experimental.pid"
     echo -e "${GRAY}  experimental PID: $(cat "$PROJECT_ROOT/.pipeline/experimental.pid")${NC}"

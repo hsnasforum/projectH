@@ -582,17 +582,19 @@ def tmux_send_keys(pane_target: str, command: str, dry_run: bool = False) -> boo
 
         if is_codex:
             # Codex interactive mode does not reliably accept pasted text + Enter.
-            # Solution: kill current codex process, then restart with prompt as argument.
-            # `codex "prompt"` launches interactive mode WITH the initial prompt,
-            # showing full working progress (file reads, edits, etc).
-            subprocess.run(["tmux", "send-keys", "-t", pane_target, "C-c"], check=False, capture_output=True)
-            time.sleep(0.3)
-            subprocess.run(["tmux", "send-keys", "-t", pane_target, "C-c"], check=False, capture_output=True)
-            time.sleep(0.3)
-            subprocess.run(["tmux", "send-keys", "-t", pane_target, "/exit", "Enter"], check=False, capture_output=True)
-            time.sleep(1.5)
-            # Launch codex interactive with prompt from file as initial argument
-            # --ask-for-approval never: prevent approval prompts from blocking/exiting
+            # Solution: run `codex "prompt"` from bash shell each time.
+            #
+            # If codex is already running (2nd+ dispatch), kill it first.
+            # If this is first dispatch (bash prompt), skip cleanup.
+            pane_last = _capture_pane_text(pane_target).strip().splitlines()
+            pane_last_line = pane_last[-1].strip() if pane_last else ""
+            if not pane_last_line.endswith("$"):
+                # Codex is running — send Ctrl+C and /exit to get back to bash
+                subprocess.run(["tmux", "send-keys", "-t", pane_target, "C-c"], check=False, capture_output=True)
+                time.sleep(0.5)
+                subprocess.run(["tmux", "send-keys", "-t", pane_target, "/exit", "Enter"], check=False, capture_output=True)
+                time.sleep(1.5)
+            # Launch codex interactive with prompt from file
             shell_cmd = f"codex --ask-for-approval never \"$(cat '{prompt_path}')\""
             subprocess.run(
                 ["tmux", "send-keys", "-t", pane_target, shell_cmd, "Enter"],

@@ -1424,6 +1424,12 @@ button:disabled {
   background: var(--paper);
   border: 1px solid var(--line);
 }
+.icon-button.subtle:hover:not(:disabled),
+.copy-button.subtle:hover:not(:disabled),
+.toggle-button.subtle:hover:not(:disabled) {
+  background: rgba(0,0,0,0.05);
+  border-color: rgba(0,0,0,0.15);
+}
 
 /* ── Form elements ── */
 form {

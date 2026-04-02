@@ -95,6 +95,20 @@ export async function postCorrection(
   });
 }
 
+// -- Candidate review API --
+
+export async function postCandidateReview(
+  sessionId: string,
+  messageId: string,
+  action: "accept" | "reject" | "defer",
+): Promise<void> {
+  await fetch(`${BASE}/api/candidate-review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, message_id: messageId, review_action: action }),
+  });
+}
+
 // -- Session management API --
 
 export async function deleteSession(sessionId: string): Promise<{ ok: boolean; deleted: boolean }> {

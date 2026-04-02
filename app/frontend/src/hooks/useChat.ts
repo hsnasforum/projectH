@@ -13,8 +13,8 @@ interface SessionState {
   thinkingStatus: string;
   title: string;
   abort: AbortController | null;
-  /** Briefly true after a background session finishes */
   justCompleted: boolean;
+  reviewQueueCount: number;
 }
 
 function emptyState(title: string): SessionState {
@@ -27,6 +27,7 @@ function emptyState(title: string): SessionState {
     title,
     abort: null,
     justCompleted: false,
+    reviewQueueCount: 0,
   };
 }
 
@@ -69,6 +70,7 @@ export function useChat(settings: AppSettings) {
       messages: session.messages,
       title: session.title,
       pendingApproval: approvals.length > 0 ? approvals[approvals.length - 1] : null,
+      reviewQueueCount: (session.review_queue_items ?? []).length,
     });
   }, [updateState]);
 
@@ -305,6 +307,7 @@ export function useChat(settings: AppSettings) {
     streamingText: current.streamingText,
     isStreaming: current.isStreaming,
     thinkingStatus: current.thinkingStatus,
+    reviewQueueCount: current.reviewQueueCount,
     backgroundStreaming,
     completedSessions,
     notifications,

@@ -94,6 +94,7 @@ export default function App() {
         onFeedback={handleFeedback}
         onToggleSidebar={toggleSidebar}
         sessionTitle={chat.sessionTitle}
+        reviewQueueCount={chat.reviewQueueCount}
       />
     </div>
   );

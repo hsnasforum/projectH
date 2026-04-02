@@ -1179,6 +1179,7 @@
         && typeof textValue === "string" && textValue.startsWith("검색 결과:");
       if (isSearchOnly) {
         responseText.hidden = true;
+        showElement(responseCopyTextButton, false);
         responseSearchPreview.hidden = false;
         searchResults.forEach(function(sr, idx) {
           var item = document.createElement("div");

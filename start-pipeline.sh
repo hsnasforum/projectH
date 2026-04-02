@@ -107,22 +107,25 @@ CODEX_PANE=$(tmux display-message -t "$SESSION:0.1" -p '#{pane_id}')
 echo -e "${GRAY}  Claude pane: $CLAUDE_PANE  Codex pane: $CODEX_PANE${NC}"
 
 tmux send-keys -t "$CLAUDE_PANE" "cd '$PROJECT_ROOT' && claude --dangerously-skip-permissions" Enter
-# Codex pane stays as bash shell — watcher will invoke `codex exec` per dispatch
-tmux send-keys -t "$CODEX_PANE" "cd '$PROJECT_ROOT'" Enter
+tmux send-keys -t "$CODEX_PANE" "cd '$PROJECT_ROOT' && codex --ask-for-approval never" Enter
 
 echo -e "${GRAY}  tmux: $SESSION (Claude=$CLAUDE_PANE / Codex=$CODEX_PANE)${NC}"
 
-# Claude CLI가 입력 프롬프트를 띄울 때까지 대기
-echo -e "${GRAY}  Claude CLI 초기화 대기 중 (최대 30초)...${NC}"
+# 양쪽 CLI 초기화 대기
+echo -e "${GRAY}  CLI 초기화 대기 중 (최대 30초)...${NC}"
 for i in $(seq 1 30); do
-    PANE_TEXT=$(tmux capture-pane -pt "$CLAUDE_PANE" -S -5 2>/dev/null || true)
-    if echo "$PANE_TEXT" | grep -q ">"; then
-        echo -e "${GRAY}  Claude 준비 완료 (${i}초)${NC}"
+    CLAUDE_TEXT=$(tmux capture-pane -pt "$CLAUDE_PANE" -S -5 2>/dev/null || true)
+    CODEX_TEXT=$(tmux capture-pane -pt "$CODEX_PANE" -S -5 2>/dev/null || true)
+    CLAUDE_READY=false
+    CODEX_READY=false
+    echo "$CLAUDE_TEXT" | grep -q ">" && CLAUDE_READY=true
+    echo "$CODEX_TEXT" | grep -q ">" && CODEX_READY=true
+    if $CLAUDE_READY && $CODEX_READY; then
+        echo -e "${GRAY}  Claude + Codex 준비 완료 (${i}초)${NC}"
         break
     fi
     sleep 1
 done
-echo -e "${GRAY}  Codex pane: bash shell 대기 (codex exec 방식)${NC}"
 sleep 1
 
 # ------------------------------------------------------------

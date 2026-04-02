@@ -631,47 +631,27 @@ def tmux_send_keys(
 def _dispatch_codex(pane_target: str, command: str) -> None:
     """Dispatch to Codex pane.
 
-    First dispatch (bash $): launch codex interactive with prompt argument.
-    Subsequent dispatches: original send-keys method (same as baseline).
+    Codex interactive session is kept alive (started by start-pipeline.sh).
+    Always paste-buffer into the running session — never re-launch codex.
     """
-    pane_lines = [l.strip() for l in _capture_pane_text(pane_target).strip().splitlines() if l.strip()]
-    last_line = pane_lines[-1] if pane_lines else ""
-    is_bash = last_line.rstrip().endswith("$") or "$ " in last_line
-
-    if is_bash:
-        prompt_path = _write_prompt_file(command)
-        shell_cmd = f"codex --ask-for-approval never \"$(cat '{prompt_path}')\""
-        subprocess.run(
-            ["tmux", "send-keys", "-t", pane_target, shell_cmd, "Enter"],
-            check=True, capture_output=True,
-        )
-        log.info("codex first dispatch: %s", prompt_path)
-    else:
-        # Original method: send-keys with text + Enter (worked before all patches)
-        subprocess.run(
-            ["tmux", "send-keys", "-t", pane_target, command, ""],
-            check=True, capture_output=True,
-        )
-        time.sleep(0.5)
-        subprocess.run(
-            ["tmux", "send-keys", "-t", pane_target, "", "Enter"],
-            check=True, capture_output=True,
-        )
-        log.info("codex subsequent dispatch (original send-keys)")
+    subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
+    subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
+    time.sleep(1.0)
+    subprocess.run(["tmux", "send-keys", "-t", pane_target, "Enter"], check=True, capture_output=True)
+    log.info("codex dispatch (paste to interactive session)")
 
 
 def _dispatch_claude(pane_target: str, command: str) -> None:
-    """Dispatch to Claude pane — original send-keys method."""
-    subprocess.run(
-        ["tmux", "send-keys", "-t", pane_target, command, ""],
-        check=True, capture_output=True,
-    )
-    time.sleep(0.5)
-    subprocess.run(
-        ["tmux", "send-keys", "-t", pane_target, "", "Enter"],
-        check=True, capture_output=True,
-    )
-    log.info("claude dispatch (original send-keys)")
+    """Dispatch to Claude pane via paste-buffer + Enter."""
+    subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
+    subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
+    time.sleep(1.0)
+    for attempt in range(3):
+        subprocess.run(["tmux", "send-keys", "-t", pane_target, "Enter"], check=True, capture_output=True)
+        time.sleep(1.5)
+        if not _pane_has_input_cursor(pane_target):
+            log.info("claude prompt consumed: attempt %d", attempt + 1)
+            break
 
 
 # ---------------------------------------------------------------------------

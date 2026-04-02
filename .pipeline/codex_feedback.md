@@ -1,18 +1,17 @@
 STATUS: implement
 
-완료 슬라이스: `legacy shell subtle button hover feedback`
+완료 슬라이스: `legacy shell keyboard focus-visible feedback`
 
 근거 pair:
-- latest `/work`: `work/4/2/2026-04-02-subtle-button-hover-feedback.md`
+- latest `/work`: `work/4/2/2026-04-02-keyboard-focus-visible-feedback.md`
 - latest same-day `/verify`: (아직 없음)
 
 operator 결정 기록:
-- React frontend → parked (repo에 남김, 연결/제거 안 함)
-- parallel stress hardening → current shipped single-worker 바깥, 이번 기본 next로 올리지 않음
-- 다음 slice → legacy shell canonical surface 안 가장 작은 user-visible polish
+- React frontend → parked
+- parallel stress hardening → current shipped single-worker 바깥, next 아님
 
 이번 slice 범위:
-- `app/static/style.css` — subtle 버튼(`.copy-button.subtle`, `.toggle-button.subtle`, `.icon-button.subtle`) hover 피드백 추가 (CSS-only)
+- `app/static/style.css` — buttons, inputs, textarea, select에 `:focus-visible` 아웃라인 추가 (CSS-only, 3곳)
 - JS/HTML/backend 변경 없음
 
 검증:

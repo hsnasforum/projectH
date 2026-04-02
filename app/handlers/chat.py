@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.localization import localize_runtime_status_payload, localize_text
-from app.web import WebApiError
+from app.errors import WebApiError
 from core.agent_loop import AgentLoop, AgentResponse, RequestCancelledError, UserRequest
 from core.contracts import (
     ArtifactKind,

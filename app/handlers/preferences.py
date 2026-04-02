@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.web import WebApiError
+from app.errors import WebApiError
 
 
 class PreferenceHandlerMixin:

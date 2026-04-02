@@ -266,7 +266,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - summary source-type label (`문서 요약` for local document summary, `선택 결과 요약` for selected search results) in both quick-meta bar and transcript message meta; single-source responses show basename-based `출처 <filename>` in both surfaces, multi-source responses show count-based `출처 N개` instead of raw filenames; general chat responses carry no source-type label
 - summary span / applied-range panel
 - response origin badge with separate answer-mode badge for web investigation (`설명 카드` / `최신 확인`), source-role trust labels, and verification strength tags in origin detail
-- copy-to-clipboard buttons: `본문 복사`, `저장 경로 복사`, `승인 경로 복사`, `검색 기록 경로 복사` (shared helper shows clipboard-specific failure notice on both success-path rejection and fallback failure)
+- copy-to-clipboard buttons: `본문 복사`, `저장 경로 복사`, `승인 경로 복사`, `검색 기록 경로 복사`, `경로 복사` (selected source paths panel); all share one helper that shows clipboard-specific failure notice on both success-path rejection and fallback failure
 - claim verification / coverage panel where applicable, with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`) leading each slot line, actionable hints for weak or unresolved slots, source role with trust level labels, a color-coded fact-strength summary bar above the response text, and entity-card verification badge downgrade from strong when no claim slot has cross-verified status
 - web search history panel with source previews, answer-mode badges, color-coded verification-strength badges, and color-coded source-role trust badges in history cards
 - progress box and cancel button during streaming

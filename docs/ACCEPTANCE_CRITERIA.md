@@ -1312,10 +1312,11 @@ These are placeholders for the next phase design target and its immediate follow
 ### Current Gates
 - Unit/service regression uses `python3 -m unittest -v`.
 - Playwright webServer launch clears inherited provider/model overrides, forces `LOCAL_AI_MODEL_PROVIDER=mock`, and does not reuse an already running smoke-port server, so operator shell state must not change the automated smoke baseline.
-- Playwright smoke covers 16 core browser scenarios:
+- Playwright smoke covers 17 core browser scenarios:
   - file summary with panels, source filename assertion in both quick-meta and transcript meta, and `문서 요약` source-type label assertion in both quick-meta and transcript meta
   - browser file picker with source filename and `문서 요약` source-type label assertion in both quick-meta and transcript meta
   - browser folder picker with `선택 결과 요약` source-type label and multi-source count-based metadata (`출처 2개`) assertion in both quick-meta and transcript meta
+  - pure search-only response with transcript preview cards visible, transcript body text hidden, response detail box preview cards visible, response body text hidden, and copy-text button hidden
   - approval reissue
   - approval-backed save
   - late flip after explicit original-draft save keeps saved history while latest content verdict changes

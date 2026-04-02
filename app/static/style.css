@@ -656,6 +656,17 @@ body.sidebar-collapsed .chat-main {
   width: 100%;
   margin: 0 auto;
 }
+/* Response text is rendered in the transcript card; keep it in the DOM
+   (for copy-button and test assertions) but hide it visually to avoid
+   showing the same text twice. */
+.response-detail-card > #response-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
 
 /* ── Panels ── */
 .panel,

@@ -361,7 +361,7 @@ class OllamaModelAdapter(ModelAdapter):
         if intent == FOLLOW_UP_INTENT_ACTION_ITEMS:
             return (
                 common
-                + " Return only actionable next steps in Korean as a numbered list. "
+                + " Return only actionable next steps in Korean as a numbered list (2 to 5 items). "
                 + "If the context does not clearly support an action, say that explicitly. "
                 + "Do not invent work that is not grounded in the supplied text. "
                 + "Use candidate action lines first, then decision-needed statements. "
@@ -371,10 +371,11 @@ class OllamaModelAdapter(ModelAdapter):
             return (
                 common
                 + " Rewrite the answer in Korean memo format using this structure exactly: "
-                + "'제목:', '핵심:', '다음 행동:'. Use the preferred evidence lines first. "
+                + "'제목:', '핵심:' (2~3 bullet items), '다음 행동:' (1~3 bullet items). "
+                + "Use the preferred evidence lines first. "
                 + "Keep each section concise and grounded in the supplied text."
             )
-        return common + " Answer in Korean with a short helpful paragraph."
+        return common + " Answer in Korean with a short helpful paragraph (2~4 sentences)."
 
     def _intent_prompt_suffix(self, intent: str) -> str:
         if intent == FOLLOW_UP_INTENT_KEY_POINTS:
@@ -401,13 +402,13 @@ class OllamaModelAdapter(ModelAdapter):
             return "Exactly 3 bullet points. No heading. No numbering. No metadata-only bullets."
         if intent == FOLLOW_UP_INTENT_ACTION_ITEMS:
             return (
-                "Only a numbered list. 1 to 5 items maximum. "
+                "Only a numbered list. 2 to 5 items. "
                 "Each item must be a concrete next action or decision. "
                 "If no grounded action exists, return exactly: 1. 문서에 바로 실행할 일은 명확히 나오지 않습니다."
             )
         if intent == FOLLOW_UP_INTENT_MEMO:
-            return "Use exactly these sections in Korean: 제목:, 핵심:, 다음 행동:."
-        return "One short Korean paragraph answering the follow-up request."
+            return "Use exactly these sections in Korean: 제목:, 핵심: (2~3 items), 다음 행동: (1~3 items)."
+        return "One short Korean paragraph (2~4 sentences) answering the follow-up request."
 
     def _intent_reasoning_guardrails(self, intent: str) -> str:
         common = "Ignore file metadata such as title, version, author, date, and path unless the user explicitly asks about metadata."
@@ -440,19 +441,19 @@ class OllamaModelAdapter(ModelAdapter):
         if intent == FOLLOW_UP_INTENT_KEY_POINTS:
             return base + "\n- 핵심 포인트 3개를 글머리 기호로 쓰세요.\n- 목적, 원칙, 결정, 결론 위주로 쓰세요."
         if intent == FOLLOW_UP_INTENT_ACTION_ITEMS:
-            return base + "\n- 실행 가능한 항목만 번호 목록으로 쓰세요 (최대 5개).\n- 실행할 일이 없으면 '문서에 바로 실행할 일은 없습니다'라고 쓰세요."
+            return base + "\n- 실행 가능한 항목만 번호 목록으로 쓰세요 (2~5개).\n- 실행할 일이 없으면 '문서에 바로 실행할 일은 없습니다'라고 쓰세요."
         if intent == FOLLOW_UP_INTENT_MEMO:
-            return base + "\n- 메모 형식으로 쓰세요: 제목:, 핵심:, 다음 행동:"
-        return base + "\n- 짧은 한 문단으로 답하세요."
+            return base + "\n- 메모 형식으로 쓰세요: 제목:, 핵심: (2~3개), 다음 행동: (1~3개)"
+        return base + "\n- 짧은 한 문단(2~4문장)으로 답하세요."
 
     def _compact_intent_output_contract(self, intent: str) -> str:
         if intent == FOLLOW_UP_INTENT_KEY_POINTS:
             return "핵심 3개를 글머리 기호로. 제목 없이."
         if intent == FOLLOW_UP_INTENT_ACTION_ITEMS:
-            return "번호 목록. 최대 5개. 실행 가능한 것만."
+            return "번호 목록. 2~5개. 실행 가능한 것만."
         if intent == FOLLOW_UP_INTENT_MEMO:
-            return "제목:, 핵심:, 다음 행동: 형식."
-        return "한국어 한 문단."
+            return "제목:, 핵심: (2~3개), 다음 행동: (1~3개) 형식."
+        return "한국어 한 문단 (2~4문장)."
 
     def _build_compact_context_prompt(
         self,

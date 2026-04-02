@@ -116,13 +116,12 @@ log_dispatch() {
 send_to_pane() {
     local pane="$1"
     local msg="$2"
-    # 텍스트 입력
-    tmux send-keys -t "$pane" "$msg" ""
-    # Enter 전에 충분히 대기
+    # set-buffer + paste-buffer for reliable long text dispatch
+    tmux set-buffer "$msg"
+    tmux paste-buffer -t "$pane"
+    sleep 1.5
+    tmux send-keys -t "$pane" Enter
     sleep 0.5
-    # Enter 전송
-    tmux send-keys -t "$pane" "" Enter
-    sleep 0.3
 }
 
 # ============================================================
@@ -155,7 +154,7 @@ handle_codex_feedback_updated() {
     echo -e "${GREEN}│  → Claude pane에 자동 전송 중...${NC}"
     echo -e "${GREEN}└─────────────────────────────────────────${NC}"
 
-    local msg=".pipeline/codex_feedback.md 읽고, STATUS가 implement일 때만 그 지시대로 한 슬라이스만 구현해줘. 작업 후 /work closeout 남겨줘."
+    local msg="work/README.md,CLAUDE.md, .pipeline/codex_feedback.md 읽고, STATUS가 implement일 때만 그 지시대로 한 슬라이스만 구현해줘. 작업 후 /work closeout 남겨줘."
 
     send_to_pane "$PANE_CLAUDE" "$msg"
     log_dispatch "$filepath" "slot_claude" "$PANE_CLAUDE"

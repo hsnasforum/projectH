@@ -35,10 +35,12 @@ get_mtime() {
 send_to_pane() {
     local pane="$1"
     local msg="$2"
-    tmux send-keys -t "$pane" "$msg" ""
+    # Use set-buffer + paste-buffer for reliable long text dispatch
+    tmux set-buffer "$msg"
+    tmux paste-buffer -t "$pane"
+    sleep 1.5
+    tmux send-keys -t "$pane" Enter
     sleep 0.5
-    tmux send-keys -t "$pane" "" Enter
-    sleep 0.3
 }
 
 # ============================================================
@@ -78,7 +80,7 @@ handle_codex_feedback_updated() {
     if [ "$status" = "implement" ]; then
         # Claude에 자동 전달
         echo -e "${GREEN}  → implement 확인 → Claude pane에 자동 전송 중...${NC}"
-        send_to_pane "$PANE_CLAUDE" ".pipeline/codex_feedback.md 읽고, STATUS가 implement일 때만 그 지시대로 한 슬라이스만 구현해줘. 작업 후 /work closeout 남겨줘."
+        send_to_pane "$PANE_CLAUDE" "work/README.md,CLAUDE.md, .pipeline/codex_feedback.md 읽고, STATUS가 implement일 때만 그 지시대로 한 슬라이스만 구현해줘. 작업 후 /work closeout 남겨줘."
         echo -e "${GREEN}  ✓ Claude pane에 전송 완료${NC}"
         echo -e "${GRAY}  → 다음 루프 대기 중...${NC}"
 

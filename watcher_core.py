@@ -553,26 +553,39 @@ def tmux_send_keys(pane_target: str, command: str, dry_run: bool = False) -> boo
         if not input_ready:
             log.warning("pane input prompt not detected, proceeding anyway: target=%s", pane_target)
 
-        # Phase 3: literal paste + delay + Enter
+        # Phase 3: use tmux set-buffer + paste-buffer for reliable long text input.
+        # send-keys -l with long text can overflow terminal line buffers or get
+        # misinterpreted by CLI paste-bracket detection.
         subprocess.run(
-            ["tmux", "send-keys", "-t", pane_target, "-l", command],
+            ["tmux", "set-buffer", command],
             check=True, capture_output=True,
         )
-        time.sleep(2.0)  # longer delay for CLI to register the pasted text
+        subprocess.run(
+            ["tmux", "paste-buffer", "-t", pane_target],
+            check=True, capture_output=True,
+        )
+        time.sleep(1.5)
         subprocess.run(
             ["tmux", "send-keys", "-t", pane_target, "Enter"],
             check=True, capture_output=True,
         )
 
         # Phase 4: verify the prompt was consumed (pane should change)
-        time.sleep(1.5)
+        time.sleep(2.0)
         if _pane_has_input_cursor(pane_target):
-            # Still showing input prompt = Enter may not have been consumed
-            log.warning("pane still shows input cursor after Enter, sending retry Enter")
+            log.warning("pane still shows input cursor after Enter, retrying submit")
             subprocess.run(
                 ["tmux", "send-keys", "-t", pane_target, "Enter"],
                 check=True, capture_output=True,
             )
+            time.sleep(1.0)
+            if _pane_has_input_cursor(pane_target):
+                # Last resort: Ctrl+M (carriage return) which some CLIs handle differently
+                log.warning("second Enter also stuck, sending C-m as last resort")
+                subprocess.run(
+                    ["tmux", "send-keys", "-t", pane_target, "C-m"],
+                    check=True, capture_output=True,
+                )
 
         return True
     except subprocess.CalledProcessError as e:

@@ -647,17 +647,33 @@ def _dispatch_codex(pane_target: str, command: str) -> None:
         )
         log.info("codex first dispatch: %s", prompt_path)
     else:
-        # Codex interactive running → Escape (clear suggestion) → paste → Enter
-        # Escape clears the › suggestion autocomplete so paste lands cleanly
-        subprocess.run(["tmux", "send-keys", "-t", pane_target, "Escape"], check=False, capture_output=True)
-        time.sleep(0.3)
-        subprocess.run(["tmux", "send-keys", "-t", pane_target, "Escape"], check=False, capture_output=True)
-        time.sleep(0.5)
+        # Codex interactive running — wait for idle (› prompt) before sending
+        # If Codex is working, DO NOT send anything (Escape = interrupt)
+        idle = False
+        for _ in range(60):  # wait up to 60 seconds for idle
+            check_lines = [l.strip() for l in _capture_pane_text(pane_target).strip().splitlines() if l.strip()]
+            check_last = check_lines[-1] if check_lines else ""
+            if check_last.startswith("›"):
+                idle = True
+                break
+            time.sleep(1.0)
+
+        if not idle:
+            log.warning("codex not idle after 60s, forcing new instance")
+            subprocess.run(["tmux", "send-keys", "-t", pane_target, "/exit", "Enter"], check=False, capture_output=True)
+            time.sleep(2.0)
+            prompt_path = _write_prompt_file(command)
+            shell_cmd = f"codex --ask-for-approval never \"$(cat '{prompt_path}')\""
+            subprocess.run(["tmux", "send-keys", "-t", pane_target, shell_cmd, "Enter"], check=True, capture_output=True)
+            log.info("codex forced new instance: %s", prompt_path)
+            return
+
+        # Codex idle → paste prompt
         subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
         subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
         time.sleep(1.0)
         subprocess.run(["tmux", "send-keys", "-t", pane_target, "Enter"], check=True, capture_output=True)
-        log.info("codex subsequent dispatch (Escape + paste)")
+        log.info("codex subsequent dispatch (paste to idle)")
 
 
 def _dispatch_claude(pane_target: str, command: str) -> None:

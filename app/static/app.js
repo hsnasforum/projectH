@@ -9,6 +9,7 @@
     const progressElapsed = document.getElementById("progress-elapsed");
     const progressNote = document.getElementById("progress-note");
     const cancelRequestButton = document.getElementById("cancel-request");
+    const responseBox = document.getElementById("response-box");
     const responseText = document.getElementById("response-text");
     const factStrengthBar = document.getElementById("fact-strength-bar");
     const responseOriginGroup = document.getElementById("response-origin-group");
@@ -3045,6 +3046,7 @@
       const latestAssistantContext = findLatestAssistantContext(session.messages || []);
       const latestAssistantMessage = latestAssistantContext.assistant;
       const correctionTargetMessage = resolveCorrectionTargetMessage(session.messages || [], latestAssistantMessage);
+      showElement(responseBox, Boolean(latestAssistantMessage));
       if (latestAssistantMessage) {
         responseText.textContent = latestAssistantMessage.text || "응답 본문이 없습니다.";
         showElement(responseCopyTextButton, Boolean(latestAssistantMessage.text));
@@ -3087,6 +3089,7 @@
       if (data.session) {
         renderSession(data.session);
       }
+      showElement(responseBox, true);
       responseText.textContent = data.response?.text || "응답 본문이 없습니다.";
       showElement(responseCopyTextButton, Boolean(data.response?.text));
       renderResponseOrigin(data.response?.response_origin || null);

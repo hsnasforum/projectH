@@ -526,8 +526,8 @@ def _pane_has_input_cursor(pane_target: str) -> bool:
     if not lines:
         return False
     last = lines[-1].strip()
-    # Codex shows "> " prompt, Claude shows "> " or "$"
-    return last.endswith(">") or last.endswith("$") or "> " in last
+    # Codex shows "> " or "›" prompt, Claude shows "> " or "$", bash shows "user@host:path$"
+    return last.endswith(">") or last.rstrip().endswith("$") or "> " in last or "$ " in last
 
 
 def _wait_for_input_ready(
@@ -637,7 +637,8 @@ def _dispatch_codex(pane_target: str, command: str) -> None:
     pane_lines = [l.strip() for l in _capture_pane_text(pane_target).strip().splitlines() if l.strip()]
     last_line = pane_lines[-1] if pane_lines else ""
 
-    if last_line.endswith("$"):
+    is_bash = last_line.rstrip().endswith("$") or "$ " in last_line
+    if is_bash:
         # Bash prompt → first launch
         prompt_path = _write_prompt_file(command)
         shell_cmd = f"codex --ask-for-approval never \"$(cat '{prompt_path}')\""
@@ -826,7 +827,13 @@ class StateMachine:
             current_pane = _capture_pane_text(self.verify_pane_target)
             pane_lines = [l.strip() for l in current_pane.strip().splitlines() if l.strip()]
             last_pane_line = pane_lines[-1] if pane_lines else ""
-            codex_idle = last_pane_line.startswith("›") or last_pane_line.endswith("$")
+            stripped_last = last_pane_line.rstrip()
+            codex_idle = (
+                stripped_last.startswith("›")
+                or stripped_last.endswith("$")
+                or "$ " in stripped_last  # colored bash prompt: user@host:path$
+                or stripped_last.startswith("xpdlqj")  # user's bash prompt line
+            )
             elapsed_since_dispatch = time.time() - job.last_dispatch_at
             # Only check after at least 10 seconds (avoid false positive during startup)
             if codex_idle and elapsed_since_dispatch > 10:

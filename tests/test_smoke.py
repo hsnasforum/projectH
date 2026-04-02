@@ -2020,7 +2020,12 @@ class SmokeTest(unittest.TestCase):
             self.assertNotIn("https://blog.example.com/crimson-desert-review", response.text)
             self.assertNotIn("생존 제작 RPG", response.text)
 
-    def test_entity_card_community_weak_claim_shows_확정_금지_qualifier(self) -> None:
+    def test_entity_card_community_only_source_does_not_surface_weak_claim_section(self) -> None:
+        """Community-only sources are not in TRUSTED_CLAIM_SOURCE_ROLES, so they
+        cannot enter weak_selected.  The '비공식 출처, 확정 금지' qualifier in the
+        rendering path is currently unreachable dead code. This test locks the
+        current gating behavior: community-only fixtures must NOT produce a
+        '단일 출처 정보' section."""
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             loop = AgentLoop(
@@ -2050,10 +2055,10 @@ class SmokeTest(unittest.TestCase):
                     metadata={"web_search_permission": "enabled"},
                 )
             )
-            # Community-source weak claims must show "확정 금지" qualifier
-            if "단일 출처 정보" in response.text:
-                self.assertIn("비공식 출처, 확정 금지", response.text)
-                self.assertNotIn("확정 표현 주의", response.text)
+            # Community sources are gated out of weak_selected → no "단일 출처 정보" section
+            self.assertNotIn("단일 출처 정보", response.text)
+            self.assertNotIn("비공식 출처, 확정 금지", response.text)
+            self.assertNotIn("확정 표현 주의", response.text)
 
     def test_web_search_entity_summary_avoids_single_source_feature_when_core_facts_agree(self) -> None:
         with TemporaryDirectory() as tmp_dir:

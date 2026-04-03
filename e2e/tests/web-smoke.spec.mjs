@@ -884,6 +884,7 @@ test("same-session recurrence aggregate는 separate blocked trigger surface로 �
   expect(conflictAggregate.reviewed_memory_transition_record.canonical_transition_id).toBe(
     emittedAggregate.reviewed_memory_transition_record.canonical_transition_id
   );
+  await expect(page.locator("#notice-box")).toHaveText(`충돌 확인이 완료되었습니다. (${conflictAggregate.reviewed_memory_conflict_visibility_record.canonical_transition_id})`);
 });
 
 test("스트리밍 중 취소 버튼이 동작합니다", async ({ page }) => {

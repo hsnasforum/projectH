@@ -202,14 +202,12 @@ test("브라우저 폴더 선택으로도 문서 검색이 됩니다", async ({ 
   // response detail preview panel is visible alongside summary body
   await expect(page.getByTestId("response-search-preview")).toBeVisible();
   await expect(page.locator("#response-search-preview .search-preview-item")).toHaveCount(2);
-  await expect(page.locator("#response-search-preview .search-preview-name").first()).toContainText("budget-plan.md");
-  await expect(page.locator("#response-search-preview .search-preview-name").first()).toContainText("1. budget-plan.md");
+  await expect(page.locator("#response-search-preview .search-preview-name").first()).toHaveText("1. budget-plan.md");
   await expect(page.locator("#response-search-preview .search-preview-name").first()).toHaveAttribute("title", /.*\/budget-plan\.md$/);
   await expect(page.locator("#response-search-preview .search-preview-match").first()).toContainText("파일명 일치");
   await expect(page.locator("#response-search-preview .search-preview-snippet").first()).toBeVisible();
   await expect(page.locator("#response-search-preview .search-preview-snippet").first()).toContainText("budget-plan");
-  await expect(page.locator("#response-search-preview .search-preview-name").nth(1)).toContainText("memo.md");
-  await expect(page.locator("#response-search-preview .search-preview-name").nth(1)).toContainText("2. memo.md");
+  await expect(page.locator("#response-search-preview .search-preview-name").nth(1)).toHaveText("2. memo.md");
   await expect(page.locator("#response-search-preview .search-preview-name").nth(1)).toHaveAttribute("title", /.*\/memo\.md$/);
   await expect(page.locator("#response-search-preview .search-preview-match").nth(1)).toContainText("내용 일치");
   await expect(page.locator("#response-search-preview .search-preview-snippet").nth(1)).toBeVisible();
@@ -220,14 +218,12 @@ test("브라우저 폴더 선택으로도 문서 검색이 됩니다", async ({ 
   const lastAssistant = page.locator("#transcript .message.assistant").last();
   await expect(lastAssistant.locator(".search-preview-panel")).toBeVisible();
   await expect(lastAssistant.locator(".search-preview-item")).toHaveCount(2);
-  await expect(lastAssistant.locator(".search-preview-name").first()).toContainText("budget-plan.md");
-  await expect(lastAssistant.locator(".search-preview-name").first()).toContainText("1. budget-plan.md");
+  await expect(lastAssistant.locator(".search-preview-name").first()).toHaveText("1. budget-plan.md");
   await expect(lastAssistant.locator(".search-preview-name").first()).toHaveAttribute("title", /.*\/budget-plan\.md$/);
   await expect(lastAssistant.locator(".search-preview-match").first()).toContainText("파일명 일치");
   await expect(lastAssistant.locator(".search-preview-snippet").first()).toBeVisible();
   await expect(lastAssistant.locator(".search-preview-snippet").first()).toContainText("budget-plan");
-  await expect(lastAssistant.locator(".search-preview-name").nth(1)).toContainText("memo.md");
-  await expect(lastAssistant.locator(".search-preview-name").nth(1)).toContainText("2. memo.md");
+  await expect(lastAssistant.locator(".search-preview-name").nth(1)).toHaveText("2. memo.md");
   await expect(lastAssistant.locator(".search-preview-name").nth(1)).toHaveAttribute("title", /.*\/memo\.md$/);
   await expect(lastAssistant.locator(".search-preview-match").nth(1)).toContainText("내용 일치");
   await expect(lastAssistant.locator(".search-preview-snippet").nth(1)).toBeVisible();
@@ -247,14 +243,12 @@ test("검색만 응답은 transcript에서 preview cards만 보이고 본문 텍
   // response detail box shows preview cards instead of raw text
   await expect(page.getByTestId("response-search-preview")).toBeVisible();
   await expect(page.locator("#response-search-preview .search-preview-item")).toHaveCount(2);
-  await expect(page.locator("#response-search-preview .search-preview-name").first()).toContainText("budget-plan.md");
-  await expect(page.locator("#response-search-preview .search-preview-name").first()).toContainText("1. budget-plan.md");
+  await expect(page.locator("#response-search-preview .search-preview-name").first()).toHaveText("1. budget-plan.md");
   await expect(page.locator("#response-search-preview .search-preview-name").first()).toHaveAttribute("title", /.*\/budget-plan\.md$/);
   await expect(page.locator("#response-search-preview .search-preview-match").first()).toContainText("파일명 일치");
   await expect(page.locator("#response-search-preview .search-preview-snippet").first()).toBeVisible();
   await expect(page.locator("#response-search-preview .search-preview-snippet").first()).toContainText("budget-plan");
-  await expect(page.locator("#response-search-preview .search-preview-name").nth(1)).toContainText("memo.md");
-  await expect(page.locator("#response-search-preview .search-preview-name").nth(1)).toContainText("2. memo.md");
+  await expect(page.locator("#response-search-preview .search-preview-name").nth(1)).toHaveText("2. memo.md");
   await expect(page.locator("#response-search-preview .search-preview-name").nth(1)).toHaveAttribute("title", /.*\/memo\.md$/);
   await expect(page.locator("#response-search-preview .search-preview-match").nth(1)).toContainText("내용 일치");
   await expect(page.locator("#response-search-preview .search-preview-snippet").nth(1)).toBeVisible();
@@ -275,14 +269,12 @@ test("검색만 응답은 transcript에서 preview cards만 보이고 본문 텍
   const lastAssistant = page.locator("#transcript .message.assistant").last();
   await expect(lastAssistant.locator(".search-preview-panel")).toBeVisible();
   await expect(lastAssistant.locator(".search-preview-item")).toHaveCount(2);
-  await expect(lastAssistant.locator(".search-preview-name").first()).toContainText("budget-plan.md");
-  await expect(lastAssistant.locator(".search-preview-name").first()).toContainText("1. budget-plan.md");
+  await expect(lastAssistant.locator(".search-preview-name").first()).toHaveText("1. budget-plan.md");
   await expect(lastAssistant.locator(".search-preview-name").first()).toHaveAttribute("title", /.*\/budget-plan\.md$/);
   await expect(lastAssistant.locator(".search-preview-match").first()).toContainText("파일명 일치");
   await expect(lastAssistant.locator(".search-preview-snippet").first()).toBeVisible();
   await expect(lastAssistant.locator(".search-preview-snippet").first()).toContainText("budget-plan");
-  await expect(lastAssistant.locator(".search-preview-name").nth(1)).toContainText("memo.md");
-  await expect(lastAssistant.locator(".search-preview-name").nth(1)).toContainText("2. memo.md");
+  await expect(lastAssistant.locator(".search-preview-name").nth(1)).toHaveText("2. memo.md");
   await expect(lastAssistant.locator(".search-preview-name").nth(1)).toHaveAttribute("title", /.*\/memo\.md$/);
   await expect(lastAssistant.locator(".search-preview-match").nth(1)).toContainText("내용 일치");
   await expect(lastAssistant.locator(".search-preview-snippet").nth(1)).toBeVisible();

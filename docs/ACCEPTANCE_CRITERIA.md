@@ -1315,7 +1315,7 @@ These are placeholders for the next phase design target and its immediate follow
 - Playwright smoke covers 17 core browser scenarios:
   - file summary with panels, source filename assertion in both quick-meta and transcript meta, and `문서 요약` source-type label assertion in both quick-meta and transcript meta
   - browser file picker with source filename and `문서 요약` source-type label assertion in both quick-meta and transcript meta
-  - browser folder picker with `선택 결과 요약` source-type label and multi-source count-based metadata (`출처 2개`) assertion in both quick-meta and transcript meta, plus response detail preview panel alongside summary body, and transcript preview panel with item count, both cards' filenames, full-path tooltips, match badges (`파일명 일치` / `내용 일치`), and snippet visibility
+  - browser folder picker with `선택 결과 요약` source-type label and multi-source count-based metadata (`출처 2개`) assertion in both quick-meta and transcript meta, plus response detail preview panel alongside summary body with first-card filename, and transcript preview panel with item count, both cards' filenames, full-path tooltips, match badges (`파일명 일치` / `내용 일치`), and snippet visibility
   - pure search-only response with transcript preview cards visible, transcript body text hidden, response detail box preview cards visible, response body text hidden, copy-text button hidden, `selected-copy` button visibility with click/notice/clipboard verification, full-path tooltip on preview card filenames, and match-type badge (`파일명 일치` / `내용 일치`) plus content snippet visibility on preview cards in both response detail and transcript
   - approval reissue
   - approval-backed save

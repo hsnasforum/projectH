@@ -140,6 +140,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("approval-path-input", html)
             self.assertIn("reissue-button", html)
             self.assertIn("response-copy-path", html)
+            self.assertIn("selected-copy", html)
             self.assertIn("advanced-settings", html)
             self.assertIn("session-id", html)
             self.assertIn("browser-file-input", html)

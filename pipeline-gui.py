@@ -526,11 +526,23 @@ class PipelineGUI:
         self.root = Tk()
         self.root.title("Pipeline Launcher")
         self.root.configure(bg="#0f0f0f")
-        self.root.geometry("920x720")
-        self.root.minsize(760, 520)
+        self.root.resizable(True, True)
+        self._set_initial_window_geometry()
+        self.root.minsize(900, 600)
 
         self._build_ui()
         self._schedule_poll()
+
+    def _set_initial_window_geometry(self) -> None:
+        screen_w = max(1280, self.root.winfo_screenwidth())
+        screen_h = max(900, self.root.winfo_screenheight())
+
+        width = min(900, screen_w - 40)
+        height = min(900, screen_h - 60)
+
+        x = max(20, (screen_w - width) // 2)
+        y = max(20, (screen_h - height) // 2)
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
 
     def _build_ui(self) -> None:
         bg = "#0f0f0f"
@@ -700,7 +712,7 @@ class PipelineGUI:
         self.focus_text = Text(
             focus_inner, font=small_font, bg=log_bg, fg="#e5e7eb",
             wrap=WORD, bd=0, highlightthickness=0, padx=12, pady=8,
-            state=DISABLED, spacing1=1, spacing3=1,
+            state=DISABLED, spacing1=1, spacing3=1, height=12,
         )
         focus_scroll = Scrollbar(focus_inner, command=self.focus_text.yview)
         self.focus_text.configure(yscrollcommand=focus_scroll.set)
@@ -719,18 +731,18 @@ class PipelineGUI:
 
         self.log_text = Text(log_inner, font=small_font, bg=log_bg, fg="#cbd5e1",
                              wrap=WORD, bd=0, highlightthickness=0, padx=10, pady=10,
-                             state=DISABLED)
+                             state=DISABLED, height=8)
         scrollbar = Scrollbar(log_inner, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side=RIGHT, fill=Y)
         self.log_text.pack(side=LEFT, fill=BOTH, expand=True)
 
-        paned.add(log_frame, minsize=100, stretch="never")
-        # 초기 sash: focus 3 : log 1 비율
+        paned.add(log_frame, minsize=160, stretch="always")
+        # 초기 sash: focus 2 : log 1 비율
         self.root.update_idletasks()
         paned_h = paned.winfo_height()
         if paned_h > 200:
-            paned.sash_place(0, 0, int(paned_h * 0.72))
+            paned.sash_place(0, 0, int(paned_h * 0.66))
 
         # ── 하단 메시지 ──
         self.msg_var = StringVar(value="")
@@ -743,9 +755,101 @@ class PipelineGUI:
         try:
             total_h = self.paned.winfo_height()
             if total_h > 240:
-                self.paned.sash_place(0, 0, int(total_h * 0.6))
+                self.paned.sash_place(0, 0, int(total_h * 0.62))
         except Exception:
             pass
+
+    def _ensure_log_pane_visible(self) -> None:
+        try:
+            total_h = self.paned.winfo_height()
+            if total_h <= 240:
+                return
+            _x, sash_y = self.paned.sash_coord(0)
+            lower_h = total_h - sash_y
+            if lower_h < 150:
+                self.paned.sash_place(0, 0, int(total_h * 0.62))
+        except Exception:
+            pass
+
+    # ── 데이터 수집 (tmux 호출 통합) ──
+
+    _prev_focus_text: str = ""
+    _prev_log_text: str = ""
+
+    def _collect_all_agent_data(self) -> tuple[list[tuple[str, str, str, str]], dict[str, str]]:
+        """list-panes 1회 + capture-pane x3 = 4회 subprocess로 status + output 둘 다 반환."""
+        code, output = _run(
+            ["tmux", "list-panes", "-t", f"{SESSION_NAME}:0", "-F", "#{pane_index}|#{pane_id}|#{pane_dead}"],
+            timeout=2.0,
+        )
+        if code != 0 or not output:
+            return (
+                [("Claude", "OFF", "", ""), ("Codex", "OFF", "", ""), ("Gemini", "OFF", "", "")],
+                {},
+            )
+
+        names = {0: "Claude", 1: "Codex", 2: "Gemini"}
+        hints = watcher_runtime_hints(self.project)
+        agents: list[tuple[str, str, str, str]] = []
+        pane_map: dict[str, str] = {}
+
+        for raw in output.splitlines():
+            try:
+                idx_s, pane_id, dead = raw.split("|", 2)
+                idx = int(idx_s)
+            except ValueError:
+                continue
+            label = names.get(idx, f"Pane {idx}")
+            if dead == "1":
+                agents.append((label, "DEAD", "", ""))
+                pane_map[label] = ""
+                continue
+
+            # 한 번만 capture — 긴 history로 가져와서 status와 output 양쪽에 사용
+            cap_code, captured = _run(
+                ["tmux", "capture-pane", "-J", "-pt", pane_id, "-S", "-180"],
+                timeout=2.0,
+            )
+            if cap_code != 0 or not captured:
+                agents.append((label, "BOOTING", "", ""))
+                pane_map[label] = ""
+                continue
+
+            cleaned = ANSI_RE.sub("", captured)
+
+            # status 판정 (agent_snapshots 로직)
+            status, note = detect_agent_status(label, cleaned)
+            quota = extract_quota_note(cleaned)
+            hint = hints.get(label)
+            if hint:
+                hint_status, hint_note = hint
+                if hint_status == "WORKING":
+                    status = "WORKING"
+                    if not note:
+                        note = hint_note
+                elif hint_status == "READY" and status == "BOOTING":
+                    status = "READY"
+                    note = ""
+            agents.append((label, status, note, quota))
+
+            # output (capture_agent_panes 로직)
+            pane_map[label] = rejoin_wrapped_pane_lines(cleaned)
+
+        return agents, pane_map
+
+    def _update_text_if_changed(self, widget: Text, new_text: str) -> None:
+        """Text 위젯의 내용이 바뀌었을 때만 갱신합니다."""
+        widget.configure(state=NORMAL)
+        current = widget.get("1.0", f"{END}-1c")
+        if current == new_text:
+            widget.configure(state=DISABLED)
+            return
+        at_bottom = widget.yview()[1] >= 0.95
+        widget.delete("1.0", END)
+        widget.insert(END, new_text)
+        widget.configure(state=DISABLED)
+        if at_bottom:
+            widget.see(END)
 
     def _select_agent(self, agent: str) -> None:
         self.selected_agent = agent
@@ -782,9 +886,9 @@ class PipelineGUI:
             self.watcher_var.set("Watcher: ✗ Dead")
             self.watcher_state_label.configure(fg="#ef4444")
 
-        # Agents
-        agents = agent_snapshots(self.project)
-        pane_map = capture_agent_panes(self.project)
+        # Agents — 통합 조회: list-panes 1회 + capture-pane x3
+        # agent_snapshots + capture_agent_panes 를 한 번에 처리
+        agents, pane_map = self._collect_all_agent_data()
         working_labels = [label for label, status, _note, _quota in agents if status == "WORKING"]
         if self.selected_agent not in {label for label, _s, _n, _q in agents}:
             self.selected_agent = working_labels[0] if working_labels else "Claude"
@@ -824,14 +928,8 @@ class PipelineGUI:
 
         selected_text = format_focus_output(pane_map.get(self.selected_agent, ""))
         self.focus_title_var.set(f"{self.selected_agent} • 최근 pane tail (read-only)")
-        # 스크롤 follow: 사용자가 바닥 근처에 있을 때만 자동 스크롤
-        focus_at_bottom = self.focus_text.yview()[1] >= 0.95
-        self.focus_text.configure(state=NORMAL)
-        self.focus_text.delete("1.0", END)
-        self.focus_text.insert(END, selected_text)
-        self.focus_text.configure(state=DISABLED)
-        if focus_at_bottom:
-            self.focus_text.see(END)
+        # diff 갱신: 내용 변경 시에만 Text 위젯 업데이트
+        self._update_text_if_changed(self.focus_text, selected_text)
 
         # Latest files
         work_name, work_mtime = latest_md(self.project / "work")
@@ -847,17 +945,11 @@ class PipelineGUI:
 
         # Watcher log
         log_lines = watcher_log_tail(self.project, lines=8)
-        log_at_bottom = self.log_text.yview()[1] >= 0.95
-        self.log_text.configure(state=NORMAL)
-        self.log_text.delete("1.0", END)
-        for line in log_lines:
-            clean = line.strip()
-            if len(clean) > 120:
-                clean = clean[:117] + "..."
-            self.log_text.insert(END, clean + "\n")
-        self.log_text.configure(state=DISABLED)
-        if log_at_bottom:
-            self.log_text.see(END)
+        log_text = "\n".join(
+            (l.strip()[:117] + "..." if len(l.strip()) > 120 else l.strip())
+            for l in log_lines
+        )
+        self._update_text_if_changed(self.log_text, log_text)
 
         # 버튼 enable/disable — 작업 중이면 전부 비활성
         if self._action_in_progress:

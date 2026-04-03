@@ -643,7 +643,7 @@ test("candidate confirmation path는 save support와 분리되어 기록되고 l
   await expect(reviewAcceptButton).toHaveText("검토 수락");
   await reviewAcceptButton.click();
 
-  await expect(page.locator("#notice-box")).toContainText("검토 후보를 수락했습니다. 아직 적용되지는 않았습니다.");
+  await expect(page.locator("#notice-box")).toHaveText("검토 후보를 수락했습니다. 아직 적용되지는 않았습니다.");
   await expect(reviewQueueBox).toBeHidden();
 
   sessionPayload = await fetchSessionPayload(page, sessionId);

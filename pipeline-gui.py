@@ -43,15 +43,22 @@ def validate_project_root(project: Path) -> tuple[bool, str]:
 
     Returns: (valid, reason)
     """
-    path_str = str(project)
+    raw_path = _path_str(project)
+    path_str = _wsl_path_str(project)
 
     # Windows 경로가 WSL project path로 착각되지 않게
-    if IS_WINDOWS and (path_str.startswith("C:") or path_str.startswith("D:") or "\\" in path_str):
+    if IS_WINDOWS and _windows_native_path(raw_path):
         return False, (
-            f"Windows 경로가 project root로 설정되었습니다: {path_str}\n\n"
+            f"Windows 경로가 project root로 설정되었습니다: {raw_path}\n\n"
             "WSL 내부 경로를 인자로 전달해야 합니다.\n"
             "예: pipeline-gui.exe /home/사용자/code/projectH\n"
             "또는 windows-launchers/pipeline-gui.cmd를 사용하세요."
+        )
+
+    if IS_WINDOWS and not path_str.startswith("/"):
+        return False, (
+            f"WSL 경로 형식이 아닙니다: {raw_path}\n\n"
+            "예: pipeline-gui.exe /home/사용자/code/projectH"
         )
 
     # WSL 경로라도 실제 projectH repo인지 확인
@@ -88,21 +95,81 @@ FOCUS_ENTRY_START_RE = re.compile(
 POLL_MS = 1500
 IS_WINDOWS = sys.platform == "win32"
 WSL_DISTRO = os.environ.get("WSL_DISTRO", "Ubuntu")
+WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[/\\]")
+CREATE_NO_WINDOW = 0x08000000
+TMUX_QUERY_TIMEOUT = 5.0 if IS_WINDOWS else 2.0
+FILE_QUERY_TIMEOUT = 10.0 if IS_WINDOWS else 5.0
+
+
+def _path_str(path: Path | str) -> str:
+    return str(path)
+
+
+def _windows_native_path(path: Path | str) -> bool:
+    raw = _path_str(path)
+    return raw.startswith("\\\\") or bool(WINDOWS_DRIVE_RE.match(raw))
+
+
+def _wsl_path_str(path: Path | str) -> str:
+    raw = _path_str(path)
+    if not IS_WINDOWS:
+        return raw
+    if _windows_native_path(raw):
+        return raw
+    return raw.replace("\\", "/")
 
 
 # ── Platform-aware command execution ──────────────────────────
 
 def _wsl_wrap(cmd: list[str]) -> list[str]:
-    """Windows에서는 wsl.exe로 감싸서 WSL 내부 명령을 실행합니다."""
+    """Windows에서는 wsl.exe로 감싸서 WSL 내부 명령을 실행합니다.
+
+    wsl.exe -- cmd 형태는 내부적으로 bash로 실행되므로
+    #{}, %, \\t 등 특수 문자가 bash에서 해석됩니다.
+    이를 방지하기 위해 bash -c '...'로 감싸서 single-quote 인용합니다.
+    """
     if IS_WINDOWS:
-        return ["wsl.exe", "-d", WSL_DISTRO, "--"] + cmd
+        # wsl.exe -- 형태는 인자를 bash에 그대로 넘기므로
+        # #{}, %, *, \t 등이 bash에서 해석됨.
+        # 각 인자를 single-quote로 개별 감싸서 bash 해석을 방지.
+        def _sq(s: str) -> str:
+            """single-quote escape: abc → 'abc', it's → 'it'\''s'"""
+            return "'" + s.replace("'", "'\\''") + "'"
+        # 첫 인자(명령)는 quote 불필요, 나머지는 quote
+        if not cmd:
+            return ["wsl.exe", "-d", WSL_DISTRO, "--", "true"]
+        shell_cmd = cmd[0] + " " + " ".join(_sq(a) for a in cmd[1:]) if len(cmd) > 1 else cmd[0]
+        return ["wsl.exe", "-d", WSL_DISTRO, "--", "bash", "-c", shell_cmd]
     return cmd
+
+
+def _hidden_subprocess_kwargs() -> dict[str, object]:
+    if not IS_WINDOWS:
+        return {}
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = 0
+    return {
+        "creationflags": CREATE_NO_WINDOW,
+        "startupinfo": startupinfo,
+    }
 
 
 def _run(cmd: list[str], timeout: float = 5.0) -> tuple[int, str]:
     try:
-        r = subprocess.run(_wsl_wrap(cmd), capture_output=True, text=True, timeout=timeout)
-        return r.returncode, r.stdout.strip()
+        r = subprocess.run(
+            _wsl_wrap(cmd),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            **_hidden_subprocess_kwargs(),
+        )
+        stdout = r.stdout if isinstance(r.stdout, str) else ""
+        stderr = r.stderr if isinstance(r.stderr, str) else ""
+        output = stdout.strip()
+        if not output and r.returncode != 0:
+            output = stderr.strip()
+        return r.returncode, output
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return -1, ""
 
@@ -116,7 +183,7 @@ def watcher_alive(project: Path) -> tuple[bool, int | None]:
     pid_path = project / ".pipeline" / "experimental.pid"
     if IS_WINDOWS:
         # Windows에서는 WSL 파일시스템을 직접 읽을 수 없으므로 wsl cat으로 읽기
-        code, content = _run(["cat", str(pid_path)])
+        code, content = _run(["cat", _wsl_path_str(pid_path)])
         if code != 0 or not content.strip():
             return False, None
         try:
@@ -138,13 +205,13 @@ def watcher_alive(project: Path) -> tuple[bool, int | None]:
 
 def _wsl_read_file(path: str) -> str:
     """Windows에서 WSL 내부 파일을 읽습니다."""
-    code, content = _run(["cat", path])
+    code, content = _run(["cat", _wsl_path_str(path)])
     return content if code == 0 else ""
 
 
 def _wsl_file_exists(path: str) -> bool:
     """Windows에서 WSL 내부 파일 존재 여부를 확인합니다."""
-    code, _ = _run(["test", "-e", path])
+    code, _ = _run(["test", "-e", _wsl_path_str(path)])
     return code == 0
 
 
@@ -152,9 +219,9 @@ def latest_md(directory: Path) -> tuple[str, float]:
     if IS_WINDOWS:
         # WSL find로 최신 .md 파일 찾기
         code, output = _run([
-            "find", str(directory), "-name", "*.md", "-type", "f",
+            "find", _wsl_path_str(directory), "-name", "*.md", "-type", "f",
             "-printf", "%T@\\t%P\\n",
-        ])
+        ], timeout=FILE_QUERY_TIMEOUT)
         if code != 0 or not output.strip():
             return "—", 0.0
         best_mtime = 0.0
@@ -207,7 +274,9 @@ def time_ago(mtime: float) -> str:
 def watcher_log_tail(project: Path, lines: int = 5) -> list[str]:
     log_path = project / ".pipeline" / "logs" / "experimental" / "watcher.log"
     if IS_WINDOWS:
-        content = _wsl_read_file(str(log_path))
+        code, content = _run(["tail", "-n", str(max(lines * 8, 40)), _wsl_path_str(log_path)], timeout=FILE_QUERY_TIMEOUT)
+        if code != 0:
+            content = ""
         if not content:
             return ["(로그 없음)"]
         all_lines = content.splitlines()
@@ -315,7 +384,7 @@ def capture_agent_panes(project: Path, history_lines: int = 180) -> dict[str, st
     """agent label -> cleaned pane text."""
     code, output = _run(
         ["tmux", "list-panes", "-t", f"{SESSION_NAME}:0", "-F", "#{pane_index}|#{pane_id}|#{pane_dead}"],
-        timeout=2.0,
+        timeout=TMUX_QUERY_TIMEOUT,
     )
     names = {0: "Claude", 1: "Codex", 2: "Gemini"}
     results: dict[str, str] = {}
@@ -334,7 +403,7 @@ def capture_agent_panes(project: Path, history_lines: int = 180) -> dict[str, st
             continue
         cap_code, captured = _run(
             ["tmux", "capture-pane", "-J", "-pt", pane_id, "-S", f"-{history_lines}"],
-            timeout=2.0,
+            timeout=TMUX_QUERY_TIMEOUT,
         )
         if cap_code != 0 or not captured:
             results[label] = ""
@@ -458,7 +527,9 @@ def watcher_runtime_hints(project: Path) -> dict[str, tuple[str, str]]:
     """watcher.log에서 agent별 WORKING/READY 힌트와 경과시간 추출."""
     log_path = project / ".pipeline" / "logs" / "experimental" / "watcher.log"
     if IS_WINDOWS:
-        content = _wsl_read_file(str(log_path))
+        code, content = _run(["tail", "-n", "300", _wsl_path_str(log_path)], timeout=FILE_QUERY_TIMEOUT)
+        if code != 0:
+            content = ""
         if not content:
             return {}
         lines = content.splitlines()[-300:]
@@ -525,7 +596,7 @@ def agent_snapshots(project: Path) -> list[tuple[str, str, str, str]]:
     """[(label, status, note, quota), ...] — launcher 수준 truth."""
     code, output = _run(
         ["tmux", "list-panes", "-t", f"{SESSION_NAME}:0", "-F", "#{pane_index}|#{pane_id}|#{pane_dead}"],
-        timeout=2.0,
+        timeout=TMUX_QUERY_TIMEOUT,
     )
     if code != 0 or not output:
         return [("Claude", "OFF", "", ""), ("Codex", "OFF", "", ""), ("Gemini", "OFF", "", "")]
@@ -544,7 +615,7 @@ def agent_snapshots(project: Path) -> list[tuple[str, str, str, str]]:
         if dead == "1":
             results.append((label, "DEAD", "", ""))
             continue
-        cap_code, captured = _run(["tmux", "capture-pane", "-pt", pane_id, "-S", "-60"], timeout=2.0)
+        cap_code, captured = _run(["tmux", "capture-pane", "-pt", pane_id, "-S", "-60"], timeout=TMUX_QUERY_TIMEOUT)
         if cap_code != 0 or not captured:
             results.append((label, "BOOTING", "", ""))
             continue
@@ -575,10 +646,10 @@ def pipeline_start(project: Path) -> str:
     if IS_WINDOWS:
         # Windows: wsl.exe로 bash 실행
         subprocess.Popen(
-            ["wsl.exe", "-d", WSL_DISTRO, "--cd", str(project), "--",
-             "bash", "-l", str(script), str(project), "--mode", "experimental", "--no-attach"],
+            ["wsl.exe", "-d", WSL_DISTRO, "--cd", _wsl_path_str(project), "--",
+             "bash", "-l", _wsl_path_str(script), _wsl_path_str(project), "--mode", "experimental", "--no-attach"],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            creationflags=0x08000000,  # CREATE_NO_WINDOW
+            creationflags=CREATE_NO_WINDOW,
         )
     else:
         if not script.exists():
@@ -598,9 +669,10 @@ def pipeline_stop(project: Path) -> str:
     script = project / "stop-pipeline.sh"
     if IS_WINDOWS:
         subprocess.run(
-            ["wsl.exe", "-d", WSL_DISTRO, "--cd", str(project), "--",
-             "bash", str(script), str(project)],
+            ["wsl.exe", "-d", WSL_DISTRO, "--cd", _wsl_path_str(project), "--",
+             "bash", _wsl_path_str(script), _wsl_path_str(project)],
             capture_output=True, timeout=15,
+            **_hidden_subprocess_kwargs(),
         )
     else:
         if not script.exists():
@@ -616,7 +688,7 @@ def tmux_attach() -> None:
         subprocess.Popen(
             ["cmd", "/c", "start", "wsl.exe", "-d", WSL_DISTRO, "--",
              "bash", "-lc", f"tmux attach -t {SESSION_NAME}"],
-            creationflags=0x08000000,  # CREATE_NO_WINDOW for the launcher itself
+            creationflags=CREATE_NO_WINDOW,  # launcher 자신만 숨기고 새 콘솔은 유지
         )
     else:
         # WSL/Linux: 직접 attach
@@ -722,7 +794,7 @@ class PipelineGUI:
         Label(proj_card, text="Project", font=section_font, bg=card_bg, fg=sub_fg).pack(anchor="w")
         Label(
             proj_card,
-            text=str(self.project),
+            text=_wsl_path_str(self.project) if IS_WINDOWS else str(self.project),
             font=body_font,
             bg=card_bg,
             fg="#f59e0b",
@@ -905,7 +977,7 @@ class PipelineGUI:
         """list-panes 1회 + capture-pane x3 = 4회 subprocess로 status + output 둘 다 반환."""
         code, output = _run(
             ["tmux", "list-panes", "-t", f"{SESSION_NAME}:0", "-F", "#{pane_index}|#{pane_id}|#{pane_dead}"],
-            timeout=2.0,
+            timeout=TMUX_QUERY_TIMEOUT,
         )
         if code != 0 or not output:
             return (
@@ -933,7 +1005,7 @@ class PipelineGUI:
             # 한 번만 capture — 긴 history로 가져와서 status와 output 양쪽에 사용
             cap_code, captured = _run(
                 ["tmux", "capture-pane", "-J", "-pt", pane_id, "-S", "-180"],
-                timeout=2.0,
+                timeout=TMUX_QUERY_TIMEOUT,
             )
             if cap_code != 0 or not captured:
                 agents.append((label, "BOOTING", "", ""))

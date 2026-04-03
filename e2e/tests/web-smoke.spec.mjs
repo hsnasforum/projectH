@@ -215,6 +215,8 @@ test("검색만 응답은 transcript에서 preview cards만 보이고 본문 텍
   await expect(page.locator("#response-search-preview .search-preview-item")).toHaveCount(2);
   await expect(page.locator("#response-search-preview .search-preview-name").first()).toContainText("budget-plan.md");
   await expect(page.locator("#response-search-preview .search-preview-name").first()).toHaveAttribute("title", /.*\/budget-plan\.md$/);
+  await expect(page.locator("#response-search-preview .search-preview-match").first()).toContainText("파일명 일치");
+  await expect(page.locator("#response-search-preview .search-preview-snippet").first()).toBeVisible();
   await expect(page.getByTestId("response-text")).toBeHidden();
   await expect(page.getByTestId("response-copy-text")).toBeHidden();
   await expect(page.locator("#selected-text")).toContainText("budget-plan.md");
@@ -233,6 +235,8 @@ test("검색만 응답은 transcript에서 preview cards만 보이고 본문 텍
   await expect(lastAssistant.locator(".search-preview-item")).toHaveCount(2);
   await expect(lastAssistant.locator(".search-preview-name").first()).toContainText("budget-plan.md");
   await expect(lastAssistant.locator(".search-preview-name").first()).toHaveAttribute("title", /.*\/budget-plan\.md$/);
+  await expect(lastAssistant.locator(".search-preview-match").first()).toContainText("파일명 일치");
+  await expect(lastAssistant.locator(".search-preview-snippet").first()).toBeVisible();
 
   // transcript body text (pre) should be hidden for search-only
   await expect(lastAssistant.locator("pre")).toHaveCount(0);

@@ -1316,7 +1316,7 @@ These are placeholders for the next phase design target and its immediate follow
   - file summary with panels, source filename assertion in both quick-meta and transcript meta, and `문서 요약` source-type label assertion in both quick-meta and transcript meta
   - browser file picker with source filename and `문서 요약` source-type label assertion in both quick-meta and transcript meta
   - browser folder picker with `선택 결과 요약` source-type label and multi-source count-based metadata (`출처 2개`) assertion in both quick-meta and transcript meta
-  - pure search-only response with transcript preview cards visible, transcript body text hidden, response detail box preview cards visible, response body text hidden, copy-text button hidden, `selected-copy` button visibility with click/notice/clipboard verification, and full-path tooltip on preview card filenames in both response detail and transcript
+  - pure search-only response with transcript preview cards visible, transcript body text hidden, response detail box preview cards visible, response body text hidden, copy-text button hidden, `selected-copy` button visibility with click/notice/clipboard verification, full-path tooltip on preview card filenames, and match-type badge (`파일명 일치` / `내용 일치`) plus content snippet visibility on preview cards in both response detail and transcript
   - approval reissue
   - approval-backed save
   - late flip after explicit original-draft save keeps saved history while latest content verdict changes

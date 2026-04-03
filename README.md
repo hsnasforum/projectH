@@ -82,7 +82,7 @@ Current smoke scenarios:
 1. file summary renders evidence, summary-range panels, per-message timestamps in the transcript, response copy button state with clipboard write verification, source filename in quick-meta and transcript meta, note-path default-directory placeholder, and `문서 요약` source-type label in both quick-meta and transcript meta
 2. browser file picker summary flow with source filename and `문서 요약` source-type label in both quick-meta and transcript meta
 3. browser folder picker search flow with `선택 결과 요약` source-type label and multi-source count-based metadata (`출처 2개`) in both quick-meta and transcript meta
-4. pure search-only response with transcript preview cards visible, transcript body text hidden, response detail box preview cards visible, response body text hidden, copy-text button hidden, `selected-copy` button visibility with click/notice/clipboard verification, and full-path tooltip on preview card filenames in both response detail and transcript
+4. pure search-only response with transcript preview cards visible, transcript body text hidden, response detail box preview cards visible, response body text hidden, copy-text button hidden, `selected-copy` button visibility with click/notice/clipboard verification, full-path tooltip on preview card filenames, and match-type badge (`파일명 일치` / `내용 일치`) plus content snippet visibility on preview cards in both response detail and transcript
 5. approval reissue with changed save path
 6. approval-backed note save
 7. late flip after explicit original-draft save keeps saved history while latest content verdict changes

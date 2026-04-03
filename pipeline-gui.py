@@ -13,6 +13,7 @@ pipeline-gui.py — 내부용 desktop GUI launcher (tkinter)
 
 from __future__ import annotations
 
+import datetime as dt
 import os
 import re
 import subprocess
@@ -114,36 +115,140 @@ def watcher_log_tail(project: Path, lines: int = 5) -> list[str]:
         return ["(읽기 실패)"]
 
 
+WATCHER_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")
+
+
+def format_elapsed(seconds: float) -> str:
+    total = max(0, int(seconds))
+    mins, secs = divmod(total, 60)
+    hours, mins = divmod(mins, 60)
+    if hours > 0:
+        return f"{hours}h {mins}m"
+    if mins > 0:
+        return f"{mins}m {secs}s"
+    return f"{secs}s"
+
+
+def extract_working_note(lines: list[str]) -> str:
+    """pane 출력에서 Working 경과시간/상태 노트 추출."""
+    for line in reversed(lines[-80:]):
+        match = re.search(r"Working \(([^)]*)", line, re.IGNORECASE)
+        if match:
+            note = match.group(1).split("•", 1)[0].strip(" )…")
+            if note:
+                return note
+        match = re.search(r"Cascading(?:…|\.{3})\s*\(([^)]*)", line, re.IGNORECASE)
+        if match:
+            return match.group(1).strip(" )…")
+        match = re.search(r"Lollygagging(?:…|\.{3})\s*\(([^)]*)", line, re.IGNORECASE)
+        if match:
+            return match.group(1).strip(" )…")
+        lowered = line.lower()
+        if "background terminal" in lowered or "waiting for background" in lowered:
+            return "bg-task"
+    return ""
+
+
 def detect_agent_status(label: str, pane_text: str) -> tuple[str, str]:
-    """(status, note) — WORKING/READY/DEAD/BOOTING"""
-    lower = pane_text.lower()
+    """(status, note) — launcher 수준 판정."""
     lines = [l.strip() for l in pane_text.splitlines() if l.strip()]
     if not lines:
         return "DEAD", ""
 
-    # Working indicators
-    match = re.search(r"Working \(([^)]*)", pane_text, re.IGNORECASE)
-    if match:
-        note = match.group(1).split("•", 1)[0].strip()
+    lower = pane_text.lower()
+
+    # Working indicators — launcher와 동일한 10+ 패턴
+    if (
+        "working (" in lower
+        or "background terminal" in lower
+        or "waiting for background" in lower
+        or "waited for background" in lower
+        or "cascading" in lower
+        or "lollygagging" in lower
+        or "hashing" in lower
+        or "leavering" in lower
+        or "without interrupting claude's current work" in lower
+        or "flumoxing" in lower
+        or "philosophising" in lower
+        or "sautéed" in lower
+    ):
+        note = extract_working_note(lines)
         return "WORKING", note
-    if "waiting for background" in lower:
-        return "WORKING", "background"
-    if "flumoxing" in lower or "philosophising" in lower or "sautéed" in lower:
-        return "WORKING", "thinking"
 
     # Ready indicators
-    if label == "Codex" and any("›" in l for l in lines[-5:]):
+    if label == "Codex" and ("› " in pane_text or "openai codex" in lower):
         return "READY", ""
-    if label == "Claude" and any(l.strip().startswith(("❯", ">")) for l in lines[-5:]):
+    if label == "Claude" and ("❯" in pane_text or "claude code" in lower or "bypass permissions" in lower):
         return "READY", ""
-    if label == "Gemini" and "type your message" in lower:
+    if label == "Gemini" and ("type your message" in lower or "gemini cli" in lower or "workspace" in lower):
         return "READY", ""
 
     return "BOOTING", ""
 
 
+def watcher_runtime_hints(project: Path) -> dict[str, tuple[str, str]]:
+    """watcher.log에서 agent별 WORKING/READY 힌트와 경과시간 추출."""
+    log_path = project / ".pipeline" / "logs" / "experimental" / "watcher.log"
+    if not log_path.exists():
+        return {}
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-300:]
+    except OSError:
+        return {}
+
+    claude_started_at: float | None = None
+    claude_done = False
+    codex_started_at: float | None = None
+    codex_done = False
+    gemini_started_at: float | None = None
+    gemini_done = False
+
+    for line in lines:
+        ts_match = WATCHER_TS_RE.match(line)
+        if not ts_match:
+            continue
+        try:
+            timestamp = dt.datetime.fromisoformat(ts_match.group(1)).timestamp()
+        except ValueError:
+            continue
+
+        if "notify_claude" in line or ("send-keys" in line and "pane_type=claude" in line) or "waiting_for_claude" in line:
+            claude_started_at = timestamp
+            claude_done = False
+        elif "claude activity detected" in line or ("new job:" in line and claude_started_at is not None):
+            claude_done = True
+
+        if "lease acquired: slot=slot_verify" in line or "VERIFY_PENDING → VERIFY_RUNNING" in line:
+            codex_started_at = timestamp
+            codex_done = False
+        elif "codex task completed" in line or "lease released: slot=slot_verify" in line or "VERIFY_RUNNING → VERIFY_DONE" in line:
+            codex_done = True
+
+        if "notify_gemini" in line or "gemini response activity" in line:
+            gemini_started_at = timestamp
+            gemini_done = False
+        elif "gemini advice updated" in line:
+            gemini_done = True
+
+    hints: dict[str, tuple[str, str]] = {}
+    now = time.time()
+    if claude_started_at is not None and not claude_done:
+        hints["Claude"] = ("WORKING", format_elapsed(now - claude_started_at))
+    elif claude_done:
+        hints["Claude"] = ("READY", "")
+    if codex_started_at is not None and not codex_done:
+        hints["Codex"] = ("WORKING", format_elapsed(now - codex_started_at))
+    elif codex_done:
+        hints["Codex"] = ("READY", "")
+    if gemini_started_at is not None and not gemini_done:
+        hints["Gemini"] = ("WORKING", format_elapsed(now - gemini_started_at))
+    elif gemini_done:
+        hints["Gemini"] = ("READY", "")
+    return hints
+
+
 def agent_snapshots(project: Path) -> list[tuple[str, str, str]]:
-    """[(label, status, note), ...]"""
+    """[(label, status, note), ...] — launcher 수준 truth."""
     code, output = _run(
         ["tmux", "list-panes", "-t", f"{SESSION_NAME}:0", "-F", "#{pane_index}|#{pane_id}|#{pane_dead}"],
         timeout=2.0,
@@ -152,7 +257,9 @@ def agent_snapshots(project: Path) -> list[tuple[str, str, str]]:
         return [("Claude", "OFF", ""), ("Codex", "OFF", ""), ("Gemini", "OFF", "")]
 
     names = {0: "Claude", 1: "Codex", 2: "Gemini"}
+    hints = watcher_runtime_hints(project)
     results: list[tuple[str, str, str]] = []
+
     for raw in output.splitlines():
         try:
             idx_s, pane_id, dead = raw.split("|", 2)
@@ -163,12 +270,25 @@ def agent_snapshots(project: Path) -> list[tuple[str, str, str]]:
         if dead == "1":
             results.append((label, "DEAD", ""))
             continue
-        cap_code, captured = _run(["tmux", "capture-pane", "-pt", pane_id, "-S", "-40"], timeout=2.0)
+        cap_code, captured = _run(["tmux", "capture-pane", "-pt", pane_id, "-S", "-60"], timeout=2.0)
         if cap_code != 0 or not captured:
             results.append((label, "BOOTING", ""))
             continue
         cleaned = ANSI_RE.sub("", captured)
         status, note = detect_agent_status(label, cleaned)
+
+        # watcher 힌트로 보정 (launcher와 동일 로직)
+        hint = hints.get(label)
+        if hint:
+            hint_status, hint_note = hint
+            if hint_status == "WORKING":
+                status = "WORKING"
+                if not note:
+                    note = hint_note
+            elif hint_status == "READY" and status == "BOOTING":
+                status = "READY"
+                note = ""
+
         results.append((label, status, note))
     return results
 

@@ -149,6 +149,24 @@ def extract_working_note(lines: list[str]) -> str:
     return ""
 
 
+def extract_quota_note(pane_text: str) -> str:
+    text = " ".join(line.strip() for line in pane_text.splitlines() if line.strip())
+
+    match = re.search(r"(\d+%)\s+lef", text, re.IGNORECASE)
+    if match:
+        return f"{match.group(1)} left"
+
+    match = re.search(r"you['’]ve used\s+(\d+%)", text, re.IGNORECASE)
+    if match:
+        return f"used {match.group(1)}"
+
+    match = re.search(r"new 2x rate limits until ([^.]+)", text, re.IGNORECASE)
+    if match:
+        return f"2x until {match.group(1).strip()}"
+
+    return ""
+
+
 def detect_agent_status(label: str, pane_text: str) -> tuple[str, str]:
     """(status, note) — launcher 수준 판정."""
     lines = [l.strip() for l in pane_text.splitlines() if l.strip()]
@@ -247,18 +265,18 @@ def watcher_runtime_hints(project: Path) -> dict[str, tuple[str, str]]:
     return hints
 
 
-def agent_snapshots(project: Path) -> list[tuple[str, str, str]]:
-    """[(label, status, note), ...] — launcher 수준 truth."""
+def agent_snapshots(project: Path) -> list[tuple[str, str, str, str]]:
+    """[(label, status, note, quota), ...] — launcher 수준 truth."""
     code, output = _run(
         ["tmux", "list-panes", "-t", f"{SESSION_NAME}:0", "-F", "#{pane_index}|#{pane_id}|#{pane_dead}"],
         timeout=2.0,
     )
     if code != 0 or not output:
-        return [("Claude", "OFF", ""), ("Codex", "OFF", ""), ("Gemini", "OFF", "")]
+        return [("Claude", "OFF", "", ""), ("Codex", "OFF", "", ""), ("Gemini", "OFF", "", "")]
 
     names = {0: "Claude", 1: "Codex", 2: "Gemini"}
     hints = watcher_runtime_hints(project)
-    results: list[tuple[str, str, str]] = []
+    results: list[tuple[str, str, str, str]] = []
 
     for raw in output.splitlines():
         try:
@@ -268,14 +286,15 @@ def agent_snapshots(project: Path) -> list[tuple[str, str, str]]:
             continue
         label = names.get(idx, f"Pane {idx}")
         if dead == "1":
-            results.append((label, "DEAD", ""))
+            results.append((label, "DEAD", "", ""))
             continue
         cap_code, captured = _run(["tmux", "capture-pane", "-pt", pane_id, "-S", "-60"], timeout=2.0)
         if cap_code != 0 or not captured:
-            results.append((label, "BOOTING", ""))
+            results.append((label, "BOOTING", "", ""))
             continue
         cleaned = ANSI_RE.sub("", captured)
         status, note = detect_agent_status(label, cleaned)
+        quota = extract_quota_note(cleaned)
 
         # watcher 힌트로 보정 (launcher와 동일 로직)
         hint = hints.get(label)
@@ -289,7 +308,7 @@ def agent_snapshots(project: Path) -> list[tuple[str, str, str]]:
                 status = "READY"
                 note = ""
 
-        results.append((label, status, note))
+        results.append((label, status, note, quota))
     return results
 
 
@@ -351,8 +370,8 @@ class PipelineGUI:
         self.root = Tk()
         self.root.title("Pipeline Launcher")
         self.root.configure(bg="#0f0f0f")
-        self.root.geometry("700x620")
-        self.root.minsize(500, 400)
+        self.root.geometry("920x720")
+        self.root.minsize(760, 520)
 
         self._build_ui()
         self._schedule_poll()
@@ -361,94 +380,157 @@ class PipelineGUI:
         bg = "#0f0f0f"
         fg = "#e0e0e0"
         accent = "#60a5fa"
+        sub_fg = "#9ca3af"
         btn_bg = "#1a1a1a"
-        btn_fg = "#cccccc"
+        btn_fg = "#d1d5db"
+        card_bg = "#171717"
+        card_border = "#2a2a2a"
+        log_bg = "#121212"
 
-        mono = tkfont.Font(family="Consolas", size=10)
-        small = tkfont.Font(family="Consolas", size=9)
+        title_font = tkfont.Font(family="Consolas", size=15, weight="bold")
+        body_font = tkfont.Font(family="Consolas", size=10)
+        small_font = tkfont.Font(family="Consolas", size=9)
+        status_font = tkfont.Font(family="Consolas", size=11, weight="bold")
+        section_font = tkfont.Font(family="Consolas", size=10, weight="bold")
 
-        # ── 상단: 프로젝트 + 상태 ──
-        top = Frame(self.root, bg="#1a1a1a", pady=6, padx=10)
+        def make_card(parent: Frame, padx: int = 12, pady: int = 10) -> Frame:
+            card = Frame(
+                parent,
+                bg=card_bg,
+                padx=padx,
+                pady=pady,
+                highlightthickness=1,
+                highlightbackground=card_border,
+            )
+            return card
+
+        # ── 상단 헤더 ──
+        top = Frame(self.root, bg="#161616", padx=14, pady=10)
         top.pack(fill=X)
 
-        Label(top, text="Pipeline Launcher", font=("Consolas", 13, "bold"),
-              bg="#1a1a1a", fg=accent).pack(side=LEFT)
-
-        self.status_var = StringVar(value="—")
-        self.status_label = Label(top, textvariable=self.status_var, font=small,
-                                  bg="#1a1a1a", fg="#888888", padx=10)
+        Label(top, text="Pipeline Launcher", font=title_font, bg="#161616", fg=accent).pack(side=LEFT)
+        self.status_var = StringVar(value="Stopped")
+        self.status_label = Label(
+            top,
+            textvariable=self.status_var,
+            font=status_font,
+            bg="#2a1717",
+            fg="#ef4444",
+            padx=10,
+            pady=4,
+        )
         self.status_label.pack(side=RIGHT)
 
+        content = Frame(self.root, bg=bg, padx=14, pady=12)
+        content.pack(fill=BOTH, expand=True)
+
         # ── 프로젝트 경로 ──
-        proj_frame = Frame(self.root, bg=bg, padx=10, pady=4)
-        proj_frame.pack(fill=X)
-        Label(proj_frame, text="Project:", font=small, bg=bg, fg="#888888").pack(side=LEFT)
-        Label(proj_frame, text=str(self.project), font=small, bg=bg, fg="#f59e0b").pack(side=LEFT, padx=6)
+        proj_card = make_card(content)
+        proj_card.pack(fill=X, pady=(0, 10))
+        Label(proj_card, text="Project", font=section_font, bg=card_bg, fg=sub_fg).pack(anchor="w")
+        Label(
+            proj_card,
+            text=str(self.project),
+            font=body_font,
+            bg=card_bg,
+            fg="#f59e0b",
+            anchor="w",
+            justify=LEFT,
+            wraplength=860,
+        ).pack(anchor="w", pady=(4, 0))
 
         # ── 버튼 바 ──
-        btn_frame = Frame(self.root, bg=bg, padx=10, pady=6)
-        btn_frame.pack(fill=X)
+        btn_card = make_card(content, padx=10, pady=8)
+        btn_card.pack(fill=X, pady=(0, 10))
 
-        for text, cmd in [
-            ("▶ Start", self._on_start),
-            ("■ Stop", self._on_stop),
-            ("↻ Restart", self._on_restart),
-            ("⬜ Attach tmux", self._on_attach),
-        ]:
-            Button(btn_frame, text=text, command=cmd, font=small,
-                   bg=btn_bg, fg=btn_fg, activebackground="#333333",
-                   activeforeground="#ffffff", bd=0, padx=12, pady=4,
-                   highlightthickness=1, highlightbackground="#444444",
-                   ).pack(side=LEFT, padx=3)
+        def make_btn(parent: Frame, text: str, cmd) -> Button:
+            return Button(
+                parent, text=text, command=cmd, font=body_font,
+                bg=btn_bg, fg=btn_fg, activebackground="#333333",
+                activeforeground="#ffffff", bd=0, padx=12, pady=6,
+                highlightthickness=1, highlightbackground="#444444",
+                disabledforeground="#555555",
+            )
 
-        # ── Pipeline + Watcher 상태 ──
-        state_frame = Frame(self.root, bg=bg, padx=10, pady=4)
-        state_frame.pack(fill=X)
+        self.btn_start = make_btn(btn_card, "▶ Start", self._on_start)
+        self.btn_start.pack(side=LEFT, padx=4)
+        self.btn_stop = make_btn(btn_card, "■ Stop", self._on_stop)
+        self.btn_stop.pack(side=LEFT, padx=4)
+        self.btn_restart = make_btn(btn_card, "↻ Restart", self._on_restart)
+        self.btn_restart.pack(side=LEFT, padx=4)
+        self.btn_attach = make_btn(btn_card, "⬜ Attach tmux", self._on_attach)
+        self.btn_attach.pack(side=LEFT, padx=4)
 
+        self._action_in_progress = False
+
+        # ── 상태 개요 + 최신 파일 ──
+        overview = Frame(content, bg=bg)
+        overview.pack(fill=X, pady=(0, 10))
+
+        system_card = make_card(overview)
+        system_card.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 6))
+        Label(system_card, text="System", font=section_font, bg=card_bg, fg=sub_fg).pack(anchor="w")
         self.pipeline_var = StringVar(value="Pipeline: —")
         self.watcher_var = StringVar(value="Watcher: —")
-        Label(state_frame, textvariable=self.pipeline_var, font=small, bg=bg, fg=fg).pack(side=LEFT)
-        Label(state_frame, textvariable=self.watcher_var, font=small, bg=bg, fg=fg, padx=20).pack(side=LEFT)
+        self.pipeline_state_label = Label(system_card, textvariable=self.pipeline_var, font=body_font, bg=card_bg, fg=fg, anchor="w")
+        self.pipeline_state_label.pack(anchor="w", pady=(8, 2))
+        self.watcher_state_label = Label(system_card, textvariable=self.watcher_var, font=body_font, bg=card_bg, fg=fg, anchor="w")
+        self.watcher_state_label.pack(anchor="w")
 
-        # ── Agent 상태 ──
-        agent_frame = Frame(self.root, bg=bg, padx=10, pady=4)
-        agent_frame.pack(fill=X)
-
-        Label(agent_frame, text="Agents:", font=small, bg=bg, fg="#888888").pack(anchor="w")
-
-        self.agent_labels: list[tuple[Label, Label, Label]] = []
-        for name in ["Claude", "Codex", "Gemini"]:
-            row = Frame(agent_frame, bg=bg)
-            row.pack(fill=X, pady=1)
-            dot = Label(row, text="●", font=small, bg=bg, fg="#666666", width=2)
-            dot.pack(side=LEFT)
-            name_lbl = Label(row, text=name, font=("Consolas", 10, "bold"), bg=bg, fg=fg, width=8, anchor="w")
-            name_lbl.pack(side=LEFT)
-            status_lbl = Label(row, text="—", font=small, bg=bg, fg="#888888")
-            status_lbl.pack(side=LEFT, padx=6)
-            self.agent_labels.append((dot, name_lbl, status_lbl))
-
-        # ── Latest files ──
-        file_frame = Frame(self.root, bg=bg, padx=10, pady=4)
-        file_frame.pack(fill=X)
-
+        file_card = make_card(overview)
+        file_card.pack(side=LEFT, fill=BOTH, expand=True, padx=(6, 0))
+        Label(file_card, text="Artifacts", font=section_font, bg=card_bg, fg=sub_fg).pack(anchor="w")
         self.work_var = StringVar(value="Latest work: —")
         self.verify_var = StringVar(value="Latest verify: —")
-        Label(file_frame, textvariable=self.work_var, font=small, bg=bg, fg="#f59e0b").pack(anchor="w")
-        Label(file_frame, textvariable=self.verify_var, font=small, bg=bg, fg="#f59e0b").pack(anchor="w")
+        Label(file_card, textvariable=self.work_var, font=body_font, bg=card_bg, fg="#f59e0b", anchor="w", justify=LEFT, wraplength=400).pack(anchor="w", pady=(8, 2))
+        Label(file_card, textvariable=self.verify_var, font=body_font, bg=card_bg, fg="#f59e0b", anchor="w", justify=LEFT, wraplength=400).pack(anchor="w")
+
+        # ── Agent 상태 ──
+        agent_section = make_card(content)
+        agent_section.pack(fill=X, pady=(0, 10))
+        Label(agent_section, text="Agents", font=section_font, bg=card_bg, fg=sub_fg).pack(anchor="w")
+
+        cards_row = Frame(agent_section, bg=card_bg)
+        cards_row.pack(fill=X, pady=(8, 0))
+
+        self.agent_labels: list[tuple[Frame, Label, Label, Label, Label]] = []
+        for idx, name in enumerate(["Claude", "Codex", "Gemini"]):
+            card = Frame(
+                cards_row,
+                bg="#111111",
+                padx=10,
+                pady=8,
+                highlightthickness=1,
+                highlightbackground=card_border,
+            )
+            card.grid(row=0, column=idx, sticky="nsew", padx=(0 if idx == 0 else 4, 0 if idx == 2 else 4))
+            cards_row.grid_columnconfigure(idx, weight=1)
+
+            name_row = Frame(card, bg="#111111")
+            name_row.pack(fill=X)
+            dot = Label(name_row, text="●", font=body_font, bg="#111111", fg="#666666")
+            dot.pack(side=LEFT)
+            Label(name_row, text=name, font=section_font, bg="#111111", fg=fg).pack(side=LEFT, padx=(6, 0))
+
+            status_lbl = Label(card, text="—", font=status_font, bg="#111111", fg="#888888", anchor="w")
+            status_lbl.pack(anchor="w", pady=(8, 2))
+            note_lbl = Label(card, text="", font=small_font, bg="#111111", fg=sub_fg, anchor="w", justify=LEFT, wraplength=220)
+            note_lbl.pack(anchor="w")
+            quota_lbl = Label(card, text="Quota: —", font=small_font, bg="#111111", fg="#7c8798", anchor="w", justify=LEFT, wraplength=220)
+            quota_lbl.pack(anchor="w", pady=(4, 0))
+            self.agent_labels.append((card, dot, status_lbl, note_lbl, quota_lbl))
 
         # ── Watcher log ──
-        log_frame = Frame(self.root, bg=bg, padx=10, pady=4)
+        log_frame = make_card(content)
         log_frame.pack(fill=BOTH, expand=True)
+        Label(log_frame, text="Recent watcher log", font=section_font, bg=card_bg, fg=sub_fg).pack(anchor="w")
 
-        Label(log_frame, text="Recent log:", font=small, bg=bg, fg="#888888").pack(anchor="w")
+        log_inner = Frame(log_frame, bg=log_bg)
+        log_inner.pack(fill=BOTH, expand=True, pady=(8, 0))
 
-        log_inner = Frame(log_frame, bg="#141414")
-        log_inner.pack(fill=BOTH, expand=True, pady=2)
-
-        self.log_text = Text(log_inner, font=small, bg="#141414", fg="#aaaaaa",
-                             wrap=WORD, bd=0, highlightthickness=0, padx=6, pady=4,
-                             state=DISABLED, height=8)
+        self.log_text = Text(log_inner, font=small_font, bg=log_bg, fg="#cbd5e1",
+                             wrap=WORD, bd=0, highlightthickness=0, padx=10, pady=10,
+                             state=DISABLED, height=12)
         scrollbar = Scrollbar(log_inner, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side=RIGHT, fill=Y)
@@ -456,8 +538,9 @@ class PipelineGUI:
 
         # ── 하단 메시지 ──
         self.msg_var = StringVar(value="")
-        Label(self.root, textvariable=self.msg_var, font=small,
-              bg=bg, fg="#f59e0b", pady=4).pack(fill=X, padx=10)
+        self.msg_label = Label(self.root, textvariable=self.msg_var, font=body_font,
+                               bg=bg, fg="#f59e0b", pady=8, anchor="w", padx=14)
+        self.msg_label.pack(fill=X)
 
     # ── 폴링 ──
 
@@ -473,32 +556,39 @@ class PipelineGUI:
         if session_ok:
             self.pipeline_var.set("Pipeline: ● Running")
             self.status_var.set("Running")
-            self.status_label.configure(fg="#34d399")
+            self.status_label.configure(fg="#34d399", bg="#0f2f23")
+            self.pipeline_state_label.configure(fg="#34d399")
         else:
             self.pipeline_var.set("Pipeline: ■ Stopped")
             self.status_var.set("Stopped")
-            self.status_label.configure(fg="#ef4444")
+            self.status_label.configure(fg="#ef4444", bg="#351717")
+            self.pipeline_state_label.configure(fg="#ef4444")
 
         # Watcher
         if w_alive:
             self.watcher_var.set(f"Watcher: ● Alive (PID:{w_pid})")
+            self.watcher_state_label.configure(fg="#34d399")
         else:
             self.watcher_var.set("Watcher: ✗ Dead")
+            self.watcher_state_label.configure(fg="#ef4444")
 
         # Agents
         agents = agent_snapshots(self.project)
-        for i, (dot_lbl, name_lbl, status_lbl) in enumerate(self.agent_labels):
+        for i, (card, dot_lbl, status_lbl, note_lbl, quota_lbl) in enumerate(self.agent_labels):
             if i < len(agents):
-                label, status, note = agents[i]
+                label, status, note, quota = agents[i]
                 color = STATUS_COLORS.get(status, "#666666")
                 dot_lbl.configure(fg=color)
-                status_text = status
-                if note:
-                    status_text += f" ({note})"
-                status_lbl.configure(text=status_text, fg=color)
+                status_lbl.configure(text=status, fg=color)
+                note_lbl.configure(text=note or "대기 중", fg="#9ca3af")
+                quota_lbl.configure(text=f"Quota: {quota}" if quota else "Quota: —", fg="#7c8798")
+                card.configure(highlightbackground=color if status == "WORKING" else "#2a2a2a")
             else:
                 dot_lbl.configure(fg="#666666")
                 status_lbl.configure(text="—", fg="#666666")
+                note_lbl.configure(text="", fg="#666666")
+                quota_lbl.configure(text="Quota: —", fg="#666666")
+                card.configure(highlightbackground="#2a2a2a")
 
         # Latest files
         work_name, work_mtime = latest_md(self.project / "work")
@@ -517,7 +607,6 @@ class PipelineGUI:
         self.log_text.configure(state=NORMAL)
         self.log_text.delete("1.0", END)
         for line in log_lines:
-            # 타임스탬프 간소화
             clean = line.strip()
             if len(clean) > 100:
                 clean = clean[:97] + "..."
@@ -525,46 +614,102 @@ class PipelineGUI:
         self.log_text.configure(state=DISABLED)
         self.log_text.see(END)
 
+        # 버튼 enable/disable — 작업 중이면 전부 비활성
+        if self._action_in_progress:
+            self.btn_start.configure(state=DISABLED)
+            self.btn_stop.configure(state=DISABLED)
+            self.btn_restart.configure(state=DISABLED)
+            self.btn_attach.configure(state=DISABLED)
+        else:
+            self.btn_start.configure(state=NORMAL if not session_ok else DISABLED)
+            self.btn_stop.configure(state=NORMAL if session_ok else DISABLED)
+            self.btn_restart.configure(state=NORMAL if session_ok else DISABLED)
+            self.btn_attach.configure(state=NORMAL if session_ok else DISABLED)
+
     # ── 제어 ──
 
+    def _lock_buttons(self, label: str) -> None:
+        self._action_in_progress = True
+        self.msg_var.set(label)
+        self.msg_label.configure(fg="#60a5fa")
+
+    def _unlock_buttons(self, msg: str, is_error: bool = False) -> None:
+        self._action_in_progress = False
+        self.msg_var.set(msg)
+        self.msg_label.configure(fg="#ef4444" if is_error else "#34d399")
+
+    def _clear_msg_later(self, delay_ms: int = 6000) -> None:
+        self.root.after(delay_ms, lambda: self.msg_var.set("") if not self._action_in_progress else None)
+
     def _on_start(self) -> None:
-        self.msg_var.set("Starting pipeline...")
+        if self._action_in_progress:
+            return
+        self._lock_buttons("▶ Starting pipeline...")
         threading.Thread(target=self._do_start, daemon=True).start()
 
     def _do_start(self) -> None:
-        msg = pipeline_start(self.project)
-        self.root.after(0, lambda: self.msg_var.set(f"Start: {msg}"))
-        time.sleep(5)
-        self.root.after(0, lambda: self.msg_var.set(""))
+        try:
+            msg = pipeline_start(self.project)
+            # 기동 대기 (최대 12초)
+            for _ in range(12):
+                time.sleep(1)
+                if tmux_alive():
+                    self.root.after(0, lambda: self._unlock_buttons("▶ Pipeline started"))
+                    self.root.after(0, lambda: self._clear_msg_later())
+                    return
+            self.root.after(0, lambda: self._unlock_buttons(f"▶ Start: {msg} (tmux 확인 안 됨)", is_error=True))
+        except Exception as e:
+            self.root.after(0, lambda: self._unlock_buttons(f"▶ Start failed: {e}", is_error=True))
+        self.root.after(0, lambda: self._clear_msg_later(10000))
 
     def _on_stop(self) -> None:
-        self.msg_var.set("Stopping pipeline...")
+        if self._action_in_progress:
+            return
+        self._lock_buttons("■ Stopping pipeline...")
         threading.Thread(target=self._do_stop, daemon=True).start()
 
     def _do_stop(self) -> None:
-        msg = pipeline_stop(self.project)
-        self.root.after(0, lambda: self.msg_var.set(f"Stop: {msg}"))
-        time.sleep(3)
-        self.root.after(0, lambda: self.msg_var.set(""))
+        try:
+            msg = pipeline_stop(self.project)
+            self.root.after(0, lambda: self._unlock_buttons(f"■ {msg}"))
+        except Exception as e:
+            self.root.after(0, lambda: self._unlock_buttons(f"■ Stop failed: {e}", is_error=True))
+        self.root.after(0, lambda: self._clear_msg_later())
 
     def _on_restart(self) -> None:
-        self.msg_var.set("Restarting pipeline...")
+        if self._action_in_progress:
+            return
+        self._lock_buttons("↻ Restarting pipeline...")
         threading.Thread(target=self._do_restart, daemon=True).start()
 
     def _do_restart(self) -> None:
-        pipeline_stop(self.project)
-        time.sleep(2)
-        msg = pipeline_start(self.project)
-        self.root.after(0, lambda: self.msg_var.set(f"Restart: {msg}"))
-        time.sleep(5)
-        self.root.after(0, lambda: self.msg_var.set(""))
+        try:
+            self.root.after(0, lambda: self.msg_var.set("↻ Stopping..."))
+            pipeline_stop(self.project)
+            time.sleep(2)
+            self.root.after(0, lambda: self.msg_var.set("↻ Starting..."))
+            pipeline_start(self.project)
+            for _ in range(12):
+                time.sleep(1)
+                if tmux_alive():
+                    self.root.after(0, lambda: self._unlock_buttons("↻ Pipeline restarted"))
+                    self.root.after(0, lambda: self._clear_msg_later())
+                    return
+            self.root.after(0, lambda: self._unlock_buttons("↻ Restart: tmux 확인 안 됨", is_error=True))
+        except Exception as e:
+            self.root.after(0, lambda: self._unlock_buttons(f"↻ Restart failed: {e}", is_error=True))
+        self.root.after(0, lambda: self._clear_msg_later(10000))
 
     def _on_attach(self) -> None:
         if tmux_alive():
             tmux_attach()
             self.msg_var.set("tmux attach 실행됨")
+            self.msg_label.configure(fg="#34d399")
+            self._clear_msg_later()
         else:
             self.msg_var.set("tmux 세션이 없습니다. 먼저 Start하세요.")
+            self.msg_label.configure(fg="#ef4444")
+            self._clear_msg_later()
 
     # ── 실행 ──
 

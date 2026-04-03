@@ -34,6 +34,7 @@
 ### Milestone 3: Core QA And Trace Baseline
 - Python regression suite
 - Playwright smoke suite (scenario 1 now also covers response copy button state with clipboard write verification, per-message timestamps, source filename in both quick-meta and transcript meta, note-path default-directory placeholder, and `문서 요약` source-type label in both quick-meta and transcript meta; browser file picker scenario now also covers source filename and `문서 요약` source-type label in both quick-meta and transcript meta; folder-search scenario now also covers `선택 결과 요약` source-type label and multi-source count-based metadata in both quick-meta and transcript meta; general chat scenario covers negative source-type label contract; dedicated claim-coverage panel rendering contract scenario with leading status tags and actionable hints)
+- search-only response browser smoke with transcript preview cards, hidden body text, `selected-copy` button visibility/click/notice/clipboard regression coverage
 - stable mock-baseline Playwright launch contract with dedicated mock webServer startup and no preexisting-server reuse on the smoke port
 - late flip after explicit original-draft save browser smoke
 - corrected-save first bridge browser smoke

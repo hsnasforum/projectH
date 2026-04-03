@@ -82,19 +82,20 @@ Current smoke scenarios:
 1. file summary renders evidence, summary-range panels, per-message timestamps in the transcript, response copy button state with clipboard write verification, source filename in quick-meta and transcript meta, note-path default-directory placeholder, and `문서 요약` source-type label in both quick-meta and transcript meta
 2. browser file picker summary flow with source filename and `문서 요약` source-type label in both quick-meta and transcript meta
 3. browser folder picker search flow with `선택 결과 요약` source-type label and multi-source count-based metadata (`출처 2개`) in both quick-meta and transcript meta
-4. approval reissue with changed save path
-5. approval-backed note save
-6. late flip after explicit original-draft save keeps saved history while latest content verdict changes
-7. `내용 거절` content-verdict path with same-card reject-note update, pending approval preserved, and later explicit save supersession
-8. corrected-save first bridge path
-9. corrected-save saved snapshot remains while late reject and later re-correct move the latest state separately
-10. candidate-linked explicit confirmation path stays outside approval UI, remains distinct from save support on the same source message, records `candidate_confirmation_record`, surfaces one `검토 후보` with `검토 수락`, records source-message `candidate_review_record`, removes the pending queue item without applying user-level memory, and clears the current-source traces again after a later correction
-11. same-session recurrence aggregate path renders one separate `검토 메모 적용 후보` section only after an aggregate exists, keeps `검토 메모 적용 시작` visible but disabled, keeps the queue-side `검토 수락` separate, and preserves `reviewed_memory_transition_record` absence
-12. streaming cancel
-13. general chat negative source-type label contract (no `문서 요약` / `선택 결과 요약` in quick-meta or transcript meta)
-14. claim-coverage panel rendering contract with `[교차 확인]`, `[단일 출처]`, `[미확인]` leading status tags and actionable hints
-15. web-search history card header badges: answer-mode badge (`설명 카드` / `최신 확인`), verification-strength badge (`검증 강` / `검증 중` / `검증 약` with CSS class), source-role trust badge compact label (`공식 기반(높음)` / `보조 기사(보통)` / `보조 커뮤니티(낮음)` with trust class)
-16. history-card `다시 불러오기` 클릭 후 reloaded response의 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail 유지 확인
+4. pure search-only response with transcript preview cards visible, transcript body text hidden, response detail box preview cards visible, response body text hidden, copy-text button hidden, and `selected-copy` button visibility with click/notice/clipboard verification
+5. approval reissue with changed save path
+6. approval-backed note save
+7. late flip after explicit original-draft save keeps saved history while latest content verdict changes
+8. `내용 거절` content-verdict path with same-card reject-note update, pending approval preserved, and later explicit save supersession
+9. corrected-save first bridge path
+10. corrected-save saved snapshot remains while late reject and later re-correct move the latest state separately
+11. candidate-linked explicit confirmation path stays outside approval UI, remains distinct from save support on the same source message, records `candidate_confirmation_record`, surfaces one `검토 후보` with `검토 수락`, records source-message `candidate_review_record`, removes the pending queue item without applying user-level memory, and clears the current-source traces again after a later correction
+12. same-session recurrence aggregate path renders one separate `검토 메모 적용 후보` section only after an aggregate exists, keeps `검토 메모 적용 시작` visible but disabled, keeps the queue-side `검토 수락` separate, and preserves `reviewed_memory_transition_record` absence
+13. streaming cancel
+14. general chat negative source-type label contract (no `문서 요약` / `선택 결과 요약` in quick-meta or transcript meta)
+15. claim-coverage panel rendering contract with `[교차 확인]`, `[단일 출처]`, `[미확인]` leading status tags and actionable hints
+16. web-search history card header badges: answer-mode badge (`설명 카드` / `최신 확인`), verification-strength badge (`검증 강` / `검증 중` / `검증 약` with CSS class), source-role trust badge compact label (`공식 기반(높음)` / `보조 기사(보통)` / `보조 커뮤니티(낮음)` with trust class)
+17. history-card `다시 불러오기` 클릭 후 reloaded response의 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail 유지 확인
 
 `make e2e-test` launches a dedicated Playwright web server for smoke with inherited `LOCAL_AI_MODEL_PROVIDER` / `LOCAL_AI_OLLAMA_MODEL` overrides cleared, `LOCAL_AI_MODEL_PROVIDER=mock` reapplied, and existing servers on the smoke port not reused. Shell overrides such as `LOCAL_AI_MODEL_PROVIDER=ollama` therefore do not change the automated baseline. Other runtimes remain optional and are validated separately.
 

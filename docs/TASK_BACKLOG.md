@@ -21,16 +21,17 @@
 10. Permission-gated web investigation with local history
 11. Claim coverage and slot reinvestigation scaffolding
 12. Playwright smoke coverage for the main browser loop (scenario 1 now also covers response copy button state with clipboard write verification, per-message timestamps, source filename in both quick-meta and transcript meta, note-path default-directory placeholder, and `문서 요약` source-type label in both quick-meta and transcript meta; browser file picker scenario now also covers source filename and `문서 요약` source-type label in both quick-meta and transcript meta; folder-search scenario now also covers `선택 결과 요약` source-type label and multi-source count-based metadata in both quick-meta and transcript meta; general chat scenario covers negative source-type label contract; dedicated claim-coverage panel rendering contract scenario with leading status tags and actionable hints)
-13. Corrected-save first bridge Playwright smoke coverage
-14. Rejected content-verdict Playwright smoke coverage
-15. Late flip after explicit original-draft save Playwright smoke coverage
-16. Corrected-save late reject / re-correct Playwright smoke coverage
-17. Candidate-linked explicit-confirmation Playwright smoke coverage
-18. Dedicated `mock` Playwright smoke launch that clears inherited provider/model overrides and does not reuse an already running smoke-port server
-19. Local read-only `review_queue_items` session projection plus compact existing-shell `검토 후보` section for eligible current `durable_candidate` items
-20. First `accept`-only review action on the shipped queue with source-message `candidate_review_record`, pending queue removal, reviewed-but-not-applied semantics, and focused regression
-21. Web-search history card header badge Playwright smoke coverage (answer-mode, verification-strength, source-role trust)
-22. History-card `다시 불러오기` click reload Playwright smoke coverage (`WEB` badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail)
+13. Search-only response Playwright smoke coverage with `selected-copy` button visibility/click/notice/clipboard regression
+14. Corrected-save first bridge Playwright smoke coverage
+15. Rejected content-verdict Playwright smoke coverage
+16. Late flip after explicit original-draft save Playwright smoke coverage
+17. Corrected-save late reject / re-correct Playwright smoke coverage
+18. Candidate-linked explicit-confirmation Playwright smoke coverage
+19. Dedicated `mock` Playwright smoke launch that clears inherited provider/model overrides and does not reuse an already running smoke-port server
+20. Local read-only `review_queue_items` session projection plus compact existing-shell `검토 후보` section for eligible current `durable_candidate` items
+21. First `accept`-only review action on the shipped queue with source-message `candidate_review_record`, pending queue removal, reviewed-but-not-applied semantics, and focused regression
+22. Web-search history card header badge Playwright smoke coverage (answer-mode, verification-strength, source-role trust)
+23. History-card `다시 불러오기` click reload Playwright smoke coverage (`WEB` badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail)
 
 ## Current Phase In Progress
 

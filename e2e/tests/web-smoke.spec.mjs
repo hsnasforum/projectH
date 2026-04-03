@@ -273,6 +273,7 @@ test("검색만 응답은 transcript에서 preview cards만 보이고 본문 텍
   await expect(lastAssistant.locator(".search-preview-name").first()).toHaveAttribute("title", /.*\/budget-plan\.md$/);
   await expect(lastAssistant.locator(".search-preview-match").first()).toContainText("파일명 일치");
   await expect(lastAssistant.locator(".search-preview-snippet").first()).toBeVisible();
+  await expect(lastAssistant.locator(".search-preview-snippet").first()).toContainText("budget-plan");
   await expect(lastAssistant.locator(".search-preview-name").nth(1)).toContainText("memo.md");
   await expect(lastAssistant.locator(".search-preview-name").nth(1)).toHaveAttribute("title", /.*\/memo\.md$/);
   await expect(lastAssistant.locator(".search-preview-match").nth(1)).toContainText("내용 일치");

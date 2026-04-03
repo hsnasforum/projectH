@@ -265,7 +265,7 @@ test("검색만 응답은 transcript에서 preview cards만 보이고 본문 텍
   await page.getByTestId("selected-copy").click();
   await expect(page.locator("#notice-box")).toContainText("선택 경로를 복사했습니다.");
   const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
-  expect(clipboardText).toContain("budget-plan.md");
+  expect(clipboardText).toBe(searchFolderRelBudgetPath + "\n" + searchFolderRelMemoPath);
 
   // transcript preview cards are visible
   const lastAssistant = page.locator("#transcript .message.assistant").last();

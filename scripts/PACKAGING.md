@@ -31,27 +31,39 @@ exe는 `wsl.exe`를 통해 WSL 내부의 tmux/watcher/agent CLI를 제어하고 
 
 ## 패키징 절차
 
-### 1. 사전 설치 (1회)
+### 방법 A: Windows Python으로 빌드 (권장 — native .exe)
+
+```powershell
+# Windows PowerShell에서
+pip install pyinstaller
+pyinstaller --onefile --noconsole --name pipeline-gui pipeline-gui.py
+# → dist\pipeline-gui.exe
+```
+
+이 방법이 진짜 Windows native exe를 만듭니다.
+`pipeline-gui.py`는 `sys.platform == "win32"` 감지로 자동으로
+모든 tmux/bash 호출을 `wsl.exe`로 감쌉니다.
+
+### 방법 B: WSL 안에서 빌드 (Linux 바이너리)
 
 ```bash
 # WSL 안에서
 pip install pyinstaller
-sudo apt install python3-tk
-```
-
-### 2. 빌드
-
-```bash
 bash scripts/build-gui-exe.sh
+# → dist/pipeline-gui (Linux ELF, Windows에서 실행 불가)
 ```
 
-### 3. 결과
+이 방법은 Linux 바이너리를 만들므로 Windows 더블클릭에는 사용 불가합니다.
+WSL 안에서 직접 실행할 때만 유용합니다.
+
+### 결과
 
 ```
-dist/pipeline-gui.exe    (단일 파일, ~15-25MB 예상)
+dist/pipeline-gui.exe    (방법 A, ~15-25MB 예상)
+dist/pipeline-gui        (방법 B, Linux only)
 ```
 
-### 4. 배포
+### 배포
 
 1. `dist/pipeline-gui.exe`를 Windows 로컬 경로에 복사
 2. 더블클릭으로 실행

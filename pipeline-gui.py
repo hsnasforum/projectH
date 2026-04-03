@@ -52,13 +52,22 @@ FOCUS_ENTRY_START_RE = re.compile(
     re.IGNORECASE,
 )
 POLL_MS = 1500
+IS_WINDOWS = sys.platform == "win32"
+WSL_DISTRO = os.environ.get("WSL_DISTRO", "Ubuntu")
 
 
-# ── 상태 조회 (pipeline-launcher.py와 동일 로직) ──────────────
+# ── Platform-aware command execution ──────────────────────────
+
+def _wsl_wrap(cmd: list[str]) -> list[str]:
+    """Windows에서는 wsl.exe로 감싸서 WSL 내부 명령을 실행합니다."""
+    if IS_WINDOWS:
+        return ["wsl.exe", "-d", WSL_DISTRO, "--"] + cmd
+    return cmd
+
 
 def _run(cmd: list[str], timeout: float = 5.0) -> tuple[int, str]:
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(_wsl_wrap(cmd), capture_output=True, text=True, timeout=timeout)
         return r.returncode, r.stdout.strip()
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return -1, ""
@@ -71,14 +80,26 @@ def tmux_alive() -> bool:
 
 def watcher_alive(project: Path) -> tuple[bool, int | None]:
     pid_path = project / ".pipeline" / "experimental.pid"
-    if not pid_path.exists():
-        return False, None
-    try:
-        pid = int(pid_path.read_text().strip())
-        os.kill(pid, 0)
-        return True, pid
-    except (ValueError, OSError):
-        return False, None
+    if IS_WINDOWS:
+        # Windows에서는 WSL 파일시스템을 직접 읽을 수 없으므로 wsl cat으로 읽기
+        code, content = _run(["cat", str(pid_path)])
+        if code != 0 or not content.strip():
+            return False, None
+        try:
+            pid = int(content.strip())
+        except ValueError:
+            return False, None
+        check_code, _ = _run(["kill", "-0", str(pid)])
+        return check_code == 0, pid
+    else:
+        if not pid_path.exists():
+            return False, None
+        try:
+            pid = int(pid_path.read_text().strip())
+            os.kill(pid, 0)
+            return True, pid
+        except (ValueError, OSError):
+            return False, None
 
 
 def latest_md(directory: Path) -> tuple[str, float]:
@@ -470,24 +491,40 @@ def agent_snapshots(project: Path) -> list[tuple[str, str, str, str]]:
 
 def pipeline_start(project: Path) -> str:
     script = project / "start-pipeline.sh"
-    if not script.exists():
-        return "start-pipeline.sh 없음"
-    log_path = project / ".pipeline" / "logs" / "experimental" / "pipeline-launcher-start.log"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("w", encoding="utf-8") as logf:
+    if IS_WINDOWS:
+        # Windows: wsl.exe로 bash 실행
         subprocess.Popen(
-            ["bash", "-l", str(script), str(project), "--mode", "experimental", "--no-attach"],
-            cwd=str(project), stdout=logf, stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL, start_new_session=True,
+            ["wsl.exe", "-d", WSL_DISTRO, "--cd", str(project), "--",
+             "bash", "-l", str(script), str(project), "--mode", "experimental", "--no-attach"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=0x08000000,  # CREATE_NO_WINDOW
         )
+    else:
+        if not script.exists():
+            return "start-pipeline.sh 없음"
+        log_path = project / ".pipeline" / "logs" / "experimental" / "pipeline-launcher-start.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("w", encoding="utf-8") as logf:
+            subprocess.Popen(
+                ["bash", "-l", str(script), str(project), "--mode", "experimental", "--no-attach"],
+                cwd=str(project), stdout=logf, stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL, start_new_session=True,
+            )
     return "시작 요청됨"
 
 
 def pipeline_stop(project: Path) -> str:
     script = project / "stop-pipeline.sh"
-    if not script.exists():
-        return "stop-pipeline.sh 없음"
-    subprocess.run(["bash", str(script), str(project)], capture_output=True, timeout=15)
+    if IS_WINDOWS:
+        subprocess.run(
+            ["wsl.exe", "-d", WSL_DISTRO, "--cd", str(project), "--",
+             "bash", str(script), str(project)],
+            capture_output=True, timeout=15,
+        )
+    else:
+        if not script.exists():
+            return "stop-pipeline.sh 없음"
+        subprocess.run(["bash", str(script), str(project)], capture_output=True, timeout=15)
     return "중지 완료"
 
 

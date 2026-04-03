@@ -244,6 +244,7 @@ test("검색만 응답은 transcript에서 preview cards만 보이고 본문 텍
   await expect(page.getByTestId("response-search-preview")).toBeVisible();
   await expect(page.locator("#response-search-preview .search-preview-item")).toHaveCount(2);
   await expect(page.locator("#response-search-preview .search-preview-name").first()).toContainText("budget-plan.md");
+  await expect(page.locator("#response-search-preview .search-preview-name").first()).toContainText("1. budget-plan.md");
   await expect(page.locator("#response-search-preview .search-preview-name").first()).toHaveAttribute("title", /.*\/budget-plan\.md$/);
   await expect(page.locator("#response-search-preview .search-preview-match").first()).toContainText("파일명 일치");
   await expect(page.locator("#response-search-preview .search-preview-snippet").first()).toBeVisible();

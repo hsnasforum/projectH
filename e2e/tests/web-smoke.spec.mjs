@@ -826,7 +826,7 @@ test("same-session recurrence aggregate는 separate blocked trigger surface로 �
   await expect(page.locator("#notice-box")).toContainText("검토 메모 적용이 중단되었습니다.");
 
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-stopped")).toBeVisible();
-  await expect(aggregateTriggerBox).toContainText("검토 메모 적용이 중단되었습니다. 이후 응답에 교정 패턴이 반영되지 않습니다.");
+  await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-helper")).toHaveText("검토 메모 적용이 중단되었습니다. 이후 응답에 교정 패턴이 반영되지 않습니다.");
 
   const stoppedPayload = await fetchSessionPayload(page, sessionId);
   const stoppedAggregate = stoppedPayload.session.recurrence_aggregate_candidates[0];

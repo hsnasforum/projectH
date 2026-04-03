@@ -812,7 +812,7 @@ test("same-session recurrence aggregate는 separate blocked trigger surface로 �
 
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-result")).toBeVisible();
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-result")).toHaveText(`결과 확정 완료 (${resultAggregate.reviewed_memory_transition_record.canonical_transition_id} · ${resultAggregate.reviewed_memory_transition_record.apply_result.applied_effect_kind})`);
-  await expect(aggregateTriggerBox).toContainText("검토 메모 적용 효과가 활성화되었습니다.");
+  await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-helper")).toHaveText("검토 메모 적용 효과가 활성화되었습니다. 이후 응답에 교정 패턴이 반영됩니다.");
 
   await page.getByTestId("source-path").fill(shortFixturePath);
   await page.getByTestId("submit-request").click();

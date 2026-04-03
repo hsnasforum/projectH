@@ -772,6 +772,7 @@ test("same-session recurrence aggregate는 separate blocked trigger surface로 �
   expect(emittedAggregate.reviewed_memory_transition_record.record_stage).toBe("emitted_record_only_not_applied");
   expect(emittedAggregate.reviewed_memory_transition_record.canonical_transition_id).toBeTruthy();
   expect(emittedAggregate.reviewed_memory_transition_record.emitted_at).toBeTruthy();
+  await expect(page.locator("#notice-box")).toHaveText(`transition record가 발행되었습니다. (${emittedAggregate.reviewed_memory_transition_record.canonical_transition_id})`);
 
   const applyButton = aggregateTriggerBox.getByTestId("aggregate-trigger-apply");
   await expect(applyButton).toBeVisible();

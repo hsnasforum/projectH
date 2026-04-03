@@ -889,7 +889,7 @@ test("스트리밍 중 취소 버튼이 동작합니다", async ({ page }) => {
   await expect(page.getByTestId("cancel-request")).toBeVisible();
   await page.getByTestId("cancel-request").click();
 
-  await expect(page.locator("#notice-box")).toContainText("요청을 취소했습니다.");
+  await expect(page.locator("#notice-box")).toHaveText("요청을 취소했습니다. 현재까지 받은 응답만 화면에 남겨둡니다.");
 });
 
 test("일반 채팅 응답에는 source-type label이 붙지 않습니다", async ({ page }) => {

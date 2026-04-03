@@ -834,6 +834,7 @@ test("same-session recurrence aggregate는 separate blocked trigger surface로 �
   expect(stoppedAggregate.reviewed_memory_transition_record.stopped_at).toBeTruthy();
   expect(stoppedAggregate.reviewed_memory_transition_record.apply_result.result_stage).toBe("effect_stopped");
   await expect(page.locator("#notice-box")).toHaveText(`검토 메모 적용이 중단되었습니다. (${stoppedAggregate.reviewed_memory_transition_record.canonical_transition_id})`);
+  await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-stopped")).toHaveText(`적용 중단됨 (${stoppedAggregate.reviewed_memory_transition_record.canonical_transition_id})`);
 
   await page.getByTestId("source-path").fill(shortFixturePath);
   await page.getByTestId("submit-request").click();

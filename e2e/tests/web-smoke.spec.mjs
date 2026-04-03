@@ -788,6 +788,7 @@ test("same-session recurrence aggregate는 separate blocked trigger surface로 �
   expect(appliedAggregate.reviewed_memory_transition_record.canonical_transition_id).toBe(
     emittedAggregate.reviewed_memory_transition_record.canonical_transition_id
   );
+  await expect(page.locator("#notice-box")).toHaveText(`검토 메모 적용이 실행되었습니다. (${appliedAggregate.reviewed_memory_transition_record.canonical_transition_id})`);
 
   const confirmResultButton = aggregateTriggerBox.getByTestId("aggregate-trigger-confirm-result");
   await expect(confirmResultButton).toBeVisible();

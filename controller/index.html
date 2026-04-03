@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pipeline Controller</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Noto Sans KR', -apple-system, sans-serif; background: #0f0f0f; color: #e0e0e0; }
+
+  /* ── Toolbar ── */
+  .toolbar {
+    display: flex; align-items: center; gap: 16px;
+    padding: 10px 20px; background: #1a1a1a; border-bottom: 1px solid #333;
+  }
+  .toolbar .title { font-size: 15px; font-weight: 700; color: #60a5fa; }
+  .toolbar .status { font-size: 13px; padding: 3px 10px; border-radius: 12px; }
+  .toolbar .status.running { background: #064e3b; color: #34d399; }
+  .toolbar .status.stopped { background: #7f1d1d; color: #fca5a5; }
+  .toolbar .btn {
+    padding: 5px 14px; border: 1px solid #444; border-radius: 6px;
+    background: #222; color: #ccc; font-size: 12px; cursor: pointer;
+  }
+  .toolbar .btn:hover { background: #333; }
+  .toolbar .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .toolbar .spacer { flex: 1; }
+  .toolbar .info { font-size: 11px; color: #888; }
+
+  /* ── Layout ── */
+  .main { display: flex; height: calc(100vh - 44px); }
+  .sidebar { width: 220px; background: #141414; border-right: 1px solid #333; padding: 12px; overflow-y: auto; flex-shrink: 0; }
+  .center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .right-panel { width: 280px; background: #141414; border-left: 1px solid #333; padding: 12px; overflow-y: auto; flex-shrink: 0; }
+
+  /* ── Sidebar ── */
+  .sidebar h3 { font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+  .sidebar .item { font-size: 12px; color: #aaa; margin-bottom: 6px; line-height: 1.5; }
+  .sidebar .item .label { color: #666; }
+  .agent-list { margin-top: 12px; }
+  .agent-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px; border-radius: 6px; margin-bottom: 4px; font-size: 12px;
+  }
+  .agent-item:hover { background: #1e1e1e; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .dot.working { background: #34d399; }
+  .dot.idle { background: #60a5fa; }
+  .dot.off { background: #555; }
+  .dot.dead { background: #ef4444; }
+  .dot.unknown { background: #a78bfa; }
+  .agent-role { color: #666; font-size: 10px; }
+
+  /* ── Pane Area ── */
+  .pane-area { flex: 1; display: flex; gap: 1px; background: #333; overflow: hidden; }
+  .pane {
+    flex: 1; display: flex; flex-direction: column; background: #0f0f0f;
+    min-width: 0; overflow: hidden;
+  }
+  .pane-header {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 10px; background: #1a1a1a; border-bottom: 1px solid #333;
+    font-size: 12px; flex-shrink: 0;
+  }
+  .pane-header .name { font-weight: 600; }
+  .pane-header .badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; }
+  .pane-header .badge.working { background: #064e3b; color: #34d399; }
+  .pane-header .badge.idle { background: #1e3a5f; color: #60a5fa; }
+  .pane-header .badge.off { background: #333; color: #888; }
+  .pane-header .badge.dead { background: #7f1d1d; color: #fca5a5; }
+  .pane-body {
+    flex: 1; padding: 8px 10px; overflow-y: auto; overflow-x: hidden;
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
+    color: #ccc;
+  }
+
+  /* ── Right Panel ── */
+  .right-panel h3 { font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+  .slot-card {
+    background: #1a1a1a; border: 1px solid #333; border-radius: 8px;
+    padding: 10px; margin-bottom: 8px;
+  }
+  .slot-card .slot-name { font-size: 11px; font-weight: 600; color: #aaa; margin-bottom: 4px; }
+  .slot-card .slot-status { font-size: 12px; font-weight: 600; }
+  .slot-card .slot-status.implement { color: #34d399; }
+  .slot-card .slot-status.needs_operator { color: #f59e0b; }
+  .slot-card .slot-status.none { color: #555; }
+  .slot-card .slot-preview { font-size: 10px; color: #777; margin-top: 4px; line-height: 1.4; max-height: 60px; overflow: hidden; }
+  .slot-card .slot-mtime { font-size: 10px; color: #555; margin-top: 4px; }
+  .watcher-box {
+    background: #1a1a1a; border: 1px solid #333; border-radius: 8px;
+    padding: 10px; margin-bottom: 12px;
+  }
+  .watcher-box .label { font-size: 11px; color: #666; }
+  .watcher-box .value { font-size: 12px; font-weight: 600; }
+  .watcher-box .value.alive { color: #34d399; }
+  .watcher-box .value.dead { color: #ef4444; }
+</style>
+</head>
+<body>
+
+<!-- Toolbar -->
+<div class="toolbar">
+  <span class="title">Pipeline Controller</span>
+  <span id="pipeline-status" class="status stopped">Stopped</span>
+  <div class="spacer"></div>
+  <button class="btn" id="btn-start" onclick="apiPost('/api/start')">▶ Start</button>
+  <button class="btn" id="btn-stop" onclick="apiPost('/api/stop')">■ Stop</button>
+  <button class="btn" id="btn-restart" onclick="apiPost('/api/restart')">↻ Restart</button>
+  <span class="info" id="project-path">—</span>
+</div>
+
+<!-- Main -->
+<div class="main">
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <h3>프로젝트</h3>
+    <div class="item" id="sidebar-project">—</div>
+
+    <h3 style="margin-top:16px;">Agent 상태</h3>
+    <div class="agent-list" id="agent-list"></div>
+
+    <h3 style="margin-top:16px;">Watcher</h3>
+    <div class="watcher-box">
+      <div class="label">상태</div>
+      <div class="value" id="watcher-status">—</div>
+      <div class="label" style="margin-top:4px;">PID</div>
+      <div class="value" id="watcher-pid" style="color:#aaa;">—</div>
+    </div>
+  </div>
+
+  <!-- Center: 3 Panes -->
+  <div class="center">
+    <div class="pane-area" id="pane-area"></div>
+  </div>
+
+  <!-- Right Panel -->
+  <div class="right-panel">
+    <h3>Handoff 상태</h3>
+    <div id="slots-area"></div>
+  </div>
+</div>
+
+<script>
+const POLL_MS = 1000;
+const SLOT_NAMES = [
+  { key: "claude_handoff", label: "claude_handoff.md" },
+  { key: "operator_request", label: "operator_request.md" },
+  { key: "gemini_request", label: "gemini_request.md" },
+  { key: "gemini_advice", label: "gemini_advice.md" },
+];
+
+function escapeHtml(s) {
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function timeAgo(mtime) {
+  if (!mtime) return "";
+  const diff = Math.floor(Date.now()/1000 - mtime);
+  if (diff < 60) return `${diff}초 전`;
+  if (diff < 3600) return `${Math.floor(diff/60)}분 전`;
+  return `${Math.floor(diff/3600)}시간 전`;
+}
+
+function renderAgentList(agents) {
+  const el = document.getElementById("agent-list");
+  el.innerHTML = agents.map(a => `
+    <div class="agent-item">
+      <div class="dot ${a.status}"></div>
+      <span>${a.name}</span>
+      <span class="agent-role">${a.role}</span>
+    </div>
+  `).join("");
+}
+
+function renderPanes(agents) {
+  const area = document.getElementById("pane-area");
+  // 첫 렌더링이면 생성, 이후는 내용만 업데이트
+  if (area.children.length !== agents.length) {
+    area.innerHTML = agents.map((a, i) => `
+      <div class="pane" id="pane-${i}">
+        <div class="pane-header">
+          <div class="dot ${a.status}"></div>
+          <span class="name">${a.name}</span>
+          <span class="badge ${a.status}">${a.status}</span>
+        </div>
+        <div class="pane-body" id="pane-body-${i}"></div>
+      </div>
+    `).join("");
+  }
+  agents.forEach((a, i) => {
+    // 헤더 업데이트
+    const header = document.querySelector(`#pane-${i} .pane-header`);
+    if (header) {
+      header.innerHTML = `
+        <div class="dot ${a.status}"></div>
+        <span class="name">${a.name}</span>
+        <span class="badge ${a.status}">${a.status}</span>
+      `;
+    }
+    // 본문 업데이트 — 스크롤이 바닥이면 follow
+    const body = document.getElementById(`pane-body-${i}`);
+    if (body) {
+      const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 50;
+      body.textContent = a.pane_text || "(출력 없음)";
+      if (atBottom) body.scrollTop = body.scrollHeight;
+    }
+  });
+}
+
+function renderSlots(slots) {
+  const area = document.getElementById("slots-area");
+  area.innerHTML = SLOT_NAMES.map(({ key, label }) => {
+    const s = slots[key] || {};
+    const statusClass = s.status === "implement" ? "implement"
+                      : s.status === "needs_operator" ? "needs_operator"
+                      : "none";
+    const statusText = s.exists ? (s.status || "(STATUS 없음)") : "(파일 없음)";
+    const preview = s.preview ? escapeHtml(s.preview.slice(0, 200)) : "";
+    return `
+      <div class="slot-card">
+        <div class="slot-name">${label}</div>
+        <div class="slot-status ${statusClass}">${statusText}</div>
+        ${preview ? `<div class="slot-preview">${preview}</div>` : ""}
+        ${s.mtime ? `<div class="slot-mtime">${timeAgo(s.mtime)}</div>` : ""}
+      </div>
+    `;
+  }).join("");
+}
+
+async function poll() {
+  try {
+    const res = await fetch("/api/state");
+    const data = await res.json();
+
+    // Toolbar
+    document.getElementById("project-path").textContent = data.project_root;
+    document.getElementById("sidebar-project").textContent = data.project_root;
+    const statusEl = document.getElementById("pipeline-status");
+    if (data.session_alive) {
+      statusEl.textContent = "Running";
+      statusEl.className = "status running";
+    } else {
+      statusEl.textContent = "Stopped";
+      statusEl.className = "status stopped";
+    }
+
+    // Watcher
+    const w = data.watcher || {};
+    const ws = document.getElementById("watcher-status");
+    ws.textContent = w.alive ? "● Alive" : "✗ Dead";
+    ws.className = `value ${w.alive ? "alive" : "dead"}`;
+    document.getElementById("watcher-pid").textContent = w.pid || "—";
+
+    // Agents
+    renderAgentList(data.agents || []);
+    renderPanes(data.agents || []);
+
+    // Slots
+    renderSlots(data.slots || {});
+
+  } catch (e) {
+    document.getElementById("pipeline-status").textContent = "API Error";
+    document.getElementById("pipeline-status").className = "status stopped";
+  }
+}
+
+async function apiPost(path) {
+  try {
+    await fetch(path, { method: "POST" });
+    setTimeout(poll, 1500);
+  } catch (e) {
+    alert("요청 실패: " + e.message);
+  }
+}
+
+// 1초마다 폴링
+setInterval(poll, POLL_MS);
+poll();
+</script>
+</body>
+</html>

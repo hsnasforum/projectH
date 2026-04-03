@@ -681,11 +681,11 @@ class PipelineGUI:
             Label(name_row, text=name, font=section_font, bg="#111111", fg=fg).pack(side=LEFT, padx=(6, 0))
 
             status_lbl = Label(card, text="—", font=status_font, bg="#111111", fg="#888888", anchor="w")
-            status_lbl.pack(anchor="w", pady=(8, 2))
-            note_lbl = Label(card, text="", font=small_font, bg="#111111", fg=sub_fg, anchor="w", justify=LEFT, wraplength=220)
+            status_lbl.pack(anchor="w", pady=(6, 1))
+            note_lbl = Label(card, text="", font=small_font, bg="#111111", fg=sub_fg, anchor="w", justify=LEFT, wraplength=250)
             note_lbl.pack(anchor="w")
-            quota_lbl = Label(card, text="Quota: —", font=small_font, bg="#111111", fg="#7c8798", anchor="w", justify=LEFT, wraplength=220)
-            quota_lbl.pack(anchor="w", pady=(4, 0))
+            quota_lbl = Label(card, text="", font=small_font, bg="#111111", fg="#7c8798", anchor="w", justify=LEFT, wraplength=250)
+            quota_lbl.pack(anchor="w", pady=(2, 0))
             self.agent_labels.append((card, dot, status_lbl, note_lbl, quota_lbl))
 
             for widget in (card, name_row, dot, status_lbl, note_lbl, quota_lbl):
@@ -709,40 +709,41 @@ class PipelineGUI:
 
         focus_inner = Frame(focus_frame, bg=log_bg)
         focus_inner.pack(fill=BOTH, expand=True, pady=(8, 0))
+        focus_font = tkfont.Font(family="Consolas", size=9)
         self.focus_text = Text(
-            focus_inner, font=small_font, bg=log_bg, fg="#e5e7eb",
-            wrap=WORD, bd=0, highlightthickness=0, padx=12, pady=8,
-            state=DISABLED, spacing1=1, spacing3=1, height=12,
+            focus_inner, font=focus_font, bg=log_bg, fg="#d4d4d8",
+            wrap=WORD, bd=0, highlightthickness=0, padx=10, pady=6,
+            state=DISABLED, spacing1=0, spacing3=1,
         )
         focus_scroll = Scrollbar(focus_inner, command=self.focus_text.yview)
         self.focus_text.configure(yscrollcommand=focus_scroll.set)
         focus_scroll.pack(side=RIGHT, fill=Y)
         self.focus_text.pack(side=LEFT, fill=BOTH, expand=True)
 
-        paned.add(focus_frame, minsize=180, stretch="always")
+        paned.add(focus_frame, minsize=140, stretch="always")
 
         # ── Watcher log ──
-        log_frame = Frame(paned, bg=card_bg, padx=12, pady=10,
+        log_frame = Frame(paned, bg=card_bg, padx=12, pady=8,
                           highlightthickness=1, highlightbackground=card_border)
         Label(log_frame, text="Recent watcher log", font=section_font, bg=card_bg, fg=sub_fg).pack(anchor="w")
 
         log_inner = Frame(log_frame, bg=log_bg)
         log_inner.pack(fill=BOTH, expand=True, pady=(8, 0))
 
-        self.log_text = Text(log_inner, font=small_font, bg=log_bg, fg="#cbd5e1",
-                             wrap=WORD, bd=0, highlightthickness=0, padx=10, pady=10,
-                             state=DISABLED, height=8)
+        self.log_text = Text(log_inner, font=small_font, bg=log_bg, fg="#a1a1aa",
+                             wrap=WORD, bd=0, highlightthickness=0, padx=10, pady=6,
+                             state=DISABLED)
         scrollbar = Scrollbar(log_inner, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side=RIGHT, fill=Y)
         self.log_text.pack(side=LEFT, fill=BOTH, expand=True)
 
-        paned.add(log_frame, minsize=160, stretch="always")
-        # 초기 sash: focus 2 : log 1 비율
+        paned.add(log_frame, minsize=100, stretch="never")
+        # 초기 sash: focus 75% / log 25%
         self.root.update_idletasks()
         paned_h = paned.winfo_height()
-        if paned_h > 200:
-            paned.sash_place(0, 0, int(paned_h * 0.66))
+        if paned_h > 240:
+            paned.sash_place(0, 0, int(paned_h * 0.75))
 
         # ── 하단 메시지 ──
         self.msg_var = StringVar(value="")

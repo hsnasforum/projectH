@@ -102,26 +102,61 @@ def watcher_alive(project: Path) -> tuple[bool, int | None]:
             return False, None
 
 
+def _wsl_read_file(path: str) -> str:
+    """Windows에서 WSL 내부 파일을 읽습니다."""
+    code, content = _run(["cat", path])
+    return content if code == 0 else ""
+
+
+def _wsl_file_exists(path: str) -> bool:
+    """Windows에서 WSL 내부 파일 존재 여부를 확인합니다."""
+    code, _ = _run(["test", "-e", path])
+    return code == 0
+
+
 def latest_md(directory: Path) -> tuple[str, float]:
-    best_path: Path | None = None
-    best_mtime: float = 0.0
-    if not directory.exists():
-        return "—", 0.0
-    for md in directory.rglob("*.md"):
-        try:
-            mt = md.stat().st_mtime
+    if IS_WINDOWS:
+        # WSL find로 최신 .md 파일 찾기
+        code, output = _run([
+            "find", str(directory), "-name", "*.md", "-type", "f",
+            "-printf", "%T@\\t%P\\n",
+        ])
+        if code != 0 or not output.strip():
+            return "—", 0.0
+        best_mtime = 0.0
+        best_rel = ""
+        for line in output.strip().splitlines():
+            parts = line.split("\t", 1)
+            if len(parts) != 2:
+                continue
+            try:
+                mt = float(parts[0])
+            except ValueError:
+                continue
             if mt > best_mtime:
                 best_mtime = mt
-                best_path = md
-        except OSError:
-            continue
-    if best_path is None:
-        return "—", 0.0
-    try:
-        rel = str(best_path.relative_to(directory))
-    except ValueError:
-        rel = best_path.name
-    return rel, best_mtime
+                best_rel = parts[1]
+        return (best_rel or "—"), best_mtime
+    else:
+        best_path: Path | None = None
+        best_mtime: float = 0.0
+        if not directory.exists():
+            return "—", 0.0
+        for md in directory.rglob("*.md"):
+            try:
+                mt = md.stat().st_mtime
+                if mt > best_mtime:
+                    best_mtime = mt
+                    best_path = md
+            except OSError:
+                continue
+        if best_path is None:
+            return "—", 0.0
+        try:
+            rel = str(best_path.relative_to(directory))
+        except ValueError:
+            rel = best_path.name
+        return rel, best_mtime
 
 
 def time_ago(mtime: float) -> str:
@@ -137,14 +172,20 @@ def time_ago(mtime: float) -> str:
 
 def watcher_log_tail(project: Path, lines: int = 5) -> list[str]:
     log_path = project / ".pipeline" / "logs" / "experimental" / "watcher.log"
-    if not log_path.exists():
-        return ["(로그 없음)"]
-    try:
-        all_lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        filtered = [l for l in all_lines if "suppressed" not in l and "A/B ratio" not in l]
-        return filtered[-lines:] if filtered else ["(이벤트 없음)"]
-    except OSError:
-        return ["(읽기 실패)"]
+    if IS_WINDOWS:
+        content = _wsl_read_file(str(log_path))
+        if not content:
+            return ["(로그 없음)"]
+        all_lines = content.splitlines()
+    else:
+        if not log_path.exists():
+            return ["(로그 없음)"]
+        try:
+            all_lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return ["(읽기 실패)"]
+    filtered = [l for l in all_lines if "suppressed" not in l and "A/B ratio" not in l]
+    return filtered[-lines:] if filtered else ["(이벤트 없음)"]
 
 
 WATCHER_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")
@@ -382,12 +423,18 @@ def format_focus_output(pane_text: str, max_lines: int = 24, max_chars: int = 22
 def watcher_runtime_hints(project: Path) -> dict[str, tuple[str, str]]:
     """watcher.log에서 agent별 WORKING/READY 힌트와 경과시간 추출."""
     log_path = project / ".pipeline" / "logs" / "experimental" / "watcher.log"
-    if not log_path.exists():
-        return {}
-    try:
-        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-300:]
-    except OSError:
-        return {}
+    if IS_WINDOWS:
+        content = _wsl_read_file(str(log_path))
+        if not content:
+            return {}
+        lines = content.splitlines()[-300:]
+    else:
+        if not log_path.exists():
+            return {}
+        try:
+            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-300:]
+        except OSError:
+            return {}
 
     claude_started_at: float | None = None
     claude_done = False

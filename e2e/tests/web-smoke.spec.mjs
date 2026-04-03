@@ -204,6 +204,7 @@ test("브라우저 폴더 선택으로도 문서 검색이 됩니다", async ({ 
   await expect(page.locator("#response-search-preview .search-preview-item")).toHaveCount(2);
   await expect(page.locator("#response-search-preview .search-preview-name").first()).toContainText("budget-plan.md");
   await expect(page.locator("#response-search-preview .search-preview-name").first()).toHaveAttribute("title", /.*\/budget-plan\.md$/);
+  await expect(page.locator("#response-search-preview .search-preview-match").first()).toContainText("파일명 일치");
   await expect(page.getByTestId("response-text")).toBeVisible();
 
   // transcript preview panel is also visible in search-plus-summary

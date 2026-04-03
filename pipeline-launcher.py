@@ -23,6 +23,7 @@ import os
 import re
 import subprocess
 import sys
+import textwrap
 import time
 import traceback
 from pathlib import Path
@@ -97,6 +98,176 @@ def _fit_text(text: str, width: int) -> str:
     if width == 1:
         return text[:1]
     return text[: width - 1] + "…"
+
+
+DECORATIVE_ONLY_RE = re.compile(r"^[\s─━│┌┐└┘╭╮╯╰▁▂▃▄▅▆▇█▉▊▋▌▍▎▏▀▝▘▜▛▙▟▞▚▖▗▐•·]+$")
+
+
+def _normalize_pane_line(text: str) -> str:
+    text = ANSI_RE.sub("", text).expandtabs(2).rstrip()
+    text = "".join(c for c in text if ord(c) >= 32 or c == "\t")
+    return text
+
+
+def _is_decorative_pane_line(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if DECORATIVE_ONLY_RE.match(stripped):
+        return True
+    weird = sum(1 for c in stripped if ord(c) > 127 and not ("가" <= c <= "힣"))
+    has_word = bool(re.search(r"[A-Za-z0-9가-힣]", stripped))
+    return weird / max(1, len(stripped)) > 0.7 and not has_word
+
+
+def _is_activity_line(text: str) -> bool:
+    lower = text.lower().strip()
+    return (
+        lower.startswith("● ")
+        or lower.startswith("• ")
+        or lower.startswith("✶ ")
+        or lower.startswith("* ")
+        or lower.startswith("bash(")
+        or lower.startswith("read ")
+        or lower.startswith("reading ")
+        or lower.startswith("searched ")
+        or "working (" in lower
+        or "waiting for background" in lower
+        or "lollygagging" in lower
+        or "cascading" in lower
+        or "hashing" in lower
+        or "leavering" in lower
+    )
+
+
+def _looks_like_new_entry(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    return stripped.startswith(
+        (
+            "●",
+            "•",
+            "✶",
+            "✽",
+            "* ",
+            "## ",
+            "@@",
+            "Bash(",
+            "Read ",
+            "Reading ",
+            "Searched ",
+            "Search ",
+            "Ran ",
+            "Explored",
+            "Updated Plan",
+            "Context compacted",
+            "ROLE:",
+            "STATE:",
+            "HANDOFF:",
+            "READ_FIRST:",
+            "목표:",
+            "변경:",
+            "검증:",
+            "커밋:",
+            "closeout:",
+            "리스크:",
+            "완료",
+            "workspace",
+            "model:",
+            "directory:",
+            "❯",
+            "> ",
+            "⎿",
+        )
+    )
+
+
+def _merge_piece(prev: str, current: str) -> str:
+    prev = prev.rstrip()
+    current = current.lstrip()
+    if not prev:
+        return current
+    if not current:
+        return prev
+
+    prev_stripped = prev.lstrip()
+    curr_stripped = current.lstrip()
+
+    if (
+        prev_stripped[:1] in {"+", "-"}
+        and curr_stripped[:1] == prev_stripped[:1]
+        and len(curr_stripped) > 1
+        and not curr_stripped[1:2].isspace()
+    ):
+        return prev + curr_stripped[1:]
+
+    prev_last = prev[-1]
+    curr_first = curr_stripped[0]
+    prev_tail = prev_stripped.split()[-1] if prev_stripped.split() else prev_stripped
+
+    if ("가" <= prev_last <= "힣") and ("가" <= curr_first <= "힣"):
+        return prev + curr_stripped
+
+    if (
+        " " not in curr_stripped
+        and (
+            re.search(r"[./_-]", curr_stripped)
+            or re.search(r"[./_-]", prev_tail)
+        )
+        and not curr_first.isupper()
+    ):
+        return prev + curr_stripped
+
+    if prev_last in "/-_([{#@:+=" or curr_first in ".,:;!?)]}/-_%":
+        return prev + curr_stripped
+
+    return prev + " " + curr_stripped
+
+
+def _reflow_focused_lines(lines: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    prev_blank = False
+    for raw_line in lines:
+        line = raw_line.replace("\t", "  ").rstrip()
+        stripped = line.strip()
+        if _is_decorative_pane_line(stripped):
+            continue
+        if not stripped:
+            if not prev_blank:
+                cleaned.append("")
+                prev_blank = True
+            continue
+        prev_blank = False
+        cleaned.append(line)
+
+    # box 내부 텍스트 정리: │로 시작/끝나는 줄에서 │ 제거
+    unboxed: list[str] = []
+    for line in cleaned:
+        s = line.strip()
+        if s.startswith("│"):
+            s = s.lstrip("│").strip()
+        if s.endswith("│"):
+            s = s[:-1].strip()
+        if s:
+            unboxed.append(s)
+        elif not unboxed or unboxed[-1] != "":
+            unboxed.append("")
+
+    # 보수적 merge: 기본은 줄을 합치지 않음.
+    # 유일한 예외: 이전 줄이 열린 괄호/경로로 끝날 때만 합침.
+    rebuilt: list[str] = []
+    for line in unboxed:
+        if not line:
+            if not rebuilt or rebuilt[-1] != "":
+                rebuilt.append("")
+            continue
+        if rebuilt and rebuilt[-1] and rebuilt[-1].endswith(("/", "(", "[", "{")):
+            rebuilt[-1] = rebuilt[-1] + line
+        else:
+            rebuilt.append(line)
+
+    return rebuilt
 
 
 # ── 상태 조회 ──────────────────────────────────────────────────
@@ -387,6 +558,8 @@ def detect_agent_status(label: str, lines: list[str]) -> tuple[str, str, str]:
         or "waited for background" in lower
         or "cascading" in lower
         or "lollygagging" in lower
+        or "hashing" in lower
+        or "leavering" in lower
         or "without interrupting claude's current work" in lower
     ):
         note = extract_working_note(lines)
@@ -438,7 +611,7 @@ def pane_snapshots(project: Path) -> list[AgentSnapshot]:
             summaries.append(AgentSnapshot(label, "BOOTING", "", "(출력 대기 중)"))
             continue
 
-        lines = [ANSI_RE.sub("", line).strip() for line in captured.splitlines()]
+        lines = [_normalize_pane_line(line).strip() for line in captured.splitlines()]
         lines = [line for line in lines if line]
         if not lines:
             summaries.append(AgentSnapshot(label, "BOOTING", "", "(출력 대기 중)"))
@@ -485,9 +658,7 @@ def capture_agent_pane(agent_index: int, lines: int = 200) -> list[str]:
                     return ["(출력 없음)"]
                 result = []
                 for l in captured.splitlines():
-                    cl = ANSI_RE.sub("", l).expandtabs(2).rstrip()
-                    # 제어 문자 제거 (0x00-0x1f, 0x7f)
-                    cl = "".join(c for c in cl if ord(c) >= 32 or c == "\t")
+                    cl = _normalize_pane_line(l)
                     if cl.strip():
                         result.append(cl)
                 return result
@@ -787,11 +958,12 @@ def draw(stdscr: curses.window, project: Path, message: str, pending_state: str 
             safe_addstr(stdscr, row, label_col, _fit_text(f"{indicator} {snap.label}", label_width), label_attr)
             safe_addstr(stdscr, row, status_col, _fit_text(f"[{snap.status}]", status_width), bracket_attr)
             safe_addstr(stdscr, row, duration_col, _fit_text(snap.status_note, duration_width), bracket_attr)
+            detail_text = snap.detail if (focused_agent is None or is_focused or is_working) else ""
             safe_addstr(
                 stdscr,
                 row,
                 detail_col,
-                snap.detail[:max(0, w - detail_col - 1)],
+                detail_text[:max(0, w - detail_col - 1)],
                 curses.color_pair(5) | curses.A_DIM,
             )
             safe_addstr(stdscr, row, w - 1, "│", CYAN)
@@ -817,45 +989,26 @@ def draw(stdscr: curses.window, project: Path, message: str, pending_state: str 
         available_rows = h - row - 3  # 메시지 + 하단 테두리용 여유
         pane_lines = capture_agent_pane(focused_agent, lines=available_rows * 3)
 
-        # 전처리: 제어 문자 제거, strip, 빈 줄 연속 제거
-        cleaned: list[str] = []
-        prev_blank = False
-        for raw_line in pane_lines:
-            stripped = raw_line.strip().replace("\t", "  ")
-            # 제어 문자 제거 (0x00-0x1f, 0x7f) 단 \n 제외
-            stripped = "".join(c for c in stripped if c == "\n" or (ord(c) >= 32 and ord(c) != 127))
-            if not stripped:
-                if not prev_blank:
-                    cleaned.append("")
-                    prev_blank = True
-                continue
-            prev_blank = False
-            cleaned.append(stripped)
+        cleaned = _reflow_focused_lines(pane_lines)
 
-        # Word wrap: 한 줄이 content_width보다 길면 여러 줄로 나눔
-        wrapped: list[str] = []
-        for line in cleaned:
-            if not line:
-                wrapped.append("")
-                continue
-            while len(line) > content_width:
-                # 잘라야 할 위치 결정: 공백 기준으로 나누되, 없으면 강제 자름
-                cut = line.rfind(" ", 0, content_width)
-                if cut <= 0:
-                    cut = content_width  # 공백 없으면 강제
-                wrapped.append(line[:cut])
-                line = line[cut:].lstrip()
-            if line:
-                wrapped.append(line)
+        # 최근 활동 시작 지점 근처를 우선 보여주기
+        anchor = None
+        for i in range(len(cleaned) - 1, -1, -1):
+            if _is_activity_line(cleaned[i]):
+                anchor = max(0, i - 4)
+                break
+        if anchor is not None:
+            cleaned = cleaned[anchor:]
 
-        # 최근 내용 위주: 뒤에서 available_rows만큼만
-        display = wrapped[-available_rows:] if len(wrapped) > available_rows else wrapped
+        # 줄바꿈 없이 단순 표시 — 긴 줄은 content_width에서 잘라냄
+        display = cleaned[-available_rows:] if len(cleaned) > available_rows else cleaned
 
         for dline in display:
             if row >= h - 3:
                 break
+            truncated = dline[:content_width] if len(dline) > content_width else dline
             safe_addstr(stdscr, row, 0, "│ ", CYAN)
-            safe_addstr(stdscr, row, margin, dline[:content_width], curses.color_pair(5))
+            safe_addstr(stdscr, row, margin, truncated, curses.color_pair(5))
             safe_addstr(stdscr, row, w - 1, "│", CYAN)
             row += 1
 

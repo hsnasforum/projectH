@@ -206,6 +206,7 @@ test("브라우저 폴더 선택으로도 문서 검색이 됩니다", async ({ 
   await expect(page.locator("#response-search-preview .search-preview-name").first()).toHaveAttribute("title", /.*\/budget-plan\.md$/);
   await expect(page.locator("#response-search-preview .search-preview-match").first()).toContainText("파일명 일치");
   await expect(page.locator("#response-search-preview .search-preview-snippet").first()).toBeVisible();
+  await expect(page.locator("#response-search-preview .search-preview-snippet").first()).toContainText("budget-plan");
   await expect(page.locator("#response-search-preview .search-preview-name").nth(1)).toContainText("memo.md");
   await expect(page.locator("#response-search-preview .search-preview-name").nth(1)).toHaveAttribute("title", /.*\/memo\.md$/);
   await expect(page.locator("#response-search-preview .search-preview-match").nth(1)).toContainText("내용 일치");

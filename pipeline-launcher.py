@@ -204,6 +204,8 @@ def watcher_runtime_hints(project: Path) -> dict[str, tuple[str, str]]:
     except OSError:
         return {}
 
+    claude_started_at: float | None = None
+    claude_done = False
     codex_started_at: float | None = None
     codex_done = False
     gemini_started_at: float | None = None
@@ -217,6 +219,19 @@ def watcher_runtime_hints(project: Path) -> dict[str, tuple[str, str]]:
             timestamp = dt.datetime.fromisoformat(ts_match.group(1)).timestamp()
         except ValueError:
             continue
+
+        if (
+            "notify_claude" in line
+            or "send-keys" in line and "pane_type=claude" in line
+            or "waiting_for_claude" in line
+        ):
+            claude_started_at = timestamp
+            claude_done = False
+        elif (
+            "claude activity detected by snapshot diff" in line
+            or ("new job:" in line and claude_started_at is not None)
+        ):
+            claude_done = True
 
         if (
             "lease acquired: slot=slot_verify" in line
@@ -243,6 +258,10 @@ def watcher_runtime_hints(project: Path) -> dict[str, tuple[str, str]]:
 
     hints: dict[str, tuple[str, str]] = {}
     now = time.time()
+    if claude_started_at is not None and not claude_done:
+        hints["Claude"] = ("WORKING", format_elapsed(now - claude_started_at))
+    elif claude_done:
+        hints["Claude"] = ("READY", "")
     if codex_started_at is not None and not codex_done:
         hints["Codex"] = ("WORKING", format_elapsed(now - codex_started_at))
     elif codex_done:
@@ -320,24 +339,45 @@ class AgentSnapshot(NamedTuple):
 
 
 def extract_working_note(lines: list[str]) -> str:
-    for line in reversed(lines[-20:]):
-        match = re.search(r"Working \(([^)]*)\)", line, re.IGNORECASE)
-        if not match:
-            continue
-        note = match.group(1).split("•", 1)[0].strip()
-        if note:
-            return note
+    for line in reversed(lines[-80:]):
+        match = re.search(r"Working \(([^)]*)", line, re.IGNORECASE)
+        if match:
+            note = match.group(1).split("•", 1)[0].strip(" )…")
+            if note:
+                return note
+        match = re.search(r"Cascading(?:…|\.{3})\s*\(([^)]*)", line, re.IGNORECASE)
+        if match:
+            note = match.group(1).strip(" )…")
+            if note:
+                return note
+        match = re.search(r"Lollygagging(?:…|\.{3})\s*\(([^)]*)", line, re.IGNORECASE)
+        if match:
+            note = match.group(1).strip(" )…")
+            if note:
+                return note
+        lowered = line.lower()
+        if "background terminal" in lowered or "waiting for background" in lowered:
+            return "bg-task"
     return ""
 
 
 def detect_agent_status(label: str, lines: list[str]) -> tuple[str, str, str]:
-    text = "\n".join(lines[-20:])
+    recent_lines = lines[-80:]
+    text = "\n".join(recent_lines)
     lower = text.lower()
 
     if not lines:
         return "DEAD", "", "(출력 없음)"
 
-    if "working (" in lower or "background terminal" in lower:
+    if (
+        "working (" in lower
+        or "background terminal" in lower
+        or "waiting for background" in lower
+        or "waited for background" in lower
+        or "cascading" in lower
+        or "lollygagging" in lower
+        or "without interrupting claude's current work" in lower
+    ):
         note = extract_working_note(lines)
         return "WORKING", note, " / ".join(lines[-2:]) if len(lines) >= 2 else lines[-1]
     if label == "Codex" and ("› " in text or "openai codex" in lower):
@@ -397,10 +437,12 @@ def pane_snapshots(project: Path) -> list[AgentSnapshot]:
         if hint:
             hint_status, hint_note = hint
             if hint_status == "WORKING":
+                # watcher가 작업 중임을 감지했다면 pane READY보다 WORKING을 우선합니다.
                 status = "WORKING"
                 if not status_note:
                     status_note = hint_note
-            elif status == "WORKING" and hint_status == "READY":
+            elif hint_status == "READY" and status == "BOOTING":
+                # pane 출력이 아직 얕을 때만 watcher의 READY 힌트로 보정합니다.
                 status = "READY"
                 status_note = ""
 
@@ -408,6 +450,33 @@ def pane_snapshots(project: Path) -> list[AgentSnapshot]:
             snippet = snippet[:107] + "..."
         summaries.append(AgentSnapshot(label, status, status_note, snippet))
     return summaries
+
+
+def capture_agent_pane(agent_index: int, lines: int = 200) -> list[str]:
+    """지정 agent pane의 최근 출력을 가져옵니다."""
+    code, output = _run(
+        ["tmux", "list-panes", "-t", f"{SESSION_NAME}:0", "-F", "#{pane_index}|#{pane_id}|#{pane_dead}"],
+        timeout=2.0,
+    )
+    if code != 0 or not output:
+        return ["(tmux 세션 없음)"]
+    for raw in output.splitlines():
+        try:
+            idx_s, pane_id, dead = raw.split("|", 2)
+            if int(idx_s) == agent_index:
+                if dead == "1":
+                    return ["(pane dead)"]
+                cap_code, captured = _run(
+                    ["tmux", "capture-pane", "-pt", pane_id, "-S", f"-{lines}"],
+                    timeout=3.0,
+                )
+                if cap_code != 0 or not captured:
+                    return ["(출력 없음)"]
+                cleaned = [ANSI_RE.sub("", l).rstrip() for l in captured.splitlines()]
+                return [l for l in cleaned if l]
+        except ValueError:
+            continue
+    return ["(pane 없음)"]
 
 
 def build_snapshot(project: Path) -> list[str]:
@@ -528,7 +597,7 @@ def run_line_mode(project: Path) -> None:
 
 # ── curses TUI ─────────────────────────────────────────────────
 
-def draw(stdscr: curses.window, project: Path, message: str, pending_state: str = "") -> None:
+def draw(stdscr: curses.window, project: Path, message: str, pending_state: str = "", focused_agent: int | None = None) -> None:
     stdscr.erase()
     h, w = stdscr.getmaxyx()
     if h < 10 or w < 40:
@@ -608,7 +677,11 @@ def draw(stdscr: curses.window, project: Path, message: str, pending_state: str 
 
     # 키 안내
     safe_addstr(stdscr, row, 0, "│ ", CYAN)
-    keys = "[S] Start  [T] Stop  [R] Restart  [A] Attach  [Q] Quit"
+    if focused_agent is not None:
+        agent_names = {0: "Claude", 1: "Codex", 2: "Gemini"}
+        keys = f"[0/Esc] 전체  [1]Claude [2]Codex [3]Gemini  ── 포커스: {agent_names.get(focused_agent, '?')}"
+    else:
+        keys = "[S]Start [T]Stop [R]Restart [A]Attach [1]Claude [2]Codex [3]Gemini [Q]Quit"
     safe_addstr(stdscr, row, 2, keys[:max(0, w - 4)], WHITE | curses.A_BOLD)
     safe_addstr(stdscr, row, w - 1, "│", CYAN)
     row += 1
@@ -674,14 +747,46 @@ def draw(stdscr: curses.window, project: Path, message: str, pending_state: str 
             "BOOTING": YELLOW,
             "DEAD": RED,
         }
-        for snap in snapshots:
+        for i, snap in enumerate(snapshots):
             if row >= h - 4:
                 break
             status_text = f"{snap.status}{(' ' + snap.status_note) if snap.status_note else ''}"
+            # 포커스된 agent 또는 WORKING agent 강조
+            is_focused = (focused_agent == i)
+            is_working = (snap.status == "WORKING")
+            label_attr = WHITE | curses.A_BOLD if (is_focused or is_working) else WHITE
+            bracket_attr = status_color.get(snap.status, WHITE)
+            if is_focused:
+                bracket_attr |= curses.A_BOLD
+            indicator = "▶" if is_focused else "●" if is_working else " "
             safe_addstr(stdscr, row, 0, "│ ", CYAN)
-            safe_addstr(stdscr, row, 2, f"  {snap.label:<6}", WHITE)
-            safe_addstr(stdscr, row, 11, f"[{status_text:<14}]", status_color.get(snap.status, WHITE))
-            safe_addstr(stdscr, row, 28, snap.detail[:max(0, w - 31)], curses.color_pair(5) | curses.A_DIM)
+            safe_addstr(stdscr, row, 2, f"{indicator} {snap.label:<6}", label_attr)
+            safe_addstr(stdscr, row, 12, f"[{status_text:<14}]", bracket_attr)
+            safe_addstr(stdscr, row, 29, snap.detail[:max(0, w - 32)], curses.color_pair(5) | curses.A_DIM)
+            safe_addstr(stdscr, row, w - 1, "│", CYAN)
+            row += 1
+
+    # ── Focused agent read-only viewer ──
+    if focused_agent is not None and row < h - 4:
+        safe_addstr(stdscr, row, 0, f"├{border}┤", CYAN)
+        row += 1
+        agent_names = {0: "Claude", 1: "Codex", 2: "Gemini"}
+        viewer_title = f"  {agent_names.get(focused_agent, '?')} pane output (read-only)"
+        safe_addstr(stdscr, row, 0, "│ ", CYAN)
+        safe_addstr(stdscr, row, 2, viewer_title, WHITE | curses.A_BOLD)
+        safe_addstr(stdscr, row, w - 1, "│", CYAN)
+        row += 1
+
+        available_lines = h - row - 3  # 메시지 + 하단 테두리용 여유
+        pane_lines = capture_agent_pane(focused_agent, lines=available_lines + 20)
+        # 최근 줄을 available_lines만큼 표시
+        display = pane_lines[-available_lines:] if len(pane_lines) > available_lines else pane_lines
+        for pline in display:
+            if row >= h - 3:
+                break
+            truncated = pline[:w - 4] if len(pline) > w - 4 else pline
+            safe_addstr(stdscr, row, 0, "│ ", CYAN)
+            safe_addstr(stdscr, row, 2, truncated, curses.color_pair(5))
             safe_addstr(stdscr, row, w - 1, "│", CYAN)
             row += 1
 
@@ -714,6 +819,7 @@ def main(stdscr: curses.window) -> None:
     pending_state = ""
     pending_state_expire = 0.0
     pending_started_at = 0.0
+    focused_agent: int | None = None  # None=전체, 0=Claude, 1=Codex, 2=Gemini
 
     while True:
         # 메시지 만료
@@ -740,8 +846,9 @@ def main(stdscr: curses.window) -> None:
         if not display_message and pending_state:
             display_message = pending_state
 
-        # draw 내부의 실제 상태색은 유지하되, 시작 직후에는 보조 문구로 혼란을 줄입니다.
-        draw(stdscr, project, display_message, pending_state)
+        # 포커스 모드에서는 더 빠른 폴링으로 실시간감 제공
+        stdscr.timeout(500 if focused_agent is not None else 1000)
+        draw(stdscr, project, display_message, pending_state, focused_agent)
 
         key = stdscr.getch()
         if key == -1:
@@ -767,7 +874,7 @@ def main(stdscr: curses.window) -> None:
         elif ch == "r":
             message = "RESTART: 재시작 중..."
             message_expire = time.time() + 10
-            draw(stdscr, project, message, pending_state)
+            draw(stdscr, project, message, pending_state, focused_agent)
             msg = pipeline_restart(project)
             message = f"RESTART: {msg}"
             message_expire = time.time() + 5
@@ -789,6 +896,14 @@ def main(stdscr: curses.window) -> None:
             else:
                 message = "ATTACH: tmux 세션이 없습니다. 먼저 Start하세요."
                 message_expire = time.time() + 3
+        elif ch == "1":
+            focused_agent = 0 if focused_agent != 0 else None
+        elif ch == "2":
+            focused_agent = 1 if focused_agent != 1 else None
+        elif ch == "3":
+            focused_agent = 2 if focused_agent != 2 else None
+        elif ch == "0" or key == 27:  # 0 또는 Esc
+            focused_agent = None
 
 
 if __name__ == "__main__":

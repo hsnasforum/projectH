@@ -41,6 +41,16 @@ def resolve_project_root() -> Path:
 SESSION_NAME = "ai-pipeline"
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 BOX_DRAWING_ONLY_RE = re.compile(r"^[\s\-_=~│┃┆┊┌┐└┘├┤┬┴┼╭╮╯╰•·●○■□▶◀▸▹▾▿▴▵>*]+$")
+FOCUS_ENTRY_START_RE = re.compile(
+    r"^(?:"
+    r"[•●◦○▪*-]\s+|"
+    r"bash\(|read\b|search(?:ing|ed)?\b|ran\b|updated plan\b|working\b|"
+    r"cascading\b|lollygagging\b|hashing\b|thinking\b|goal:|목표:|변경|검증|결과:|"
+    r"wait(?:ed|ing)\b|without interrupting\b|role:|state:|handoff:|read_first:|"
+    r"claude code\b|openai codex\b|gemini cli\b"
+    r")",
+    re.IGNORECASE,
+)
 POLL_MS = 1500
 
 
@@ -205,7 +215,7 @@ def detect_agent_status(label: str, pane_text: str) -> tuple[str, str]:
     return "BOOTING", ""
 
 
-def capture_agent_panes(project: Path, history_lines: int = 120) -> dict[str, str]:
+def capture_agent_panes(project: Path, history_lines: int = 180) -> dict[str, str]:
     """agent label -> cleaned pane text."""
     code, output = _run(
         ["tmux", "list-panes", "-t", f"{SESSION_NAME}:0", "-F", "#{pane_index}|#{pane_id}|#{pane_dead}"],
@@ -233,7 +243,8 @@ def capture_agent_panes(project: Path, history_lines: int = 120) -> dict[str, st
         if cap_code != 0 or not captured:
             results[label] = ""
             continue
-        results[label] = ANSI_RE.sub("", captured)
+        cleaned = ANSI_RE.sub("", captured)
+        results[label] = rejoin_wrapped_pane_lines(cleaned)
     return results
 
 
@@ -243,11 +254,64 @@ def _is_interesting_line(line: str) -> bool:
         return False
     if BOX_DRAWING_ONLY_RE.match(stripped):
         return False
+    lowered = stripped.lower()
+    if (
+        "bypass" in lowered
+        or "sandbox disabled" in lowered
+        or "claude code has switc" in lowered
+        or lowered in {"/effort", "high · /effort", "high /effort"}
+        or lowered.startswith("workspace /")
+        or lowered.startswith("type your message")
+        or lowered == "workspace"
+        or lowered.endswith("skills")
+    ):
+        return False
     return True
 
 
-def format_focus_output(pane_text: str, max_lines: int = 22) -> str:
-    """좁은 tmux pane 출력에서 최근 활동 위주로 읽기 좋게 정리."""
+def rejoin_wrapped_pane_lines(text: str) -> str:
+    """좁은 tmux pane에서 mid-sentence로 하드 래핑된 줄을 최대한 다시 붙입니다.
+
+    controller/server.py의 wide-display 보정과 같은 계열 로직입니다.
+    """
+    if not text:
+        return text
+
+    result_lines: list[str] = []
+    for line in text.split("\n"):
+        stripped = line.rstrip()
+        if not result_lines:
+            result_lines.append(stripped)
+            continue
+
+        prev = result_lines[-1]
+        is_natural_break = (
+            not prev
+            or prev.endswith((".", "!", "?", ":", ")", "]", "}", "─", "│", "┘", "┐", "┤", "┴"))
+            or stripped.startswith(("•", "─", "│", "┌", "└", "├", "›", ">", "$", "#", "-", "*", "✓", "✗"))
+            or stripped.startswith(("  •", "  -", "  *", "  ✓"))
+            or not stripped
+        )
+        if is_natural_break:
+            result_lines.append(stripped)
+        else:
+            result_lines[-1] = prev + " " + stripped.lstrip()
+
+    return "\n".join(result_lines)
+
+
+def _normalize_focus_line(line: str) -> str:
+    line = line.rstrip()
+    line = re.sub(r"\s+", " ", line.strip())
+    return line
+
+
+def _focus_line_starts_new_entry(line: str) -> bool:
+    return bool(FOCUS_ENTRY_START_RE.match(line))
+
+
+def format_focus_output(pane_text: str, max_lines: int = 24, max_chars: int = 220) -> str:
+    """선택 agent pane을 최근 20줄 이상 문맥 중심으로 보여준다."""
     if not pane_text.strip():
         return "(출력 없음)"
 
@@ -258,33 +322,40 @@ def format_focus_output(pane_text: str, max_lines: int = 22) -> str:
 
     interesting_markers = (
         "working", "cascading", "lollygagging", "hashing", "leavering",
-        "read ", "read:", "read  ", "search", "searched",
-        "bash(", "ran ", "updated plan", "goal:", "목표:", "변경", "검증",
-        "thinking", "without interrupting", "background", "type your message",
+        "read", "search", "searched", "bash(", "ran ", "updated plan",
+        "goal:", "목표:", "변경", "검증", "thinking", "without interrupting",
+        "background", "role:", "handoff:", "state:", "explored", "waiting",
     )
 
     anchor = max(0, len(filtered) - max_lines)
     for idx in range(len(filtered) - 1, -1, -1):
         lowered = filtered[idx].lower()
         if any(marker in lowered for marker in interesting_markers):
-            anchor = max(0, idx - 4)
+            anchor = max(0, idx - (max_lines - 6))
             break
 
     tail = filtered[anchor:]
-    condensed: list[str] = []
+
+    rendered: list[str] = []
     previous_blank = False
-    for line in tail:
-        stripped = line.strip()
-        if not stripped:
+    for raw in tail:
+        line = _normalize_focus_line(raw)
+        if not line:
             if not previous_blank:
-                condensed.append("")
+                rendered.append("")
             previous_blank = True
             continue
         previous_blank = False
-        condensed.append(stripped)
 
-    tail = condensed[-max_lines:]
-    return "\n".join(tail)
+        if len(line) > max_chars:
+            rendered.append(line[: max_chars - 3] + "...")
+        else:
+            rendered.append(line)
+
+    rendered = rendered[-max_lines:]
+    if not rendered:
+        return "(표시할 출력 없음)"
+    return "\n".join(rendered)
 
 
 def watcher_runtime_hints(project: Path) -> dict[str, tuple[str, str]]:
@@ -612,6 +683,7 @@ class PipelineGUI:
         from tkinter import PanedWindow, VERTICAL
         paned = PanedWindow(content, orient=VERTICAL, bg="#222222", sashwidth=4, sashrelief="flat")
         paned.pack(fill=BOTH, expand=True)
+        self.paned = paned
 
         # ── 선택 agent 상세 출력 ──
         focus_frame = Frame(paned, bg=card_bg, padx=12, pady=10,
@@ -627,15 +699,15 @@ class PipelineGUI:
         focus_inner.pack(fill=BOTH, expand=True, pady=(8, 0))
         self.focus_text = Text(
             focus_inner, font=small_font, bg=log_bg, fg="#e5e7eb",
-            wrap=WORD, bd=0, highlightthickness=0, padx=10, pady=10,
-            state=DISABLED,
+            wrap=WORD, bd=0, highlightthickness=0, padx=12, pady=8,
+            state=DISABLED, spacing1=1, spacing3=1,
         )
         focus_scroll = Scrollbar(focus_inner, command=self.focus_text.yview)
         self.focus_text.configure(yscrollcommand=focus_scroll.set)
         focus_scroll.pack(side=RIGHT, fill=Y)
         self.focus_text.pack(side=LEFT, fill=BOTH, expand=True)
 
-        paned.add(focus_frame, minsize=80, stretch="always")
+        paned.add(focus_frame, minsize=180, stretch="always")
 
         # ── Watcher log ──
         log_frame = Frame(paned, bg=card_bg, padx=12, pady=10,
@@ -653,13 +725,27 @@ class PipelineGUI:
         scrollbar.pack(side=RIGHT, fill=Y)
         self.log_text.pack(side=LEFT, fill=BOTH, expand=True)
 
-        paned.add(log_frame, minsize=60, stretch="always")
+        paned.add(log_frame, minsize=100, stretch="never")
+        # 초기 sash: focus 3 : log 1 비율
+        self.root.update_idletasks()
+        paned_h = paned.winfo_height()
+        if paned_h > 200:
+            paned.sash_place(0, 0, int(paned_h * 0.72))
 
         # ── 하단 메시지 ──
         self.msg_var = StringVar(value="")
         self.msg_label = Label(self.root, textvariable=self.msg_var, font=body_font,
                                bg=bg, fg="#f59e0b", pady=8, anchor="w", padx=14)
         self.msg_label.pack(fill=X)
+        self.root.after(120, self._set_initial_pane_split)
+
+    def _set_initial_pane_split(self) -> None:
+        try:
+            total_h = self.paned.winfo_height()
+            if total_h > 240:
+                self.paned.sash_place(0, 0, int(total_h * 0.6))
+        except Exception:
+            pass
 
     def _select_agent(self, agent: str) -> None:
         self.selected_agent = agent
@@ -721,7 +807,9 @@ class PipelineGUI:
                         except Exception:
                             pass
                 else:
-                    card.configure(highlightbackground=color if status == "WORKING" else "#2a2a2a", bg="#111111")
+                    border_color = color if status == "WORKING" else "#2a2a2a"
+                    border_width = 2 if status == "WORKING" else 1
+                    card.configure(highlightbackground=border_color, highlightthickness=border_width, bg="#111111")
                     for child in card.winfo_children():
                         try:
                             child.configure(bg="#111111")
@@ -736,11 +824,14 @@ class PipelineGUI:
 
         selected_text = format_focus_output(pane_map.get(self.selected_agent, ""))
         self.focus_title_var.set(f"{self.selected_agent} • 최근 pane tail (read-only)")
+        # 스크롤 follow: 사용자가 바닥 근처에 있을 때만 자동 스크롤
+        focus_at_bottom = self.focus_text.yview()[1] >= 0.95
         self.focus_text.configure(state=NORMAL)
         self.focus_text.delete("1.0", END)
         self.focus_text.insert(END, selected_text)
         self.focus_text.configure(state=DISABLED)
-        self.focus_text.see(END)
+        if focus_at_bottom:
+            self.focus_text.see(END)
 
         # Latest files
         work_name, work_mtime = latest_md(self.project / "work")
@@ -755,16 +846,18 @@ class PipelineGUI:
         self.verify_var.set(verify_display)
 
         # Watcher log
-        log_lines = watcher_log_tail(self.project, lines=5)
+        log_lines = watcher_log_tail(self.project, lines=8)
+        log_at_bottom = self.log_text.yview()[1] >= 0.95
         self.log_text.configure(state=NORMAL)
         self.log_text.delete("1.0", END)
         for line in log_lines:
             clean = line.strip()
-            if len(clean) > 100:
-                clean = clean[:97] + "..."
+            if len(clean) > 120:
+                clean = clean[:117] + "..."
             self.log_text.insert(END, clean + "\n")
         self.log_text.configure(state=DISABLED)
-        self.log_text.see(END)
+        if log_at_bottom:
+            self.log_text.see(END)
 
         # 버튼 enable/disable — 작업 중이면 전부 비활성
         if self._action_in_progress:

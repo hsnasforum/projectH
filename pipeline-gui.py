@@ -31,11 +31,45 @@ from tkinter import (
 
 def resolve_project_root() -> Path:
     if len(sys.argv) > 1:
-        return Path(sys.argv[1]).resolve()
+        return Path(sys.argv[1])
     env = os.environ.get("PROJECT_ROOT")
     if env:
-        return Path(env).resolve()
+        return Path(env)
     return Path.cwd().resolve()
+
+
+def validate_project_root(project: Path) -> tuple[bool, str]:
+    """프로젝트 경로가 유효한 projectH repo인지 확인합니다.
+
+    Returns: (valid, reason)
+    """
+    path_str = str(project)
+
+    # Windows 경로가 WSL project path로 착각되지 않게
+    if IS_WINDOWS and (path_str.startswith("C:") or path_str.startswith("D:") or "\\" in path_str):
+        return False, (
+            f"Windows 경로가 project root로 설정되었습니다: {path_str}\n\n"
+            "WSL 내부 경로를 인자로 전달해야 합니다.\n"
+            "예: pipeline-gui.exe /home/사용자/code/projectH\n"
+            "또는 windows-launchers/pipeline-gui.cmd를 사용하세요."
+        )
+
+    # WSL 경로라도 실제 projectH repo인지 확인
+    if IS_WINDOWS:
+        # wsl test로 핵심 파일 존재 확인
+        code, _ = _run(["test", "-f", f"{path_str}/start-pipeline.sh"])
+        if code != 0:
+            return False, f"프로젝트 경로에 start-pipeline.sh가 없습니다: {path_str}"
+        code, _ = _run(["test", "-d", f"{path_str}/.pipeline"])
+        if code != 0:
+            return False, f"프로젝트 경로에 .pipeline 디렉터리가 없습니다: {path_str}"
+    else:
+        markers = ["start-pipeline.sh", "stop-pipeline.sh", ".pipeline", "work"]
+        missing = [m for m in markers if not (project / m).exists()]
+        if missing:
+            return False, f"프로젝트 경로에 필수 파일이 없습니다: {', '.join(missing)}\n경로: {path_str}"
+
+    return True, ""
 
 
 SESSION_NAME = "ai-pipeline"
@@ -608,6 +642,7 @@ class PipelineGUI:
         self.project = project
         self.selected_agent = "Claude"
         self._auto_focus_agent = True
+        self._project_valid, self._project_error = validate_project_root(project)
         self.root = Tk()
         self.root.title("Pipeline Launcher")
         self.root.configure(bg="#0f0f0f")
@@ -616,7 +651,11 @@ class PipelineGUI:
         self.root.minsize(900, 600)
 
         self._build_ui()
-        self._schedule_poll()
+
+        if not self._project_valid:
+            self._show_project_error()
+        else:
+            self._schedule_poll()
 
     def _set_initial_window_geometry(self) -> None:
         screen_w = max(1280, self.root.winfo_screenwidth())
@@ -943,6 +982,24 @@ class PipelineGUI:
         self._poll()
 
     # ── 폴링 ──
+
+    def _show_project_error(self) -> None:
+        """invalid project root일 때 GUI를 에러 상태로 표시합니다."""
+        self.status_var.set("Invalid Project")
+        self.status_label.configure(fg="#ef4444", bg="#351717")
+        self.pipeline_var.set("Pipeline: — (invalid project root)")
+        self.pipeline_state_label.configure(fg="#ef4444")
+        self.watcher_var.set("Watcher: —")
+        self.watcher_state_label.configure(fg="#888888")
+        self.work_var.set("Latest work: —")
+        self.verify_var.set("Latest verify: —")
+        self.msg_var.set(self._project_error)
+        self.msg_label.configure(fg="#ef4444")
+        # 모든 버튼 비활성
+        self.btn_start.configure(state=DISABLED)
+        self.btn_stop.configure(state=DISABLED)
+        self.btn_restart.configure(state=DISABLED)
+        self.btn_attach.configure(state=DISABLED)
 
     def _schedule_poll(self) -> None:
         self._poll()

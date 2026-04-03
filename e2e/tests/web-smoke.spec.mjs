@@ -198,6 +198,13 @@ test("브라우저 폴더 선택으로도 문서 검색이 됩니다", async ({ 
   await expect(page.locator('#transcript [data-testid="transcript-meta"]').last()).not.toContainText(/출처\s+budget-plan\.md/);
   await expect(page.locator('#transcript [data-testid="transcript-meta"]').last()).not.toContainText(/출처\s+memo\.md/);
   await expect(page.locator("#selected-text")).toContainText("budget-plan.md");
+
+  // transcript preview panel is also visible in search-plus-summary
+  const lastAssistant = page.locator("#transcript .message.assistant").last();
+  await expect(lastAssistant.locator(".search-preview-panel")).toBeVisible();
+  await expect(lastAssistant.locator(".search-preview-item")).toHaveCount(2);
+  await expect(lastAssistant.locator(".search-preview-name").first()).toContainText("budget-plan.md");
+  await expect(lastAssistant.locator(".search-preview-match").first()).toContainText("파일명 일치");
 });
 
 test("검색만 응답은 transcript에서 preview cards만 보이고 본문 텍스트는 숨겨집니다", async ({ page }) => {

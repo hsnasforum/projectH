@@ -55,8 +55,37 @@ def tmux_list_panes() -> list[dict]:
     return panes
 
 
-def tmux_capture_pane(pane_id: str, lines: int = 80) -> str:
-    return _run(["tmux", "capture-pane", "-pt", pane_id, "-S", f"-{lines}"])
+def tmux_capture_pane(pane_id: str, lines: int = 240) -> str:
+    """Capture pane text and rejoin wrapped lines for wide display."""
+    raw = _run(["tmux", "capture-pane", "-p", "-J", "-t", pane_id, "-S", f"-{lines}"])
+    if not raw:
+        return raw
+    # -J handles soft-wraps, but narrow panes still produce short hard-wrapped lines.
+    # Rejoin lines that were split mid-sentence: if a line doesn't end with a
+    # "natural break" character and the next line doesn't start with a bullet/prompt,
+    # merge them into one continuous line.
+    result_lines: list[str] = []
+    for line in raw.split("\n"):
+        stripped = line.rstrip()
+        if not result_lines:
+            result_lines.append(stripped)
+            continue
+        prev = result_lines[-1]
+        # Natural break: empty line, ends with punctuation, or next line starts with
+        # a structural marker (bullet, prompt, heading, box drawing, etc.)
+        is_natural_break = (
+            not prev
+            or prev.endswith((".", "!", "?", ":", ")", "]", "}", "─", "│", "┘", "┐", "┤", "┴"))
+            or stripped.startswith(("•", "─", "│", "┌", "└", "├", "›", ">", "$", "#", "-", "*", "✓", "✗"))
+            or stripped.startswith(("  •", "  -", "  *", "  ✓"))
+            or not stripped  # empty next line
+        )
+        if is_natural_break:
+            result_lines.append(stripped)
+        else:
+            # Merge: continuation of previous line
+            result_lines[-1] = prev + " " + stripped.lstrip()
+    return "\n".join(result_lines)
 
 
 def watcher_alive() -> dict:
@@ -141,7 +170,7 @@ def get_full_state() -> dict:
             "role": agent_def["role"],
             "status": status,
             "pane_id": pane["pane_id"] if pane else None,
-            "pane_text": pane_text[-3000:] if pane_text else "",  # 최근 3000자
+            "pane_text": pane_text[-20000:] if pane_text else "",  # 최근 20000자
         })
 
     return {

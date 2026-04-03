@@ -867,7 +867,7 @@ test("same-session recurrence aggregate는 separate blocked trigger surface로 �
   await expect(page.locator("#notice-box")).toContainText("충돌 확인이 완료되었습니다.");
 
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-conflict-checked")).toBeVisible();
-  await expect(aggregateTriggerBox).toContainText("충돌 확인이 완료되었습니다. 현재 aggregate 범위의 충돌 상태가 기록되었습니다.");
+  await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-helper")).toHaveText("충돌 확인이 완료되었습니다. 현재 aggregate 범위의 충돌 상태가 기록되었습니다.");
 
   const conflictPayload = await fetchSessionPayload(page, sessionId);
   const conflictAggregate = conflictPayload.session.recurrence_aggregate_candidates[0];

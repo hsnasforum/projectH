@@ -858,6 +858,7 @@ test("same-session recurrence aggregate는 separate blocked trigger surface로 �
     emittedAggregate.reviewed_memory_transition_record.canonical_transition_id
   );
   await expect(page.locator("#notice-box")).toHaveText(`검토 메모 적용이 되돌려졌습니다. (${reversedAggregate.reviewed_memory_transition_record.canonical_transition_id})`);
+  await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-reversed")).toHaveText(`적용 되돌림 완료 (${reversedAggregate.reviewed_memory_transition_record.canonical_transition_id})`);
 
   const conflictCheckButton = aggregateTriggerBox.getByTestId("aggregate-trigger-conflict-check");
   await expect(conflictCheckButton).toBeVisible();

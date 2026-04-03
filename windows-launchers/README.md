@@ -39,6 +39,21 @@ WSL 내부의 pipeline을 Windows에서 더블클릭으로 실행하기 위한 l
 | GUI 창이 안 뜸 | `wsl --update` 후 재시작 (WSLg) |
 | tkinter 없음 | `wsl -e sudo apt install python3-tk` |
 
+## 기존 `pipeline-gui.bat` / `pipeline.bat`와의 차이
+
+repo 루트에 있는 `.bat` 파일들은 **WSL 안에서 직접 실행하거나**, Windows 탐색기로
+WSL 공유 경로에서 더블클릭할 때 쓸 수 있도록 만들어졌습니다. 하지만:
+
+| | repo 루트 `.bat` | 이 폴더 `.cmd` |
+|--|---|---|
+| 위치 | WSL 안 (`\\wsl.localhost\...`) | Windows 로컬 (C:\, Desktop 등) |
+| UNC 경고 | **뜸** (cmd가 UNC 지원 안 함) | **안 뜸** |
+| 경로 변환 | `wslpath`로 동적 변환 (실패 가능) | 설정에 WSL 경로 직접 기입 (안정적) |
+| 사전 검증 | 없거나 최소 | WSL, distro, path, python3, tkinter 순서 검증 |
+| 권장 용도 | WSL 터미널에서 직접 실행 | **Windows 더블클릭** |
+
+**권장**: Windows 바탕화면에서 더블클릭으로 쓰려면 이 폴더의 `.cmd`를 복사해서 쓰세요.
+
 ## 왜 Windows 로컬에 복사해야 하나요?
 
 `cmd.exe`는 UNC 경로(`\\wsl.localhost\...`)를 현재 디렉터리로 지원하지 않습니다.

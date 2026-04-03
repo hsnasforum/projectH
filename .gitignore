@@ -37,6 +37,11 @@ output/playwright/*
 output/playwright/fixtures/*
 !output/playwright/fixtures/long-summary-fixture.md
 
+# PyInstaller build artifacts
+dist/
+build/
+*.spec
+
 # Pipeline runtime (logs, state, locks, pid)
 .pipeline/logs/
 .pipeline/state/

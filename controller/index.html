@@ -23,14 +23,23 @@
   }
   .toolbar .btn:hover { background: #333; }
   .toolbar .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .toolbar .view-tabs { display: flex; align-items: center; gap: 6px; }
+  .toolbar .view-label { font-size: 11px; color: #777; }
+  .toolbar .view-tab {
+    padding: 4px 10px; border: 1px solid #444; border-radius: 999px;
+    background: #181818; color: #aaa; font-size: 11px; cursor: pointer;
+  }
+  .toolbar .view-tab.active { background: #1d4ed8; border-color: #2563eb; color: #fff; }
   .toolbar .spacer { flex: 1; }
   .toolbar .info { font-size: 11px; color: #888; }
 
   /* ── Layout ── */
-  .main { display: flex; height: calc(100vh - 44px); }
-  .sidebar { width: 220px; background: #141414; border-right: 1px solid #333; padding: 12px; overflow-y: auto; flex-shrink: 0; }
+  .main { display: flex; height: calc(100vh - 44px); min-width: 0; }
+  .sidebar { width: 180px; background: #141414; border-right: 1px solid #333; padding: 12px; overflow-y: auto; flex-shrink: 0; }
   .center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  .right-panel { width: 280px; background: #141414; border-left: 1px solid #333; padding: 12px; overflow-y: auto; flex-shrink: 0; }
+  .right-panel { width: 220px; background: #141414; border-left: 1px solid #333; padding: 12px; overflow-y: auto; flex-shrink: 0; }
+  .main.focus-mode .sidebar { width: 140px; }
+  .main.focus-mode .right-panel { display: none; }
 
   /* ── Sidebar ── */
   .sidebar h3 { font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
@@ -51,10 +60,17 @@
   .agent-role { color: #666; font-size: 10px; }
 
   /* ── Pane Area ── */
-  .pane-area { flex: 1; display: flex; gap: 1px; background: #333; overflow: hidden; }
+  .pane-area {
+    flex: 1; display: flex; gap: 1px; background: #333;
+    overflow: hidden; align-items: stretch;
+  }
   .pane {
-    flex: 1; display: flex; flex-direction: column; background: #0f0f0f;
-    min-width: 0; overflow: hidden;
+    flex: 1 1 0; display: flex; flex-direction: column; background: #0f0f0f;
+    min-width: 280px; overflow: hidden;
+  }
+  .pane-area.focused .pane {
+    flex: 1 0 100%;
+    min-width: 100%;
   }
   .pane-header {
     display: flex; align-items: center; gap: 6px;
@@ -68,10 +84,26 @@
   .pane-header .badge.off { background: #333; color: #888; }
   .pane-header .badge.dead { background: #7f1d1d; color: #fca5a5; }
   .pane-body {
-    flex: 1; padding: 8px 10px; overflow-y: auto; overflow-x: hidden;
+    flex: 1; padding: 8px 10px; overflow: auto; scrollbar-gutter: stable both-edges;
     font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
-    font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
+    font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; overflow-wrap: break-word;
     color: #ccc;
+    tab-size: 2;
+  }
+  .pane-area::-webkit-scrollbar,
+  .pane-body::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+  .pane-area::-webkit-scrollbar-thumb,
+  .pane-body::-webkit-scrollbar-thumb {
+    background: #3f3f46;
+    border-radius: 999px;
+    border: 2px solid #111;
+  }
+  .pane-area::-webkit-scrollbar-track,
+  .pane-body::-webkit-scrollbar-track {
+    background: #111;
   }
 
   /* ── Right Panel ── */
@@ -103,6 +135,7 @@
 <div class="toolbar">
   <span class="title">Pipeline Controller</span>
   <span id="pipeline-status" class="status stopped">Stopped</span>
+  <div class="view-tabs" id="view-tabs"></div>
   <div class="spacer"></div>
   <button class="btn" id="btn-start" onclick="apiPost('/api/start')">▶ Start</button>
   <button class="btn" id="btn-stop" onclick="apiPost('/api/stop')">■ Stop</button>
@@ -143,6 +176,7 @@
 
 <script>
 const POLL_MS = 1000;
+let selectedView = "";
 const SLOT_NAMES = [
   { key: "claude_handoff", label: "claude_handoff.md" },
   { key: "operator_request", label: "operator_request.md" },
@@ -175,9 +209,14 @@ function renderAgentList(agents) {
 
 function renderPanes(agents) {
   const area = document.getElementById("pane-area");
+  const visibleAgents = selectedView === "all"
+    ? agents
+    : agents.filter(a => a.name.toLowerCase() === selectedView);
+  area.classList.toggle("focused", selectedView !== "all");
+
   // 첫 렌더링이면 생성, 이후는 내용만 업데이트
-  if (area.children.length !== agents.length) {
-    area.innerHTML = agents.map((a, i) => `
+  if (area.children.length !== visibleAgents.length) {
+    area.innerHTML = visibleAgents.map((a, i) => `
       <div class="pane" id="pane-${i}">
         <div class="pane-header">
           <div class="dot ${a.status}"></div>
@@ -188,7 +227,7 @@ function renderPanes(agents) {
       </div>
     `).join("");
   }
-  agents.forEach((a, i) => {
+  visibleAgents.forEach((a, i) => {
     // 헤더 업데이트
     const header = document.querySelector(`#pane-${i} .pane-header`);
     if (header) {
@@ -206,6 +245,26 @@ function renderPanes(agents) {
       if (atBottom) body.scrollTop = body.scrollHeight;
     }
   });
+}
+
+function renderViewTabs(agents) {
+  const tabs = document.getElementById("view-tabs");
+  const options = [{ key: "all", label: "전체" }].concat(
+    agents.map(a => ({ key: a.name.toLowerCase(), label: a.name }))
+  );
+  tabs.innerHTML = `
+    <span class="view-label">보기</span>
+    ${options.map(opt => `
+      <button class="view-tab ${selectedView === opt.key ? "active" : ""}" onclick="setView('${opt.key}')">${opt.label}</button>
+    `).join("")}
+  `;
+}
+
+function setView(view) {
+  selectedView = view;
+  const main = document.querySelector(".main");
+  main.classList.toggle("focus-mode", selectedView !== "all");
+  poll();
 }
 
 function renderSlots(slots) {
@@ -253,7 +312,13 @@ async function poll() {
     document.getElementById("watcher-pid").textContent = w.pid || "—";
 
     // Agents
+    if (!selectedView) {
+      const working = (data.agents || []).find(a => a.status === "working");
+      selectedView = working ? working.name.toLowerCase() : "all";
+      document.querySelector(".main").classList.toggle("focus-mode", selectedView !== "all");
+    }
     renderAgentList(data.agents || []);
+    renderViewTabs(data.agents || []);
     renderPanes(data.agents || []);
 
     // Slots

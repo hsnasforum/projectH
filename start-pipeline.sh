@@ -6,25 +6,110 @@
 #   bash start-pipeline.sh . --mode baseline     # baseline만
 #   bash start-pipeline.sh . --mode experimental # experimental만
 #   bash start-pipeline.sh . --mode both         # 둘 다 (비교 불가, 비권장)
+#   bash start-pipeline.sh . --mode experimental --no-attach
 # ============================================================
 
 PROJECT_ROOT="${1:-$(pwd)}"
 MODE="experimental"
+NO_ATTACH=0
 
 for arg in "$@"; do
     case $arg in
         baseline|experimental|both) MODE="$arg" ;;
+        --no-attach) NO_ATTACH=1 ;;
     esac
 done
 
 SESSION="ai-pipeline"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# CLI 경로 탐지 — non-interactive shell에서도 nvm/npm global을 찾을 수 있도록
+# 1차: 현재 PATH에서 탐색
+# 2차: nvm 로드 후 재시도
+# 3차: 알려진 경로 직접 탐색
+_find_cli_bin() {
+    local name="$1"
+    # 1. 현재 PATH
+    local found
+    found="$(command -v "$name" 2>/dev/null || true)"
+    if [ -n "$found" ]; then echo "$found"; return; fi
+    # 2. nvm 로드 후 재시도
+    if [ -s "$HOME/.nvm/nvm.sh" ]; then
+        . "$HOME/.nvm/nvm.sh" 2>/dev/null
+        found="$(command -v "$name" 2>/dev/null || true)"
+        if [ -n "$found" ]; then echo "$found"; return; fi
+    fi
+    # 3. 알려진 경로 직접 탐색
+    for dir in "$HOME/.nvm/versions/node"/*/bin "$HOME/.local/bin" "/usr/local/bin"; do
+        if [ -x "$dir/$name" ]; then echo "$dir/$name"; return; fi
+    done
+}
+
+CLAUDE_BIN="$(_find_cli_bin claude)"
+CODEX_BIN="$(_find_cli_bin codex)"
+GEMINI_BIN="$(_find_cli_bin gemini)"
+
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 YELLOW='\033[1;33m'
 GRAY='\033[0;37m'
 NC='\033[0m'
+
+terminate_repo_watchers() {
+    local project_abs
+    project_abs="$(readlink -f "$PROJECT_ROOT")"
+    local pids pid cmd cwd
+
+    pids="$(pgrep -f 'watcher_core\.py|pipeline-watcher-v3(\-logged)?\.sh' || true)"
+    for pid in $pids; do
+        cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+        cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
+        case "$cmd" in
+            *watcher_core.py*|*pipeline-watcher-v3.sh*|*pipeline-watcher-v3-logged.sh*)
+                if [ "$cwd" = "$project_abs" ] || printf '%s' "$cmd" | grep -Fq "$project_abs"; then
+                    kill "$pid" 2>/dev/null || true
+                fi
+                ;;
+        esac
+    done
+}
+
+wait_for_cli_ready() {
+    local pane_target="$1"
+    local lane_name="$2"
+    local pane_text
+
+    sleep 1
+    pane_text=$(tmux capture-pane -pt "$pane_target" -S -20 2>/dev/null || true)
+    if printf '%s\n' "$pane_text" | awk 'NF { print }' | tail -n 12 | grep -Eq '^[[:space:]]*(>|›|❯)([[:space:]].*)?$|[$][[:space:]]*$'; then
+        echo -e "${GRAY}  ${lane_name} 준비 완료 (즉시)${NC}"
+        return 0
+    fi
+
+    echo -e "${GRAY}  ${lane_name} prompt 미확인, watcher readiness에 맡기고 계속 진행${NC}"
+}
+
+launch_agent_in_pane() {
+    local pane_target="$1"
+    local lane_name="$2"
+    local cmd_text="$3"
+
+    tmux respawn-pane -k -t "$pane_target" -c "$PROJECT_ROOT" "$cmd_text" >/dev/null 2>&1 || {
+        echo -e "${YELLOW}  ${lane_name} pane respawn 실패${NC}"
+        return 1
+    }
+    return 0
+}
+
+require_agent_bin() {
+    local label="$1"
+    local path="$2"
+    if [ -n "$path" ]; then
+        return 0
+    fi
+    echo -e "${YELLOW}  ${label} 실행 경로를 찾지 못했습니다 (command -v 실패)${NC}"
+    return 1
+}
 
 echo ""
 echo -e "${CYAN}============================================${NC}"
@@ -50,17 +135,8 @@ for pidfile in baseline experimental; do
     fi
 done
 
-# pid 파일 밖에 남은 watcher도 함께 정리
-for pattern in \
-    "$SCRIPT_DIR/watcher_core.py" \
-    "$SCRIPT_DIR/pipeline-watcher-v3.sh" \
-    "$SCRIPT_DIR/pipeline-watcher-v3-logged.sh"
-do
-    pids="$(pgrep -f "$pattern" || true)"
-    if [ -n "$pids" ]; then
-        kill $pids 2>/dev/null || true
-    fi
-done
+# pid 파일 밖에 남은 repo-local watcher도 함께 정리
+terminate_repo_watchers
 
 # ------------------------------------------------------------
 # 2. 로그/상태 초기화 (모드별)
@@ -94,38 +170,50 @@ fi
 # ------------------------------------------------------------
 echo -e "${GREEN}[2/4] tmux 세션 생성 중...${NC}"
 
-tmux new-session -d -s "$SESSION"
+tmux new-session -d -s "$SESSION" -c "$PROJECT_ROOT" "bash" >/dev/null 2>&1 || {
+    echo -e "${YELLOW}  tmux new-session 실패${NC}"
+}
+tmux set-option -g destroy-unattached off >/dev/null 2>&1 || true
+tmux set-option -g exit-empty off >/dev/null 2>&1 || true
 
 # Session settings
 tmux set-option -t "$SESSION" destroy-unattached off
+tmux set-option -t "$SESSION" mouse on
+tmux set-option -t "$SESSION" status-position bottom
+tmux set-option -t "$SESSION" status-style "bg=colour235,fg=colour250"
+tmux set-option -t "$SESSION" message-style "bg=colour235,fg=colour250"
+tmux set-option -t "$SESSION" mode-style "bg=colour238,fg=colour255"
+tmux set-option -t "$SESSION" pane-border-style "fg=colour238"
+tmux set-option -t "$SESSION" pane-active-border-style "fg=colour45"
+tmux set-option -t "$SESSION" status-left "[#S] "
+tmux set-option -t "$SESSION" status-right "#{window_index}:#{window_name} · %H:%M %d-%b-%y"
+tmux set-option -t "$SESSION" status-format[0] "#[align=left]#{status-left}#[default] #[align=right]#{status-right}"
+tmux set-window-option -t "$SESSION" window-status-format "#I:#W"
+tmux set-window-option -t "$SESSION" window-status-current-format "#[bold]#I:#W"
+tmux set-option -u -t "$SESSION" status-format[1] 2>/dev/null || true
+tmux set-window-option -t "$SESSION:0" remain-on-exit on >/dev/null 2>&1 || true
+
+require_agent_bin "Claude" "$CLAUDE_BIN" || exit 1
+require_agent_bin "Codex" "$CODEX_BIN" || exit 1
+require_agent_bin "Gemini" "$GEMINI_BIN" || exit 1
 
 # Capture pane IDs for reliable targeting (pane index can shift)
 CLAUDE_PANE=$(tmux display-message -t "$SESSION:0.0" -p '#{pane_id}')
-tmux split-window -h -t "$SESSION:0"
-CODEX_PANE=$(tmux display-message -t "$SESSION:0.1" -p '#{pane_id}')
+CODEX_PANE=$(tmux split-window -P -F '#{pane_id}' -h -t "$CLAUDE_PANE" -c "$PROJECT_ROOT" "bash")
+GEMINI_PANE=$(tmux split-window -P -F '#{pane_id}' -h -t "$CODEX_PANE" -c "$PROJECT_ROOT" "bash")
+tmux select-layout -t "$SESSION:0" even-horizontal
 
-echo -e "${GRAY}  Claude pane: $CLAUDE_PANE  Codex pane: $CODEX_PANE${NC}"
+launch_agent_in_pane "$CLAUDE_PANE" "Claude" "exec \"$CLAUDE_BIN\" --dangerously-skip-permissions"
+launch_agent_in_pane "$CODEX_PANE" "Codex" "exec \"$CODEX_BIN\" --ask-for-approval never --disable apps"
+launch_agent_in_pane "$GEMINI_PANE" "Gemini" "exec \"$GEMINI_BIN\" --approval-mode auto_edit"
 
-tmux send-keys -t "$CLAUDE_PANE" "cd '$PROJECT_ROOT' && claude --dangerously-skip-permissions" Enter
-tmux send-keys -t "$CODEX_PANE" "cd '$PROJECT_ROOT' && codex --ask-for-approval never" Enter
+echo -e "${GRAY}  Claude pane: $CLAUDE_PANE  Codex pane: $CODEX_PANE  Gemini pane: $GEMINI_PANE${NC}"
 
-echo -e "${GRAY}  tmux: $SESSION (Claude=$CLAUDE_PANE / Codex=$CODEX_PANE)${NC}"
+echo -e "${GRAY}  tmux: $SESSION (Claude=$CLAUDE_PANE / Codex=$CODEX_PANE / Gemini=$GEMINI_PANE)${NC}"
 
-# 양쪽 CLI 초기화 대기
-echo -e "${GRAY}  CLI 초기화 대기 중 (최대 30초)...${NC}"
-for i in $(seq 1 30); do
-    CLAUDE_TEXT=$(tmux capture-pane -pt "$CLAUDE_PANE" -S -5 2>/dev/null || true)
-    CODEX_TEXT=$(tmux capture-pane -pt "$CODEX_PANE" -S -5 2>/dev/null || true)
-    CLAUDE_READY=false
-    CODEX_READY=false
-    echo "$CLAUDE_TEXT" | grep -q ">" && CLAUDE_READY=true
-    echo "$CODEX_TEXT" | grep -q ">" && CODEX_READY=true
-    if $CLAUDE_READY && $CODEX_READY; then
-        echo -e "${GRAY}  Claude + Codex 준비 완료 (${i}초)${NC}"
-        break
-    fi
-    sleep 1
-done
+wait_for_cli_ready "$CLAUDE_PANE" "Claude"
+wait_for_cli_ready "$CODEX_PANE" "Codex"
+wait_for_cli_ready "$GEMINI_PANE" "Gemini"
 sleep 1
 
 # ------------------------------------------------------------
@@ -133,30 +221,41 @@ sleep 1
 # ------------------------------------------------------------
 if [ "$MODE" = "baseline" ] || [ "$MODE" = "both" ]; then
     echo -e "${GREEN}[3/4] baseline watcher 시작 중...${NC}"
-    bash "$SCRIPT_DIR/pipeline-watcher-v3-logged.sh" "$PROJECT_ROOT" \
-        > "$PROJECT_ROOT/.pipeline/logs/baseline/watcher.log" 2>&1 &
-    echo $! > "$PROJECT_ROOT/.pipeline/baseline.pid"
-    echo -e "${GRAY}  baseline PID: $(cat "$PROJECT_ROOT/.pipeline/baseline.pid")${NC}"
+    BASELINE_LOG_QUOTED=$(printf '%q' "$PROJECT_ROOT/.pipeline/logs/baseline/watcher.log")
+    BASELINE_CMD=$(printf '%q ' bash "$SCRIPT_DIR/pipeline-watcher-v3-logged.sh" "$PROJECT_ROOT")
+    BASELINE_WATCHER_PANE=$(tmux new-window -d -P -F '#{pane_id}' -t "$SESSION" -n watcher-baseline -c "$PROJECT_ROOT" "exec ${BASELINE_CMD}> $BASELINE_LOG_QUOTED 2>&1")
+    tmux display-message -p -t "$BASELINE_WATCHER_PANE" '#{pane_pid}' > "$PROJECT_ROOT/.pipeline/baseline.pid"
+    echo -e "${GRAY}  baseline pane: $BASELINE_WATCHER_PANE  PID: $(cat "$PROJECT_ROOT/.pipeline/baseline.pid")${NC}"
 else
     echo -e "${GRAY}[3/4] baseline 건너뜀${NC}"
 fi
 
 if [ "$MODE" = "experimental" ] || [ "$MODE" = "both" ]; then
     echo -e "${GREEN}[4/4] experimental watcher 시작 중...${NC}"
-    VERIFY_PROMPT="AGENTS.md, work/README.md, verify/README.md, .pipeline/README.md를 먼저 읽고, 최신 Claude /work와 같은 날 최신 /verify를 기준으로 이번 라운드 변경만 검수해줘. Claude가 주장한 코드/문서 변경이 실제로 맞는지, 범위가 현재 projectH 방향에서 벗어나지 않았는지 확인하고, 이번 변경에 필요한 검증만 재실행해줘. 결과는 /verify에 남기고, 다음 슬라이스는 current-risk reduction > same-family user-visible improvement > new quality axis > internal cleanup 순으로 좁혀서 Claude가 바로 구현할 수 있는 정확한 단일 슬라이스를 .pipeline/codex_feedback.md에 갱신해줘. 기본값은 STATUS: implement다. genuine tie나 approval-record/truth-sync blocker가 있을 때만 STATUS: needs_operator를 써줘. needs_operator가 필요하면 operator에게 한 번에 하나의 결정만 요청하고, 가능하면 추천 exact slice 1개를 먼저 제시해줘. broad family 메뉴를 단계적으로 다시 좁히는 연쇄 질문은 피하고, operator가 family나 axis를 골라주면 다음 패스에서는 네가 exact slice 하나로 좁혀줘. 전체 프로젝트 진단이 필요하면 /verify가 아니라 report/에 분리해줘."
-    CLAUDE_PROMPT="CLAUDE.md, work/README.md, verify/README.md, .pipeline/README.md, .pipeline/codex_feedback.md를 읽고, STATUS가 implement일 때만 그 지시대로 한 슬라이스만 구현해줘. STATUS가 needs_operator면 새 구현을 시작하지 말고 기다려줘. 작업 후 /work closeout 남겨줘."
-    python3 "$SCRIPT_DIR/watcher_core.py" \
-        --watch-dir "$PROJECT_ROOT/work" \
-        --base-dir "$PROJECT_ROOT/.pipeline" \
-        --verify-pane-target "$CODEX_PANE" \
-        --claude-pane-target "$CLAUDE_PANE" \
-        --verify-prompt "$VERIFY_PROMPT" \
-        --claude-prompt "$CLAUDE_PROMPT" \
-        --startup-grace 8 \
-        --lease-ttl 600 \
-        > "$PROJECT_ROOT/.pipeline/logs/experimental/watcher.log" 2>&1 &
-    echo $! > "$PROJECT_ROOT/.pipeline/experimental.pid"
-    echo -e "${GRAY}  experimental PID: $(cat "$PROJECT_ROOT/.pipeline/experimental.pid")${NC}"
+    VERIFY_PROMPT="ROLE: codex_verify\nSTATE: verify_pending\nLATEST_WORK: {latest_work_path}\nLATEST_VERIFY: {latest_verify_path}\nREAD_FIRST:\n- AGENTS.md\n- work/README.md\n- verify/README.md\n- .pipeline/README.md\nOUTPUTS:\n- /verify verification note if needed\n- .pipeline/claude_handoff.md for STATUS: implement\n- .pipeline/gemini_request.md when Codex cannot narrow after tie-break\n- .pipeline/operator_request.md only when Gemini still cannot resolve it\nRULES:\n- latest /work first, then same-day latest /verify if any\n- never route needs_operator to Claude\n- keep one exact next slice or one exact operator decision only"
+    CLAUDE_PROMPT="ROLE: claude_implement\nSTATE: implement\nHANDOFF: .pipeline/claude_handoff.md\nREAD_FIRST:\n- CLAUDE.md\n- .pipeline/claude_handoff.md"
+    GEMINI_PROMPT="ROLE: gemini_arbitrate\nSTATE: codex_needs_tiebreak\nOpen these files now:\n- @GEMINI.md\n- {gemini_request_mention}\n- @AGENTS.md\n- {latest_work_mention}\n- {latest_verify_mention}\nWrite exactly two files using edit/write tools only:\n- advisory log: {gemini_report_path}\n- recommendation slot: {gemini_advice_path}\nDo not use shell heredoc, shell redirection, cat > file, or printf > file.\nDo not modify any other repo files.\nKeep the recommendation short and exact."
+    CODEX_FOLLOWUP_PROMPT="ROLE: codex_followup\nSTATE: gemini_advice_ready\nREQUEST: .pipeline/gemini_request.md\nADVICE: .pipeline/gemini_advice.md\nLATEST_WORK: {latest_work_path}\nLATEST_VERIFY: {latest_verify_path}\nREAD_FIRST:\n- AGENTS.md\n- verify/README.md\n- .pipeline/README.md\n- .pipeline/gemini_request.md\n- .pipeline/gemini_advice.md"
+    EXP_LOG_QUOTED=$(printf '%q' "$PROJECT_ROOT/.pipeline/logs/experimental/watcher.log")
+    EXP_CMD=(
+        python3 "$SCRIPT_DIR/watcher_core.py"
+        --watch-dir "$PROJECT_ROOT/work"
+        --base-dir "$PROJECT_ROOT/.pipeline"
+        --repo-root "$PROJECT_ROOT"
+        --verify-pane-target "$CODEX_PANE"
+        --claude-pane-target "$CLAUDE_PANE"
+        --gemini-pane-target "$GEMINI_PANE"
+        --verify-prompt "$VERIFY_PROMPT"
+        --claude-prompt "$CLAUDE_PROMPT"
+        --gemini-prompt "$GEMINI_PROMPT"
+        --codex-followup-prompt "$CODEX_FOLLOWUP_PROMPT"
+        --startup-grace 8
+        --lease-ttl 600
+    )
+    EXP_CMD_STR=$(printf '%q ' "${EXP_CMD[@]}")
+    EXP_WATCHER_PANE=$(tmux new-window -d -P -F '#{pane_id}' -t "$SESSION" -n watcher-exp -c "$PROJECT_ROOT" "exec ${EXP_CMD_STR}> $EXP_LOG_QUOTED 2>&1")
+    tmux display-message -p -t "$EXP_WATCHER_PANE" '#{pane_pid}' > "$PROJECT_ROOT/.pipeline/experimental.pid"
+    echo -e "${GRAY}  experimental watcher pane: $EXP_WATCHER_PANE  PID: $(cat "$PROJECT_ROOT/.pipeline/experimental.pid")${NC}"
 else
     echo -e "${GRAY}[4/4] experimental 건너뜀${NC}"
 fi
@@ -178,4 +277,6 @@ if [ "$MODE" = "both" ]; then
     echo ""
 fi
 
-tmux attach -t "$SESSION"
+if [ "$NO_ATTACH" -ne 1 ]; then
+    tmux attach -t "$SESSION"
+fi

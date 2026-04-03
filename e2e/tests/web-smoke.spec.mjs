@@ -348,7 +348,7 @@ test("원문 저장 후 늦게 내용 거절해도 saved history와 latest verdi
   await page.getByTestId("response-content-reject").click();
 
   await expect(responseBox).toContainText("저장했습니다.");
-  await expect(page.locator("#notice-box")).toContainText("이미 저장된 노트는 그대로 유지되며 최신 내용 판정만 바뀝니다.");
+  await expect(page.locator("#notice-box")).toHaveText("내용 거절을 기록했습니다. 이미 저장된 노트는 그대로 유지되며 최신 내용 판정만 바뀝니다.");
   await expect(page.locator("#response-content-verdict-state")).toContainText("내용 거절 기록됨");
   await expect(page.locator("#response-content-verdict-status")).toContainText("이미 저장된 노트와 경로는 그대로 남고, 이번 내용 거절은 최신 판정만 바꿉니다.");
   await expect(page.getByTestId("response-content-reason-box")).toBeVisible();
@@ -507,7 +507,7 @@ test("corrected-save 저장 뒤 늦게 내용 거절하고 다시 수정해도 s
   await page.getByTestId("response-content-reject").click();
 
   await expect(responseBox).toContainText("승인 시점에 고정된 수정본");
-  await expect(page.locator("#notice-box")).toContainText("이미 저장된 노트는 그대로 유지되며 최신 내용 판정만 바뀝니다.");
+  await expect(page.locator("#notice-box")).toHaveText("내용 거절을 기록했습니다. 이미 저장된 노트는 그대로 유지되며 최신 내용 판정만 바뀝니다.");
   await expect(page.locator("#response-quick-meta-text")).toContainText("저장 기준 요청 시점 수정본 스냅샷");
   await expect(page.locator("#response-quick-meta-text")).not.toContainText("내용 거절 기록됨");
   await expect(page.locator("#response-content-verdict-state")).toContainText("내용 거절 기록됨");

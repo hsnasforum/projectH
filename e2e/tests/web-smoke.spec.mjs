@@ -218,6 +218,7 @@ test("검색만 응답은 transcript에서 preview cards만 보이고 본문 텍
   await expect(page.locator("#response-search-preview .search-preview-match").first()).toContainText("파일명 일치");
   await expect(page.locator("#response-search-preview .search-preview-snippet").first()).toBeVisible();
   await expect(page.locator("#response-search-preview .search-preview-name").nth(1)).toContainText("memo.md");
+  await expect(page.locator("#response-search-preview .search-preview-name").nth(1)).toHaveAttribute("title", /.*\/memo\.md$/);
   await expect(page.locator("#response-search-preview .search-preview-match").nth(1)).toContainText("내용 일치");
   await expect(page.locator("#response-search-preview .search-preview-snippet").nth(1)).toBeVisible();
   await expect(page.locator("#response-search-preview .search-preview-snippet").nth(1)).toContainText("budget");
@@ -242,6 +243,7 @@ test("검색만 응답은 transcript에서 preview cards만 보이고 본문 텍
   await expect(lastAssistant.locator(".search-preview-match").first()).toContainText("파일명 일치");
   await expect(lastAssistant.locator(".search-preview-snippet").first()).toBeVisible();
   await expect(lastAssistant.locator(".search-preview-name").nth(1)).toContainText("memo.md");
+  await expect(lastAssistant.locator(".search-preview-name").nth(1)).toHaveAttribute("title", /.*\/memo\.md$/);
   await expect(lastAssistant.locator(".search-preview-match").nth(1)).toContainText("내용 일치");
   await expect(lastAssistant.locator(".search-preview-snippet").nth(1)).toBeVisible();
   await expect(lastAssistant.locator(".search-preview-snippet").nth(1)).toContainText("budget");

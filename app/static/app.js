@@ -1176,11 +1176,14 @@
 
     function renderResponseSearchPreview(searchResults, textValue) {
       responseSearchPreview.innerHTML = "";
-      var isSearchOnly = Array.isArray(searchResults) && searchResults.length > 0
+      var hasResults = Array.isArray(searchResults) && searchResults.length > 0;
+      var isSearchOnly = hasResults
         && typeof textValue === "string" && textValue.startsWith("검색 결과:");
-      if (isSearchOnly) {
-        responseText.hidden = true;
-        showElement(responseCopyTextButton, false);
+      if (hasResults) {
+        if (isSearchOnly) {
+          responseText.hidden = true;
+          showElement(responseCopyTextButton, false);
+        }
         responseSearchPreview.hidden = false;
         searchResults.forEach(function(sr, idx) {
           var item = document.createElement("div");

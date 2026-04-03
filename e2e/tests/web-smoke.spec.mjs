@@ -199,6 +199,11 @@ test("브라우저 폴더 선택으로도 문서 검색이 됩니다", async ({ 
   await expect(page.locator('#transcript [data-testid="transcript-meta"]').last()).not.toContainText(/출처\s+memo\.md/);
   await expect(page.locator("#selected-text")).toContainText("budget-plan.md");
 
+  // response detail preview panel is visible alongside summary body
+  await expect(page.getByTestId("response-search-preview")).toBeVisible();
+  await expect(page.locator("#response-search-preview .search-preview-item")).toHaveCount(2);
+  await expect(page.getByTestId("response-text")).toBeVisible();
+
   // transcript preview panel is also visible in search-plus-summary
   const lastAssistant = page.locator("#transcript .message.assistant").last();
   await expect(lastAssistant.locator(".search-preview-panel")).toBeVisible();

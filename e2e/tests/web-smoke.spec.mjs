@@ -227,6 +227,7 @@ test("브라우저 폴더 선택으로도 문서 검색이 됩니다", async ({ 
   await expect(lastAssistant.locator(".search-preview-snippet").first()).toBeVisible();
   await expect(lastAssistant.locator(".search-preview-snippet").first()).toContainText("budget-plan");
   await expect(lastAssistant.locator(".search-preview-name").nth(1)).toContainText("memo.md");
+  await expect(lastAssistant.locator(".search-preview-name").nth(1)).toContainText("2. memo.md");
   await expect(lastAssistant.locator(".search-preview-name").nth(1)).toHaveAttribute("title", /.*\/memo\.md$/);
   await expect(lastAssistant.locator(".search-preview-match").nth(1)).toContainText("내용 일치");
   await expect(lastAssistant.locator(".search-preview-snippet").nth(1)).toBeVisible();

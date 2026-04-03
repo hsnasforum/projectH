@@ -1,36 +1,30 @@
 @echo off
 setlocal enabledelayedexpansion
 
-rem ============================================================
-rem  Pipeline TUI Launcher — Windows-side entrypoint (curses)
-rem ============================================================
+rem Pipeline TUI Launcher - Windows-side entrypoint
 rem
-rem  이 파일을 Windows 로컬 폴더에 복사해서 더블클릭으로 실행하세요.
-rem  GUI 대신 터미널 기반 curses UI가 열립니다.
-rem ============================================================
+rem Copy this file to a Windows-local folder before double-clicking.
 
 set "WSL_DISTRO=Ubuntu"
 set "WSL_PROJECT=/home/xpdlqj/code/projectH"
 
-where wsl.exe >nul 2>&1
+where wsl.exe >nul 2>nul
 if errorlevel 1 (
-    echo [ERROR] WSL이 설치되어 있지 않습니다.
+    echo [ERROR] WSL not found. Install: https://aka.ms/wsl
     pause
     exit /b 1
 )
 
-wsl.exe -d %WSL_DISTRO% -- test -d "%WSL_PROJECT%" 2>nul
+wsl.exe -d %WSL_DISTRO% -- test -d "%WSL_PROJECT%" >nul 2>nul
 if errorlevel 1 (
-    echo [ERROR] 프로젝트 경로를 찾을 수 없습니다: %WSL_PROJECT%
+    echo [ERROR] Project not found: %WSL_PROJECT%
+    echo Update WSL_PROJECT in this file.
     pause
     exit /b 1
 )
 
-echo  Pipeline TUI Launcher
-echo  Distro:  %WSL_DISTRO%
-echo  Project: %WSL_PROJECT%
-echo.
+echo Pipeline TUI  [%WSL_DISTRO%] %WSL_PROJECT%
 
-wsl.exe -d %WSL_DISTRO% --cd "%WSL_PROJECT%" -- python3 pipeline-launcher.py "%WSL_PROJECT%" --line-mode
+wsl.exe -d %WSL_DISTRO% --cd "%WSL_PROJECT%" --exec python3 pipeline-launcher.py "%WSL_PROJECT%" --line-mode
 if not "%ERRORLEVEL%"=="0" pause
 exit /b %ERRORLEVEL%

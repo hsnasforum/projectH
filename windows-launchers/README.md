@@ -1,62 +1,38 @@
 # Windows Launchers
 
-WSL 내부의 pipeline을 Windows에서 더블클릭으로 실행하기 위한 launcher 템플릿입니다.
+Windows 바탕화면에서 더블클릭으로 pipeline GUI/TUI를 실행하기 위한 launcher입니다.
 
 ## 사용 방법
 
-1. 이 폴더의 `.cmd` 파일을 **Windows 로컬 폴더**에 복사하세요.
+1. `.cmd` 파일을 **Windows 로컬 폴더**에 복사합니다.
    - 예: `C:\Users\사용자\Desktop\pipeline-gui.cmd`
-   - WSL 공유 경로(`\\wsl.localhost\...`)에서 직접 실행하면 안 됩니다.
-
-2. 복사한 파일을 열고, 상단의 설정 변수를 자신의 환경에 맞게 수정하세요:
+2. 파일 상단의 두 변수를 자기 환경에 맞게 수정합니다:
    ```cmd
    set "WSL_DISTRO=Ubuntu"
    set "WSL_PROJECT=/home/xpdlqj/code/projectH"
    ```
+3. 더블클릭으로 실행합니다.
 
-3. 더블클릭으로 실행하세요.
-
-## 파일 설명
+## 파일
 
 | 파일 | 설명 |
 |------|------|
-| `pipeline-gui.cmd` | tkinter 기반 desktop GUI launcher (WSLg 필요) |
-| `pipeline-tui.cmd` | curses 기반 터미널 TUI launcher |
+| `pipeline-gui.cmd` | tkinter desktop GUI (WSLg 필요) |
+| `pipeline-tui.cmd` | curses 터미널 TUI |
 
 ## 요구사항
 
-- Windows 11 + WSL2
-- WSLg (GUI용) — `wsl --update`로 활성화
+- Windows 11 + WSL2 + WSLg
 - WSL 내부: `python3`, `python3-tk` (GUI용), `tmux`
+
+## 기존 `.bat` 파일과의 차이
+
+repo 루트의 `pipeline-gui.bat`, `pipeline.bat`은 WSL 공유 경로(`\\wsl.localhost\...`)에서
+직접 실행될 때 UNC 경고가 뜹니다. 이 `.cmd` 파일은 Windows 로컬에서 실행되므로
+UNC 문제가 없고, 사전 검증(WSL, distro, path, python3)도 포함되어 있습니다.
 
 ## 문제 해결
 
-| 증상 | 해결 |
-|------|------|
-| "WSL이 설치되어 있지 않습니다" | [WSL 설치](https://learn.microsoft.com/windows/wsl/install) |
-| "배포판을 찾을 수 없습니다" | `wsl --list`로 확인 후 `WSL_DISTRO` 수정 |
-| "프로젝트 경로를 찾을 수 없습니다" | `WSL_PROJECT` 변수 확인 |
-| GUI 창이 안 뜸 | `wsl --update` 후 재시작 (WSLg) |
-| tkinter 없음 | `wsl -e sudo apt install python3-tk` |
-
-## 기존 `pipeline-gui.bat` / `pipeline.bat`와의 차이
-
-repo 루트에 있는 `.bat` 파일들은 **WSL 안에서 직접 실행하거나**, Windows 탐색기로
-WSL 공유 경로에서 더블클릭할 때 쓸 수 있도록 만들어졌습니다. 하지만:
-
-| | repo 루트 `.bat` | 이 폴더 `.cmd` |
-|--|---|---|
-| 위치 | WSL 안 (`\\wsl.localhost\...`) | Windows 로컬 (C:\, Desktop 등) |
-| UNC 경고 | **뜸** (cmd가 UNC 지원 안 함) | **안 뜸** |
-| 경로 변환 | `wslpath`로 동적 변환 (실패 가능) | 설정에 WSL 경로 직접 기입 (안정적) |
-| 사전 검증 | 없거나 최소 | WSL, distro, path, python3, tkinter 순서 검증 |
-| 권장 용도 | WSL 터미널에서 직접 실행 | **Windows 더블클릭** |
-
-**권장**: Windows 바탕화면에서 더블클릭으로 쓰려면 이 폴더의 `.cmd`를 복사해서 쓰세요.
-
-## 왜 Windows 로컬에 복사해야 하나요?
-
-`cmd.exe`는 UNC 경로(`\\wsl.localhost\...`)를 현재 디렉터리로 지원하지 않습니다.
-WSL 공유 경로에서 `.bat`/`.cmd`를 직접 실행하면 현재 디렉터리가 `C:\Windows`로
-떨어지고, 경로 변환이 실패합니다. Windows 로컬 파일시스템(C:\, D:\ 등)에서
-실행하면 이 문제가 없습니다.
+- **GUI 창이 안 뜸**: `wsl --update` + `sudo apt install python3-tk`
+- **배포판 못 찾음**: `wsl --list`로 확인 후 `WSL_DISTRO` 수정
+- **경로 못 찾음**: `WSL_PROJECT` 변수 확인

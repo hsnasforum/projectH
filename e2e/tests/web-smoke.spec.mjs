@@ -199,7 +199,7 @@ test("브라우저 폴더 선택으로도 문서 검색이 됩니다", async ({ 
   await expect(page.locator('#transcript [data-testid="transcript-meta"]').last()).toContainText("출처 2개");
   await expect(page.locator('#transcript [data-testid="transcript-meta"]').last()).not.toContainText(/출처\s+budget-plan\.md/);
   await expect(page.locator('#transcript [data-testid="transcript-meta"]').last()).not.toContainText(/출처\s+memo\.md/);
-  await expect(page.locator("#selected-text")).toContainText("budget-plan.md");
+  await expect(page.locator("#selected-text")).toHaveText(searchFolderRelBudgetPath + "\n" + searchFolderRelMemoPath);
 
   // response detail preview panel is visible alongside summary body
   await expect(page.getByTestId("response-search-preview")).toBeVisible();

@@ -94,7 +94,14 @@ launch_agent_in_pane() {
     local lane_name="$2"
     local cmd_text="$3"
 
-    tmux respawn-pane -k -t "$pane_target" -c "$PROJECT_ROOT" "$cmd_text" >/dev/null 2>&1 || {
+    # tmux respawn-pane은 새 shell을 만들므로 nvm/PATH가 없을 수 있음.
+    # nvm을 먼저 source하여 올바른 node가 PATH에 오도록 한다.
+    local nvm_prefix=""
+    if [ -s "$HOME/.nvm/nvm.sh" ]; then
+        nvm_prefix='. "$HOME/.nvm/nvm.sh" 2>/dev/null; '
+    fi
+
+    tmux respawn-pane -k -t "$pane_target" -c "$PROJECT_ROOT" "${nvm_prefix}${cmd_text}" >/dev/null 2>&1 || {
         echo -e "${YELLOW}  ${lane_name} pane respawn 실패${NC}"
         return 1
     }

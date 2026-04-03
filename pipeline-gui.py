@@ -577,14 +577,15 @@ def pipeline_stop(project: Path) -> str:
 
 def tmux_attach() -> None:
     """별도 터미널에서 tmux attach 실행."""
-    # WSL 환경에서 새 터미널 창 열기
-    try:
+    if IS_WINDOWS:
+        # Windows: cmd /c start로 새 콘솔 창에서 wsl tmux attach
         subprocess.Popen(
-            ["wsl.exe", "bash", "-lc", f"tmux attach -t {SESSION_NAME}"],
-            start_new_session=True,
+            ["cmd", "/c", "start", "wsl.exe", "-d", WSL_DISTRO, "--",
+             "bash", "-lc", f"tmux attach -t {SESSION_NAME}"],
+            creationflags=0x08000000,  # CREATE_NO_WINDOW for the launcher itself
         )
-    except FileNotFoundError:
-        # WSL이 아닌 환경 — 직접 attach
+    else:
+        # WSL/Linux: 직접 attach
         subprocess.Popen(
             ["bash", "-c", f"tmux attach -t {SESSION_NAME}"],
             start_new_session=True,

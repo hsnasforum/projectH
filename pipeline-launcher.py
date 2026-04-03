@@ -88,6 +88,17 @@ def safe_addstr(
         pass
 
 
+def _fit_text(text: str, width: int) -> str:
+    """고정폭 컬럼 안에 맞게 자르거나 패딩합니다."""
+    if width <= 0:
+        return ""
+    if len(text) <= width:
+        return text.ljust(width)
+    if width == 1:
+        return text[:1]
+    return text[: width - 1] + "…"
+
+
 # ── 상태 조회 ──────────────────────────────────────────────────
 
 def _run(cmd: list[str], timeout: float = 5.0) -> tuple[int, str]:
@@ -420,7 +431,7 @@ def pane_snapshots(project: Path) -> list[AgentSnapshot]:
             continue
 
         capture_code, captured = _run(
-            ["tmux", "capture-pane", "-pt", pane_id, "-S", "-60"],
+            ["tmux", "capture-pane", "-J", "-pt", pane_id, "-S", "-60"],
             timeout=2.0,
         )
         if capture_code != 0 or not captured:
@@ -467,13 +478,19 @@ def capture_agent_pane(agent_index: int, lines: int = 200) -> list[str]:
                 if dead == "1":
                     return ["(pane dead)"]
                 cap_code, captured = _run(
-                    ["tmux", "capture-pane", "-pt", pane_id, "-S", f"-{lines}"],
+                    ["tmux", "capture-pane", "-J", "-pt", pane_id, "-S", f"-{lines}"],
                     timeout=3.0,
                 )
                 if cap_code != 0 or not captured:
                     return ["(출력 없음)"]
-                cleaned = [ANSI_RE.sub("", l).rstrip() for l in captured.splitlines()]
-                return [l for l in cleaned if l]
+                result = []
+                for l in captured.splitlines():
+                    cl = ANSI_RE.sub("", l).expandtabs(2).rstrip()
+                    # 제어 문자 제거 (0x00-0x1f, 0x7f)
+                    cl = "".join(c for c in cl if ord(c) >= 32 or c == "\t")
+                    if cl.strip():
+                        result.append(cl)
+                return result
         except ValueError:
             continue
     return ["(pane 없음)"]
@@ -508,8 +525,9 @@ def build_snapshot(project: Path) -> list[str]:
             "",
             "Agents:",
             *[
-                f"  {snap.label:<6} "
-                f"[{snap.status}{(' ' + snap.status_note) if snap.status_note else '':<14}] "
+                f"  {_fit_text(snap.label, 6)} "
+                f"{_fit_text(f'[{snap.status}]', 11)} "
+                f"{_fit_text(snap.status_note, 8)} "
                 f"{snap.detail}"
                 for snap in pane_lines
             ],
@@ -750,7 +768,6 @@ def draw(stdscr: curses.window, project: Path, message: str, pending_state: str 
         for i, snap in enumerate(snapshots):
             if row >= h - 4:
                 break
-            status_text = f"{snap.status}{(' ' + snap.status_note) if snap.status_note else ''}"
             # 포커스된 agent 또는 WORKING agent 강조
             is_focused = (focused_agent == i)
             is_working = (snap.status == "WORKING")
@@ -759,10 +776,24 @@ def draw(stdscr: curses.window, project: Path, message: str, pending_state: str 
             if is_focused:
                 bracket_attr |= curses.A_BOLD
             indicator = "▶" if is_focused else "●" if is_working else " "
+            label_col = 2
+            label_width = 10
+            status_col = label_col + label_width + 1
+            status_width = 11
+            duration_col = status_col + status_width + 1
+            duration_width = 8
+            detail_col = duration_col + duration_width + 1
             safe_addstr(stdscr, row, 0, "│ ", CYAN)
-            safe_addstr(stdscr, row, 2, f"{indicator} {snap.label:<6}", label_attr)
-            safe_addstr(stdscr, row, 12, f"[{status_text:<14}]", bracket_attr)
-            safe_addstr(stdscr, row, 29, snap.detail[:max(0, w - 32)], curses.color_pair(5) | curses.A_DIM)
+            safe_addstr(stdscr, row, label_col, _fit_text(f"{indicator} {snap.label}", label_width), label_attr)
+            safe_addstr(stdscr, row, status_col, _fit_text(f"[{snap.status}]", status_width), bracket_attr)
+            safe_addstr(stdscr, row, duration_col, _fit_text(snap.status_note, duration_width), bracket_attr)
+            safe_addstr(
+                stdscr,
+                row,
+                detail_col,
+                snap.detail[:max(0, w - detail_col - 1)],
+                curses.color_pair(5) | curses.A_DIM,
+            )
             safe_addstr(stdscr, row, w - 1, "│", CYAN)
             row += 1
 
@@ -777,16 +808,54 @@ def draw(stdscr: curses.window, project: Path, message: str, pending_state: str 
         safe_addstr(stdscr, row, w - 1, "│", CYAN)
         row += 1
 
-        available_lines = h - row - 3  # 메시지 + 하단 테두리용 여유
-        pane_lines = capture_agent_pane(focused_agent, lines=available_lines + 20)
-        # 최근 줄을 available_lines만큼 표시
-        display = pane_lines[-available_lines:] if len(pane_lines) > available_lines else pane_lines
-        for pline in display:
+        margin = 3          # 좌우 여백 (│ + 공백 + 내용 ... 공백 + │)
+        content_width = w - margin - 1  # 실제 텍스트 폭
+
+        if content_width < 10:
+            content_width = 10
+
+        available_rows = h - row - 3  # 메시지 + 하단 테두리용 여유
+        pane_lines = capture_agent_pane(focused_agent, lines=available_rows * 3)
+
+        # 전처리: 제어 문자 제거, strip, 빈 줄 연속 제거
+        cleaned: list[str] = []
+        prev_blank = False
+        for raw_line in pane_lines:
+            stripped = raw_line.strip().replace("\t", "  ")
+            # 제어 문자 제거 (0x00-0x1f, 0x7f) 단 \n 제외
+            stripped = "".join(c for c in stripped if c == "\n" or (ord(c) >= 32 and ord(c) != 127))
+            if not stripped:
+                if not prev_blank:
+                    cleaned.append("")
+                    prev_blank = True
+                continue
+            prev_blank = False
+            cleaned.append(stripped)
+
+        # Word wrap: 한 줄이 content_width보다 길면 여러 줄로 나눔
+        wrapped: list[str] = []
+        for line in cleaned:
+            if not line:
+                wrapped.append("")
+                continue
+            while len(line) > content_width:
+                # 잘라야 할 위치 결정: 공백 기준으로 나누되, 없으면 강제 자름
+                cut = line.rfind(" ", 0, content_width)
+                if cut <= 0:
+                    cut = content_width  # 공백 없으면 강제
+                wrapped.append(line[:cut])
+                line = line[cut:].lstrip()
+            if line:
+                wrapped.append(line)
+
+        # 최근 내용 위주: 뒤에서 available_rows만큼만
+        display = wrapped[-available_rows:] if len(wrapped) > available_rows else wrapped
+
+        for dline in display:
             if row >= h - 3:
                 break
-            truncated = pline[:w - 4] if len(pline) > w - 4 else pline
             safe_addstr(stdscr, row, 0, "│ ", CYAN)
-            safe_addstr(stdscr, row, 2, truncated, curses.color_pair(5))
+            safe_addstr(stdscr, row, margin, dline[:content_width], curses.color_pair(5))
             safe_addstr(stdscr, row, w - 1, "│", CYAN)
             row += 1
 

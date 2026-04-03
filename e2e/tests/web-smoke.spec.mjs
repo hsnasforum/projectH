@@ -257,7 +257,7 @@ test("검색만 응답은 transcript에서 preview cards만 보이고 본문 텍
   await expect(page.locator("#response-search-preview .search-preview-snippet").nth(1)).toContainText("budget");
   await expect(page.getByTestId("response-text")).toBeHidden();
   await expect(page.getByTestId("response-copy-text")).toBeHidden();
-  await expect(page.locator("#selected-text")).toContainText("budget-plan.md");
+  await expect(page.locator("#selected-text")).toHaveText(searchFolderRelBudgetPath + "\n" + searchFolderRelMemoPath);
 
   // selected-copy button is visible and copies path list
   await expect(page.getByTestId("selected-copy")).toBeVisible();

@@ -392,7 +392,7 @@ test("내용 거절은 approval을 유지하고 나중 explicit save로 supersed
   await page.getByTestId("response-content-reason-input").fill(rejectNote);
   await expect(responseBox.getByTestId("response-content-reason-submit")).toBeEnabled();
   await page.getByTestId("response-content-reason-submit").click();
-  await expect(page.locator("#notice-box")).toContainText("거절 메모를 기록했습니다. 내용 거절 판정은 그대로 유지됩니다.");
+  await expect(page.locator("#notice-box")).toHaveText("거절 메모를 기록했습니다. 내용 거절 판정은 그대로 유지됩니다.");
   await expect(page.getByTestId("response-content-reason-input")).toHaveValue(rejectNote);
   await expect(page.locator("#response-content-reason-status")).toContainText("기록된 거절 메모가 있습니다");
   await expect(page.locator("#response-quick-meta-text")).toContainText("내용 거절 기록됨");
@@ -517,7 +517,7 @@ test("corrected-save 저장 뒤 늦게 내용 거절하고 다시 수정해도 s
 
   await page.getByTestId("response-content-reason-input").fill(rejectNote);
   await page.getByTestId("response-content-reason-submit").click();
-  await expect(page.locator("#notice-box")).toContainText("거절 메모를 기록했습니다. 내용 거절 판정은 그대로 유지됩니다.");
+  await expect(page.locator("#notice-box")).toHaveText("거절 메모를 기록했습니다. 내용 거절 판정은 그대로 유지됩니다.");
   await expect(page.locator("#response-content-reason-status")).toContainText("기록된 거절 메모가 있습니다");
 
   await page.getByTestId("response-correction-input").fill(correctedTextB);

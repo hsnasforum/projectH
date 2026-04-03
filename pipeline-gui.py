@@ -40,6 +40,7 @@ def resolve_project_root() -> Path:
 
 SESSION_NAME = "ai-pipeline"
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+BOX_DRAWING_ONLY_RE = re.compile(r"^[\s\-_=~│┃┆┊┌┐└┘├┤┬┴┼╭╮╯╰•·●○■□▶◀▸▹▾▿▴▵>*]+$")
 POLL_MS = 1500
 
 
@@ -202,6 +203,88 @@ def detect_agent_status(label: str, pane_text: str) -> tuple[str, str]:
         return "READY", ""
 
     return "BOOTING", ""
+
+
+def capture_agent_panes(project: Path, history_lines: int = 120) -> dict[str, str]:
+    """agent label -> cleaned pane text."""
+    code, output = _run(
+        ["tmux", "list-panes", "-t", f"{SESSION_NAME}:0", "-F", "#{pane_index}|#{pane_id}|#{pane_dead}"],
+        timeout=2.0,
+    )
+    names = {0: "Claude", 1: "Codex", 2: "Gemini"}
+    results: dict[str, str] = {}
+    if code != 0 or not output:
+        return results
+
+    for raw in output.splitlines():
+        try:
+            idx_s, pane_id, dead = raw.split("|", 2)
+            idx = int(idx_s)
+        except ValueError:
+            continue
+        label = names.get(idx, f"Pane {idx}")
+        if dead == "1":
+            results[label] = ""
+            continue
+        cap_code, captured = _run(
+            ["tmux", "capture-pane", "-J", "-pt", pane_id, "-S", f"-{history_lines}"],
+            timeout=2.0,
+        )
+        if cap_code != 0 or not captured:
+            results[label] = ""
+            continue
+        results[label] = ANSI_RE.sub("", captured)
+    return results
+
+
+def _is_interesting_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if BOX_DRAWING_ONLY_RE.match(stripped):
+        return False
+    return True
+
+
+def format_focus_output(pane_text: str, max_lines: int = 22) -> str:
+    """좁은 tmux pane 출력에서 최근 활동 위주로 읽기 좋게 정리."""
+    if not pane_text.strip():
+        return "(출력 없음)"
+
+    lines = [line.rstrip() for line in pane_text.splitlines()]
+    filtered = [line for line in lines if _is_interesting_line(line)]
+    if not filtered:
+        return "(표시할 출력 없음)"
+
+    interesting_markers = (
+        "working", "cascading", "lollygagging", "hashing", "leavering",
+        "read ", "read:", "read  ", "search", "searched",
+        "bash(", "ran ", "updated plan", "goal:", "목표:", "변경", "검증",
+        "thinking", "without interrupting", "background", "type your message",
+    )
+
+    anchor = max(0, len(filtered) - max_lines)
+    for idx in range(len(filtered) - 1, -1, -1):
+        lowered = filtered[idx].lower()
+        if any(marker in lowered for marker in interesting_markers):
+            anchor = max(0, idx - 4)
+            break
+
+    tail = filtered[anchor:]
+    condensed: list[str] = []
+    previous_blank = False
+    for line in tail:
+        stripped = line.strip()
+        if not stripped:
+            if not previous_blank:
+                condensed.append("")
+            previous_blank = True
+            continue
+        previous_blank = False
+        condensed.append(stripped)
+
+    tail = condensed[-max_lines:]
+    return "\n".join(tail)
 
 
 def watcher_runtime_hints(project: Path) -> dict[str, tuple[str, str]]:
@@ -367,6 +450,8 @@ STATUS_COLORS = {
 class PipelineGUI:
     def __init__(self, project: Path) -> None:
         self.project = project
+        self.selected_agent = "Claude"
+        self._auto_focus_agent = True
         self.root = Tk()
         self.root.title("Pipeline Launcher")
         self.root.configure(bg="#0f0f0f")
@@ -520,9 +605,41 @@ class PipelineGUI:
             quota_lbl.pack(anchor="w", pady=(4, 0))
             self.agent_labels.append((card, dot, status_lbl, note_lbl, quota_lbl))
 
+            for widget in (card, name_row, dot, status_lbl, note_lbl, quota_lbl):
+                widget.bind("<Button-1>", lambda _event, agent=name: self._select_agent(agent))
+
+        # ── 하단 2영역: agent output + watcher log (균등 분할) ──
+        from tkinter import PanedWindow, VERTICAL
+        paned = PanedWindow(content, orient=VERTICAL, bg="#222222", sashwidth=4, sashrelief="flat")
+        paned.pack(fill=BOTH, expand=True)
+
+        # ── 선택 agent 상세 출력 ──
+        focus_frame = Frame(paned, bg=card_bg, padx=12, pady=10,
+                            highlightthickness=1, highlightbackground=card_border)
+
+        focus_header = Frame(focus_frame, bg=card_bg)
+        focus_header.pack(fill=X)
+        Label(focus_header, text="Selected agent output", font=section_font, bg=card_bg, fg=sub_fg).pack(side=LEFT)
+        self.focus_title_var = StringVar(value="Claude • 최근 pane tail (read-only)")
+        Label(focus_header, textvariable=self.focus_title_var, font=small_font, bg=card_bg, fg="#9ca3af").pack(side=RIGHT)
+
+        focus_inner = Frame(focus_frame, bg=log_bg)
+        focus_inner.pack(fill=BOTH, expand=True, pady=(8, 0))
+        self.focus_text = Text(
+            focus_inner, font=small_font, bg=log_bg, fg="#e5e7eb",
+            wrap=WORD, bd=0, highlightthickness=0, padx=10, pady=10,
+            state=DISABLED,
+        )
+        focus_scroll = Scrollbar(focus_inner, command=self.focus_text.yview)
+        self.focus_text.configure(yscrollcommand=focus_scroll.set)
+        focus_scroll.pack(side=RIGHT, fill=Y)
+        self.focus_text.pack(side=LEFT, fill=BOTH, expand=True)
+
+        paned.add(focus_frame, minsize=80, stretch="always")
+
         # ── Watcher log ──
-        log_frame = make_card(content)
-        log_frame.pack(fill=BOTH, expand=True)
+        log_frame = Frame(paned, bg=card_bg, padx=12, pady=10,
+                          highlightthickness=1, highlightbackground=card_border)
         Label(log_frame, text="Recent watcher log", font=section_font, bg=card_bg, fg=sub_fg).pack(anchor="w")
 
         log_inner = Frame(log_frame, bg=log_bg)
@@ -530,17 +647,24 @@ class PipelineGUI:
 
         self.log_text = Text(log_inner, font=small_font, bg=log_bg, fg="#cbd5e1",
                              wrap=WORD, bd=0, highlightthickness=0, padx=10, pady=10,
-                             state=DISABLED, height=12)
+                             state=DISABLED)
         scrollbar = Scrollbar(log_inner, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side=RIGHT, fill=Y)
         self.log_text.pack(side=LEFT, fill=BOTH, expand=True)
+
+        paned.add(log_frame, minsize=60, stretch="always")
 
         # ── 하단 메시지 ──
         self.msg_var = StringVar(value="")
         self.msg_label = Label(self.root, textvariable=self.msg_var, font=body_font,
                                bg=bg, fg="#f59e0b", pady=8, anchor="w", padx=14)
         self.msg_label.pack(fill=X)
+
+    def _select_agent(self, agent: str) -> None:
+        self.selected_agent = agent
+        self._auto_focus_agent = False
+        self._poll()
 
     # ── 폴링 ──
 
@@ -574,6 +698,13 @@ class PipelineGUI:
 
         # Agents
         agents = agent_snapshots(self.project)
+        pane_map = capture_agent_panes(self.project)
+        working_labels = [label for label, status, _note, _quota in agents if status == "WORKING"]
+        if self.selected_agent not in {label for label, _s, _n, _q in agents}:
+            self.selected_agent = working_labels[0] if working_labels else "Claude"
+        elif self._auto_focus_agent and working_labels:
+            self.selected_agent = working_labels[0]
+
         for i, (card, dot_lbl, status_lbl, note_lbl, quota_lbl) in enumerate(self.agent_labels):
             if i < len(agents):
                 label, status, note, quota = agents[i]
@@ -582,13 +713,34 @@ class PipelineGUI:
                 status_lbl.configure(text=status, fg=color)
                 note_lbl.configure(text=note or "대기 중", fg="#9ca3af")
                 quota_lbl.configure(text=f"Quota: {quota}" if quota else "Quota: —", fg="#7c8798")
-                card.configure(highlightbackground=color if status == "WORKING" else "#2a2a2a")
+                if label == self.selected_agent:
+                    card.configure(highlightbackground="#f59e0b", bg="#141414")
+                    for child in card.winfo_children():
+                        try:
+                            child.configure(bg="#141414")
+                        except Exception:
+                            pass
+                else:
+                    card.configure(highlightbackground=color if status == "WORKING" else "#2a2a2a", bg="#111111")
+                    for child in card.winfo_children():
+                        try:
+                            child.configure(bg="#111111")
+                        except Exception:
+                            pass
             else:
                 dot_lbl.configure(fg="#666666")
                 status_lbl.configure(text="—", fg="#666666")
                 note_lbl.configure(text="", fg="#666666")
                 quota_lbl.configure(text="Quota: —", fg="#666666")
                 card.configure(highlightbackground="#2a2a2a")
+
+        selected_text = format_focus_output(pane_map.get(self.selected_agent, ""))
+        self.focus_title_var.set(f"{self.selected_agent} • 최근 pane tail (read-only)")
+        self.focus_text.configure(state=NORMAL)
+        self.focus_text.delete("1.0", END)
+        self.focus_text.insert(END, selected_text)
+        self.focus_text.configure(state=DISABLED)
+        self.focus_text.see(END)
 
         # Latest files
         work_name, work_mtime = latest_md(self.project / "work")

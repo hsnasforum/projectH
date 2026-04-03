@@ -1183,6 +1183,8 @@
         if (isSearchOnly) {
           responseText.hidden = true;
           showElement(responseCopyTextButton, false);
+        } else {
+          responseText.hidden = false;
         }
         responseSearchPreview.hidden = false;
         searchResults.forEach(function(sr, idx) {

@@ -29,13 +29,14 @@ import hashlib
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 # jsonschema는 선택적 의존성 — 없으면 필수 필드 구조 검증만 수행
 try:
@@ -56,6 +57,7 @@ logging.basicConfig(
 log = logging.getLogger("watcher_core")
 
 SCHEMA_VERSION = 1
+ROUND_NOTE_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-.+\.md$")
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +100,7 @@ class JobState:
     retry_budget:         int   = 3
     last_dispatch_at:     float = 0.0
     last_dispatch_slot:   str   = ""
-    feedback_baseline_sig:str   = ""    # dispatch 직전 codex_feedback.md 시그니처
+    feedback_baseline_sig:str   = ""    # dispatch 직전 control-slot 시그니처
     # 2단계 추가 필드
     verify_manifest_path: str   = ""    # 수집된 manifest 파일 경로
     verify_completed_at:  float = 0.0   # VERIFY_DONE 전이 시각
@@ -129,9 +131,11 @@ class JobState:
     def save(self, state_dir: Path) -> None:
         state_dir.mkdir(parents=True, exist_ok=True)
         path = state_dir / f"{self.job_id}.json"
+        tmp_path = path.with_suffix(f"{path.suffix}.tmp")
         data = asdict(self)
         data["status"] = self.status.value
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        tmp_path.replace(path)
 
     # ------------------------------------------------------------------
     @classmethod
@@ -139,7 +143,16 @@ class JobState:
         path = state_dir / f"{job_id}.json"
         if not path.exists():
             return None
-        data = json.loads(path.read_text())
+        try:
+            data = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError) as e:
+            corrupt_path = path.with_suffix(f"{path.suffix}.corrupt-{int(time.time())}")
+            try:
+                path.replace(corrupt_path)
+                log.warning("quarantined corrupt job state: %s -> %s (%s)", path, corrupt_path, e)
+            except OSError:
+                log.warning("failed to quarantine corrupt job state: %s (%s)", path, e)
+            return None
         data["status"] = JobStatus(data["status"])
         return cls(**data)
 
@@ -177,6 +190,17 @@ def compute_file_sig(path: Path) -> str:
         return f"{stat.st_mtime_ns}:{stat.st_size}:{digest}"
     except OSError:
         return ""
+
+
+def compute_multi_file_sig(paths: list[Path]) -> str:
+    """여러 파일 시그니처를 합친다. 없는 파일은 건너뛴다."""
+    parts: list[str] = []
+    for path in paths:
+        sig = compute_file_sig(path)
+        if not sig:
+            continue
+        parts.append(f"{path.name}={sig}")
+    return "|".join(parts)
 
 
 def build_md_tree_snapshot(root: Path) -> dict[str, str]:
@@ -519,29 +543,141 @@ def wait_for_pane_settle(
     return False
 
 
-def _pane_has_input_cursor(pane_target: str) -> bool:
-    """Check if the pane shows an input prompt (> or $) on the last non-empty line."""
-    text = _capture_pane_text(pane_target)
+def _line_looks_like_input_prompt(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    return (
+        stripped == ">"
+        or stripped == "›"
+        or stripped == "❯"
+        or stripped.startswith("> ")
+        or stripped.startswith("› ")
+        or stripped.startswith("❯ ")
+        or stripped.endswith("$")
+    )
+
+
+def _pane_text_has_busy_indicator(text: str) -> bool:
+    """Check if pane text contains any sign that the agent is still working."""
+    # Case-insensitive search across entire visible pane text.
+    # These patterns mean the agent has NOT finished yet.
+    lower = text.lower()
+    busy_patterns = [
+        "working (",        # ◦ Working (36s • esc to interrupt)
+        "working for ",     # Worked for 1m 25s (transition text)
+        "• working",        # • Working ...
+        "◦ working",        # ◦ Working ...
+        "waiting for background",   # Waiting for background terminal
+        "background terminal",      # background terminal (active)
+        "germinating",      # Codex startup indicator
+        "flumoxing",        # Claude thinking indicator
+        "thinking",         # generic thinking
+        "esc to interrupt", # still running if this is visible
+    ]
+    for pattern in busy_patterns:
+        if pattern in lower:
+            return True
+    return False
+
+
+def _pane_text_has_input_cursor(text: str) -> bool:
     lines = [l for l in text.strip().splitlines() if l.strip()]
     if not lines:
         return False
-    last = lines[-1].strip()
-    # Codex shows "> " prompt, Claude shows "> " or "$"
-    return last.endswith(">") or last.endswith("$") or "> " in last
+    for line in reversed(lines[-12:]):
+        if _line_looks_like_input_prompt(line):
+            return True
+    return False
+
+
+def _pane_has_input_cursor(pane_target: str) -> bool:
+    """Check if the pane shows an input prompt in the recent visible lines."""
+    text = _capture_pane_text(pane_target)
+    return _pane_text_has_input_cursor(text)
+
+
+def _pane_has_working_indicator(pane_target: str) -> bool:
+    """Check whether the recent pane output shows Codex has started working."""
+    text = _capture_pane_text(pane_target)
+    return "• Working" in text
+
+
+def _pane_text_has_codex_activity(text: str) -> bool:
+    """Detect Codex response activity even when the input prompt remains visible."""
+    return "\n• " in text or text.lstrip().startswith("• ")
+
+
+def _pane_text_has_gemini_activity(text: str) -> bool:
+    """Detect Gemini response/tool activity even when the input prompt remains visible."""
+    return (
+        "\n✦ " in text
+        or text.lstrip().startswith("✦ ")
+        or "ReadFile" in text
+        or "WriteFile" in text
+        or "ReadManyFiles" in text
+    )
 
 
 def _wait_for_input_ready(
     pane_target: str,
     timeout_sec: float = 30.0,
-    poll_sec: float = 1.0,
+    poll_sec: float = 0.5,
+    stable_sec: float = 2.0,
 ) -> bool:
-    """Wait until the pane shows an input prompt, meaning the CLI is ready."""
+    """
+    Wait until the pane shows a stable input prompt.
+
+    For fresh Codex startup, the prompt may briefly appear while MCP boot/logging is
+    still settling. Requiring a short continuous ready window makes the first
+    dispatch less likely to land during that unstable startup phase.
+    """
     deadline = time.time() + timeout_sec
+    ready_since: Optional[float] = None
     while time.time() < deadline:
-        if _pane_has_input_cursor(pane_target):
-            return True
+        snapshot = _capture_pane_text(pane_target)
+        if _pane_text_has_input_cursor(snapshot):
+            if ready_since is None:
+                ready_since = time.time()
+            elif time.time() - ready_since >= stable_sec:
+                return True
+        else:
+            ready_since = None
         time.sleep(poll_sec)
     return False
+
+
+def _wait_for_dispatch_window(
+    pane_target: str,
+    pane_type: str,
+    timeout_sec: float = 10.0,
+) -> bool:
+    """
+    Dispatch 직전 pane이 실제 입력을 받을 준비가 됐는지 기다린다.
+    MCP 문자열 기반 장기 대기 대신, 고정된 짧은 readiness 확인만 수행한다.
+    """
+    if _is_pane_dead(pane_target):
+        _respawn_pane(pane_target)
+
+    if not _wait_for_input_ready(
+        pane_target,
+        timeout_sec=timeout_sec,
+        poll_sec=0.5,
+        stable_sec=2.0,
+    ):
+        log.warning(
+            "%s pane not ready for dispatch (timeout=%.1fs)",
+            pane_type, timeout_sec,
+        )
+        return False
+
+    wait_for_pane_settle(
+        pane_target,
+        timeout_sec=3.0,
+        quiet_sec=0.75,
+        poll_sec=0.25,
+    )
+    return True
 
 
 # Prompt temp file cleanup list (cleaned at exit)
@@ -592,6 +728,11 @@ def _write_prompt_file(command: str) -> str:
     return fd.name
 
 
+def _normalize_prompt_text(text: str) -> str:
+    """Convert literal \\n sequences from shell-passed templates into real newlines."""
+    return text.replace("\\n", "\n")
+
+
 def tmux_send_keys(
     pane_target: str,
     command: str,
@@ -600,15 +741,20 @@ def tmux_send_keys(
 ) -> bool:
     """Send a prompt to a tmux pane.
 
-    pane_type: "codex" — write prompt to file, run `codex "$(cat file)"`
+    pane_type: "codex" — paste-buffer + Enter retry with working-indicator check
                "claude" — paste-buffer + Enter retry
+               "gemini" — paste-buffer + Enter retry
     """
     log.info("send-keys target=%s pane_type=%s dry_run=%s", pane_target, pane_type, dry_run)
     if dry_run:
         return True
     try:
+        if not _wait_for_dispatch_window(pane_target, pane_type):
+            return False
         if pane_type == "codex":
             _dispatch_codex(pane_target, command)
+        elif pane_type == "gemini":
+            _dispatch_gemini(pane_target, command)
         else:
             _dispatch_claude(pane_target, command)
 
@@ -624,11 +770,30 @@ def _dispatch_codex(pane_target: str, command: str) -> None:
     Codex interactive session is kept alive (started by start-pipeline.sh).
     Always paste-buffer into the running session — never re-launch codex.
     """
+    log.info("dispatching codex prompt: chars=%d", len(command))
     subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
     subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
+    pasted_snapshot = _capture_pane_text(pane_target)
     time.sleep(1.0)
-    subprocess.run(["tmux", "send-keys", "-t", pane_target, "Enter"], check=True, capture_output=True)
-    log.info("codex dispatch (paste to interactive session)")
+    for attempt in range(3):
+        subprocess.run(["tmux", "send-keys", "-t", pane_target, "Enter"], check=True, capture_output=True)
+        time.sleep(1.5)
+        snapshot = _capture_pane_text(pane_target)
+        if not _pane_text_has_input_cursor(snapshot):
+            log.info("codex prompt consumed: attempt %d", attempt + 1)
+            deadline = time.time() + 6.0
+            while time.time() < deadline:
+                if _pane_has_working_indicator(pane_target):
+                    log.info("codex working indicator detected")
+                    return
+                time.sleep(0.5)
+            log.info("codex working indicator not yet visible after dispatch")
+            break
+        if snapshot != pasted_snapshot and _pane_text_has_codex_activity(snapshot):
+            log.info("codex response activity detected: attempt %d", attempt + 1)
+            return
+    else:
+        log.info("codex prompt still visible after retries")
 
 
 def _dispatch_claude(pane_target: str, command: str) -> None:
@@ -641,6 +806,24 @@ def _dispatch_claude(pane_target: str, command: str) -> None:
         time.sleep(1.5)
         if not _pane_has_input_cursor(pane_target):
             log.info("claude prompt consumed: attempt %d", attempt + 1)
+            break
+
+
+def _dispatch_gemini(pane_target: str, command: str) -> None:
+    """Dispatch to Gemini pane via paste-buffer + Enter."""
+    subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
+    subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
+    pasted_snapshot = _capture_pane_text(pane_target)
+    time.sleep(1.0)
+    for attempt in range(3):
+        subprocess.run(["tmux", "send-keys", "-t", pane_target, "Enter"], check=True, capture_output=True)
+        time.sleep(1.5)
+        snapshot = _capture_pane_text(pane_target)
+        if not _pane_text_has_input_cursor(snapshot):
+            log.info("gemini prompt consumed: attempt %d", attempt + 1)
+            break
+        if snapshot != pasted_snapshot and _pane_text_has_gemini_activity(snapshot):
+            log.info("gemini response activity detected: attempt %d", attempt + 1)
             break
 
 
@@ -665,7 +848,8 @@ class StateMachine:
         collector:              ManifestCollector,
         verify_pane_target:     str,
         verify_prompt_template: str,
-        feedback_path:          Path,
+        verify_context_builder: Optional[Callable[[JobState], dict[str, str]]],
+        completion_paths:       list[Path],
         error_log:              Path,
         dry_run:                bool = False,
     ) -> None:
@@ -676,7 +860,8 @@ class StateMachine:
         self.collector              = collector
         self.verify_pane_target     = verify_pane_target
         self.verify_prompt_template = verify_prompt_template
-        self.feedback_path          = feedback_path
+        self.verify_context_builder = verify_context_builder
+        self.completion_paths       = completion_paths
         self.error_log              = error_log
         self.dry_run                = dry_run
 
@@ -725,9 +910,17 @@ class StateMachine:
                 job.job_id, job.round, job.artifact_hash, slot, "lease_busy")
             return job
 
-        prompt = self.verify_prompt_template.format(
-            job_id=job.job_id, round=job.round, artifact_path=job.artifact_path,
-        )
+        prompt_context = {
+            "job_id": job.job_id,
+            "round": job.round,
+            "artifact_path": job.artifact_path,
+            "latest_work_path": job.artifact_path,
+            "latest_verify_path": "없음",
+        }
+        if self.verify_context_builder:
+            prompt_context.update(self.verify_context_builder(job))
+
+        prompt = _normalize_prompt_text(self.verify_prompt_template.format(**prompt_context))
         ok = tmux_send_keys(self.verify_pane_target, prompt, self.dry_run, pane_type="codex")
 
         if ok:
@@ -737,7 +930,7 @@ class StateMachine:
             )
             job.last_dispatch_at   = time.time()
             job.last_dispatch_slot = slot
-            job.feedback_baseline_sig = compute_file_sig(self.feedback_path)
+            job.feedback_baseline_sig = compute_multi_file_sig(self.completion_paths)
             job.transition(JobStatus.VERIFY_RUNNING, f"dispatched to {slot}")
             job.save(self.state_dir)
             if self.dry_run:
@@ -751,7 +944,7 @@ class StateMachine:
         """
         manifest 파일을 폴링하고:
           - 없으면:
-            · codex_feedback.md가 dispatch 이후 갱신됐으면 → Codex 완료로 간주, VERIFY_DONE
+            · control slot이 dispatch 이후 갱신됐으면 → Codex 완료로 간주, VERIFY_DONE
             · lease TTL 초과 → 타임아웃, VERIFY_DONE (result=timeout)
             · 그 외 → 대기 (VERIFY_RUNNING 유지)
           - 스키마/일치 검증 실패 → verify_result="invalid_manifest", VERIFY_RUNNING 유지
@@ -761,37 +954,37 @@ class StateMachine:
         manifest = self.collector.poll(job)
         if manifest is None:
             # manifest 없음 — feedback 변경 또는 타임아웃 체크
-            # Codex는 manifest를 안 남기고 codex_feedback.md만 갱신할 수 있음
-            fb_sig = compute_file_sig(self.feedback_path)
+            # Codex는 manifest 없이 rolling handoff/operator 슬롯만 갱신할 수 있음
+            fb_sig = compute_multi_file_sig(self.completion_paths)
 
             if fb_sig and fb_sig != job.feedback_baseline_sig:
-                # feedback 내용/크기/mtime_ns 중 하나라도 달라졌으면 Codex 완료로 간주
-                log.info("feedback signature changed after dispatch: job=%s, treating as verify done",
+                # handoff/operator 슬롯 내용이 달라졌으면 Codex 완료로 간주
+                log.info("pipeline signal changed after dispatch: job=%s, treating as verify done",
                          job.job_id)
                 job.verify_result = "passed_by_feedback"
                 job.verify_completed_at = time.time()
                 self.lease.release("slot_verify")
                 job.transition(JobStatus.VERIFY_DONE,
-                               "codex_feedback.md signature changed after dispatch")
+                               "pipeline signal changed after dispatch")
                 job.save(self.state_dir)
                 return job
 
-            # Check if Codex finished: pane shows "›" prompt (interactive idle)
-            # or bash "$" prompt (codex exited). Either means task is done.
+            # Check if Codex finished: pane must show an input prompt AND
+            # have no active working/waiting indicators anywhere in visible text.
             current_pane = _capture_pane_text(self.verify_pane_target)
-            pane_lines = [l.strip() for l in current_pane.strip().splitlines() if l.strip()]
-            last_pane_line = pane_lines[-1] if pane_lines else ""
-            codex_idle = last_pane_line.startswith("›") or last_pane_line.endswith("$")
+            still_busy = _pane_text_has_busy_indicator(current_pane)
+            has_prompt = _pane_text_has_input_cursor(current_pane)
+            codex_idle = has_prompt and not still_busy
             elapsed_since_dispatch = time.time() - job.last_dispatch_at
-            # Only check after at least 10 seconds (avoid false positive during startup)
-            if codex_idle and elapsed_since_dispatch > 10:
-                log.info("codex task completed (pane idle): job=%s elapsed=%.0fs",
+            # Only check after at least 15 seconds (avoid false positive during startup)
+            if codex_idle and elapsed_since_dispatch > 15:
+                log.info("codex task completed (idle confirmed): job=%s elapsed=%.0fs",
                          job.job_id, elapsed_since_dispatch)
                 job.verify_result = "completed"
                 job.verify_completed_at = time.time()
                 self.lease.release("slot_verify")
                 job.transition(JobStatus.VERIFY_DONE,
-                               f"codex idle after {elapsed_since_dispatch:.0f}s")
+                               f"codex idle confirmed after {elapsed_since_dispatch:.0f}s")
                 job.save(self.state_dir)
                 return job
 
@@ -887,6 +1080,10 @@ class WatcherCore:
         base = Path(config.get("base_dir", ".pipeline"))
 
         self.watch_dir     = Path(config["watch_dir"])
+        self.artifact_root = self.watch_dir.parent
+        self.repo_root     = Path(config.get("repo_root", str(self.artifact_root)))
+        self.verify_dir    = self.artifact_root / "verify"
+        self.report_gemini_dir = self.artifact_root / "report" / "gemini"
         self.state_dir     = base / "state"
         self.lock_dir      = base / "locks"
         self.manifests_dir = base / "manifests"
@@ -900,18 +1097,66 @@ class WatcherCore:
         self.startup_grace_sec = float(config.get("startup_grace_sec", 8.0))
         self.started_at = time.time()
 
-        # feedback 파일 경로 및 Claude pane 타겟
-        self.feedback_path       = base / "codex_feedback.md"
+        # rolling handoff 슬롯
+        self.claude_handoff_path    = base / "claude_handoff.md"      # Claude-only execution slot
+        self.gemini_request_path    = base / "gemini_request.md"      # Codex -> Gemini request slot
+        self.gemini_advice_path     = base / "gemini_advice.md"       # Gemini -> Codex advice slot
+        self.operator_request_path  = base / "operator_request.md"    # operator-only stop slot
+        self.completion_paths       = [
+            self.claude_handoff_path,
+            self.gemini_request_path,
+            self.operator_request_path,
+        ]
         self.claude_pane_target  = config.get("claude_pane_target", "ai-pipeline:0.0")
-        self.claude_prompt       = config.get(
+        self.gemini_pane_target  = config.get("gemini_pane_target", "ai-pipeline:0.2")
+        self.codex_pane_target   = config.get("verify_pane_target", "ai-pipeline:0.1")
+        self.claude_prompt       = _normalize_prompt_text(config.get(
             "claude_prompt",
-            "CLAUDE.md, AGENTS.md, verify/README.md, work/README.md, .pipeline/README.md, "
-            ".pipeline/codex_feedback.md를 읽고, STATUS가 implement일 때만 그 지시대로 한 슬라이스만 "
-            "구현해줘. STATUS가 needs_operator면 새 구현을 시작하지 말고 기다려줘.",
-        )
+            "ROLE: claude_implement\n"
+            "STATE: implement\n"
+            "HANDOFF: .pipeline/claude_handoff.md\n"
+            "READ_FIRST:\n"
+            "- CLAUDE.md\n"
+            "- .pipeline/claude_handoff.md",
+        ))
+        self.gemini_prompt       = _normalize_prompt_text(config.get(
+            "gemini_prompt",
+            "ROLE: gemini_arbitrate\n"
+            "STATE: codex_needs_tiebreak\n"
+            "Open these files now:\n"
+            "- @GEMINI.md\n"
+            "- {gemini_request_mention}\n"
+            "- @AGENTS.md\n"
+            "- {latest_work_mention}\n"
+            "- {latest_verify_mention}\n"
+            "Write exactly two files using edit/write tools only:\n"
+            "- advisory log: {gemini_report_path}\n"
+            "- recommendation slot: {gemini_advice_path}\n"
+            "Do not use shell heredoc, shell redirection, cat > file, or printf > file.\n"
+            "Do not modify any other repo files.\n"
+            "Keep the recommendation short and exact.",
+        ))
+        self.codex_followup_prompt = _normalize_prompt_text(config.get(
+            "codex_followup_prompt",
+            "ROLE: codex_followup\n"
+            "STATE: gemini_advice_ready\n"
+            "REQUEST: .pipeline/gemini_request.md\n"
+            "ADVICE: .pipeline/gemini_advice.md\n"
+            "LATEST_WORK: {latest_work_path}\n"
+            "LATEST_VERIFY: {latest_verify_path}\n"
+            "READ_FIRST:\n"
+            "- AGENTS.md\n"
+            "- verify/README.md\n"
+            "- .pipeline/README.md\n"
+            "- .pipeline/gemini_request.md\n"
+            "- .pipeline/gemini_advice.md",
+        ))
 
-        # feedback 파일 시그니처 추적 (mtime_ns + size + hash)
-        self._last_feedback_sig: str = self._get_feedback_sig()
+        # rolling 슬롯 시그니처 추적 (mtime_ns + size + hash)
+        self._last_claude_handoff_sig: str = self._get_path_sig(self.claude_handoff_path)
+        self._last_gemini_request_sig: str = self._get_path_sig(self.gemini_request_path)
+        self._last_gemini_advice_sig: str = self._get_path_sig(self.gemini_advice_path)
+        self._last_operator_request_sig: str = self._get_path_sig(self.operator_request_path)
         # 시작 시 이미 Claude 차례인지 판단하는 플래그
         self._initial_turn_checked: bool = False
         # Claude 차례일 때: 시작 시점 work/ 스냅샷
@@ -948,34 +1193,227 @@ class WatcherCore:
                 "verify_prompt_template",
                 "verify job={job_id} round={round} path={artifact_path}",
             ),
-            feedback_path=self.feedback_path,
+            verify_context_builder=self._build_verify_prompt_context,
+            completion_paths=self.completion_paths,
             error_log=self.events_dir / "errors.jsonl",
             dry_run=self.dry_run,
         )
 
     # ------------------------------------------------------------------
-    def _get_feedback_mtime(self) -> float:
-        """feedback 파일의 mtime 반환. 없으면 0.0."""
+    def _get_path_mtime(self, path: Path) -> float:
+        """path의 mtime 반환. 없으면 0.0."""
         try:
-            return self.feedback_path.stat().st_mtime
+            return path.stat().st_mtime
         except OSError:
             return 0.0
 
     # ------------------------------------------------------------------
-    def _get_feedback_sig(self) -> str:
-        """feedback 파일 시그니처 반환. 없으면 빈 문자열."""
-        return compute_file_sig(self.feedback_path)
+    def _get_path_sig(self, path: Path) -> str:
+        """path 파일 시그니처 반환. 없으면 빈 문자열."""
+        return compute_file_sig(path)
+
+    # ------------------------------------------------------------------
+    def _repo_relative(self, path: Optional[Path]) -> str:
+        if path is None:
+            return "없음"
+        try:
+            return str(path.relative_to(self.repo_root))
+        except ValueError:
+            return str(path)
+
+    # ------------------------------------------------------------------
+    def _path_mention(self, path: Optional[Path]) -> str:
+        if path is None:
+            return "(없음)"
+        return f"@{self._repo_relative(path)}"
+
+    # ------------------------------------------------------------------
+    def _find_latest_md(self, root: Path) -> Optional[Path]:
+        latest_path: Optional[Path] = None
+        latest_mtime = 0.0
+        if not root.exists():
+            return None
+        for md in root.rglob("*.md"):
+            if not self._is_canonical_round_note(root, md):
+                continue
+            try:
+                mt = md.stat().st_mtime
+            except OSError:
+                continue
+            if mt >= latest_mtime:
+                latest_path = md
+                latest_mtime = mt
+        return latest_path
+
+    # ------------------------------------------------------------------
+    def _get_latest_work_path(self) -> Optional[Path]:
+        return self._find_latest_md(self.watch_dir)
+
+    # ------------------------------------------------------------------
+    def _is_canonical_round_note(self, root: Path, path: Path) -> bool:
+        try:
+            rel = path.relative_to(root)
+        except ValueError:
+            return False
+        if len(rel.parts) < 3:
+            return False
+        return bool(ROUND_NOTE_NAME_RE.match(path.name))
+
+    # ------------------------------------------------------------------
+    def _get_latest_same_day_verify_path(self, work_path: Optional[Path]) -> Optional[Path]:
+        if work_path is None:
+            return self._find_latest_md(self.verify_dir)
+
+        try:
+            rel = work_path.relative_to(self.watch_dir)
+        except ValueError:
+            return self._find_latest_md(self.verify_dir)
+
+        if len(rel.parts) >= 2:
+            same_day_dir = self.verify_dir / rel.parts[0] / rel.parts[1]
+            latest_same_day = self._find_latest_md(same_day_dir)
+            if latest_same_day is not None:
+                return latest_same_day
+
+        return self._find_latest_md(self.verify_dir)
+
+    # ------------------------------------------------------------------
+    def _infer_gemini_report_hint(self, work_path: Optional[Path]) -> str:
+        date_prefix = time.strftime("%Y-%m-%d")
+        if work_path is not None:
+            stem = work_path.stem
+            if len(stem) >= 10 and stem[4] == "-" and stem[7] == "-":
+                date_prefix = stem[:10]
+        return f"{date_prefix}-<slug>.md"
+
+    # ------------------------------------------------------------------
+    def _build_runtime_prompt_context(self, work_path: Optional[Path] = None) -> dict[str, str]:
+        latest_work = work_path or self._get_latest_work_path()
+        latest_verify = self._get_latest_same_day_verify_path(latest_work)
+        gemini_report_hint = self._infer_gemini_report_hint(latest_work)
+        gemini_report_path = self.report_gemini_dir / gemini_report_hint
+        return {
+            "latest_work_path": self._repo_relative(latest_work),
+            "latest_verify_path": self._repo_relative(latest_verify),
+            "gemini_report_dir": self._repo_relative(self.report_gemini_dir) + "/",
+            "gemini_report_hint": gemini_report_hint,
+            "gemini_report_path": self._repo_relative(gemini_report_path),
+            "claude_handoff_path": self._repo_relative(self.claude_handoff_path),
+            "gemini_request_path": self._repo_relative(self.gemini_request_path),
+            "gemini_advice_path": self._repo_relative(self.gemini_advice_path),
+            "operator_request_path": self._repo_relative(self.operator_request_path),
+            "latest_work_mention": self._path_mention(latest_work),
+            "latest_verify_mention": self._path_mention(latest_verify),
+            "gemini_request_mention": self._path_mention(self.gemini_request_path),
+            "gemini_advice_mention": self._path_mention(self.gemini_advice_path),
+        }
+
+    # ------------------------------------------------------------------
+    def _build_verify_prompt_context(self, job: JobState) -> dict[str, str]:
+        artifact = Path(job.artifact_path)
+        return {
+            "artifact_path": job.artifact_path,
+            **self._build_runtime_prompt_context(artifact),
+        }
+
+    # ------------------------------------------------------------------
+    def _format_runtime_prompt(self, template: str, work_path: Optional[Path] = None) -> str:
+        return _normalize_prompt_text(template.format(**self._build_runtime_prompt_context(work_path)))
+
+    # ------------------------------------------------------------------
+    def _read_status_from_path(self, path: Path) -> Optional[str]:
+        """지정 파일의 첫 STATUS: 줄을 읽어 값을 반환."""
+        try:
+            with path.open() as f:
+                for line in f:
+                    stripped = line.strip()
+                    if stripped.startswith("STATUS:"):
+                        return stripped.split(":", 1)[1].strip().lower()
+        except OSError:
+            return None
+        return None
+
+    # ------------------------------------------------------------------
+    def _get_latest_implement_handoff(self) -> tuple[Optional[Path], float]:
+        """Claude가 읽을 최신 implement handoff 슬롯을 고른다."""
+        if self._read_status_from_path(self.claude_handoff_path) != "implement":
+            return None, 0.0
+        return self.claude_handoff_path, self._get_path_mtime(self.claude_handoff_path)
+
+    # ------------------------------------------------------------------
+    def _get_pending_operator_mtime(self) -> float:
+        """operator_request가 실제 pending stop이면 mtime을 반환한다."""
+        if self._read_status_from_path(self.operator_request_path) == "needs_operator":
+            return self._get_path_mtime(self.operator_request_path)
+        return 0.0
+
+    # ------------------------------------------------------------------
+    def _get_gemini_request_mtime(self) -> float:
+        if self._read_status_from_path(self.gemini_request_path) == "request_open":
+            return self._get_path_mtime(self.gemini_request_path)
+        return 0.0
+
+    # ------------------------------------------------------------------
+    def _get_gemini_advice_mtime(self) -> float:
+        if self._read_status_from_path(self.gemini_advice_path) == "advice_ready":
+            return self._get_path_mtime(self.gemini_advice_path)
+        return 0.0
+
+    # ------------------------------------------------------------------
+    def _get_pending_gemini_request_mtime(self) -> float:
+        request_mtime = self._get_gemini_request_mtime()
+        advice_mtime = self._get_gemini_advice_mtime()
+        control_mtime = max(
+            self._get_path_mtime(self.claude_handoff_path),
+            self._get_pending_operator_mtime(),
+        )
+        if request_mtime > 0.0 and request_mtime > advice_mtime and request_mtime >= control_mtime:
+            return request_mtime
+        return 0.0
+
+    # ------------------------------------------------------------------
+    def _get_pending_gemini_advice_mtime(self) -> float:
+        request_mtime = self._get_gemini_request_mtime()
+        advice_mtime = self._get_gemini_advice_mtime()
+        control_mtime = max(
+            self._get_path_mtime(self.claude_handoff_path),
+            self._get_pending_operator_mtime(),
+        )
+        if advice_mtime > 0.0 and advice_mtime >= request_mtime and advice_mtime > control_mtime:
+            return advice_mtime
+        return 0.0
+
+    # ------------------------------------------------------------------
+    def _operator_blocks_handoff(self, handoff_mtime: float) -> bool:
+        pending_mtime = self._get_pending_operator_mtime()
+        return pending_mtime > 0.0 and pending_mtime >= handoff_mtime
 
     # ------------------------------------------------------------------
     def _get_work_tree_snapshot(self) -> dict[str, str]:
         """work/ 전체 .md 스냅샷 반환."""
-        return build_md_tree_snapshot(self.watch_dir)
+        snapshot: dict[str, str] = {}
+        if not self.watch_dir.exists():
+            return snapshot
+        for md in self.watch_dir.rglob("*.md"):
+            if not self._is_canonical_round_note(self.watch_dir, md):
+                continue
+            sig = compute_file_sig(md)
+            if not sig:
+                continue
+            try:
+                rel = str(md.relative_to(self.watch_dir))
+            except ValueError:
+                rel = str(md)
+            snapshot[rel] = sig
+        return snapshot
 
     # ------------------------------------------------------------------
     def _get_latest_work_mtime(self) -> float:
         """work/ 내 최신 .md 파일의 mtime 반환. 없으면 0.0."""
         latest = 0.0
         for md in self.watch_dir.rglob("*.md"):
+            if not self._is_canonical_round_note(self.watch_dir, md):
+                continue
             try:
                 mt = md.stat().st_mtime
                 if mt > latest:
@@ -985,65 +1423,157 @@ class WatcherCore:
         return latest
 
     # ------------------------------------------------------------------
-    def _determine_initial_turn(self) -> str:
+    def _latest_work_needs_verify(self) -> bool:
         """
-        시작 시 턴 판단 — feedback.md vs work/*.md mtime 비교:
-          - feedback가 더 최신 → Claude 차례 (Codex가 마지막으로 작업한 것)
-          - work가 더 최신 → Codex 차례 (Claude가 마지막으로 작업한 것)
-          - 둘 다 없음 → Claude 차례 (초기 상태)
+        최신 canonical /work가 same-day 최신 /verify보다 앞서 있으면 True.
+        handoff 파일 mtime보다 product truth를 우선해 Codex가 먼저 따라붙어야 하는지 판단한다.
         """
-        feedback_mtime = self._get_feedback_mtime()
+        latest_work = self._get_latest_work_path()
+        if latest_work is None:
+            return False
 
-        work_mtime = 0.0
-        for md in self.watch_dir.rglob("*.md"):
-            try:
-                mt = md.stat().st_mtime
-                if mt > work_mtime:
-                    work_mtime = mt
-            except OSError:
-                continue
-
-        if feedback_mtime == 0.0 and work_mtime == 0.0:
-            return "claude"  # 초기 상태
-        if feedback_mtime >= work_mtime:
-            return "claude"  # Codex가 마지막 → Claude 차례
-        return "codex"       # Claude가 마지막 → Codex 차례
+        latest_verify = self._get_latest_same_day_verify_path(latest_work)
+        work_mtime = self._get_path_mtime(latest_work)
+        verify_mtime = self._get_path_mtime(latest_verify) if latest_verify else 0.0
+        return work_mtime > verify_mtime
 
     # ------------------------------------------------------------------
-    def _notify_claude(self, reason: str) -> None:
+    def _determine_initial_turn(self) -> str:
+        """
+        시작 시 턴 판단 — operator stop / Gemini arbitration / Claude handoff / work 최신성 비교:
+          - operator_request가 최신 pending stop → operator 대기
+          - gemini_request가 최신 pending request → Gemini 차례
+          - gemini_advice가 최신 pending advice → Codex follow-up 차례
+          - latest /work가 latest same-day /verify보다 새로우면 → Codex 차례
+          - 그 외에 implement handoff가 있으면 → Claude 차례
+          - 셋 다 없음 → Claude 차례 (초기 상태)
+        """
+        operator_mtime = self._get_pending_operator_mtime()
+        gemini_request_mtime = self._get_pending_gemini_request_mtime()
+        gemini_advice_mtime = self._get_pending_gemini_advice_mtime()
+        handoff_path, handoff_mtime = self._get_latest_implement_handoff()
+        work_mtime = self._get_latest_work_mtime()
+
+        if operator_mtime == 0.0 and gemini_request_mtime == 0.0 and gemini_advice_mtime == 0.0 and handoff_mtime == 0.0 and work_mtime == 0.0:
+            return "claude"
+        if operator_mtime > 0.0 and operator_mtime >= gemini_request_mtime and operator_mtime >= gemini_advice_mtime and operator_mtime >= handoff_mtime and operator_mtime >= work_mtime:
+            return "operator"
+        if gemini_request_mtime > 0.0 and gemini_request_mtime >= gemini_advice_mtime and gemini_request_mtime >= handoff_mtime and gemini_request_mtime >= work_mtime:
+            return "gemini"
+        if gemini_advice_mtime > 0.0 and gemini_advice_mtime >= gemini_request_mtime and gemini_advice_mtime >= handoff_mtime and gemini_advice_mtime >= work_mtime:
+            return "codex_followup"
+        if self._latest_work_needs_verify():
+            return "codex"
+        if handoff_path and handoff_mtime > 0.0 and handoff_mtime >= operator_mtime:
+            return "claude"
+        return "codex"
+
+    # ------------------------------------------------------------------
+    def _notify_claude(self, reason: str, handoff_path: Optional[Path] = None) -> None:
         """Claude pane에 다음 작업 프롬프트 전송."""
         log.info("notify_claude: reason=%s target=%s", reason, self.claude_pane_target)
-        self._log_raw("claude_notify", str(self.feedback_path), "turn_signal",
-                       {"reason": reason})
+        self._log_raw(
+            "claude_notify",
+            str(handoff_path or self.claude_handoff_path),
+            "turn_signal",
+            {"reason": reason},
+        )
         tmux_send_keys(self.claude_pane_target, self.claude_prompt, self.dry_run, pane_type="claude")
 
     # ------------------------------------------------------------------
-    def _read_feedback_status(self) -> Optional[str]:
-        """feedback 파일의 첫 STATUS: 줄을 읽어 값을 반환."""
-        try:
-            with self.feedback_path.open() as f:
-                for line in f:
-                    stripped = line.strip()
-                    if stripped.startswith("STATUS:"):
-                        return stripped.split(":", 1)[1].strip().lower()
-        except OSError:
-            return None
-        return None
+    def _notify_gemini(self, reason: str) -> None:
+        """Gemini pane에 arbitration 프롬프트 전송."""
+        log.info("notify_gemini: reason=%s target=%s", reason, self.gemini_pane_target)
+        self._log_raw(
+            "gemini_notify",
+            str(self.gemini_request_path),
+            "turn_signal",
+            {"reason": reason},
+        )
+        prompt = self._format_runtime_prompt(self.gemini_prompt)
+        tmux_send_keys(self.gemini_pane_target, prompt, self.dry_run, pane_type="gemini")
 
-    def _check_feedback_update(self) -> None:
-        """feedback 파일 시그니처가 바뀌면 STATUS를 확인하고 implement일 때만 Claude에 알림."""
-        current_sig = self._get_feedback_sig()
-        if current_sig and current_sig != self._last_feedback_sig:
-            self._last_feedback_sig = current_sig
-            status = self._read_feedback_status()
-            if status == "implement":
-                log.info("feedback updated: STATUS=implement → Claude 차례")
-                self._notify_claude("feedback_updated")
+    # ------------------------------------------------------------------
+    def _notify_codex_followup(self, reason: str) -> None:
+        """Gemini advice 이후 Codex가 최종 결론을 쓰도록 재호출."""
+        log.info("notify_codex_followup: reason=%s target=%s", reason, self.codex_pane_target)
+        self._log_raw(
+            "codex_followup_notify",
+            str(self.gemini_advice_path),
+            "turn_signal",
+            {"reason": reason},
+        )
+        prompt = self._format_runtime_prompt(self.codex_followup_prompt)
+        tmux_send_keys(self.codex_pane_target, prompt, self.dry_run, pane_type="codex")
+
+    # ------------------------------------------------------------------
+    def _check_pipeline_signal_updates(self) -> None:
+        """handoff/operator 슬롯 시그니처를 확인하고 Claude 라우팅을 결정한다."""
+        operator_sig = self._get_path_sig(self.operator_request_path)
+        if operator_sig and operator_sig != self._last_operator_request_sig:
+            self._last_operator_request_sig = operator_sig
+            status = self._read_status_from_path(self.operator_request_path) or "missing"
+            if status == "needs_operator":
+                log.info("operator request updated: STATUS=needs_operator → Claude notify 차단")
+                self._log_raw(
+                    "operator_request_pending",
+                    str(self.operator_request_path),
+                    "turn_signal",
+                    {"status": status},
+                )
+
+        gemini_request_sig = self._get_path_sig(self.gemini_request_path)
+        if gemini_request_sig and gemini_request_sig != self._last_gemini_request_sig:
+            self._last_gemini_request_sig = gemini_request_sig
+            request_mtime = self._get_pending_gemini_request_mtime()
+            status = self._read_status_from_path(self.gemini_request_path) or "missing"
+            if request_mtime > 0.0 and self._get_pending_operator_mtime() == 0.0:
+                log.info("gemini request updated: STATUS=request_open → Gemini 차례")
+                self._notify_gemini("gemini_request_updated")
             else:
-                reason = status or "missing"
-                log.info("feedback updated: STATUS=%s → Claude notify 건너뜀", reason)
-                self._log_raw("claude_notify_skipped", str(self.feedback_path),
-                              "turn_signal", {"status": reason})
+                self._log_raw(
+                    "gemini_notify_skipped",
+                    str(self.gemini_request_path),
+                    "turn_signal",
+                    {"status": status},
+                )
+
+        gemini_advice_sig = self._get_path_sig(self.gemini_advice_path)
+        if gemini_advice_sig and gemini_advice_sig != self._last_gemini_advice_sig:
+            self._last_gemini_advice_sig = gemini_advice_sig
+            advice_mtime = self._get_pending_gemini_advice_mtime()
+            status = self._read_status_from_path(self.gemini_advice_path) or "missing"
+            if advice_mtime > 0.0 and self._get_pending_operator_mtime() == 0.0:
+                log.info("gemini advice updated: STATUS=advice_ready → Codex follow-up")
+                self._notify_codex_followup("gemini_advice_updated")
+            else:
+                self._log_raw(
+                    "codex_followup_notify_skipped",
+                    str(self.gemini_advice_path),
+                    "turn_signal",
+                    {"status": status},
+                )
+
+        handoff_sig = self._get_path_sig(self.claude_handoff_path)
+        if handoff_sig and handoff_sig != self._last_claude_handoff_sig:
+            self._last_claude_handoff_sig = handoff_sig
+            status = self._read_status_from_path(self.claude_handoff_path) or "missing"
+            handoff_mtime = self._get_path_mtime(self.claude_handoff_path)
+            if status == "implement" and not self._operator_blocks_handoff(handoff_mtime) and not self._latest_work_needs_verify():
+                log.info("claude handoff updated: STATUS=implement → Claude 차례")
+                self._notify_claude("claude_handoff_updated", self.claude_handoff_path)
+            else:
+                log.info("claude handoff updated: STATUS=%s → Claude notify 건너뜀", status)
+                self._log_raw(
+                    "claude_notify_skipped",
+                    str(self.claude_handoff_path),
+                    "turn_signal",
+                    {
+                        "status": status,
+                        "operator_blocked": self._operator_blocks_handoff(handoff_mtime),
+                        "pending_verify": self._latest_work_needs_verify(),
+                    },
+                )
 
     # ------------------------------------------------------------------
     def _log_raw(self, event: str, path: str, job_id: str,
@@ -1142,13 +1672,38 @@ class WatcherCore:
                 # Claude 차례 → 시작 시점 work/ 전체 스냅샷을 기준선으로 저장
                 self._work_baseline_snapshot = self._get_work_tree_snapshot()
                 self._waiting_for_claude = True
-                self._notify_claude("startup_turn_claude")
+                handoff_path, _ = self._get_latest_implement_handoff()
+                self._notify_claude("startup_turn_claude", handoff_path)
                 log.info("waiting_for_claude: baseline_files=%d",
                          len(self._work_baseline_snapshot))
                 return
+            if turn == "operator":
+                log.info("startup turn blocked by pending operator_request")
+                self._log_raw(
+                    "operator_request_pending",
+                    str(self.operator_request_path),
+                    "startup",
+                    {"status": "needs_operator"},
+                )
+                return
+            if turn == "gemini":
+                self._notify_gemini("startup_turn_gemini")
+                return
+            if turn == "codex_followup":
+                self._notify_codex_followup("startup_turn_codex_followup")
+                return
 
-        # --- feedback 파일 변경 감시 (Codex → Claude 방향) ---
-        self._check_feedback_update()
+        # --- rolling handoff / operator 슬롯 감시 (Codex → Claude / operator 방향) ---
+        self._check_pipeline_signal_updates()
+
+        # --- 최신 control signal이 operator stop이면 자동 진행을 멈춤 ---
+        _, handoff_mtime = self._get_latest_implement_handoff()
+        if self._operator_blocks_handoff(handoff_mtime):
+            return
+
+        # --- Gemini arbitration이 pending이면 다른 자동 진행을 잠시 멈춤 ---
+        if self._get_pending_gemini_request_mtime() > 0.0 or self._get_pending_gemini_advice_mtime() > 0.0:
+            return
 
         # --- Claude 차례 대기 중이면 work/ 감시 건너뜀 ---
         if self._waiting_for_claude:
@@ -1163,7 +1718,11 @@ class WatcherCore:
 
         # --- work/ 디렉터리 감시 (Claude → Codex 방향) ---
         # baseline과 동일하게 가장 최신 파일 1개만 처리
-        all_mds = sorted(self.watch_dir.rglob("*.md"), key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
+        all_mds = sorted(
+            (p for p in self.watch_dir.rglob("*.md") if self._is_canonical_round_note(self.watch_dir, p)),
+            key=lambda p: p.stat().st_mtime if p.exists() else 0,
+            reverse=True,
+        )
         latest = all_mds[0] if all_mds else None
         artifacts_to_process = [latest] if latest else []
         for artifact in artifacts_to_process:
@@ -1224,9 +1783,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="watcher_core.py - Pipeline Watcher v2.1")
     parser.add_argument("--watch-dir",            required=True)
     parser.add_argument("--base-dir",             default=".pipeline")
+    parser.add_argument("--repo-root",            default="",
+                        help="프롬프트 표시 기준 repo root (기본: watch-dir parent)")
     parser.add_argument("--verify-pane-target",   default="ai-pipeline:0.1")
     parser.add_argument("--claude-pane-target",   default="ai-pipeline:0.0",
                         help="Claude가 실행 중인 tmux pane (기본: ai-pipeline:0.0)")
+    parser.add_argument("--gemini-pane-target",   default="ai-pipeline:0.2",
+                        help="Gemini가 실행 중인 tmux pane (기본: ai-pipeline:0.2)")
     parser.add_argument("--manifest-schema-path", default="",
                         help="agent_manifest.schema.json 경로 (기본: ./schemas/)")
     parser.add_argument("--dry-run",              action="store_true")
@@ -1238,13 +1801,19 @@ def main() -> None:
                         help="Codex pane에 보낼 프롬프트 (기본: 내부 job ID 형식)")
     parser.add_argument("--claude-prompt",         default="",
                         help="Claude pane에 보낼 프롬프트 (feedback 갱신 시)")
+    parser.add_argument("--gemini-prompt",         default="",
+                        help="Gemini pane에 보낼 arbitration 프롬프트")
+    parser.add_argument("--codex-followup-prompt", default="",
+                        help="Gemini advice 이후 Codex follow-up 프롬프트")
     args = parser.parse_args()
 
     config: dict = {
         "watch_dir":          args.watch_dir,
         "base_dir":           args.base_dir,
+        "repo_root":          args.repo_root or str(Path(args.watch_dir).parent),
         "verify_pane_target": args.verify_pane_target,
         "claude_pane_target": args.claude_pane_target,
+        "gemini_pane_target": args.gemini_pane_target,
         "dry_run":            args.dry_run,
         "poll_interval":      args.poll,
         "settle_sec":         args.settle,
@@ -1255,6 +1824,10 @@ def main() -> None:
         config["verify_prompt_template"] = args.verify_prompt
     if args.claude_prompt:
         config["claude_prompt"] = args.claude_prompt
+    if args.gemini_prompt:
+        config["gemini_prompt"] = args.gemini_prompt
+    if args.codex_followup_prompt:
+        config["codex_followup_prompt"] = args.codex_followup_prompt
     if args.manifest_schema_path:
         config["manifest_schema_path"] = args.manifest_schema_path
 

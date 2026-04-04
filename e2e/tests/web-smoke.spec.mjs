@@ -623,7 +623,8 @@ test("candidate confirmation path는 save support와 분리되어 기록되고 l
   await page.getByTestId("approve-button").click();
 
   await expect(approvalBox).toBeHidden();
-  await expect(responseBox).toContainText("승인 시점에 고정된 수정본");
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).toContainText("승인 시점에 고정된 수정본");
   await expect(page.locator("#response-quick-meta-text")).toContainText("저장 기준 요청 시점 수정본 스냅샷");
 
   await expect

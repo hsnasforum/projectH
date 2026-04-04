@@ -327,7 +327,8 @@ test("승인 후 실제 note가 저장됩니다", async ({ page }) => {
   await expect(page.getByTestId("approval-box")).toBeVisible();
   await page.getByTestId("approve-button").click();
 
-  await expect(page.getByTestId("response-box")).toContainText("저장했습니다.");
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).toContainText("저장했습니다.");
   expect(fs.existsSync(directNotePath)).toBeTruthy();
 });
 

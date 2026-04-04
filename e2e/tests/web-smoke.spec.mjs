@@ -851,7 +851,8 @@ test("same-session recurrence aggregate는 separate blocked trigger surface로 �
 
   await page.getByTestId("source-path").fill(shortFixturePath);
   await page.getByTestId("submit-request").click();
-  await expect(page.getByTestId("response-box")).toContainText("[검토 메모 활성]");
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).toContainText("[검토 메모 활성]");
   await expect(page.getByTestId("response-box")).toContainText("반복 교정 패턴을 적용합니다.");
 
   const stopButton = aggregateTriggerBox.getByTestId("aggregate-trigger-stop");

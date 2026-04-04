@@ -356,7 +356,8 @@ test("원문 저장 후 늦게 내용 거절해도 saved history와 latest verdi
 
   await page.getByTestId("response-content-reject").click();
 
-  await expect(responseBox).toContainText("저장했습니다.");
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).toContainText("저장했습니다.");
   await expect(page.locator("#notice-box")).toHaveText("내용 거절을 기록했습니다. 이미 저장된 노트는 그대로 유지되며 최신 내용 판정만 바뀝니다.");
   const lateFlipVerdictStatePattern = /^내용 거절 기록됨 · .+$/;
   await expect(page.locator("#response-content-verdict-state")).toHaveText(lateFlipVerdictStatePattern);

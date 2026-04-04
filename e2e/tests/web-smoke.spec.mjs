@@ -590,7 +590,7 @@ test("candidate confirmation path는 save support와 분리되어 기록되고 l
   await expect(approvalBox).toBeVisible();
   await expect(confirmationBox).toBeVisible();
   await expect(approvalBox.locator('[data-testid="response-candidate-confirmation-submit"]')).toHaveCount(0);
-  await expect(page.locator("#response-candidate-confirmation-status")).toContainText("이미 열린 저장 승인 카드와도 섞이지 않습니다.");
+  await expect(page.locator("#response-candidate-confirmation-status")).toHaveText("이 버튼은 현재 기록된 수정 방향을 나중에도 다시 써도 된다는 positive reuse confirmation만 남깁니다. 저장 승인, 내용 거절, 거절 메모, 피드백과는 별도입니다. 이미 열린 저장 승인 카드와도 섞이지 않습니다.");
 
   await page.getByTestId("approve-button").click();
 

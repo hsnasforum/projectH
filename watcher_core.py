@@ -47,6 +47,24 @@ except ImportError:
     _JSONSCHEMA_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
+# Session name — pipeline-gui.py / start-pipeline.sh와 동일 규칙
+# ---------------------------------------------------------------------------
+_SESSION_PREFIX = "aip"
+
+
+def _session_name_for_project(project_path: str) -> str:
+    """Project path → deterministic session name (aip-<safe-dirname>)."""
+    name = Path(project_path).resolve().name or "default"
+    safe = re.sub(r"[^A-Za-z0-9_-]", "", name)
+    return f"{_SESSION_PREFIX}-{safe}" if safe else f"{_SESSION_PREFIX}-default"
+
+
+def _default_pane_targets(session: str) -> tuple[str, str, str]:
+    """(claude, codex/verify, gemini) default pane targets for a session."""
+    return f"{session}:0.0", f"{session}:0.1", f"{session}:0.2"
+
+
+# ---------------------------------------------------------------------------
 # 로깅
 # ---------------------------------------------------------------------------
 logging.basicConfig(
@@ -1107,9 +1125,13 @@ class WatcherCore:
             self.gemini_request_path,
             self.operator_request_path,
         ]
-        self.claude_pane_target  = config.get("claude_pane_target", "ai-pipeline:0.0")
-        self.gemini_pane_target  = config.get("gemini_pane_target", "ai-pipeline:0.2")
-        self.codex_pane_target   = config.get("verify_pane_target", "ai-pipeline:0.1")
+        # pane target: 명시 인자 우선, 없으면 project-aware session 기반 default
+        repo_root_str = config.get("repo_root", str(self.artifact_root))
+        _sess = _session_name_for_project(repo_root_str)
+        _def_claude, _def_codex, _def_gemini = _default_pane_targets(_sess)
+        self.claude_pane_target  = config.get("claude_pane_target", _def_claude)
+        self.gemini_pane_target  = config.get("gemini_pane_target", _def_gemini)
+        self.codex_pane_target   = config.get("verify_pane_target", _def_codex)
         self.claude_prompt       = _normalize_prompt_text(config.get(
             "claude_prompt",
             "ROLE: claude_implement\n"
@@ -1188,7 +1210,7 @@ class WatcherCore:
             lease=self.lease,
             dedupe=self.dedupe,
             collector=self.collector,
-            verify_pane_target=config.get("verify_pane_target", "ai-pipeline:0.1"),
+            verify_pane_target=config.get("verify_pane_target", _def_codex),
             verify_prompt_template=config.get(
                 "verify_prompt_template",
                 "verify job={job_id} round={round} path={artifact_path}",
@@ -1785,11 +1807,12 @@ def main() -> None:
     parser.add_argument("--base-dir",             default=".pipeline")
     parser.add_argument("--repo-root",            default="",
                         help="프롬프트 표시 기준 repo root (기본: watch-dir parent)")
-    parser.add_argument("--verify-pane-target",   default="ai-pipeline:0.1")
-    parser.add_argument("--claude-pane-target",   default="ai-pipeline:0.0",
-                        help="Claude가 실행 중인 tmux pane (기본: ai-pipeline:0.0)")
-    parser.add_argument("--gemini-pane-target",   default="ai-pipeline:0.2",
-                        help="Gemini가 실행 중인 tmux pane (기본: ai-pipeline:0.2)")
+    parser.add_argument("--verify-pane-target",   default="",
+                        help="Codex/verify pane target (기본: <session>:0.1)")
+    parser.add_argument("--claude-pane-target",   default="",
+                        help="Claude pane target (기본: <session>:0.0)")
+    parser.add_argument("--gemini-pane-target",   default="",
+                        help="Gemini pane target (기본: <session>:0.2)")
     parser.add_argument("--manifest-schema-path", default="",
                         help="agent_manifest.schema.json 경로 (기본: ./schemas/)")
     parser.add_argument("--dry-run",              action="store_true")
@@ -1811,15 +1834,19 @@ def main() -> None:
         "watch_dir":          args.watch_dir,
         "base_dir":           args.base_dir,
         "repo_root":          args.repo_root or str(Path(args.watch_dir).parent),
-        "verify_pane_target": args.verify_pane_target,
-        "claude_pane_target": args.claude_pane_target,
-        "gemini_pane_target": args.gemini_pane_target,
         "dry_run":            args.dry_run,
         "poll_interval":      args.poll,
         "settle_sec":         args.settle,
         "startup_grace_sec":  args.startup_grace,
         "lease_ttl":          args.lease_ttl,
     }
+    # pane target: 명시되면 config에 포함, 비어있으면 WatcherCore가 project-aware default 사용
+    if args.verify_pane_target:
+        config["verify_pane_target"] = args.verify_pane_target
+    if args.claude_pane_target:
+        config["claude_pane_target"] = args.claude_pane_target
+    if args.gemini_pane_target:
+        config["gemini_pane_target"] = args.gemini_pane_target
     if args.verify_prompt:
         config["verify_prompt_template"] = args.verify_prompt
     if args.claude_prompt:

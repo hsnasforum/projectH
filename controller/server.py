@@ -9,6 +9,9 @@ import json
 import subprocess
 import os
 import signal
+import time
+import datetime as dt
+import re
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -16,8 +19,22 @@ from urllib.parse import urlparse
 
 PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parent.parent))
 PIPELINE_DIR = PROJECT_ROOT / ".pipeline"
-SESSION_NAME = "ai-pipeline"
 CONTROLLER_PORT = int(os.environ.get("CONTROLLER_PORT", "8780"))
+ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+# Session name: pipeline-gui.py / start-pipeline.sh / watcher_core.py와 동일 규칙
+_SESSION_PREFIX = "aip"
+
+
+def _session_name_for_project(project: Path) -> str:
+    """aip-<safe-dirname> — 전체 파이프라인과 동일한 deterministic session name."""
+    name = project.resolve().name or "default"
+    safe = re.sub(r"[^A-Za-z0-9_-]", "", name)
+    return f"{_SESSION_PREFIX}-{safe}" if safe else f"{_SESSION_PREFIX}-default"
+
+
+SESSION_NAME = _session_name_for_project(PROJECT_ROOT)
+WATCHER_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")
 
 
 # ── tmux 헬퍼 ─────────────────────────────────────────────────
@@ -100,6 +117,17 @@ def watcher_alive() -> dict:
         return {"alive": False, "pid": None}
 
 
+def format_elapsed(seconds: float) -> str:
+    total = max(0, int(seconds))
+    mins, secs = divmod(total, 60)
+    hours, mins = divmod(mins, 60)
+    if hours > 0:
+        return f"{hours}h {mins}m"
+    if mins > 0:
+        return f"{mins}m {secs}s"
+    return f"{secs}s"
+
+
 # ── 파이프라인 상태 슬롯 ───────────────────────────────────────
 
 def read_slot(name: str) -> dict:
@@ -136,39 +164,148 @@ def detect_agent_status(pane_text: str) -> str:
     lines = [l.strip() for l in pane_text.strip().splitlines() if l.strip()]
     if not lines:
         return "off"
+    lower = pane_text.lower()
+    if (
+        "working (" in lower
+        or "background terminal" in lower
+        or "waiting for background" in lower
+        or "waited for background" in lower
+        or "cascading" in lower
+        or "lollygagging" in lower
+        or "hashing" in lower
+        or "leavering" in lower
+        or "without interrupting claude's current work" in lower
+        or "flumoxing" in lower
+        or "philosophising" in lower
+        or "sautéed" in lower
+    ):
+        return "working"
     last = lines[-1]
-    # Working indicators
-    if "Working" in pane_text or "Flumoxing" in pane_text or "thinking" in pane_text.lower():
-        return "working"
-    if "• Explored" in pane_text or "• Ran " in pane_text or "• Read " in pane_text:
-        return "working"
-    # Idle indicators
-    if last.startswith("›") or last.endswith(">") or "> " in last:
-        return "idle"
+    if "openai codex" in lower or "› " in pane_text:
+        return "ready"
+    if "claude code" in lower or "bypass permissions" in lower or "❯" in pane_text:
+        return "ready"
+    if "gemini cli" in lower or "type your message" in lower or "workspace" in lower:
+        return "ready"
     if last.rstrip().endswith("$"):
         return "off"
-    return "unknown"
+    return "booting"
+
+
+def extract_working_note(lines: list[str]) -> str:
+    for line in reversed(lines[-80:]):
+        match = re.search(r"Working \(([^)]*)", line, re.IGNORECASE)
+        if match:
+            note = match.group(1).split("•", 1)[0].strip(" )…")
+            if note:
+                return note
+        match = re.search(r"Cascading(?:…|\.{3})\s*\(([^)]*)", line, re.IGNORECASE)
+        if match:
+            return match.group(1).strip(" )…")
+        match = re.search(r"Lollygagging(?:…|\.{3})\s*\(([^)]*)", line, re.IGNORECASE)
+        if match:
+            return match.group(1).strip(" )…")
+        lowered = line.lower()
+        if "background terminal" in lowered or "waiting for background" in lowered:
+            return "bg-task"
+    return ""
+
+
+def watcher_runtime_hints() -> dict[str, tuple[str, str]]:
+    log_path = PIPELINE_DIR / "logs" / "experimental" / "watcher.log"
+    if not log_path.exists():
+        return {}
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-300:]
+    except OSError:
+        return {}
+
+    claude_started_at = None
+    claude_done = False
+    codex_started_at = None
+    codex_done = False
+    gemini_started_at = None
+    gemini_done = False
+
+    for line in lines:
+        ts_match = WATCHER_TS_RE.match(line)
+        if not ts_match:
+            continue
+        try:
+            timestamp = dt.datetime.fromisoformat(ts_match.group(1)).timestamp()
+        except ValueError:
+            continue
+
+        if "notify_claude" in line or ("send-keys" in line and "pane_type=claude" in line) or "waiting_for_claude" in line:
+            claude_started_at = timestamp
+            claude_done = False
+        elif "claude activity detected" in line or ("new job:" in line and claude_started_at is not None):
+            claude_done = True
+
+        if "lease acquired: slot=slot_verify" in line or "dispatching codex prompt" in line or "VERIFY_PENDING → VERIFY_RUNNING" in line:
+            codex_started_at = timestamp
+            codex_done = False
+        elif "codex task completed" in line or "lease released: slot=slot_verify" in line or "VERIFY_RUNNING → VERIFY_DONE" in line:
+            codex_done = True
+
+        if "notify_gemini" in line or "gemini response activity" in line:
+            gemini_started_at = timestamp
+            gemini_done = False
+        elif "gemini advice updated" in line:
+            gemini_done = True
+
+    hints = {}
+    now = time.time()
+    if claude_started_at is not None and not claude_done:
+        hints["Claude"] = ("working", format_elapsed(now - claude_started_at))
+    elif claude_done:
+        hints["Claude"] = ("ready", "")
+    if codex_started_at is not None and not codex_done:
+        hints["Codex"] = ("working", format_elapsed(now - codex_started_at))
+    elif codex_done:
+        hints["Codex"] = ("ready", "")
+    if gemini_started_at is not None and not gemini_done:
+        hints["Gemini"] = ("working", format_elapsed(now - gemini_started_at))
+    elif gemini_done:
+        hints["Gemini"] = ("ready", "")
+    return hints
 
 
 def get_full_state() -> dict:
     session_alive = tmux_session_exists()
     panes = tmux_list_panes() if session_alive else []
+    hints = watcher_runtime_hints()
 
     agents = []
     for agent_def in AGENT_ROLES:
         pane = next((p for p in panes if p["index"] == agent_def["pane_index"]), None)
         pane_text = ""
         status = "off"
+        status_note = ""
         if pane and not pane["dead"]:
             pane_text = tmux_capture_pane(pane["pane_id"])
             status = detect_agent_status(pane_text)
+            lines = [ANSI_RE.sub("", l).strip() for l in pane_text.splitlines() if l.strip()]
+            if status == "working":
+                status_note = extract_working_note(lines)
         elif pane and pane["dead"]:
             status = "dead"
+
+        hint = hints.get(agent_def["name"])
+        if hint:
+            hint_status, hint_note = hint
+            if hint_status == "working":
+                status = "working"
+                if not status_note:
+                    status_note = hint_note
+            elif hint_status == "ready" and status == "booting":
+                status = "ready"
 
         agents.append({
             "name": agent_def["name"],
             "role": agent_def["role"],
             "status": status,
+            "status_note": status_note,
             "pane_id": pane["pane_id"] if pane else None,
             "pane_text": pane_text[-20000:] if pane_text else "",  # 최근 20000자
         })

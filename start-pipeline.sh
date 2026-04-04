@@ -12,15 +12,30 @@
 PROJECT_ROOT="${1:-$(pwd)}"
 MODE="experimental"
 NO_ATTACH=0
+SESSION=""
 
+shift 2>/dev/null || true  # skip PROJECT_ROOT positional
 for arg in "$@"; do
     case $arg in
         baseline|experimental|both) MODE="$arg" ;;
         --no-attach) NO_ATTACH=1 ;;
+        --session) :; ;;  # next arg is the value
+        --session=*) SESSION="${arg#*=}" ;;
     esac
 done
+# Handle --session VALUE (two-arg form)
+prev=""
+for arg in "$@"; do
+    if [ "$prev" = "--session" ]; then SESSION="$arg"; fi
+    prev="$arg"
+done
 
-SESSION="ai-pipeline"
+# Default: project-aware session name
+if [ -z "$SESSION" ]; then
+    _proj_name="$(basename "$(readlink -f "$PROJECT_ROOT")")"
+    _safe_name="$(printf '%s' "$_proj_name" | tr -cd 'A-Za-z0-9_-')"
+    SESSION="aip-${_safe_name:-default}"
+fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # CLI 경로 탐지 — non-interactive shell에서도 nvm/npm global을 찾을 수 있도록

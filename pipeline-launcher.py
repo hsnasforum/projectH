@@ -564,6 +564,11 @@ def detect_agent_status(label: str, lines: list[str]) -> tuple[str, str, str]:
     ):
         note = extract_working_note(lines)
         return "WORKING", note, " / ".join(lines[-2:]) if len(lines) >= 2 else lines[-1]
+    # Gemini-specific working: "Thinking..." spinner in recent output only
+    if label == "Gemini":
+        recent_lower = "\n".join(recent_lines[-15:]).lower()
+        if "esc to cancel" in recent_lower:
+            return "WORKING", "", " / ".join(recent_lines[-2:]) if len(recent_lines) >= 2 else recent_lines[-1]
     if label == "Codex" and ("› " in text or "openai codex" in lower):
         return "READY", "", " / ".join(lines[-2:]) if len(lines) >= 2 else lines[-1]
     if label == "Claude" and ("❯" in text or "claude code" in lower or "bypass permissions" in lower):

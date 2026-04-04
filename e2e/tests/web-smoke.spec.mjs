@@ -517,7 +517,8 @@ test("corrected-save 저장 뒤 늦게 내용 거절하고 다시 수정해도 s
   await expect(page.locator("#notice-box")).toHaveText("내용 거절을 기록했습니다. 이미 저장된 노트는 그대로 유지되며 최신 내용 판정만 바뀝니다.");
   await expect(page.locator("#response-quick-meta-text")).toContainText("저장 기준 요청 시점 수정본 스냅샷");
   await expect(page.locator("#response-quick-meta-text")).not.toContainText("내용 거절 기록됨");
-  await expect(page.locator("#response-content-verdict-state")).toContainText("내용 거절 기록됨");
+  const correctedSaveVerdictStatePattern = /^내용 거절 기록됨 · .+$/;
+  await expect(page.locator("#response-content-verdict-state")).toHaveText(correctedSaveVerdictStatePattern);
   const correctedSaveSavedHistoryVerdictStatus = "이 답변 내용을 거절로 기록했습니다. 저장 승인 거절과는 별도입니다. 아래 수정본 기록이나 저장 요청은 계속 별도 흐름으로 사용할 수 있습니다. 이미 저장된 노트와 경로는 그대로 남고, 이번 내용 거절은 최신 판정만 바꿉니다.";
   await expect(page.locator("#response-content-verdict-status")).toHaveText(correctedSaveSavedHistoryVerdictStatus);
   await expect(page.getByTestId("response-content-reason-box")).toBeVisible();

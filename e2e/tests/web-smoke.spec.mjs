@@ -376,7 +376,15 @@ test("내용 거절은 approval을 유지하고 나중 explicit save로 supersed
   await expect(approvalBox.locator('[data-testid="response-content-reject"]')).toHaveCount(0);
   await expect(page.locator("#response-content-verdict-status")).toContainText("저장 승인 거절과는 별도입니다.");
   await expect(page.locator("#response-content-verdict-status")).toContainText("이미 열린 저장 승인 카드는 그대로 유지되며 자동 취소되지 않습니다.");
-  await expect(page.locator("#approval-preview")).toContainText("중간 섹션 핵심 결정은 승인 기반 저장을 유지하는 것입니다.");
+  const expectedNotePreview = [
+    `# ${path.basename(longFixturePath)} 요약`,
+    "",
+    `원본 파일: ${longFixturePath}`,
+    "",
+    "## 요약",
+    `[모의 요약] ${middleSignal} 추가로 로컬 우선 구조를 유지합니다. 마무리 설명 문장입니다. 마무리 설명 문장입니다. 마무리 설명 문장입니다. 마무리 설명 문장입니다. 마무리 설명 문장입니다. 마무리 설명 문장입니다. 마 긴 요약 문서 도입 설명 문장입니다. 도입 설명 문장입니다. 도입 설명 문장입니다. 도입 설명 문장입니다. 도입 설명 문장입니다. 도입 설명 문장입니다. 도입 설명 문장입니다. `,
+  ].join("\n");
+  await expect(page.locator("#approval-preview")).toHaveText(expectedNotePreview);
 
   const originalApprovalPreview = (await page.locator("#approval-preview").textContent()) || "";
 

@@ -874,7 +874,8 @@ test("same-session recurrence aggregate는 separate blocked trigger surface로 �
 
   await page.getByTestId("source-path").fill(shortFixturePath);
   await page.getByTestId("submit-request").click();
-  await expect(page.getByTestId("response-box")).not.toContainText("[검토 메모 활성]");
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).not.toContainText("[검토 메모 활성]");
 
   const reverseButton = aggregateTriggerBox.getByTestId("aggregate-trigger-reverse");
   await expect(reverseButton).toBeVisible();

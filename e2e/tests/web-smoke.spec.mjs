@@ -752,7 +752,8 @@ test("same-session recurrence aggregate는 separate blocked trigger surface로 �
   await page.getByTestId("source-path").fill(shortFixturePath);
   await page.getByTestId("submit-request").click();
 
-  await expect(page.getByTestId("response-box")).toContainText(middleSignal);
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).toContainText(middleSignal);
   await page.getByTestId("response-correction-input").fill(correctedText);
   await page.getByTestId("response-correction-submit").click();
 

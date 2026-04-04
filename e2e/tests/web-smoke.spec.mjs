@@ -490,7 +490,7 @@ test("corrected-save 저장 뒤 늦게 내용 거절하고 다시 수정해도 s
   await page.getByTestId("response-correction-save-request").click();
   await expect(page.getByTestId("approval-box")).toBeVisible();
   await expect(page.locator("#approval-meta span").filter({ hasText: "저장 기준:" })).toHaveText("저장 기준: 기록된 수정본 스냅샷");
-  await expect(page.locator("#approval-preview")).toContainText("수정본 A입니다.");
+  await expect(page.locator("#approval-preview")).toHaveText(correctedTextA);
 
   await page.getByTestId("approve-button").click();
 

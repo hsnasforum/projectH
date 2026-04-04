@@ -907,6 +907,7 @@ test("스트리밍 중 취소 버튼이 동작합니다", async ({ page }) => {
   await page.getByTestId("submit-request").click();
 
   await expect(page.getByTestId("cancel-request")).toBeVisible();
+  await expect(page.locator("#progress-title")).not.toHaveText("파일 요약 생성 중");
   await page.getByTestId("cancel-request").click();
 
   await expect(page.locator("#notice-box")).toHaveText("요청을 취소했습니다. 현재까지 받은 응답만 화면에 남겨둡니다.");

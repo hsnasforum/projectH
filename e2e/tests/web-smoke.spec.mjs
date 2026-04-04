@@ -530,7 +530,7 @@ test("corrected-save 저장 뒤 늦게 내용 거절하고 다시 수정해도 s
   await expect(page.getByTestId("response-content-reason-box")).toBeHidden();
   await expect(page.getByTestId("response-correction-input")).toHaveValue(correctedTextB);
   await expect(page.locator("#response-correction-state")).toContainText("기록된 수정본이 있습니다");
-  await expect(page.locator("#response-correction-status")).toContainText("이미 기록된 수정본으로 새 승인 미리보기를 만듭니다.");
+  await expect(page.locator("#response-correction-status")).toHaveText("저장 요청은 현재 입력창이 아니라 이미 기록된 수정본으로 새 승인 미리보기를 만듭니다. 저장 승인과는 별도입니다.");
   await expect(page.getByTestId("response-correction-save-request")).toBeEnabled();
   await expect(page.locator("#response-saved-path-row")).toBeVisible();
   expect(fs.readFileSync(correctedBridgeNotePath, "utf-8")).toBe(correctedTextA);

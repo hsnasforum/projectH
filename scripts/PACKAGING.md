@@ -56,13 +56,27 @@ Windows native path(`C:\...\Temp\_MEIxxxx\_data\...`)는 자동으로
 
 ```powershell
 pip install pyinstaller
+# repo 루트에서 실행 (pipeline_gui/ 패키지가 있는 위치)
 pyinstaller --onefile --noconsole --name pipeline-gui `
+    --paths "." `
     --add-data "start-pipeline.sh;_data" `
     --add-data "stop-pipeline.sh;_data" `
     --add-data "watcher_core.py;_data" `
     --add-data "schemas/agent_manifest.schema.json;_data/schemas" `
     --add-data "schemas/job_state.schema.json;_data/schemas" `
     pipeline-gui.py
+```
+
+`windows-launchers/` 폴더에서 실행하는 경우:
+```powershell
+pyinstaller --onefile --noconsole --name pipeline-gui `
+    --paths ".." `
+    --add-data "..\start-pipeline.sh;_data" `
+    --add-data "..\stop-pipeline.sh;_data" `
+    --add-data "..\watcher_core.py;_data" `
+    --add-data "..\schemas\agent_manifest.schema.json;_data/schemas" `
+    --add-data "..\schemas\job_state.schema.json;_data/schemas" `
+    ..\pipeline-gui.py
 ```
 
 `--add-data`를 빼고 빌드하면 `Setup: Missing start-pipeline.sh, ...`가 뜹니다.

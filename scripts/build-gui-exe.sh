@@ -101,6 +101,7 @@ pyinstaller \
     --noconsole \
     --name "pipeline-gui" \
     --clean \
+    --paths "$PROJECT_ROOT" \
     $ADD_DATA_ARGS \
     pipeline-gui.py
 

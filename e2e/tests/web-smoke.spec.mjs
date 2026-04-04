@@ -425,7 +425,8 @@ test("내용 거절은 approval을 유지하고 나중 explicit save로 supersed
 
   await page.getByTestId("approve-button").click();
 
-  await expect(responseBox).toContainText("저장했습니다.");
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).toContainText("저장했습니다.");
   await expect
     .poll(async () => {
       const payload = await fetchSessionPayload(page, sessionId);

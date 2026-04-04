@@ -561,8 +561,7 @@ test("candidate confirmation path는 save support와 분리되어 기록되고 l
   await expect(page.locator("#notice-box")).toHaveText("수정본을 기록했습니다. 저장 승인은 별도 흐름으로 유지됩니다.");
   await expect(confirmationBox).toBeVisible();
   await expect(confirmationButton).toBeEnabled();
-  await expect(page.locator("#response-candidate-confirmation-status")).toContainText("positive reuse confirmation만 남깁니다.");
-  await expect(page.locator("#response-candidate-confirmation-status")).toContainText("저장 승인, 내용 거절, 거절 메모, 피드백과는 별도입니다.");
+  await expect(page.locator("#response-candidate-confirmation-status")).toHaveText("이 버튼은 현재 기록된 수정 방향을 나중에도 다시 써도 된다는 positive reuse confirmation만 남깁니다. 저장 승인, 내용 거절, 거절 메모, 피드백과는 별도입니다.");
 
   await expect
     .poll(async () => {

@@ -377,7 +377,8 @@ test("내용 거절은 approval을 유지하고 나중 explicit save로 supersed
   const responseBox = page.getByTestId("response-box");
   const approvalBox = page.getByTestId("approval-box");
 
-  await expect(responseBox).toContainText("중간 섹션 핵심 결정은 승인 기반 저장을 유지하는 것입니다.");
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).toContainText(middleSignal);
   await expect(approvalBox).toBeVisible();
   await expect(responseBox.getByTestId("response-content-verdict-box")).toBeVisible();
   await expect(responseBox.getByTestId("response-content-reject")).toBeVisible();

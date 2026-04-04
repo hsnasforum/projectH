@@ -744,7 +744,7 @@ test("same-session recurrence aggregate는 separate blocked trigger surface로 �
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-item").locator("strong").first()).toHaveText("반복 교정 묶음");
   await expect(aggregateTriggerBox).toContainText("capability unblocked_all_required");
   await expect(aggregateTriggerBox).toContainText("audit contract_only_not_emitted");
-  await expect(aggregateTriggerBox).toContainText("계획 타깃 eligible_for_reviewed_memory_draft_planning_only");
+  await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-item").locator(".history-item-summary").filter({ hasText: "계획 타깃" })).toHaveText("계획 타깃 eligible_for_reviewed_memory_draft_planning_only");
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-helper")).toHaveText("검토 메모 적용을 시작할 수 있습니다. 사유를 입력한 뒤 시작 버튼을 누르세요.");
 
   const noteInput = aggregateTriggerBox.getByTestId("aggregate-trigger-note");

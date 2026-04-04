@@ -637,7 +637,7 @@ test("candidate confirmation path는 save support와 분리되어 기록되고 l
   await expect(page.locator("#review-queue-status")).toHaveText("현재 후보는 검토 수락만 기록할 수 있습니다. 아직 적용, 편집, 거절은 열지 않았습니다.");
   await expect(reviewQueueBox.getByTestId("review-queue-item").locator("strong").first()).toHaveText("explicit rewrite correction recorded for this grounded brief");
   await expect(reviewQueueBox.getByTestId("review-queue-item").locator(".history-item-title span")).toContainText("기준 명시 확인");
-  await expect(reviewQueueBox).toContainText("상태 검토 대기");
+  await expect(reviewQueueBox.getByTestId("review-queue-item").locator(".history-item-title span")).toContainText("상태 검토 대기");
   const reviewAcceptButton = reviewQueueBox.getByTestId("review-queue-accept");
   await expect(reviewAcceptButton).toHaveCount(1);
   await expect(reviewAcceptButton).toHaveText("검토 수락");

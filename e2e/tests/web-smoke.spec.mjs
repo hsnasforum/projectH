@@ -761,7 +761,7 @@ test("same-session recurrence aggregate는 separate blocked trigger surface로 �
   await expect(page.locator("#notice-box")).toContainText("transition record가 발행되었습니다.");
 
   await expect(reviewQueueBox).toBeVisible();
-  await expect(reviewQueueBox).toContainText("검토 수락");
+  await expect(reviewQueueBox.getByTestId("review-queue-accept")).toHaveText("검토 수락");
 
   const emittedPayload = await fetchSessionPayload(page, sessionId);
   expect(emittedPayload.session.recurrence_aggregate_candidates).toHaveLength(1);

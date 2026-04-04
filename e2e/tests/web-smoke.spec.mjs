@@ -627,7 +627,7 @@ test("candidate confirmation path는 save support와 분리되어 기록되고 l
   await confirmationButton.click();
 
   await expect(page.locator("#notice-box")).toHaveText("현재 수정 방향을 나중에도 다시 써도 된다는 확인을 기록했습니다. 저장 승인과는 별도입니다.");
-  await expect(page.locator("#response-candidate-confirmation-state")).toContainText("재사용 확인 기록됨");
+  await expect(page.locator("#response-candidate-confirmation-state")).toHaveText(/^재사용 확인 기록됨 · .+$/);
   await expect(confirmationButton).toBeDisabled();
   await expect(page.locator("#response-candidate-confirmation-status")).toHaveText("현재 기록된 수정 방향을 나중에도 다시 써도 된다는 positive reuse confirmation만 남겼습니다. 저장 승인, 내용 거절, 거절 메모와는 별도입니다.");
   await expect(reviewQueueBox).toBeVisible();

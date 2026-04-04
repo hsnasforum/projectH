@@ -313,7 +313,8 @@ test("저장 요청 후 승인 경로를 다시 발급할 수 있습니다", asy
   await page.getByTestId("approval-path-input").fill(revisedNotePath);
   await page.getByTestId("reissue-button").click();
 
-  await expect(page.getByTestId("response-box")).toContainText("새 경로로 저장하려면 다시 승인해 주세요.");
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).toContainText("새 경로로 저장하려면 다시 승인해 주세요.");
   await expect(page.getByTestId("approval-path-input")).toHaveValue(revisedNotePath);
 });
 

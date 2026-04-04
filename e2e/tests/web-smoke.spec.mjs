@@ -550,7 +550,8 @@ test("corrected-save 저장 뒤 늦게 내용 거절하고 다시 수정해도 s
   await page.getByTestId("response-correction-submit").click();
 
   await expect(page.locator("#notice-box")).toHaveText("수정본을 기록했습니다. 저장 승인은 별도 흐름으로 유지됩니다.");
-  await expect(responseBox).toContainText("승인 시점에 고정된 수정본");
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).toContainText("승인 시점에 고정된 수정본");
   await expect(page.locator("#response-quick-meta-text")).toContainText("저장 기준 요청 시점 수정본 스냅샷");
   await expect(page.locator("#response-quick-meta-text")).not.toContainText("내용 거절 기록됨");
   await expect(page.locator("#response-content-verdict-state")).toHaveText("최신 내용 판정은 기록된 수정본입니다.");

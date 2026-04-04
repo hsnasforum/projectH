@@ -570,7 +570,8 @@ test("candidate confirmation path는 save support와 분리되어 기록되고 l
   const confirmationButton = page.getByTestId("response-candidate-confirmation-submit");
   const reviewQueueBox = page.getByTestId("review-queue-box");
 
-  await expect(responseBox).toContainText(middleSignal);
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).toContainText(middleSignal);
   await expect(confirmationBox).toBeHidden();
   await expect(reviewQueueBox).toBeHidden();
 

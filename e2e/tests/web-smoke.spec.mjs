@@ -175,7 +175,8 @@ test("브라우저 파일 선택으로도 파일 요약이 됩니다", async ({ 
 
   await page.getByTestId("submit-request").click();
 
-  await expect(page.getByTestId("response-box")).toContainText("중간 섹션 핵심 결정은 승인 기반 저장을 유지하는 것입니다.");
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).toContainText(middleSignal);
   await expect(page.locator("#context-box")).toContainText("long-summary-fixture.md");
   await expect(page.locator("#response-quick-meta-text")).toContainText("long-summary-fixture.md");
   await expect(page.locator("#response-quick-meta-text")).toContainText("문서 요약");

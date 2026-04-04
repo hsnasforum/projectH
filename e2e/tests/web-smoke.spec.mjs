@@ -692,7 +692,7 @@ test("candidate confirmation path는 save support와 분리되어 기록되고 l
   await page.getByTestId("response-correction-submit").click();
 
   await expect(page.locator("#notice-box")).toHaveText("수정본을 기록했습니다. 저장 승인은 별도 흐름으로 유지됩니다.");
-  await expect(page.locator("#response-candidate-confirmation-state")).toContainText("현재 수정 방향 재사용 확인은 아직 없습니다.");
+  await expect(page.locator("#response-candidate-confirmation-state")).toHaveText("현재 수정 방향 재사용 확인은 아직 없습니다.");
   await expect(confirmationButton).toBeEnabled();
   await expect(reviewQueueBox).toBeHidden();
 

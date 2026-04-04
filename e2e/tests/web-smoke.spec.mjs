@@ -339,7 +339,7 @@ test("원문 저장 후 늦게 내용 거절해도 saved history와 latest verdi
   await expect(responseBox).toContainText("저장했습니다.");
   await expect(page.locator("#response-saved-path-row")).toBeVisible();
   await expect(page.locator("#response-saved-path")).toContainText("late-flip-note.md");
-  await expect(page.locator("#response-content-verdict-state")).toContainText("최신 내용 판정은 원문 저장 승인입니다.");
+  await expect(page.locator("#response-content-verdict-state")).toHaveText("최신 내용 판정은 원문 저장 승인입니다.");
   await expect(page.getByTestId("response-content-reason-box")).toBeHidden();
   expect(fs.existsSync(lateFlipNotePath)).toBeTruthy();
   const savedBeforeReject = fs.readFileSync(lateFlipNotePath, "utf-8");

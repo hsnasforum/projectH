@@ -156,7 +156,8 @@ test("파일 요약 후 근거와 요약 구간이 보입니다", async ({ page 
   await page.getByTestId("source-path").fill(longFixturePath);
   await page.getByTestId("submit-request").click();
   await expect(page.getByTestId("response-copy-text")).toBeHidden();
-  await expect(page.getByTestId("response-box")).toContainText(middleSignal);
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).toContainText(middleSignal);
   await expect(page.getByTestId("response-copy-text")).toBeVisible();
 
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);

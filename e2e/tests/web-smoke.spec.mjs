@@ -374,8 +374,8 @@ test("내용 거절은 approval을 유지하고 나중 explicit save로 supersed
   await expect(responseBox.getByTestId("response-content-reject")).toBeVisible();
   await expect(responseBox.getByTestId("response-content-reason-box")).toBeHidden();
   await expect(approvalBox.locator('[data-testid="response-content-reject"]')).toHaveCount(0);
-  await expect(page.locator("#response-content-verdict-status")).toContainText("저장 승인 거절과는 별도입니다.");
-  await expect(page.locator("#response-content-verdict-status")).toContainText("이미 열린 저장 승인 카드는 그대로 유지되며 자동 취소되지 않습니다.");
+  const initialVerdictStatus = "저장 승인 거절과는 별도입니다. 이 버튼을 누르면 grounded-brief 원문 응답에 내용 거절을 즉시 기록합니다. 이미 열린 저장 승인 카드는 그대로 유지되며 자동 취소되지 않습니다.";
+  await expect(page.locator("#response-content-verdict-status")).toHaveText(initialVerdictStatus);
   const expectedNotePreview = [
     `# ${path.basename(longFixturePath)} 요약`,
     "",

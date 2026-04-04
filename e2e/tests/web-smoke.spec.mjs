@@ -123,7 +123,8 @@ test("파일 요약 후 근거와 요약 구간이 보입니다", async ({ page 
   await page.getByTestId("source-path").fill(longFixturePath);
   await page.getByTestId("submit-request").click();
 
-  await expect(page.getByTestId("response-box")).toContainText("중간 섹션 핵심 결정은 승인 기반 저장을 유지하는 것입니다.");
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).toContainText(middleSignal);
   await expect(page.locator("#response-quick-meta-text")).toContainText("long-summary-fixture.md");
   await expect(page.locator("#response-quick-meta-text")).toContainText("문서 요약");
   await expect(page.getByTestId("response-copy-text")).toBeVisible();

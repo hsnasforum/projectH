@@ -291,8 +291,8 @@ test("검색만 응답은 transcript에서 preview cards만 보이고 본문 텍
   // after search-only, send search-plus-summary in same session — body must recover
   await page.locator("#search-only").uncheck();
   await page.getByTestId("submit-request").click();
-  await expect(page.getByTestId("response-box")).toContainText("[모의 요약]");
   await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).toContainText("[모의 요약]");
   await expect(page.getByTestId("response-search-preview")).toBeVisible();
 });
 

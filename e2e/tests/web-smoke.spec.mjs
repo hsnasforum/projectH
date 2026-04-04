@@ -344,7 +344,8 @@ test("원문 저장 후 늦게 내용 거절해도 saved history와 latest verdi
   await expect(page.getByTestId("approval-box")).toBeVisible();
   await page.getByTestId("approve-button").click();
 
-  await expect(responseBox).toContainText("저장했습니다.");
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).toContainText("저장했습니다.");
   await expect(page.locator("#response-saved-path-row")).toBeVisible();
   await expect(page.locator("#response-saved-path")).toContainText("late-flip-note.md");
   await expect(page.locator("#response-content-verdict-state")).toHaveText("최신 내용 판정은 원문 저장 승인입니다.");

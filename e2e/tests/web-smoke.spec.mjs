@@ -190,7 +190,8 @@ test("브라우저 폴더 선택으로도 문서 검색이 됩니다", async ({ 
 
   await page.getByTestId("submit-request").click();
 
-  await expect(page.getByTestId("response-box")).toContainText("[모의 요약]");
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).toContainText("[모의 요약]");
   await expect(page.locator("#response-quick-meta-text")).toContainText("선택 결과 요약");
   await expect(page.locator("#response-quick-meta-text")).toContainText("출처 2개");
   await expect(page.locator("#response-quick-meta-text")).not.toContainText(/출처\s+budget-plan\.md/);

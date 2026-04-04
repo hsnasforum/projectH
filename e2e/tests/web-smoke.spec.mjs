@@ -424,7 +424,7 @@ test("내용 거절은 approval을 유지하고 나중 explicit save로 supersed
   await expect(approvalBox).toBeHidden();
   await expect(page.locator("#response-saved-path-row")).toBeVisible();
   await expect(page.locator("#response-saved-path")).toContainText("rejected-verdict-note.md");
-  await expect(page.locator("#response-content-verdict-state")).toContainText("최신 내용 판정은 원문 저장 승인입니다.");
+  await expect(page.locator("#response-content-verdict-state")).toHaveText("최신 내용 판정은 원문 저장 승인입니다.");
   await expect(responseBox.getByTestId("response-content-reason-box")).toBeHidden();
   await expect(page.getByTestId("response-content-reject")).toBeEnabled();
   await expect(page.locator("#response-quick-meta-text")).not.toContainText("내용 거절 기록됨");

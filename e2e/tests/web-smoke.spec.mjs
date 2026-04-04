@@ -393,7 +393,8 @@ test("내용 거절은 approval을 유지하고 나중 explicit save로 supersed
   await page.getByTestId("response-content-reject").click();
 
   await expect(page.locator("#notice-box")).toHaveText("내용 거절을 기록했습니다. 저장 승인 거절과는 별도입니다.");
-  await expect(page.locator("#response-content-verdict-state")).toContainText("내용 거절 기록됨");
+  const postRejectVerdictStatePattern = /^내용 거절 기록됨 · .+$/;
+  await expect(page.locator("#response-content-verdict-state")).toHaveText(postRejectVerdictStatePattern);
   const postRejectVerdictStatus = "이 답변 내용을 거절로 기록했습니다. 저장 승인 거절과는 별도입니다. 아래 수정본 기록이나 저장 요청은 계속 별도 흐름으로 사용할 수 있습니다. 이미 열린 저장 승인 카드는 그대로 유지되며 자동 취소되지 않습니다.";
   await expect(page.locator("#response-content-verdict-status")).toHaveText(postRejectVerdictStatus);
   await expect(responseBox.getByTestId("response-content-reason-box")).toBeVisible();

@@ -4222,3 +4222,55 @@ test("entity-card dual-probe 자연어 reload 후 follow-up에서 response origi
 
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
+
+test("entity-card 붉은사막 자연어 reload 후 follow-up에서 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "entity-actual-natural-reload-followup-origin");
+
+  const recordId = `websearch-entity-actual-nat-fu-or-${Date.now().toString(36)}`;
+  const recordDir = path.join(repoRoot, "data", "web-search", sessionId);
+  const recordPath = path.join(recordDir, `붉은사막-${recordId}.json`);
+  fs.mkdirSync(recordDir, { recursive: true });
+  const record = {
+    record_id: recordId,
+    session_id: sessionId,
+    query: "붉은사막",
+    permission: "enabled",
+    created_at: new Date().toISOString(),
+    result_count: 1,
+    page_count: 0,
+    results: [{ title: "붉은사막 - 나무위키", url: "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", snippet: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다." }],
+    pages: [],
+    summary_text: "웹 검색 요약: 붉은사막\n\n붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+    response_origin: { provider: "web", badge: "WEB", label: "웹 검색", answer_mode: "entity_card", verification_label: "설명형 단일 출처", source_roles: ["백과 기반"] },
+    claim_coverage: [],
+    claim_coverage_progress_summary: "",
+  };
+  fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
+
+  await page.evaluate(({ items }) => { renderSearchHistory(items); }, {
+    items: [{ record_id: recordId, query: "붉은사막", answer_mode: "entity_card", verification_label: "설명형 단일 출처", source_roles: ["백과 기반"], result_count: 1, page_count: 0, created_at: record.created_at, record_path: recordPath }],
+  });
+
+  const historyBox = page.locator("#search-history-box");
+  await expect(historyBox).toBeVisible();
+  await historyBox.locator(".history-item-actions button.secondary").first().click();
+
+  const originBadge = page.locator("#response-origin-badge");
+  await expect(originBadge).toHaveText("WEB");
+
+  await page.evaluate(async () => { await sendRequest({ user_text: "방금 검색한 결과 다시 보여줘" }); });
+  await expect(originBadge).toHaveText("WEB");
+
+  await page.evaluate(async ({ rid }) => { await sendRequest({ user_text: "이 검색 결과 요약해줘", load_web_search_record_id: rid }, "follow_up"); }, { rid: recordId });
+
+  await expect(originBadge).toHaveText("WEB");
+  await expect(originBadge).toHaveClass(/web/);
+  const answerModeBadge = page.locator("#response-answer-mode-badge");
+  await expect(answerModeBadge).toBeVisible();
+  await expect(answerModeBadge).toHaveText("설명 카드");
+  const originDetail = page.locator("#response-origin-detail");
+  await expect(originDetail).toContainText("설명형 단일 출처");
+  await expect(originDetail).toContainText("백과 기반");
+
+  try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
+});

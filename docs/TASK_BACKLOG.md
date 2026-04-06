@@ -61,6 +61,7 @@
 48. Entity-card dual-probe browser natural-reload exact-field Playwright smoke coverage (`WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반`)
 49. Entity-card dual-probe browser natural-reload follow-up source-path continuity service + Playwright smoke coverage (`pearlabyss.com` dual-probe URLs in context box)
 50. Entity-card dual-probe browser natural-reload follow-up response-origin continuity service + Playwright smoke coverage (`WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반` drift prevention)
+51. Entity-card 붉은사막 browser natural-reload follow-up response-origin continuity service + Playwright smoke coverage (`WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반` drift prevention)
 
 ## Current Phase In Progress
 

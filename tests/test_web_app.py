@@ -15767,6 +15767,72 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(followup_origin["verification_label"], first_origin["verification_label"])
             self.assertEqual(followup_origin["source_roles"], first_origin["source_roles"])
 
+    def test_handle_chat_actual_entity_search_natural_reload_follow_up_preserves_response_origin(self) -> None:
+        """actual entity-search → 자연어 reload → follow-up에서
+        response_origin이 drift하지 않습니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "actual-entity-natural-followup-origin-session",
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            second = service.handle_chat(
+                {
+                    "session_id": "actual-entity-natural-followup-origin-session",
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                }
+            )
+            self.assertTrue(second["ok"])
+
+            third = service.handle_chat(
+                {
+                    "session_id": "actual-entity-natural-followup-origin-session",
+                    "user_text": "이 검색 결과 요약해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(third["ok"])
+            followup_origin = third["response"]["response_origin"]
+
+            self.assertIsNotNone(followup_origin)
+            self.assertIn(followup_origin.get("answer_mode", ""), ("entity_card", first_origin["answer_mode"]))
+            self.assertEqual(followup_origin["verification_label"], first_origin["verification_label"])
+            self.assertEqual(followup_origin["source_roles"], first_origin["source_roles"])
+
 
 if __name__ == "__main__":
     unittest.main()

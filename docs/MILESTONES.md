@@ -72,6 +72,7 @@
 - entity-card dual-probe browser natural-reload exact-field smoke covering `WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반` retention after `방금 검색한 결과 다시 보여줘`
 - entity-card dual-probe browser natural-reload follow-up source-path continuity smoke covering `pearlabyss.com` dual-probe URLs in context box after natural reload + follow-up
 - entity-card dual-probe browser natural-reload follow-up response-origin continuity smoke covering `WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반` drift prevention
+- entity-card 붉은사막 browser natural-reload follow-up response-origin continuity smoke covering `WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반` drift prevention
 - PDF text-layer support
 - OCR-not-supported guidance
 - response feedback capture

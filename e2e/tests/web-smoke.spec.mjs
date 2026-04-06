@@ -582,6 +582,8 @@ test("corrected-save 저장 뒤 늦게 내용 거절하고 다시 수정해도 s
   await expect(page.getByTestId("response-correction-save-request")).toBeEnabled();
   await expect(page.locator("#response-saved-path-row")).toBeVisible();
   expect(fs.readFileSync(correctedBridgeNotePath, "utf-8")).toBe(correctedTextA);
+  await expect(page.locator("#transcript .message-when").first()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
+  await expect(page.locator("#transcript .message-when").last()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
 });
 
 test("candidate confirmation path는 save support와 분리되어 기록되고 later correction으로 current state에서 사라집니다", async ({ page }) => {

@@ -379,6 +379,8 @@ test("원문 저장 후 늦게 내용 거절해도 saved history와 latest verdi
   await expect(page.locator("#response-saved-path-row")).toBeVisible();
   await expect(page.locator("#response-saved-path")).toContainText("late-flip-note.md");
   expect(fs.readFileSync(lateFlipNotePath, "utf-8")).toBe(savedBeforeReject);
+  await expect(page.locator("#transcript .message-when").first()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
+  await expect(page.locator("#transcript .message-when").last()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
 });
 
 test("내용 거절은 approval을 유지하고 나중 explicit save로 supersede 됩니다", async ({ page }) => {
@@ -453,6 +455,8 @@ test("내용 거절은 approval을 유지하고 나중 explicit save로 supersed
   await expect(page.getByTestId("response-content-reject")).toBeEnabled();
   await expect(page.locator("#response-quick-meta-text")).not.toContainText("내용 거절 기록됨");
   expect(fs.existsSync(rejectedVerdictNotePath)).toBeTruthy();
+  await expect(page.locator("#transcript .message-when").first()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
+  await expect(page.locator("#transcript .message-when").last()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
 });
 
 test("corrected-save first bridge path가 기록본 기준 승인 스냅샷으로 저장됩니다", async ({ page }) => {

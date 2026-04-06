@@ -979,6 +979,8 @@ test("일반 채팅 응답에는 source-type label이 붙지 않습니다", asyn
     expect(metaText).not.toContain("문서 요약");
     expect(metaText).not.toContain("선택 결과 요약");
   }
+  await expect(page.locator("#transcript .message-when").first()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
+  await expect(page.locator("#transcript .message-when").last()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
 });
 
 test("claim-coverage panel은 status tag와 행동 힌트를 올바르게 렌더링합니다", async ({ page }) => {

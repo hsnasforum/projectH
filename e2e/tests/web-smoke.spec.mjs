@@ -3794,3 +3794,118 @@ test("entity-card 붉은사막 검색 결과 자연어 reload에서 response ori
     // best-effort cleanup
   }
 });
+
+test("entity-card dual-probe 자연어 reload에서 source path가 context box에 유지됩니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "entity-dual-probe-natural-reload-sp");
+
+  // Pre-seed an entity_card record with dual-probe URLs
+  const recordId = `websearch-entity-dual-nat-sp-${Date.now().toString(36)}`;
+  const recordDir = path.join(repoRoot, "data", "web-search", sessionId);
+  const recordPath = path.join(recordDir, `붉은사막-${recordId}.json`);
+  fs.mkdirSync(recordDir, { recursive: true });
+  const record = {
+    record_id: recordId,
+    session_id: sessionId,
+    query: "붉은사막",
+    permission: "enabled",
+    created_at: new Date().toISOString(),
+    result_count: 3,
+    page_count: 2,
+    results: [
+      {
+        title: "붉은사막 - 나무위키",
+        url: "https://namu.wiki/w/test",
+        snippet: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+        matched_query: "붉은사막",
+      },
+      {
+        title: "붉은사막 | 플랫폼 - 공식",
+        url: "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200",
+        snippet: "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.",
+        matched_query: "붉은사막 공식 플랫폼",
+      },
+      {
+        title: "붉은사막 | 서비스 - 공식",
+        url: "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300",
+        snippet: "붉은사막은 펄어비스가 운영하는 게임이다.",
+        matched_query: "붉은사막 서비스 공식",
+      },
+    ],
+    pages: [
+      {
+        url: "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200",
+        title: "붉은사막 | 플랫폼 - 공식",
+        text: "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이며 펄어비스가 개발 중입니다.",
+      },
+      {
+        url: "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300",
+        title: "붉은사막 | 서비스 - 공식",
+        text: "붉은사막은 펄어비스가 운영하는 게임이며 배급도 펄어비스가 담당합니다.",
+      },
+    ],
+    summary_text: "웹 검색 요약: 붉은사막\n\n붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+    response_origin: {
+      provider: "web",
+      badge: "WEB",
+      label: "웹 검색",
+      answer_mode: "entity_card",
+      verification_label: "설명형 단일 출처",
+      source_roles: ["백과 기반"],
+    },
+    claim_coverage: [],
+    claim_coverage_progress_summary: "",
+  };
+  fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
+
+  // Step 1: click reload to register record in server session
+  await page.evaluate(
+    ({ items }) => {
+      // @ts-ignore — renderSearchHistory is defined in the page scope
+      renderSearchHistory(items);
+    },
+    {
+      items: [
+        {
+          record_id: recordId,
+          query: "붉은사막",
+          answer_mode: "entity_card",
+          verification_label: "설명형 단일 출처",
+          source_roles: ["백과 기반"],
+          result_count: 3,
+          page_count: 2,
+          created_at: record.created_at,
+          record_path: recordPath,
+        },
+      ],
+    }
+  );
+
+  const historyBox = page.locator("#search-history-box");
+  await expect(historyBox).toBeVisible();
+  const reloadButton = historyBox.locator(".history-item-actions button.secondary").first();
+  await reloadButton.click();
+
+  const originBadge = page.locator("#response-origin-badge");
+  await expect(originBadge).toHaveText("WEB");
+
+  // Step 2: natural reload
+  await page.evaluate(async () => {
+    // @ts-ignore — sendRequest is defined in the page scope
+    await sendRequest({
+      user_text: "방금 검색한 결과 다시 보여줘",
+    });
+  });
+
+  // Assert context box shows both dual-probe source URLs after natural reload
+  const contextBox = page.locator("#context-box");
+  await expect(contextBox).toContainText("pearlabyss.com/ko-KR/Board/Detail?_boardNo=200");
+  await expect(contextBox).toContainText("pearlabyss.com/ko-KR/Board/Detail?_boardNo=300");
+
+  // Clean up
+  try {
+    fs.unlinkSync(recordPath);
+    fs.rmdirSync(recordDir);
+  } catch (_) {
+    // best-effort cleanup
+  }
+});

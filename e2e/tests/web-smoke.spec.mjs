@@ -323,6 +323,8 @@ test("저장 요청 후 승인 경로를 다시 발급할 수 있습니다", asy
   await expect(page.getByTestId("response-text")).toBeVisible();
   await expect(page.getByTestId("response-text")).toContainText("새 경로로 저장하려면 다시 승인해 주세요.");
   await expect(page.getByTestId("approval-path-input")).toHaveValue(revisedNotePath);
+  await expect(page.locator("#transcript .message-when").first()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
+  await expect(page.locator("#transcript .message-when").last()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
 });
 
 test("승인 후 실제 note가 저장됩니다", async ({ page }) => {
@@ -338,6 +340,8 @@ test("승인 후 실제 note가 저장됩니다", async ({ page }) => {
   await expect(page.getByTestId("response-text")).toBeVisible();
   await expect(page.getByTestId("response-text")).toContainText("저장했습니다.");
   expect(fs.existsSync(directNotePath)).toBeTruthy();
+  await expect(page.locator("#transcript .message-when").first()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
+  await expect(page.locator("#transcript .message-when").last()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
 });
 
 test("원문 저장 후 늦게 내용 거절해도 saved history와 latest verdict가 분리됩니다", async ({ page }) => {

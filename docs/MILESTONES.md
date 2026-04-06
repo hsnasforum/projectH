@@ -62,6 +62,7 @@
 - history-card latest-update mixed-source `다시 불러오기` follow-up source-path continuity service + browser smoke covering `store.steampowered.com` and `yna.co.kr` in context box
 - history-card latest-update single-source `다시 불러오기` follow-up source-path continuity service + browser smoke covering `example.com/seoul-weather` in context box
 - history-card latest-update news-only `다시 불러오기` follow-up source-path continuity service + browser smoke covering `hankyung.com` and `mk.co.kr` in context box
+- history-card entity-card zero-strong-slot `다시 불러오기` reload verification-label continuity browser smoke covering downgraded `설명형 단일 출처` and `백과 기반` without overstatement
 - PDF text-layer support
 - OCR-not-supported guidance
 - response feedback capture

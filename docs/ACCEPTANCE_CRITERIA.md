@@ -1353,6 +1353,7 @@ These are placeholders for the next phase design target and its immediate follow
   - history-card latest-update mixed-source `다시 불러오기` 후 follow-up → source path(`store.steampowered.com`, `yna.co.kr`) context box 유지
   - history-card latest-update single-source `다시 불러오기` 후 follow-up → source path(`example.com/seoul-weather`) context box 유지
   - history-card latest-update news-only `다시 불러오기` 후 follow-up → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지
+  - history-card entity-card zero-strong-slot `다시 불러오기` → downgraded `설명형 단일 출처` verification label, `백과 기반` source role 과장 없이 유지
 
 ### In Progress
 - Improve regression fixtures for weak-slot reinvestigation and source consensus.

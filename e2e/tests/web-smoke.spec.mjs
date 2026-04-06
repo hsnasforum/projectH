@@ -3145,7 +3145,7 @@ test("history-card latest-update news-only 다시 불러오기 후 follow-up 질
   }
 });
 
-test("history-card entity-card zero-strong-slot 다시 불러오기 후 downgraded verification badge와 verification label이 유지됩니다", async ({ page }) => {
+test("history-card entity-card zero-strong-slot 다시 불러오기 후 설명 카드 answer-mode badge와 설명형 단일 출처 verification label이 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "history-card-reload-entity-zero-strong");
 
   // Pre-seed a zero-strong-slot entity_card record (downgraded from strong to medium)

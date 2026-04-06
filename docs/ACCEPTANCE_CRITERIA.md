@@ -1352,6 +1352,7 @@ These are placeholders for the next phase design target and its immediate follow
   - history-card entity-card `다시 불러오기` 후 follow-up → dual-probe source path(`pearlabyss.com/200`, `pearlabyss.com/300`) context box 유지
   - history-card latest-update mixed-source `다시 불러오기` 후 follow-up → source path(`store.steampowered.com`, `yna.co.kr`) context box 유지
   - history-card latest-update single-source `다시 불러오기` 후 follow-up → source path(`example.com/seoul-weather`) context box 유지
+  - history-card latest-update news-only `다시 불러오기` 후 follow-up → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지
 
 ### In Progress
 - Improve regression fixtures for weak-slot reinvestigation and source consensus.

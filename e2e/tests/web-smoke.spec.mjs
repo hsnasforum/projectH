@@ -752,6 +752,8 @@ test("candidate confirmation path는 save support와 분리되어 기록되고 l
   expect(sourceMessage.candidate_review_record).toBeUndefined();
   expect(sourceMessage.candidate_confirmation_record).toBeUndefined();
   expect(sourceMessage.durable_candidate).toBeUndefined();
+  await expect(page.locator("#transcript .message-when").first()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
+  await expect(page.locator("#transcript .message-when").last()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
 });
 
 test("same-session recurrence aggregate는 separate blocked trigger surface로 렌더링됩니다", async ({ page }, testInfo) => {

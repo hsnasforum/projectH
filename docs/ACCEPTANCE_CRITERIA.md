@@ -1340,6 +1340,7 @@ These are placeholders for the next phase design target and its immediate follow
   - history-card `다시 불러오기` 후 follow-up → response origin badge, answer-mode badge drift 없음
   - history-card latest-update `다시 불러오기` 후 follow-up → `WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail drift 없음
   - history-card latest-update `다시 불러오기` 후 noisy community source(`보조 커뮤니티`, `brunch`) 본문·origin detail 미노출
+  - history-card entity-card `다시 불러오기` 후 noisy single-source claim(`출시일`, `2025`) 본문·origin detail 미노출, agreement-backed 사실 카드 유지
 
 ### In Progress
 - Improve regression fixtures for weak-slot reinvestigation and source consensus.

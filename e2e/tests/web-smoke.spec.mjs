@@ -2256,3 +2256,106 @@ test("history-card latest-update news-only 다시 불러오기 후 기사 교차
     // best-effort cleanup
   }
 });
+
+test("history-card latest-update news-only 다시 불러오기 후 기사 source path가 context box에 유지됩니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "history-card-reload-latest-news-sp");
+
+  // Pre-seed a news-only latest_update record (hankyung + mk)
+  const recordId = `websearch-latest-news-sp-${Date.now().toString(36)}`;
+  const recordDir = path.join(repoRoot, "data", "web-search", sessionId);
+  const recordPath = path.join(recordDir, `기준금리-${recordId}.json`);
+  fs.mkdirSync(recordDir, { recursive: true });
+  const record = {
+    record_id: recordId,
+    session_id: sessionId,
+    query: "기준금리 속보",
+    permission: "enabled",
+    created_at: new Date().toISOString(),
+    result_count: 2,
+    page_count: 2,
+    results: [
+      {
+        title: "기준금리 속보 - 한국경제",
+        url: "https://www.hankyung.com/economy/2025",
+        snippet: "한국은행이 기준금리를 동결했다고 밝혔다.",
+      },
+      {
+        title: "기준금리 뉴스 - 매일경제",
+        url: "https://www.mk.co.kr/economy/2025",
+        snippet: "한국은행이 기준금리를 동결했다.",
+      },
+    ],
+    pages: [
+      {
+        url: "https://www.hankyung.com/economy/2025",
+        title: "기준금리 속보 - 한국경제",
+        text: "한국은행이 기준금리를 동결했다고 밝혔다.",
+      },
+      {
+        url: "https://www.mk.co.kr/economy/2025",
+        title: "기준금리 뉴스 - 매일경제",
+        text: "한국은행이 기준금리를 동결했다.",
+      },
+    ],
+    summary_text: "웹 검색 요약: 기준금리 속보\n\n한국은행이 기준금리를 동결했다고 밝혔다.",
+    response_origin: {
+      provider: "web",
+      badge: "WEB",
+      label: "웹 검색",
+      answer_mode: "latest_update",
+      verification_label: "기사 교차 확인",
+      source_roles: ["보조 기사"],
+    },
+    claim_coverage: [],
+    claim_coverage_progress_summary: "",
+  };
+  fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
+
+  // Render the history card
+  await page.evaluate(
+    ({ items }) => {
+      // @ts-ignore — renderSearchHistory is defined in the page scope
+      renderSearchHistory(items);
+    },
+    {
+      items: [
+        {
+          record_id: recordId,
+          query: "기준금리 속보",
+          answer_mode: "latest_update",
+          verification_label: "기사 교차 확인",
+          source_roles: ["보조 기사"],
+          result_count: 2,
+          page_count: 2,
+          created_at: record.created_at,
+          record_path: recordPath,
+        },
+      ],
+    }
+  );
+
+  const historyBox = page.locator("#search-history-box");
+  await expect(historyBox).toBeVisible();
+  const reloadButton = historyBox.locator(".history-item-actions button.secondary").first();
+  await expect(reloadButton).toHaveText("다시 불러오기");
+
+  // Click "다시 불러오기"
+  await reloadButton.click();
+
+  // Wait for the response to render
+  const originBadge = page.locator("#response-origin-badge");
+  await expect(originBadge).toHaveText("WEB");
+
+  // Assert context box shows both news source URLs
+  const contextBox = page.locator("#context-box");
+  await expect(contextBox).toContainText("hankyung.com");
+  await expect(contextBox).toContainText("mk.co.kr");
+
+  // Clean up
+  try {
+    fs.unlinkSync(recordPath);
+    fs.rmdirSync(recordDir);
+  } catch (_) {
+    // best-effort cleanup
+  }
+});

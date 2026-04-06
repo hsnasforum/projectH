@@ -1345,6 +1345,7 @@ These are placeholders for the next phase design target and its immediate follow
   - history-card latest-update `다시 불러오기` 후 mixed-source source path(`store.steampowered.com`, `yna.co.kr`)가 context box에 유지
   - history-card latest-update single-source `다시 불러오기` 후 `단일 출처 참고` verification label, `보조 출처` source role이 origin detail에 유지
   - history-card latest-update news-only `다시 불러오기` 후 `기사 교차 확인` verification label, `보조 기사` source role이 origin detail에 유지
+  - history-card latest-update news-only `다시 불러오기` 후 기사 source path(`hankyung.com`, `mk.co.kr`)가 context box에 유지
 
 ### In Progress
 - Improve regression fixtures for weak-slot reinvestigation and source consensus.

@@ -1133,9 +1133,12 @@ test("history-card 다시 불러오기 클릭 후 response origin badge와 answe
       },
     ],
     pages: [],
-    summary_text: "웹 검색 요약: 붉은사막",
+    summary_text: "웹 검색 요약: 붉은사막\n\n단일 출처 정보 (교차 확인 부족, 추가 확인 필요):\n붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다. 단일 출처에서만 확인된 정보입니다.\n\n확인되지 않은 항목:\n교차 확인 가능한 근거를 찾지 못했습니다.",
     response_origin: {},
-    claim_coverage: [],
+    claim_coverage: [
+      { claim: "붉은사막은 오픈월드 액션 어드벤처 게임이다", status: "weak" },
+      { claim: "출시일 관련 정보", status: "missing" },
+    ],
   };
   fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
 
@@ -1186,6 +1189,8 @@ test("history-card 다시 불러오기 클릭 후 response origin badge와 answe
   await expect(originDetail).toContainText("백과 기반");
 
   await expect(page.getByTestId("response-text")).toContainText("웹 검색 요약: 붉은사막");
+  await expect(page.getByTestId("response-text")).toContainText("단일 출처 정보 (교차 확인 부족, 추가 확인 필요):");
+  await expect(page.getByTestId("response-text")).toContainText("확인되지 않은 항목:");
 
   await expect(page.locator("#transcript .message-when").first()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
   await expect(page.locator("#transcript .message-when").last()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);

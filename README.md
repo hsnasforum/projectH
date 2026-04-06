@@ -148,6 +148,7 @@ Current smoke scenarios:
 36. history-card entity-card zero-strong-slot `다시 불러오기` 후 follow-up 질문에서 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source role이 drift하지 않는지 확인
 37. entity-card zero-strong-slot `다시 불러오기` 후 두 번째 follow-up 질문에서 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source role이 drift하지 않는지 확인 (서비스 테스트는 자연어 reload path를 별도로 커버)
 38. entity-card zero-strong-slot `방금 검색한 결과 다시 보여줘` 자연어 reload에서 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source role이 유지되는지 확인
+39. entity-card zero-strong-slot 자연어 reload 후 follow-up에서 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source role이 drift하지 않는지 확인 (browser natural-reload path)
 
 `make e2e-test` launches a dedicated Playwright web server for smoke with inherited `LOCAL_AI_MODEL_PROVIDER` / `LOCAL_AI_OLLAMA_MODEL` overrides cleared, `LOCAL_AI_MODEL_PROVIDER=mock` reapplied, and existing servers on the smoke port not reused. Shell overrides such as `LOCAL_AI_MODEL_PROVIDER=ollama` therefore do not change the automated baseline. Other runtimes remain optional and are validated separately.
 

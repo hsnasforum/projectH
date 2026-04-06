@@ -55,6 +55,7 @@
 42. History-card entity-card zero-strong-slot `다시 불러오기` follow-up response-origin continuity service + Playwright smoke coverage (`설명 카드`, `설명형 단일 출처`, `백과 기반` drift prevention)
 43. Entity-card zero-strong-slot click-reload follow-up response-origin continuity Playwright smoke + natural-reload service coverage (`설명 카드`, `설명형 단일 출처`, `백과 기반` drift prevention)
 44. Entity-card zero-strong-slot browser natural-reload exact-field Playwright smoke coverage (`방금 검색한 결과 다시 보여줘` path)
+45. Entity-card zero-strong-slot browser natural-reload follow-up response-origin continuity Playwright smoke coverage (natural reload + follow-up drift prevention)
 
 ## Current Phase In Progress
 

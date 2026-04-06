@@ -237,6 +237,8 @@ test("브라우저 폴더 선택으로도 문서 검색이 됩니다", async ({ 
   await expect(lastAssistant.locator(".search-preview-match").nth(1)).toHaveText("내용 일치");
   await expect(lastAssistant.locator(".search-preview-snippet").nth(1)).toBeVisible();
   await expect(lastAssistant.locator(".search-preview-snippet").nth(1)).toContainText("budget");
+  await expect(page.locator("#transcript .message-when").first()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
+  await expect(page.locator("#transcript .message-when").last()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
 });
 
 test("검색만 응답은 transcript에서 preview cards만 보이고 본문 텍스트는 숨겨집니다", async ({ page }) => {

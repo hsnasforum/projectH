@@ -15422,6 +15422,70 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("https://www.hankyung.com/economy/2025", source_paths)
             self.assertIn("https://www.mk.co.kr/economy/2025", source_paths)
 
+    def test_handle_chat_zero_strong_slot_entity_card_history_card_reload_follow_up_preserves_stored_response_origin(self) -> None:
+        """zero-strong-slot entity-card → load_web_search_record_id + user_text follow-up에서
+        response_origin이 stored 값으로 보존되거나 runtime default로 drift하지 않습니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="테스트게임 - 나무위키",
+                            url="https://namu.wiki/w/testgame",
+                            snippet="테스트게임은 알 수 없는 개발사의 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="테스트게임 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/testgame",
+                            snippet="테스트게임은 정보가 부족한 게임이다.",
+                        ),
+                    ],
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: zero-strong-slot entity search ---
+            first = service.handle_chat(
+                {
+                    "session_id": "zero-strong-followup-origin-session",
+                    "user_text": "테스트게임에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # --- 둘째 호출: reload-follow-up (non-show-only) ---
+            second = service.handle_chat(
+                {
+                    "session_id": "zero-strong-followup-origin-session",
+                    "user_text": "이 검색 결과 요약해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+
+            self.assertIsNotNone(reload_origin)
+            self.assertIn(reload_origin.get("answer_mode", ""), ("entity_card", first_origin["answer_mode"]))
+            self.assertEqual(reload_origin["verification_label"], first_origin["verification_label"])
+            self.assertEqual(reload_origin["source_roles"], first_origin["source_roles"])
+
 
 if __name__ == "__main__":
     unittest.main()

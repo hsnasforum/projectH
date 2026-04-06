@@ -52,6 +52,7 @@
 39. History-card latest-update single-source `다시 불러오기` follow-up source-path continuity service + Playwright smoke coverage (`example.com/seoul-weather` in context box)
 40. History-card latest-update news-only `다시 불러오기` follow-up source-path continuity service + Playwright smoke coverage (`hankyung.com`, `mk.co.kr` in context box)
 41. History-card entity-card zero-strong-slot `다시 불러오기` reload verification-label continuity Playwright smoke coverage (downgraded `설명형 단일 출처`, `백과 기반`)
+42. History-card entity-card zero-strong-slot `다시 불러오기` follow-up response-origin continuity service + Playwright smoke coverage (`설명 카드`, `설명형 단일 출처`, `백과 기반` drift prevention)
 
 ## Current Phase In Progress
 

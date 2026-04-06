@@ -1185,6 +1185,9 @@ test("history-card 다시 불러오기 클릭 후 response origin badge와 answe
   await expect(originDetail).toContainText("설명형 단일 출처");
   await expect(originDetail).toContainText("백과 기반");
 
+  await expect(page.locator("#transcript .message-when").first()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
+  await expect(page.locator("#transcript .message-when").last()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
+
   // Clean up the pre-seeded record
   try {
     fs.unlinkSync(recordPath);

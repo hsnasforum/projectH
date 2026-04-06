@@ -2451,3 +2451,116 @@ test("history-card latest-update single-source 다시 불러오기 후 source pa
     // best-effort cleanup
   }
 });
+
+test("history-card latest-update single-source 다시 불러오기 후 follow-up 질문에서 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "history-card-reload-latest-single-followup");
+
+  // Pre-seed a single-source latest_update record
+  const recordId = `websearch-latest-single-fu-${Date.now().toString(36)}`;
+  const recordDir = path.join(repoRoot, "data", "web-search", sessionId);
+  const recordPath = path.join(recordDir, `서울날씨-${recordId}.json`);
+  fs.mkdirSync(recordDir, { recursive: true });
+  const record = {
+    record_id: recordId,
+    session_id: sessionId,
+    query: "서울 날씨",
+    permission: "enabled",
+    created_at: new Date().toISOString(),
+    result_count: 1,
+    page_count: 1,
+    results: [
+      {
+        title: "서울 날씨 - 예보",
+        url: "https://example.com/seoul-weather",
+        snippet: "서울은 맑고 낮 최고 17도, 밤 최저 7도로 예보되었습니다.",
+      },
+    ],
+    pages: [
+      {
+        url: "https://example.com/seoul-weather",
+        title: "서울 날씨 - 예보",
+        text: "서울은 맑고 낮 최고 17도. 미세먼지 보통.",
+      },
+    ],
+    summary_text: "웹 검색 요약: 서울 날씨\n\n서울은 맑고 낮 최고 17도, 밤 최저 7도로 예보되었습니다.",
+    response_origin: {
+      provider: "web",
+      badge: "WEB",
+      label: "웹 검색",
+      answer_mode: "latest_update",
+      verification_label: "단일 출처 참고",
+      source_roles: ["보조 출처"],
+    },
+    claim_coverage: [],
+    claim_coverage_progress_summary: "",
+  };
+  fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
+
+  // Render the history card
+  await page.evaluate(
+    ({ items }) => {
+      // @ts-ignore — renderSearchHistory is defined in the page scope
+      renderSearchHistory(items);
+    },
+    {
+      items: [
+        {
+          record_id: recordId,
+          query: "서울 날씨",
+          answer_mode: "latest_update",
+          verification_label: "단일 출처 참고",
+          source_roles: ["보조 출처"],
+          result_count: 1,
+          page_count: 1,
+          created_at: record.created_at,
+          record_path: recordPath,
+        },
+      ],
+    }
+  );
+
+  const historyBox = page.locator("#search-history-box");
+  await expect(historyBox).toBeVisible();
+  const reloadButton = historyBox.locator(".history-item-actions button.secondary").first();
+  await expect(reloadButton).toHaveText("다시 불러오기");
+
+  // Click "다시 불러오기" — show-only reload
+  await reloadButton.click();
+
+  // Wait for the initial reload response badges
+  const originBadge = page.locator("#response-origin-badge");
+  await expect(originBadge).toHaveText("WEB");
+  const answerModeBadge = page.locator("#response-answer-mode-badge");
+  await expect(answerModeBadge).toHaveText("최신 확인");
+
+  // Send a follow-up with load_web_search_record_id + user_text (non-show-only)
+  await page.evaluate(
+    async ({ rid }) => {
+      // @ts-ignore — sendRequest is defined in the page scope
+      await sendRequest({
+        user_text: "이 검색 결과 요약해줘",
+        load_web_search_record_id: rid,
+      }, "follow_up");
+    },
+    { rid: recordId }
+  );
+
+  // Assert response origin badges are preserved after follow-up
+  await expect(originBadge).toHaveText("WEB");
+  await expect(originBadge).toHaveClass(/web/);
+
+  await expect(answerModeBadge).toBeVisible();
+  await expect(answerModeBadge).toHaveText("최신 확인");
+
+  const originDetail = page.locator("#response-origin-detail");
+  await expect(originDetail).toContainText("단일 출처 참고");
+  await expect(originDetail).toContainText("보조 출처");
+
+  // Clean up
+  try {
+    fs.unlinkSync(recordPath);
+    fs.rmdirSync(recordDir);
+  } catch (_) {
+    // best-effort cleanup
+  }
+});

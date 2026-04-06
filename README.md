@@ -153,6 +153,7 @@ Current smoke scenarios:
 41. entity-card dual-probe `방금 검색한 결과 다시 보여줘` 자연어 reload에서 source path(`pearlabyss.com/ko-KR/Board/Detail?_boardNo=200`, `pearlabyss.com/ko-KR/Board/Detail?_boardNo=300`)가 context box에 유지되는지 확인
 42. entity-card dual-probe `방금 검색한 결과 다시 보여줘` 자연어 reload에서 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source role이 유지되는지 확인
 43. entity-card dual-probe 자연어 reload 후 follow-up에서 source path(`pearlabyss.com/ko-KR/Board/Detail?_boardNo=200`, `pearlabyss.com/ko-KR/Board/Detail?_boardNo=300`)가 context box에 유지되는지 확인
+44. entity-card dual-probe 자연어 reload 후 follow-up에서 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source role이 drift하지 않는지 확인
 
 `make e2e-test` launches a dedicated Playwright web server for smoke with inherited `LOCAL_AI_MODEL_PROVIDER` / `LOCAL_AI_OLLAMA_MODEL` overrides cleared, `LOCAL_AI_MODEL_PROVIDER=mock` reapplied, and existing servers on the smoke port not reused. Shell overrides such as `LOCAL_AI_MODEL_PROVIDER=ollama` therefore do not change the automated baseline. Other runtimes remain optional and are validated separately.
 

@@ -40,6 +40,7 @@
 27. History-card latest-update `다시 불러오기` noisy community source exclusion Playwright smoke coverage (negative `보조 커뮤니티` / noisy content assertions)
 28. History-card entity-card `다시 불러오기` noisy single-source claim exclusion Playwright smoke coverage (negative `출시일` / `2025` assertions, positive agreement-backed fact card assertions)
 29. History-card entity-card `다시 불러오기` dual-probe source-path continuity Playwright smoke coverage (`pearlabyss.com/200`, `pearlabyss.com/300` in context box)
+30. History-card latest-update `다시 불러오기` mixed-source source-path continuity Playwright smoke coverage (`store.steampowered.com`, `yna.co.kr` in context box)
 
 ## Current Phase In Progress
 

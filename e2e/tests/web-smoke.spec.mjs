@@ -3353,3 +3353,111 @@ test("history-card entity-card zero-strong-slot 다시 불러오기 후 follow-u
     // best-effort cleanup
   }
 });
+
+test("entity-card zero-strong-slot 자연어 reload 후 follow-up 질문에서 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "entity-zero-strong-natural-reload-followup");
+
+  // Pre-seed a zero-strong-slot entity_card record on disk
+  const recordId = `websearch-entity-zero-nat-fu-${Date.now().toString(36)}`;
+  const recordDir = path.join(repoRoot, "data", "web-search", sessionId);
+  const recordPath = path.join(recordDir, `테스트게임-${recordId}.json`);
+  fs.mkdirSync(recordDir, { recursive: true });
+  const record = {
+    record_id: recordId,
+    session_id: sessionId,
+    query: "테스트게임",
+    permission: "enabled",
+    created_at: new Date().toISOString(),
+    result_count: 2,
+    page_count: 0,
+    results: [
+      {
+        title: "테스트게임 - 나무위키",
+        url: "https://namu.wiki/w/testgame",
+        snippet: "테스트게임은 알 수 없는 개발사의 게임이다.",
+      },
+      {
+        title: "테스트게임 - 위키백과",
+        url: "https://ko.wikipedia.org/wiki/testgame",
+        snippet: "테스트게임은 정보가 부족한 게임이다.",
+      },
+    ],
+    pages: [],
+    summary_text: "웹 검색 요약: 테스트게임\n\n테스트게임은 알 수 없는 개발사의 게임이다.",
+    response_origin: {
+      provider: "web",
+      badge: "WEB",
+      label: "웹 검색",
+      answer_mode: "entity_card",
+      verification_label: "설명형 단일 출처",
+      source_roles: ["백과 기반"],
+    },
+    claim_coverage: [],
+    claim_coverage_progress_summary: "",
+  };
+  fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
+
+  // Seed the session's web_search_history so reload can find it
+  await page.evaluate(
+    ({ items }) => {
+      // @ts-ignore — renderSearchHistory is defined in the page scope
+      renderSearchHistory(items);
+    },
+    {
+      items: [
+        {
+          record_id: recordId,
+          query: "테스트게임",
+          answer_mode: "entity_card",
+          verification_label: "설명형 단일 출처",
+          source_roles: ["백과 기반"],
+          result_count: 2,
+          page_count: 0,
+          created_at: record.created_at,
+          record_path: recordPath,
+        },
+      ],
+    }
+  );
+
+  // Step 1: load the record via show-only reload (click "다시 불러오기")
+  const historyBox = page.locator("#search-history-box");
+  await expect(historyBox).toBeVisible();
+  const reloadButton = historyBox.locator(".history-item-actions button.secondary").first();
+  await reloadButton.click();
+
+  const originBadge = page.locator("#response-origin-badge");
+  await expect(originBadge).toHaveText("WEB");
+
+  // Step 2: follow-up with user_text (simulating natural continuation after reload)
+  await page.evaluate(
+    async ({ rid }) => {
+      // @ts-ignore — sendRequest is defined in the page scope
+      await sendRequest({
+        user_text: "이 검색 결과 요약해줘",
+        load_web_search_record_id: rid,
+      }, "follow_up");
+    },
+    { rid: recordId }
+  );
+
+  // Assert response origin badges are preserved after follow-up
+  await expect(originBadge).toHaveText("WEB");
+  await expect(originBadge).toHaveClass(/web/);
+
+  const answerModeBadge = page.locator("#response-answer-mode-badge");
+  await expect(answerModeBadge).toBeVisible();
+  await expect(answerModeBadge).toHaveText("설명 카드");
+
+  const originDetail = page.locator("#response-origin-detail");
+  await expect(originDetail).toContainText("설명형 단일 출처");
+  await expect(originDetail).toContainText("백과 기반");
+
+  // Clean up
+  try {
+    fs.unlinkSync(recordPath);
+    fs.rmdirSync(recordDir);
+  } catch (_) {
+    // best-effort cleanup
+  }
+});

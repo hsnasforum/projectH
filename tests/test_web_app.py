@@ -15219,6 +15219,78 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("https://www.pearlabyss.com/200", source_paths)
             self.assertIn("https://www.pearlabyss.com/300", source_paths)
 
+    def test_handle_chat_latest_update_mixed_source_follow_up_preserves_source_paths(self) -> None:
+        """latest_update mixed-source 검색 → load_web_search_record_id + user_text follow-up에서
+        active_context.source_paths에 두 source URL이 모두 보존됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="Steam 여름 할인 - Steam Store",
+                            url="https://store.steampowered.com/sale/summer2026",
+                            snippet="Steam 여름 할인이 시작되었습니다. 수천 개 게임이 최대 90% 할인됩니다.",
+                        ),
+                        SimpleNamespace(
+                            title="스팀 여름 할인 시작 - 게임뉴스",
+                            url="https://www.yna.co.kr/view/AKR20260401000100017",
+                            snippet="스팀이 2026년 여름 할인을 시작했다. 주요 타이틀 할인 목록을 정리했다.",
+                        ),
+                    ],
+                    pages={
+                        "https://store.steampowered.com/sale/summer2026": {
+                            "title": "Steam 여름 할인 - Steam Store",
+                            "text": "Steam 여름 할인이 시작되었습니다.\n수천 개 게임이 최대 90% 할인됩니다.",
+                            "excerpt": "Steam 여름 할인이 시작되었습니다.",
+                        },
+                        "https://www.yna.co.kr/view/AKR20260401000100017": {
+                            "title": "스팀 여름 할인 시작 - 게임뉴스",
+                            "text": "스팀이 2026년 여름 할인을 시작했다.\n주요 타이틀 할인 목록을 정리했다.",
+                            "excerpt": "스팀이 2026년 여름 할인을 시작했다.",
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: mixed-source latest_update 검색 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "latest-mixed-followup-sp-session",
+                    "user_text": "최신 스팀 할인 소식 검색해줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # --- 둘째 호출: reload-follow-up (non-show-only) ---
+            second = service.handle_chat(
+                {
+                    "session_id": "latest-mixed-followup-sp-session",
+                    "user_text": "이 검색 결과 요약해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            source_paths = second["session"]["active_context"]["source_paths"]
+            self.assertIn("https://store.steampowered.com/sale/summer2026", source_paths)
+            self.assertIn("https://www.yna.co.kr/view/AKR20260401000100017", source_paths)
+
 
 if __name__ == "__main__":
     unittest.main()

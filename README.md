@@ -141,6 +141,7 @@ Current smoke scenarios:
 29. history-card latest-update single-source `다시 불러오기` 후 follow-up 질문에서 `WEB` origin badge, `최신 확인` answer-mode badge, `단일 출처 참고` verification label, `보조 출처` source role이 drift하지 않는지 확인
 30. history-card latest-update news-only `다시 불러오기` 후 follow-up 질문에서 `WEB` origin badge, `최신 확인` answer-mode badge, `기사 교차 확인` verification label, `보조 기사` source role이 drift하지 않는지 확인
 31. history-card entity-card `다시 불러오기` 후 follow-up 질문에서 dual-probe source path(`pearlabyss.com/200`, `pearlabyss.com/300`)가 context box에 유지되는지 확인
+32. history-card latest-update mixed-source `다시 불러오기` 후 follow-up 질문에서 source path(`store.steampowered.com`, `yna.co.kr`)가 context box에 유지되는지 확인
 
 `make e2e-test` launches a dedicated Playwright web server for smoke with inherited `LOCAL_AI_MODEL_PROVIDER` / `LOCAL_AI_OLLAMA_MODEL` overrides cleared, `LOCAL_AI_MODEL_PROVIDER=mock` reapplied, and existing servers on the smoke port not reused. Shell overrides such as `LOCAL_AI_MODEL_PROVIDER=ollama` therefore do not change the automated baseline. Other runtimes remain optional and are validated separately.
 

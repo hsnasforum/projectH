@@ -303,6 +303,8 @@ test("검색만 응답은 transcript에서 preview cards만 보이고 본문 텍
   await expect(page.getByTestId("response-text")).toBeVisible();
   await expect(page.getByTestId("response-text")).toContainText("[모의 요약]");
   await expect(page.getByTestId("response-search-preview")).toBeVisible();
+  await expect(page.locator("#transcript .message-when").first()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
+  await expect(page.locator("#transcript .message-when").last()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
 });
 
 test("저장 요청 후 승인 경로를 다시 발급할 수 있습니다", async ({ page }) => {

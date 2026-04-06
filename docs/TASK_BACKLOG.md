@@ -39,6 +39,7 @@
 26. History-card latest-update `다시 불러오기` follow-up Playwright smoke coverage (`WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail drift prevention)
 27. History-card latest-update `다시 불러오기` noisy community source exclusion Playwright smoke coverage (negative `보조 커뮤니티` / noisy content assertions)
 28. History-card entity-card `다시 불러오기` noisy single-source claim exclusion Playwright smoke coverage (negative `출시일` / `2025` assertions, positive agreement-backed fact card assertions)
+29. History-card entity-card `다시 불러오기` dual-probe source-path continuity Playwright smoke coverage (`pearlabyss.com/200`, `pearlabyss.com/300` in context box)
 
 ## Current Phase In Progress
 

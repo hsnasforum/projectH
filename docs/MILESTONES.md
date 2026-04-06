@@ -52,6 +52,7 @@
 - history-card entity-card `다시 불러오기` noisy single-source claim exclusion browser smoke covering negative assertions for `출시일` and `2025` in response body, and positive assertions for agreement-backed fact card retention
 - history-card entity-card `다시 불러오기` dual-probe source-path continuity browser smoke covering `pearlabyss.com/200` and `pearlabyss.com/300` in context box after reload
 - history-card latest-update `다시 불러오기` mixed-source source-path continuity browser smoke covering `store.steampowered.com` and `yna.co.kr` in context box after reload
+- history-card latest-update single-source `다시 불러오기` verification-label continuity browser smoke covering `단일 출처 참고` and `보조 출처` in origin detail after reload
 - PDF text-layer support
 - OCR-not-supported guidance
 - response feedback capture

@@ -65,6 +65,7 @@
 - history-card entity-card zero-strong-slot `다시 불러오기` reload verification-label continuity browser smoke covering downgraded `설명형 단일 출처` and `백과 기반` without overstatement
 - history-card entity-card zero-strong-slot `다시 불러오기` follow-up response-origin continuity service + browser smoke covering `설명 카드` answer-mode badge, `설명형 단일 출처`, `백과 기반` drift prevention
 - entity-card zero-strong-slot click-reload follow-up response-origin continuity browser smoke covering `설명 카드` answer-mode badge, `설명형 단일 출처`, `백과 기반` drift prevention; service test separately covers natural-reload path
+- entity-card zero-strong-slot browser natural-reload exact-field smoke covering `방금 검색한 결과 다시 보여줘` path with `WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반` retention
 - PDF text-layer support
 - OCR-not-supported guidance
 - response feedback capture

@@ -3354,7 +3354,7 @@ test("history-card entity-card zero-strong-slot 다시 불러오기 후 follow-u
   }
 });
 
-test("entity-card zero-strong-slot 자연어 reload 후 follow-up 질문에서 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+test("entity-card zero-strong-slot 다시 불러오기 후 두 번째 follow-up 질문에서 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "entity-zero-strong-natural-reload-followup");
 
   // Pre-seed a zero-strong-slot entity_card record on disk

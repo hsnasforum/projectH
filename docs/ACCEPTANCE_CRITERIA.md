@@ -1355,7 +1355,7 @@ These are placeholders for the next phase design target and its immediate follow
   - history-card latest-update news-only `다시 불러오기` 후 follow-up → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지
   - history-card entity-card zero-strong-slot `다시 불러오기` → downgraded `설명형 단일 출처` verification label, `백과 기반` source role 과장 없이 유지
   - history-card entity-card zero-strong-slot `다시 불러오기` 후 follow-up → `WEB` badge, `설명 카드` badge, `설명형 단일 출처`, `백과 기반` drift 없음
-  - entity-card zero-strong-slot 자연어 reload 후 follow-up → `WEB` badge, `설명 카드` badge, `설명형 단일 출처`, `백과 기반` drift 없음
+  - entity-card zero-strong-slot `다시 불러오기` 후 두 번째 follow-up → `WEB` badge, `설명 카드` badge, `설명형 단일 출처`, `백과 기반` drift 없음 (서비스 테스트는 자연어 reload path 별도 커버)
 
 ### In Progress
 - Improve regression fixtures for weak-slot reinvestigation and source consensus.

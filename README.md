@@ -10,6 +10,24 @@
 - 핵심 루프: 문서 읽기 -> grounded summary -> 후속 질의 -> 승인 기반 저장
 - 웹 조사는 secondary mode
 
+## Release Candidate Scope
+
+현재 릴리즈 후보 범위는 **`python3 -m app.web` 기준 문서 비서 본체**입니다.
+
+- 포함:
+  - `/app` 웹 셸
+  - 로컬 문서 읽기 / 요약 / 검색
+  - 세션 / 승인 기반 저장
+  - evidence / source / grounded-brief trace
+  - 웹 조사 secondary mode
+- 제외:
+  - `controller.server`
+  - `pipeline_gui/`
+  - `windows-launchers/`
+  - `_data/` 기반 pipeline/token collector tooling
+
+위 제외 항목들은 현재 repo 안에 함께 존재하지만, 이번 릴리즈 게이트의 기본 판정 대상은 아닙니다.
+
 ### Next Phase Design Target
 - `grounded brief` 1개를 공식 artifact로 고정
 - 그 artifact를 기준으로 correction / approval / preference memory를 구조화
@@ -65,7 +83,20 @@
 - Local web shell:
   - `python3 -m app.web`
 - Default URL:
-  - `http://127.0.0.1:8765`
+  - `http://127.0.0.1:8765/app`
+- Current shipped browser contract:
+  - `/app` is the shipped web shell route
+  - `/` redirects to `/app`
+  - the shipped shell currently serves the existing template/static UI (`app/templates/index.html` + `/static/app.js`)
+  - the React build remains preview-only at `/app-preview`, and its build assets are served from `/assets/*`
+  - WSL에서 실행하면 Windows 브라우저 접근을 위해 기본 bind host를 `0.0.0.0`로 잡고, 시작 로그에 `Windows fallback: http://<WSL-IP>:8765/app`를 함께 출력합니다.
+- Internal pipeline controller:
+  - `python3 -m controller.server`
+  - `http://127.0.0.1:8780/controller`
+  - internal/operator tool only; not part of the current release-candidate browser contract
+  - WSL에서 실행하면 Windows 브라우저 접근을 위해 기본 bind host를 `0.0.0.0`로 잡고, 브라우저 URL은 계속 `127.0.0.1` 기준으로 안내합니다.
+  - 만약 Windows에서 `127.0.0.1:8780`이 안 열리면, 시작 로그에 함께 출력되는 `Windows fallback: http://<WSL-IP>:8780/controller` 주소를 사용하시면 됩니다.
+  - Windows localhost 고정 매핑이 필요하면 관리자 PowerShell에서 `windows-launchers/configure-controller-portproxy.ps1`를 실행해 `127.0.0.1:8780 -> 현재 WSL IP:8780` portproxy를 잡을 수 있습니다.
 
 ## Verification
 
@@ -96,6 +127,8 @@ Current smoke scenarios:
 15. claim-coverage panel rendering contract with `[교차 확인]`, `[단일 출처]`, `[미확인]` leading status tags and actionable hints
 16. web-search history card header badges: answer-mode badge (`설명 카드` / `최신 확인`), verification-strength badge (`검증 강` / `검증 중` / `검증 약` with CSS class), source-role trust badge compact label (`공식 기반(높음)` / `보조 기사(보통)` / `보조 커뮤니티(낮음)` with trust class)
 17. history-card `다시 불러오기` 클릭 후 reloaded response의 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail 유지 확인
+18. history-card latest-update `다시 불러오기` 클릭 후 reloaded response의 `WEB` origin badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail 유지 확인
+19. history-card `다시 불러오기` 후 follow-up 질문에서 response origin badge와 answer-mode badge가 drift하지 않는지 확인
 
 `make e2e-test` launches a dedicated Playwright web server for smoke with inherited `LOCAL_AI_MODEL_PROVIDER` / `LOCAL_AI_OLLAMA_MODEL` overrides cleared, `LOCAL_AI_MODEL_PROVIDER=mock` reapplied, and existing servers on the smoke port not reused. Shell overrides such as `LOCAL_AI_MODEL_PROVIDER=ollama` therefore do not change the automated baseline. Other runtimes remain optional and are validated separately.
 

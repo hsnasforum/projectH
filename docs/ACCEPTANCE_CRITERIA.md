@@ -4,11 +4,17 @@
 
 - This document separates the current shipped contract from next-phase design placeholders.
 - Placeholder items below are **not** current shipped acceptance gates unless explicitly marked as current.
+- The current release gate is scoped to the `app.web` browser shell.
+- Internal/operator tooling such as `controller.server`, `pipeline_gui/`, `windows-launchers/`, and `_data/` pipeline helpers is outside the current release gate unless explicitly promoted later.
 
 ## Current Web MVP Contract
 
 ### Implemented
 - The local web shell loads on `127.0.0.1`.
+- The shipped browser contract is `/app`, and `/` redirects to `/app`.
+- The shipped browser shell currently serves the existing template/static UI (`app/templates/index.html` + `/static/app.js`).
+- The React build is preview-only at `/app-preview`, and `/assets/*` serves its preview build assets.
+- When the web shell runs inside WSL, it binds to `0.0.0.0` by default and prints a Windows fallback browser URL using the current WSL IPv4 address.
 - The home screen shows recent sessions and the current conversation timeline with per-message timestamps.
 - Users can switch between file summary, document search, and general chat.
 - Save requests return an approval object and do not write immediately.
@@ -1330,6 +1336,8 @@ These are placeholders for the next phase design target and its immediate follow
   - claim-coverage panel rendering contract with `[교차 확인]`, `[단일 출처]`, `[미확인]` leading status tags and actionable hints
   - web-search history card header badges: answer-mode badge, verification-strength badge with CSS class, source-role trust badge compact label with trust class
   - history-card `다시 불러오기` click → reloaded response `WEB` badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail 유지
+  - history-card latest-update `다시 불러오기` click → reloaded response `WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail 유지
+  - history-card `다시 불러오기` 후 follow-up → response origin badge, answer-mode badge drift 없음
 
 ### In Progress
 - Improve regression fixtures for weak-slot reinvestigation and source consensus.

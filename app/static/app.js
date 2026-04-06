@@ -1869,6 +1869,10 @@
       updateContentVerdictState();
     }
 
+    function rerenderAfterMutation(session) {
+      renderSession(session, { force: true });
+    }
+
     async function submitFeedback(messageId, feedbackLabel, feedbackReason = "") {
       if (!messageId || state.isBusy) return;
       const data = await fetchJson("/api/feedback", {
@@ -1882,7 +1886,7 @@
         }),
       });
       if (data.session) {
-        renderSession(data.session);
+        rerenderAfterMutation(data.session);
         renderApproval((data.session.pending_approvals || []).slice(-1)[0] || null);
         const latestAssistantContext = findLatestAssistantContext(data.session.messages || []);
         renderCorrectionEditor(
@@ -1907,7 +1911,7 @@
         }),
       });
       if (data.session) {
-        renderSession(data.session);
+        rerenderAfterMutation(data.session);
         renderApproval((data.session.pending_approvals || []).slice(-1)[0] || null);
         const latestAssistantContext = findLatestAssistantContext(data.session.messages || []);
         renderCorrectionEditor(
@@ -1935,7 +1939,7 @@
         }),
       });
       if (data.session) {
-        renderSession(data.session);
+        rerenderAfterMutation(data.session);
         renderApproval((data.session.pending_approvals || []).slice(-1)[0] || null);
       }
       renderNotice("현재 수정 방향을 나중에도 다시 써도 된다는 확인을 기록했습니다. 저장 승인과는 별도입니다.");
@@ -1963,7 +1967,7 @@
         }),
       });
       if (data.session) {
-        renderSession(data.session);
+        rerenderAfterMutation(data.session);
         renderApproval((data.session.pending_approvals || []).slice(-1)[0] || null);
       }
       renderNotice("검토 후보를 수락했습니다. 아직 적용되지는 않았습니다.");
@@ -1981,7 +1985,7 @@
         }),
       });
       if (data.session) {
-        renderSession(data.session);
+        rerenderAfterMutation(data.session);
         renderApproval((data.session.pending_approvals || []).slice(-1)[0] || null);
       }
       const savedHistoryExists = hasSavedHistoryForArtifact(
@@ -2008,7 +2012,7 @@
         }),
       });
       if (data.session) {
-        renderSession(data.session);
+        rerenderAfterMutation(data.session);
         renderApproval((data.session.pending_approvals || []).slice(-1)[0] || null);
       }
       renderNotice("거절 메모를 기록했습니다. 내용 거절 판정은 그대로 유지됩니다.");
@@ -2655,7 +2659,7 @@
                 });
                 renderNotice(`충돌 확인이 완료되었습니다. (${data.canonical_transition_id})`);
                 if (data.session) {
-                  renderSession(data.session);
+                  rerenderAfterMutation(data.session);
                 }
               } catch (error) {
                 renderError(error);
@@ -2689,7 +2693,7 @@
               });
               renderNotice(`검토 메모 적용이 되돌려졌습니다. (${data.canonical_transition_id})`);
               if (data.session) {
-                renderSession(data.session);
+                rerenderAfterMutation(data.session);
               }
             } catch (error) {
               renderError(error);
@@ -2725,7 +2729,7 @@
               });
               renderNotice(`검토 메모 적용이 중단되었습니다. (${data.canonical_transition_id})`);
               if (data.session) {
-                renderSession(data.session);
+                rerenderAfterMutation(data.session);
               }
             } catch (error) {
               renderError(error);
@@ -2752,7 +2756,7 @@
               });
               renderNotice(`검토 메모 적용 결과가 확정되었습니다. (${data.canonical_transition_id})`);
               if (data.session) {
-                renderSession(data.session);
+                rerenderAfterMutation(data.session);
               }
             } catch (error) {
               renderError(error);
@@ -2779,7 +2783,7 @@
               });
               renderNotice(`검토 메모 적용이 실행되었습니다. (${data.canonical_transition_id})`);
               if (data.session) {
-                renderSession(data.session);
+                rerenderAfterMutation(data.session);
               }
             } catch (error) {
               renderError(error);
@@ -2820,7 +2824,7 @@
               });
               renderNotice(`transition record가 발행되었습니다. (${data.canonical_transition_id})`);
               if (data.session) {
-                renderSession(data.session);
+                rerenderAfterMutation(data.session);
               }
             } catch (error) {
               renderError(error);
@@ -3079,11 +3083,13 @@
       updateCorrectionHelperText();
     }
 
-    function renderSession(session) {
+    function renderSession(session, opts) {
+      const force = opts && opts.force;
       const incomingId = session.session_id || "";
       const incomingUpdatedAt = session.updated_at || "";
       if (
-        incomingId === state.currentSessionId
+        !force
+        && incomingId === state.currentSessionId
         && incomingUpdatedAt
         && state._lastRenderedSessionUpdatedAt
         && incomingUpdatedAt < state._lastRenderedSessionUpdatedAt

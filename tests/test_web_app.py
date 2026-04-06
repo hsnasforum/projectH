@@ -15291,6 +15291,67 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("https://store.steampowered.com/sale/summer2026", source_paths)
             self.assertIn("https://www.yna.co.kr/view/AKR20260401000100017", source_paths)
 
+    def test_handle_chat_latest_update_single_source_follow_up_preserves_source_paths(self) -> None:
+        """single-source latest_update 검색 → load_web_search_record_id + user_text follow-up에서
+        active_context.source_paths에 source URL이 보존됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="서울 날씨 - 예보",
+                            url="https://example.com/seoul-weather",
+                            snippet="서울은 맑고 낮 최고 17도, 밤 최저 7도로 예보되었습니다.",
+                        )
+                    ],
+                    pages={
+                        "https://example.com/seoul-weather": {
+                            "title": "서울 날씨 - 예보",
+                            "text": "서울은 맑고 낮 최고 17도.\n미세먼지 보통.",
+                            "excerpt": "서울은 맑고 낮 최고 17도.",
+                        }
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: single-source latest_update 검색 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "latest-single-followup-sp-session",
+                    "user_text": "서울 날씨 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # --- 둘째 호출: reload-follow-up (non-show-only) ---
+            second = service.handle_chat(
+                {
+                    "session_id": "latest-single-followup-sp-session",
+                    "user_text": "이 검색 결과 요약해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            source_paths = second["session"]["active_context"]["source_paths"]
+            self.assertIn("https://example.com/seoul-weather", source_paths)
+
 
 if __name__ == "__main__":
     unittest.main()

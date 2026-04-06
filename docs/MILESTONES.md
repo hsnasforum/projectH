@@ -60,6 +60,7 @@
 - history-card latest-update news-only `다시 불러오기` follow-up response-origin continuity service + browser smoke covering `기사 교차 확인` and `보조 기사` drift prevention
 - history-card entity-card `다시 불러오기` follow-up dual-probe source-path continuity service + browser smoke covering `pearlabyss.com/200` and `pearlabyss.com/300` in context box
 - history-card latest-update mixed-source `다시 불러오기` follow-up source-path continuity service + browser smoke covering `store.steampowered.com` and `yna.co.kr` in context box
+- history-card latest-update single-source `다시 불러오기` follow-up source-path continuity service + browser smoke covering `example.com/seoul-weather` in context box
 - PDF text-layer support
 - OCR-not-supported guidance
 - response feedback capture

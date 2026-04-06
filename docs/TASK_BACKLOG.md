@@ -49,6 +49,7 @@
 36. History-card latest-update news-only `다시 불러오기` follow-up response-origin continuity service + Playwright smoke coverage (`기사 교차 확인`, `보조 기사` drift prevention)
 37. History-card entity-card `다시 불러오기` follow-up dual-probe source-path continuity service + Playwright smoke coverage (`pearlabyss.com/200`, `pearlabyss.com/300` in context box)
 38. History-card latest-update mixed-source `다시 불러오기` follow-up source-path continuity service + Playwright smoke coverage (`store.steampowered.com`, `yna.co.kr` in context box)
+39. History-card latest-update single-source `다시 불러오기` follow-up source-path continuity service + Playwright smoke coverage (`example.com/seoul-weather` in context box)
 
 ## Current Phase In Progress
 

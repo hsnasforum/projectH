@@ -47,6 +47,7 @@
 - history-card `다시 불러오기` click reload browser smoke covering `WEB` badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail retention after server-side record reload
 - history-card latest-update `다시 불러오기` click reload browser smoke covering `WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail retention after server-side record reload
 - history-card `다시 불러오기` follow-up browser smoke covering response origin badge and answer-mode badge drift prevention
+- history-card latest-update `다시 불러오기` follow-up browser smoke covering `WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail drift prevention
 - PDF text-layer support
 - OCR-not-supported guidance
 - response feedback capture

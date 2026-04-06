@@ -36,6 +36,7 @@
 23. History-card `다시 불러오기` click reload Playwright smoke coverage (`WEB` badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail)
 24. History-card latest-update `다시 불러오기` click reload Playwright smoke coverage (`WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail)
 25. History-card `다시 불러오기` follow-up Playwright smoke coverage (response origin badge, answer-mode badge drift prevention)
+26. History-card latest-update `다시 불러오기` follow-up Playwright smoke coverage (`WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail drift prevention)
 
 ## Current Phase In Progress
 

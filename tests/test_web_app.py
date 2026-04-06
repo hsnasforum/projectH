@@ -15081,6 +15081,83 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(reload_origin["verification_label"], "단일 출처 참고")
             self.assertEqual(reload_origin["source_roles"], ["보조 출처"])
 
+    def test_handle_chat_latest_update_news_only_reload_follow_up_preserves_stored_response_origin(self) -> None:
+        """news-only latest_update 검색 → load_web_search_record_id + user_text follow-up에서
+        response_origin이 stored 값으로 보존되거나 runtime default로 drift하지 않습니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 한국경제",
+                            url="https://www.hankyung.com/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                    ],
+                    pages={
+                        "https://www.hankyung.com/economy/2025": {
+                            "title": "기준금리 속보 - 한국경제",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: news-only latest_update 검색 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "latest-news-followup-origin-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # --- 둘째 호출: reload-follow-up (non-show-only) ---
+            second = service.handle_chat(
+                {
+                    "session_id": "latest-news-followup-origin-session",
+                    "user_text": "이 검색 결과 요약해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            reload_origin = second["response"]["response_origin"]
+
+            # response_origin이 존재하고 WEB provider 계열을 유지
+            self.assertIsNotNone(reload_origin)
+            # answer_mode가 stored latest_update 값 유지
+            self.assertIn(reload_origin.get("answer_mode", ""), ("latest_update", first_origin["answer_mode"]))
+            # verification_label과 source_roles도 stored 값 유지
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+            self.assertEqual(reload_origin["source_roles"], ["보조 기사"])
+
 
 if __name__ == "__main__":
     unittest.main()

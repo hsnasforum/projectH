@@ -67,6 +67,7 @@
 - entity-card zero-strong-slot click-reload follow-up response-origin continuity browser smoke covering `설명 카드` answer-mode badge, `설명형 단일 출처`, `백과 기반` drift prevention; service test separately covers natural-reload path
 - entity-card zero-strong-slot browser natural-reload exact-field smoke covering `방금 검색한 결과 다시 보여줘` path with `WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반` retention
 - entity-card zero-strong-slot browser natural-reload follow-up response-origin continuity smoke covering `WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반` drift prevention after natural reload + follow-up
+- entity-card 붉은사막 검색 결과 browser natural-reload exact-field smoke covering `방금 검색한 결과 다시 보여줘` path with `WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반` retention
 - PDF text-layer support
 - OCR-not-supported guidance
 - response feedback capture

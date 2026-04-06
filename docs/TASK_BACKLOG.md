@@ -56,6 +56,7 @@
 43. Entity-card zero-strong-slot click-reload follow-up response-origin continuity Playwright smoke + natural-reload service coverage (`설명 카드`, `설명형 단일 출처`, `백과 기반` drift prevention)
 44. Entity-card zero-strong-slot browser natural-reload exact-field Playwright smoke coverage (`방금 검색한 결과 다시 보여줘` path)
 45. Entity-card zero-strong-slot browser natural-reload follow-up response-origin continuity Playwright smoke coverage (natural reload + follow-up drift prevention)
+46. Entity-card 붉은사막 검색 결과 browser natural-reload exact-field Playwright smoke coverage (`방금 검색한 결과 다시 보여줘` path)
 
 ## Current Phase In Progress
 

@@ -1136,9 +1136,22 @@ test("history-card 다시 불러오기 클릭 후 response origin badge와 answe
     summary_text: "웹 검색 요약: 붉은사막\n\n단일 출처 정보 (교차 확인 부족, 추가 확인 필요):\n붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다. 단일 출처에서만 확인된 정보입니다.\n\n확인되지 않은 항목:\n교차 확인 가능한 근거를 찾지 못했습니다.",
     response_origin: {},
     claim_coverage: [
-      { claim: "붉은사막은 오픈월드 액션 어드벤처 게임이다", status: "weak" },
-      { claim: "출시일 관련 정보", status: "missing" },
+      {
+        slot: "장르",
+        status: "weak",
+        status_label: "단일 출처",
+        value: "오픈월드 액션 어드벤처 게임",
+        support_count: 1,
+        candidate_count: 1,
+        source_role: "encyclopedia",
+      },
+      {
+        slot: "출시일",
+        status: "missing",
+        status_label: "미확인",
+      },
     ],
+    claim_coverage_progress_summary: "단일 출처 상태 1건, 미확인 1건.",
   };
   fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
 
@@ -1192,8 +1205,127 @@ test("history-card 다시 불러오기 클릭 후 response origin badge와 answe
   await expect(page.getByTestId("response-text")).toContainText("단일 출처 정보 (교차 확인 부족, 추가 확인 필요):");
   await expect(page.getByTestId("response-text")).toContainText("확인되지 않은 항목:");
 
+  await expect(page.locator("#claim-coverage-hint")).toContainText("단일 출처 상태 1건, 미확인 1건.");
+
   await expect(page.locator("#transcript .message-when").first()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
   await expect(page.locator("#transcript .message-when").last()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
+
+  // Clean up the pre-seeded record
+  try {
+    fs.unlinkSync(recordPath);
+    fs.rmdirSync(recordDir);
+  } catch (_) {
+    // best-effort cleanup
+  }
+});
+
+test("history-card 다시 불러오기 후 follow-up 질문에서 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "history-card-reload-followup");
+
+  // Pre-seed a web search record with stored response_origin including answer_mode
+  const recordId = `websearch-followup-${Date.now().toString(36)}`;
+  const recordDir = path.join(repoRoot, "data", "web-search", sessionId);
+  const recordPath = path.join(recordDir, `붉은사막-${recordId}.json`);
+  fs.mkdirSync(recordDir, { recursive: true });
+  const record = {
+    record_id: recordId,
+    session_id: sessionId,
+    query: "붉은사막",
+    permission: "enabled",
+    created_at: new Date().toISOString(),
+    result_count: 1,
+    page_count: 0,
+    results: [
+      {
+        title: "붉은사막 - 나무위키",
+        url: "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+        snippet: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+      },
+    ],
+    pages: [],
+    summary_text: "웹 검색 요약: 붉은사막\n\n붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+    response_origin: {
+      provider: "web",
+      badge: "WEB",
+      label: "웹 검색",
+      answer_mode: "entity_card",
+      verification_label: "설명형 단일 출처",
+      source_roles: ["백과 기반"],
+    },
+    claim_coverage: [
+      {
+        slot: "장르",
+        status: "weak",
+        status_label: "단일 출처",
+        value: "오픈월드 액션 어드벤처 게임",
+        support_count: 1,
+        candidate_count: 1,
+        source_role: "encyclopedia",
+      },
+    ],
+    claim_coverage_progress_summary: "단일 출처 상태 1건.",
+  };
+  fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
+
+  // Render the history card in the browser
+  await page.evaluate(
+    ({ items }) => {
+      // @ts-ignore — renderSearchHistory is defined in the page scope
+      renderSearchHistory(items);
+    },
+    {
+      items: [
+        {
+          record_id: recordId,
+          query: "붉은사막",
+          answer_mode: "entity_card",
+          verification_label: "설명형 단일 출처",
+          source_roles: ["백과 기반"],
+          result_count: 1,
+          page_count: 0,
+          created_at: record.created_at,
+          record_path: recordPath,
+        },
+      ],
+    }
+  );
+
+  const historyBox = page.locator("#search-history-box");
+  await expect(historyBox).toBeVisible();
+  const reloadButton = historyBox.locator(".history-item-actions button.secondary").first();
+  await expect(reloadButton).toHaveText("다시 불러오기");
+
+  // Click "다시 불러오기" — show-only reload
+  await reloadButton.click();
+
+  // Wait for the initial reload response badges
+  const originBadge = page.locator("#response-origin-badge");
+  await expect(originBadge).toHaveText("WEB");
+  const answerModeBadge = page.locator("#response-answer-mode-badge");
+  await expect(answerModeBadge).toHaveText("설명 카드");
+
+  // Send a follow-up with load_web_search_record_id + user_text (non-show-only)
+  await page.evaluate(
+    async ({ rid }) => {
+      // @ts-ignore — sendRequest is defined in the page scope
+      await sendRequest({
+        user_text: "이 검색 결과 요약해줘",
+        load_web_search_record_id: rid,
+      }, "follow_up");
+    },
+    { rid: recordId }
+  );
+
+  // Assert response origin badges are preserved after follow-up
+  await expect(originBadge).toHaveText("WEB");
+  await expect(originBadge).toHaveClass(/web/);
+
+  await expect(answerModeBadge).toBeVisible();
+  await expect(answerModeBadge).toHaveText("설명 카드");
+
+  const originDetail = page.locator("#response-origin-detail");
+  await expect(originDetail).toContainText("설명형 단일 출처");
+  await expect(originDetail).toContainText("백과 기반");
 
   // Clean up the pre-seeded record
   try {

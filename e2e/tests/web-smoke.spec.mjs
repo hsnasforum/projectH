@@ -183,6 +183,8 @@ test("브라우저 파일 선택으로도 파일 요약이 됩니다", async ({ 
   await expect(page.locator("#response-quick-meta-text")).toContainText("문서 요약");
   await expect(page.locator('#transcript [data-testid="transcript-meta"]').last()).toContainText("long-summary-fixture.md");
   await expect(page.locator('#transcript [data-testid="transcript-meta"]').last()).toContainText("문서 요약");
+  await expect(page.locator("#transcript .message-when").first()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
+  await expect(page.locator("#transcript .message-when").last()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
 });
 
 test("브라우저 폴더 선택으로도 문서 검색이 됩니다", async ({ page }) => {

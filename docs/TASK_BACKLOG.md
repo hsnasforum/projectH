@@ -42,6 +42,7 @@
 29. History-card entity-card `다시 불러오기` dual-probe source-path continuity Playwright smoke coverage (`pearlabyss.com/200`, `pearlabyss.com/300` in context box)
 30. History-card latest-update `다시 불러오기` mixed-source source-path continuity Playwright smoke coverage (`store.steampowered.com`, `yna.co.kr` in context box)
 31. History-card latest-update single-source `다시 불러오기` verification-label continuity Playwright smoke coverage (`단일 출처 참고`, `보조 출처` in origin detail)
+32. History-card latest-update news-only `다시 불러오기` verification-label continuity Playwright smoke coverage (`기사 교차 확인`, `보조 기사` in origin detail)
 
 ## Current Phase In Progress
 

@@ -130,6 +130,7 @@ test("파일 요약 후 근거와 요약 구간이 보입니다", async ({ page 
   await expect(page.getByTestId("response-copy-text")).toBeVisible();
   await expect(page.locator("#transcript .message-when")).toHaveCount(2);
   await expect(page.locator("#transcript .message-when").first()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
+  await expect(page.locator("#transcript .message-when").last()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
   await expect(page.locator('#transcript [data-testid="transcript-meta"]').last()).toContainText("문서 요약");
   await expect(page.locator('#transcript [data-testid="transcript-meta"]').last()).toContainText("long-summary-fixture.md");
   await expect(page.getByTestId("evidence-box")).toBeVisible();

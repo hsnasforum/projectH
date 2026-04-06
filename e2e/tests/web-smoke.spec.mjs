@@ -947,6 +947,8 @@ test("same-session recurrence aggregate는 separate blocked trigger surface로 �
   );
   await expect(page.locator("#notice-box")).toHaveText(`충돌 확인이 완료되었습니다. (${conflictAggregate.reviewed_memory_conflict_visibility_record.canonical_transition_id})`);
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-conflict-checked")).toHaveText(`충돌 확인 완료 (${conflictAggregate.reviewed_memory_conflict_visibility_record.canonical_transition_id} · 항목 ${conflictAggregate.reviewed_memory_conflict_visibility_record.conflict_entry_count}건)`);
+  await expect(page.locator("#transcript .message-when").first()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
+  await expect(page.locator("#transcript .message-when").last()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
 });
 
 test("스트리밍 중 취소 버튼이 동작합니다", async ({ page }) => {

@@ -946,7 +946,7 @@ test("일반 채팅 응답에는 source-type label이 붙지 않습니다", asyn
   await page.locator("#user-text").fill("안녕하세요");
   await page.getByTestId("submit-request").click();
 
-  await expect(page.getByTestId("response-box")).not.toBeEmpty();
+  await expect(page.getByTestId("response-text")).toBeVisible();
   const quickMetaText = await page.locator("#response-quick-meta-text").textContent();
   expect(quickMetaText).not.toContain("문서 요약");
   expect(quickMetaText).not.toContain("선택 결과 요약");

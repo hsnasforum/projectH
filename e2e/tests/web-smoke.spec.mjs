@@ -1219,6 +1219,116 @@ test("history-card 다시 불러오기 클릭 후 response origin badge와 answe
   }
 });
 
+test("history-card latest-update 다시 불러오기 후 response origin badge와 answer-mode badge가 유지됩니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "history-card-reload-latest");
+
+  // Pre-seed a latest_update web search record with mixed source roles
+  const recordId = `websearch-latest-${Date.now().toString(36)}`;
+  const recordDir = path.join(repoRoot, "data", "web-search", sessionId);
+  const recordPath = path.join(recordDir, `스팀할인-${recordId}.json`);
+  fs.mkdirSync(recordDir, { recursive: true });
+  const record = {
+    record_id: recordId,
+    session_id: sessionId,
+    query: "스팀 여름 할인",
+    permission: "enabled",
+    created_at: new Date().toISOString(),
+    result_count: 2,
+    page_count: 2,
+    results: [
+      {
+        title: "Steam 여름 할인 - Steam Store",
+        url: "https://store.steampowered.com/sale/summer2026",
+        snippet: "Steam 여름 할인이 시작되었습니다.",
+      },
+      {
+        title: "스팀 여름 할인 시작 - 게임뉴스",
+        url: "https://www.yna.co.kr/view/AKR20260401000100017",
+        snippet: "스팀이 2026년 여름 할인을 시작했다.",
+      },
+    ],
+    pages: [
+      {
+        url: "https://store.steampowered.com/sale/summer2026",
+        title: "Steam 여름 할인 - Steam Store",
+        text: "Steam 여름 할인이 시작되었습니다.",
+      },
+      {
+        url: "https://www.yna.co.kr/view/AKR20260401000100017",
+        title: "스팀 여름 할인 시작 - 게임뉴스",
+        text: "스팀이 2026년 여름 할인을 시작했다.",
+      },
+    ],
+    summary_text: "웹 검색 요약: 스팀 여름 할인\n\nSteam 여름 할인이 시작되었습니다. 수천 개 게임이 최대 90% 할인됩니다.",
+    response_origin: {
+      provider: "web",
+      badge: "WEB",
+      label: "웹 검색",
+      answer_mode: "latest_update",
+      verification_label: "공식+기사 교차 확인",
+      source_roles: ["보조 기사", "공식 기반"],
+    },
+    claim_coverage: [],
+    claim_coverage_progress_summary: "",
+  };
+  fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
+
+  // Render the history card with latest_update answer_mode
+  await page.evaluate(
+    ({ items }) => {
+      // @ts-ignore — renderSearchHistory is defined in the page scope
+      renderSearchHistory(items);
+    },
+    {
+      items: [
+        {
+          record_id: recordId,
+          query: "스팀 여름 할인",
+          answer_mode: "latest_update",
+          verification_label: "공식+기사 교차 확인",
+          source_roles: ["보조 기사", "공식 기반"],
+          result_count: 2,
+          page_count: 2,
+          created_at: record.created_at,
+          record_path: recordPath,
+        },
+      ],
+    }
+  );
+
+  const historyBox = page.locator("#search-history-box");
+  await expect(historyBox).toBeVisible();
+  const reloadButton = historyBox.locator(".history-item-actions button.secondary").first();
+  await expect(reloadButton).toHaveText("다시 불러오기");
+
+  // Click "다시 불러오기"
+  await reloadButton.click();
+
+  // Assert reloaded response origin badge
+  const originBadge = page.locator("#response-origin-badge");
+  await expect(originBadge).toHaveText("WEB");
+  await expect(originBadge).toHaveClass(/web/);
+
+  // Assert answer-mode badge shows "최신 확인" for latest_update
+  const answerModeBadge = page.locator("#response-answer-mode-badge");
+  await expect(answerModeBadge).toBeVisible();
+  await expect(answerModeBadge).toHaveText("최신 확인");
+
+  // Assert origin detail contains verification label and source roles
+  const originDetail = page.locator("#response-origin-detail");
+  await expect(originDetail).toContainText("공식+기사 교차 확인");
+  await expect(originDetail).toContainText("보조 기사");
+  await expect(originDetail).toContainText("공식 기반");
+
+  // Clean up
+  try {
+    fs.unlinkSync(recordPath);
+    fs.rmdirSync(recordDir);
+  } catch (_) {
+    // best-effort cleanup
+  }
+});
+
 test("history-card 다시 불러오기 후 follow-up 질문에서 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "history-card-reload-followup");
 

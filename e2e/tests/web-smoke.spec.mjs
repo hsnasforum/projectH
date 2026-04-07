@@ -4311,8 +4311,8 @@ test("entity-card 붉은사막 검색 결과 자연어 reload에서 noisy single
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
 
-test("entity-card 붉은사막 자연어 reload에서 source path가 context box에 유지됩니다", async ({ page }) => {
-  const sessionId = await prepareSession(page, "entity-actual-search-natural-reload-sp");
+test("entity-card 붉은사막 자연어 reload에서 source path(namu.wiki, ko.wikipedia.org, blog.example.com provenance)가 context box에 유지됩니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "entity-actual-search-natural-reload-sp-prov");
 
   // Pre-seed a noisy 3-source entity_card record (붉은사막)
   const recordId = `websearch-entity-actual-nat-sp-${Date.now().toString(36)}`;

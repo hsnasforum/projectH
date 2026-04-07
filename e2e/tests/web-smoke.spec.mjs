@@ -5174,10 +5174,11 @@ test("entity-card 붉은사막 자연어 reload 후 follow-up에서 noisy single
   expect(responseText).not.toContain("2025");
   expect(responseText).not.toContain("blog.example.com");
 
-  // Assert context box continuity
+  // Assert context box continuity + provenance
   const contextBox = page.locator("#context-box");
   await expect(contextBox).toContainText("namu.wiki");
   await expect(contextBox).toContainText("ko.wikipedia.org");
+  await expect(contextBox).toContainText("blog.example.com");
 
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
@@ -5255,10 +5256,11 @@ test("entity-card 붉은사막 자연어 reload 후 두 번째 follow-up에서 n
   expect(responseText).not.toContain("2025");
   expect(responseText).not.toContain("blog.example.com");
 
-  // Assert context box continuity
+  // Assert context box continuity + provenance
   const contextBox = page.locator("#context-box");
   await expect(contextBox).toContainText("namu.wiki");
   await expect(contextBox).toContainText("ko.wikipedia.org");
+  await expect(contextBox).toContainText("blog.example.com");
 
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });

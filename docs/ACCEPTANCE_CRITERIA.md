@@ -1365,7 +1365,7 @@ These are placeholders for the next phase design target and its immediate follow
   - entity-card dual-probe 자연어 reload 후 follow-up → `WEB` badge, `설명 카드` badge, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` drift 없음
   - entity-card 붉은사막 자연어 reload 후 follow-up → `WEB` badge, `설명 카드` badge, `설명형 다중 출처 합의`, `백과 기반` drift 없음
   - entity-card 붉은사막 자연어 reload → source path plurality(`namu.wiki`, `ko.wikipedia.org`, `blog.example.com` provenance 포함) context box 유지
-  - entity-card 붉은사막 자연어 reload 후 follow-up → source path plurality(`namu.wiki`, `ko.wikipedia.org`) context box 유지
+  - entity-card 붉은사막 actual-search 자연어 reload 후 follow-up → source path plurality(`namu.wiki`, `ko.wikipedia.org`) context box 유지
   - entity-card 붉은사막 자연어 reload 후 follow-up → noisy single-source claim(`출시일`, `2025`, `blog.example.com`) 본문/origin detail 미노출 + `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` continuity 유지 + context box `blog.example.com` provenance 포함
   - entity-card 붉은사막 자연어 reload 후 두 번째 follow-up → noisy single-source claim(`출시일`, `2025`, `blog.example.com`) 본문/origin detail 미노출 + `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` continuity 유지 + context box `blog.example.com` provenance 포함
   - history-card entity-card `다시 불러오기` 후 actual-search source-path plurality(`namu.wiki`, `ko.wikipedia.org`) context box 유지 + `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` response-origin continuity
@@ -1373,7 +1373,7 @@ These are placeholders for the next phase design target and its immediate follow
   - history-card entity-card `다시 불러오기` 후 두 번째 follow-up → actual-search source-path plurality(`namu.wiki`, `ko.wikipedia.org`) context box 유지 + `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` response-origin drift 없음
   - history-card entity-card `다시 불러오기` 후 두 번째 follow-up → dual-probe source path(`pearlabyss.com/200`, `pearlabyss.com/300`) context box 유지 + `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` response-origin drift 없음
   - entity-card dual-probe 자연어 reload 후 두 번째 follow-up → source path(`pearlabyss.com/ko-KR/Board/Detail?_boardNo=200`, `pearlabyss.com/ko-KR/Board/Detail?_boardNo=300`) context box 유지 + `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` response-origin drift 없음
-  - entity-card 붉은사막 자연어 reload 후 두 번째 follow-up → source path(`namu.wiki`, `ko.wikipedia.org`) context box 유지 + `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` response-origin drift 없음
+  - entity-card 붉은사막 actual-search 자연어 reload 후 두 번째 follow-up → source path(`namu.wiki`, `ko.wikipedia.org`) context box 유지 + `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` response-origin drift 없음
   - history-card latest-update mixed-source `다시 불러오기` 후 두 번째 follow-up → source path(`store.steampowered.com`, `yna.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` response-origin drift 없음
   - history-card latest-update single-source `다시 불러오기` 후 두 번째 follow-up → source path(`example.com/seoul-weather`) context box 유지 + `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처` response-origin drift 없음
   - history-card latest-update news-only `다시 불러오기` 후 두 번째 follow-up → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` response-origin drift 없음

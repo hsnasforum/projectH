@@ -82,6 +82,8 @@
 69. Latest-update single-source natural-reload second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`example.com/seoul-weather` in context box, `단일 출처 참고`, `보조 출처`)
 70. Latest-update news-only natural-reload follow-up source-path + response-origin continuity service + Playwright smoke coverage (`hankyung.com`, `mk.co.kr` in context box, `기사 교차 확인`, `보조 기사`)
 71. Latest-update news-only natural-reload second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`hankyung.com`, `mk.co.kr` in context box, `기사 교차 확인`, `보조 기사`)
+72. Latest-update noisy-community natural-reload follow-up exclusion service + Playwright smoke coverage (`보조 커뮤니티`, `brunch` negative + `기사 교차 확인`, `보조 기사` positive)
+73. Latest-update noisy-community natural-reload second-follow-up exclusion service + Playwright smoke coverage (`보조 커뮤니티`, `brunch` negative + `기사 교차 확인`, `보조 기사` positive)
 
 ## Current Phase In Progress
 

@@ -1384,6 +1384,8 @@ These are placeholders for the next phase design target and its immediate follow
   - latest-update single-source 자연어 reload 후 두 번째 follow-up → source path(`example.com/seoul-weather`) context box 유지 + `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처` response-origin drift 없음
   - latest-update news-only 자연어 reload 후 follow-up → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` response-origin drift 없음
   - latest-update news-only 자연어 reload 후 두 번째 follow-up → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` response-origin drift 없음
+  - latest-update noisy community source 자연어 reload 후 follow-up → `보조 커뮤니티`, `brunch` 미노출 + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` 유지
+  - latest-update noisy community source 자연어 reload 후 두 번째 follow-up → `보조 커뮤니티`, `brunch` 미노출 + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` 유지
 
 ### In Progress
 - Improve regression fixtures for weak-slot reinvestigation and source consensus.

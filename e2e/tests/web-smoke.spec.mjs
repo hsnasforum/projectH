@@ -5392,7 +5392,7 @@ test("history-card latest-update news-only 다시 불러오기 후 두 번째 fo
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
 
-test("latest-update mixed-source 자연어 reload에서 source path가 context box에 유지되고 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+test("latest-update mixed-source 자연어 reload에서 source path(store.steampowered.com, yna.co.kr) + WEB badge, 최신 확인, 공식+기사 교차 확인, 보조 기사 · 공식 기반이 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "latest-mixed-natural-reload");
 
   const recordId = `websearch-latest-mixed-nat-${Date.now().toString(36)}`;
@@ -5570,7 +5570,7 @@ test("latest-update news-only 자연어 reload에서 기사 source path가 conte
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
 
-test("latest-update mixed-source 자연어 reload 후 follow-up에서 source path가 context box에 유지되고 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+test("latest-update mixed-source 자연어 reload 후 follow-up에서 source path(store.steampowered.com, yna.co.kr) + WEB badge, 최신 확인, 공식+기사 교차 확인, 보조 기사 · 공식 기반이 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "latest-mixed-natural-reload-followup");
 
   const recordId = `websearch-latest-mixed-nat-fu-${Date.now().toString(36)}`;
@@ -5635,7 +5635,7 @@ test("latest-update mixed-source 자연어 reload 후 follow-up에서 source pat
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
 
-test("latest-update mixed-source 자연어 reload 후 두 번째 follow-up에서 source path가 context box에 유지되고 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+test("latest-update mixed-source 자연어 reload 후 두 번째 follow-up에서 source path(store.steampowered.com, yna.co.kr) + WEB badge, 최신 확인, 공식+기사 교차 확인, 보조 기사 · 공식 기반이 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "latest-mixed-natural-reload-second-followup");
 
   const recordId = `websearch-latest-mixed-nat-2fu-${Date.now().toString(36)}`;

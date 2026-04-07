@@ -9237,6 +9237,9 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(reload_origin["verification_label"], first_origin["verification_label"])
             self.assertEqual(reload_origin["source_roles"], first_origin["source_roles"])
             self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
+            reload_source_paths = second["session"]["active_context"]["source_paths"]
+            self.assertIn("https://namu.wiki/w/testgame", reload_source_paths)
+            self.assertIn("https://ko.wikipedia.org/wiki/testgame", reload_source_paths)
 
     def test_handle_chat_zero_strong_slot_entity_card_natural_reload_exact_fields(self) -> None:
         """zero-strong-slot entity-card record를 자연어 reload했을 때
@@ -15693,6 +15696,9 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn(reload_origin.get("answer_mode", ""), ("entity_card", first_origin["answer_mode"]))
             self.assertEqual(reload_origin["verification_label"], first_origin["verification_label"])
             self.assertEqual(reload_origin["source_roles"], first_origin["source_roles"])
+            followup_source_paths = second["session"]["active_context"]["source_paths"]
+            self.assertIn("https://namu.wiki/w/testgame", followup_source_paths)
+            self.assertIn("https://ko.wikipedia.org/wiki/testgame", followup_source_paths)
 
     def test_handle_chat_zero_strong_slot_entity_card_natural_reload_follow_up_preserves_stored_response_origin(self) -> None:
         """zero-strong-slot entity-card → 자연어 reload → user_text follow-up에서

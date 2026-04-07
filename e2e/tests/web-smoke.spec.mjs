@@ -1925,9 +1925,10 @@ test("history-card entity-card 다시 불러오기 후 actual-search source path
   const originBadge = page.locator("#response-origin-badge");
   await expect(originBadge).toHaveText("WEB");
 
-  // Assert context box shows actual-search source URL
+  // Assert context box shows both actual-search source URLs (plurality)
   const contextBox = page.locator("#context-box");
   await expect(contextBox).toContainText("namu.wiki");
+  await expect(contextBox).toContainText("ko.wikipedia.org");
 
   // Clean up
   try {

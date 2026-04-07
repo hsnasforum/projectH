@@ -8566,7 +8566,7 @@ class WebAppServiceTest(unittest.TestCase):
 
     def test_handle_chat_actual_entity_search_reload_preserves_active_context_source_paths(self) -> None:
         """실제 entity search → stored record → load_web_search_record_id reload 경로에서
-        actual-search source path가 active_context.source_paths에 보존됩니다."""
+        actual-search source path plurality가 active_context.source_paths에 보존됩니다."""
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             settings = AppSettings(
@@ -8586,6 +8586,11 @@ class WebAppServiceTest(unittest.TestCase):
                         SimpleNamespace(
                             title="붉은사막 - 나무위키",
                             url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="붉은사막 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
                             snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
                         ),
                     ],
@@ -8617,6 +8622,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
             reload_source_paths = second["session"]["active_context"]["source_paths"]
             self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", reload_source_paths)
+            self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", reload_source_paths)
 
     def test_handle_chat_actual_entity_search_dual_probe_reload_preserves_active_context_source_paths(self) -> None:
         """실제 entity search → stored record → load_web_search_record_id reload 경로에서

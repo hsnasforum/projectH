@@ -15364,6 +15364,79 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(followup_origin["verification_label"], "설명형 다중 출처 합의")
             self.assertEqual(followup_origin["source_roles"], ["백과 기반"])
 
+    def test_handle_chat_dual_probe_entity_card_history_card_reload_second_follow_up_preserves_stored_response_origin(self) -> None:
+        """dual-probe entity-card → click reload → first follow-up → second follow-up에서
+        response_origin과 active_context.source_paths가 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "dual-probe-second-followup-origin-session"
+
+            store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {"title": "붉은사막 - 나무위키", "url": "https://namu.wiki/w/test", "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.", "matched_query": "붉은사막"},
+                    {"title": "붉은사막 | 플랫폼 - 공식", "url": "https://www.pearlabyss.com/200", "snippet": "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.", "matched_query": "붉은사막 공식 플랫폼"},
+                    {"title": "붉은사막 | 서비스 - 공식", "url": "https://www.pearlabyss.com/300", "snippet": "붉은사막은 펄어비스가 운영하는 게임이다.", "matched_query": "붉은사막 서비스 공식"},
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "badge": "WEB",
+                    "label": "웹 검색",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 다중 출처 합의",
+                    "source_roles": ["공식 기반", "백과 기반"],
+                },
+            )
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool([]),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            records = store.list_session_record_summaries(session_id)
+            record_id = records[0]["record_id"]
+
+            # show-only reload
+            first = service.handle_chat(
+                {"session_id": session_id, "provider": "mock", "load_web_search_record_id": record_id}
+            )
+            self.assertTrue(first["ok"])
+
+            # first follow-up
+            second = service.handle_chat(
+                {"session_id": session_id, "user_text": "이 검색 결과 요약해줘", "provider": "mock", "load_web_search_record_id": record_id}
+            )
+            self.assertTrue(second["ok"])
+
+            # second follow-up
+            third = service.handle_chat(
+                {"session_id": session_id, "user_text": "더 자세히 알려줘", "provider": "mock", "load_web_search_record_id": record_id}
+            )
+            self.assertTrue(third["ok"])
+            origin = third["response"]["response_origin"]
+            self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["answer_mode"], "entity_card")
+            self.assertEqual(origin["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(origin["source_roles"], ["공식 기반", "백과 기반"])
+            source_paths = third["session"]["active_context"]["source_paths"]
+            self.assertIn("https://www.pearlabyss.com/200", source_paths)
+            self.assertIn("https://www.pearlabyss.com/300", source_paths)
+
     def test_handle_chat_actual_entity_search_history_card_reload_second_follow_up_preserves_source_paths(self) -> None:
         """actual entity-search → click reload → first follow-up → second follow-up에서
         active_context.source_paths plurality가 유지됩니다."""

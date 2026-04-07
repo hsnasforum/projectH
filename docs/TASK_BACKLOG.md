@@ -86,10 +86,10 @@
 73. Latest-update noisy-community natural-reload second-follow-up exclusion service + Playwright smoke coverage (`보조 커뮤니티`, `brunch` negative in origin detail, response body, context box + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` positive retention)
 74. History-card latest-update noisy-community click-reload follow-up exclusion service + Playwright smoke coverage (`보조 커뮤니티`, `brunch` negative in origin detail, response body, context box + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` positive retention)
 75. History-card latest-update noisy-community click-reload second-follow-up exclusion service + Playwright smoke coverage (`보조 커뮤니티`, `brunch` negative in origin detail, response body, context box + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` positive retention)
-76. Entity-card noisy single-source claim natural-reload follow-up exclusion + provenance truth-sync (`출시일`, `2025`, `blog.example.com` 본문/detail 미노출, source_paths에 `blog.example.com` provenance 포함)
-77. Entity-card noisy single-source claim natural-reload second-follow-up exclusion + provenance truth-sync (`출시일`, `2025`, `blog.example.com` 본문/detail 미노출, source_paths에 `blog.example.com` provenance 포함)
-78. History-card entity-card noisy single-source claim click-reload follow-up exclusion + provenance truth-sync (`출시일`, `2025`, `blog.example.com` 본문/detail 미노출, source_paths에 `blog.example.com` provenance 포함)
-79. History-card entity-card noisy single-source claim click-reload second-follow-up exclusion + provenance truth-sync (`출시일`, `2025`, `blog.example.com` 본문/detail 미노출, source_paths에 `blog.example.com` provenance 포함)
+76. Entity-card noisy single-source claim natural-reload follow-up exclusion + provenance truth-sync (`출시일`, `2025`, `blog.example.com` 본문/detail 미노출, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, source_paths/context box에 `blog.example.com` provenance 포함)
+77. Entity-card noisy single-source claim natural-reload second-follow-up exclusion + provenance truth-sync (`출시일`, `2025`, `blog.example.com` 본문/detail 미노출, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, source_paths/context box에 `blog.example.com` provenance 포함)
+78. History-card entity-card noisy single-source claim click-reload follow-up exclusion + provenance truth-sync (`출시일`, `2025`, `blog.example.com` 본문/detail 미노출, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, source_paths/context box에 `blog.example.com` provenance 포함)
+79. History-card entity-card noisy single-source claim click-reload second-follow-up exclusion + provenance truth-sync (`출시일`, `2025`, `blog.example.com` 본문/detail 미노출, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, source_paths/context box에 `blog.example.com` provenance 포함)
 
 ## Current Phase In Progress
 

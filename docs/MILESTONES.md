@@ -48,7 +48,7 @@
 - history-card latest-update `다시 불러오기` click reload browser smoke covering `WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail retention after server-side record reload
 - history-card `다시 불러오기` follow-up browser smoke covering response origin badge and answer-mode badge drift prevention
 - history-card latest-update `다시 불러오기` follow-up browser smoke covering `WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail drift prevention
-- history-card latest-update `다시 불러오기` noisy community source exclusion browser smoke covering negative assertions for `보조 커뮤니티` and noisy content in origin detail and response body
+- history-card latest-update `다시 불러오기` noisy community source exclusion browser smoke covering negative assertions for `보조 커뮤니티` and `brunch` in response body, origin detail, and context box
 - history-card entity-card `다시 불러오기` noisy single-source claim exclusion browser smoke covering negative assertions for `출시일` and `2025` in response body, and positive assertions for agreement-backed fact card retention
 - history-card entity-card `다시 불러오기` dual-probe source-path + response-origin continuity browser smoke covering `pearlabyss.com/200` and `pearlabyss.com/300` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` after reload
 - history-card latest-update `다시 불러오기` mixed-source source-path + response-origin continuity browser smoke covering `store.steampowered.com` and `yna.co.kr` in context box, `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` after reload

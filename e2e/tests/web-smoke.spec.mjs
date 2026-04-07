@@ -2497,7 +2497,7 @@ test("history-card latest-update news-only 다시 불러오기 후 기사 source
   }
 });
 
-test("history-card latest-update single-source 다시 불러오기 후 source path가 context box에 유지됩니다", async ({ page }) => {
+test("history-card latest-update single-source 다시 불러오기 후 source path(example.com/seoul-weather) + WEB badge, 최신 확인, 단일 출처 참고, 보조 출처가 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "history-card-reload-latest-single-sp");
 
   // Pre-seed a single-source latest_update record
@@ -2589,7 +2589,7 @@ test("history-card latest-update single-source 다시 불러오기 후 source pa
   }
 });
 
-test("history-card latest-update single-source 다시 불러오기 후 follow-up 질문에서 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+test("history-card latest-update single-source 다시 불러오기 후 follow-up 질문에서 WEB badge, 최신 확인, 단일 출처 참고, 보조 출처가 drift하지 않습니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "history-card-reload-latest-single-followup");
 
   // Pre-seed a single-source latest_update record
@@ -3460,7 +3460,7 @@ test("history-card latest-update mixed-source 다시 불러오기 후 두 번째
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
 
-test("history-card latest-update single-source 다시 불러오기 후 follow-up 질문에서 source path가 context box에 유지됩니다", async ({ page }) => {
+test("history-card latest-update single-source 다시 불러오기 후 follow-up 질문에서 source path(example.com/seoul-weather) + WEB badge, 최신 확인, 단일 출처 참고, 보조 출처가 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "history-card-reload-latest-single-followup-sp");
 
   // Pre-seed a single-source latest_update record
@@ -5267,7 +5267,7 @@ test("entity-card 붉은사막 자연어 reload 후 두 번째 follow-up에서 n
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
 
-test("history-card latest-update single-source 다시 불러오기 후 두 번째 follow-up 질문에서 source path가 context box에 유지되고 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+test("history-card latest-update single-source 다시 불러오기 후 두 번째 follow-up 질문에서 source path(example.com/seoul-weather) + WEB badge, 최신 확인, 단일 출처 참고, 보조 출처가 drift하지 않습니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "history-card-reload-latest-single-second-followup");
 
   const recordId = `websearch-latest-single-2fu-${Date.now().toString(36)}`;

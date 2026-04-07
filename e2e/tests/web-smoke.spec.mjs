@@ -2825,7 +2825,7 @@ test("history-card latest-update news-only 다시 불러오기 후 follow-up 질
   }
 });
 
-test("history-card entity-card 다시 불러오기 후 follow-up 질문에서 actual-search source path가 context box에 유지됩니다", async ({ page }) => {
+test("history-card entity-card 다시 불러오기 후 follow-up 질문에서 actual-search source path(namu.wiki, ko.wikipedia.org) + WEB badge, 설명 카드, 설명형 다중 출처 합의, 백과 기반이 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "history-card-reload-entity-actual-followup-sp");
 
   // Pre-seed a generic entity_card record (붉은사막, single source without dual-probe)
@@ -2930,6 +2930,7 @@ test("history-card entity-card 다시 불러오기 후 follow-up 질문에서 ac
   await expect(contextBox).toContainText("ko.wikipedia.org");
 
   // Assert response-origin continuity after follow-up
+  await expect(originBadge).toHaveText("WEB");
   const answerModeBadge = page.locator("#response-answer-mode-badge");
   await expect(answerModeBadge).toBeVisible();
   await expect(answerModeBadge).toHaveText("설명 카드");

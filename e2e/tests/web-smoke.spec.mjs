@@ -4285,8 +4285,8 @@ test("entity-card dual-probe 자연어 reload에서 response origin badge와 ans
       badge: "WEB",
       label: "웹 검색",
       answer_mode: "entity_card",
-      verification_label: "설명형 단일 출처",
-      source_roles: ["백과 기반"],
+      verification_label: "설명형 다중 출처 합의",
+      source_roles: ["공식 기반", "백과 기반"],
     },
     claim_coverage: [],
     claim_coverage_progress_summary: "",
@@ -4305,8 +4305,8 @@ test("entity-card dual-probe 자연어 reload에서 response origin badge와 ans
           record_id: recordId,
           query: "붉은사막",
           answer_mode: "entity_card",
-          verification_label: "설명형 단일 출처",
-          source_roles: ["백과 기반"],
+          verification_label: "설명형 다중 출처 합의",
+          source_roles: ["공식 기반", "백과 기반"],
           result_count: 3,
           page_count: 2,
           created_at: record.created_at,
@@ -4341,7 +4341,8 @@ test("entity-card dual-probe 자연어 reload에서 response origin badge와 ans
   await expect(answerModeBadge).toHaveText("설명 카드");
 
   const originDetail = page.locator("#response-origin-detail");
-  await expect(originDetail).toContainText("설명형 단일 출처");
+  await expect(originDetail).toContainText("설명형 다중 출처 합의");
+  await expect(originDetail).toContainText("공식 기반");
   await expect(originDetail).toContainText("백과 기반");
 
   // Clean up
@@ -4507,14 +4508,14 @@ test("entity-card dual-probe 자연어 reload 후 follow-up에서 response origi
       { url: "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300", title: "붉은사막 | 서비스 - 공식", text: "붉은사막은 펄어비스가 운영하는 게임이며 배급도 펄어비스가 담당합니다." },
     ],
     summary_text: "웹 검색 요약: 붉은사막\n\n붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
-    response_origin: { provider: "web", badge: "WEB", label: "웹 검색", answer_mode: "entity_card", verification_label: "설명형 단일 출처", source_roles: ["백과 기반"] },
+    response_origin: { provider: "web", badge: "WEB", label: "웹 검색", answer_mode: "entity_card", verification_label: "설명형 다중 출처 합의", source_roles: ["공식 기반", "백과 기반"] },
     claim_coverage: [],
     claim_coverage_progress_summary: "",
   };
   fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
 
   await page.evaluate(({ items }) => { renderSearchHistory(items); }, {
-    items: [{ record_id: recordId, query: "붉은사막", answer_mode: "entity_card", verification_label: "설명형 단일 출처", source_roles: ["백과 기반"], result_count: 3, page_count: 2, created_at: record.created_at, record_path: recordPath }],
+    items: [{ record_id: recordId, query: "붉은사막", answer_mode: "entity_card", verification_label: "설명형 다중 출처 합의", source_roles: ["공식 기반", "백과 기반"], result_count: 3, page_count: 2, created_at: record.created_at, record_path: recordPath }],
   });
 
   const historyBox = page.locator("#search-history-box");
@@ -4538,7 +4539,8 @@ test("entity-card dual-probe 자연어 reload 후 follow-up에서 response origi
   await expect(answerModeBadge).toBeVisible();
   await expect(answerModeBadge).toHaveText("설명 카드");
   const originDetail = page.locator("#response-origin-detail");
-  await expect(originDetail).toContainText("설명형 단일 출처");
+  await expect(originDetail).toContainText("설명형 다중 출처 합의");
+  await expect(originDetail).toContainText("공식 기반");
   await expect(originDetail).toContainText("백과 기반");
 
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}

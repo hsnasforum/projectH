@@ -151,9 +151,9 @@ Current smoke scenarios:
 39. entity-card zero-strong-slot 자연어 reload 후 follow-up에서 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source role이 drift하지 않는지 확인 (browser natural-reload path)
 40. entity-card 붉은사막 검색 결과 `방금 검색한 결과 다시 보여줘` 자연어 reload에서 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 다중 출처 합의` verification label, `백과 기반` source role이 유지되는지 확인
 41. entity-card dual-probe `방금 검색한 결과 다시 보여줘` 자연어 reload에서 source path(`pearlabyss.com/ko-KR/Board/Detail?_boardNo=200`, `pearlabyss.com/ko-KR/Board/Detail?_boardNo=300`)가 context box에 유지되는지 확인
-42. entity-card dual-probe `방금 검색한 결과 다시 보여줘` 자연어 reload에서 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source role이 유지되는지 확인
+42. entity-card dual-probe `방금 검색한 결과 다시 보여줘` 자연어 reload에서 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 다중 출처 합의` verification label, `공식 기반` · `백과 기반` source role이 유지되는지 확인
 43. entity-card dual-probe 자연어 reload 후 follow-up에서 source path(`pearlabyss.com/ko-KR/Board/Detail?_boardNo=200`, `pearlabyss.com/ko-KR/Board/Detail?_boardNo=300`)가 context box에 유지되는지 확인
-44. entity-card dual-probe 자연어 reload 후 follow-up에서 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source role이 drift하지 않는지 확인
+44. entity-card dual-probe 자연어 reload 후 follow-up에서 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 다중 출처 합의` verification label, `공식 기반` · `백과 기반` source role이 drift하지 않는지 확인
 45. entity-card 붉은사막 자연어 reload 후 follow-up에서 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 다중 출처 합의` verification label, `백과 기반` source role이 drift하지 않는지 확인
 46. entity-card 붉은사막 자연어 reload에서 source path(`namu.wiki`, `ko.wikipedia.org`)가 context box에 유지되는지 확인
 47. entity-card 붉은사막 자연어 reload 후 follow-up에서 source path(`namu.wiki`, `ko.wikipedia.org`)가 context box에 유지되는지 확인

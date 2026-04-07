@@ -68,6 +68,7 @@
 55. History-card entity-card `다시 불러오기` follow-up actual-search source-path plurality service + Playwright smoke coverage (`namu.wiki`, `ko.wikipedia.org` in context box)
 56. History-card entity-card `다시 불러오기` second-follow-up actual-search source-path plurality + response-origin continuity service + Playwright smoke coverage (`namu.wiki`, `ko.wikipedia.org` in context box)
 57. History-card entity-card `다시 불러오기` second-follow-up dual-probe source-path + response-origin continuity service + Playwright smoke coverage (`pearlabyss.com/200`, `pearlabyss.com/300` in context box)
+58. Entity-card dual-probe natural-reload second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`pearlabyss.com` dual-probe URLs in context box)
 
 ## Current Phase In Progress
 

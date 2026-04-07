@@ -4814,6 +4814,78 @@ test("entity-card dual-probe 자연어 reload 후 follow-up에서 response origi
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
 
+test("entity-card dual-probe 자연어 reload 후 두 번째 follow-up에서 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "entity-dual-probe-natural-reload-second-followup-origin");
+
+  const recordId = `websearch-entity-dual-nat-2fu-or-${Date.now().toString(36)}`;
+  const recordDir = path.join(repoRoot, "data", "web-search", sessionId);
+  const recordPath = path.join(recordDir, `붉은사막-${recordId}.json`);
+  fs.mkdirSync(recordDir, { recursive: true });
+  const record = {
+    record_id: recordId,
+    session_id: sessionId,
+    query: "붉은사막",
+    permission: "enabled",
+    created_at: new Date().toISOString(),
+    result_count: 3,
+    page_count: 2,
+    results: [
+      { title: "붉은사막 - 나무위키", url: "https://namu.wiki/w/test", snippet: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.", matched_query: "붉은사막" },
+      { title: "붉은사막 | 플랫폼 - 공식", url: "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200", snippet: "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.", matched_query: "붉은사막 공식 플랫폼" },
+      { title: "붉은사막 | 서비스 - 공식", url: "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300", snippet: "붉은사막은 펄어비스가 운영하는 게임이다.", matched_query: "붉은사막 서비스 공식" },
+    ],
+    pages: [
+      { url: "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200", title: "붉은사막 | 플랫폼 - 공식", text: "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이며 펄어비스가 개발 중입니다." },
+      { url: "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300", title: "붉은사막 | 서비스 - 공식", text: "붉은사막은 펄어비스가 운영하는 게임이며 배급도 펄어비스가 담당합니다." },
+    ],
+    summary_text: "웹 검색 요약: 붉은사막\n\n붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+    response_origin: { provider: "web", badge: "WEB", label: "웹 검색", answer_mode: "entity_card", verification_label: "설명형 다중 출처 합의", source_roles: ["공식 기반", "백과 기반"] },
+    claim_coverage: [],
+    claim_coverage_progress_summary: "",
+  };
+  fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
+
+  await page.evaluate(({ items }) => { renderSearchHistory(items); }, {
+    items: [{ record_id: recordId, query: "붉은사막", answer_mode: "entity_card", verification_label: "설명형 다중 출처 합의", source_roles: ["공식 기반", "백과 기반"], result_count: 3, page_count: 2, created_at: record.created_at, record_path: recordPath }],
+  });
+
+  const historyBox = page.locator("#search-history-box");
+  await expect(historyBox).toBeVisible();
+  await historyBox.locator(".history-item-actions button.secondary").first().click();
+
+  const originBadge = page.locator("#response-origin-badge");
+  await expect(originBadge).toHaveText("WEB");
+
+  // Natural reload
+  await page.evaluate(async () => { await sendRequest({ user_text: "방금 검색한 결과 다시 보여줘" }); });
+  await expect(originBadge).toHaveText("WEB");
+
+  // First follow-up
+  await page.evaluate(async ({ rid }) => { await sendRequest({ user_text: "이 검색 결과 요약해줘", load_web_search_record_id: rid }, "follow_up"); }, { rid: recordId });
+  await expect(originBadge).toHaveText("WEB");
+
+  // Second follow-up
+  await page.evaluate(async ({ rid }) => { await sendRequest({ user_text: "더 자세히 알려줘", load_web_search_record_id: rid }, "follow_up"); }, { rid: recordId });
+
+  // Assert response-origin continuity after second follow-up
+  await expect(originBadge).toHaveText("WEB");
+  await expect(originBadge).toHaveClass(/web/);
+  const answerModeBadge = page.locator("#response-answer-mode-badge");
+  await expect(answerModeBadge).toBeVisible();
+  await expect(answerModeBadge).toHaveText("설명 카드");
+  const originDetail = page.locator("#response-origin-detail");
+  await expect(originDetail).toContainText("설명형 다중 출처 합의");
+  await expect(originDetail).toContainText("공식 기반");
+  await expect(originDetail).toContainText("백과 기반");
+
+  // Assert context box shows dual-probe source URLs
+  const contextBox = page.locator("#context-box");
+  await expect(contextBox).toContainText("pearlabyss.com/ko-KR/Board/Detail?_boardNo=200");
+  await expect(contextBox).toContainText("pearlabyss.com/ko-KR/Board/Detail?_boardNo=300");
+
+  try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
+});
+
 test("entity-card 붉은사막 자연어 reload 후 follow-up에서 source path가 context box에 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "entity-actual-search-natural-reload-followup-sp");
 

@@ -8805,7 +8805,7 @@ class WebAppServiceTest(unittest.TestCase):
 
     def test_handle_chat_actual_entity_search_natural_reload_preserves_source_paths(self) -> None:
         """실제 entity search → 자연어 recent-record recall 경로에서
-        source_paths가 active_context에서 유지됩니다."""
+        source_paths plurality가 active_context에서 유지됩니다."""
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             settings = AppSettings(
@@ -8825,6 +8825,11 @@ class WebAppServiceTest(unittest.TestCase):
                         SimpleNamespace(
                             title="붉은사막 - 나무위키",
                             url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="붉은사막 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
                             snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
                         ),
                     ],
@@ -8855,6 +8860,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
             reload_source_paths = second["session"]["active_context"]["source_paths"]
             self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", reload_source_paths)
+            self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", reload_source_paths)
 
     def test_handle_chat_actual_entity_search_natural_reload_exact_fields(self) -> None:
         """실제 entity search → 자연어 recent-record recall 경로에서
@@ -15950,7 +15956,7 @@ class WebAppServiceTest(unittest.TestCase):
 
     def test_handle_chat_actual_entity_search_natural_reload_follow_up_preserves_source_paths(self) -> None:
         """actual entity-search → 자연어 reload → follow-up에서
-        active_context.source_paths가 유지됩니다."""
+        active_context.source_paths plurality가 유지됩니다."""
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             settings = AppSettings(
@@ -15970,6 +15976,11 @@ class WebAppServiceTest(unittest.TestCase):
                         SimpleNamespace(
                             title="붉은사막 - 나무위키",
                             url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="붉은사막 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
                             snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
                         ),
                     ],
@@ -16009,6 +16020,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(third["ok"])
             source_paths = third["session"]["active_context"]["source_paths"]
             self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
 
     def test_handle_chat_actual_entity_search_natural_reload_follow_up_preserves_response_origin(self) -> None:
         """actual entity-search → 자연어 reload → follow-up에서

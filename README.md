@@ -155,8 +155,8 @@ Current smoke scenarios:
 43. entity-card dual-probe 자연어 reload 후 follow-up에서 source path(`pearlabyss.com/ko-KR/Board/Detail?_boardNo=200`, `pearlabyss.com/ko-KR/Board/Detail?_boardNo=300`)가 context box에 유지되는지 확인
 44. entity-card dual-probe 자연어 reload 후 follow-up에서 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source role이 drift하지 않는지 확인
 45. entity-card 붉은사막 자연어 reload 후 follow-up에서 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source role이 drift하지 않는지 확인
-46. entity-card 붉은사막 자연어 reload에서 source path(`namu.wiki`)가 context box에 유지되는지 확인
-47. entity-card 붉은사막 자연어 reload 후 follow-up에서 source path(`namu.wiki`)가 context box에 유지되는지 확인
+46. entity-card 붉은사막 자연어 reload에서 source path(`namu.wiki`, `ko.wikipedia.org`)가 context box에 유지되는지 확인
+47. entity-card 붉은사막 자연어 reload 후 follow-up에서 source path(`namu.wiki`, `ko.wikipedia.org`)가 context box에 유지되는지 확인
 48. history-card entity-card `다시 불러오기` 후 actual-search source path(`namu.wiki`, `ko.wikipedia.org`)가 context box에 유지되는지 확인
 49. history-card entity-card `다시 불러오기` 후 follow-up 질문에서 actual-search source path(`namu.wiki`, `ko.wikipedia.org`)가 context box에 유지되는지 확인
 

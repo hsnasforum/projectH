@@ -8229,6 +8229,9 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(reload_origin["answer_mode"], "latest_update")
             self.assertEqual(reload_origin["verification_label"], "공식+기사 교차 확인")
             self.assertEqual(reload_origin["source_roles"], ["보조 기사", "공식 기반"])
+            source_paths = second["session"]["active_context"]["source_paths"]
+            self.assertIn("https://store.steampowered.com/sale/summer2026", source_paths)
+            self.assertIn("https://www.yna.co.kr/view/AKR20260401000100017", source_paths)
 
     def test_handle_chat_single_source_latest_update_reload_exact_fields(self) -> None:
         """handle_chat 두 번 호출: single-source latest_update 검색 →
@@ -8297,6 +8300,87 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(reload_origin["answer_mode"], "latest_update")
             self.assertEqual(reload_origin["verification_label"], "단일 출처 참고")
             self.assertEqual(reload_origin["source_roles"], ["보조 출처"])
+            source_paths = second["session"]["active_context"]["source_paths"]
+            self.assertIn("https://example.com/seoul-weather", source_paths)
+
+    def test_handle_chat_news_only_latest_update_reload_exact_fields(self) -> None:
+        """handle_chat 두 번 호출: news-only latest_update 검색 →
+        같은 세션에서 '방금 검색한 결과 다시 보여줘' reload.
+        reload 응답의 actions_taken, web_search_record_path, response_origin
+        exact field가 news-only contract과 일관되게 유지되는지 통합 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 한국경제",
+                            url="https://www.hankyung.com/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                    ],
+                    pages={
+                        "https://www.hankyung.com/economy/2025": {
+                            "title": "기준금리 속보 - 한국경제",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: news-only latest_update 검색 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "reload-news-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_record_path = first["response"]["web_search_record_path"]
+            self.assertTrue(first_record_path)
+
+            # --- 둘째 호출: 같은 세션에서 reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": "reload-news-session",
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
+            reload_origin = second["response"]["response_origin"]
+            self.assertIsNotNone(reload_origin)
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+            self.assertEqual(reload_origin["source_roles"], ["보조 기사"])
+            source_paths = second["session"]["active_context"]["source_paths"]
+            self.assertIn("https://www.hankyung.com/economy/2025", source_paths)
+            self.assertIn("https://www.mk.co.kr/economy/2025", source_paths)
 
     def test_handle_chat_load_web_search_record_id_single_source_latest_update_exact_fields(self) -> None:
         """load_web_search_record_id를 직접 전달하는 history-card 선택 경로에서

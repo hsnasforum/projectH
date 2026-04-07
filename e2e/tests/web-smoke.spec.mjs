@@ -2076,7 +2076,7 @@ test("history-card entity-card 다시 불러오기 후 dual-probe source path(pe
   }
 });
 
-test("history-card latest-update 다시 불러오기 후 mixed-source source path가 context box에 유지됩니다", async ({ page }) => {
+test("history-card latest-update 다시 불러오기 후 mixed-source source path(store.steampowered.com, yna.co.kr) + WEB badge, 최신 확인, 공식+기사 교차 확인, 보조 기사 · 공식 기반이 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "history-card-reload-latest-source-path");
 
   // Pre-seed a latest_update record with two mixed-source URLs
@@ -3271,7 +3271,7 @@ test("history-card entity-card 다시 불러오기 후 follow-up 질문에서 du
   }
 });
 
-test("history-card latest-update mixed-source 다시 불러오기 후 follow-up 질문에서 source path가 context box에 유지됩니다", async ({ page }) => {
+test("history-card latest-update mixed-source 다시 불러오기 후 follow-up 질문에서 source path(store.steampowered.com, yna.co.kr) + WEB badge, 최신 확인, 공식+기사 교차 확인, 보조 기사 · 공식 기반이 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "history-card-reload-latest-mixed-followup-sp");
 
   // Pre-seed a mixed-source latest_update record
@@ -3395,7 +3395,7 @@ test("history-card latest-update mixed-source 다시 불러오기 후 follow-up 
   }
 });
 
-test("history-card latest-update mixed-source 다시 불러오기 후 두 번째 follow-up 질문에서 source path가 context box에 유지되고 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+test("history-card latest-update mixed-source 다시 불러오기 후 두 번째 follow-up 질문에서 source path(store.steampowered.com, yna.co.kr) + WEB badge, 최신 확인, 공식+기사 교차 확인, 보조 기사 · 공식 기반이 drift하지 않습니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "history-card-reload-latest-mixed-second-followup");
 
   const recordId = `websearch-latest-mixed-2fu-${Date.now().toString(36)}`;

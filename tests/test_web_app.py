@@ -15273,7 +15273,7 @@ class WebAppServiceTest(unittest.TestCase):
 
     def test_handle_chat_entity_card_actual_search_follow_up_preserves_source_paths(self) -> None:
         """entity-card actual-search record → load_web_search_record_id reload → follow-up에서
-        active_context.source_paths가 유지됩니다."""
+        active_context.source_paths plurality가 유지됩니다."""
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
@@ -15337,6 +15337,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(second["ok"])
             source_paths = second["session"]["active_context"]["source_paths"]
             self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
 
     def test_handle_chat_entity_card_dual_probe_follow_up_preserves_source_paths(self) -> None:
         """entity-card dual-probe record → load_web_search_record_id + user_text follow-up에서

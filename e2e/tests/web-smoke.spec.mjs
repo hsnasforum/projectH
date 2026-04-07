@@ -2889,9 +2889,10 @@ test("history-card entity-card 다시 불러오기 후 follow-up 질문에서 ac
     { rid: recordId }
   );
 
-  // Assert context box still shows actual-search source URL after follow-up
+  // Assert context box still shows both actual-search source URLs after follow-up (plurality)
   const contextBox = page.locator("#context-box");
   await expect(contextBox).toContainText("namu.wiki");
+  await expect(contextBox).toContainText("ko.wikipedia.org");
 
   // Clean up
   try {

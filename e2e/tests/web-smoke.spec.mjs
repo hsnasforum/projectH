@@ -6388,8 +6388,8 @@ test("entity-card noisy single-source claim(출시일/2025/blog.example.com)이 
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
 
-test("history-card entity-card noisy single-source claim이 다시 불러오기 후 follow-up에서도 본문과 origin detail에 다시 노출되지 않습니다", async ({ page }) => {
-  const sessionId = await prepareSession(page, "entity-noisy-click-reload-followup");
+test("history-card entity-card noisy single-source claim(출시일/2025/blog.example.com)이 다시 불러오기 후 follow-up에서도 본문과 origin detail에 미노출되고 blog.example.com provenance가 context box에 유지됩니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "entity-noisy-click-reload-followup-prov");
 
   const recordId = `websearch-entity-noisy-click-fu-${Date.now().toString(36)}`;
   const recordDir = path.join(repoRoot, "data", "web-search", sessionId);
@@ -6457,8 +6457,8 @@ test("history-card entity-card noisy single-source claim이 다시 불러오기 
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
 
-test("history-card entity-card noisy single-source claim이 다시 불러오기 후 두 번째 follow-up에서도 본문과 origin detail에 다시 노출되지 않습니다", async ({ page }) => {
-  const sessionId = await prepareSession(page, "entity-noisy-click-reload-second-followup");
+test("history-card entity-card noisy single-source claim(출시일/2025/blog.example.com)이 다시 불러오기 후 두 번째 follow-up에서도 본문과 origin detail에 미노출되고 blog.example.com provenance가 context box에 유지됩니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "entity-noisy-click-reload-second-followup-prov");
 
   const recordId = `websearch-entity-noisy-click-2fu-${Date.now().toString(36)}`;
   const recordDir = path.join(repoRoot, "data", "web-search", sessionId);

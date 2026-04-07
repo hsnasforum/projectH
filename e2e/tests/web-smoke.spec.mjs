@@ -3384,6 +3384,71 @@ test("history-card latest-update mixed-source 다시 불러오기 후 follow-up 
   }
 });
 
+test("history-card latest-update mixed-source 다시 불러오기 후 두 번째 follow-up 질문에서 source path가 context box에 유지되고 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "history-card-reload-latest-mixed-second-followup");
+
+  const recordId = `websearch-latest-mixed-2fu-${Date.now().toString(36)}`;
+  const recordDir = path.join(repoRoot, "data", "web-search", sessionId);
+  const recordPath = path.join(recordDir, `스팀할인-${recordId}.json`);
+  fs.mkdirSync(recordDir, { recursive: true });
+  const record = {
+    record_id: recordId,
+    session_id: sessionId,
+    query: "스팀 여름 할인",
+    permission: "enabled",
+    created_at: new Date().toISOString(),
+    result_count: 2,
+    page_count: 2,
+    results: [
+      { title: "Steam 여름 할인 - Steam Store", url: "https://store.steampowered.com/sale/summer2026", snippet: "Steam 여름 할인이 시작되었습니다." },
+      { title: "스팀 여름 할인 시작 - 게임뉴스", url: "https://www.yna.co.kr/view/AKR20260401000100017", snippet: "스팀이 2026년 여름 할인을 시작했다." },
+    ],
+    pages: [
+      { url: "https://store.steampowered.com/sale/summer2026", title: "Steam 여름 할인", text: "Steam 여름 할인이 시작되었습니다." },
+      { url: "https://www.yna.co.kr/view/AKR20260401000100017", title: "스팀 여름 할인 시작", text: "스팀이 2026년 여름 할인을 시작했다." },
+    ],
+    summary_text: "웹 검색 요약: 스팀 여름 할인\n\nSteam 여름 할인이 시작되었습니다.",
+    response_origin: { provider: "web", badge: "WEB", label: "웹 검색", answer_mode: "latest_update", verification_label: "공식+기사 교차 확인", source_roles: ["보조 기사", "공식 기반"] },
+    claim_coverage: [],
+    claim_coverage_progress_summary: "",
+  };
+  fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
+
+  await page.evaluate(({ items }) => { renderSearchHistory(items); }, {
+    items: [{ record_id: recordId, query: "스팀 여름 할인", answer_mode: "latest_update", verification_label: "공식+기사 교차 확인", source_roles: ["보조 기사", "공식 기반"], result_count: 2, page_count: 2, created_at: record.created_at, record_path: recordPath }],
+  });
+
+  const historyBox = page.locator("#search-history-box");
+  await expect(historyBox).toBeVisible();
+  await historyBox.locator(".history-item-actions button.secondary").first().click();
+
+  const originBadge = page.locator("#response-origin-badge");
+  await expect(originBadge).toHaveText("WEB");
+
+  // First follow-up
+  await page.evaluate(async ({ rid }) => { await sendRequest({ user_text: "이 검색 결과 요약해줘", load_web_search_record_id: rid }, "follow_up"); }, { rid: recordId });
+  await expect(originBadge).toHaveText("WEB");
+
+  // Second follow-up
+  await page.evaluate(async ({ rid }) => { await sendRequest({ user_text: "더 자세히 알려줘", load_web_search_record_id: rid }, "follow_up"); }, { rid: recordId });
+
+  await expect(originBadge).toHaveText("WEB");
+  await expect(originBadge).toHaveClass(/web/);
+  const answerModeBadge = page.locator("#response-answer-mode-badge");
+  await expect(answerModeBadge).toBeVisible();
+  await expect(answerModeBadge).toHaveText("최신 확인");
+  const originDetail = page.locator("#response-origin-detail");
+  await expect(originDetail).toContainText("공식+기사 교차 확인");
+  await expect(originDetail).toContainText("보조 기사");
+  await expect(originDetail).toContainText("공식 기반");
+
+  const contextBox = page.locator("#context-box");
+  await expect(contextBox).toContainText("store.steampowered.com");
+  await expect(contextBox).toContainText("yna.co.kr");
+
+  try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
+});
+
 test("history-card latest-update single-source 다시 불러오기 후 follow-up 질문에서 source path가 context box에 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "history-card-reload-latest-single-followup-sp");
 

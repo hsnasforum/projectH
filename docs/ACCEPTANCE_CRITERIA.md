@@ -1372,6 +1372,7 @@ These are placeholders for the next phase design target and its immediate follow
   - history-card entity-card `다시 불러오기` 후 두 번째 follow-up → dual-probe source path(`pearlabyss.com/200`, `pearlabyss.com/300`) context box 유지 + `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` response-origin drift 없음
   - entity-card dual-probe 자연어 reload 후 두 번째 follow-up → source path(`pearlabyss.com` dual-probe URLs) context box 유지 + `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` response-origin drift 없음
   - entity-card 붉은사막 자연어 reload 후 두 번째 follow-up → source path(`namu.wiki`, `ko.wikipedia.org`) context box 유지 + `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` response-origin drift 없음
+  - history-card latest-update mixed-source `다시 불러오기` 후 두 번째 follow-up → source path(`store.steampowered.com`, `yna.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` response-origin drift 없음
 
 ### In Progress
 - Improve regression fixtures for weak-slot reinvestigation and source consensus.

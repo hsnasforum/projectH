@@ -9764,6 +9764,20 @@ class WebAppServiceTest(unittest.TestCase):
             # reload: noisy single-source claim 미노출
             self.assertNotIn("출시일", reload_text, "noisy single-source의 '출시일' claim이 reload에 다시 노출되면 안 됩니다")
             self.assertNotIn("2025", reload_text, "noisy single-source의 '2025' claim이 reload에 다시 노출되면 안 됩니다")
+            self.assertNotIn("blog.example.com", reload_text)
+
+            # reload: response_origin exact fields
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["badge"], "WEB")
+            self.assertEqual(reload_origin["answer_mode"], "entity_card")
+            self.assertEqual(reload_origin["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(reload_origin["source_roles"], ["백과 기반"])
+
+            # reload: source_paths provenance
+            source_paths = second["session"]["active_context"]["source_paths"]
+            self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            self.assertIn("https://blog.example.com/crimson-desert", source_paths)
 
 
     def test_handle_chat_entity_card_multi_source_agreement_over_noise_natural_reload(self) -> None:
@@ -9872,11 +9886,21 @@ class WebAppServiceTest(unittest.TestCase):
             # reload: noisy single-source claim 미노출
             self.assertNotIn("출시일", reload_text, "noisy single-source의 '출시일' claim이 자연어 reload에 노출되면 안 됩니다")
             self.assertNotIn("2025", reload_text, "noisy single-source의 '2025' claim이 자연어 reload에 노출되면 안 됩니다")
+            self.assertNotIn("blog.example.com", reload_text)
 
-            # reload: source_roles에 noisy single-source role 미포함
+            # reload: response_origin exact fields
             reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["badge"], "WEB")
+            self.assertEqual(reload_origin["answer_mode"], "entity_card")
+            self.assertEqual(reload_origin["verification_label"], "설명형 다중 출처 합의")
             self.assertEqual(reload_origin["source_roles"], ["백과 기반"])
             self.assertNotIn("설명형 출처", reload_origin["source_roles"])
+
+            # reload: source_paths provenance
+            source_paths = second["session"]["active_context"]["source_paths"]
+            self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            self.assertIn("https://blog.example.com/crimson-desert", source_paths)
 
 
     def test_handle_chat_latest_update_noisy_source_excluded_from_body_and_badge(self) -> None:

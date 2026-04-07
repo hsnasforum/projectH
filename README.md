@@ -131,7 +131,7 @@ Current smoke scenarios:
 19. history-card `다시 불러오기` 후 follow-up 질문에서 response origin badge와 answer-mode badge가 drift하지 않는지 확인
 20. history-card latest-update `다시 불러오기` 후 follow-up 질문에서 `WEB` origin badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail이 drift하지 않는지 확인
 21. history-card latest-update `다시 불러오기` 후 noisy community source(`보조 커뮤니티`, `brunch` 등)가 본문과 origin detail에 노출되지 않는지 확인
-22. history-card entity-card `다시 불러오기` 후 noisy single-source claim(`출시일`, `2025` 등)이 본문과 origin detail에 노출되지 않고, agreement-backed 사실 카드(`확인된 사실:`, `교차 확인`)가 유지되는지 확인
+22. history-card entity-card `다시 불러오기` 후 noisy single-source claim(`출시일`, `2025`, `blog.example.com`)이 본문과 origin detail에 노출되지 않고, `설명형 다중 출처 합의`, `백과 기반` 유지, agreement-backed 사실 카드(`확인된 사실:`, `교차 확인`) 유지, context box에 `namu.wiki`, `ko.wikipedia.org`, `blog.example.com` provenance 포함 확인
 23. history-card entity-card `다시 불러오기` 후 dual-probe source path(`pearlabyss.com/200`, `pearlabyss.com/300`)가 context box에 유지되고, `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 다중 출처 합의` verification label, `공식 기반` · `백과 기반` source role이 유지되는지 확인
 24. history-card latest-update `다시 불러오기` 후 mixed-source source path(`store.steampowered.com`, `yna.co.kr`)가 context box에 유지되고, `WEB` origin badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source role이 유지되는지 확인
 25. history-card latest-update single-source `다시 불러오기` 후 `단일 출처 참고` verification label과 `보조 출처` source role이 origin detail에 유지되는지 확인

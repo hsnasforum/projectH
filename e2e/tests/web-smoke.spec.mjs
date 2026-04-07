@@ -1756,7 +1756,7 @@ test("history-card entity-card 다시 불러오기 후 noisy single-source claim
       badge: "WEB",
       label: "웹 검색",
       answer_mode: "entity_card",
-      verification_label: "설명형 단일 출처",
+      verification_label: "설명형 다중 출처 합의",
       source_roles: ["백과 기반"],
     },
     claim_coverage: [
@@ -1786,7 +1786,7 @@ test("history-card entity-card 다시 불러오기 후 noisy single-source claim
           record_id: recordId,
           query: "붉은사막",
           answer_mode: "entity_card",
-          verification_label: "설명형 단일 출처",
+          verification_label: "설명형 다중 출처 합의",
           source_roles: ["백과 기반"],
           result_count: 3,
           page_count: 3,
@@ -1813,11 +1813,13 @@ test("history-card entity-card 다시 불러오기 후 noisy single-source claim
 
   // Assert origin detail shows clean source role
   const originDetail = page.locator("#response-origin-detail");
-  await expect(originDetail).toContainText("설명형 단일 출처");
+  await expect(originDetail).toContainText("설명형 다중 출처 합의");
   await expect(originDetail).toContainText("백과 기반");
 
   // Negative assertions: noisy blog source must NOT appear in origin detail
   const originDetailText = await originDetail.textContent();
+  expect(originDetailText).not.toContain("출시일");
+  expect(originDetailText).not.toContain("2025");
   expect(originDetailText).not.toContain("blog.example.com");
 
   // Response body: wait for content to render, then check positive and negative assertions
@@ -1826,7 +1828,14 @@ test("history-card entity-card 다시 불러오기 후 noisy single-source claim
   const responseText = await page.getByTestId("response-text").textContent();
   expect(responseText).not.toContain("출시일");
   expect(responseText).not.toContain("2025");
+  expect(responseText).not.toContain("blog.example.com");
   expect(responseText).not.toContain("로그인 회원가입 구독 광고");
+
+  // Context box: provenance URLs preserved
+  const contextBox = page.locator("#context-box");
+  await expect(contextBox).toContainText("namu.wiki");
+  await expect(contextBox).toContainText("ko.wikipedia.org");
+  await expect(contextBox).toContainText("blog.example.com");
 
   // Clean up
   try {

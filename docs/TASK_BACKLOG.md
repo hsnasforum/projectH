@@ -88,6 +88,8 @@
 75. History-card latest-update noisy-community click-reload second-follow-up exclusion service + Playwright smoke coverage (`보조 커뮤니티`, `brunch` negative + `기사 교차 확인`, `보조 기사` positive)
 76. Entity-card noisy single-source claim natural-reload follow-up exclusion service + Playwright smoke coverage (`출시일`, `2025`, `blog.example.com` negative + `확인된 사실:`, `교차 확인`, `설명형 다중 출처 합의`, `백과 기반` positive)
 77. Entity-card noisy single-source claim natural-reload second-follow-up exclusion service + Playwright smoke coverage (`출시일`, `2025`, `blog.example.com` negative + `확인된 사실:`, `교차 확인`, `설명형 다중 출처 합의`, `백과 기반` positive)
+78. History-card entity-card noisy single-source claim click-reload follow-up exclusion service + Playwright smoke coverage (`출시일`, `2025` negative + `설명형 다중 출처 합의`, `백과 기반` positive)
+79. History-card entity-card noisy single-source claim click-reload second-follow-up exclusion service + Playwright smoke coverage (`출시일`, `2025` negative + `설명형 다중 출처 합의`, `백과 기반` positive)
 
 ## Current Phase In Progress
 

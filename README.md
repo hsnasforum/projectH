@@ -181,6 +181,8 @@ Current smoke scenarios:
 69. history-card latest-update noisy community source가 `다시 불러오기` 후 두 번째 follow-up에서도 origin detail과 본문, context box에 `보조 커뮤니티`, `brunch` 미노출되고, `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr`만 유지되는지 확인
 70. entity-card noisy single-source claim이 자연어 reload 후 follow-up에서도 본문과 origin detail에 `출시일`, `2025` 미노출되고, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org`가 유지되는지 확인
 71. entity-card noisy single-source claim이 자연어 reload 후 두 번째 follow-up에서도 본문과 origin detail에 `출시일`, `2025` 미노출되고, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org`가 유지되는지 확인
+72. history-card entity-card noisy single-source claim이 `다시 불러오기` 후 follow-up에서도 본문과 origin detail에 `출시일`, `2025` 미노출되고, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org`가 유지되는지 확인
+73. history-card entity-card noisy single-source claim이 `다시 불러오기` 후 두 번째 follow-up에서도 본문과 origin detail에 `출시일`, `2025` 미노출되고, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org`가 유지되는지 확인
 
 `make e2e-test` launches a dedicated Playwright web server for smoke with inherited `LOCAL_AI_MODEL_PROVIDER` / `LOCAL_AI_OLLAMA_MODEL` overrides cleared, `LOCAL_AI_MODEL_PROVIDER=mock` reapplied, and existing servers on the smoke port not reused. Shell overrides such as `LOCAL_AI_MODEL_PROVIDER=ollama` therefore do not change the automated baseline. Other runtimes remain optional and are validated separately.
 

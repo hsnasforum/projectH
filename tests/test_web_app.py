@@ -15703,6 +15703,86 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("https://namu.wiki/w/testgame", followup_source_paths)
             self.assertIn("https://ko.wikipedia.org/wiki/testgame", followup_source_paths)
 
+    def test_handle_chat_zero_strong_slot_entity_card_history_card_reload_second_follow_up_preserves_source_paths(self) -> None:
+        """zero-strong-slot entity-card → click reload → first follow-up → second follow-up에서
+        active_context.source_paths가 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="테스트게임 - 나무위키",
+                            url="https://namu.wiki/w/testgame",
+                            snippet="테스트게임은 알 수 없는 개발사의 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="테스트게임 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/testgame",
+                            snippet="테스트게임은 정보가 부족한 게임이다.",
+                        ),
+                    ],
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "zero-strong-second-followup-sp-session",
+                    "user_text": "테스트게임에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # show-only reload
+            second = service.handle_chat(
+                {
+                    "session_id": "zero-strong-second-followup-sp-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+
+            # first follow-up
+            third = service.handle_chat(
+                {
+                    "session_id": "zero-strong-second-followup-sp-session",
+                    "user_text": "이 검색 결과 요약해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(third["ok"])
+
+            # second follow-up
+            fourth = service.handle_chat(
+                {
+                    "session_id": "zero-strong-second-followup-sp-session",
+                    "user_text": "더 자세히 알려줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(fourth["ok"])
+            source_paths = fourth["session"]["active_context"]["source_paths"]
+            self.assertIn("https://namu.wiki/w/testgame", source_paths)
+            self.assertIn("https://ko.wikipedia.org/wiki/testgame", source_paths)
+
     def test_handle_chat_zero_strong_slot_entity_card_natural_reload_follow_up_preserves_stored_response_origin(self) -> None:
         """zero-strong-slot entity-card → 자연어 reload → user_text follow-up에서
         response_origin이 stored 값으로 보존되거나 runtime default로 drift하지 않습니다."""

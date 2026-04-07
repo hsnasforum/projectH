@@ -3730,6 +3730,11 @@ test("entity-card zero-strong-slot 다시 불러오기 후 두 번째 follow-up 
   await expect(originDetail).toContainText("설명형 단일 출처");
   await expect(originDetail).toContainText("백과 기반");
 
+  // Assert context box shows both source URLs after second follow-up (source-path continuity)
+  const contextBox = page.locator("#context-box");
+  await expect(contextBox).toContainText("namu.wiki");
+  await expect(contextBox).toContainText("ko.wikipedia.org");
+
   // Clean up
   try {
     fs.unlinkSync(recordPath);

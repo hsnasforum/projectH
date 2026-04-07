@@ -1388,6 +1388,8 @@ These are placeholders for the next phase design target and its immediate follow
   - latest-update noisy community source 자연어 reload 후 두 번째 follow-up → `보조 커뮤니티`, `brunch` 미노출 + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` 유지
   - history-card latest-update noisy community source `다시 불러오기` 후 follow-up → `보조 커뮤니티`, `brunch` 미노출 + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` 유지
   - history-card latest-update noisy community source `다시 불러오기` 후 두 번째 follow-up → `보조 커뮤니티`, `brunch` 미노출 + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` 유지
+  - entity-card noisy single-source claim 자연어 reload 후 follow-up → `출시일`, `2025`, `blog.example.com` 미노출 + `확인된 사실:`, `교차 확인`, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지
+  - entity-card noisy single-source claim 자연어 reload 후 두 번째 follow-up → `출시일`, `2025`, `blog.example.com` 미노출 + `확인된 사실:`, `교차 확인`, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지
 
 ### In Progress
 - Improve regression fixtures for weak-slot reinvestigation and source consensus.

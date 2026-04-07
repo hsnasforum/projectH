@@ -17248,6 +17248,118 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("https://www.mk.co.kr/economy/2025", source_paths)
             self.assertNotIn("https://brunch.co.kr/economy", source_paths)
 
+    def test_handle_chat_entity_card_noisy_single_source_claim_excluded_after_natural_reload_follow_up(self) -> None:
+        """entity-card noisy single-source → 자연어 reload → first follow-up에서
+        noisy single-source claim이 텍스트에 미노출되고 agreement-backed 사실 카드가 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_page_text = "붉은사막 출시일은 2025년 12월로 예정되어 있다. 로그인 회원가입 구독 광고 전체메뉴 기사제보 이용약관 개인정보 쿠키 facebook twitter"
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(title="붉은사막 - 나무위키", url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."),
+                        SimpleNamespace(title="붉은사막 - 위키백과", url="https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."),
+                        SimpleNamespace(title="붉은사막 출시일 정보", url="https://blog.example.com/crimson-desert", snippet="붉은사막 출시일은 2025년 12월로 예정되어 있다."),
+                    ],
+                    pages={
+                        "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89": {"title": "붉은사막 - 나무위키", "text": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."},
+                        "https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89": {"title": "붉은사막 - 위키백과", "text": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."},
+                        "https://blog.example.com/crimson-desert": {"title": "붉은사막 출시일 정보", "text": noisy_page_text},
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat({"session_id": "entity-noisy-nat-fu-session", "user_text": "붉은사막에 대해 알려줘", "provider": "mock", "web_search_permission": "enabled"})
+            self.assertTrue(first["ok"])
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            second = service.handle_chat({"session_id": "entity-noisy-nat-fu-session", "user_text": "방금 검색한 결과 다시 보여줘", "provider": "mock"})
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+
+            third = service.handle_chat({"session_id": "entity-noisy-nat-fu-session", "user_text": "이 검색 결과 요약해줘", "provider": "mock", "load_web_search_record_id": record_id})
+            self.assertTrue(third["ok"])
+            origin = third["response"]["response_origin"]
+            self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["answer_mode"], "entity_card")
+            self.assertEqual(origin["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(origin["source_roles"], ["백과 기반"])
+            self.assertNotIn("출시일", third["response"]["text"])
+            self.assertNotIn("2025", third["response"]["text"])
+            source_paths = third["session"]["active_context"]["source_paths"]
+            self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+
+    def test_handle_chat_entity_card_noisy_single_source_claim_excluded_after_natural_reload_second_follow_up(self) -> None:
+        """entity-card noisy single-source → 자연어 reload → first follow-up → second follow-up에서
+        noisy single-source claim이 텍스트에 미노출되고 agreement-backed 사실 카드가 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_page_text = "붉은사막 출시일은 2025년 12월로 예정되어 있다. 로그인 회원가입 구독 광고 전체메뉴 기사제보 이용약관 개인정보 쿠키 facebook twitter"
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(title="붉은사막 - 나무위키", url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."),
+                        SimpleNamespace(title="붉은사막 - 위키백과", url="https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."),
+                        SimpleNamespace(title="붉은사막 출시일 정보", url="https://blog.example.com/crimson-desert", snippet="붉은사막 출시일은 2025년 12월로 예정되어 있다."),
+                    ],
+                    pages={
+                        "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89": {"title": "붉은사막 - 나무위키", "text": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."},
+                        "https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89": {"title": "붉은사막 - 위키백과", "text": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."},
+                        "https://blog.example.com/crimson-desert": {"title": "붉은사막 출시일 정보", "text": noisy_page_text},
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat({"session_id": "entity-noisy-nat-2fu-session", "user_text": "붉은사막에 대해 알려줘", "provider": "mock", "web_search_permission": "enabled"})
+            self.assertTrue(first["ok"])
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            second = service.handle_chat({"session_id": "entity-noisy-nat-2fu-session", "user_text": "방금 검색한 결과 다시 보여줘", "provider": "mock"})
+            self.assertTrue(second["ok"])
+
+            third = service.handle_chat({"session_id": "entity-noisy-nat-2fu-session", "user_text": "이 검색 결과 요약해줘", "provider": "mock", "load_web_search_record_id": record_id})
+            self.assertTrue(third["ok"])
+
+            fourth = service.handle_chat({"session_id": "entity-noisy-nat-2fu-session", "user_text": "더 자세히 알려줘", "provider": "mock", "load_web_search_record_id": record_id})
+            self.assertTrue(fourth["ok"])
+            origin = fourth["response"]["response_origin"]
+            self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["answer_mode"], "entity_card")
+            self.assertEqual(origin["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(origin["source_roles"], ["백과 기반"])
+            self.assertNotIn("출시일", fourth["response"]["text"])
+            self.assertNotIn("2025", fourth["response"]["text"])
+            source_paths = fourth["session"]["active_context"]["source_paths"]
+            self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+
 
 if __name__ == "__main__":
     unittest.main()

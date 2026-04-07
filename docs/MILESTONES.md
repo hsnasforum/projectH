@@ -92,6 +92,7 @@
 - latest-update news-only natural-reload follow-up + second-follow-up source-path + response-origin continuity service + browser smoke covering `hankyung.com`, `mk.co.kr`, `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사`
 - latest-update noisy-community natural-reload follow-up + second-follow-up exclusion service + browser smoke covering `보조 커뮤니티`, `brunch` negative assertion with `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` positive assertion
 - latest-update noisy-community click-reload follow-up + second-follow-up exclusion service + browser smoke covering `보조 커뮤니티`, `brunch` negative assertion with `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` positive assertion
+- entity-card noisy single-source claim natural-reload follow-up + second-follow-up exclusion service + browser smoke covering `출시일`, `2025`, `blog.example.com` negative assertion with `확인된 사실:`, `교차 확인`, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` positive assertion
 - PDF text-layer support
 - OCR-not-supported guidance
 - response feedback capture

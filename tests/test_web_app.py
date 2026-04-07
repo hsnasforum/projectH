@@ -15303,7 +15303,7 @@ class WebAppServiceTest(unittest.TestCase):
                 response_origin={
                     "provider": "web",
                     "answer_mode": "entity_card",
-                    "verification_label": "설명형 단일 출처",
+                    "verification_label": "설명형 다중 출처 합의",
                     "source_roles": ["백과 기반"],
                 },
             )

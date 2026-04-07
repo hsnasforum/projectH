@@ -8623,6 +8623,10 @@ class WebAppServiceTest(unittest.TestCase):
             reload_source_paths = second["session"]["active_context"]["source_paths"]
             self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", reload_source_paths)
             self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", reload_source_paths)
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["answer_mode"], "entity_card")
+            self.assertEqual(reload_origin["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(reload_origin["source_roles"], ["백과 기반"])
 
     def test_handle_chat_actual_entity_search_dual_probe_reload_preserves_active_context_source_paths(self) -> None:
         """실제 entity search → stored record → load_web_search_record_id reload 경로에서
@@ -15349,6 +15353,10 @@ class WebAppServiceTest(unittest.TestCase):
             source_paths = second["session"]["active_context"]["source_paths"]
             self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
             self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            followup_origin = second["response"]["response_origin"]
+            self.assertEqual(followup_origin["answer_mode"], "entity_card")
+            self.assertEqual(followup_origin["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(followup_origin["source_roles"], ["백과 기반"])
 
     def test_handle_chat_entity_card_dual_probe_follow_up_preserves_source_paths(self) -> None:
         """entity-card dual-probe record → load_web_search_record_id + user_text follow-up에서

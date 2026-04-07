@@ -5453,7 +5453,7 @@ test("latest-update mixed-source 자연어 reload에서 source path(store.steamp
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
 
-test("latest-update single-source 자연어 reload에서 source path가 context box에 유지되고 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+test("latest-update single-source 자연어 reload에서 source path(example.com/seoul-weather) + WEB badge, 최신 확인, 단일 출처 참고, 보조 출처가 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "latest-single-natural-reload");
 
   const recordId = `websearch-latest-single-nat-${Date.now().toString(36)}`;
@@ -5704,7 +5704,7 @@ test("latest-update mixed-source 자연어 reload 후 두 번째 follow-up에서
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
 
-test("latest-update single-source 자연어 reload 후 follow-up에서 source path가 context box에 유지되고 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+test("latest-update single-source 자연어 reload 후 follow-up에서 source path(example.com/seoul-weather) + WEB badge, 최신 확인, 단일 출처 참고, 보조 출처가 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "latest-single-natural-reload-followup");
 
   const recordId = `websearch-latest-single-nat-fu-${Date.now().toString(36)}`;
@@ -5765,7 +5765,7 @@ test("latest-update single-source 자연어 reload 후 follow-up에서 source pa
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
 
-test("latest-update single-source 자연어 reload 후 두 번째 follow-up에서 source path가 context box에 유지되고 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+test("latest-update single-source 자연어 reload 후 두 번째 follow-up에서 source path(example.com/seoul-weather) + WEB badge, 최신 확인, 단일 출처 참고, 보조 출처가 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "latest-single-natural-reload-second-followup");
 
   const recordId = `websearch-latest-single-nat-2fu-${Date.now().toString(36)}`;

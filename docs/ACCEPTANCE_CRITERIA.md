@@ -1359,9 +1359,9 @@ These are placeholders for the next phase design target and its immediate follow
   - entity-card zero-strong-slot `방금 검색한 결과 다시 보여줘` 자연어 reload → `WEB` badge, `설명 카드` badge, `설명형 단일 출처`, `백과 기반` 유지 + source path(`namu.wiki`, `ko.wikipedia.org`) context box 유지
   - entity-card zero-strong-slot 자연어 reload 후 follow-up → `WEB` badge, `설명 카드` badge, `설명형 단일 출처`, `백과 기반` drift 없음 + source path(`namu.wiki`, `ko.wikipedia.org`) context box 유지 (browser natural-reload path)
   - entity-card 붉은사막 검색 결과 자연어 reload → `WEB` badge, `설명 카드` badge, `설명형 다중 출처 합의`, `백과 기반` 유지, 본문/origin detail에 `출시일`/`2025`/`blog.example.com` 미노출, context box에 `blog.example.com` provenance 포함
-  - entity-card dual-probe 자연어 reload → source path(`pearlabyss.com` dual-probe URLs) context box 유지
+  - entity-card dual-probe 자연어 reload → source path(`pearlabyss.com/ko-KR/Board/Detail?_boardNo=200`, `pearlabyss.com/ko-KR/Board/Detail?_boardNo=300`) context box 유지
   - entity-card dual-probe 자연어 reload → `WEB` badge, `설명 카드` badge, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` exact field 유지
-  - entity-card dual-probe 자연어 reload 후 follow-up → source path(`pearlabyss.com` dual-probe URLs) context box 유지
+  - entity-card dual-probe 자연어 reload 후 follow-up → source path(`pearlabyss.com/ko-KR/Board/Detail?_boardNo=200`, `pearlabyss.com/ko-KR/Board/Detail?_boardNo=300`) context box 유지
   - entity-card dual-probe 자연어 reload 후 follow-up → `WEB` badge, `설명 카드` badge, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` drift 없음
   - entity-card 붉은사막 자연어 reload 후 follow-up → `WEB` badge, `설명 카드` badge, `설명형 다중 출처 합의`, `백과 기반` drift 없음
   - entity-card 붉은사막 자연어 reload → source path plurality(`namu.wiki`, `ko.wikipedia.org`, `blog.example.com` provenance 포함) context box 유지

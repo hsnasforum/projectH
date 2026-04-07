@@ -4242,7 +4242,7 @@ test("entity-card zero-strong-slot 자연어 reload 후 follow-up에서 response
 test("entity-card 붉은사막 검색 결과 자연어 reload에서 response origin badge와 answer-mode badge가 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "entity-actual-search-natural-reload");
 
-  // Pre-seed a generic entity_card record (붉은사막, with strong slots)
+  // Pre-seed a noisy 3-source entity_card record (붉은사막)
   const recordId = `websearch-entity-actual-nat-${Date.now().toString(36)}`;
   const recordDir = path.join(repoRoot, "data", "web-search", sessionId);
   const recordPath = path.join(recordDir, `붉은사막-${recordId}.json`);
@@ -4253,109 +4253,68 @@ test("entity-card 붉은사막 검색 결과 자연어 reload에서 response ori
     query: "붉은사막",
     permission: "enabled",
     created_at: new Date().toISOString(),
-    result_count: 2,
-    page_count: 0,
+    result_count: 3,
+    page_count: 3,
     results: [
-      {
-        title: "붉은사막 - 나무위키",
-        url: "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
-        snippet: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
-      },
-      {
-        title: "붉은사막 - 위키백과",
-        url: "https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
-        snippet: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
-      },
+      { title: "붉은사막 - 나무위키", url: "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", snippet: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다." },
+      { title: "붉은사막 - 위키백과", url: "https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", snippet: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다." },
+      { title: "붉은사막 출시일 정보", url: "https://blog.example.com/crimson-desert", snippet: "붉은사막 출시일은 2025년 12월로 예정되어 있다." },
     ],
-    pages: [],
+    pages: [
+      { url: "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", title: "붉은사막 - 나무위키", text: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다." },
+      { url: "https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", title: "붉은사막 - 위키백과", text: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다." },
+      { url: "https://blog.example.com/crimson-desert", title: "붉은사막 출시일 정보", text: "붉은사막 출시일은 2025년 12월로 예정되어 있다. 로그인 회원가입 구독 광고" },
+    ],
     summary_text: "웹 검색 요약: 붉은사막\n\n확인된 사실:\n붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다. [교차 확인]",
-    response_origin: {
-      provider: "web",
-      badge: "WEB",
-      label: "웹 검색",
-      answer_mode: "entity_card",
-      verification_label: "설명형 다중 출처 합의",
-      source_roles: ["백과 기반"],
-    },
-    claim_coverage: [
-      {
-        slot: "장르",
-        status: "strong",
-        status_label: "교차 확인",
-        value: "오픈월드 액션 어드벤처 게임",
-        support_count: 2,
-        candidate_count: 2,
-        source_role: "encyclopedia",
-      },
-    ],
+    response_origin: { provider: "web", badge: "WEB", label: "웹 검색", answer_mode: "entity_card", verification_label: "설명형 다중 출처 합의", source_roles: ["백과 기반"] },
+    claim_coverage: [{ slot: "장르", status: "strong", status_label: "교차 확인", value: "오픈월드 액션 어드벤처 게임", support_count: 2, candidate_count: 2, source_role: "encyclopedia" }],
     claim_coverage_progress_summary: "교차 확인 1건.",
   };
   fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
 
-  // Step 1: click reload to register record in server session
-  await page.evaluate(
-    ({ items }) => {
-      // @ts-ignore — renderSearchHistory is defined in the page scope
-      renderSearchHistory(items);
-    },
-    {
-      items: [
-        {
-          record_id: recordId,
-          query: "붉은사막",
-          answer_mode: "entity_card",
-          verification_label: "설명형 다중 출처 합의",
-          source_roles: ["백과 기반"],
-          result_count: 2,
-          page_count: 0,
-          created_at: record.created_at,
-          record_path: recordPath,
-        },
-      ],
-    }
-  );
+  await page.evaluate(({ items }) => { renderSearchHistory(items); }, {
+    items: [{ record_id: recordId, query: "붉은사막", answer_mode: "entity_card", verification_label: "설명형 다중 출처 합의", source_roles: ["백과 기반"], result_count: 3, page_count: 3, created_at: record.created_at, record_path: recordPath }],
+  });
 
   const historyBox = page.locator("#search-history-box");
   await expect(historyBox).toBeVisible();
-  const reloadButton = historyBox.locator(".history-item-actions button.secondary").first();
-  await reloadButton.click();
+  await historyBox.locator(".history-item-actions button.secondary").first().click();
 
   const originBadge = page.locator("#response-origin-badge");
   await expect(originBadge).toHaveText("WEB");
 
-  // Step 2: natural reload — "방금 검색한 결과 다시 보여줘" without record ID
-  await page.evaluate(async () => {
-    // @ts-ignore — sendRequest is defined in the page scope
-    await sendRequest({
-      user_text: "방금 검색한 결과 다시 보여줘",
-    });
-  });
+  await page.evaluate(async () => { await sendRequest({ user_text: "방금 검색한 결과 다시 보여줘" }); });
 
-  // Assert natural reload preserves exact fields
   await expect(originBadge).toHaveText("WEB");
   await expect(originBadge).toHaveClass(/web/);
-
   const answerModeBadge = page.locator("#response-answer-mode-badge");
   await expect(answerModeBadge).toBeVisible();
   await expect(answerModeBadge).toHaveText("설명 카드");
-
   const originDetail = page.locator("#response-origin-detail");
   await expect(originDetail).toContainText("설명형 다중 출처 합의");
   await expect(originDetail).toContainText("백과 기반");
+  const originDetailText = await originDetail.textContent();
+  expect(originDetailText).not.toContain("출시일");
+  expect(originDetailText).not.toContain("2025");
+  expect(originDetailText).not.toContain("blog.example.com");
+  await expect(page.getByTestId("response-text")).toContainText("확인된 사실:");
+  await expect(page.getByTestId("response-text")).toContainText("교차 확인");
+  const responseText = await page.getByTestId("response-text").textContent();
+  expect(responseText).not.toContain("출시일");
+  expect(responseText).not.toContain("2025");
+  expect(responseText).not.toContain("blog.example.com");
+  const contextBox = page.locator("#context-box");
+  await expect(contextBox).toContainText("namu.wiki");
+  await expect(contextBox).toContainText("ko.wikipedia.org");
+  await expect(contextBox).toContainText("blog.example.com");
 
-  // Clean up
-  try {
-    fs.unlinkSync(recordPath);
-    fs.rmdirSync(recordDir);
-  } catch (_) {
-    // best-effort cleanup
-  }
+  try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
 
 test("entity-card 붉은사막 자연어 reload에서 source path가 context box에 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "entity-actual-search-natural-reload-sp");
 
-  // Pre-seed a generic entity_card record (붉은사막, single source)
+  // Pre-seed a noisy 3-source entity_card record (붉은사막)
   const recordId = `websearch-entity-actual-nat-sp-${Date.now().toString(36)}`;
   const recordDir = path.join(repoRoot, "data", "web-search", sessionId);
   const recordPath = path.join(recordDir, `붉은사막-${recordId}.json`);
@@ -4366,96 +4325,44 @@ test("entity-card 붉은사막 자연어 reload에서 source path가 context box
     query: "붉은사막",
     permission: "enabled",
     created_at: new Date().toISOString(),
-    result_count: 2,
-    page_count: 0,
+    result_count: 3,
+    page_count: 3,
     results: [
-      {
-        title: "붉은사막 - 나무위키",
-        url: "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
-        snippet: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
-      },
-      {
-        title: "붉은사막 - 위키백과",
-        url: "https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
-        snippet: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
-      },
+      { title: "붉은사막 - 나무위키", url: "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", snippet: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다." },
+      { title: "붉은사막 - 위키백과", url: "https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", snippet: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다." },
+      { title: "붉은사막 출시일 정보", url: "https://blog.example.com/crimson-desert", snippet: "붉은사막 출시일은 2025년 12월로 예정되어 있다." },
     ],
-    pages: [],
+    pages: [
+      { url: "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", title: "붉은사막 - 나무위키", text: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다." },
+      { url: "https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", title: "붉은사막 - 위키백과", text: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다." },
+      { url: "https://blog.example.com/crimson-desert", title: "붉은사막 출시일 정보", text: "붉은사막 출시일은 2025년 12월로 예정되어 있다. 로그인 회원가입 구독 광고" },
+    ],
     summary_text: "웹 검색 요약: 붉은사막\n\n확인된 사실:\n붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다. [교차 확인]",
-    response_origin: {
-      provider: "web",
-      badge: "WEB",
-      label: "웹 검색",
-      answer_mode: "entity_card",
-      verification_label: "설명형 단일 출처",
-      source_roles: ["백과 기반"],
-    },
-    claim_coverage: [
-      {
-        slot: "장르",
-        status: "strong",
-        status_label: "교차 확인",
-        value: "오픈월드 액션 어드벤처 게임",
-        support_count: 2,
-        candidate_count: 2,
-        source_role: "encyclopedia",
-      },
-    ],
+    response_origin: { provider: "web", badge: "WEB", label: "웹 검색", answer_mode: "entity_card", verification_label: "설명형 다중 출처 합의", source_roles: ["백과 기반"] },
+    claim_coverage: [{ slot: "장르", status: "strong", status_label: "교차 확인", value: "오픈월드 액션 어드벤처 게임", support_count: 2, candidate_count: 2, source_role: "encyclopedia" }],
     claim_coverage_progress_summary: "교차 확인 1건.",
   };
   fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
 
-  // Step 1: click reload to register record in server session
-  await page.evaluate(
-    ({ items }) => {
-      // @ts-ignore — renderSearchHistory is defined in the page scope
-      renderSearchHistory(items);
-    },
-    {
-      items: [
-        {
-          record_id: recordId,
-          query: "붉은사막",
-          answer_mode: "entity_card",
-          verification_label: "설명형 단일 출처",
-          source_roles: ["백과 기반"],
-          result_count: 2,
-          page_count: 0,
-          created_at: record.created_at,
-          record_path: recordPath,
-        },
-      ],
-    }
-  );
+  await page.evaluate(({ items }) => { renderSearchHistory(items); }, {
+    items: [{ record_id: recordId, query: "붉은사막", answer_mode: "entity_card", verification_label: "설명형 다중 출처 합의", source_roles: ["백과 기반"], result_count: 3, page_count: 3, created_at: record.created_at, record_path: recordPath }],
+  });
 
   const historyBox = page.locator("#search-history-box");
   await expect(historyBox).toBeVisible();
-  const reloadButton = historyBox.locator(".history-item-actions button.secondary").first();
-  await reloadButton.click();
+  await historyBox.locator(".history-item-actions button.secondary").first().click();
 
   const originBadge = page.locator("#response-origin-badge");
   await expect(originBadge).toHaveText("WEB");
 
-  // Step 2: natural reload
-  await page.evaluate(async () => {
-    // @ts-ignore — sendRequest is defined in the page scope
-    await sendRequest({
-      user_text: "방금 검색한 결과 다시 보여줘",
-    });
-  });
+  await page.evaluate(async () => { await sendRequest({ user_text: "방금 검색한 결과 다시 보여줘" }); });
 
-  // Assert context box shows both actual-search source URLs after natural reload (plurality)
   const contextBox = page.locator("#context-box");
   await expect(contextBox).toContainText("namu.wiki");
   await expect(contextBox).toContainText("ko.wikipedia.org");
+  await expect(contextBox).toContainText("blog.example.com");
 
-  // Clean up
-  try {
-    fs.unlinkSync(recordPath);
-    fs.rmdirSync(recordDir);
-  } catch (_) {
-    // best-effort cleanup
-  }
+  try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
 
 test("entity-card dual-probe 자연어 reload에서 source path가 context box에 유지됩니다", async ({ page }) => {

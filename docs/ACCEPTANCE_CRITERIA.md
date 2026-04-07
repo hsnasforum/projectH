@@ -1355,7 +1355,7 @@ These are placeholders for the next phase design target and its immediate follow
   - history-card latest-update news-only `다시 불러오기` 후 follow-up → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지
   - history-card entity-card zero-strong-slot `다시 불러오기` → `WEB` badge, `설명 카드` answer-mode badge, downgraded `설명형 단일 출처` verification label, `백과 기반` source role 과장 없이 유지 + source path(`namu.wiki`, `ko.wikipedia.org`) context box 유지
   - history-card entity-card zero-strong-slot `다시 불러오기` 후 follow-up → `WEB` badge, `설명 카드` badge, `설명형 단일 출처`, `백과 기반` drift 없음 + source path(`namu.wiki`, `ko.wikipedia.org`) context box 유지
-  - entity-card zero-strong-slot `다시 불러오기` 후 두 번째 follow-up → `WEB` badge, `설명 카드` badge, `설명형 단일 출처`, `백과 기반` drift 없음 + source path(`namu.wiki`, `ko.wikipedia.org`) context box 유지
+  - history-card entity-card zero-strong-slot `다시 불러오기` 후 두 번째 follow-up → `WEB` badge, `설명 카드` badge, `설명형 단일 출처`, `백과 기반` drift 없음 + source path(`namu.wiki`, `ko.wikipedia.org`) context box 유지
   - entity-card zero-strong-slot `방금 검색한 결과 다시 보여줘` 자연어 reload → `WEB` badge, `설명 카드` badge, `설명형 단일 출처`, `백과 기반` 유지 + source path(`namu.wiki`, `ko.wikipedia.org`) context box 유지
   - entity-card zero-strong-slot 자연어 reload 후 follow-up → `WEB` badge, `설명 카드` badge, `설명형 단일 출처`, `백과 기반` drift 없음 + source path(`namu.wiki`, `ko.wikipedia.org`) context box 유지 (browser natural-reload path)
   - entity-card 붉은사막 검색 결과 자연어 reload → `WEB` badge, `설명 카드` badge, `설명형 다중 출처 합의`, `백과 기반` 유지, 본문/origin detail에 `출시일`/`2025`/`blog.example.com` 미노출, context box에 `namu.wiki`, `ko.wikipedia.org`, `blog.example.com` provenance 포함

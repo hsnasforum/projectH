@@ -4239,8 +4239,8 @@ test("entity-card zero-strong-slot 자연어 reload 후 follow-up에서 response
   }
 });
 
-test("entity-card 붉은사막 검색 결과 자연어 reload에서 response origin badge와 answer-mode badge가 유지됩니다", async ({ page }) => {
-  const sessionId = await prepareSession(page, "entity-actual-search-natural-reload");
+test("entity-card 붉은사막 검색 결과 자연어 reload에서 noisy single-source claim(출시일/2025/blog.example.com) 미노출, 설명형 다중 출처 합의, 백과 기반 유지, namu.wiki/ko.wikipedia.org/blog.example.com provenance 유지됩니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "entity-actual-search-natural-reload-prov");
 
   // Pre-seed a noisy 3-source entity_card record (붉은사막)
   const recordId = `websearch-entity-actual-nat-${Date.now().toString(36)}`;

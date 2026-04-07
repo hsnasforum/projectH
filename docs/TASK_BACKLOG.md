@@ -65,6 +65,7 @@
 52. Entity-card 붉은사막 browser natural-reload source-path continuity service + Playwright smoke coverage (`namu.wiki` in context box)
 53. Entity-card 붉은사막 browser natural-reload follow-up source-path continuity service + Playwright smoke coverage (`namu.wiki` in context box)
 54. History-card entity-card `다시 불러오기` actual-search source-path continuity service + Playwright smoke coverage (`namu.wiki` in context box)
+55. History-card entity-card `다시 불러오기` follow-up actual-search source-path continuity service + Playwright smoke coverage (`namu.wiki` in context box)
 
 ## Current Phase In Progress
 

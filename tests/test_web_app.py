@@ -15265,6 +15265,73 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
             self.assertEqual(reload_origin["source_roles"], ["보조 기사"])
 
+    def test_handle_chat_entity_card_actual_search_follow_up_preserves_source_paths(self) -> None:
+        """entity-card actual-search record → load_web_search_record_id reload → follow-up에서
+        active_context.source_paths가 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "actual-entity-reload-followup-sp-session"
+
+            store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {"title": "붉은사막 - 나무위키", "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."},
+                    {"title": "붉은사막 - 위키백과", "url": "https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."},
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+            )
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool([]),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            records = store.list_session_record_summaries(session_id)
+            record_id = records[0]["record_id"]
+
+            # reload
+            first = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(first["ok"])
+
+            # follow-up with load_web_search_record_id + user_text
+            second = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 검색 결과 요약해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            source_paths = second["session"]["active_context"]["source_paths"]
+            self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+
     def test_handle_chat_entity_card_dual_probe_follow_up_preserves_source_paths(self) -> None:
         """entity-card dual-probe record → load_web_search_record_id + user_text follow-up에서
         active_context.source_paths에 두 probe URL이 모두 보존됩니다."""

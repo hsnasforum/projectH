@@ -3932,7 +3932,7 @@ test("entity-card 붉은사막 검색 결과 자연어 reload에서 response ori
       badge: "WEB",
       label: "웹 검색",
       answer_mode: "entity_card",
-      verification_label: "설명형 단일 출처",
+      verification_label: "설명형 다중 출처 합의",
       source_roles: ["백과 기반"],
     },
     claim_coverage: [
@@ -3962,7 +3962,7 @@ test("entity-card 붉은사막 검색 결과 자연어 reload에서 response ori
           record_id: recordId,
           query: "붉은사막",
           answer_mode: "entity_card",
-          verification_label: "설명형 단일 출처",
+          verification_label: "설명형 다중 출처 합의",
           source_roles: ["백과 기반"],
           result_count: 2,
           page_count: 0,
@@ -3998,7 +3998,7 @@ test("entity-card 붉은사막 검색 결과 자연어 reload에서 response ori
   await expect(answerModeBadge).toHaveText("설명 카드");
 
   const originDetail = page.locator("#response-origin-detail");
-  await expect(originDetail).toContainText("설명형 단일 출처");
+  await expect(originDetail).toContainText("설명형 다중 출처 합의");
   await expect(originDetail).toContainText("백과 기반");
 
   // Clean up
@@ -4677,19 +4677,22 @@ test("entity-card 붉은사막 자연어 reload 후 follow-up에서 response ori
     query: "붉은사막",
     permission: "enabled",
     created_at: new Date().toISOString(),
-    result_count: 1,
+    result_count: 2,
     page_count: 0,
-    results: [{ title: "붉은사막 - 나무위키", url: "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", snippet: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다." }],
+    results: [
+      { title: "붉은사막 - 나무위키", url: "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", snippet: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다." },
+      { title: "붉은사막 - 위키백과", url: "https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", snippet: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다." },
+    ],
     pages: [],
     summary_text: "웹 검색 요약: 붉은사막\n\n붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
-    response_origin: { provider: "web", badge: "WEB", label: "웹 검색", answer_mode: "entity_card", verification_label: "설명형 단일 출처", source_roles: ["백과 기반"] },
+    response_origin: { provider: "web", badge: "WEB", label: "웹 검색", answer_mode: "entity_card", verification_label: "설명형 다중 출처 합의", source_roles: ["백과 기반"] },
     claim_coverage: [],
     claim_coverage_progress_summary: "",
   };
   fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
 
   await page.evaluate(({ items }) => { renderSearchHistory(items); }, {
-    items: [{ record_id: recordId, query: "붉은사막", answer_mode: "entity_card", verification_label: "설명형 단일 출처", source_roles: ["백과 기반"], result_count: 1, page_count: 0, created_at: record.created_at, record_path: recordPath }],
+    items: [{ record_id: recordId, query: "붉은사막", answer_mode: "entity_card", verification_label: "설명형 다중 출처 합의", source_roles: ["백과 기반"], result_count: 2, page_count: 0, created_at: record.created_at, record_path: recordPath }],
   });
 
   const historyBox = page.locator("#search-history-box");
@@ -4710,7 +4713,7 @@ test("entity-card 붉은사막 자연어 reload 후 follow-up에서 response ori
   await expect(answerModeBadge).toBeVisible();
   await expect(answerModeBadge).toHaveText("설명 카드");
   const originDetail = page.locator("#response-origin-detail");
-  await expect(originDetail).toContainText("설명형 단일 출처");
+  await expect(originDetail).toContainText("설명형 다중 출처 합의");
   await expect(originDetail).toContainText("백과 기반");
 
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}

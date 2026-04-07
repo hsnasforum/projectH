@@ -8887,6 +8887,11 @@ class WebAppServiceTest(unittest.TestCase):
                             url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
                             snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
                         ),
+                        SimpleNamespace(
+                            title="붉은사막 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
                     ],
                 ),
                 "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
@@ -16044,6 +16049,11 @@ class WebAppServiceTest(unittest.TestCase):
                         SimpleNamespace(
                             title="붉은사막 - 나무위키",
                             url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="붉은사막 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
                             snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
                         ),
                     ],

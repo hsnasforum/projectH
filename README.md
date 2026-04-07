@@ -159,6 +159,7 @@ Current smoke scenarios:
 47. entity-card 붉은사막 자연어 reload 후 follow-up에서 source path(`namu.wiki`, `ko.wikipedia.org`)가 context box에 유지되는지 확인
 48. history-card entity-card `다시 불러오기` 후 actual-search source path(`namu.wiki`, `ko.wikipedia.org`)가 context box에 유지되고, `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 다중 출처 합의` verification label, `백과 기반` source role이 유지되는지 확인
 49. history-card entity-card `다시 불러오기` 후 follow-up 질문에서 actual-search source path(`namu.wiki`, `ko.wikipedia.org`)가 context box에 유지되고, `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 다중 출처 합의` verification label, `백과 기반` source role이 drift하지 않는지 확인
+50. history-card entity-card `다시 불러오기` 후 두 번째 follow-up 질문에서 actual-search source path(`namu.wiki`, `ko.wikipedia.org`)가 context box에 유지되고, `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 다중 출처 합의` verification label, `백과 기반` source role이 drift하지 않는지 확인
 
 `make e2e-test` launches a dedicated Playwright web server for smoke with inherited `LOCAL_AI_MODEL_PROVIDER` / `LOCAL_AI_OLLAMA_MODEL` overrides cleared, `LOCAL_AI_MODEL_PROVIDER=mock` reapplied, and existing servers on the smoke port not reused. Shell overrides such as `LOCAL_AI_MODEL_PROVIDER=ollama` therefore do not change the automated baseline. Other runtimes remain optional and are validated separately.
 

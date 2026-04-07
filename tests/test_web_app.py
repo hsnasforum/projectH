@@ -15364,6 +15364,86 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(followup_origin["verification_label"], "설명형 다중 출처 합의")
             self.assertEqual(followup_origin["source_roles"], ["백과 기반"])
 
+    def test_handle_chat_actual_entity_search_history_card_reload_second_follow_up_preserves_source_paths(self) -> None:
+        """actual entity-search → click reload → first follow-up → second follow-up에서
+        active_context.source_paths plurality가 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="붉은사막 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat(
+                {
+                    "session_id": "actual-entity-second-followup-sp-session",
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # show-only reload
+            second = service.handle_chat(
+                {
+                    "session_id": "actual-entity-second-followup-sp-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+
+            # first follow-up
+            third = service.handle_chat(
+                {
+                    "session_id": "actual-entity-second-followup-sp-session",
+                    "user_text": "이 검색 결과 요약해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(third["ok"])
+
+            # second follow-up
+            fourth = service.handle_chat(
+                {
+                    "session_id": "actual-entity-second-followup-sp-session",
+                    "user_text": "더 자세히 알려줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(fourth["ok"])
+            source_paths = fourth["session"]["active_context"]["source_paths"]
+            self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+
     def test_handle_chat_entity_card_dual_probe_follow_up_preserves_source_paths(self) -> None:
         """entity-card dual-probe record → load_web_search_record_id + user_text follow-up에서
         active_context.source_paths에 두 probe URL이 모두 보존됩니다."""

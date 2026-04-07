@@ -77,6 +77,7 @@
 - entity-card 붉은사막 browser natural-reload follow-up source-path plurality smoke covering `namu.wiki` and `ko.wikipedia.org` in context box after natural reload + follow-up
 - history-card entity-card `다시 불러오기` actual-search source-path plurality + response-origin continuity service + browser smoke covering `namu.wiki` and `ko.wikipedia.org` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` after click reload
 - history-card entity-card `다시 불러오기` follow-up actual-search source-path plurality + response-origin continuity service + browser smoke covering `namu.wiki` and `ko.wikipedia.org` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` after click reload + follow-up
+- history-card entity-card `다시 불러오기` second-follow-up actual-search source-path plurality + response-origin continuity service + browser smoke covering `namu.wiki` and `ko.wikipedia.org` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` after click reload + second follow-up
 - PDF text-layer support
 - OCR-not-supported guidance
 - response feedback capture

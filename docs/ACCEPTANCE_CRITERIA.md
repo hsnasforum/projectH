@@ -1368,6 +1368,7 @@ These are placeholders for the next phase design target and its immediate follow
   - entity-card 붉은사막 자연어 reload 후 follow-up → source path plurality(`namu.wiki`, `ko.wikipedia.org`) context box 유지
   - history-card entity-card `다시 불러오기` 후 actual-search source-path plurality(`namu.wiki`, `ko.wikipedia.org`) context box 유지 + `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` response-origin continuity
   - history-card entity-card `다시 불러오기` 후 follow-up → actual-search source-path plurality(`namu.wiki`, `ko.wikipedia.org`) context box 유지 + `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` response-origin drift 없음
+  - history-card entity-card `다시 불러오기` 후 두 번째 follow-up → actual-search source-path plurality(`namu.wiki`, `ko.wikipedia.org`) context box 유지 + `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` response-origin drift 없음
 
 ### In Progress
 - Improve regression fixtures for weak-slot reinvestigation and source consensus.

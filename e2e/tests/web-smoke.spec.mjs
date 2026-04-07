@@ -1956,7 +1956,7 @@ test("history-card entity-card 다시 불러오기 후 actual-search source path
   }
 });
 
-test("history-card entity-card 다시 불러오기 후 dual-probe source path가 context box에 유지됩니다", async ({ page }) => {
+test("history-card entity-card 다시 불러오기 후 dual-probe source path(pearlabyss.com/200, pearlabyss.com/300) + WEB badge, 설명 카드, 설명형 다중 출처 합의, 공식 기반 · 백과 기반이 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "history-card-reload-entity-dual-probe");
 
   // Pre-seed an entity_card record with dual-probe results (two official URLs)

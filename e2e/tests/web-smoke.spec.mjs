@@ -1219,7 +1219,7 @@ test("history-card 다시 불러오기 클릭 후 response origin badge와 answe
   }
 });
 
-test("history-card latest-update 다시 불러오기 후 response origin badge와 answer-mode badge가 유지됩니다", async ({ page }) => {
+test("history-card latest-update 다시 불러오기 후 WEB badge, 최신 확인, 공식+기사 교차 확인, 보조 기사 · 공식 기반이 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "history-card-reload-latest");
 
   // Pre-seed a latest_update web search record with mixed source roles
@@ -1446,7 +1446,7 @@ test("history-card 다시 불러오기 후 follow-up 질문에서 response origi
   }
 });
 
-test("history-card latest-update 다시 불러오기 후 follow-up 질문에서 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+test("history-card latest-update 다시 불러오기 후 follow-up 질문에서 WEB badge, 최신 확인, 공식+기사 교차 확인, 보조 기사 · 공식 기반이 drift하지 않습니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "history-card-reload-latest-followup");
 
   // Pre-seed a latest_update web search record with mixed source roles

@@ -5624,3 +5624,261 @@ test("latest-update mixed-source 자연어 reload 후 두 번째 follow-up에서
 
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
+
+test("latest-update single-source 자연어 reload 후 follow-up에서 source path가 context box에 유지되고 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "latest-single-natural-reload-followup");
+
+  const recordId = `websearch-latest-single-nat-fu-${Date.now().toString(36)}`;
+  const recordDir = path.join(repoRoot, "data", "web-search", sessionId);
+  const recordPath = path.join(recordDir, `서울날씨-${recordId}.json`);
+  fs.mkdirSync(recordDir, { recursive: true });
+  const record = {
+    record_id: recordId,
+    session_id: sessionId,
+    query: "서울 날씨",
+    permission: "enabled",
+    created_at: new Date().toISOString(),
+    result_count: 1,
+    page_count: 1,
+    results: [
+      { title: "서울 날씨 - 예보", url: "https://example.com/seoul-weather", snippet: "서울은 맑고 낮 최고 17도, 밤 최저 7도로 예보되었습니다." },
+    ],
+    pages: [
+      { url: "https://example.com/seoul-weather", title: "서울 날씨 - 예보", text: "서울은 맑고 낮 최고 17도. 미세먼지 보통." },
+    ],
+    summary_text: "웹 검색 요약: 서울 날씨\n\n서울은 맑고 낮 최고 17도, 밤 최저 7도로 예보되었습니다.",
+    response_origin: { provider: "web", badge: "WEB", label: "웹 검색", answer_mode: "latest_update", verification_label: "단일 출처 참고", source_roles: ["보조 출처"] },
+    claim_coverage: [],
+    claim_coverage_progress_summary: "",
+  };
+  fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
+
+  await page.evaluate(({ items }) => { renderSearchHistory(items); }, {
+    items: [{ record_id: recordId, query: "서울 날씨", answer_mode: "latest_update", verification_label: "단일 출처 참고", source_roles: ["보조 출처"], result_count: 1, page_count: 1, created_at: record.created_at, record_path: recordPath }],
+  });
+
+  const historyBox = page.locator("#search-history-box");
+  await expect(historyBox).toBeVisible();
+  await historyBox.locator(".history-item-actions button.secondary").first().click();
+
+  const originBadge = page.locator("#response-origin-badge");
+  await expect(originBadge).toHaveText("WEB");
+
+  // Natural reload
+  await page.evaluate(async () => { await sendRequest({ user_text: "방금 검색한 결과 다시 보여줘" }); });
+  await expect(originBadge).toHaveText("WEB");
+
+  // Follow-up
+  await page.evaluate(async ({ rid }) => { await sendRequest({ user_text: "이 검색 결과 요약해줘", load_web_search_record_id: rid }, "follow_up"); }, { rid: recordId });
+
+  await expect(originBadge).toHaveText("WEB");
+  await expect(originBadge).toHaveClass(/web/);
+  const answerModeBadge = page.locator("#response-answer-mode-badge");
+  await expect(answerModeBadge).toBeVisible();
+  await expect(answerModeBadge).toHaveText("최신 확인");
+  const originDetail = page.locator("#response-origin-detail");
+  await expect(originDetail).toContainText("단일 출처 참고");
+  await expect(originDetail).toContainText("보조 출처");
+
+  const contextBox = page.locator("#context-box");
+  await expect(contextBox).toContainText("example.com/seoul-weather");
+
+  try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
+});
+
+test("latest-update single-source 자연어 reload 후 두 번째 follow-up에서 source path가 context box에 유지되고 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "latest-single-natural-reload-second-followup");
+
+  const recordId = `websearch-latest-single-nat-2fu-${Date.now().toString(36)}`;
+  const recordDir = path.join(repoRoot, "data", "web-search", sessionId);
+  const recordPath = path.join(recordDir, `서울날씨-${recordId}.json`);
+  fs.mkdirSync(recordDir, { recursive: true });
+  const record = {
+    record_id: recordId,
+    session_id: sessionId,
+    query: "서울 날씨",
+    permission: "enabled",
+    created_at: new Date().toISOString(),
+    result_count: 1,
+    page_count: 1,
+    results: [
+      { title: "서울 날씨 - 예보", url: "https://example.com/seoul-weather", snippet: "서울은 맑고 낮 최고 17도, 밤 최저 7도로 예보되었습니다." },
+    ],
+    pages: [
+      { url: "https://example.com/seoul-weather", title: "서울 날씨 - 예보", text: "서울은 맑고 낮 최고 17도. 미세먼지 보통." },
+    ],
+    summary_text: "웹 검색 요약: 서울 날씨\n\n서울은 맑고 낮 최고 17도, 밤 최저 7도로 예보되었습니다.",
+    response_origin: { provider: "web", badge: "WEB", label: "웹 검색", answer_mode: "latest_update", verification_label: "단일 출처 참고", source_roles: ["보조 출처"] },
+    claim_coverage: [],
+    claim_coverage_progress_summary: "",
+  };
+  fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
+
+  await page.evaluate(({ items }) => { renderSearchHistory(items); }, {
+    items: [{ record_id: recordId, query: "서울 날씨", answer_mode: "latest_update", verification_label: "단일 출처 참고", source_roles: ["보조 출처"], result_count: 1, page_count: 1, created_at: record.created_at, record_path: recordPath }],
+  });
+
+  const historyBox = page.locator("#search-history-box");
+  await expect(historyBox).toBeVisible();
+  await historyBox.locator(".history-item-actions button.secondary").first().click();
+
+  const originBadge = page.locator("#response-origin-badge");
+  await expect(originBadge).toHaveText("WEB");
+
+  // Natural reload
+  await page.evaluate(async () => { await sendRequest({ user_text: "방금 검색한 결과 다시 보여줘" }); });
+  await expect(originBadge).toHaveText("WEB");
+
+  // First follow-up
+  await page.evaluate(async ({ rid }) => { await sendRequest({ user_text: "이 검색 결과 요약해줘", load_web_search_record_id: rid }, "follow_up"); }, { rid: recordId });
+  await expect(originBadge).toHaveText("WEB");
+
+  // Second follow-up
+  await page.evaluate(async ({ rid }) => { await sendRequest({ user_text: "더 자세히 알려줘", load_web_search_record_id: rid }, "follow_up"); }, { rid: recordId });
+
+  await expect(originBadge).toHaveText("WEB");
+  await expect(originBadge).toHaveClass(/web/);
+  const answerModeBadge = page.locator("#response-answer-mode-badge");
+  await expect(answerModeBadge).toBeVisible();
+  await expect(answerModeBadge).toHaveText("최신 확인");
+  const originDetail = page.locator("#response-origin-detail");
+  await expect(originDetail).toContainText("단일 출처 참고");
+  await expect(originDetail).toContainText("보조 출처");
+
+  const contextBox = page.locator("#context-box");
+  await expect(contextBox).toContainText("example.com/seoul-weather");
+
+  try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
+});
+
+test("latest-update news-only 자연어 reload 후 follow-up에서 기사 source path가 context box에 유지되고 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "latest-news-natural-reload-followup");
+
+  const recordId = `websearch-latest-news-nat-fu-${Date.now().toString(36)}`;
+  const recordDir = path.join(repoRoot, "data", "web-search", sessionId);
+  const recordPath = path.join(recordDir, `기준금리-${recordId}.json`);
+  fs.mkdirSync(recordDir, { recursive: true });
+  const record = {
+    record_id: recordId,
+    session_id: sessionId,
+    query: "기준금리 속보",
+    permission: "enabled",
+    created_at: new Date().toISOString(),
+    result_count: 2,
+    page_count: 2,
+    results: [
+      { title: "기준금리 속보 - 한국경제", url: "https://www.hankyung.com/economy/2025", snippet: "한국은행이 기준금리를 동결했다고 밝혔다." },
+      { title: "기준금리 뉴스 - 매일경제", url: "https://www.mk.co.kr/economy/2025", snippet: "한국은행이 기준금리를 동결했다." },
+    ],
+    pages: [
+      { url: "https://www.hankyung.com/economy/2025", title: "기준금리 속보 - 한국경제", text: "한국은행이 기준금리를 동결했다고 밝혔다." },
+      { url: "https://www.mk.co.kr/economy/2025", title: "기준금리 뉴스 - 매일경제", text: "한국은행이 기준금리를 동결했다." },
+    ],
+    summary_text: "웹 검색 요약: 기준금리 속보\n\n한국은행이 기준금리를 동결했다고 밝혔다.",
+    response_origin: { provider: "web", badge: "WEB", label: "웹 검색", answer_mode: "latest_update", verification_label: "기사 교차 확인", source_roles: ["보조 기사"] },
+    claim_coverage: [],
+    claim_coverage_progress_summary: "",
+  };
+  fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
+
+  await page.evaluate(({ items }) => { renderSearchHistory(items); }, {
+    items: [{ record_id: recordId, query: "기준금리 속보", answer_mode: "latest_update", verification_label: "기사 교차 확인", source_roles: ["보조 기사"], result_count: 2, page_count: 2, created_at: record.created_at, record_path: recordPath }],
+  });
+
+  const historyBox = page.locator("#search-history-box");
+  await expect(historyBox).toBeVisible();
+  await historyBox.locator(".history-item-actions button.secondary").first().click();
+
+  const originBadge = page.locator("#response-origin-badge");
+  await expect(originBadge).toHaveText("WEB");
+
+  // Natural reload
+  await page.evaluate(async () => { await sendRequest({ user_text: "방금 검색한 결과 다시 보여줘" }); });
+  await expect(originBadge).toHaveText("WEB");
+
+  // Follow-up
+  await page.evaluate(async ({ rid }) => { await sendRequest({ user_text: "이 검색 결과 요약해줘", load_web_search_record_id: rid }, "follow_up"); }, { rid: recordId });
+
+  await expect(originBadge).toHaveText("WEB");
+  await expect(originBadge).toHaveClass(/web/);
+  const answerModeBadge = page.locator("#response-answer-mode-badge");
+  await expect(answerModeBadge).toBeVisible();
+  await expect(answerModeBadge).toHaveText("최신 확인");
+  const originDetail = page.locator("#response-origin-detail");
+  await expect(originDetail).toContainText("기사 교차 확인");
+  await expect(originDetail).toContainText("보조 기사");
+
+  const contextBox = page.locator("#context-box");
+  await expect(contextBox).toContainText("hankyung.com");
+  await expect(contextBox).toContainText("mk.co.kr");
+
+  try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
+});
+
+test("latest-update news-only 자연어 reload 후 두 번째 follow-up에서 기사 source path가 context box에 유지되고 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "latest-news-natural-reload-second-followup");
+
+  const recordId = `websearch-latest-news-nat-2fu-${Date.now().toString(36)}`;
+  const recordDir = path.join(repoRoot, "data", "web-search", sessionId);
+  const recordPath = path.join(recordDir, `기준금리-${recordId}.json`);
+  fs.mkdirSync(recordDir, { recursive: true });
+  const record = {
+    record_id: recordId,
+    session_id: sessionId,
+    query: "기준금리 속보",
+    permission: "enabled",
+    created_at: new Date().toISOString(),
+    result_count: 2,
+    page_count: 2,
+    results: [
+      { title: "기준금리 속보 - 한국경제", url: "https://www.hankyung.com/economy/2025", snippet: "한국은행이 기준금리를 동결했다고 밝혔다." },
+      { title: "기준금리 뉴스 - 매일경제", url: "https://www.mk.co.kr/economy/2025", snippet: "한국은행이 기준금리를 동결했다." },
+    ],
+    pages: [
+      { url: "https://www.hankyung.com/economy/2025", title: "기준금리 속보 - 한국경제", text: "한국은행이 기준금리를 동결했다고 밝혔다." },
+      { url: "https://www.mk.co.kr/economy/2025", title: "기준금리 뉴스 - 매일경제", text: "한국은행이 기준금리를 동결했다." },
+    ],
+    summary_text: "웹 검색 요약: 기준금리 속보\n\n한국은행이 기준금리를 동결했다고 밝혔다.",
+    response_origin: { provider: "web", badge: "WEB", label: "웹 검색", answer_mode: "latest_update", verification_label: "기사 교차 확인", source_roles: ["보조 기사"] },
+    claim_coverage: [],
+    claim_coverage_progress_summary: "",
+  };
+  fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
+
+  await page.evaluate(({ items }) => { renderSearchHistory(items); }, {
+    items: [{ record_id: recordId, query: "기준금리 속보", answer_mode: "latest_update", verification_label: "기사 교차 확인", source_roles: ["보조 기사"], result_count: 2, page_count: 2, created_at: record.created_at, record_path: recordPath }],
+  });
+
+  const historyBox = page.locator("#search-history-box");
+  await expect(historyBox).toBeVisible();
+  await historyBox.locator(".history-item-actions button.secondary").first().click();
+
+  const originBadge = page.locator("#response-origin-badge");
+  await expect(originBadge).toHaveText("WEB");
+
+  // Natural reload
+  await page.evaluate(async () => { await sendRequest({ user_text: "방금 검색한 결과 다시 보여줘" }); });
+  await expect(originBadge).toHaveText("WEB");
+
+  // First follow-up
+  await page.evaluate(async ({ rid }) => { await sendRequest({ user_text: "이 검색 결과 요약해줘", load_web_search_record_id: rid }, "follow_up"); }, { rid: recordId });
+  await expect(originBadge).toHaveText("WEB");
+
+  // Second follow-up
+  await page.evaluate(async ({ rid }) => { await sendRequest({ user_text: "더 자세히 알려줘", load_web_search_record_id: rid }, "follow_up"); }, { rid: recordId });
+
+  await expect(originBadge).toHaveText("WEB");
+  await expect(originBadge).toHaveClass(/web/);
+  const answerModeBadge = page.locator("#response-answer-mode-badge");
+  await expect(answerModeBadge).toBeVisible();
+  await expect(answerModeBadge).toHaveText("최신 확인");
+  const originDetail = page.locator("#response-origin-detail");
+  await expect(originDetail).toContainText("기사 교차 확인");
+  await expect(originDetail).toContainText("보조 기사");
+
+  const contextBox = page.locator("#context-box");
+  await expect(contextBox).toContainText("hankyung.com");
+  await expect(contextBox).toContainText("mk.co.kr");
+
+  try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
+});

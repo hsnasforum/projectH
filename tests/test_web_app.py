@@ -16830,6 +16830,192 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("https://store.steampowered.com/sale/summer2026", source_paths)
             self.assertIn("https://www.yna.co.kr/view/AKR20260401000100017", source_paths)
 
+    def test_handle_chat_latest_update_single_source_natural_reload_follow_up_preserves_response_origin_and_source_paths(self) -> None:
+        """latest_update single-source → 자연어 reload → first follow-up에서
+        response_origin과 active_context.source_paths가 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [SimpleNamespace(title="서울 날씨 - 예보", url="https://example.com/seoul-weather", snippet="서울은 맑고 낮 최고 17도, 밤 최저 7도로 예보되었습니다.")],
+                    pages={"https://example.com/seoul-weather": {"title": "서울 날씨 - 예보", "text": "서울은 맑고 낮 최고 17도.\n미세먼지 보통.", "excerpt": "서울은 맑고 낮 최고 17도."}},
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat({"session_id": "latest-single-nat-fu-session", "user_text": "서울 날씨 검색해봐", "provider": "mock", "web_search_permission": "enabled"})
+            self.assertTrue(first["ok"])
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            second = service.handle_chat({"session_id": "latest-single-nat-fu-session", "user_text": "방금 검색한 결과 다시 보여줘", "provider": "mock"})
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+
+            third = service.handle_chat({"session_id": "latest-single-nat-fu-session", "user_text": "이 검색 결과 요약해줘", "provider": "mock", "load_web_search_record_id": record_id})
+            self.assertTrue(third["ok"])
+            origin = third["response"]["response_origin"]
+            self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["answer_mode"], "latest_update")
+            self.assertEqual(origin["verification_label"], "단일 출처 참고")
+            self.assertEqual(origin["source_roles"], ["보조 출처"])
+            source_paths = third["session"]["active_context"]["source_paths"]
+            self.assertIn("https://example.com/seoul-weather", source_paths)
+
+    def test_handle_chat_latest_update_single_source_natural_reload_second_follow_up_preserves_response_origin_and_source_paths(self) -> None:
+        """latest_update single-source → 자연어 reload → first follow-up → second follow-up에서
+        response_origin과 active_context.source_paths가 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [SimpleNamespace(title="서울 날씨 - 예보", url="https://example.com/seoul-weather", snippet="서울은 맑고 낮 최고 17도, 밤 최저 7도로 예보되었습니다.")],
+                    pages={"https://example.com/seoul-weather": {"title": "서울 날씨 - 예보", "text": "서울은 맑고 낮 최고 17도.\n미세먼지 보통.", "excerpt": "서울은 맑고 낮 최고 17도."}},
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat({"session_id": "latest-single-nat-2fu-session", "user_text": "서울 날씨 검색해봐", "provider": "mock", "web_search_permission": "enabled"})
+            self.assertTrue(first["ok"])
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            second = service.handle_chat({"session_id": "latest-single-nat-2fu-session", "user_text": "방금 검색한 결과 다시 보여줘", "provider": "mock"})
+            self.assertTrue(second["ok"])
+
+            third = service.handle_chat({"session_id": "latest-single-nat-2fu-session", "user_text": "이 검색 결과 요약해줘", "provider": "mock", "load_web_search_record_id": record_id})
+            self.assertTrue(third["ok"])
+
+            fourth = service.handle_chat({"session_id": "latest-single-nat-2fu-session", "user_text": "더 자세히 알려줘", "provider": "mock", "load_web_search_record_id": record_id})
+            self.assertTrue(fourth["ok"])
+            origin = fourth["response"]["response_origin"]
+            self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["answer_mode"], "latest_update")
+            self.assertEqual(origin["verification_label"], "단일 출처 참고")
+            self.assertEqual(origin["source_roles"], ["보조 출처"])
+            source_paths = fourth["session"]["active_context"]["source_paths"]
+            self.assertIn("https://example.com/seoul-weather", source_paths)
+
+    def test_handle_chat_latest_update_news_only_natural_reload_follow_up_preserves_response_origin_and_source_paths(self) -> None:
+        """latest_update news-only → 자연어 reload → first follow-up에서
+        response_origin과 active_context.source_paths가 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(title="기준금리 속보 - 한국경제", url="https://www.hankyung.com/economy/2025", snippet="한국은행이 기준금리를 동결했다고 밝혔다."),
+                        SimpleNamespace(title="기준금리 뉴스 - 매일경제", url="https://www.mk.co.kr/economy/2025", snippet="한국은행이 기준금리를 동결했다."),
+                    ],
+                    pages={
+                        "https://www.hankyung.com/economy/2025": {"title": "기준금리 속보 - 한국경제", "text": "한국은행이 기준금리를 동결했다고 밝혔다."},
+                        "https://www.mk.co.kr/economy/2025": {"title": "기준금리 뉴스 - 매일경제", "text": "한국은행이 기준금리를 동결했다."},
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat({"session_id": "latest-news-nat-fu-session", "user_text": "기준금리 속보 검색해봐", "provider": "mock", "web_search_permission": "enabled"})
+            self.assertTrue(first["ok"])
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            second = service.handle_chat({"session_id": "latest-news-nat-fu-session", "user_text": "방금 검색한 결과 다시 보여줘", "provider": "mock"})
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+
+            third = service.handle_chat({"session_id": "latest-news-nat-fu-session", "user_text": "이 검색 결과 요약해줘", "provider": "mock", "load_web_search_record_id": record_id})
+            self.assertTrue(third["ok"])
+            origin = third["response"]["response_origin"]
+            self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["answer_mode"], "latest_update")
+            self.assertEqual(origin["verification_label"], "기사 교차 확인")
+            self.assertEqual(origin["source_roles"], ["보조 기사"])
+            source_paths = third["session"]["active_context"]["source_paths"]
+            self.assertIn("https://www.hankyung.com/economy/2025", source_paths)
+            self.assertIn("https://www.mk.co.kr/economy/2025", source_paths)
+
+    def test_handle_chat_latest_update_news_only_natural_reload_second_follow_up_preserves_response_origin_and_source_paths(self) -> None:
+        """latest_update news-only → 자연어 reload → first follow-up → second follow-up에서
+        response_origin과 active_context.source_paths가 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(title="기준금리 속보 - 한국경제", url="https://www.hankyung.com/economy/2025", snippet="한국은행이 기준금리를 동결했다고 밝혔다."),
+                        SimpleNamespace(title="기준금리 뉴스 - 매일경제", url="https://www.mk.co.kr/economy/2025", snippet="한국은행이 기준금리를 동결했다."),
+                    ],
+                    pages={
+                        "https://www.hankyung.com/economy/2025": {"title": "기준금리 속보 - 한국경제", "text": "한국은행이 기준금리를 동결했다고 밝혔다."},
+                        "https://www.mk.co.kr/economy/2025": {"title": "기준금리 뉴스 - 매일경제", "text": "한국은행이 기준금리를 동결했다."},
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat({"session_id": "latest-news-nat-2fu-session", "user_text": "기준금리 속보 검색해봐", "provider": "mock", "web_search_permission": "enabled"})
+            self.assertTrue(first["ok"])
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            second = service.handle_chat({"session_id": "latest-news-nat-2fu-session", "user_text": "방금 검색한 결과 다시 보여줘", "provider": "mock"})
+            self.assertTrue(second["ok"])
+
+            third = service.handle_chat({"session_id": "latest-news-nat-2fu-session", "user_text": "이 검색 결과 요약해줘", "provider": "mock", "load_web_search_record_id": record_id})
+            self.assertTrue(third["ok"])
+
+            fourth = service.handle_chat({"session_id": "latest-news-nat-2fu-session", "user_text": "더 자세히 알려줘", "provider": "mock", "load_web_search_record_id": record_id})
+            self.assertTrue(fourth["ok"])
+            origin = fourth["response"]["response_origin"]
+            self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["answer_mode"], "latest_update")
+            self.assertEqual(origin["verification_label"], "기사 교차 확인")
+            self.assertEqual(origin["source_roles"], ["보조 기사"])
+            source_paths = fourth["session"]["active_context"]["source_paths"]
+            self.assertIn("https://www.hankyung.com/economy/2025", source_paths)
+            self.assertIn("https://www.mk.co.kr/economy/2025", source_paths)
+
 
 if __name__ == "__main__":
     unittest.main()

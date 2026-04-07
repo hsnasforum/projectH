@@ -1380,6 +1380,10 @@ These are placeholders for the next phase design target and its immediate follow
   - latest-update news-only `방금 검색한 결과 다시 보여줘` 자연어 reload → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` exact field 유지
   - latest-update mixed-source 자연어 reload 후 follow-up → source path(`store.steampowered.com`, `yna.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` response-origin drift 없음
   - latest-update mixed-source 자연어 reload 후 두 번째 follow-up → source path(`store.steampowered.com`, `yna.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` response-origin drift 없음
+  - latest-update single-source 자연어 reload 후 follow-up → source path(`example.com/seoul-weather`) context box 유지 + `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처` response-origin drift 없음
+  - latest-update single-source 자연어 reload 후 두 번째 follow-up → source path(`example.com/seoul-weather`) context box 유지 + `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처` response-origin drift 없음
+  - latest-update news-only 자연어 reload 후 follow-up → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` response-origin drift 없음
+  - latest-update news-only 자연어 reload 후 두 번째 follow-up → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` response-origin drift 없음
 
 ### In Progress
 - Improve regression fixtures for weak-slot reinvestigation and source consensus.

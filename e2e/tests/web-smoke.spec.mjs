@@ -6390,7 +6390,7 @@ test("entity-card noisy single-source claim(출시일/2025/blog.example.com)이 
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
 
-test("history-card entity-card noisy single-source claim(출시일/2025/blog.example.com)이 다시 불러오기 후 follow-up에서도 본문과 origin detail에 미노출되고 blog.example.com provenance가 context box에 유지됩니다", async ({ page }) => {
+test("history-card entity-card noisy single-source claim(출시일/2025/blog.example.com)이 다시 불러오기 후 follow-up에서도 미노출되고 설명형 다중 출처 합의, 백과 기반, namu.wiki/ko.wikipedia.org/blog.example.com provenance가 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "entity-noisy-click-reload-followup-prov");
 
   const recordId = `websearch-entity-noisy-click-fu-${Date.now().toString(36)}`;
@@ -6459,7 +6459,7 @@ test("history-card entity-card noisy single-source claim(출시일/2025/blog.exa
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
 
-test("history-card entity-card noisy single-source claim(출시일/2025/blog.example.com)이 다시 불러오기 후 두 번째 follow-up에서도 본문과 origin detail에 미노출되고 blog.example.com provenance가 context box에 유지됩니다", async ({ page }) => {
+test("history-card entity-card noisy single-source claim(출시일/2025/blog.example.com)이 다시 불러오기 후 두 번째 follow-up에서도 미노출되고 설명형 다중 출처 합의, 백과 기반, namu.wiki/ko.wikipedia.org/blog.example.com provenance가 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "entity-noisy-click-reload-second-followup-prov");
 
   const recordId = `websearch-entity-noisy-click-2fu-${Date.now().toString(36)}`;

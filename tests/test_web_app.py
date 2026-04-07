@@ -9305,6 +9305,9 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(reload_origin["verification_label"], first_origin["verification_label"])
             self.assertEqual(reload_origin["source_roles"], first_origin["source_roles"])
             self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
+            reload_source_paths = second["session"]["active_context"]["source_paths"]
+            self.assertIn("https://namu.wiki/w/testgame", reload_source_paths)
+            self.assertIn("https://ko.wikipedia.org/wiki/testgame", reload_source_paths)
 
     def test_handle_chat_entity_card_separates_weak_and_missing_slot_sections(self) -> None:
         """entity-card 응답 본문에서 '단일 출처 확인 정보:'(단일 출처 weak slot)와
@@ -15775,6 +15778,9 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn(followup_origin.get("answer_mode", ""), ("entity_card", first_origin["answer_mode"]))
             self.assertEqual(followup_origin["verification_label"], first_origin["verification_label"])
             self.assertEqual(followup_origin["source_roles"], first_origin["source_roles"])
+            followup_source_paths = third["session"]["active_context"]["source_paths"]
+            self.assertIn("https://namu.wiki/w/testgame", followup_source_paths)
+            self.assertIn("https://ko.wikipedia.org/wiki/testgame", followup_source_paths)
 
     def test_handle_chat_dual_probe_natural_reload_follow_up_preserves_source_paths(self) -> None:
         """dual-probe entity-card → 자연어 reload → follow-up에서

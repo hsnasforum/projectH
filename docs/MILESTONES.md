@@ -65,8 +65,8 @@
 - history-card entity-card zero-strong-slot `다시 불러오기` reload verification-label + source-path continuity browser smoke covering downgraded `설명형 단일 출처`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` in context box
 - history-card entity-card zero-strong-slot `다시 불러오기` follow-up response-origin + source-path continuity service + browser smoke covering `설명 카드`, `설명형 단일 출처`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` drift prevention
 - entity-card zero-strong-slot click-reload follow-up response-origin continuity browser smoke covering `설명 카드` answer-mode badge, `설명형 단일 출처`, `백과 기반` drift prevention; service test separately covers natural-reload path
-- entity-card zero-strong-slot browser natural-reload exact-field smoke covering `방금 검색한 결과 다시 보여줘` path with `WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반` retention
-- entity-card zero-strong-slot browser natural-reload follow-up response-origin continuity smoke covering `WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반` drift prevention after natural reload + follow-up
+- entity-card zero-strong-slot browser natural-reload exact-field + source-path smoke covering `방금 검색한 결과 다시 보여줘` path with `WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` in context box
+- entity-card zero-strong-slot browser natural-reload follow-up response-origin + source-path continuity smoke covering `WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` drift prevention after natural reload + follow-up
 - entity-card 붉은사막 검색 결과 browser natural-reload exact-field smoke covering `방금 검색한 결과 다시 보여줘` path with `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` retention
 - entity-card dual-probe browser natural-reload source-path continuity smoke covering `pearlabyss.com` dual-probe URLs in context box after `방금 검색한 결과 다시 보여줘`
 - entity-card dual-probe browser natural-reload exact-field smoke covering `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` retention after `방금 검색한 결과 다시 보여줘`

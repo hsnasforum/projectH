@@ -5042,8 +5042,8 @@ test("entity-card 붉은사막 actual-search 자연어 reload 후 follow-up에�
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
 
-test("entity-card 붉은사막 actual-search 자연어 reload 후 두 번째 follow-up에서 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
-  const sessionId = await prepareSession(page, "entity-actual-search-natural-reload-second-followup-origin");
+test("entity-card 붉은사막 actual-search 자연어 reload 후 두 번째 follow-up에서 source path가 context box에 유지되고 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "entity-actual-search-natural-reload-second-followup-sp-origin");
 
   const recordId = `websearch-entity-actual-nat-2fu-or-${Date.now().toString(36)}`;
   const recordDir = path.join(repoRoot, "data", "web-search", sessionId);

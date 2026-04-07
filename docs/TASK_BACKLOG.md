@@ -38,7 +38,7 @@
 25. History-card `다시 불러오기` follow-up Playwright smoke coverage (response origin badge, answer-mode badge drift prevention)
 26. History-card latest-update `다시 불러오기` follow-up Playwright smoke coverage (`WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail drift prevention)
 27. History-card latest-update `다시 불러오기` noisy community source exclusion Playwright smoke coverage (negative `보조 커뮤니티` / `brunch` in response body, origin detail, and context box)
-28. History-card entity-card `다시 불러오기` noisy single-source claim exclusion Playwright smoke coverage (`설명형 다중 출처 합의`, `백과 기반`, negative `출시일` / `2025` / `blog.example.com` in response body and origin detail, positive agreement-backed fact card, `blog.example.com` provenance in context box/source_paths)
+28. History-card entity-card `다시 불러오기` noisy single-source claim exclusion Playwright smoke coverage (`설명형 다중 출처 합의`, `백과 기반`, negative `출시일` / `2025` / `blog.example.com` in response body and origin detail, positive agreement-backed fact card, `namu.wiki`, `ko.wikipedia.org`, `blog.example.com` provenance in context box/source_paths)
 29. History-card entity-card `다시 불러오기` dual-probe source-path + response-origin continuity Playwright smoke coverage (`pearlabyss.com/200`, `pearlabyss.com/300` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반`)
 30. History-card latest-update `다시 불러오기` mixed-source source-path + response-origin continuity Playwright smoke coverage (`store.steampowered.com`, `yna.co.kr` in context box, `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반`)
 31. History-card latest-update single-source `다시 불러오기` verification-label continuity Playwright smoke coverage (`단일 출처 참고`, `보조 출처` in origin detail)

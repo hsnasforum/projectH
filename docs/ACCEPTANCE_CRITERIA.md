@@ -1340,7 +1340,7 @@ These are placeholders for the next phase design target and its immediate follow
   - history-card `다시 불러오기` 후 follow-up → response origin badge, answer-mode badge drift 없음
   - history-card latest-update `다시 불러오기` 후 follow-up → `WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail drift 없음
   - history-card latest-update `다시 불러오기` 후 noisy community source(`보조 커뮤니티`, `brunch`) 본문, origin detail, context box 미노출
-  - history-card entity-card `다시 불러오기` 후 noisy single-source claim(`출시일`, `2025`, `blog.example.com`) 본문/origin detail 미노출, `설명형 다중 출처 합의`, `백과 기반` 유지, agreement-backed 사실 카드 유지, source_paths/context box에 `blog.example.com` provenance 포함
+  - history-card entity-card `다시 불러오기` 후 noisy single-source claim(`출시일`, `2025`, `blog.example.com`) 본문/origin detail 미노출, `설명형 다중 출처 합의`, `백과 기반` 유지, agreement-backed 사실 카드 유지, source_paths/context box에 `namu.wiki`, `ko.wikipedia.org`, `blog.example.com` provenance 포함
   - history-card entity-card `다시 불러오기` 후 dual-probe source path가 context box에 유지 + `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` response-origin continuity
   - history-card latest-update `다시 불러오기` 후 mixed-source source path(`store.steampowered.com`, `yna.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` response-origin continuity
   - history-card latest-update single-source `다시 불러오기` 후 `단일 출처 참고` verification label, `보조 출처` source role이 origin detail에 유지

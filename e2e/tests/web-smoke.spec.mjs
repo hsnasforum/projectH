@@ -1846,7 +1846,7 @@ test("history-card entity-card 다시 불러오기 후 noisy single-source claim
   }
 });
 
-test("history-card entity-card 다시 불러오기 후 actual-search source path가 context box에 유지됩니다", async ({ page }) => {
+test("history-card entity-card 다시 불러오기 후 actual-search source path(namu.wiki, ko.wikipedia.org) + WEB badge, 설명 카드, 설명형 다중 출처 합의, 백과 기반이 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "history-card-reload-entity-actual-sp");
 
   // Pre-seed a generic entity_card record (붉은사막, single source without dual-probe)

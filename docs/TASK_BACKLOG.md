@@ -64,32 +64,34 @@
 51. Entity-card 붉은사막 browser natural-reload follow-up response-origin truth-sync service + Playwright smoke coverage (`WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` drift prevention)
 52. Entity-card 붉은사막 browser natural-reload source-path plurality service + Playwright smoke coverage (`namu.wiki`, `ko.wikipedia.org`, `blog.example.com` provenance in context box)
 53. Entity-card 붉은사막 browser natural-reload follow-up source-path plurality service + Playwright smoke coverage (`namu.wiki`, `ko.wikipedia.org` in context box)
-54. History-card entity-card `다시 불러오기` actual-search source-path plurality + response-origin continuity service + Playwright smoke coverage (`namu.wiki`, `ko.wikipedia.org` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반`)
-55. History-card entity-card `다시 불러오기` follow-up actual-search source-path plurality + response-origin continuity service + Playwright smoke coverage (`namu.wiki`, `ko.wikipedia.org` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` drift prevention)
-56. History-card entity-card `다시 불러오기` second-follow-up actual-search source-path plurality + response-origin continuity service + Playwright smoke coverage (`namu.wiki`, `ko.wikipedia.org` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` drift prevention)
-57. History-card entity-card `다시 불러오기` second-follow-up dual-probe source-path + response-origin continuity service + Playwright smoke coverage (`pearlabyss.com/200`, `pearlabyss.com/300` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` drift prevention)
-58. Entity-card dual-probe natural-reload second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`pearlabyss.com/ko-KR/Board/Detail?_boardNo=200`, `pearlabyss.com/ko-KR/Board/Detail?_boardNo=300` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` drift prevention)
-59. Entity-card 붉은사막 natural-reload second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`namu.wiki`, `ko.wikipedia.org` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` drift prevention)
-60. History-card latest-update mixed-source `다시 불러오기` second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`store.steampowered.com`, `yna.co.kr` in context box, `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` drift prevention)
-61. History-card latest-update single-source `다시 불러오기` second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`example.com/seoul-weather` in context box, `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처` drift prevention)
-62. History-card latest-update news-only `다시 불러오기` second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`hankyung.com`, `mk.co.kr` in context box, `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` drift prevention)
-63. Latest-update mixed-source `방금 검색한 결과 다시 보여줘` natural-reload exact-field service + Playwright smoke coverage (`store.steampowered.com`, `yna.co.kr` in context box, `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반`)
-64. Latest-update single-source `방금 검색한 결과 다시 보여줘` natural-reload exact-field service + Playwright smoke coverage (`example.com/seoul-weather` in context box, `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처`)
-65. Latest-update news-only `방금 검색한 결과 다시 보여줘` natural-reload exact-field service + Playwright smoke coverage (`hankyung.com`, `mk.co.kr` in context box, `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사`)
-66. Latest-update mixed-source natural-reload follow-up source-path + response-origin continuity service + Playwright smoke coverage (`store.steampowered.com`, `yna.co.kr` in context box, `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` drift prevention)
-67. Latest-update mixed-source natural-reload second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`store.steampowered.com`, `yna.co.kr` in context box, `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` drift prevention)
-68. Latest-update single-source natural-reload follow-up source-path + response-origin continuity service + Playwright smoke coverage (`example.com/seoul-weather` in context box, `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처` drift prevention)
-69. Latest-update single-source natural-reload second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`example.com/seoul-weather` in context box, `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처` drift prevention)
-70. Latest-update news-only natural-reload follow-up source-path + response-origin continuity service + Playwright smoke coverage (`hankyung.com`, `mk.co.kr` in context box, `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` drift prevention)
-71. Latest-update news-only natural-reload second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`hankyung.com`, `mk.co.kr` in context box, `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` drift prevention)
-72. Latest-update noisy-community natural-reload follow-up exclusion service + Playwright smoke coverage (`보조 커뮤니티`, `brunch` negative in origin detail, response body, context box + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` positive retention)
-73. Latest-update noisy-community natural-reload second-follow-up exclusion service + Playwright smoke coverage (`보조 커뮤니티`, `brunch` negative in origin detail, response body, context box + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` positive retention)
-74. History-card latest-update noisy-community click-reload follow-up exclusion service + Playwright smoke coverage (`보조 커뮤니티`, `brunch` negative in origin detail, response body, context box + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` positive retention)
-75. History-card latest-update noisy-community click-reload second-follow-up exclusion service + Playwright smoke coverage (`보조 커뮤니티`, `brunch` negative in origin detail, response body, context box + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` positive retention)
-76. Entity-card noisy single-source claim natural-reload follow-up exclusion + provenance truth-sync (`출시일`, `2025`, `blog.example.com` 본문/detail 미노출, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, source_paths/context box에 `blog.example.com` provenance 포함)
-77. Entity-card noisy single-source claim natural-reload second-follow-up exclusion + provenance truth-sync (`출시일`, `2025`, `blog.example.com` 본문/detail 미노출, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, source_paths/context box에 `blog.example.com` provenance 포함)
-78. History-card entity-card noisy single-source claim click-reload follow-up exclusion + provenance truth-sync (`출시일`, `2025`, `blog.example.com` 본문/detail 미노출, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, source_paths/context box에 `blog.example.com` provenance 포함)
-79. History-card entity-card noisy single-source claim click-reload second-follow-up exclusion + provenance truth-sync (`출시일`, `2025`, `blog.example.com` 본문/detail 미노출, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, source_paths/context box에 `blog.example.com` provenance 포함)
+54. Entity-card 붉은사막 browser natural-reload follow-up noisy single-source exclusion Playwright smoke coverage (negative `출시일` / `2025` / `blog.example.com` in response text and origin detail + `namu.wiki`, `ko.wikipedia.org` context box continuity)
+57. Entity-card 붉은사막 browser natural-reload second-follow-up noisy single-source exclusion Playwright smoke coverage (negative `출시일` / `2025` / `blog.example.com` in response text and origin detail + `namu.wiki`, `ko.wikipedia.org` context box continuity)
+58. History-card entity-card `다시 불러오기` actual-search source-path plurality + response-origin continuity service + Playwright smoke coverage (`namu.wiki`, `ko.wikipedia.org` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반`)
+57. History-card entity-card `다시 불러오기` follow-up actual-search source-path plurality + response-origin continuity service + Playwright smoke coverage (`namu.wiki`, `ko.wikipedia.org` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` drift prevention)
+58. History-card entity-card `다시 불러오기` second-follow-up actual-search source-path plurality + response-origin continuity service + Playwright smoke coverage (`namu.wiki`, `ko.wikipedia.org` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` drift prevention)
+59. History-card entity-card `다시 불러오기` second-follow-up dual-probe source-path + response-origin continuity service + Playwright smoke coverage (`pearlabyss.com/200`, `pearlabyss.com/300` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` drift prevention)
+60. Entity-card dual-probe natural-reload second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`pearlabyss.com/ko-KR/Board/Detail?_boardNo=200`, `pearlabyss.com/ko-KR/Board/Detail?_boardNo=300` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` drift prevention)
+61. Entity-card 붉은사막 natural-reload second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`namu.wiki`, `ko.wikipedia.org` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` drift prevention)
+62. History-card latest-update mixed-source `다시 불러오기` second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`store.steampowered.com`, `yna.co.kr` in context box, `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` drift prevention)
+63. History-card latest-update single-source `다시 불러오기` second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`example.com/seoul-weather` in context box, `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처` drift prevention)
+64. History-card latest-update news-only `다시 불러오기` second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`hankyung.com`, `mk.co.kr` in context box, `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` drift prevention)
+65. Latest-update mixed-source `방금 검색한 결과 다시 보여줘` natural-reload exact-field service + Playwright smoke coverage (`store.steampowered.com`, `yna.co.kr` in context box, `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반`)
+66. Latest-update single-source `방금 검색한 결과 다시 보여줘` natural-reload exact-field service + Playwright smoke coverage (`example.com/seoul-weather` in context box, `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처`)
+67. Latest-update news-only `방금 검색한 결과 다시 보여줘` natural-reload exact-field service + Playwright smoke coverage (`hankyung.com`, `mk.co.kr` in context box, `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사`)
+68. Latest-update mixed-source natural-reload follow-up source-path + response-origin continuity service + Playwright smoke coverage (`store.steampowered.com`, `yna.co.kr` in context box, `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` drift prevention)
+69. Latest-update mixed-source natural-reload second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`store.steampowered.com`, `yna.co.kr` in context box, `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` drift prevention)
+70. Latest-update single-source natural-reload follow-up source-path + response-origin continuity service + Playwright smoke coverage (`example.com/seoul-weather` in context box, `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처` drift prevention)
+71. Latest-update single-source natural-reload second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`example.com/seoul-weather` in context box, `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처` drift prevention)
+72. Latest-update news-only natural-reload follow-up source-path + response-origin continuity service + Playwright smoke coverage (`hankyung.com`, `mk.co.kr` in context box, `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` drift prevention)
+73. Latest-update news-only natural-reload second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`hankyung.com`, `mk.co.kr` in context box, `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` drift prevention)
+74. Latest-update noisy-community natural-reload follow-up exclusion service + Playwright smoke coverage (`보조 커뮤니티`, `brunch` negative in origin detail, response body, context box + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` positive retention)
+75. Latest-update noisy-community natural-reload second-follow-up exclusion service + Playwright smoke coverage (`보조 커뮤니티`, `brunch` negative in origin detail, response body, context box + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` positive retention)
+76. History-card latest-update noisy-community click-reload follow-up exclusion service + Playwright smoke coverage (`보조 커뮤니티`, `brunch` negative in origin detail, response body, context box + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` positive retention)
+77. History-card latest-update noisy-community click-reload second-follow-up exclusion service + Playwright smoke coverage (`보조 커뮤니티`, `brunch` negative in origin detail, response body, context box + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` positive retention)
+78. Entity-card noisy single-source claim natural-reload follow-up exclusion + provenance truth-sync (`출시일`, `2025`, `blog.example.com` 본문/detail 미노출, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, source_paths/context box에 `blog.example.com` provenance 포함)
+79. Entity-card noisy single-source claim natural-reload second-follow-up exclusion + provenance truth-sync (`출시일`, `2025`, `blog.example.com` 본문/detail 미노출, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, source_paths/context box에 `blog.example.com` provenance 포함)
+80. History-card entity-card noisy single-source claim click-reload follow-up exclusion + provenance truth-sync (`출시일`, `2025`, `blog.example.com` 본문/detail 미노출, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, source_paths/context box에 `blog.example.com` provenance 포함)
+81. History-card entity-card noisy single-source claim click-reload second-follow-up exclusion + provenance truth-sync (`출시일`, `2025`, `blog.example.com` 본문/detail 미노출, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, source_paths/context box에 `blog.example.com` provenance 포함)
 
 ## Current Phase In Progress
 
@@ -294,40 +296,40 @@
 53. Keep the shipped same-session `recurrence_aggregate_candidates` promotion-ineligible:
   - exact aggregate identity remains necessary but insufficient for repeated-signal promotion
   - no post-aggregate apply path, no reviewed-memory candidate store, and no cross-session counting in the current contract
-54. Keep the first post-aggregate reviewed-memory boundary explicit and separate:
+56. Keep the first post-aggregate reviewed-memory boundary explicit and separate:
   - `candidate_review_record` remains one source-message reviewed-but-not-applied trace
   - `recurrence_aggregate_candidates` remains one same-session grouping surface
   - reviewed memory remains later than rollback, disable, conflict, and operator-audit rules
-55. Keep the shipped post-aggregate surface as one read-only aggregate-level promotion-eligibility marker only:
+57. Keep the shipped post-aggregate surface as one read-only aggregate-level promotion-eligibility marker only:
   - `promotion_basis = same_session_exact_recurrence_aggregate`
   - `promotion_eligibility = blocked_pending_reviewed_memory_boundary`
   - `reviewed_memory_boundary = not_open`
-56. Keep review acceptance, approval-backed save, historical adjuncts, queue presence, fixed statement text, and task-log replay out of post-aggregate promotion identity.
-57. Keep the same-session aggregate unblock contract exact and all-required:
+58. Keep review acceptance, approval-backed save, historical adjuncts, queue presence, fixed statement text, and task-log replay out of post-aggregate promotion identity.
+59. Keep the same-session aggregate unblock contract exact and all-required:
   - `reviewed_memory_boundary_defined`
   - `rollback_ready_reviewed_memory_effect`
   - `disable_ready_reviewed_memory_effect`
   - `conflict_visible_reviewed_memory_scope`
   - `operator_auditable_reviewed_memory_transition`
-58. Keep each unblock precondition truthful and separate:
+60. Keep each unblock precondition truthful and separate:
   - rollback reverses later reviewed-memory effect, not source-message correction history
   - disable stops later apply, not candidate deletion
   - conflict visibility means reviewed-signal conflict across aggregates within the same reviewed scope, not only same-source edit conflict
   - operator-audit means explicit operator-visible transition trace, not task-log promoted to canonical
-59. Require all unblock preconditions before any same-session aggregate can leave `blocked_pending_reviewed_memory_boundary`:
+61. Require all unblock preconditions before any same-session aggregate can leave `blocked_pending_reviewed_memory_boundary`:
   - partial satisfaction may later surface read-only only
   - same-session unblock must not auto-open cross-session counting
-60. Keep the shipped aggregate-level `reviewed_memory_precondition_status` object narrow and blocked-only:
+62. Keep the shipped aggregate-level `reviewed_memory_precondition_status` object narrow and blocked-only:
   - no per-precondition satisfaction booleans yet
   - no payload-visible reviewed-memory store and no payload-visible proof-record or proof-boundary surface
   - no reviewed-memory apply
   - no repeated-signal promotion
   - no user-level memory
-61. Fix `reviewed_memory_boundary_defined` to one first narrow reviewed scope only:
+63. Fix `reviewed_memory_boundary_defined` to one first narrow reviewed scope only:
   - `same_session_exact_recurrence_aggregate_only`
   - no reviewed-scope enum in the first boundary slice
   - no rename of `candidate_review_record`, `recurrence_aggregate_candidates`, or the current blocked marker into reviewed memory
-62. Current same-session `recurrence_aggregate_candidates` items may now also expose one read-only `reviewed_memory_boundary_draft`:
+64. Current same-session `recurrence_aggregate_candidates` items may now also expose one read-only `reviewed_memory_boundary_draft`:
   - `boundary_version = fixed_narrow_reviewed_scope_v1`
   - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
   - one `aggregate_identity_ref`
@@ -336,29 +338,29 @@
   - optional `supporting_review_refs`
   - `boundary_stage = draft_not_applied`
   - deterministic `drafted_at = last_seen_at`
-63. Keep the shipped `reviewed_memory_boundary_draft` narrower than reviewed-memory store/apply:
+65. Keep the shipped `reviewed_memory_boundary_draft` narrower than reviewed-memory store/apply:
   - no readiness or satisfaction tracker
   - no apply result
   - no cross-session scope
   - do not widen into cross-session counting or user-level memory
-64. Fix `rollback_ready_reviewed_memory_effect` to one exact future rollback target only:
+66. Fix `rollback_ready_reviewed_memory_effect` to one exact future rollback target only:
   - rollback means later reviewed-memory effect reversal, not source-message correction-history rewind
   - the first rollback target stays one later applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
   - the shipped `reviewed_memory_boundary_draft` remains a scope draft and basis ref, not the rollback target
-65. Keep rollback narrower than delete or rewrite semantics:
+67. Keep rollback narrower than delete or rewrite semantics:
   - rollback must not delete `candidate_review_record`
   - rollback must not delete `candidate_recurrence_key`
   - rollback must not rewrite `recurrence_aggregate_candidates` identity history
   - boundary-draft deletion must not become canonical rollback
-66. Keep rollback output boundaries exact:
+68. Keep rollback output boundaries exact:
   - aggregate identity, supporting refs, boundary draft, and operator-visible audit trace must remain after rollback
   - only later applied reviewed-memory influence may deactivate
   - current append-only `task_log` may mirror rollback trace but must not become the canonical rollback store
-67. Keep rollback separate from disable, conflict visibility, and operator audit:
+69. Keep rollback separate from disable, conflict visibility, and operator audit:
   - rollback = reversal of already-applied reviewed-memory effect
   - disable = later stop-apply machinery
   - conflict visibility and operator-audit remain separate preconditions and must not be implied by rollback target definition alone
-68. Current same-session `recurrence_aggregate_candidates` items may now also expose one read-only `reviewed_memory_rollback_contract`:
+70. Current same-session `recurrence_aggregate_candidates` items may now also expose one read-only `reviewed_memory_rollback_contract`:
   - `rollback_version = first_reviewed_memory_effect_reversal_v1`
   - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
   - one `aggregate_identity_ref`
@@ -367,28 +369,28 @@
   - `rollback_stage = contract_only_not_applied`
   - `audit_trace_expectation = operator_visible_local_transition_required`
   - deterministic `defined_at = last_seen_at`
-69. Keep the shipped `reviewed_memory_rollback_contract` narrower than reviewed-memory store/apply:
+71. Keep the shipped `reviewed_memory_rollback_contract` narrower than reviewed-memory store/apply:
   - it must remain contract-only and read-only
   - it must not become a rollback state machine
   - it must not widen into cross-session scope
-70. Fix `disable_ready_reviewed_memory_effect` to one exact future stop-apply target only:
+72. Fix `disable_ready_reviewed_memory_effect` to one exact future stop-apply target only:
   - disable means later reviewed-memory effect stop-apply, not source-message correction-history rewrite
   - the first disable target stays one later applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
   - the shipped `reviewed_memory_boundary_draft` and shipped `reviewed_memory_rollback_contract` remain basis refs, not the disable target
-71. Keep disable narrower than delete or reversal semantics:
+73. Keep disable narrower than delete or reversal semantics:
   - disable must not delete `candidate_review_record`
   - disable must not delete `candidate_recurrence_key`
   - disable must not rewrite `recurrence_aggregate_candidates` identity history
   - disable must not be treated as rollback reversal
-72. Keep disable output boundaries exact:
+74. Keep disable output boundaries exact:
   - aggregate identity, supporting refs, boundary draft, rollback contract, and operator-visible audit trace must remain after disable
   - only later applied reviewed-memory influence may become inactive
   - current append-only `task_log` may mirror disable trace but must not become the canonical disable store
-73. Keep disable separate from rollback, conflict visibility, and operator audit:
+75. Keep disable separate from rollback, conflict visibility, and operator audit:
   - disable = stop-apply of already-applied reviewed-memory effect
   - rollback = reversal of already-applied reviewed-memory effect
   - conflict visibility and operator-audit remain separate preconditions and must not be implied by disable target definition alone
-74. Current same-session `recurrence_aggregate_candidates` items may now also expose one read-only `reviewed_memory_disable_contract`:
+76. Current same-session `recurrence_aggregate_candidates` items may now also expose one read-only `reviewed_memory_disable_contract`:
   - one `reviewed_memory_disable_contract`
   - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
   - `disable_target_kind = future_applied_reviewed_memory_effect_only`
@@ -396,58 +398,58 @@
   - `effect_behavior = stop_apply_without_reversal`
   - `audit_trace_expectation = operator_visible_local_transition_required`
   - deterministic `defined_at = last_seen_at`
-75. Keep the shipped `reviewed_memory_disable_contract` narrower than reviewed-memory store/apply:
+77. Keep the shipped `reviewed_memory_disable_contract` narrower than reviewed-memory store/apply:
   - it must remain contract-only and read-only
   - it must not become a disable state machine
   - it must not widen into cross-session scope
-76. Fix `conflict_visible_reviewed_memory_scope` to one exact same-session visibility boundary only:
+78. Fix `conflict_visible_reviewed_memory_scope` to one exact same-session visibility boundary only:
   - conflict visibility means operator-visible read-only exposure of competing reviewed-memory targets inside `same_session_exact_recurrence_aggregate_only`
   - it must remain tied to one current aggregate identity plus its exact supporting refs
   - it must stay broader than same-source-message edit conflict alone without widening into cross-session scope
-77. Keep the first conflict categories fixed and narrow:
+79. Keep the first conflict categories fixed and narrow:
   - `future_reviewed_memory_candidate_draft_vs_applied_effect`
   - `future_applied_reviewed_memory_effect_vs_applied_effect`
   - current `candidate_review_record` must not become a conflict object by itself
-78. Keep conflict visibility narrower than resolution mechanics:
+80. Keep conflict visibility narrower than resolution mechanics:
   - it must not auto-resolve
   - it must not auto-disable
   - it must not auto-rollback
   - it must not auto-apply
-79. Keep conflict visibility separate from current shipped contracts:
+81. Keep conflict visibility separate from current shipped contracts:
   - current `reviewed_memory_boundary_draft`, `reviewed_memory_rollback_contract`, and `reviewed_memory_disable_contract` remain basis refs or neighboring contracts, not the conflict object itself
   - current append-only `task_log` may mirror conflict trace but must not become the canonical conflict store
-80. Current same-session `recurrence_aggregate_candidates` items may now also expose one read-only `reviewed_memory_conflict_contract`:
+82. Current same-session `recurrence_aggregate_candidates` items may now also expose one read-only `reviewed_memory_conflict_contract`:
   - one `reviewed_memory_conflict_contract`
   - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
   - `conflict_target_categories`
   - `conflict_visibility_stage = contract_only_not_resolved`
   - `audit_trace_expectation = operator_visible_local_transition_required`
   - deterministic `defined_at = last_seen_at`
-81. Keep the shipped `reviewed_memory_conflict_contract` narrower than reviewed-memory store/apply:
+83. Keep the shipped `reviewed_memory_conflict_contract` narrower than reviewed-memory store/apply:
   - it must remain contract-only and read-only
   - it must not become a conflict resolver
   - it must not widen into cross-session counting
-82. Fix `operator_auditable_reviewed_memory_transition` to one exact local transition-trace contract only:
+84. Fix `operator_auditable_reviewed_memory_transition` to one exact local transition-trace contract only:
   - operator audit must remain separate from current evidence traces and separate from conflict visibility itself
   - current append-only `task_log` may mirror the trace but must not become the canonical reviewed-memory audit store
-83. Keep operator-audit target boundary exact:
+85. Keep operator-audit target boundary exact:
   - the first operator-auditable transition scope stays `same_session_exact_recurrence_aggregate_only`
   - the first transition action vocabulary stays fixed at:
     - `future_reviewed_memory_apply`
     - `future_reviewed_memory_stop_apply`
     - `future_reviewed_memory_reversal`
     - `future_reviewed_memory_conflict_visibility`
-84. Keep operator audit narrower than state or resolver mechanics:
+86. Keep operator audit narrower than state or resolver mechanics:
   - it must not auto-apply
   - it must not auto-disable
   - it must not auto-rollback
   - it must not auto-resolve
   - it must not auto-repair
-85. Keep operator audit separate from current shipped contracts:
+87. Keep operator audit separate from current shipped contracts:
   - current `reviewed_memory_boundary_draft`, `reviewed_memory_rollback_contract`, `reviewed_memory_disable_contract`, and `reviewed_memory_conflict_contract` remain basis refs or neighboring contracts, not transition results
   - current `candidate_review_record` must not become the transition record by itself
   - approval-backed save support, historical adjuncts, review acceptance, queue presence, and task-log replay alone must not create canonical transition state
-86. Current same-session `recurrence_aggregate_candidates` items may now also expose one read-only `reviewed_memory_transition_audit_contract`:
+88. Current same-session `recurrence_aggregate_candidates` items may now also expose one read-only `reviewed_memory_transition_audit_contract`:
   - one `reviewed_memory_transition_audit_contract`
   - `audit_version = first_reviewed_memory_transition_identity_v1`
   - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
@@ -458,37 +460,37 @@
   - `audit_store_boundary = canonical_transition_record_separate_from_task_log`
   - `post_transition_invariants = aggregate_identity_and_contract_refs_retained`
   - deterministic `defined_at = last_seen_at`
-87. Keep the shipped `reviewed_memory_transition_audit_contract` narrower than reviewed-memory store/apply:
+89. Keep the shipped `reviewed_memory_transition_audit_contract` narrower than reviewed-memory store/apply:
   - it must remain contract-only and read-only
   - it must not become a transition state machine
   - it must not widen into cross-session counting
-88. Keep current shipped boundary / rollback / disable / conflict / transition-audit objects separated from same-session unblock satisfaction:
+90. Keep current shipped boundary / rollback / disable / conflict / transition-audit objects separated from same-session unblock satisfaction:
   - each current object means only `contract exists`
   - object existence must not count as `satisfied`
   - approval-backed save support, historical adjuncts, review acceptance, queue presence, and `task_log` mirror existence must remain outside satisfaction basis
-89. Fix first same-session unblock semantics as binary and all-required:
+91. Fix first same-session unblock semantics as binary and all-required:
   - unblock may occur only when all five reviewed-memory preconditions are satisfied through later machinery
   - the first widened vocabulary should stay binary:
     - `blocked_all_required`
     - `unblocked_all_required`
   - partial satisfaction remains blocked-only in the current phase
-90. Keep the first unblocked target narrower than apply:
+92. Keep the first unblocked target narrower than apply:
   - keep `reviewed_memory_planning_target_ref.target_label = eligible_for_reviewed_memory_draft_planning_only`
   - interpret it as reviewed-memory draft planning only for one exact same-session aggregate
   - do not treat it as emitted transition record, reviewed-memory apply result, repeated-signal promotion, or cross-session counting
-91. Keep source-message review, approval-backed save, and `task_log` separate from aggregate-level unblock satisfaction:
+93. Keep source-message review, approval-backed save, and `task_log` separate from aggregate-level unblock satisfaction:
   - `candidate_review_record` may support confidence only and must not replace aggregate-level readiness
   - `review_queue_items` presence must not act as readiness
   - approval-backed save remains supporting evidence only
   - `task_log` remains mirror / appendix only, not canonical transition satisfaction
-92. The shipped readiness surface should stay one read-only `reviewed_memory_unblock_contract`:
+94. The shipped readiness surface should stay one read-only `reviewed_memory_unblock_contract`:
   - exact `required_preconditions`
   - binary `unblock_status`
   - `satisfaction_basis_boundary = canonical_reviewed_memory_layer_capabilities_only`
   - `partial_state_policy = partial_states_not_materialized`
   - deterministic `evaluated_at`
   - current object existence still does not mean satisfied capability outcome
-93. The shipped separate satisfaction surface should stay one read-only `reviewed_memory_capability_status`:
+95. The shipped separate satisfaction surface should stay one read-only `reviewed_memory_capability_status`:
   - `capability_version = same_session_reviewed_memory_capabilities_v1`
   - exact `required_preconditions`
   - `capability_outcome`
@@ -603,7 +605,7 @@
   - current implementation now probes and emits this basis layer during aggregate serialization because one truthful matching capability source family exists for the same exact aggregate
   - current contract-object existence alone, `candidate_review_record`, queue presence, approval-backed save support, historical adjuncts, and `task_log` replay alone must not materialize that rollback-capability handle, that shared applied-effect target, the capability source family, that basis object, or `unblocked_all_required`
   - capability-path opening alone must not mint `canonical_transition_id`, `operator_reason_or_note`, `emitted_at`, or `reviewed_memory_transition_record`
-94. Keep the shipped planning-only target centralized on one shared aggregate-level ref:
+96. Keep the shipped planning-only target centralized on one shared aggregate-level ref:
   - the current aggregate item exposes one additive `reviewed_memory_planning_target_ref`
   - shipped shape:
     - `planning_target_version = same_session_reviewed_memory_planning_target_ref_v1`
@@ -615,7 +617,7 @@
   - the duplicated target echo fields have now been removed together in one cleanup-only pass
   - do not reintroduce one or two fallback target strings in later slices
   - do not add a separate post-cleanup compatibility note as a fallback surface; ordinary current docs and ordinary `/work` closeouts should keep only the shared-ref-only truth
-95. The first emitted-transition-record layer is now implemented as one separate aggregate-level read-only surface (shipped):
+97. The first emitted-transition-record layer is now implemented as one separate aggregate-level read-only surface (shipped):
   - one `reviewed_memory_transition_record`
   - `transition_record_version = first_reviewed_memory_transition_record_v1`
   - one `canonical_transition_id`
@@ -629,27 +631,27 @@
   - one local `emitted_at`
   - persisted on the session under `reviewed_memory_emitted_transition_records`
   - emitted only at the enabled aggregate-card submit boundary; reviewed-memory apply is NOT triggered
-96. Keep the emitted-transition-record layer smaller than reviewed-memory apply:
+98. Keep the emitted-transition-record layer smaller than reviewed-memory apply:
   - keep the shipped `reviewed_memory_transition_audit_contract` contract-only
   - emitted transition record must not equal `blocked_all_required` / `unblocked_all_required`
   - emitted transition record must not equal reviewed-memory apply result
   - emitted transition record must not equal repeated-signal promotion, cross-session counting, or user-level memory
-97. Keep canonical transition identity separate from `task_log` replay:
+99. Keep canonical transition identity separate from `task_log` replay:
   - `task_log` may mirror one emitted transition record, but only as append-only evidence / appendix
   - `task_log` replay alone must not define canonical transition state
   - approval-backed save support, historical adjuncts, review acceptance, queue presence, and task-log replay alone remain outside emitted-transition-record basis
-98. The emitted-record layer is now shipped; keep it truthful:
+100. The emitted-record layer is now shipped; keep it truthful:
   - current shipped payload now emits one `reviewed_memory_transition_record` at the enabled aggregate-card submit boundary
   - `record_stage = emitted_record_only_not_applied` means the record is present but reviewed-memory apply has NOT occurred
   - current implementation must not synthesize the object from current read-only surfaces without an actual enabled-submit action
   - the current aggregate serializer and focused regression now enforce correct emission only at the enabled-submit boundary
-99. Keep the first truthful emitted action to one exact first trigger only:
+101. Keep the first truthful emitted action to one exact first trigger only:
   - the first emitted-transition-record implementation may materialize only for `future_reviewed_memory_apply`
   - it must require one exact same-session aggregate already at truthful `unblocked_all_required`
   - it must require one real `canonical_transition_id`
   - it must require one explicit `operator_reason_or_note`
   - it must require one local `emitted_at`
-100. Keep the first materialization slice narrower than later transition vocabulary:
+102. Keep the first materialization slice narrower than later transition vocabulary:
   - `future_reviewed_memory_stop_apply` is now implemented (it is no longer later); `future_reviewed_memory_reversal` is now also implemented (it is no longer later): after stop-apply the aggregate card shows an `적용 되돌리기` button; clicking it changes `record_stage` to `reversed`, sets `apply_result.result_stage` to `effect_reversed`, and adds `reversed_at`; aggregate identity, supporting refs, and contracts are retained
   - `future_reviewed_memory_conflict_visibility` is now also implemented (it is no longer later): after the effect is reversed the aggregate card shows a `충돌 확인` button; clicking it creates a separate conflict-visibility transition record with `transition_action = future_reviewed_memory_conflict_visibility`, `record_stage = conflict_visibility_checked`, evaluated `conflict_entries` and `conflict_entry_count`, and `source_apply_transition_ref`; the conflict visibility record is separate from the apply transition record and does not mutate it
   - first-round `task_log` mirroring stays optional; canonical emitted record remains sufficient by itself

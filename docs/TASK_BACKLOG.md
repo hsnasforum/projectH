@@ -33,7 +33,7 @@
 20. Local read-only `review_queue_items` session projection plus compact existing-shell `검토 후보` section for eligible current `durable_candidate` items
 21. First `accept`-only review action on the shipped queue with source-message `candidate_review_record`, pending queue removal, reviewed-but-not-applied semantics, and focused regression
 22. Web-search history card header badge Playwright smoke coverage (answer-mode, verification-strength, source-role trust)
-23. History-card `다시 불러오기` click reload Playwright smoke coverage (`WEB` badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail)
+23. History-card entity-card `다시 불러오기` click reload Playwright smoke coverage (`WEB` badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail)
 24. History-card latest-update `다시 불러오기` click reload Playwright smoke coverage (`WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail)
 25. History-card entity-card `다시 불러오기` follow-up Playwright smoke coverage (`WEB` badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail drift prevention)
 26. History-card latest-update `다시 불러오기` follow-up Playwright smoke coverage (`WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail drift prevention)

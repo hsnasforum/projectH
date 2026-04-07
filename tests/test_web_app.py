@@ -15418,6 +15418,10 @@ class WebAppServiceTest(unittest.TestCase):
             source_paths = result["session"]["active_context"]["source_paths"]
             self.assertIn("https://www.pearlabyss.com/200", source_paths)
             self.assertIn("https://www.pearlabyss.com/300", source_paths)
+            followup_origin = result["response"]["response_origin"]
+            self.assertEqual(followup_origin["answer_mode"], "entity_card")
+            self.assertEqual(followup_origin["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(followup_origin["source_roles"], ["공식 기반", "백과 기반"])
 
     def test_handle_chat_latest_update_mixed_source_follow_up_preserves_source_paths(self) -> None:
         """latest_update mixed-source 검색 → load_web_search_record_id + user_text follow-up에서

@@ -2049,6 +2049,15 @@ test("history-card entity-card 다시 불러오기 후 dual-probe source path가
   await expect(contextBox).toContainText("pearlabyss.com/200");
   await expect(contextBox).toContainText("pearlabyss.com/300");
 
+  // Assert response-origin continuity
+  const answerModeBadge = page.locator("#response-answer-mode-badge");
+  await expect(answerModeBadge).toBeVisible();
+  await expect(answerModeBadge).toHaveText("설명 카드");
+  const originDetail = page.locator("#response-origin-detail");
+  await expect(originDetail).toContainText("설명형 다중 출처 합의");
+  await expect(originDetail).toContainText("공식 기반");
+  await expect(originDetail).toContainText("백과 기반");
+
   // Clean up
   try {
     fs.unlinkSync(recordPath);
@@ -3032,6 +3041,15 @@ test("history-card entity-card 다시 불러오기 후 follow-up 질문에서 du
   const contextBox = page.locator("#context-box");
   await expect(contextBox).toContainText("pearlabyss.com/200");
   await expect(contextBox).toContainText("pearlabyss.com/300");
+
+  // Assert response-origin continuity after follow-up
+  const answerModeBadge = page.locator("#response-answer-mode-badge");
+  await expect(answerModeBadge).toBeVisible();
+  await expect(answerModeBadge).toHaveText("설명 카드");
+  const originDetail = page.locator("#response-origin-detail");
+  await expect(originDetail).toContainText("설명형 다중 출처 합의");
+  await expect(originDetail).toContainText("공식 기반");
+  await expect(originDetail).toContainText("백과 기반");
 
   // Clean up
   try {

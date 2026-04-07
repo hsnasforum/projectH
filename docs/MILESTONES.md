@@ -87,6 +87,7 @@
 - latest-update mixed-source `방금 검색한 결과 다시 보여줘` natural-reload exact-field service + browser smoke covering `store.steampowered.com`, `yna.co.kr`, `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반`
 - latest-update single-source `방금 검색한 결과 다시 보여줘` natural-reload exact-field service + browser smoke covering `example.com/seoul-weather`, `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처`
 - latest-update news-only `방금 검색한 결과 다시 보여줘` natural-reload exact-field service + browser smoke covering `hankyung.com`, `mk.co.kr`, `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사`
+- latest-update mixed-source natural-reload follow-up + second-follow-up source-path + response-origin continuity service + browser smoke covering `store.steampowered.com`, `yna.co.kr`, `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반`
 - PDF text-layer support
 - OCR-not-supported guidance
 - response feedback capture

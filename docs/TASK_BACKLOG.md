@@ -76,6 +76,8 @@
 63. Latest-update mixed-source `방금 검색한 결과 다시 보여줘` natural-reload exact-field service + Playwright smoke coverage (`store.steampowered.com`, `yna.co.kr` in context box, `공식+기사 교차 확인`, `보조 기사` · `공식 기반`)
 64. Latest-update single-source `방금 검색한 결과 다시 보여줘` natural-reload exact-field service + Playwright smoke coverage (`example.com/seoul-weather` in context box, `단일 출처 참고`, `보조 출처`)
 65. Latest-update news-only `방금 검색한 결과 다시 보여줘` natural-reload exact-field service + Playwright smoke coverage (`hankyung.com`, `mk.co.kr` in context box, `기사 교차 확인`, `보조 기사`)
+66. Latest-update mixed-source natural-reload follow-up source-path + response-origin continuity service + Playwright smoke coverage (`store.steampowered.com`, `yna.co.kr` in context box, `공식+기사 교차 확인`, `보조 기사` · `공식 기반`)
+67. Latest-update mixed-source natural-reload second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`store.steampowered.com`, `yna.co.kr` in context box, `공식+기사 교차 확인`, `보조 기사` · `공식 기반`)
 
 ## Current Phase In Progress
 

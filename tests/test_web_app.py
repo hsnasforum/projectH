@@ -16725,5 +16725,111 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("https://www.mk.co.kr/economy/2025", source_paths)
 
 
+    def test_handle_chat_latest_update_mixed_source_natural_reload_follow_up_preserves_response_origin_and_source_paths(self) -> None:
+        """latest_update mixed-source → 자연어 reload → first follow-up에서
+        response_origin과 active_context.source_paths가 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(title="Steam 여름 할인 - Steam Store", url="https://store.steampowered.com/sale/summer2026", snippet="Steam 여름 할인이 시작되었습니다."),
+                        SimpleNamespace(title="스팀 여름 할인 시작 - 게임뉴스", url="https://www.yna.co.kr/view/AKR20260401000100017", snippet="스팀이 2026년 여름 할인을 시작했다."),
+                    ],
+                    pages={
+                        "https://store.steampowered.com/sale/summer2026": {"title": "Steam 여름 할인", "text": "Steam 여름 할인이 시작되었습니다.", "excerpt": "Steam 여름 할인이 시작되었습니다."},
+                        "https://www.yna.co.kr/view/AKR20260401000100017": {"title": "스팀 여름 할인 시작", "text": "스팀이 2026년 여름 할인을 시작했다.", "excerpt": "스팀이 2026년 여름 할인을 시작했다."},
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat({"session_id": "latest-mixed-nat-fu-session", "user_text": "최신 스팀 할인 소식 검색해줘", "provider": "mock", "web_search_permission": "enabled"})
+            self.assertTrue(first["ok"])
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # 자연어 reload
+            second = service.handle_chat({"session_id": "latest-mixed-nat-fu-session", "user_text": "방금 검색한 결과 다시 보여줘", "provider": "mock"})
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+
+            # first follow-up
+            third = service.handle_chat({"session_id": "latest-mixed-nat-fu-session", "user_text": "이 검색 결과 요약해줘", "provider": "mock", "load_web_search_record_id": record_id})
+            self.assertTrue(third["ok"])
+            origin = third["response"]["response_origin"]
+            self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["answer_mode"], "latest_update")
+            self.assertEqual(origin["verification_label"], "공식+기사 교차 확인")
+            self.assertEqual(origin["source_roles"], ["보조 기사", "공식 기반"])
+            source_paths = third["session"]["active_context"]["source_paths"]
+            self.assertIn("https://store.steampowered.com/sale/summer2026", source_paths)
+            self.assertIn("https://www.yna.co.kr/view/AKR20260401000100017", source_paths)
+
+    def test_handle_chat_latest_update_mixed_source_natural_reload_second_follow_up_preserves_response_origin_and_source_paths(self) -> None:
+        """latest_update mixed-source → 자연어 reload → first follow-up → second follow-up에서
+        response_origin과 active_context.source_paths가 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(title="Steam 여름 할인 - Steam Store", url="https://store.steampowered.com/sale/summer2026", snippet="Steam 여름 할인이 시작되었습니다."),
+                        SimpleNamespace(title="스팀 여름 할인 시작 - 게임뉴스", url="https://www.yna.co.kr/view/AKR20260401000100017", snippet="스팀이 2026년 여름 할인을 시작했다."),
+                    ],
+                    pages={
+                        "https://store.steampowered.com/sale/summer2026": {"title": "Steam 여름 할인", "text": "Steam 여름 할인이 시작되었습니다.", "excerpt": "Steam 여름 할인이 시작되었습니다."},
+                        "https://www.yna.co.kr/view/AKR20260401000100017": {"title": "스팀 여름 할인 시작", "text": "스팀이 2026년 여름 할인을 시작했다.", "excerpt": "스팀이 2026년 여름 할인을 시작했다."},
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat({"session_id": "latest-mixed-nat-2fu-session", "user_text": "최신 스팀 할인 소식 검색해줘", "provider": "mock", "web_search_permission": "enabled"})
+            self.assertTrue(first["ok"])
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # 자연어 reload
+            second = service.handle_chat({"session_id": "latest-mixed-nat-2fu-session", "user_text": "방금 검색한 결과 다시 보여줘", "provider": "mock"})
+            self.assertTrue(second["ok"])
+
+            # first follow-up
+            third = service.handle_chat({"session_id": "latest-mixed-nat-2fu-session", "user_text": "이 검색 결과 요약해줘", "provider": "mock", "load_web_search_record_id": record_id})
+            self.assertTrue(third["ok"])
+
+            # second follow-up
+            fourth = service.handle_chat({"session_id": "latest-mixed-nat-2fu-session", "user_text": "더 자세히 알려줘", "provider": "mock", "load_web_search_record_id": record_id})
+            self.assertTrue(fourth["ok"])
+            origin = fourth["response"]["response_origin"]
+            self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["answer_mode"], "latest_update")
+            self.assertEqual(origin["verification_label"], "공식+기사 교차 확인")
+            self.assertEqual(origin["source_roles"], ["보조 기사", "공식 기반"])
+            source_paths = fourth["session"]["active_context"]["source_paths"]
+            self.assertIn("https://store.steampowered.com/sale/summer2026", source_paths)
+            self.assertIn("https://www.yna.co.kr/view/AKR20260401000100017", source_paths)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -5104,7 +5104,7 @@ test("entity-card 붉은사막 actual-search 자연어 reload 후 두 번째 fol
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
 
-test("entity-card 붉은사막 자연어 reload 후 follow-up에서 noisy single-source claim(출시일/2025/blog.example.com)이 본문과 origin detail에 미노출되고 blog.example.com provenance와 continuity가 유지됩니다", async ({ page }) => {
+test("entity-card 붉은사막 자연어 reload 후 follow-up에서 noisy single-source claim(출시일/2025/blog.example.com)이 본문과 origin detail에 미노출되고 설명형 다중 출처 합의, 백과 기반, namu.wiki/ko.wikipedia.org/blog.example.com provenance continuity가 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "entity-crimson-natural-reload-followup-noisy-excl-prov");
 
   const recordId = `websearch-entity-nat-fu-noisy-${Date.now().toString(36)}`;
@@ -5183,7 +5183,7 @@ test("entity-card 붉은사막 자연어 reload 후 follow-up에서 noisy single
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
 
-test("entity-card 붉은사막 자연어 reload 후 두 번째 follow-up에서 noisy single-source claim(출시일/2025/blog.example.com)이 본문과 origin detail에 미노출되고 blog.example.com provenance와 continuity가 유지됩니다", async ({ page }) => {
+test("entity-card 붉은사막 자연어 reload 후 두 번째 follow-up에서 noisy single-source claim(출시일/2025/blog.example.com)이 본문과 origin detail에 미노출되고 설명형 다중 출처 합의, 백과 기반, namu.wiki/ko.wikipedia.org/blog.example.com provenance continuity가 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "entity-crimson-natural-reload-second-followup-noisy-excl-prov");
 
   const recordId = `websearch-entity-nat-2fu-noisy-${Date.now().toString(36)}`;

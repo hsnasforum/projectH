@@ -17131,6 +17131,123 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("https://www.mk.co.kr/economy/2025", source_paths)
             self.assertNotIn("https://brunch.co.kr/economy", source_paths)
 
+    def test_handle_chat_latest_update_noisy_source_excluded_after_history_card_reload_follow_up(self) -> None:
+        """latest_update noisy-community → click reload → first follow-up에서
+        noisy community source가 텍스트·source_roles·source_paths에 미노출되고,
+        기사 교차 확인 계열 contract가 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 이용약관 개인정보 facebook twitter"
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(title="기준금리 속보 - 한국경제", url="https://www.hankyung.com/economy/2025", snippet="한국은행이 기준금리를 동결했다고 밝혔다."),
+                        SimpleNamespace(title="기준금리 뉴스 - 매일경제", url="https://www.mk.co.kr/economy/2025", snippet="한국은행이 기준금리를 동결했다."),
+                        SimpleNamespace(title="기준금리 커뮤니티", url="https://brunch.co.kr/economy", snippet=noisy_snippet),
+                    ],
+                    pages={
+                        "https://www.hankyung.com/economy/2025": {"title": "기준금리 속보 - 한국경제", "text": "한국은행이 기준금리를 동결했다고 밝혔다."},
+                        "https://www.mk.co.kr/economy/2025": {"title": "기준금리 뉴스 - 매일경제", "text": "한국은행이 기준금리를 동결했다."},
+                        "https://brunch.co.kr/economy": {"title": "기준금리 커뮤니티", "text": noisy_snippet},
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat({"session_id": "latest-noisy-click-fu-session", "user_text": "기준금리 속보 검색해봐", "provider": "mock", "web_search_permission": "enabled"})
+            self.assertTrue(first["ok"])
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # click reload (show-only)
+            second = service.handle_chat({"session_id": "latest-noisy-click-fu-session", "provider": "mock", "load_web_search_record_id": record_id})
+            self.assertTrue(second["ok"])
+
+            # first follow-up
+            third = service.handle_chat({"session_id": "latest-noisy-click-fu-session", "user_text": "이 검색 결과 요약해줘", "provider": "mock", "load_web_search_record_id": record_id})
+            self.assertTrue(third["ok"])
+            origin = third["response"]["response_origin"]
+            self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["answer_mode"], "latest_update")
+            self.assertEqual(origin["verification_label"], "기사 교차 확인")
+            self.assertEqual(origin["source_roles"], ["보조 기사"])
+            self.assertNotIn("보조 커뮤니티", str(origin["source_roles"]))
+            self.assertNotIn("brunch", third["response"]["text"])
+            source_paths = third["session"]["active_context"]["source_paths"]
+            self.assertIn("https://www.hankyung.com/economy/2025", source_paths)
+            self.assertIn("https://www.mk.co.kr/economy/2025", source_paths)
+            self.assertNotIn("https://brunch.co.kr/economy", source_paths)
+
+    def test_handle_chat_latest_update_noisy_source_excluded_after_history_card_reload_second_follow_up(self) -> None:
+        """latest_update noisy-community → click reload → first follow-up → second follow-up에서
+        noisy community source가 텍스트·source_roles·source_paths에 미노출되고,
+        기사 교차 확인 계열 contract가 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 이용약관 개인정보 facebook twitter"
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(title="기준금리 속보 - 한국경제", url="https://www.hankyung.com/economy/2025", snippet="한국은행이 기준금리를 동결했다고 밝혔다."),
+                        SimpleNamespace(title="기준금리 뉴스 - 매일경제", url="https://www.mk.co.kr/economy/2025", snippet="한국은행이 기준금리를 동결했다."),
+                        SimpleNamespace(title="기준금리 커뮤니티", url="https://brunch.co.kr/economy", snippet=noisy_snippet),
+                    ],
+                    pages={
+                        "https://www.hankyung.com/economy/2025": {"title": "기준금리 속보 - 한국경제", "text": "한국은행이 기준금리를 동결했다고 밝혔다."},
+                        "https://www.mk.co.kr/economy/2025": {"title": "기준금리 뉴스 - 매일경제", "text": "한국은행이 기준금리를 동결했다."},
+                        "https://brunch.co.kr/economy": {"title": "기준금리 커뮤니티", "text": noisy_snippet},
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat({"session_id": "latest-noisy-click-2fu-session", "user_text": "기준금리 속보 검색해봐", "provider": "mock", "web_search_permission": "enabled"})
+            self.assertTrue(first["ok"])
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            second = service.handle_chat({"session_id": "latest-noisy-click-2fu-session", "provider": "mock", "load_web_search_record_id": record_id})
+            self.assertTrue(second["ok"])
+
+            third = service.handle_chat({"session_id": "latest-noisy-click-2fu-session", "user_text": "이 검색 결과 요약해줘", "provider": "mock", "load_web_search_record_id": record_id})
+            self.assertTrue(third["ok"])
+
+            fourth = service.handle_chat({"session_id": "latest-noisy-click-2fu-session", "user_text": "더 자세히 알려줘", "provider": "mock", "load_web_search_record_id": record_id})
+            self.assertTrue(fourth["ok"])
+            origin = fourth["response"]["response_origin"]
+            self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["answer_mode"], "latest_update")
+            self.assertEqual(origin["verification_label"], "기사 교차 확인")
+            self.assertEqual(origin["source_roles"], ["보조 기사"])
+            self.assertNotIn("보조 커뮤니티", str(origin["source_roles"]))
+            self.assertNotIn("brunch", fourth["response"]["text"])
+            source_paths = fourth["session"]["active_context"]["source_paths"]
+            self.assertIn("https://www.hankyung.com/economy/2025", source_paths)
+            self.assertIn("https://www.mk.co.kr/economy/2025", source_paths)
+            self.assertNotIn("https://brunch.co.kr/economy", source_paths)
+
 
 if __name__ == "__main__":
     unittest.main()

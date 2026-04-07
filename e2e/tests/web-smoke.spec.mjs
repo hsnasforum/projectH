@@ -6023,3 +6023,141 @@ test("latest-update noisy community source가 자연어 reload 후 두 번째 fo
 
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
+
+test("history-card latest-update noisy community source가 다시 불러오기 후 follow-up에서도 origin detail과 본문에 다시 노출되지 않습니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "latest-noisy-click-reload-followup");
+
+  const recordId = `websearch-latest-noisy-click-fu-${Date.now().toString(36)}`;
+  const recordDir = path.join(repoRoot, "data", "web-search", sessionId);
+  const recordPath = path.join(recordDir, `기준금리-${recordId}.json`);
+  fs.mkdirSync(recordDir, { recursive: true });
+  const record = {
+    record_id: recordId,
+    session_id: sessionId,
+    query: "기준금리 속보",
+    permission: "enabled",
+    created_at: new Date().toISOString(),
+    result_count: 3,
+    page_count: 3,
+    results: [
+      { title: "기준금리 속보 - 한국경제", url: "https://www.hankyung.com/economy/2025", snippet: "한국은행이 기준금리를 동결했다고 밝혔다." },
+      { title: "기준금리 뉴스 - 매일경제", url: "https://www.mk.co.kr/economy/2025", snippet: "한국은행이 기준금리를 동결했다." },
+      { title: "기준금리 커뮤니티", url: "https://brunch.co.kr/economy", snippet: "기준금리 속보 - 로그인 회원가입 구독 광고" },
+    ],
+    pages: [
+      { url: "https://www.hankyung.com/economy/2025", title: "기준금리 속보 - 한국경제", text: "한국은행이 기준금리를 동결했다고 밝혔다." },
+      { url: "https://www.mk.co.kr/economy/2025", title: "기준금리 뉴스 - 매일경제", text: "한국은행이 기준금리를 동결했다." },
+      { url: "https://brunch.co.kr/economy", title: "기준금리 커뮤니티", text: "기준금리 속보 - 로그인 회원가입 구독 광고" },
+    ],
+    summary_text: "웹 검색 요약: 기준금리 속보\n\n한국은행이 기준금리를 동결했다고 밝혔다.",
+    response_origin: { provider: "web", badge: "WEB", label: "웹 검색", answer_mode: "latest_update", verification_label: "기사 교차 확인", source_roles: ["보조 기사"] },
+    claim_coverage: [],
+    claim_coverage_progress_summary: "",
+  };
+  fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
+
+  await page.evaluate(({ items }) => { renderSearchHistory(items); }, {
+    items: [{ record_id: recordId, query: "기준금리 속보", answer_mode: "latest_update", verification_label: "기사 교차 확인", source_roles: ["보조 기사"], result_count: 3, page_count: 3, created_at: record.created_at, record_path: recordPath }],
+  });
+
+  const historyBox = page.locator("#search-history-box");
+  await expect(historyBox).toBeVisible();
+  await historyBox.locator(".history-item-actions button.secondary").first().click();
+  const originBadge = page.locator("#response-origin-badge");
+  await expect(originBadge).toHaveText("WEB");
+
+  // Follow-up
+  await page.evaluate(async ({ rid }) => { await sendRequest({ user_text: "이 검색 결과 요약해줘", load_web_search_record_id: rid }, "follow_up"); }, { rid: recordId });
+
+  await expect(originBadge).toHaveText("WEB");
+  await expect(originBadge).toHaveClass(/web/);
+  const answerModeBadge = page.locator("#response-answer-mode-badge");
+  await expect(answerModeBadge).toBeVisible();
+  await expect(answerModeBadge).toHaveText("최신 확인");
+  const originDetail = page.locator("#response-origin-detail");
+  await expect(originDetail).toContainText("기사 교차 확인");
+  await expect(originDetail).toContainText("보조 기사");
+  const originDetailText = await originDetail.textContent();
+  expect(originDetailText).not.toContain("보조 커뮤니티");
+  expect(originDetailText).not.toContain("brunch");
+  const responseText = await page.getByTestId("response-text").textContent();
+  expect(responseText).not.toContain("brunch");
+  const contextBox = page.locator("#context-box");
+  await expect(contextBox).toContainText("hankyung.com");
+  await expect(contextBox).toContainText("mk.co.kr");
+  const contextBoxText = await contextBox.textContent();
+  expect(contextBoxText).not.toContain("brunch");
+
+  try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
+});
+
+test("history-card latest-update noisy community source가 다시 불러오기 후 두 번째 follow-up에서도 origin detail과 본문에 다시 노출되지 않습니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "latest-noisy-click-reload-second-followup");
+
+  const recordId = `websearch-latest-noisy-click-2fu-${Date.now().toString(36)}`;
+  const recordDir = path.join(repoRoot, "data", "web-search", sessionId);
+  const recordPath = path.join(recordDir, `기준금리-${recordId}.json`);
+  fs.mkdirSync(recordDir, { recursive: true });
+  const record = {
+    record_id: recordId,
+    session_id: sessionId,
+    query: "기준금리 속보",
+    permission: "enabled",
+    created_at: new Date().toISOString(),
+    result_count: 3,
+    page_count: 3,
+    results: [
+      { title: "기준금리 속보 - 한국경제", url: "https://www.hankyung.com/economy/2025", snippet: "한국은행이 기준금리를 동결했다고 밝혔다." },
+      { title: "기준금리 뉴스 - 매일경제", url: "https://www.mk.co.kr/economy/2025", snippet: "한국은행이 기준금리를 동결했다." },
+      { title: "기준금리 커뮤니티", url: "https://brunch.co.kr/economy", snippet: "기준금리 속보 - 로그인 회원가입 구독 광고" },
+    ],
+    pages: [
+      { url: "https://www.hankyung.com/economy/2025", title: "기준금리 속보 - 한국경제", text: "한국은행이 기준금리를 동결했다고 밝혔다." },
+      { url: "https://www.mk.co.kr/economy/2025", title: "기준금리 뉴스 - 매일경제", text: "한국은행이 기준금리를 동결했다." },
+      { url: "https://brunch.co.kr/economy", title: "기준금리 커뮤니티", text: "기준금리 속보 - 로그인 회원가입 구독 광고" },
+    ],
+    summary_text: "웹 검색 요약: 기준금리 속보\n\n한국은행이 기준금리를 동결했다고 밝혔다.",
+    response_origin: { provider: "web", badge: "WEB", label: "웹 검색", answer_mode: "latest_update", verification_label: "기사 교차 확인", source_roles: ["보조 기사"] },
+    claim_coverage: [],
+    claim_coverage_progress_summary: "",
+  };
+  fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
+
+  await page.evaluate(({ items }) => { renderSearchHistory(items); }, {
+    items: [{ record_id: recordId, query: "기준금리 속보", answer_mode: "latest_update", verification_label: "기사 교차 확인", source_roles: ["보조 기사"], result_count: 3, page_count: 3, created_at: record.created_at, record_path: recordPath }],
+  });
+
+  const historyBox = page.locator("#search-history-box");
+  await expect(historyBox).toBeVisible();
+  await historyBox.locator(".history-item-actions button.secondary").first().click();
+  const originBadge = page.locator("#response-origin-badge");
+  await expect(originBadge).toHaveText("WEB");
+
+  // First follow-up
+  await page.evaluate(async ({ rid }) => { await sendRequest({ user_text: "이 검색 결과 요약해줘", load_web_search_record_id: rid }, "follow_up"); }, { rid: recordId });
+  await expect(originBadge).toHaveText("WEB");
+
+  // Second follow-up
+  await page.evaluate(async ({ rid }) => { await sendRequest({ user_text: "더 자세히 알려줘", load_web_search_record_id: rid }, "follow_up"); }, { rid: recordId });
+
+  await expect(originBadge).toHaveText("WEB");
+  await expect(originBadge).toHaveClass(/web/);
+  const answerModeBadge = page.locator("#response-answer-mode-badge");
+  await expect(answerModeBadge).toBeVisible();
+  await expect(answerModeBadge).toHaveText("최신 확인");
+  const originDetail = page.locator("#response-origin-detail");
+  await expect(originDetail).toContainText("기사 교차 확인");
+  await expect(originDetail).toContainText("보조 기사");
+  const originDetailText = await originDetail.textContent();
+  expect(originDetailText).not.toContain("보조 커뮤니티");
+  expect(originDetailText).not.toContain("brunch");
+  const responseText = await page.getByTestId("response-text").textContent();
+  expect(responseText).not.toContain("brunch");
+  const contextBox = page.locator("#context-box");
+  await expect(contextBox).toContainText("hankyung.com");
+  await expect(contextBox).toContainText("mk.co.kr");
+  const contextBoxText = await contextBox.textContent();
+  expect(contextBoxText).not.toContain("brunch");
+
+  try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
+});

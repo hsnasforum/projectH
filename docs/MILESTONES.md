@@ -91,6 +91,7 @@
 - latest-update single-source natural-reload follow-up + second-follow-up source-path + response-origin continuity service + browser smoke covering `example.com/seoul-weather`, `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처`
 - latest-update news-only natural-reload follow-up + second-follow-up source-path + response-origin continuity service + browser smoke covering `hankyung.com`, `mk.co.kr`, `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사`
 - latest-update noisy-community natural-reload follow-up + second-follow-up exclusion service + browser smoke covering `보조 커뮤니티`, `brunch` negative assertion with `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` positive assertion
+- latest-update noisy-community click-reload follow-up + second-follow-up exclusion service + browser smoke covering `보조 커뮤니티`, `brunch` negative assertion with `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` positive assertion
 - PDF text-layer support
 - OCR-not-supported guidance
 - response feedback capture

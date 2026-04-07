@@ -155,7 +155,7 @@ Current smoke scenarios:
 43. entity-card dual-probe browser 자연어 reload 후 follow-up에서 source path(`pearlabyss.com/ko-KR/Board/Detail?_boardNo=200`, `pearlabyss.com/ko-KR/Board/Detail?_boardNo=300`)가 context box에 유지되는지 확인
 44. entity-card dual-probe browser 자연어 reload 후 follow-up에서 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 다중 출처 합의` verification label, `공식 기반` · `백과 기반` source role이 drift하지 않는지 확인
 45. entity-card 붉은사막 actual-search browser 자연어 reload 후 follow-up에서 source path(`namu.wiki`/`ko.wikipedia.org`)가 context box에 유지되고, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반`이 drift하지 않는지 확인
-46. entity-card 붉은사막 browser 자연어 reload에서 source path(`namu.wiki`/`ko.wikipedia.org`/`blog.example.com` provenance 포함)가 context box에 유지되는지 확인
+46. entity-card 붉은사막 browser 자연어 reload에서 source path(`namu.wiki`/`ko.wikipedia.org`/`blog.example.com` provenance)가 context box에 유지되는지 확인
 47. entity-card 붉은사막 actual-search browser 자연어 reload 후 follow-up에서 source path(`namu.wiki`/`ko.wikipedia.org`) context box 유지 확인
 48. history-card entity-card `다시 불러오기` 후 actual-search source path(`namu.wiki`, `ko.wikipedia.org`)가 context box에 유지되고, `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 다중 출처 합의` verification label, `백과 기반` source role이 유지되는지 확인
 49. history-card entity-card `다시 불러오기` 후 follow-up 질문에서 actual-search source path(`namu.wiki`, `ko.wikipedia.org`)가 context box에 유지되고, `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 다중 출처 합의` verification label, `백과 기반` source role이 drift하지 않는지 확인

@@ -1342,7 +1342,7 @@ These are placeholders for the next phase design target and its immediate follow
   - history-card latest-update `다시 불러오기` 후 noisy community source(`보조 커뮤니티`, `brunch`) 본문·origin detail 미노출
   - history-card entity-card `다시 불러오기` 후 noisy single-source claim(`출시일`, `2025`) 본문·origin detail 미노출, agreement-backed 사실 카드 유지
   - history-card entity-card `다시 불러오기` 후 dual-probe source path가 context box에 유지 + `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` response-origin continuity
-  - history-card latest-update `다시 불러오기` 후 mixed-source source path(`store.steampowered.com`, `yna.co.kr`)가 context box에 유지
+  - history-card latest-update `다시 불러오기` 후 mixed-source source path(`store.steampowered.com`, `yna.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` response-origin continuity
   - history-card latest-update single-source `다시 불러오기` 후 `단일 출처 참고` verification label, `보조 출처` source role이 origin detail에 유지
   - history-card latest-update news-only `다시 불러오기` 후 `기사 교차 확인` verification label, `보조 기사` source role이 origin detail에 유지
   - history-card latest-update news-only `다시 불러오기` 후 기사 source path(`hankyung.com`, `mk.co.kr`)가 context box에 유지
@@ -1350,7 +1350,7 @@ These are placeholders for the next phase design target and its immediate follow
   - history-card latest-update single-source `다시 불러오기` 후 follow-up → `WEB` badge, `최신 확인` badge, `단일 출처 참고`, `보조 출처` drift 없음
   - history-card latest-update news-only `다시 불러오기` 후 follow-up → `WEB` badge, `최신 확인` badge, `기사 교차 확인`, `보조 기사` drift 없음
   - history-card entity-card `다시 불러오기` 후 follow-up → dual-probe source path(`pearlabyss.com/200`, `pearlabyss.com/300`) context box 유지 + `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` response-origin drift 없음
-  - history-card latest-update mixed-source `다시 불러오기` 후 follow-up → source path(`store.steampowered.com`, `yna.co.kr`) context box 유지
+  - history-card latest-update mixed-source `다시 불러오기` 후 follow-up → source path(`store.steampowered.com`, `yna.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` response-origin drift 없음
   - history-card latest-update single-source `다시 불러오기` 후 follow-up → source path(`example.com/seoul-weather`) context box 유지
   - history-card latest-update news-only `다시 불러오기` 후 follow-up → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지
   - history-card entity-card zero-strong-slot `다시 불러오기` → downgraded `설명형 단일 출처` verification label, `백과 기반` source role 과장 없이 유지

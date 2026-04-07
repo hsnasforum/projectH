@@ -2161,6 +2161,15 @@ test("history-card latest-update 다시 불러오기 후 mixed-source source pat
   await expect(contextBox).toContainText("store.steampowered.com");
   await expect(contextBox).toContainText("yna.co.kr");
 
+  // Assert response-origin continuity
+  const answerModeBadge = page.locator("#response-answer-mode-badge");
+  await expect(answerModeBadge).toBeVisible();
+  await expect(answerModeBadge).toHaveText("최신 확인");
+  const originDetail = page.locator("#response-origin-detail");
+  await expect(originDetail).toContainText("공식+기사 교차 확인");
+  await expect(originDetail).toContainText("보조 기사");
+  await expect(originDetail).toContainText("공식 기반");
+
   // Clean up
   try {
     fs.unlinkSync(recordPath);
@@ -3165,6 +3174,15 @@ test("history-card latest-update mixed-source 다시 불러오기 후 follow-up 
   const contextBox = page.locator("#context-box");
   await expect(contextBox).toContainText("store.steampowered.com");
   await expect(contextBox).toContainText("yna.co.kr");
+
+  // Assert response-origin continuity after follow-up
+  const answerModeBadge = page.locator("#response-answer-mode-badge");
+  await expect(answerModeBadge).toBeVisible();
+  await expect(answerModeBadge).toHaveText("최신 확인");
+  const originDetail = page.locator("#response-origin-detail");
+  await expect(originDetail).toContainText("공식+기사 교차 확인");
+  await expect(originDetail).toContainText("보조 기사");
+  await expect(originDetail).toContainText("공식 기반");
 
   // Clean up
   try {

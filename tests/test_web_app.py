@@ -15494,6 +15494,10 @@ class WebAppServiceTest(unittest.TestCase):
             source_paths = second["session"]["active_context"]["source_paths"]
             self.assertIn("https://store.steampowered.com/sale/summer2026", source_paths)
             self.assertIn("https://www.yna.co.kr/view/AKR20260401000100017", source_paths)
+            followup_origin = second["response"]["response_origin"]
+            self.assertEqual(followup_origin["answer_mode"], "latest_update")
+            self.assertEqual(followup_origin["verification_label"], "공식+기사 교차 확인")
+            self.assertEqual(followup_origin["source_roles"], ["보조 기사", "공식 기반"])
 
     def test_handle_chat_latest_update_single_source_follow_up_preserves_source_paths(self) -> None:
         """single-source latest_update 검색 → load_web_search_record_id + user_text follow-up에서

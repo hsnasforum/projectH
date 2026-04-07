@@ -82,6 +82,8 @@
 - entity-card dual-probe natural-reload second-follow-up source-path + response-origin continuity service + browser smoke covering `pearlabyss.com` dual-probe URLs, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` after natural reload + second follow-up
 - entity-card 붉은사막 natural-reload second-follow-up source-path + response-origin continuity service + browser smoke covering `namu.wiki`, `ko.wikipedia.org`, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` after natural reload + second follow-up
 - history-card latest-update mixed-source `다시 불러오기` second-follow-up source-path + response-origin continuity service + browser smoke covering `store.steampowered.com`, `yna.co.kr`, `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` after click reload + second follow-up
+- history-card latest-update single-source `다시 불러오기` second-follow-up source-path + response-origin continuity service + browser smoke covering `example.com/seoul-weather`, `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처` after click reload + second follow-up
+- history-card latest-update news-only `다시 불러오기` second-follow-up source-path + response-origin continuity service + browser smoke covering `hankyung.com`, `mk.co.kr`, `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` after click reload + second follow-up
 - PDF text-layer support
 - OCR-not-supported guidance
 - response feedback capture

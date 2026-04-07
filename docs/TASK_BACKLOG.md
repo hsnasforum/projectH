@@ -71,6 +71,8 @@
 58. Entity-card dual-probe natural-reload second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`pearlabyss.com` dual-probe URLs in context box)
 59. Entity-card 붉은사막 natural-reload second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`namu.wiki`, `ko.wikipedia.org` in context box)
 60. History-card latest-update mixed-source `다시 불러오기` second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`store.steampowered.com`, `yna.co.kr` in context box)
+61. History-card latest-update single-source `다시 불러오기` second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`example.com/seoul-weather` in context box, `단일 출처 참고`, `보조 출처` drift prevention)
+62. History-card latest-update news-only `다시 불러오기` second-follow-up source-path + response-origin continuity service + Playwright smoke coverage (`hankyung.com`, `mk.co.kr` in context box, `기사 교차 확인`, `보조 기사` drift prevention)
 
 ## Current Phase In Progress
 

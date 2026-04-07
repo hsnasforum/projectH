@@ -1366,8 +1366,8 @@ These are placeholders for the next phase design target and its immediate follow
   - entity-card 붉은사막 actual-search browser 자연어 reload 후 follow-up → `WEB` badge, `설명 카드` badge, `설명형 다중 출처 합의`, `백과 기반` drift 없음
   - entity-card 붉은사막 browser 자연어 reload → source path plurality(`namu.wiki`, `ko.wikipedia.org`, `blog.example.com` provenance 포함) context box 유지
   - entity-card 붉은사막 actual-search browser 자연어 reload 후 follow-up → source path plurality(`namu.wiki`, `ko.wikipedia.org`) context box 유지
-  - entity-card 붉은사막 browser 자연어 reload 후 follow-up → noisy single-source claim(`출시일`, `2025`, `blog.example.com`) 본문/origin detail 미노출 + `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` continuity 유지 + context box `blog.example.com` provenance 포함
-  - entity-card 붉은사막 browser 자연어 reload 후 두 번째 follow-up → noisy single-source claim(`출시일`, `2025`, `blog.example.com`) 본문/origin detail 미노출 + `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` continuity 유지 + context box `blog.example.com` provenance 포함
+  - entity-card 붉은사막 browser 자연어 reload 후 follow-up → noisy single-source claim(`출시일`/`2025`/`blog.example.com`) 미노출 + `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`/`ko.wikipedia.org`/`blog.example.com` provenance continuity 유지
+  - entity-card 붉은사막 browser 자연어 reload 후 두 번째 follow-up → noisy single-source claim(`출시일`/`2025`/`blog.example.com`) 미노출 + `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`/`ko.wikipedia.org`/`blog.example.com` provenance continuity 유지
   - history-card entity-card `다시 불러오기` 후 actual-search source-path plurality(`namu.wiki`, `ko.wikipedia.org`) context box 유지 + `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` response-origin continuity
   - history-card entity-card `다시 불러오기` 후 follow-up → actual-search source-path plurality(`namu.wiki`, `ko.wikipedia.org`) context box 유지 + `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` response-origin drift 없음
   - history-card entity-card `다시 불러오기` 후 두 번째 follow-up → actual-search source-path plurality(`namu.wiki`, `ko.wikipedia.org`) context box 유지 + `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` response-origin drift 없음

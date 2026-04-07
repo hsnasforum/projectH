@@ -63,6 +63,7 @@
 50. Entity-card dual-probe browser natural-reload follow-up response-origin continuity service + Playwright smoke coverage (`WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반` drift prevention)
 51. Entity-card 붉은사막 browser natural-reload follow-up response-origin continuity service + Playwright smoke coverage (`WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반` drift prevention)
 52. Entity-card 붉은사막 browser natural-reload source-path continuity service + Playwright smoke coverage (`namu.wiki` in context box)
+53. Entity-card 붉은사막 browser natural-reload follow-up source-path continuity service + Playwright smoke coverage (`namu.wiki` in context box)
 
 ## Current Phase In Progress
 

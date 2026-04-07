@@ -74,6 +74,7 @@
 - entity-card dual-probe browser natural-reload follow-up response-origin continuity smoke covering `WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반` drift prevention
 - entity-card 붉은사막 browser natural-reload follow-up response-origin continuity smoke covering `WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반` drift prevention
 - entity-card 붉은사막 browser natural-reload source-path continuity smoke covering `namu.wiki` in context box after `방금 검색한 결과 다시 보여줘`
+- entity-card 붉은사막 browser natural-reload follow-up source-path continuity smoke covering `namu.wiki` in context box after natural reload + follow-up
 - PDF text-layer support
 - OCR-not-supported guidance
 - response feedback capture

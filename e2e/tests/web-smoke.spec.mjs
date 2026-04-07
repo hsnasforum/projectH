@@ -4795,7 +4795,7 @@ test("entity-card dual-probe 자연어 reload 후 follow-up에서 WEB badge, 설
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
 
-test("entity-card dual-probe 자연어 reload 후 두 번째 follow-up에서 response origin badge와 answer-mode badge가 drift하지 않습니다", async ({ page }) => {
+test("entity-card dual-probe 자연어 reload 후 두 번째 follow-up에서 source path(pearlabyss.com/200, pearlabyss.com/300) + WEB badge, 설명 카드, 설명형 다중 출처 합의, 공식 기반 · 백과 기반이 drift하지 않습니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "entity-dual-probe-natural-reload-second-followup-origin");
 
   const recordId = `websearch-entity-dual-nat-2fu-or-${Date.now().toString(36)}`;

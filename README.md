@@ -181,8 +181,8 @@ Current smoke scenarios:
 69. latest-update noisy community source가 browser 자연어 reload 후 두 번째 follow-up에서도 origin detail과 본문, context box에 `보조 커뮤니티`, `brunch` 미노출되고, `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr`만 유지되는지 확인
 70. history-card latest-update noisy community source가 `다시 불러오기` 후 follow-up에서도 origin detail과 본문, context box에 `보조 커뮤니티`, `brunch` 미노출되고, `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr`만 유지되는지 확인
 71. history-card latest-update noisy community source가 `다시 불러오기` 후 두 번째 follow-up에서도 origin detail과 본문, context box에 `보조 커뮤니티`, `brunch` 미노출되고, `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr`만 유지되는지 확인
-72. entity-card noisy single-source claim이 자연어 reload 후 follow-up에서도 본문과 origin detail에 `출시일`, `2025`, `blog.example.com` 미노출되고, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, context box에는 `blog.example.com` provenance 포함 유지되는지 확인
-73. entity-card noisy single-source claim이 자연어 reload 후 두 번째 follow-up에서도 본문과 origin detail에 `출시일`, `2025`, `blog.example.com` 미노출되고, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, context box에는 `blog.example.com` provenance 포함 유지되는지 확인
+72. entity-card noisy single-source claim이 browser 자연어 reload 후 follow-up에서도 본문과 origin detail에 `출시일`, `2025`, `blog.example.com` 미노출되고, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, context box에는 `blog.example.com` provenance 포함 유지되는지 확인
+73. entity-card noisy single-source claim이 browser 자연어 reload 후 두 번째 follow-up에서도 본문과 origin detail에 `출시일`, `2025`, `blog.example.com` 미노출되고, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, context box에는 `blog.example.com` provenance 포함 유지되는지 확인
 74. history-card entity-card noisy single-source claim이 `다시 불러오기` 후 follow-up에서도 본문과 origin detail에 `출시일`, `2025`, `blog.example.com` 미노출되고, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, context box에는 `blog.example.com` provenance 포함 유지되는지 확인
 75. history-card entity-card noisy single-source claim이 `다시 불러오기` 후 두 번째 follow-up에서도 본문과 origin detail에 `출시일`, `2025`, `blog.example.com` 미노출되고, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, context box에는 `blog.example.com` provenance 포함 유지되는지 확인
 

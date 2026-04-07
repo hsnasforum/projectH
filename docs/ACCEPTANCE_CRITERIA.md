@@ -1366,6 +1366,7 @@ These are placeholders for the next phase design target and its immediate follow
   - entity-card 붉은사막 자연어 reload 후 follow-up → `WEB` badge, `설명 카드` badge, `설명형 단일 출처`, `백과 기반` drift 없음
   - entity-card 붉은사막 자연어 reload → source path(`namu.wiki`) context box 유지
   - entity-card 붉은사막 자연어 reload 후 follow-up → source path(`namu.wiki`) context box 유지
+  - history-card entity-card `다시 불러오기` 후 actual-search source path(`namu.wiki`) context box 유지
 
 ### In Progress
 - Improve regression fixtures for weak-slot reinvestigation and source consensus.

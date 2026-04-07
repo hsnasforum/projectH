@@ -1837,6 +1837,107 @@ test("history-card entity-card 다시 불러오기 후 noisy single-source claim
   }
 });
 
+test("history-card entity-card 다시 불러오기 후 actual-search source path가 context box에 유지됩니다", async ({ page }) => {
+  const sessionId = await prepareSession(page, "history-card-reload-entity-actual-sp");
+
+  // Pre-seed a generic entity_card record (붉은사막, single source without dual-probe)
+  const recordId = `websearch-entity-actual-sp-${Date.now().toString(36)}`;
+  const recordDir = path.join(repoRoot, "data", "web-search", sessionId);
+  const recordPath = path.join(recordDir, `붉은사막-${recordId}.json`);
+  fs.mkdirSync(recordDir, { recursive: true });
+  const record = {
+    record_id: recordId,
+    session_id: sessionId,
+    query: "붉은사막",
+    permission: "enabled",
+    created_at: new Date().toISOString(),
+    result_count: 2,
+    page_count: 0,
+    results: [
+      {
+        title: "붉은사막 - 나무위키",
+        url: "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+        snippet: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+      },
+      {
+        title: "붉은사막 - 위키백과",
+        url: "https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+        snippet: "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+      },
+    ],
+    pages: [],
+    summary_text: "웹 검색 요약: 붉은사막\n\n확인된 사실:\n붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다. [교차 확인]",
+    response_origin: {
+      provider: "web",
+      badge: "WEB",
+      label: "웹 검색",
+      answer_mode: "entity_card",
+      verification_label: "설명형 단일 출처",
+      source_roles: ["백과 기반"],
+    },
+    claim_coverage: [
+      {
+        slot: "장르",
+        status: "strong",
+        status_label: "교차 확인",
+        value: "오픈월드 액션 어드벤처 게임",
+        support_count: 2,
+        candidate_count: 2,
+        source_role: "encyclopedia",
+      },
+    ],
+    claim_coverage_progress_summary: "교차 확인 1건.",
+  };
+  fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf-8");
+
+  // Render the history card
+  await page.evaluate(
+    ({ items }) => {
+      // @ts-ignore — renderSearchHistory is defined in the page scope
+      renderSearchHistory(items);
+    },
+    {
+      items: [
+        {
+          record_id: recordId,
+          query: "붉은사막",
+          answer_mode: "entity_card",
+          verification_label: "설명형 단일 출처",
+          source_roles: ["백과 기반"],
+          result_count: 2,
+          page_count: 0,
+          created_at: record.created_at,
+          record_path: recordPath,
+        },
+      ],
+    }
+  );
+
+  const historyBox = page.locator("#search-history-box");
+  await expect(historyBox).toBeVisible();
+  const reloadButton = historyBox.locator(".history-item-actions button.secondary").first();
+  await expect(reloadButton).toHaveText("다시 불러오기");
+
+  // Click "다시 불러오기"
+  await reloadButton.click();
+
+  // Wait for the response to render
+  const originBadge = page.locator("#response-origin-badge");
+  await expect(originBadge).toHaveText("WEB");
+
+  // Assert context box shows actual-search source URL
+  const contextBox = page.locator("#context-box");
+  await expect(contextBox).toContainText("namu.wiki");
+
+  // Clean up
+  try {
+    fs.unlinkSync(recordPath);
+    fs.rmdirSync(recordDir);
+  } catch (_) {
+    // best-effort cleanup
+  }
+});
+
 test("history-card entity-card 다시 불러오기 후 dual-probe source path가 context box에 유지됩니다", async ({ page }) => {
   const sessionId = await prepareSession(page, "history-card-reload-entity-dual-probe");
 

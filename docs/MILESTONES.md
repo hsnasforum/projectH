@@ -46,7 +46,7 @@
 - web-search history card header badge browser smoke covering answer-mode badge, verification-strength badge with CSS class, and source-role trust badge compact label with trust class
 - history-card `다시 불러오기` click reload browser smoke covering `WEB` badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail retention after server-side record reload
 - history-card latest-update `다시 불러오기` click reload browser smoke covering `WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail retention after server-side record reload
-- history-card `다시 불러오기` follow-up browser smoke covering response origin badge and answer-mode badge drift prevention
+- history-card entity-card `다시 불러오기` follow-up browser smoke covering `WEB` badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail drift prevention
 - history-card latest-update `다시 불러오기` follow-up browser smoke covering `WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail drift prevention
 - history-card latest-update `다시 불러오기` noisy community source exclusion browser smoke covering negative assertions for `보조 커뮤니티` and `brunch` in response body, origin detail, and context box
 - history-card entity-card `다시 불러오기` noisy single-source claim exclusion browser smoke covering `설명형 다중 출처 합의`, `백과 기반`, negative assertions for `출시일`, `2025`, `blog.example.com` in response body and origin detail, positive assertions for agreement-backed fact card retention, and `namu.wiki`, `ko.wikipedia.org`, `blog.example.com` provenance in context box/source_paths

@@ -35,7 +35,7 @@
 22. Web-search history card header badge Playwright smoke coverage (answer-mode, verification-strength, source-role trust)
 23. History-card `다시 불러오기` click reload Playwright smoke coverage (`WEB` badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail)
 24. History-card latest-update `다시 불러오기` click reload Playwright smoke coverage (`WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail)
-25. History-card `다시 불러오기` follow-up Playwright smoke coverage (response origin badge, answer-mode badge drift prevention)
+25. History-card entity-card `다시 불러오기` follow-up Playwright smoke coverage (`WEB` badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail drift prevention)
 26. History-card latest-update `다시 불러오기` follow-up Playwright smoke coverage (`WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail drift prevention)
 27. History-card latest-update `다시 불러오기` noisy community source exclusion Playwright smoke coverage (negative `보조 커뮤니티` / `brunch` in response body, origin detail, and context box)
 28. History-card entity-card `다시 불러오기` noisy single-source claim exclusion Playwright smoke coverage (`설명형 다중 출처 합의`, `백과 기반`, negative `출시일` / `2025` / `blog.example.com` in response body and origin detail, positive agreement-backed fact card, `namu.wiki`, `ko.wikipedia.org`, `blog.example.com` provenance in context box/source_paths)

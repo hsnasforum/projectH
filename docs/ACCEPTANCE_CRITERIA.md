@@ -1337,7 +1337,7 @@ These are placeholders for the next phase design target and its immediate follow
   - web-search history card header badges: answer-mode badge, verification-strength badge with CSS class, source-role trust badge compact label with trust class
   - history-card `다시 불러오기` click → reloaded response `WEB` badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail 유지
   - history-card latest-update `다시 불러오기` click → reloaded response `WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail 유지
-  - history-card `다시 불러오기` 후 follow-up → response origin badge, answer-mode badge drift 없음
+  - history-card entity-card `다시 불러오기` 후 follow-up → `WEB` badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail drift 없음
   - history-card latest-update `다시 불러오기` 후 follow-up → `WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail drift 없음
   - history-card latest-update `다시 불러오기` 후 noisy community source(`보조 커뮤니티`, `brunch`) 본문, origin detail, context box 미노출
   - history-card entity-card `다시 불러오기` 후 noisy single-source claim(`출시일`, `2025`, `blog.example.com`) 본문/origin detail 미노출, `설명형 다중 출처 합의`, `백과 기반` 유지, agreement-backed 사실 카드 유지, source_paths/context box에 `namu.wiki`, `ko.wikipedia.org`, `blog.example.com` provenance 포함

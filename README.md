@@ -144,7 +144,7 @@ Current smoke scenarios:
 32. history-card latest-update mixed-source `다시 불러오기` 후 follow-up 질문에서 source path(`store.steampowered.com`, `yna.co.kr`)가 context box에 유지되고, `WEB` origin badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source role이 drift하지 않는지 확인
 33. history-card latest-update single-source `다시 불러오기` 후 follow-up 질문에서 source path(`example.com/seoul-weather`)가 context box에 유지되는지 확인
 34. history-card latest-update news-only `다시 불러오기` 후 follow-up 질문에서 기사 source path(`hankyung.com`, `mk.co.kr`)가 context box에 유지되는지 확인
-35. history-card entity-card zero-strong-slot `다시 불러오기` 후 `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source role이 과장 없이 유지되고, source path(`namu.wiki`, `ko.wikipedia.org`)가 context box에 유지되는지 확인
+35. history-card entity-card zero-strong-slot `다시 불러오기` 후 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source role이 과장 없이 유지되고, source path(`namu.wiki`, `ko.wikipedia.org`)가 context box에 유지되는지 확인
 36. history-card entity-card zero-strong-slot `다시 불러오기` 후 follow-up 질문에서 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source role이 drift하지 않고, source path(`namu.wiki`, `ko.wikipedia.org`)가 context box에 유지되는지 확인
 37. entity-card zero-strong-slot `다시 불러오기` 후 두 번째 follow-up 질문에서 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source role이 drift하지 않고, source path(`namu.wiki`, `ko.wikipedia.org`)가 context box에 유지되는지 확인
 38. entity-card zero-strong-slot `방금 검색한 결과 다시 보여줘` 자연어 reload에서 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source role이 유지되고, source path(`namu.wiki`, `ko.wikipedia.org`)가 context box에 유지되는지 확인

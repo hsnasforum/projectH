@@ -62,7 +62,7 @@
 - history-card latest-update mixed-source `다시 불러오기` follow-up source-path + response-origin continuity service + browser smoke covering `store.steampowered.com` and `yna.co.kr` in context box, `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반`
 - history-card latest-update single-source `다시 불러오기` follow-up source-path continuity service + browser smoke covering `example.com/seoul-weather` in context box
 - history-card latest-update news-only `다시 불러오기` follow-up source-path continuity service + browser smoke covering `hankyung.com` and `mk.co.kr` in context box
-- history-card entity-card zero-strong-slot `다시 불러오기` reload answer-mode + verification-label + source-path continuity browser smoke covering `설명 카드` answer-mode badge, downgraded `설명형 단일 출처`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` in context box
+- history-card entity-card zero-strong-slot `다시 불러오기` reload response-origin + answer-mode + verification-label + source-path continuity browser smoke covering `WEB` badge, `설명 카드` answer-mode badge, downgraded `설명형 단일 출처`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` in context box
 - history-card entity-card zero-strong-slot `다시 불러오기` follow-up response-origin + source-path continuity service + browser smoke covering `WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` drift prevention
 - entity-card zero-strong-slot click-reload second-follow-up response-origin + source-path continuity service + browser smoke covering `WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` drift prevention
 - entity-card zero-strong-slot browser natural-reload exact-field + source-path smoke covering `방금 검색한 결과 다시 보여줘` path with `WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` in context box

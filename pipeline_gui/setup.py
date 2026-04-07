@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .platform import IS_WINDOWS, APP_ROOT, _wsl_path_str, _run
+from .platform import IS_WINDOWS, APP_ROOT, _wsl_path_str, _run, resolve_packaged_file
 
 # ── Hard blockers ──
 _HARD_BLOCKERS: list[tuple[str, str, str, str]] = [
@@ -22,7 +22,17 @@ _HARD_BLOCKERS: list[tuple[str, str, str, str]] = [
 _SOFT_WARNINGS: list[tuple[str, str, str]] = [
     ("agent_manifest.schema.json", "launcher_file", "schemas/agent_manifest.schema.json"),
     ("job_state.schema.json",      "launcher_file", "schemas/job_state.schema.json"),
+    ("token_collector.py",         "launcher_file", "token_collector.py"),
+    ("token_schema.sql",           "launcher_file", "token_schema.sql"),
 ]
+
+_PACKAGED_GUI_FILES = {
+    "start-pipeline.sh",
+    "stop-pipeline.sh",
+    "watcher_core.py",
+    "token_collector.py",
+    "token_schema.sql",
+}
 
 # ── CLI finder (same 3-stage search as start-pipeline.sh) ──
 _FIND_CLI_SH = r"""
@@ -44,6 +54,11 @@ def _find_cli_bin(name: str) -> bool:
 
 
 def _file_exists(base: Path, rel: str) -> bool:
+    if base == APP_ROOT and rel in _PACKAGED_GUI_FILES:
+        try:
+            return resolve_packaged_file(rel).exists()
+        except FileNotFoundError:
+            return False
     local = base / rel
     if local.exists():
         return True

@@ -38,7 +38,8 @@ Use this skill when a round has effectively ended and the next task is a verific
 4. Re-run only the verification that is actually needed for the round. If meaningful implementation changed, prefer:
    - `python3 -m py_compile ...`
    - `python3 -m unittest -v tests.test_smoke tests.test_web_app`
-   - `make e2e-test`
+   - `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "<scenario>" --reporter=line` for Playwright-only smoke tightening, selector drift, or single-scenario fixture updates
+   - `make e2e-test` only when the browser-visible contract widened, shared browser helpers changed, a current browser family looks broadly broken, or the round is making a ready / release claim
    - `git diff --check`
 5. Distinguish automated verification from manual checks not run.
 6. Leave or update a verification note under `verify/<month>/<day>/YYYY-MM-DD-<slug>.md` when the handoff itself is meaningful.

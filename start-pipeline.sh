@@ -37,6 +37,22 @@ if [ -z "$SESSION" ]; then
     SESSION="aip-${_safe_name:-default}"
 fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DATA_DIR="$SCRIPT_DIR"
+if [ -f "$SCRIPT_DIR/_data/token_collector.py" ]; then
+    DATA_DIR="$SCRIPT_DIR/_data"
+fi
+
+resolve_data_file() {
+    local name="$1"
+    if [ -f "$DATA_DIR/$name" ]; then
+        printf '%s' "$DATA_DIR/$name"
+        return 0
+    fi
+    printf '%s' "$SCRIPT_DIR/$name"
+}
+
+TOKEN_COLLECTOR_PY="$(resolve_data_file token_collector.py)"
+WATCHER_CORE_PY="$(resolve_data_file watcher_core.py)"
 
 # CLI 경로 탐지 — non-interactive shell에서도 nvm/npm global을 찾을 수 있도록
 # 1차: 현재 PATH에서 탐색
@@ -133,6 +149,39 @@ require_agent_bin() {
     return 1
 }
 
+write_token_collector_metadata() {
+    local pid="$1"
+    local pane_id="$2"
+    local window_name="$3"
+    local launch_mode="$4"
+    printf '%s' "$pid" > "$PROJECT_ROOT/.pipeline/usage/collector.pid"
+    printf '%s' "$pane_id" > "$PROJECT_ROOT/.pipeline/usage/collector.pane_id"
+    printf '%s' "$window_name" > "$PROJECT_ROOT/.pipeline/usage/collector.window_name"
+    printf '%s' "$launch_mode" > "$PROJECT_ROOT/.pipeline/usage/collector.launch_mode"
+}
+
+spawn_token_collector_tmux() {
+    local window_name="usage-collector"
+    local token_log_quoted token_cmd_str token_pane token_pid
+    token_log_quoted=$(printf '%q' "$PROJECT_ROOT/.pipeline/usage/collector.log")
+    TOKEN_CMD=(
+        python3 "$TOKEN_COLLECTOR_PY"
+        --project-root "$PROJECT_ROOT"
+        --db-path "$PROJECT_ROOT/.pipeline/usage/usage.db"
+        --poll-interval 3.0
+        --daemon
+        --since-days 7
+    )
+    token_cmd_str=$(printf '%q ' "${TOKEN_CMD[@]}")
+    if tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null | grep -Fxq "$window_name"; then
+        tmux kill-window -t "$SESSION:$window_name" >/dev/null 2>&1 || true
+    fi
+    token_pane=$(tmux new-window -d -P -F '#{pane_id}' -t "$SESSION" -n "$window_name" -c "$PROJECT_ROOT" "exec ${token_cmd_str}> $token_log_quoted 2>&1")
+    token_pid=$(tmux display-message -p -t "$token_pane" '#{pane_pid}')
+    write_token_collector_metadata "$token_pid" "$token_pane" "$window_name" "tmux"
+    echo -e "${GRAY}  token collector pane: $token_pane  PID: $token_pid${NC}"
+}
+
 echo ""
 echo -e "${CYAN}============================================${NC}"
 echo -e "${CYAN}  AI Pipeline Launcher  [mode: $MODE]${NC}"
@@ -175,9 +224,15 @@ if [ "$MODE" = "experimental" ] || [ "$MODE" = "both" ]; then
     mkdir -p "$PROJECT_ROOT/.pipeline/state"
     mkdir -p "$PROJECT_ROOT/.pipeline/locks"
     mkdir -p "$PROJECT_ROOT/.pipeline/manifests"
+    mkdir -p "$PROJECT_ROOT/.pipeline/usage"
     : > "$PROJECT_ROOT/.pipeline/logs/experimental/watcher.log"
     : > "$PROJECT_ROOT/.pipeline/logs/experimental/raw.jsonl"
     : > "$PROJECT_ROOT/.pipeline/logs/experimental/dispatch.jsonl"
+    : > "$PROJECT_ROOT/.pipeline/usage/collector.log"
+    rm -f "$PROJECT_ROOT/.pipeline/usage/collector.pid" 2>/dev/null
+    rm -f "$PROJECT_ROOT/.pipeline/usage/collector.pane_id" 2>/dev/null
+    rm -f "$PROJECT_ROOT/.pipeline/usage/collector.window_name" 2>/dev/null
+    rm -f "$PROJECT_ROOT/.pipeline/usage/collector.launch_mode" 2>/dev/null
     # Clean state/locks/manifests
     rm -f "$PROJECT_ROOT/.pipeline/state/"* 2>/dev/null
     rm -f "$PROJECT_ROOT/.pipeline/locks/"* 2>/dev/null
@@ -260,7 +315,7 @@ if [ "$MODE" = "experimental" ] || [ "$MODE" = "both" ]; then
     CODEX_FOLLOWUP_PROMPT="ROLE: codex_followup\nSTATE: gemini_advice_ready\nREQUEST: .pipeline/gemini_request.md\nADVICE: .pipeline/gemini_advice.md\nLATEST_WORK: {latest_work_path}\nLATEST_VERIFY: {latest_verify_path}\nREAD_FIRST:\n- AGENTS.md\n- verify/README.md\n- .pipeline/README.md\n- .pipeline/gemini_request.md\n- .pipeline/gemini_advice.md"
     EXP_LOG_QUOTED=$(printf '%q' "$PROJECT_ROOT/.pipeline/logs/experimental/watcher.log")
     EXP_CMD=(
-        python3 "$SCRIPT_DIR/watcher_core.py"
+        python3 "$WATCHER_CORE_PY"
         --watch-dir "$PROJECT_ROOT/work"
         --base-dir "$PROJECT_ROOT/.pipeline"
         --repo-root "$PROJECT_ROOT"
@@ -278,6 +333,8 @@ if [ "$MODE" = "experimental" ] || [ "$MODE" = "both" ]; then
     EXP_WATCHER_PANE=$(tmux new-window -d -P -F '#{pane_id}' -t "$SESSION" -n watcher-exp -c "$PROJECT_ROOT" "exec ${EXP_CMD_STR}> $EXP_LOG_QUOTED 2>&1")
     tmux display-message -p -t "$EXP_WATCHER_PANE" '#{pane_pid}' > "$PROJECT_ROOT/.pipeline/experimental.pid"
     echo -e "${GRAY}  experimental watcher pane: $EXP_WATCHER_PANE  PID: $(cat "$PROJECT_ROOT/.pipeline/experimental.pid")${NC}"
+
+    spawn_token_collector_tmux
 else
     echo -e "${GRAY}[4/4] experimental 건너뜀${NC}"
 fi

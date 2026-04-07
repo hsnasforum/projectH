@@ -4,6 +4,8 @@
 
 - Document status: current implementation spec with staged product framing
 - Current shipped contract: local-first document assistant web MVP
+- Current release-candidate scope: `python3 -m app.web` browser shell
+- Internal/operator tooling such as `controller.server`, `pipeline_gui/`, `windows-launchers/`, and `_data/` pipeline helpers remains outside the current release gate
 - This document separates:
   - current contract
   - next phase design target
@@ -26,6 +28,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - Web investigation is a secondary mode, not the core product identity.
 - The current phase is not model training.
 - The current phase is not local tool or program operation.
+- The current release candidate is scoped to the document-assistant browser shell rather than repo-internal operator tooling.
 
 ### Primary Workflow Contract
 1. Read one local document by path or browser picker.
@@ -151,12 +154,22 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 
 ### Implemented
 - local-only web shell on `127.0.0.1`
+- current shipped browser entry is `/app`; `/` redirects to `/app`
+- the shipped browser shell currently serves the existing template/static UI (`app/templates/index.html` + `/static/app.js`)
+- the React build remains preview-only at `/app-preview`, and `/assets/*` serves the matching preview build assets
+- when the web shell runs inside WSL, the server binds to `0.0.0.0` by default and prints a Windows fallback browser URL using the current WSL IPv4 address
 - recent session list
 - conversation timeline with per-message timestamps
 - one compact `검토 후보` section inside the current session shell for eligible current `durable_candidate` items, plus one `accept`-only reviewed-but-not-applied action
 - advanced settings for provider/runtime/session/search permission
 - browser file picker and browser folder picker
 - streaming progress box and cancel interaction
+
+### Outside The Current Release Gate
+- `controller.server` pipeline dashboard and its Windows fallback helpers
+- `pipeline_gui/` desktop launcher and token-maintenance paths
+- `windows-launchers/` wrappers and packaged `.exe` flow
+- `_data/` pipeline/token collector runtime helpers
 
 ### Open Question
 - How much more should the web shell expose for low-confidence web investigation suggestions without shifting product identity away from document work?

@@ -7,15 +7,14 @@ influence all future responses.
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
-from json import JSONDecodeError
-from pathlib import Path
 import threading
+from pathlib import Path
 from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
 from core.contracts import CandidateFamily, PreferenceStatus
+
+from .json_store_base import utc_now_iso, json_path, atomic_write, read_json, scan_json_dir
 
 if TYPE_CHECKING:
     from storage.correction_store import CorrectionStore
@@ -28,37 +27,10 @@ class PreferenceStore:
         self._lock = threading.RLock()
 
     def _path(self, preference_id: str) -> Path:
-        safe_id = preference_id.replace("/", "-").replace("\\", "-").strip()
-        return self.base_dir / f"{safe_id}.json"
-
-    def _now(self) -> str:
-        return datetime.now(timezone.utc).isoformat()
-
-    def _atomic_write(self, path: Path, data: dict[str, Any]) -> None:
-        temp_path = path.with_name(f"{path.name}.{uuid4().hex[:8]}.tmp")
-        encoded = json.dumps(data, ensure_ascii=False, indent=2)
-        try:
-            temp_path.write_text(encoded, encoding="utf-8")
-            temp_path.replace(path)
-        except BaseException:
-            temp_path.unlink(missing_ok=True)
-            raise
-
-    def _read(self, path: Path) -> dict[str, Any] | None:
-        if not path.exists():
-            return None
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (JSONDecodeError, OSError):
-            return None
+        return json_path(self.base_dir, preference_id)
 
     def _scan_all(self) -> list[dict[str, Any]]:
-        results: list[dict[str, Any]] = []
-        for p in self.base_dir.glob("*.json"):
-            data = self._read(p)
-            if data and isinstance(data.get("preference_id"), str):
-                results.append(data)
-        return results
+        return [d for d in scan_json_dir(self.base_dir) if isinstance(d.get("preference_id"), str)]
 
     # -- Core operations --
 
@@ -67,13 +39,7 @@ class PreferenceStore:
         delta_fingerprint: str,
         correction_store: CorrectionStore,
     ) -> dict[str, Any] | None:
-        """Create a preference candidate from a recurring correction pattern.
-
-        Returns None if fewer than 2 distinct sessions have this fingerprint.
-        Idempotent: returns existing preference if already created.
-        """
         with self._lock:
-            # Check if preference already exists for this fingerprint
             existing = self.find_by_fingerprint(delta_fingerprint)
             if existing is not None:
                 return self._refresh_evidence(existing, delta_fingerprint, correction_store)
@@ -86,7 +52,6 @@ class PreferenceStore:
             if len(session_ids) < 2:
                 return None
 
-            # Use the delta_summary from the first correction
             delta_summary = corrections[0].get("delta_summary", {})
             description = self._generate_description(delta_summary)
 
@@ -99,7 +64,7 @@ class PreferenceStore:
                 for c in corrections
             ]
 
-            now = self._now()
+            now = utc_now_iso()
             preference_id = f"pref-{uuid4().hex[:12]}"
             record: dict[str, Any] = {
                 "preference_id": preference_id,
@@ -117,7 +82,7 @@ class PreferenceStore:
                 "created_at": now,
                 "updated_at": now,
             }
-            self._atomic_write(self._path(preference_id), record)
+            atomic_write(self._path(preference_id), record)
             return record
 
     def _refresh_evidence(
@@ -126,7 +91,6 @@ class PreferenceStore:
         delta_fingerprint: str,
         correction_store: CorrectionStore,
     ) -> dict[str, Any]:
-        """Update evidence counts on an existing preference."""
         corrections = correction_store.find_by_fingerprint(delta_fingerprint)
         session_ids = {c.get("session_id") for c in corrections if c.get("session_id")}
 
@@ -143,14 +107,12 @@ class PreferenceStore:
 
         preference["evidence_count"] = len(corrections)
         preference["cross_session_count"] = len(session_ids)
-        preference["updated_at"] = self._now()
-        self._atomic_write(self._path(preference["preference_id"]), preference)
+        preference["updated_at"] = utc_now_iso()
+        atomic_write(self._path(preference["preference_id"]), preference)
         return preference
 
     def _generate_description(self, delta_summary: dict[str, Any]) -> str:
-        """Generate a human-readable Korean description from delta summary."""
         parts: list[str] = []
-
         replacements = delta_summary.get("replacements", [])
         if replacements:
             for r in replacements[:3]:
@@ -160,19 +122,16 @@ class PreferenceStore:
                     parts.append(f"'{fr}' → '{to}'")
             if parts:
                 return "교정 패턴: " + ", ".join(parts)
-
         additions = delta_summary.get("additions", [])
         if additions:
             added = additions[0][:30] if additions[0] else ""
             if added:
                 parts.append(f"'{added}' 추가 선호")
-
         removals = delta_summary.get("removals", [])
         if removals:
             removed = removals[0][:30] if removals[0] else ""
             if removed:
                 parts.append(f"'{removed}' 제거 선호")
-
         if parts:
             return "교정 패턴: " + ", ".join(parts)
         return "반복 교정 패턴"
@@ -181,7 +140,7 @@ class PreferenceStore:
 
     def get(self, preference_id: str) -> dict[str, Any] | None:
         with self._lock:
-            return self._read(self._path(preference_id))
+            return read_json(self._path(preference_id))
 
     def find_by_fingerprint(self, delta_fingerprint: str) -> dict[str, Any] | None:
         with self._lock:
@@ -209,14 +168,14 @@ class PreferenceStore:
 
     def _transition(self, preference_id: str, status: str, ts_field: str) -> dict[str, Any] | None:
         with self._lock:
-            record = self._read(self._path(preference_id))
+            record = read_json(self._path(preference_id))
             if record is None:
                 return None
-            now = self._now()
+            now = utc_now_iso()
             record["status"] = status
             record[ts_field] = now
             record["updated_at"] = now
-            self._atomic_write(self._path(preference_id), record)
+            atomic_write(self._path(preference_id), record)
             return record
 
     def activate_preference(self, preference_id: str) -> dict[str, Any] | None:

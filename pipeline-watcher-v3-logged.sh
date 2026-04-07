@@ -14,9 +14,8 @@ RAW_LOG="$LOG_DIR/raw.jsonl"
 SUPPRESSED_LOG="$LOG_DIR/suppressed.jsonl"
 DISPATCH_LOG="$LOG_DIR/dispatch.jsonl"
 
-# Accept pane IDs as arguments, fallback to index
-PANE_CLAUDE="${2:-$SESSION:0.0}"
-PANE_CODEX="${3:-$SESSION:0.1}"
+PANE_CLAUDE="$SESSION:0.0"
+PANE_CODEX="$SESSION:0.1"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -117,12 +116,13 @@ log_dispatch() {
 send_to_pane() {
     local pane="$1"
     local msg="$2"
-    # set-buffer + paste-buffer for reliable long text dispatch
-    tmux set-buffer "$msg"
-    tmux paste-buffer -t "$pane"
-    sleep 1.5
-    tmux send-keys -t "$pane" Enter
+    # 텍스트 입력
+    tmux send-keys -t "$pane" "$msg" ""
+    # Enter 전에 충분히 대기
     sleep 0.5
+    # Enter 전송
+    tmux send-keys -t "$pane" "" Enter
+    sleep 0.3
 }
 
 # ============================================================
@@ -137,7 +137,7 @@ handle_work_updated() {
     echo -e "${CYAN}│  파일: $(basename "$filepath")${NC}"
     echo -e "${CYAN}└─────────────────────────────────────────${NC}"
 
-    local msg="AGENTS.md, work/README.md, verify/README.md, .pipeline/README.md를 먼저 읽고, 최신 Claude /work를 기준으로 이번 라운드 작업만 검수해줘. 같은 날 최신 /verify를 참고해 현재 truth를 맞추고, 이번 변경에 필요한 검증만 다시 실행해 /verify에 남겨줘. 그다음 Claude가 바로 구현할 수 있는 정확한 다음 단일 슬라이스를 .pipeline/codex_feedback.md에 작성해줘. Claude에게 슬라이스 선택을 넘기지 마. 단일 슬라이스를 확정할 수 없으면 .pipeline/codex_feedback.md에 STATUS: needs_operator만 남겨줘. 전체 프로젝트 audit이 필요하면 /verify가 아니라 report/에 분리해줘."
+    local msg="AGENTS.md, work/README.md, verify/README.md, .pipeline/README.md를 먼저 읽고, 최신 Claude /work와 같은 날 최신 /verify를 기준으로 이번 라운드 변경만 검수해줘. Claude가 주장한 코드/문서 변경이 실제로 맞는지, 범위가 현재 projectH 방향에서 벗어나지 않았는지 확인하고, 이번 변경에 필요한 검증만 재실행해줘. 결과는 /verify에 남기고, 다음 Claude 지시사항은 .pipeline/codex_feedback.md에 갱신해줘. 전체 프로젝트 진단이 필요하면 /verify가 아니라 report/에 분리해줘."
 
     send_to_pane "$PANE_CODEX" "$msg"
     log_dispatch "$filepath" "slot_verify" "$PANE_CODEX"
@@ -155,7 +155,7 @@ handle_codex_feedback_updated() {
     echo -e "${GREEN}│  → Claude pane에 자동 전송 중...${NC}"
     echo -e "${GREEN}└─────────────────────────────────────────${NC}"
 
-    local msg="work/README.md,CLAUDE.md, .pipeline/codex_feedback.md 읽고, STATUS가 implement일 때만 그 지시대로 한 슬라이스만 구현해줘. 작업 후 /work closeout 남겨줘."
+    local msg=".pipeline/codex_feedback.md 읽고 다음 작업 진행해줘."
 
     send_to_pane "$PANE_CLAUDE" "$msg"
     log_dispatch "$filepath" "slot_claude" "$PANE_CLAUDE"

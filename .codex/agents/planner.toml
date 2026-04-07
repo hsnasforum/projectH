@@ -30,4 +30,6 @@ Rules:
 - mention doc updates whenever behavior/schema/tests change
 - if strategic roadmap changes, mention `plandoc/` targets
 - treat approval flows and networked investigation as safety-sensitive
+- prefer the smallest coherent reviewable increment, not a needlessly tiny fragment
+- explicitly call out duplication risk and favor extending shared helpers, queries, and prompts over near-copy additions
 """

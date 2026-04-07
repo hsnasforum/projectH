@@ -39,6 +39,8 @@ Current implemented focus:
 - If agent or skill files change, keep `.codex/config.toml`, mirrored agent files, and mirrored skill files synchronized.
 - Always separate current shipped behavior from long-term teachable-agent roadmap.
 - Do not describe preference learning, model adaptation, or program control as implemented unless the code actually supports it.
+- Prefer reusing or extending existing shared helpers, queries, scripts, and prompts over duplicating code paths.
+- Do not over-fragment work into many micro-slices; prefer one coherent reviewable unit when the same files and verification path naturally belong together.
 
 ## Operator Surfaces
 
@@ -49,7 +51,14 @@ Current implemented focus:
 - `work/`: tracked closeout notes for Codex rounds and operator handoff
 - `verify/`: tracked verification rerun notes and truth-reconciliation handoff results
 - `report/`: occasional whole-project or milestone-level audit memos
-- `.pipeline/`: rolling automation handoff slots; `codex_feedback.md` is the primary Codex -> Claude next-round prompt, and `gpt_prompt.md` is now optional or legacy
+  - `report/gemini/` = Gemini advisory logs
+- `.pipeline/`: rolling automation handoff slots
+  - `claude_handoff.md` = Claude-only execution slot
+  - `gemini_request.md` = Codex -> Gemini arbitration slot
+  - `gemini_advice.md` = Gemini -> Codex advisory slot
+  - `operator_request.md` = operator-only stop slot
+  - `codex_feedback.md` = optional scratch or legacy compatibility text, not an execution slot
+  - `gpt_prompt.md` = optional or legacy scratch slot
 - `plandoc/`: staged roadmap and strategy notes above the current shipped contract
 
 Current high-value helper roles:
@@ -89,6 +98,7 @@ then update the matching product docs in the same task:
 And if helper-agent or repo-skill files changed, also sync:
 - `AGENTS.md`
 - `CLAUDE.md`
+- `GEMINI.md`
 - `PROJECT_CUSTOM_INSTRUCTIONS.md`
 - `.codex/config.toml`
 - matching files under `.codex/agents/`, `.claude/agents/`, `.agents/skills/`, `.claude/skills/`
@@ -99,37 +109,51 @@ And if helper-agent or repo-skill files changed, also sync:
 
 - Meaningful work should leave a closeout note at `work/<month>/<day>/YYYY-MM-DD-<slug>.md`.
 - Meaningful verification-backed handoff or rerun-check work should leave a verification note at `verify/<month>/<day>/YYYY-MM-DD-<slug>.md`.
-- `.pipeline/codex_feedback.md` is the primary rolling latest-slot handoff file for automation and may be overwritten; it does not replace `/work` or `/verify`.
-- `.pipeline/codex_feedback.md` should explicitly say either `STATUS: implement` or `STATUS: needs_operator`.
-- If it says `STATUS: needs_operator`, the file should still include the stop reason, the latest `/work` and `/verify` references behind that stop, and the operator decision still needed before implementation can resume.
+- Gemini advisory or mediation work should leave a note at `report/gemini/YYYY-MM-DD-<slug>.md`.
+- `.pipeline/claude_handoff.md` is the current execution slot for Claude and may be overwritten between rounds; it does not replace `/work` or `/verify`.
+- `.pipeline/gemini_request.md` and `.pipeline/gemini_advice.md` are current arbitration slots; they do not replace `/work` or `/verify`.
+- `.pipeline/operator_request.md` is the current stop slot for operator-only decisions and may be overwritten; it does not replace `/work` or `/verify`.
+- `.pipeline/session_arbitration_draft.md` is an optional watcher-generated draft slot for Codex review only; it appears only when an active Claude session shows an escalation pattern after Codex/Gemini have gone idle and Claude is either idle or stably sitting on the escalation text for a short settle window, and it is cleared again when Claude resumes work or canonical Gemini/operator control opens. It does not replace `/work` or `/verify`.
+- `.pipeline/codex_feedback.md` may remain as optional scratch or legacy compatibility text, but it is no longer part of the execution path.
 - `.pipeline/gpt_prompt.md` may remain as an optional or legacy scratch slot, but it is no longer part of the canonical single-Codex flow.
+- Gemini advisory writes should prefer file edit/write tools rather than shell heredoc or shell redirection so the arbitration lane can stay in its constrained write mode.
+- Gemini arbitration prompts should prefer explicit `@path` file mentions and exact advisory output paths so Gemini can resolve its inputs and outputs without guessing.
 - Before a new round, read today's newest note first; if none exists, use the newest note from the previous day.
 - Before a new verification-backed handoff round, read the newest `work/` note first and then the newest same-day `verify/` note if one exists.
 - Keep the closeout honest: changed files, used skills, commands actually run, residual risks.
+- When proposing the next round, avoid artificially tiny follow-ups if one bounded slice can close the same meaningful progress.
 
 ## Single Codex Reminder
 
-- Codex = round verification and handoff lane: reads latest `/work` and `/verify`, reruns the checks needed to review that round, updates `/verify`, then writes `.pipeline/codex_feedback.md`.
-- `STATUS: implement` means the next slice is already fixed and should be implemented as written.
-- `STATUS: needs_operator` means the next slice is intentionally not fixed yet; do not start a new implementation round from that handoff.
-- A `needs_operator` handoff should never be interpreted as "choose your own next slice." It is a stopped state with an explained reason, not an invitation to improvise.
+- Codex = round verification and handoff lane: reads latest `/work` and `/verify`, reruns the checks needed to review that round, updates `/verify`, then writes `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, or `.pipeline/operator_request.md`.
+- `.pipeline/claude_handoff.md` with `STATUS: implement` means the next slice is already fixed and should be implemented as written.
+- `.pipeline/gemini_request.md` and `.pipeline/gemini_advice.md` are not Claude input slots.
+- `.pipeline/operator_request.md` with `STATUS: needs_operator` means the next slice is intentionally not fixed yet; do not start a new implementation round from that stop request.
+- A `needs_operator` stop request should never be interpreted as "choose your own next slice." It is a stopped state with an explained reason, not an invitation to improvise.
+- If Codex relays a short side answer during an active session because Gemini arbitrated a context-exhaustion, session-rollover, or continue-vs-switch question, treat that reply as lane guidance for the current session only. Do not reinterpret it as a new `.pipeline/claude_handoff.md`.
 - Codex may auto-fix the next slice without operator intervention when the latest `/work` and `/verify` already closed one family and one smaller same-family current-risk reduction clearly remains.
-- In automation, the status line is the control signal. A prose change without a status change should not be treated as a stop/go override.
+- In automation, the newest control file is the signal. A prose change without a status change should not be treated as a stop/go override.
 - `gpt_prompt.md` is optional or legacy and should not be treated as required for the canonical flow.
 - If `.pipeline` contents disagree with persistent notes, trust `/work` and `/verify`.
 - Whole-project audits are exceptional and belong in `report/`; they should not silently redefine the meaning of `/verify`.
 
 ## Current Handoff Interpretation Rules
 
-- Read `.pipeline/codex_feedback.md` as the latest operator handoff, but keep current MVP priorities above internal completeness.
-- Do not self-select a new slice from `.pipeline/codex_feedback.md`.
-- If the file says `STATUS: implement`, implement that one slice only.
-- If the file says `STATUS: needs_operator`, wait for a new handoff instead of creating a new `/work` round.
+- Read `.pipeline/claude_handoff.md` as the latest execution handoff, but keep current MVP priorities above internal completeness.
+- Do not self-select a new slice from `.pipeline/claude_handoff.md`.
+- If `.pipeline/claude_handoff.md` says `STATUS: implement`, implement that one slice only.
+- If `.pipeline/gemini_request.md` or `.pipeline/gemini_advice.md` is the newest pending control file, wait instead of creating a new `/work` round.
+- If `.pipeline/operator_request.md` is the newest pending control file, wait instead of creating a new `/work` round.
+- `.pipeline/operator_request.md` is not a Claude input slot. Do not answer it on behalf of the operator.
+- `.pipeline/codex_feedback.md` is not a Claude input slot. Prefer `.pipeline/claude_handoff.md` only for actual implementation input.
+- `.pipeline/session_arbitration_draft.md` is not a Claude input slot. If Codex references it, wait for a short lane reply or a new round-start handoff instead of reading the draft as execution input.
+- While a session is already active, assume `.pipeline/claude_handoff.md` remains the round-start contract unless Codex explicitly ends the round and delivers a new handoff. Mid-session side answers should be followed as short lane guidance, not as a rewritten handoff.
 - If watcher delivered the handoff but your lane is busy, interrupted, or mid-response, that is a session-state issue rather than a handoff-policy change.
 - Do not widen a reviewed-memory slice only because more internal layers or route-level regressions remain.
 - If the handoff appears to pull the work toward route-by-route completeness rather than user-visible value, prefer the smallest user-visible or current-risk-reducing interpretation that still fits the written instruction.
 - If Codex selected the slice through the same-family current-risk-first tie-break, treat that as the intended plan and do not reopen a broader comparison yourself.
 - Browser or end-to-end checks are not default for every round; use them when the current change actually touches browser-visible behavior or when the handoff explicitly requires a ready or release decision.
+- Playwright-only smoke tightening, selector drift, or single-scenario fixture updates should normally start with an isolated browser rerun. Do not treat every narrow browser tweak as an automatic `make e2e-test` round unless the handoff clearly widened the browser-visible contract, touched shared browser helpers, or is making a ready / release claim.
 - For current planning purposes, treat the reviewed-memory user-visible loop through effect activation plus explicit stop as the default anchor; later reversal or conflict-visibility layers may exist, but they are not the automatic next slice.
 
 ## Response Pattern

@@ -19,4 +19,6 @@ Rules:
 - prefer implementation truth over aspirational wording
 - if behavior is ambiguous, mark it as TODO or OPEN QUESTION
 - keep brief, proposal, spec, architecture, acceptance, backlog, and roadmap roles distinct
+- when docs mention implementation follow-up, favor reuse over duplicated code paths
+- avoid turning one coherent implementation follow-up into many micro-slices unless a real boundary requires it
 """

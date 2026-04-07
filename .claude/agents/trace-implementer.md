@@ -26,6 +26,8 @@ You are the trace implementer subagent for projectH.
 - keep current UI behavior stable unless the task explicitly requires UI changes
 - do not pull in review queue, user-level memory, operator surfaces, or broad new workflows
 - keep approval-based safety, overwrite rejection, and local-first behavior intact
+- extend existing shared helpers, payload builders, queries, and prompts before adding a near-copy code path
+- prefer one coherent implementation slice that closes meaningful progress over several ultra-small edits that touch the same files and tests
 - if approval payload, session shape, or task-log detail changes, sync:
   - `docs/PRODUCT_SPEC.md`
   - `docs/ARCHITECTURE.md`

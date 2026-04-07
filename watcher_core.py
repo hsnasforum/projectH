@@ -621,6 +621,13 @@ def _pane_has_working_indicator(pane_target: str) -> bool:
     return "• Working" in text
 
 
+def _pane_text_is_idle(text: str) -> bool:
+    """Treat a pane as idle only when a prompt is visible and no busy signal remains."""
+    if not text.strip():
+        return False
+    return _pane_text_has_input_cursor(text) and not _pane_text_has_busy_indicator(text)
+
+
 def _pane_text_has_codex_activity(text: str) -> bool:
     """Detect Codex response activity even when the input prompt remains visible."""
     return "\n• " in text or text.lstrip().startswith("• ")
@@ -635,6 +642,117 @@ def _pane_text_has_gemini_activity(text: str) -> bool:
         or "WriteFile" in text
         or "ReadManyFiles" in text
     )
+
+
+_LIVE_SESSION_ESCALATION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "context_exhaustion",
+        re.compile(
+            r"context window|context exhausted|window nearly full|maximum context|conversation too long|컨텍스트\s*window|컨텍스트.*가득",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "session_rollover",
+        re.compile(
+            r"new session recommended|session rollover|start a new session|fresh session|new thread|새 세션|새로.*세션",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "continue_vs_switch",
+        re.compile(
+            r"continue\?|should i continue|continue here|handoff and continue|진행할까요|이어가시는 것을 강하게 권고|이어서 진행",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+_LIVE_SESSION_ESCALATION_FALLBACK_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "context_exhaustion": (
+        "context", "window", "full", "exhaust", "too long", "maximum context",
+        "token", "limit", "컨텍스트", "가득", "소진", "길어",
+    ),
+    "session_rollover": (
+        "new session", "fresh session", "new thread", "start over", "restart session",
+        "open a new", "새 세션", "새로", "다음 세션", "새 thread",
+    ),
+    "continue_vs_switch": (
+        "continue", "keep going", "handoff", "switch", "continue here",
+        "진행", "이어서", "계속", "이어갈", "이어가",
+    ),
+}
+
+
+def _normalize_escalation_line(line: str) -> str:
+    normalized = line.strip().lower()
+    normalized = re.sub(r"\d+[hmsp초분시간]+", "#", normalized)
+    normalized = re.sub(r"\d+", "#", normalized)
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized
+
+
+def _fallback_escalation_reasons(lines: list[str]) -> list[str]:
+    window_text = " ".join(_normalize_escalation_line(line) for line in lines)
+    matched: list[str] = []
+    for reason, keywords in _LIVE_SESSION_ESCALATION_FALLBACK_KEYWORDS.items():
+        if any(keyword in window_text for keyword in keywords):
+            matched.append(reason)
+    if len(matched) < 2:
+        return []
+    if "continue_vs_switch" in matched and any(
+        reason in matched for reason in ("context_exhaustion", "session_rollover")
+    ):
+        return matched
+    if {"context_exhaustion", "session_rollover"}.issubset(matched):
+        return matched
+    return []
+
+
+def _extract_live_session_escalation(text: str) -> Optional[dict[str, object]]:
+    """Return a normalized live-session escalation signal from pane text."""
+    if not text.strip():
+        return None
+
+    recent_lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not recent_lines:
+        return None
+    recent_lines = recent_lines[-60:]
+    hot_window = recent_lines[-12:]
+
+    matched_reasons: list[str] = []
+    excerpt_lines: list[str] = []
+    matched_in_hot_window = False
+    for line in recent_lines:
+        matched_here = False
+        for reason, pattern in _LIVE_SESSION_ESCALATION_PATTERNS:
+            if pattern.search(line):
+                matched_here = True
+                if reason not in matched_reasons:
+                    matched_reasons.append(reason)
+        if matched_here:
+            excerpt_lines.append(line)
+            if line in hot_window:
+                matched_in_hot_window = True
+
+    if not matched_reasons:
+        fallback_reasons = _fallback_escalation_reasons(hot_window)
+        if fallback_reasons:
+            matched_reasons = fallback_reasons
+            excerpt_lines = hot_window[-8:]
+            matched_in_hot_window = True
+
+    if not matched_reasons or not matched_in_hot_window:
+        return None
+
+    normalized_excerpt = [_normalize_escalation_line(line) for line in excerpt_lines[:8]]
+    fingerprint_source = "|".join(matched_reasons + normalized_excerpt)
+    fingerprint = hashlib.sha1(fingerprint_source.encode("utf-8")).hexdigest()
+    return {
+        "reasons": matched_reasons,
+        "excerpt_lines": excerpt_lines[:8],
+        "fingerprint": fingerprint,
+    }
 
 
 def _wait_for_input_ready(
@@ -1113,6 +1231,8 @@ class WatcherCore:
         self.poll_interval = config.get("poll_interval", 1.0)
         self.dry_run       = config.get("dry_run", False)
         self.startup_grace_sec = float(config.get("startup_grace_sec", 8.0))
+        self.session_arbitration_settle_sec = float(config.get("session_arbitration_settle_sec", 5.0))
+        self.session_arbitration_cooldown_sec = float(config.get("session_arbitration_cooldown_sec", 300.0))
         self.started_at = time.time()
 
         # rolling handoff 슬롯
@@ -1120,6 +1240,7 @@ class WatcherCore:
         self.gemini_request_path    = base / "gemini_request.md"      # Codex -> Gemini request slot
         self.gemini_advice_path     = base / "gemini_advice.md"       # Gemini -> Codex advice slot
         self.operator_request_path  = base / "operator_request.md"    # operator-only stop slot
+        self.session_arbitration_draft_path = base / "session_arbitration_draft.md"  # watcher-generated non-canonical draft
         self.completion_paths       = [
             self.claude_handoff_path,
             self.gemini_request_path,
@@ -1179,6 +1300,11 @@ class WatcherCore:
         self._last_gemini_request_sig: str = self._get_path_sig(self.gemini_request_path)
         self._last_gemini_advice_sig: str = self._get_path_sig(self.gemini_advice_path)
         self._last_operator_request_sig: str = self._get_path_sig(self.operator_request_path)
+        self._last_session_arbitration_draft_sig: str = self._get_path_sig(self.session_arbitration_draft_path)
+        self._last_session_arbitration_fingerprint: str = ""
+        self._session_arbitration_snapshot_fingerprints: dict[str, str] = {}
+        self._session_arbitration_snapshot_changed_at: dict[str, float] = {}
+        self._session_arbitration_cooldowns: dict[str, float] = {}
         # 시작 시 이미 Claude 차례인지 판단하는 플래그
         self._initial_turn_checked: bool = False
         # Claude 차례일 때: 시작 시점 work/ 스냅샷
@@ -1607,6 +1733,132 @@ class WatcherCore:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     # ------------------------------------------------------------------
+    def _write_session_arbitration_draft(self, signal: dict[str, object]) -> bool:
+        now = time.time()
+        fingerprint = str(signal["fingerprint"])
+        if fingerprint == self._last_session_arbitration_fingerprint:
+            return False
+        if now < self._session_arbitration_cooldowns.get(fingerprint, 0.0):
+            return False
+
+        context = self._build_runtime_prompt_context()
+        reasons = signal["reasons"]
+        excerpt_lines = signal["excerpt_lines"]
+        reason_lines = "\n".join(f"- {reason}" for reason in reasons)
+        excerpt_block = "\n".join(f"> {line}" for line in excerpt_lines) or "> (없음)"
+        body = (
+            "STATUS: draft_only\n\n"
+            "역할:\n"
+            "- watcher가 active Claude session의 live side question 신호를 감지해 남긴 non-canonical draft\n"
+            "- 이 파일은 자동 실행 슬롯이 아니며 watcher와 Claude/Gemini는 이 파일만으로 dispatch하지 않음\n"
+            "- Codex가 보고 short lane reply로 끝낼지, `.pipeline/gemini_request.md`로 승격할지 결정해야 함\n\n"
+            "감지 이유:\n"
+            f"{reason_lines}\n\n"
+            "현재 round-start contract:\n"
+            f"- `.pipeline/claude_handoff.md`: {context['claude_handoff_path']}\n"
+            f"- latest `/work`: {context['latest_work_path']}\n"
+            f"- latest `/verify`: {context['latest_verify_path']}\n\n"
+            "관찰 excerpt:\n"
+            f"{excerpt_block}\n\n"
+            "Codex next step:\n"
+            "- active session을 mid-session handoff rewrite 없이 처리할지 먼저 판단\n"
+            "- 필요하면 Gemini arbitration request를 사람이 검토 가능한 canonical 슬롯으로만 승격\n"
+            "- 그렇지 않으면 Claude에게 short lane reply만 전달\n"
+        )
+        self.session_arbitration_draft_path.write_text(body)
+        self._last_session_arbitration_fingerprint = fingerprint
+        self._last_session_arbitration_draft_sig = self._get_path_sig(self.session_arbitration_draft_path)
+        self._log_raw(
+            "session_arbitration_draft_written",
+            str(self.session_arbitration_draft_path),
+            "claude_session",
+            {"reasons": list(reasons)},
+        )
+        return True
+
+    # ------------------------------------------------------------------
+    def _clear_session_arbitration_draft(self, reason: str) -> None:
+        fingerprint = self._last_session_arbitration_fingerprint
+        if fingerprint:
+            self._session_arbitration_cooldowns[fingerprint] = (
+                time.time() + self.session_arbitration_cooldown_sec
+            )
+        if self.session_arbitration_draft_path.exists():
+            self.session_arbitration_draft_path.unlink()
+            self._log_raw(
+                "session_arbitration_draft_cleared",
+                str(self.session_arbitration_draft_path),
+                "claude_session",
+                {"reason": reason},
+            )
+        self._last_session_arbitration_draft_sig = self._get_path_sig(self.session_arbitration_draft_path)
+        self._last_session_arbitration_fingerprint = ""
+        self._session_arbitration_snapshot_fingerprints = {}
+        self._session_arbitration_snapshot_changed_at = {}
+
+    # ------------------------------------------------------------------
+    def _pane_snapshot_stable_sec(self, pane_name: str, snapshot: str) -> float:
+        now = time.time()
+        fingerprint = hashlib.sha1(snapshot.encode("utf-8")).hexdigest()
+        if self._session_arbitration_snapshot_fingerprints.get(pane_name) != fingerprint:
+            self._session_arbitration_snapshot_fingerprints[pane_name] = fingerprint
+            self._session_arbitration_snapshot_changed_at[pane_name] = now
+            return 0.0
+        changed_at = self._session_arbitration_snapshot_changed_at.get(pane_name, now)
+        return max(0.0, now - changed_at)
+
+    # ------------------------------------------------------------------
+    def _claude_session_arbitration_ready(self, pane_snapshots: dict[str, str]) -> bool:
+        if _is_pane_dead(self.claude_pane_target):
+            return False
+        if _is_pane_dead(self.codex_pane_target):
+            return False
+        if _is_pane_dead(self.gemini_pane_target):
+            return False
+        if not _pane_text_is_idle(pane_snapshots["codex"]):
+            return False
+        if not _pane_text_is_idle(pane_snapshots["gemini"]):
+            return False
+        if _pane_text_is_idle(pane_snapshots["claude"]):
+            return True
+        return (
+            self._pane_snapshot_stable_sec("claude", pane_snapshots["claude"])
+            >= self.session_arbitration_settle_sec
+        )
+
+    # ------------------------------------------------------------------
+    def _check_claude_live_session_escalation(self) -> None:
+        if not self._waiting_for_claude:
+            return
+        if self._get_pending_operator_mtime() > 0.0:
+            self._clear_session_arbitration_draft("operator_request_pending")
+            return
+        if self._get_pending_gemini_request_mtime() > 0.0 or self._get_pending_gemini_advice_mtime() > 0.0:
+            self._clear_session_arbitration_draft("canonical_gemini_pending")
+            return
+        if self._read_status_from_path(self.claude_handoff_path) != "implement":
+            self._clear_session_arbitration_draft("handoff_inactive")
+            return
+
+        pane_snapshots = {
+            "claude": _capture_pane_text(self.claude_pane_target),
+            "codex": _capture_pane_text(self.codex_pane_target),
+            "gemini": _capture_pane_text(self.gemini_pane_target),
+        }
+        signal = _extract_live_session_escalation(pane_snapshots["claude"])
+        if signal is None:
+            self._clear_session_arbitration_draft("signal_cleared")
+            return
+        if not self._claude_session_arbitration_ready(pane_snapshots):
+            return
+        if self._write_session_arbitration_draft(signal):
+            log.info(
+                "live session escalation draft written: reasons=%s path=%s",
+                ",".join(signal["reasons"]),
+                self.session_arbitration_draft_path,
+            )
+
+    # ------------------------------------------------------------------
     def print_ab_ratios(self) -> None:
         """
         A/B 비율 계산식 고정:
@@ -1725,10 +1977,12 @@ class WatcherCore:
 
         # --- Gemini arbitration이 pending이면 다른 자동 진행을 잠시 멈춤 ---
         if self._get_pending_gemini_request_mtime() > 0.0 or self._get_pending_gemini_advice_mtime() > 0.0:
+            self._clear_session_arbitration_draft("canonical_gemini_pending")
             return
 
         # --- Claude 차례 대기 중이면 work/ 감시 건너뜀 ---
         if self._waiting_for_claude:
+            self._check_claude_live_session_escalation()
             # work/ 전체 스냅샷이 달라졌는지 확인
             current_snapshot = self._get_work_tree_snapshot()
             if current_snapshot == self._work_baseline_snapshot:
@@ -1736,6 +1990,7 @@ class WatcherCore:
             # Claude가 새 파일을 썼거나 기존 파일 내용을 바꿨으므로 대기 해제
             self._waiting_for_claude = False
             self._work_baseline_snapshot = {}
+            self._clear_session_arbitration_draft("claude_activity_resumed")
             log.info("claude activity detected by snapshot diff, resuming codex dispatch")
 
         # --- work/ 디렉터리 감시 (Claude → Codex 방향) ---

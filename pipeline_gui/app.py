@@ -1,6 +1,7 @@
 """PipelineGUI — main application class with polling, control, and UI."""
 from __future__ import annotations
 
+import queue
 import threading
 import time
 from pathlib import Path
@@ -13,8 +14,10 @@ from tkinter import (
 from tkinter import PanedWindow, VERTICAL
 from tkinter.ttk import Scrollbar as TtkScrollbar
 
+from .formatting import format_compact_count
 from .platform import (
     IS_WINDOWS, APP_ROOT, TMUX_QUERY_TIMEOUT, WSL_DISTRO,
+    resolve_project_runtime_file,
     _wsl_path_str, _windows_to_wsl_mount, _normalize_picked_path, _run,
 )
 from .project import (
@@ -24,7 +27,8 @@ from .project import (
 )
 from .backend import (
     tmux_alive, watcher_alive, latest_md, time_ago,
-    watcher_log_tail, pipeline_start, pipeline_stop, tmux_attach,
+    watcher_log_tail, pipeline_start, pipeline_stop, tmux_attach, token_collector_alive,
+    backfill_token_history, rebuild_token_db,
 )
 from .agents import (
     STATUS_COLORS, ANSI_RE,
@@ -43,8 +47,12 @@ from .view import (
     BG, FG, ACCENT, SUB_FG, BTN_BG, BTN_FG,
     CARD_BG, CARD_BORDER, LOG_BG, HEADER_BG, AGENT_CARD_BG,
     POLL_MS, init_ttk_style, create_fonts, make_card, lighten,
+    build_header, build_project_bar, build_control_bar,
+    build_status_panels, build_agent_cards, build_token_panel, build_console_panels,
 )
 from .guide import DEFAULT_GUIDE
+from .token_queries import load_token_dashboard
+from .tokens import collect_token_usage, format_token_usage_note
 
 class PipelineGUI:
     def __init__(self, project: Path) -> None:
@@ -58,6 +66,13 @@ class PipelineGUI:
         self._poll_after_id: str | None = None
         self._tick_after_id: str | None = None
         self._validate_after_id: str | None = None
+        self._token_ui_after_id: str | None = None
+        self._token_ui_queue: queue.Queue[callable] = queue.Queue()
+        self._token_usage_cache: dict[str, dict[str, object]] = {}
+        self._token_usage_project_key: str = str(project)
+        self._token_usage_last_refresh: float = 0.0
+        self._token_usage_refresh_in_flight = False
+        self._token_usage_lock = threading.Lock()
         self._setup_state: str = "unknown"  # unknown / checking / ready / missing / failed
         self._project_valid, self._project_error = validate_project_root(project)
         if self._project_valid:
@@ -97,383 +112,27 @@ class PipelineGUI:
 
     def _build_ui(self) -> None:
         init_ttk_style()
+        self._fonts = create_fonts()
 
-        # Colors from view module
-        bg = BG
-        fg = FG
-        accent = ACCENT
-        sub_fg = SUB_FG
-        btn_bg = BTN_BG
-        btn_fg = BTN_FG
-        card_bg = CARD_BG
-        card_border = CARD_BORDER
-        log_bg = LOG_BG
-        header_bg = HEADER_BG
+        # Header must be packed before the expanding content container,
+        # otherwise Tk packs it after the main body and it appears at the bottom.
+        build_header(self)
 
-        fonts = create_fonts()
-        title_font = fonts["title"]
-        body_font = fonts["body"]
-        small_font = fonts["small"]
-        status_font = fonts["status"]
-        section_font = fonts["section"]
-        ctrl_font = fonts["ctrl"]
-
-
-
-        # ── 상단 헤더 (콘솔 바) ──
-        top = Frame(self.root, bg=header_bg, padx=16, pady=8)
-        top.pack(fill=X)
-        # 좌측 세로선 accent
-        Frame(top, bg=accent, width=3).pack(side=LEFT, fill=Y, padx=(0, 10))
-
-        Label(top, text="PIPELINE OPS", font=title_font, bg=header_bg, fg="#8090b0").pack(side=LEFT)
-
-        # ── Home / Guide 모드 전환 ──
-        mode_frame = Frame(top, bg=header_bg)
-        mode_frame.pack(side=LEFT, padx=(24, 0))
-        self._mode = "home"
-        self._mode_btn_home = Button(
-            mode_frame, text="OPS", font=ctrl_font,
-            bg="#2a2a3a", fg="#d8dae0", activebackground="#3a3a4e", activeforeground="#ffffff",
-            bd=0, padx=12, pady=3, highlightthickness=0, cursor="hand2",
-            command=lambda: self._switch_mode("home"),
-        )
-        self._mode_btn_home.bind("<Enter>", lambda e: self._mode_btn_home.configure(bg="#363648"))
-        self._mode_btn_home.bind("<Leave>", lambda e: self._mode_btn_home.configure(
-            bg="#2a2a3a" if self._mode == "home" else "#18182a"))
-        self._mode_btn_home.pack(side=LEFT, padx=(0, 2))
-        self._mode_btn_guide = Button(
-            mode_frame, text="GUIDE", font=ctrl_font,
-            bg="#18182a", fg="#6b7280", activebackground="#2a2a3a", activeforeground="#ffffff",
-            bd=0, padx=12, pady=3, highlightthickness=0, cursor="hand2",
-            command=lambda: self._switch_mode("guide"),
-        )
-        self._mode_btn_guide.bind("<Enter>", lambda e: self._mode_btn_guide.configure(bg="#363648"))
-        self._mode_btn_guide.bind("<Leave>", lambda e: self._mode_btn_guide.configure(
-            bg="#2a2a3a" if self._mode == "guide" else "#18182a"))
-        self._mode_btn_guide.pack(side=LEFT)
-
-        self.status_var = StringVar(value="STOPPED")
-        self.status_label = Label(
-            top,
-            textvariable=self.status_var,
-            font=ctrl_font,
-            bg="#2a1015",
-            fg="#f87171",
-            padx=12,
-            pady=3,
-        )
-        self.status_label.pack(side=RIGHT)
-
-        # ── 메인 컨텐츠 컨테이너 ──
-        self._content_container = Frame(self.root, bg=bg)
+        # Container frames
+        self._content_container = Frame(self.root, bg=BG)
         self._content_container.pack(fill=BOTH, expand=True)
-
-        # Home 모드 프레임
-        content = Frame(self._content_container, bg=bg, padx=14, pady=12)
+        content = Frame(self._content_container, bg=BG, padx=14, pady=12)
         self._home_frame = content
         content.pack(fill=BOTH, expand=True)
+        self._guide_frame = Frame(self._content_container, bg=BG, padx=14, pady=12)
 
-        # Guide 모드 프레임 (나중에 채움)
-        self._guide_frame = Frame(self._content_container, bg=bg, padx=14, pady=12)
-
-        # ── 프로젝트 경로 (Entry + Browse + Apply) ──
-        proj_card = make_card(content)
-        proj_card.pack(fill=X, pady=(0, 10))
-        Label(proj_card, text="Project", font=section_font, bg=card_bg, fg=sub_fg).pack(anchor="w")
-
-        path_row = Frame(proj_card, bg=card_bg)
-        path_row.pack(fill=X, pady=(4, 0))
-
-        self._path_var = StringVar(
-            value=_wsl_path_str(self.project) if IS_WINDOWS else str(self.project),
-        )
-        self._path_entry = Entry(
-            path_row,
-            textvariable=self._path_var,
-            font=body_font,
-            bg="#1a1a1a",
-            fg="#f59e0b",
-            insertbackground="#f59e0b",
-            bd=0,
-            highlightthickness=1,
-            highlightbackground="#444444",
-            highlightcolor="#f59e0b",
-        )
-        self._path_entry.pack(side=LEFT, fill=X, expand=True, padx=(0, 6))
-        self._path_entry.bind("<Return>", lambda _e: self._apply_project_path())
-
-        _browse_bg = btn_bg
-        self._path_browse_btn = Button(
-            path_row,
-            text="Browse…",
-            command=self._on_browse,
-            font=small_font,
-            bg=_browse_bg,
-            fg=btn_fg,
-            activebackground=lighten(_browse_bg, 30),
-            activeforeground="#ffffff",
-            bd=0,
-            padx=8,
-            pady=4,
-            highlightthickness=1,
-            highlightbackground="#444444",
-            cursor="hand2",
-        )
-        self._path_browse_btn.bind("<Enter>", lambda e: self._path_browse_btn.configure(bg=lighten(_browse_bg, 18)))
-        self._path_browse_btn.bind("<Leave>", lambda e: self._path_browse_btn.configure(bg=_browse_bg))
-        self._path_browse_btn.pack(side=RIGHT, padx=(4, 0))
-
-        _apply_bg = btn_bg
-        self._path_apply_btn = Button(
-            path_row,
-            text="Apply",
-            command=self._apply_project_path,
-            font=small_font,
-            bg=_apply_bg,
-            fg=btn_fg,
-            activebackground=lighten(_apply_bg, 30),
-            activeforeground="#ffffff",
-            bd=0,
-            padx=10,
-            pady=4,
-            highlightthickness=1,
-            highlightbackground="#444444",
-            disabledforeground="#555555",
-        )
-        self._path_apply_btn.bind("<Enter>", lambda e: self._path_apply_btn.configure(bg=lighten(_apply_bg, 18)) if str(self._path_apply_btn["state"]) != "disabled" else None)
-        self._path_apply_btn.bind("<Leave>", lambda e: self._path_apply_btn.configure(bg=_apply_bg))
-        self._path_apply_btn.pack(side=RIGHT)
-
-        # Apply 버튼 활성/비활성: Entry가 비어있으면 비활성
-        self._path_var.trace_add("write", self._on_path_var_change)
-        self._on_path_var_change()  # 초기 상태 설정
-
-        # ── 최근 프로젝트 quick select ──
-        self._recent_row = Frame(proj_card, bg=card_bg)
-        self._recent_row.pack(fill=X, pady=(4, 0))
-        self._refresh_recent_buttons()
-
-        # ── 제어 패널 ──
-        ctrl_bar = Frame(content, bg="#0e0e14")
-        ctrl_bar.pack(fill=X, pady=(0, 8))
-
-        def make_ctrl_btn(parent: Frame, text: str, cmd, color: str = btn_bg,
-                          fg_color: str = btn_fg) -> Button:
-            hover_bg = lighten(color, 18)
-            press_bg = lighten(color, 30)
-            btn = Button(
-                parent, text=text, command=cmd, font=ctrl_font,
-                bg=color, fg=fg_color, activebackground=press_bg,
-                activeforeground="#ffffff", bd=0, padx=14, pady=6,
-                highlightthickness=1, highlightbackground="#36364a",
-                disabledforeground="#404050", cursor="hand2",
-            )
-            # hover 피드백
-            btn.bind("<Enter>", lambda e, b=btn, h=hover_bg: b.configure(bg=h) if str(b["state"]) != "disabled" else None)
-            btn.bind("<Leave>", lambda e, b=btn, c=color: b.configure(bg=c) if str(b["state"]) != "disabled" else None)
-            return btn
-
-        self.btn_setup = make_ctrl_btn(ctrl_bar, "⚙ SETUP", self._on_setup_check)
-        self.btn_setup.pack(side=LEFT, padx=(0, 4))
-        self.btn_start = make_ctrl_btn(ctrl_bar, "▶ START", self._on_start, "#1a3a1a", "#4ade80")
-        self.btn_start.pack(side=LEFT, padx=4)
-        self.btn_stop = make_ctrl_btn(ctrl_bar, "■ STOP", self._on_stop, "#3a1a1a", "#f87171")
-        self.btn_stop.pack(side=LEFT, padx=4)
-        self.btn_restart = make_ctrl_btn(ctrl_bar, "↻ RESTART", self._on_restart)
-        self.btn_restart.pack(side=LEFT, padx=4)
-        self.btn_attach = make_ctrl_btn(ctrl_bar, "⬜ ATTACH", self._on_attach)
-        self.btn_attach.pack(side=LEFT, padx=4)
-
-        self._action_in_progress = False
-
-        # ── 상태 개요 + 최신 파일 ──
-        overview = Frame(content, bg=bg)
-        overview.pack(fill=X, pady=(0, 10))
-
-        system_card = make_card(overview)
-        system_card.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 6))
-        Label(system_card, text="SYSTEM", font=section_font, bg=card_bg, fg=sub_fg).pack(anchor="w")
-        self.pipeline_var = StringVar(value="Pipeline: —")
-        self.watcher_var = StringVar(value="Watcher: —")
-        self.setup_var = StringVar(value="Setup: … Checking")
-        self.pipeline_state_label = Label(system_card, textvariable=self.pipeline_var, font=body_font, bg=card_bg, fg=fg, anchor="w")
-        self.pipeline_state_label.pack(anchor="w", pady=(6, 2))
-        self.watcher_state_label = Label(system_card, textvariable=self.watcher_var, font=body_font, bg=card_bg, fg=fg, anchor="w")
-        self.watcher_state_label.pack(anchor="w", pady=(0, 2))
-        self.setup_state_label = Label(system_card, textvariable=self.setup_var, font=body_font, bg=card_bg, fg="#e0a040", anchor="w")
-        self.setup_state_label.pack(anchor="w")
-
-        file_card = make_card(overview)
-        file_card.pack(side=LEFT, fill=BOTH, expand=True, padx=(6, 0))
-        self._artifacts_title_var = StringVar(value="ARTIFACTS")
-        Label(file_card, textvariable=self._artifacts_title_var, font=section_font, bg=card_bg, fg=sub_fg).pack(anchor="w")
-        self.work_var = StringVar(value="Latest work: —")
-        self.verify_var = StringVar(value="Latest verify: —")
-        # current run context
-        self._run_context_var = StringVar(value="")
-        self._run_context_label = Label(file_card, textvariable=self._run_context_var, font=small_font,
-                                         bg=card_bg, fg="#5b9cf6", anchor="w", justify=LEFT, wraplength=400)
-        self._run_context_label.pack(anchor="w", pady=(4, 4))
-        self._work_label = Label(file_card, textvariable=self.work_var, font=body_font, bg=card_bg, fg="#c0a060", anchor="w", justify=LEFT, wraplength=400)
-        self._work_label.pack(anchor="w", pady=(0, 2))
-        self._verify_label = Label(file_card, textvariable=self.verify_var, font=body_font, bg=card_bg, fg="#c0a060", anchor="w", justify=LEFT, wraplength=400)
-        self._verify_label.pack(anchor="w")
-
-        # ── Agent 상태 ──
-        agent_section = Frame(content, bg=bg)
-        agent_section.pack(fill=X, pady=(0, 8))
-        Label(agent_section, text="AGENTS", font=section_font, bg=bg, fg=sub_fg).pack(anchor="w", pady=(0, 4))
-
-        cards_row = Frame(agent_section, bg=bg)
-        cards_row.pack(fill=X)
-
-        agent_card_bg = "#12121a"
-        self.agent_labels: list[tuple[Frame, Label, Label, Label, Label]] = []
-        for idx, name in enumerate(["Claude", "Codex", "Gemini"]):
-            card = Frame(
-                cards_row,
-                bg=agent_card_bg,
-                padx=10,
-                pady=8,
-                highlightthickness=2,
-                highlightbackground="#1e1e2e",
-            )
-            card.grid(row=0, column=idx, sticky="nsew", padx=(0 if idx == 0 else 3, 0 if idx == 2 else 3))
-            cards_row.grid_columnconfigure(idx, weight=1, uniform="agents")
-
-            name_row = Frame(card, bg=agent_card_bg)
-            name_row.pack(fill=X)
-            dot = Label(name_row, text="●", font=body_font, bg=agent_card_bg, fg="#404058")
-            dot.pack(side=LEFT)
-            name_lbl = Label(name_row, text=name.upper(), font=section_font, bg=agent_card_bg, fg="#8890a8")
-            name_lbl.pack(side=LEFT, padx=(6, 0))
-
-            status_lbl = Label(card, text="—", font=status_font, bg=agent_card_bg, fg="#505068", anchor="w")
-            status_lbl.pack(anchor="w", pady=(4, 1))
-            note_lbl = Label(card, text="", font=small_font, bg=agent_card_bg, fg="#606878", anchor="w", justify=LEFT, wraplength=250)
-            note_lbl.pack(anchor="w")
-            quota_lbl = Label(card, text="", font=small_font, bg=agent_card_bg, fg="#505868", anchor="w", justify=LEFT, wraplength=250)
-            quota_lbl.pack(anchor="w", pady=(2, 0))
-            self.agent_labels.append((card, dot, status_lbl, note_lbl, quota_lbl))
-
-            for widget in (card, name_row, dot, name_lbl, status_lbl, note_lbl, quota_lbl):
-                widget.bind("<Button-1>", lambda _event, agent=name: self._select_agent(agent))
-                widget.configure(cursor="hand2")
-
-        # ── 하단 2영역: agent output + watcher log ──
-        from tkinter import PanedWindow, VERTICAL
-
-        paned = PanedWindow(content, orient=VERTICAL, bg="#222222", sashwidth=4, sashrelief="flat")
-        paned.pack(fill=BOTH, expand=True)
-        self.paned = paned
-
-        # ── 선택 agent 상세 출력 (콘솔 패널) ──
-        focus_frame = Frame(paned, bg=log_bg, padx=0, pady=0,
-                            highlightthickness=1, highlightbackground="#1e1e30")
-
-        focus_header = Frame(focus_frame, bg="#12121c", padx=10, pady=5)
-        focus_header.pack(fill=X)
-        Label(focus_header, text="AGENT OUTPUT", font=section_font, bg="#12121c", fg="#5060a0").pack(side=LEFT)
-        self.focus_title_var = StringVar(value="CLAUDE • pane tail")
-        Label(focus_header, textvariable=self.focus_title_var, font=small_font, bg="#12121c", fg="#4a5070").pack(side=RIGHT)
-
-        focus_font = tkfont.Font(family="Consolas", size=9)
-        self.focus_text = Text(
-            focus_frame, font=focus_font, bg=log_bg, fg="#a0a8c0",
-            wrap=WORD, bd=0, highlightthickness=0, padx=12, pady=8,
-            state=DISABLED, spacing1=0, spacing3=1,
-        )
-        focus_scroll = TtkScrollbar(focus_frame, command=self.focus_text.yview, style="Dark.Vertical.TScrollbar")
-        self.focus_text.configure(yscrollcommand=focus_scroll.set)
-        focus_scroll.pack(side=RIGHT, fill=Y)
-        self.focus_text.pack(side=LEFT, fill=BOTH, expand=True)
-
-        paned.add(focus_frame, minsize=140, stretch="always")
-
-        # ── Watcher log (콘솔 패널) ──
-        log_frame = Frame(paned, bg=log_bg, padx=0, pady=0,
-                          highlightthickness=1, highlightbackground="#1e1e30")
-
-        log_header = Frame(log_frame, bg="#12121c", padx=10, pady=5)
-        log_header.pack(fill=X)
-        self._log_title_var = StringVar(value="WATCHER LOG")
-        Label(log_header, textvariable=self._log_title_var, font=section_font, bg="#12121c", fg="#5060a0").pack(side=LEFT)
-
-        self.log_text = Text(log_frame, font=small_font, bg=log_bg, fg="#707898",
-                             wrap=WORD, bd=0, highlightthickness=0, padx=12, pady=6,
-                             state=DISABLED)
-        scrollbar = TtkScrollbar(log_frame, command=self.log_text.yview, style="Dark.Vertical.TScrollbar")
-        self.log_text.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side=RIGHT, fill=Y)
-        self.log_text.pack(side=LEFT, fill=BOTH, expand=True)
-
-        paned.add(log_frame, minsize=100, stretch="never")
-        # 초기 sash: focus 75% / log 25%
-        self.root.update_idletasks()
-        paned_h = paned.winfo_height()
-        if paned_h > 240:
-            paned.sash_place(0, 0, int(paned_h * 0.75))
-
-        # ── Guide 모드 화면 (상단 Home/Guide 전환으로 표시) ──
-        gf = self._guide_frame
-
-        guide_header = Frame(gf, bg=card_bg, padx=12, pady=8,
-                             highlightthickness=1, highlightbackground=card_border)
-        guide_header.pack(fill=X, pady=(0, 10))
-        Label(guide_header, text="Project Guide", font=section_font, bg=card_bg, fg=sub_fg).pack(side=LEFT)
-        self._guide_status_var = StringVar(value="")
-        Label(guide_header, textvariable=self._guide_status_var, font=small_font,
-              bg=card_bg, fg="#34d399").pack(side=RIGHT)
-        _export_bg = "#2563eb"
-        _export_btn = Button(
-            guide_header, text="  Export .md  ", command=self._export_guide_md,
-            font=tkfont.Font(family="Consolas", size=10, weight="bold"),
-            bg=_export_bg, fg="#ffffff",
-            activebackground="#1d4ed8", activeforeground="#ffffff",
-            bd=0, padx=14, pady=5,
-            highlightthickness=1, highlightbackground="#3b82f6",
-            cursor="hand2",
-        )
-        _export_btn.bind("<Enter>", lambda e: _export_btn.configure(bg=lighten(_export_bg, 20)))
-        _export_btn.bind("<Leave>", lambda e: _export_btn.configure(bg=_export_bg))
-        _export_btn.pack(side=RIGHT, padx=(0, 8))
-
-        guide_body = Frame(gf, bg=bg)
-        guide_body.pack(fill=BOTH, expand=True)
-
-        self._guide_text = Text(
-            guide_body, font=body_font, bg="#1a1a1a", fg="#d4d4d8",
-            wrap=WORD, bd=0,
-            highlightthickness=1, highlightbackground="#333333",
-            padx=10, pady=8, state=DISABLED,
-            cursor="arrow",
-        )
-        guide_scroll = TtkScrollbar(guide_body, command=self._guide_text.yview, style="Dark.Vertical.TScrollbar")
-        self._guide_text.configure(yscrollcommand=guide_scroll.set)
-        guide_scroll.pack(side=RIGHT, fill=Y)
-        self._guide_text.pack(side=LEFT, fill=BOTH, expand=True)
-
-        # canonical guide 로드
-        self._load_project_guide()
-
-        # ── 상단 overlay toast banner ──
-        self._toast_font = tkfont.Font(family="Consolas", size=10, weight="bold")
-        self.msg_var = StringVar(value="")
-        self.msg_label = Label(
-            self.root,
-            textvariable=self.msg_var,
-            font=self._toast_font,
-            bg="#1e3a5f",
-            fg="#93c5fd",
-            pady=8,
-            padx=18,
-            anchor="center",
-            wraplength=700,
-        )
-        # 초기엔 숨김 — _show_toast에서 place로 표시
-        self.msg_var.trace_add("write", self._on_toast_change)
-        self.root.after(120, self._set_initial_pane_split)
+        # Build sections
+        build_project_bar(self, content)
+        build_control_bar(self, content)
+        build_status_panels(self, content)
+        build_agent_cards(self, content)
+        build_token_panel(self, content)
+        build_console_panels(self, content)
 
     def _set_initial_pane_split(self) -> None:
         try:
@@ -548,8 +207,10 @@ class PipelineGUI:
             if hint:
                 hint_status, hint_note = hint
                 if hint_status == "WORKING":
-                    status = "WORKING"
-                    if not note:
+                    if status in {"BOOTING", "OFF"}:
+                        status = "WORKING"
+                        note = hint_note or note
+                    elif status == "WORKING" and hint_note:
                         note = hint_note
                 elif hint_status == "READY" and status == "BOOTING":
                     status = "READY"
@@ -581,6 +242,97 @@ class PipelineGUI:
         if at_bottom:
             widget.see(END)
 
+    def _get_cached_token_usage(self) -> dict[str, dict[str, object]]:
+        project_key = str(self.project)
+        now = time.time()
+        with self._token_usage_lock:
+            if self._token_usage_project_key != project_key:
+                self._token_usage_project_key = project_key
+                self._token_usage_cache = {}
+                self._token_usage_last_refresh = 0.0
+                self._token_usage_refresh_in_flight = False
+            cached = dict(self._token_usage_cache)
+            last_refresh = self._token_usage_last_refresh
+            in_flight = self._token_usage_refresh_in_flight
+        if (not cached or (now - last_refresh) >= 30.0) and not in_flight:
+            self._start_token_usage_refresh()
+        return cached
+
+    def _start_token_usage_refresh(self, *, force: bool = False) -> None:
+        project = Path(self.project)
+        project_key = str(project)
+        with self._token_usage_lock:
+            if self._token_usage_project_key != project_key:
+                self._token_usage_project_key = project_key
+                self._token_usage_cache = {}
+                self._token_usage_last_refresh = 0.0
+                self._token_usage_refresh_in_flight = False
+            if self._token_usage_refresh_in_flight:
+                return
+            if (
+                not force
+                and self._token_usage_cache
+                and (time.time() - self._token_usage_last_refresh) < 30.0
+            ):
+                return
+            self._token_usage_refresh_in_flight = True
+        threading.Thread(
+            target=self._token_usage_refresh_worker,
+            args=(project, project_key),
+            daemon=True,
+        ).start()
+
+    def _token_usage_refresh_worker(self, project: Path, project_key: str) -> None:
+        result: dict[str, dict[str, object]]
+        try:
+            result = collect_token_usage(project)
+        except Exception:
+            result = {}
+        with self._token_usage_lock:
+            if self._token_usage_project_key == project_key:
+                self._token_usage_cache = dict(result)
+                self._token_usage_last_refresh = time.time()
+            self._token_usage_refresh_in_flight = False
+        try:
+            self.root.after(0, lambda: self._apply_token_usage_cache(project_key, result))
+        except Exception:
+            pass
+
+    def _apply_token_usage_cache(self, project_key: str, result: dict[str, dict[str, object]]) -> None:
+        if str(self.project) != project_key:
+            return
+        if self._last_snapshot is None:
+            return
+        snapshot = dict(self._last_snapshot)
+        snapshot["token_usage"] = result
+        self._apply_snapshot(snapshot)
+
+    def _refresh_token_dashboard_async(self) -> None:
+        project = Path(self.project)
+        project_key = str(project)
+
+        def _worker() -> None:
+            try:
+                dashboard = load_token_dashboard(project)
+            except Exception:
+                return
+            try:
+                self.root.after(0, lambda: self._apply_token_dashboard_refresh(project_key, dashboard))
+            except Exception:
+                pass
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _apply_token_dashboard_refresh(self, project_key: str, dashboard: object) -> None:
+        if str(self.project) != project_key:
+            return
+        if self._last_snapshot is None:
+            self._apply_token_dashboard(dashboard)
+            return
+        snapshot = dict(self._last_snapshot)
+        snapshot["token_dashboard"] = dashboard
+        self._apply_snapshot(snapshot)
+
     def _select_agent(self, agent: str) -> None:
         self.selected_agent = agent
         self._auto_focus_agent = False
@@ -605,12 +357,7 @@ class PipelineGUI:
         self.msg_var.set(self._project_error)
         self.setup_var.set("Setup: —")
         self.setup_state_label.configure(fg="#888888")
-        # 모든 버튼 비활성
-        self.btn_setup.configure(state=DISABLED)
-        self.btn_start.configure(state=DISABLED)
-        self.btn_stop.configure(state=DISABLED)
-        self.btn_restart.configure(state=DISABLED)
-        self.btn_attach.configure(state=DISABLED)
+        self._set_main_button_states(all_disabled=True)
 
     def _tick_elapsed(self) -> None:
         """Lightweight tick — updates WORKING elapsed note aligned to second boundaries."""
@@ -638,6 +385,9 @@ class PipelineGUI:
         if self._tick_after_id is not None:
             self.root.after_cancel(self._tick_after_id)
             self._tick_after_id = None
+        if self._token_ui_after_id is not None:
+            self.root.after_cancel(self._token_ui_after_id)
+            self._token_ui_after_id = None
 
     _VALIDATE_DEBOUNCE_MS = 600
 
@@ -863,6 +613,11 @@ class PipelineGUI:
             self._project_error = ""
             self._working_since.clear()
             self._last_snapshot = None
+            with self._token_usage_lock:
+                self._token_usage_project_key = str(new_path)
+                self._token_usage_cache = {}
+                self._token_usage_last_refresh = 0.0
+                self._token_usage_refresh_in_flight = False
             _save_project_path(new_path_str)
             self._refresh_recent_buttons()
             self._load_project_guide()
@@ -904,6 +659,8 @@ class PipelineGUI:
         session_ok = tmux_alive(self._session_name)
         w_alive, w_pid = watcher_alive(self.project)
         agents, pane_map = self._collect_all_agent_data()
+        token_usage = self._get_cached_token_usage()
+        token_dashboard = load_token_dashboard(self.project)
         work_name, work_mtime = latest_md(self.project / "work")
         verify_name, verify_mtime = latest_md(self.project / "verify")
         log_lines = watcher_log_tail(self.project, lines=14)
@@ -917,6 +674,8 @@ class PipelineGUI:
             "watcher_pid": w_pid,
             "agents": agents,
             "pane_map": pane_map,
+            "token_usage": token_usage,
+            "token_dashboard": token_dashboard,
             "work_name": work_name,
             "work_mtime": work_mtime,
             "verify_name": verify_name,
@@ -932,6 +691,8 @@ class PipelineGUI:
         w_pid = snapshot["watcher_pid"]
         agents = snapshot["agents"]
         pane_map = snapshot["pane_map"]
+        token_usage = snapshot.get("token_usage", {})
+        token_dashboard = snapshot.get("token_dashboard")
         work_name = snapshot["work_name"]
         work_mtime = float(snapshot["work_mtime"])
         verify_name = snapshot["verify_name"]
@@ -990,7 +751,14 @@ class PipelineGUI:
                 else:
                     self._working_since.pop(label, None)
                     note_lbl.configure(text=note or "대기 중", fg="#9ca3af")
-                quota_lbl.configure(text=f"Quota: {quota}" if quota else "Quota: —", fg="#7c8798")
+                usage_quota = ""
+                if isinstance(token_usage, dict):
+                    usage_quota = format_token_usage_note(token_usage.get(label, {}))
+                display_quota = usage_quota or quota
+                quota_lbl.configure(
+                    text=f"Quota: {display_quota}" if display_quota else "Quota: —",
+                    fg="#7c8798",
+                )
                 if label == self.selected_agent:
                     # Selected: 굵은 밝은 파란 보더 + 밝은 배경
                     sel_bg = "#1a1a30"
@@ -1023,6 +791,8 @@ class PipelineGUI:
                 note_lbl.configure(text="", fg="#666666")
                 quota_lbl.configure(text="Quota: —", fg="#666666")
                 card.configure(highlightbackground="#2a2a2a")
+
+        self._apply_token_dashboard(token_dashboard)
 
         # running vs stopped 구분 — 아래 title/color에서 사용
         is_live = session_ok and w_alive
@@ -1114,20 +884,281 @@ class PipelineGUI:
         )
         self._update_text_if_changed(self.log_text, log_text)
 
-        # 버튼 enable/disable — 작업 중이면 전부 비활성
-        if self._action_in_progress:
+        can_start = not session_ok and self._setup_state == "ready"
+        self._set_main_button_states(
+            all_disabled=self._action_in_progress,
+            can_start=can_start,
+            session_ok=session_ok,
+        )
+
+    def _apply_token_dashboard(self, dashboard: object) -> None:
+        if dashboard is None:
+            self._token_status_var.set(self._empty_token_label("Collector"))
+            self._token_totals_var.set(self._empty_token_label("Today"))
+            self._token_agents_var.set(self._empty_token_label("Agents"))
+            self._token_selected_var.set(self._empty_token_label(f"Selected {self.selected_agent.upper()}"))
+            self._token_jobs_var.set(self._empty_token_label("Top jobs"))
+            return
+        collector = getattr(dashboard, "collector_status", None)
+        totals = getattr(dashboard, "today_totals", None)
+        agents = list(getattr(dashboard, "agent_totals", []) or [])
+        jobs = list(getattr(dashboard, "top_jobs", []) or [])
+        display_day = str(getattr(dashboard, "display_day", "") or "")
+        today_day = time.strftime("%Y-%m-%d")
+        totals_label = "Today" if not display_day or display_day == today_day else f"Latest {display_day}"
+        token_loading = self._token_dashboard_loading()
+        totals_empty = self._token_totals_empty(totals)
+
+        self._token_status_var.set(self._format_token_status_line(collector, token_loading=token_loading))
+        self._token_totals_var.set(
+            self._format_token_totals_line(
+                totals,
+                totals_label=totals_label,
+                token_loading=token_loading,
+                totals_empty=totals_empty,
+                has_agents=bool(agents),
+                has_jobs=bool(jobs),
+            )
+        )
+        self._token_agents_var.set(self._format_token_agents_line(agents, token_loading=token_loading))
+
+        token_usage = {}
+        if isinstance(self._last_snapshot, dict):
+            raw_usage = self._last_snapshot.get("token_usage")
+            if isinstance(raw_usage, dict):
+                token_usage = raw_usage
+        self._apply_selected_token_detail(token_usage, dashboard, token_loading=token_loading, totals_label=totals_label)
+        self._token_jobs_var.set(
+            self._format_token_jobs_line(
+                jobs,
+                token_loading=token_loading,
+                has_agents=bool(agents),
+                totals_empty=totals_empty,
+            )
+        )
+
+    def _apply_selected_token_detail(
+        self,
+        token_usage: object,
+        dashboard: object,
+        *,
+        token_loading: bool,
+        totals_label: str,
+    ) -> None:
+        selected = self.selected_agent
+        title = f"Selected {selected.upper()}: "
+        usage_summary: dict[str, object] = {}
+        if isinstance(token_usage, dict):
+            raw_usage = token_usage.get(selected)
+            if isinstance(raw_usage, dict):
+                usage_summary = raw_usage
+        agent_row = None
+        for item in list(getattr(dashboard, "agent_totals", []) or []):
+            if str(getattr(item, "source", "") or "").lower() == selected.lower():
+                agent_row = item
+                break
+
+        if token_loading and not usage_summary.get("available") and agent_row is None:
+            self._token_selected_var.set(title + "loading...")
+            return
+
+        parts: list[str] = []
+        usage_note = format_token_usage_note(usage_summary) if usage_summary else ""
+        if usage_note:
+            parts.append(f"usage {usage_note}")
+
+        if agent_row is not None:
+            input_tokens = self._fmt_count(int(getattr(agent_row, "input_tokens", 0) or 0))
+            output_tokens = self._fmt_count(int(getattr(agent_row, "output_tokens", 0) or 0))
+            events = int(getattr(agent_row, "events", 0) or 0)
+            linked_events = int(getattr(agent_row, "linked_events", 0) or 0)
+            total_cost = float(getattr(agent_row, "total_cost_usd", 0.0) or 0.0)
+            parts.append(f"{totals_label.lower()} {input_tokens}/{output_tokens}")
+            if total_cost:
+                parts.append(f"${total_cost:.2f}")
+            if events > 0:
+                if linked_events == 0:
+                    parts.append("no-link")
+                else:
+                    parts.append(f"linked {linked_events}/{events}")
+
+        if not parts:
+            parts.append("no data")
+        self._token_selected_var.set(title + " · ".join(parts))
+
+    def _empty_token_label(self, label: str) -> str:
+        return f"{label}: —"
+
+    def _loading_token_label(self, label: str) -> str:
+        return f"{label}: loading..."
+
+    def _token_dashboard_loading(self) -> bool:
+        token_action_text = ""
+        if hasattr(self, "_token_action_var"):
+            token_action_text = str(self._token_action_var.get() or "")
+        return self._action_in_progress and (
+            "FULL HISTORY" in token_action_text or "REBUILD DB" in token_action_text
+        )
+
+    def _token_totals_empty(self, totals: object) -> bool:
+        return bool(
+            totals is not None
+            and not int(getattr(totals, "input_tokens", 0) or 0)
+            and not int(getattr(totals, "output_tokens", 0) or 0)
+            and not int(getattr(totals, "cache_read_tokens", 0) or 0)
+            and not int(getattr(totals, "cache_write_tokens", 0) or 0)
+            and not int(getattr(totals, "thinking_tokens", 0) or 0)
+            and not float(getattr(totals, "actual_cost_usd_sum", 0.0) or 0.0)
+            and not float(getattr(totals, "estimated_only_cost_usd_sum", 0.0) or 0.0)
+        )
+
+    def _format_token_status_line(self, collector: object, *, token_loading: bool) -> str:
+        if collector is None or not getattr(collector, "available", False):
+            return self._loading_token_label("Collector") if token_loading else "Collector: missing"
+        phase = getattr(collector, "phase", "missing")
+        heartbeat = str(getattr(collector, "last_heartbeat_at", "") or "")
+        heartbeat_age_sec = int(getattr(collector, "heartbeat_age_sec", 0) or 0)
+        parsed = int(getattr(collector, "parsed_events", 0) or 0)
+        files = int(getattr(collector, "scanned_files", 0) or 0)
+        error = str(getattr(collector, "last_error", "") or "")
+        launch_mode = str(getattr(collector, "launch_mode", "") or "")
+        window_name = str(getattr(collector, "window_name", "") or "")
+        status_parts = [f"Collector: {phase}"]
+        if launch_mode:
+            status_parts.append(f"{launch_mode}:{window_name}" if launch_mode == "tmux" and window_name else launch_mode)
+        if heartbeat:
+            status_parts.append(f"HB {heartbeat[11:19] if len(heartbeat) >= 19 else heartbeat}")
+        if getattr(collector, "is_stale", False) and heartbeat_age_sec:
+            status_parts.append(f"stale {heartbeat_age_sec}s")
+        if files or parsed:
+            status_parts.append(f"{files} files · {parsed} events")
+        if error:
+            status_parts.append(f"Err {error[:60]}")
+        return " | ".join(status_parts)
+
+    def _format_token_totals_line(
+        self,
+        totals: object,
+        *,
+        totals_label: str,
+        token_loading: bool,
+        totals_empty: bool,
+        has_agents: bool,
+        has_jobs: bool,
+    ) -> str:
+        if token_loading and totals_empty and not has_agents and not has_jobs:
+            return self._loading_token_label(totals_label)
+        if totals is None:
+            return self._empty_token_label(totals_label)
+        total_parts = [
+            f"{totals_label} In {self._fmt_count(int(getattr(totals, 'input_tokens', 0) or 0))}",
+            f"Out {self._fmt_count(int(getattr(totals, 'output_tokens', 0) or 0))}",
+        ]
+        cache_total = int(getattr(totals, "cache_read_tokens", 0) or 0) + int(
+            getattr(totals, "cache_write_tokens", 0) or 0
+        )
+        thinking = int(getattr(totals, "thinking_tokens", 0) or 0)
+        if cache_total:
+            total_parts.append(f"Cache {self._fmt_count(cache_total)}")
+        if thinking:
+            total_parts.append(f"Think {self._fmt_count(thinking)}")
+        actual_cost = float(getattr(totals, "actual_cost_usd_sum", 0.0) or 0.0)
+        estimated_cost = float(getattr(totals, "estimated_only_cost_usd_sum", 0.0) or 0.0)
+        total_parts.append(f"Cost ${actual_cost + estimated_cost:.2f}")
+        if actual_cost:
+            total_parts.append(f"Actual ${actual_cost:.2f}")
+        if estimated_cost:
+            total_parts.append(f"Est ${estimated_cost:.2f}")
+        return " | ".join(total_parts)
+
+    def _format_token_agents_line(self, agents: list[object], *, token_loading: bool) -> str:
+        if token_loading and not agents:
+            return self._loading_token_label("Agents")
+        if not agents:
+            return self._empty_token_label("Agents")
+        return "Agents: " + " | ".join(self._format_token_agent_segment(item) for item in agents[:3])
+
+    def _format_token_agent_segment(self, item: object) -> str:
+        source = str(getattr(item, "source", "") or "").upper()
+        inp = self._fmt_count(int(getattr(item, "input_tokens", 0) or 0))
+        out = self._fmt_count(int(getattr(item, "output_tokens", 0) or 0))
+        events = int(getattr(item, "events", 0) or 0)
+        linked_events = int(getattr(item, "linked_events", 0) or 0)
+        cost = float(getattr(item, "total_cost_usd", 0.0) or 0.0)
+        segment = f"{source} {inp}/{out}"
+        if cost:
+            segment += f" ${cost:.2f}"
+        if events > 0 and linked_events == 0:
+            segment += " no-link"
+        return segment
+
+    def _format_token_jobs_line(
+        self,
+        jobs: list[object],
+        *,
+        token_loading: bool,
+        has_agents: bool,
+        totals_empty: bool,
+    ) -> str:
+        if token_loading and not jobs:
+            return self._loading_token_label("Top jobs")
+        if not jobs and (has_agents or not totals_empty):
+            return "Top jobs: no linked jobs yet"
+        if not jobs:
+            return self._empty_token_label("Top jobs")
+        return "Top jobs: " + " | ".join(self._format_token_job_segment(item) for item in jobs[:3])
+
+    def _format_token_job_segment(self, item: object) -> str:
+        job_id = str(getattr(item, "job_id", "") or "")
+        short_job = job_id.split("-", 1)[1][:28] if "-" in job_id else job_id[:28]
+        cost = float(getattr(item, "total_cost_usd", 0.0) or 0.0)
+        method = str(getattr(item, "primary_link_method", "") or "")
+        confidence = float(getattr(item, "max_confidence", 0.0) or 0.0)
+        low_confidence_events = int(getattr(item, "low_confidence_events", 0) or 0)
+        total_events = int(getattr(item, "events", 0) or 0)
+        segment = short_job
+        if cost:
+            segment += f" ${cost:.2f}"
+        if method:
+            segment += f" {self._short_token_link_method(method)}"
+        segment += f" c={confidence:.2f}"
+        if total_events:
+            segment += f" low={low_confidence_events}/{total_events}"
+        return segment
+
+    def _short_token_link_method(self, method: str) -> str:
+        return (
+            method.replace("dispatch_slot_verify_window", "dispatch")
+            .replace("artifact_seen_work_window", "artifact")
+            .replace("gemini_notify_recent_job_window", "gemini")
+        )
+
+    def _fmt_count(self, value: int) -> str:
+        return format_compact_count(value)
+
+    def _set_main_button_states(
+        self,
+        *,
+        all_disabled: bool,
+        can_start: bool = False,
+        session_ok: bool = False,
+    ) -> None:
+        if all_disabled:
             self.btn_setup.configure(state=DISABLED)
             self.btn_start.configure(state=DISABLED)
             self.btn_stop.configure(state=DISABLED)
             self.btn_restart.configure(state=DISABLED)
             self.btn_attach.configure(state=DISABLED)
-        else:
-            self.btn_setup.configure(state=NORMAL)
-            can_start = not session_ok and self._setup_state == "ready"
-            self.btn_start.configure(state=NORMAL if can_start else DISABLED)
-            self.btn_stop.configure(state=NORMAL if session_ok else DISABLED)
-            self.btn_restart.configure(state=NORMAL if session_ok else DISABLED)
-            self.btn_attach.configure(state=NORMAL if session_ok else DISABLED)
+            self.btn_token_backfill.configure(state=DISABLED)
+            self.btn_token_rebuild.configure(state=DISABLED)
+            return
+        self.btn_setup.configure(state=NORMAL)
+        self.btn_start.configure(state=NORMAL if can_start else DISABLED)
+        self.btn_stop.configure(state=NORMAL if session_ok else DISABLED)
+        self.btn_restart.configure(state=NORMAL if session_ok else DISABLED)
+        self.btn_attach.configure(state=NORMAL if session_ok else DISABLED)
+        self.btn_token_backfill.configure(state=NORMAL)
+        self.btn_token_rebuild.configure(state=NORMAL)
 
     # ── 제어 ──
 
@@ -1160,6 +1191,84 @@ class PipelineGUI:
         self._action_in_progress = False
         self._set_toast_style("error" if is_error else "success")
         self.msg_var.set(msg)
+
+    def _set_token_action_text(self, text: str) -> None:
+        if hasattr(self, "_token_action_var"):
+            self._token_action_var.set(text)
+
+    def _update_token_action_progress(self, action_label: str, payload: dict[str, object]) -> None:
+        phase = str(payload.get("phase") or "scanning")
+        phase_display = phase.replace("_", " ")
+        elapsed = float(payload.get("elapsed_sec") or 0.0)
+        scanned_files = int(payload.get("scanned_files") or 0)
+        parsed_files = int(payload.get("parsed_files") or 0)
+        total_files = int(payload.get("total_files") or 0)
+        progress_percent = int(payload.get("progress_percent") or 0)
+        inserted = int(payload.get("usage_inserted") or 0) + int(payload.get("pipeline_inserted") or 0)
+        duplicates = int(payload.get("duplicates") or 0)
+        retry_later = int(payload.get("retry_later") or 0)
+        text = (
+            f"Action: {action_label} · {progress_percent}% · {phase_display} · {elapsed:.1f}s"
+            f" · scan {scanned_files}/{total_files or scanned_files} · parse {parsed_files}"
+            f" · insert {self._fmt_count(inserted)} · dup {self._fmt_count(duplicates)}"
+        )
+        if retry_later:
+            text += f" · retry {retry_later}"
+        self._set_token_action_text(text)
+
+    def _token_progress_callback(self, action_label: str):
+        def _callback(payload: dict[str, object]) -> None:
+            self._enqueue_token_ui(
+                lambda p=dict(payload), a=action_label: self._update_token_action_progress(a, p)
+            )
+        return _callback
+
+    def _enqueue_token_ui(self, callback) -> None:
+        self._token_ui_queue.put(callback)
+
+    def _start_token_ui_pump(self) -> None:
+        if self._token_ui_after_id is None:
+            self._token_ui_after_id = self.root.after(50, self._drain_token_ui_queue)
+
+    def _drain_token_ui_queue(self) -> None:
+        self._token_ui_after_id = None
+        while True:
+            try:
+                callback = self._token_ui_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                callback()
+            except Exception:
+                continue
+        if self._action_in_progress or not self._token_ui_queue.empty():
+            self._token_ui_after_id = self.root.after(50, self._drain_token_ui_queue)
+
+    def _format_token_action_done(
+        self,
+        action_label: str,
+        summary: dict[str, object],
+        *,
+        backup_path: str = "",
+    ) -> str:
+        elapsed = float(summary.get("elapsed_sec") or 0.0)
+        scanned_files = int(summary.get("scanned_files") or 0)
+        parsed_files = int(summary.get("parsed_files") or 0)
+        total_files = int(summary.get("total_files") or 0)
+        progress_percent = int(summary.get("progress_percent") or 100)
+        inserted = int(summary.get("usage_inserted") or 0) + int(summary.get("pipeline_inserted") or 0)
+        duplicates = int(summary.get("duplicates") or 0)
+        retry_later = int(summary.get("retry_later") or 0)
+        text = (
+            f"Action: {action_label} · {progress_percent}% · idle · {elapsed:.1f}s"
+            f" · scan {scanned_files}/{total_files or scanned_files} · parse {parsed_files}"
+            f" · insert {self._fmt_count(inserted)} · dup {self._fmt_count(duplicates)}"
+        )
+        if retry_later:
+            text += f" · retry {retry_later}"
+        if backup_path:
+            text += f" · backup {Path(backup_path).name}"
+        return text
 
     def _clear_msg_later(self, delay_ms: int = 6000) -> None:
         self.root.after(delay_ms, lambda: self.msg_var.set("") if not self._action_in_progress else None)
@@ -1201,10 +1310,14 @@ class PipelineGUI:
         self.root.after(0, lambda: self.msg_var.set(text))
 
     def _ask_yn(self, title: str, msg: str, icon: str = "warning") -> bool:
-        """Background thread에서 main-thread messagebox를 호출하고 결과 대기."""
+        """현재 thread 문맥에 맞춰 yes/no dialog를 안전하게 표시합니다."""
+        if threading.current_thread() is threading.main_thread():
+            return bool(messagebox.askyesno(title, msg, icon=icon))
         result: list[bool | None] = [None]
+
         def _ask() -> None:
             result[0] = messagebox.askyesno(title, msg, icon=icon)
+
         self.root.after(0, _ask)
         while result[0] is None:
             time.sleep(0.1)
@@ -1438,8 +1551,9 @@ class PipelineGUI:
     def _do_start(self) -> None:
         try:
             # Pre-check: launcher script 접근 가능 여부
-            script = APP_ROOT / "start-pipeline.sh"
-            if not script.exists() and not IS_WINDOWS:
+            try:
+                script = resolve_project_runtime_file(self.project, "start-pipeline.sh")
+            except FileNotFoundError:
                 self.root.after(0, lambda: self._unlock_buttons(
                     "▶ Start failed: start-pipeline.sh not found", is_error=True))
                 self.root.after(0, lambda: self._clear_msg_later(10000))
@@ -1497,8 +1611,28 @@ class PipelineGUI:
 
     def _do_stop(self) -> None:
         try:
-            msg = pipeline_stop(self.project, self._session_name)
-            self.root.after(0, lambda: self._unlock_buttons(f"■ {msg}"))
+            pipeline_stop(self.project, self._session_name)
+            for sec in range(5):
+                time.sleep(1)
+                session_alive = tmux_alive(self._session_name)
+                collector_alive, _collector_pid = token_collector_alive(self.project)
+                if not session_alive and not collector_alive:
+                    self.root.after(0, lambda: self._unlock_buttons("■ 중지 완료"))
+                    self.root.after(0, lambda: self._clear_msg_later())
+                    return
+                self.root.after(0, lambda s=sec: self.msg_var.set(
+                    f"■ Stopping... ({s+1}s)"))
+            remaining = []
+            if tmux_alive(self._session_name):
+                remaining.append("tmux session")
+            collector_alive, _collector_pid = token_collector_alive(self.project)
+            if collector_alive:
+                remaining.append("token collector")
+            detail = ", ".join(remaining) if remaining else "processes"
+            self.root.after(0, lambda d=detail: self._unlock_buttons(
+                f"■ Stop incomplete: {d} still detected",
+                is_error=True,
+            ))
         except Exception as e:
             self.root.after(0, lambda: self._unlock_buttons(f"■ Stop failed: {e}", is_error=True))
         self.root.after(0, lambda: self._clear_msg_later())
@@ -1570,8 +1704,124 @@ class PipelineGUI:
             self.msg_var.set("tmux 세션이 없습니다. 먼저 Start하세요.")
             self._clear_msg_later()
 
+    def _token_action_initial_payload(self) -> dict[str, object]:
+        return {
+            "phase": "preparing",
+            "elapsed_sec": 0.0,
+            "scanned_files": 0,
+            "parsed_files": 0,
+            "total_files": 0,
+            "progress_percent": 0,
+            "usage_inserted": 0,
+            "pipeline_inserted": 0,
+            "duplicates": 0,
+            "retry_later": 0,
+        }
+
+    def _start_token_maintenance_action(
+        self,
+        *,
+        action_label: str,
+        dialog_title: str,
+        dialog_message: str,
+        icon: str,
+        lock_message: str,
+        worker_target,
+    ) -> None:
+        if self._action_in_progress:
+            return
+        if not self._ask_yn(dialog_title, dialog_message, icon=icon):
+            return
+        self._lock_buttons(lock_message)
+        self._update_token_action_progress(action_label, self._token_action_initial_payload())
+        self._start_token_ui_pump()
+        threading.Thread(target=worker_target, daemon=True).start()
+
+    def _run_token_maintenance_action(
+        self,
+        *,
+        action_label: str,
+        action_runner,
+        unlock_message_builder,
+        error_message: str,
+    ) -> None:
+        try:
+            result = action_runner()
+            summary = dict(result.get("summary") or {})
+            backup_path = str(result.get("backup_path") or "")
+            done_text = self._format_token_action_done(action_label, summary, backup_path=backup_path)
+            self._enqueue_token_ui(lambda text=done_text: self._set_token_action_text(text))
+            self._enqueue_token_ui(self._refresh_token_dashboard_async)
+            self._enqueue_token_ui(lambda: self._start_token_usage_refresh(force=True))
+            unlock_message = unlock_message_builder(summary, backup_path)
+            self._enqueue_token_ui(lambda text=unlock_message: self._unlock_buttons(text))
+        except Exception as e:
+            err = str(e)
+            self._enqueue_token_ui(
+                lambda text=f"Action: {action_label} · error · {err}": self._set_token_action_text(text)
+            )
+            self._enqueue_token_ui(lambda text=f"{error_message}: {err}": self._unlock_buttons(text, is_error=True))
+        self._enqueue_token_ui(lambda: self._clear_msg_later(10000))
+
+    def _on_token_backfill(self) -> None:
+        self._start_token_maintenance_action(
+            action_label="FULL HISTORY",
+            dialog_title="Full History Backfill",
+            dialog_message=(
+                "기존 usage.db를 유지한 채 전체 히스토리를 추가로 채웁니다.\n"
+                "중복은 dedup로 막고, 실행 중 collector가 있으면 잠시 멈췄다가 다시 시작합니다.\n\n"
+                "계속하시겠습니까?"
+            ),
+            icon="question",
+            lock_message="TOKENS: full history backfill...",
+            worker_target=self._do_token_backfill,
+        )
+
+    def _do_token_backfill(self) -> None:
+        self._run_token_maintenance_action(
+            action_label="FULL HISTORY",
+            action_runner=lambda: backfill_token_history(
+                self.project,
+                progress_callback=self._token_progress_callback("FULL HISTORY"),
+            ),
+            unlock_message_builder=lambda summary, _backup_path: (
+                f"TOKENS: full history backfill complete "
+                f"({float(summary.get('elapsed_sec') or 0.0):.1f}s, "
+                f"{self._fmt_count(int(summary.get('usage_inserted') or 0))} usage)"
+            ),
+            error_message="TOKENS: backfill failed",
+        )
+
+    def _on_token_rebuild(self) -> None:
+        self._start_token_maintenance_action(
+            action_label="REBUILD DB",
+            dialog_title="Rebuild Token DB",
+            dialog_message=(
+                "임시 DB로 전체 스캔을 다시 수행한 뒤, 성공 시 기존 usage.db를 backup으로 남기고 교체합니다.\n"
+                "실패하면 현재 usage.db는 유지됩니다.\n"
+                "실행 중 collector가 있으면 잠시 멈췄다가 다시 시작합니다.\n\n"
+                "계속하시겠습니까?"
+            ),
+            icon="warning",
+            lock_message="TOKENS: rebuilding usage DB...",
+            worker_target=self._do_token_rebuild,
+        )
+
+    def _do_token_rebuild(self) -> None:
+        self._run_token_maintenance_action(
+            action_label="REBUILD DB",
+            action_runner=lambda: rebuild_token_db(
+                self.project,
+                progress_callback=self._token_progress_callback("REBUILD DB"),
+            ),
+            unlock_message_builder=lambda summary, backup_path: (
+                f"TOKENS: DB rebuilt ({float(summary.get('elapsed_sec') or 0.0):.1f}s)"
+                f"{f' · backup {Path(backup_path).name}' if backup_path else ''}"
+            ),
+            error_message="TOKENS: rebuild failed",
+        )
+
     # ── 실행 ──
 
     def run(self) -> None:
         self.root.mainloop()
-

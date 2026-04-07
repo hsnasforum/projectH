@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 
-
 @dataclass(slots=True)
 class AppSettings:
     app_name: str = "local-ai-assistant"

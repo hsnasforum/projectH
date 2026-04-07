@@ -62,6 +62,16 @@ if [ -f "$PROJECT_ROOT/.pipeline/experimental.pid" ]; then
     echo -e "${GREEN}  experimental watcher 종료${NC}"
 fi
 
+# token collector 종료
+if [ -f "$PROJECT_ROOT/.pipeline/usage/collector.pid" ]; then
+    kill "$(cat "$PROJECT_ROOT/.pipeline/usage/collector.pid")" 2>/dev/null || true
+    rm "$PROJECT_ROOT/.pipeline/usage/collector.pid"
+    echo -e "${GREEN}  token collector 종료${NC}"
+fi
+rm -f "$PROJECT_ROOT/.pipeline/usage/collector.pane_id" 2>/dev/null || true
+rm -f "$PROJECT_ROOT/.pipeline/usage/collector.window_name" 2>/dev/null || true
+rm -f "$PROJECT_ROOT/.pipeline/usage/collector.launch_mode" 2>/dev/null || true
+
 # pid 파일 밖에 남은 repo-local watcher도 함께 정리
 terminate_repo_watchers
 

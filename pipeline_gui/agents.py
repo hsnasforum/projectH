@@ -28,6 +28,23 @@ WATCHER_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")
 _JOB_ID_RE = re.compile(r"new job:\s*(\S+)")
 _STATE_TRANS_RE = re.compile(r"state\s+\S+\s+(\S+)\s*→\s*(\S+)")
 _ELAPSED_RE = re.compile(r"(\d+)\s*(h|m|s)")
+_BUSY_PATTERNS = (
+    "working (",        # ◦ Working (36s • esc to interrupt)
+    "working for ",     # Worked for 1m 25s (transition text)
+    "• working",        # • Working ...
+    "◦ working",        # ◦ Working ...
+    "waiting for background",
+    "background terminal",
+    "cascading",
+    "lollygagging",
+    "hashing",
+    "leavering",
+    "flumoxing",
+    "philosophising",
+    "sautéed",
+    "thinking",
+    "esc to interrupt",
+)
 
 STATUS_COLORS = {
     "WORKING": "#4ade80",
@@ -92,8 +109,17 @@ def _parse_elapsed(note: str) -> float:
     return total
 
 
+def _recent_nonempty_lines(pane_text: str, limit: int = 24) -> list[str]:
+    return [line.strip() for line in pane_text.splitlines() if line.strip()][-limit:]
+
+
+def _recent_busy_indicator(pane_text: str, limit: int = 18) -> bool:
+    recent_lower = "\n".join(_recent_nonempty_lines(pane_text, limit)).lower()
+    return any(pattern in recent_lower for pattern in _BUSY_PATTERNS)
+
+
 def extract_working_note(lines: list[str]) -> str:
-    for line in reversed(lines[-80:]):
+    for line in reversed(lines[-24:]):
         match = re.search(r"Working \(([^)]*)", line, re.IGNORECASE)
         if match:
             note = match.group(1).split("•", 1)[0].strip(" )…")
@@ -130,18 +156,16 @@ def detect_agent_status(label: str, pane_text: str) -> tuple[str, str]:
     if not lines:
         return "DEAD", ""
     lower = pane_text.lower()
+    recent_lower = "\n".join(_recent_nonempty_lines(pane_text, 18)).lower()
+    has_recent_busy = _recent_busy_indicator(pane_text)
     if (
-        "working (" in lower or "background terminal" in lower
-        or "waiting for background" in lower or "waited for background" in lower
-        or "cascading" in lower or "lollygagging" in lower
-        or "hashing" in lower or "leavering" in lower
-        or "without interrupting claude's current work" in lower
-        or "flumoxing" in lower or "philosophising" in lower or "sautéed" in lower
+        has_recent_busy
+        or "waited for background" in recent_lower
+        or "without interrupting claude's current work" in recent_lower
     ):
         note = extract_working_note(lines)
         return "WORKING", note
     if label == "Gemini":
-        recent_lower = "\n".join(lines[-15:]).lower()
         if "esc to cancel" in recent_lower:
             return "WORKING", ""
     if label == "Codex" and ("› " in pane_text or "openai codex" in lower):
@@ -304,15 +328,15 @@ def watcher_runtime_hints(project: Path) -> dict[str, tuple[str, str]]:
     hints: dict[str, tuple[str, str]] = {}
     now = time.time()
     if claude_started_at is not None and not claude_done:
-        hints["Claude"] = ("WORKING", format_elapsed(now - claude_started_at))
+        hints["Claude"] = ("WORKING", f"impl {format_elapsed(now - claude_started_at)}")
     elif claude_done:
         hints["Claude"] = ("READY", "")
     if codex_started_at is not None and not codex_done:
-        hints["Codex"] = ("WORKING", format_elapsed(now - codex_started_at))
+        hints["Codex"] = ("WORKING", f"verify {format_elapsed(now - codex_started_at)}")
     elif codex_done:
         hints["Codex"] = ("READY", "")
     if gemini_started_at is not None and not gemini_done:
-        hints["Gemini"] = ("WORKING", format_elapsed(now - gemini_started_at))
+        hints["Gemini"] = ("WORKING", f"advice {format_elapsed(now - gemini_started_at)}")
     elif gemini_done:
         hints["Gemini"] = ("READY", "")
     return hints

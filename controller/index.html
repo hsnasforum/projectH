@@ -6,12 +6,14 @@
 <title>Pipeline Controller</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
   body { font-family: 'Noto Sans KR', -apple-system, sans-serif; background: #0f0f0f; color: #e0e0e0; }
 
   /* ── Toolbar ── */
   .toolbar {
     display: flex; align-items: center; gap: 16px;
     padding: 10px 20px; background: #1a1a1a; border-bottom: 1px solid #333;
+    min-width: 0; overflow: hidden;
   }
   .toolbar .title { font-size: 15px; font-weight: 700; color: #60a5fa; }
   .toolbar .status { font-size: 13px; padding: 3px 10px; border-radius: 12px; }
@@ -31,42 +33,80 @@
   }
   .toolbar .view-tab.active { background: #1d4ed8; border-color: #2563eb; color: #fff; }
   .toolbar .spacer { flex: 1; }
-  .toolbar .info { font-size: 11px; color: #888; }
+  .toolbar .info {
+    font-size: 11px; color: #888; min-width: 0; max-width: 32vw;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
 
   /* ── Layout ── */
-  .main { display: flex; height: calc(100vh - 44px); min-width: 0; }
-  .sidebar { width: 180px; background: #141414; border-right: 1px solid #333; padding: 12px; overflow-y: auto; flex-shrink: 0; }
-  .center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  .right-panel { width: 220px; background: #141414; border-left: 1px solid #333; padding: 12px; overflow-y: auto; flex-shrink: 0; }
+  .main { display: flex; height: calc(100vh - 44px); min-width: 0; overflow: hidden; }
+  .sidebar {
+    width: 180px; background: #141414; border-right: 1px solid #333; padding: 12px;
+    overflow-y: auto; overflow-x: hidden; flex-shrink: 0; min-width: 180px;
+  }
+  .center { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+  .right-panel {
+    width: 220px; background: #141414; border-left: 1px solid #333; padding: 12px;
+    overflow-y: auto; overflow-x: hidden; flex-shrink: 0; min-width: 220px;
+  }
   .main.focus-mode .sidebar { width: 140px; }
   .main.focus-mode .right-panel { display: none; }
 
   /* ── Sidebar ── */
   .sidebar h3 { font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
-  .sidebar .item { font-size: 12px; color: #aaa; margin-bottom: 6px; line-height: 1.5; }
+  .sidebar .item {
+    font-size: 12px; color: #aaa; margin-bottom: 6px; line-height: 1.5;
+    overflow-wrap: anywhere; word-break: break-word;
+  }
   .sidebar .item .label { color: #666; }
   .agent-list { margin-top: 12px; }
   .agent-item {
     display: flex; align-items: center; gap: 8px;
     padding: 6px 8px; border-radius: 6px; margin-bottom: 4px; font-size: 12px;
+    min-width: 0;
   }
   .agent-item:hover { background: #1e1e1e; }
+  .agent-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agent-meta { margin-left: auto; display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .agent-status {
+    font-size: 10px; padding: 2px 8px; border-radius: 999px; text-transform: uppercase;
+    letter-spacing: .03em; font-weight: 700;
+  }
+  .agent-status.working { background: #064e3b; color: #34d399; }
+  .agent-status.ready { background: #1e3a5f; color: #60a5fa; }
+  .agent-status.booting, .agent-status.unknown { background: #4a3414; color: #fbbf24; }
+  .agent-status.dead, .agent-status.off { background: #7f1d1d; color: #fca5a5; }
+  .agent-note {
+    color: #999; font-size: 10px; min-width: 0; max-width: 56px;
+    text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
   .dot.working { background: #34d399; }
-  .dot.idle { background: #60a5fa; }
+  .dot.idle, .dot.ready { background: #60a5fa; }
+  .dot.booting { background: #f59e0b; }
   .dot.off { background: #555; }
   .dot.dead { background: #ef4444; }
   .dot.unknown { background: #a78bfa; }
   .agent-role { color: #666; font-size: 10px; }
 
-  /* ── Pane Area ── */
+ /* 2. 패널 전체 영역 설정 확인 */
   .pane-area {
-    flex: 1; display: flex; gap: 1px; background: #333;
-    overflow: hidden; align-items: stretch;
+    flex: 1;
+    display: flex;
+    gap: 1px;
+    background: #333;
+    overflow: hidden;
+    align-items: stretch;
+    width: 100%; /* 부모 너비의 100% 사용 */
   }
+  /* 1. 개별 패널의 너비 제한 풀기 */
   .pane {
-    flex: 1 1 0; display: flex; flex-direction: column; background: #0f0f0f;
-    min-width: 280px; overflow: hidden;
+    flex: 1 1 0;      /* 중요: 세 영역이 화면을 정확히 1/3씩 나눠 갖도록 함 */
+    min-width: 0;     /* 기존 280px 설정을 0으로 줄여서 유연하게 확장 */
+    display: flex;
+    flex-direction: column;
+    background: #0f0f0f;
+    overflow: hidden;
   }
   .pane-area.focused .pane {
     flex: 1 0 100%;
@@ -75,21 +115,42 @@
   .pane-header {
     display: flex; align-items: center; gap: 6px;
     padding: 6px 10px; background: #1a1a1a; border-bottom: 1px solid #333;
-    font-size: 12px; flex-shrink: 0;
+    font-size: 12px; flex-shrink: 0; min-width: 0;
   }
-  .pane-header .name { font-weight: 600; }
+  .pane-header .name {
+    font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .pane-header .badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; }
   .pane-header .badge.working { background: #064e3b; color: #34d399; }
-  .pane-header .badge.idle { background: #1e3a5f; color: #60a5fa; }
+  .pane-header .badge.idle, .pane-header .badge.ready { background: #1e3a5f; color: #60a5fa; }
+  .pane-header .badge.booting, .pane-header .badge.unknown { background: #4a3414; color: #fbbf24; }
   .pane-header .badge.off { background: #333; color: #888; }
   .pane-header .badge.dead { background: #7f1d1d; color: #fca5a5; }
+  .pane-header .meta { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .pane-header .note {
+    font-size: 10px; color: #a3a3a3; min-width: 0; max-width: 96px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .pane-body {
-    flex: 1; padding: 4px 0; overflow: auto;
-    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
-    font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; overflow-wrap: break-word;
-    color: #ccc;
-    tab-size: 2;
-    width: 100%;
+  flex: 1;
+  padding: 15px 25px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #ccc;
+
+  /* ── 이 설정들이 그릇을 넓혀줍니다 ── */
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box;
+
+  white-space: pre-wrap;     /* 줄바꿈 유지 */
+  word-break: break-all;     /* 박스 끝까지 글자 채우기 */
+  overflow-wrap: anywhere;   /* 박스 이탈 방지 */
+  text-align: left;
   }
   .pane-area::-webkit-scrollbar,
   .pane-body::-webkit-scrollbar {
@@ -128,6 +189,12 @@
   .watcher-box .value { font-size: 12px; font-weight: 600; }
   .watcher-box .value.alive { color: #34d399; }
   .watcher-box .value.dead { color: #ef4444; }
+  .watcher-box .value,
+  .slot-card .slot-preview,
+  #sidebar-project {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
 </style>
 </head>
 <body>
@@ -202,8 +269,10 @@ function renderAgentList(agents) {
   el.innerHTML = agents.map(a => `
     <div class="agent-item">
       <div class="dot ${a.status}"></div>
-      <span>${a.name}</span>
-      <span class="agent-role">${a.role}</span>
+      <span class="agent-name">${a.name}</span>
+      <div class="agent-meta">
+        <span class="agent-status ${a.status}">${a.status}</span>
+      </div>
     </div>
   `).join("");
 }
@@ -222,7 +291,10 @@ function renderPanes(agents) {
         <div class="pane-header">
           <div class="dot ${a.status}"></div>
           <span class="name">${a.name}</span>
-          <span class="badge ${a.status}">${a.status}</span>
+          <div class="meta">
+            ${a.status_note ? `<span class="note">${escapeHtml(a.status_note)}</span>` : ``}
+            <span class="badge ${a.status}">${a.status}</span>
+          </div>
         </div>
         <div class="pane-body" id="pane-body-${i}"></div>
       </div>
@@ -235,14 +307,17 @@ function renderPanes(agents) {
       header.innerHTML = `
         <div class="dot ${a.status}"></div>
         <span class="name">${a.name}</span>
-        <span class="badge ${a.status}">${a.status}</span>
+        <div class="meta">
+          ${a.status_note ? `<span class="note">${escapeHtml(a.status_note)}</span>` : ``}
+          <span class="badge ${a.status}">${a.status}</span>
+        </div>
       `;
     }
     // 본문 업데이트 — 스크롤이 바닥이면 follow
     const body = document.getElementById(`pane-body-${i}`);
     if (body) {
       const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 50;
-      body.textContent = a.pane_text || "(출력 없음)";
+      body.textContent = (a.pane_text || "(출력 없음)").trim();
       if (atBottom) body.scrollTop = body.scrollHeight;
     }
   });

@@ -15,6 +15,7 @@
 - verification 메모를 저장할 때는 `verify/<현재월>/<현재일>/` 폴더가 없으면 먼저 생성합니다.
 - 한 verification 라운드가 끝날 때 실제 재실행한 검증, 실제 코드/문서 대조 결과, 현재 truth, 남은 리스크를 한 파일에 정리합니다.
 - 기본 모드에서 verification 메모는 "이번 Claude `/work` 주장이 맞는가"를 확인하는 검수 결과서여야 합니다.
+- verification 메모는 인위적으로 잘게 쪼갠 micro-round보다, 하나의 의미 있는 bounded slice가 truthfully 닫혔는지 확인하는 단위로 남기는 편이 맞습니다.
 - 새 verification 메모에는 아래 섹션을 이 순서로 둡니다:
   - `## 변경 파일`
   - `## 사용 skill`
@@ -32,7 +33,10 @@
 - `/verify`는 최신 `/work`에 대한 검수 결과와 truth 재대조 결과입니다.
 - 구현이 있었다면 먼저 `/work`가 있고, 그 다음 verification-backed handoff가 의미 있으면 `/verify`가 따라옵니다.
 - `/verify`는 `/work`를 대체하지 않습니다. 최신 구현 truth는 항상 최신 `/work`부터 읽고 시작합니다.
-- `.pipeline/codex_feedback.md`는 자동화용 rolling handoff 슬롯이며, 최신 verification truth를 편하게 넘기기 위한 보조 수단일 뿐 `/verify`를 대체하지 않습니다.
+- `.pipeline/claude_handoff.md`와 `.pipeline/operator_request.md`는 자동화용 rolling handoff 슬롯이며, 최신 verification truth를 편하게 넘기기 위한 보조 수단일 뿐 `/verify`를 대체하지 않습니다.
+- `.pipeline/gemini_request.md`와 `.pipeline/gemini_advice.md`는 arbitration용 rolling 슬롯이며, 최신 verification truth를 편하게 넘기기 위한 보조 수단일 뿐 `/verify`를 대체하지 않습니다.
+- `.pipeline/session_arbitration_draft.md`는 watcher가 active Claude session의 escalation pattern을 감지했고 Codex/Gemini가 idle이며 Claude가 idle이거나 짧게 settle된 상태일 때만 남길 수 있는 draft_only 메모이며, 검증 truth나 canonical arbitration 슬롯을 대체하지 않습니다. resolved 조건이 생기면 watcher가 정리할 수 있고, 같은 fingerprint는 짧은 cooldown 동안 반복 생성하지 않습니다.
+- `.pipeline/codex_feedback.md`는 optional scratch 또는 legacy compatibility text일 뿐이며, 실행 신호로는 쓰지 않습니다.
 - `.pipeline/gpt_prompt.md`는 optional/legacy scratch 슬롯로 남길 수 있지만, canonical single-Codex 흐름의 필수 단계는 아닙니다.
 - whole-project trajectory audit이나 milestone-level 평가는 `/verify`가 아니라 `report/`에 남기는 편이 맞습니다.
 
@@ -47,20 +51,26 @@
 - `/verify`는 `/work`와 같은 섹션 순서를 유지하되, 검증자가 실제로 다시 실행한 명령과 현재 truth를 더 엄격하게 기록하는 용도입니다.
 - round-handoff, release-check 같은 verification/handoff 성격의 skill을 썼다면 그 사실을 `## 사용 skill`에 적습니다.
 - `/work` 또는 `/verify` 정책이 바뀌면 두 README를 같은 라운드에서 함께 갱신해 후속 작업자가 경계를 헷갈리지 않게 합니다.
-- single-Codex tmux 흐름에서는 Codex가 실제 검증 후 `/verify`를 남긴 다음 `.pipeline/codex_feedback.md`를 씁니다. persistent verification truth는 항상 `/verify`가 먼저입니다.
-- Codex는 `.pipeline/codex_feedback.md`를 쓸 때 항상 다음 둘 중 하나를 명시합니다.
-  - `STATUS: implement` = 다음 단일 슬라이스 확정
-  - `STATUS: needs_operator` = 다음 단일 슬라이스 미확정, 자동 진행 금지
+- single-Codex tmux 흐름에서는 Codex가 실제 검증 후 `/verify`를 남긴 다음:
+  - 구현 가능한 경우 `.pipeline/claude_handoff.md`에 `STATUS: implement`
+  - Gemini arbitration이 필요하면 `.pipeline/gemini_request.md`에 `STATUS: request_open`
+  - Gemini가 `.pipeline/gemini_advice.md`에 `STATUS: advice_ready`
+  - 멈춰야 하는 경우 `.pipeline/operator_request.md`에 `STATUS: needs_operator`
+  를 남깁니다. persistent verification truth는 항상 `/verify`가 먼저입니다.
 - `STATUS: needs_operator`를 쓸 때는 bare stop line만 남기지 말고, 최소한 stop reason, 근거가 된 latest `/work`와 `/verify`, 그리고 operator가 다음에 무엇을 정해야 하는지를 같이 남깁니다.
 - `/verify`의 1차 목적은 현재 truth를 정직하게 다시 맞추는 것입니다. 다음 슬라이스 제안은 가능하지만, 단순한 uncovered regression 채우기보다 현재 MVP 우선순위를 먼저 통과해야 합니다.
 - `/verify`의 1차 목적은 repo 전체 상태를 새로 재판정하는 것이 아니라, 최신 Claude 라운드가 truthful한지 확인하고 그 범위 안에서 다음 한 슬라이스를 좁게 제안하는 것입니다.
+- 다음 슬라이스를 제안할 때도 기존 shared path 재사용으로 중복 코드를 줄일 수 있는지 먼저 보고, 하나의 coherent slice로 닫을 수 있는데도 필요 이상으로 micro-slice로 쪼개지 않습니다.
 - latest `/work`와 `/verify`가 한 family를 truthfully 닫았다면, 다음 슬라이스 제안은 보통 같은 family의 가장 작은 current-risk reduction부터 검토하는 편이 맞습니다.
 - 자동 제안 우선순위는 보통 다음과 같습니다.
   - same-family current-risk reduction
   - same-family user-visible improvement
   - new quality axis
   - internal cleanup
-- 따라서 `/verify`에서 바로 다음 단일 슬라이스를 고르지 못했다면, Claude에게 선택권을 넘기지 말고 `.pipeline/codex_feedback.md`를 `STATUS: needs_operator`로 남기는 편이 맞습니다.
-- 다만 그 경우에도 `.pipeline/codex_feedback.md`는 빈 정지 신호가 아니라, 사람이 다시 읽었을 때 즉시 맥락을 복원할 수 있는 stop handoff여야 합니다.
+- 따라서 `/verify`에서 바로 다음 단일 슬라이스를 고르지 못했다면, Claude에게 선택권을 넘기지 말고 `.pipeline/operator_request.md`를 `STATUS: needs_operator`로 남기는 편이 맞습니다.
+- 다만 operator escalation 전에 Gemini arbitration이 도움이 되는 경우, 먼저 `.pipeline/gemini_request.md`를 열고 Gemini recommendation을 받은 뒤 Codex가 다시 한 번 exact slice를 좁히는 편이 맞습니다.
+- 다만 그 Gemini arbitration이 active Claude session의 context exhaustion, session rollover, continue-vs-switch 같은 side question을 다루는 경우에는, Codex가 그 답을 Claude에게 짧은 lane reply로만 relay하고 `.pipeline/claude_handoff.md`는 session boundary 전까지 그대로 두는 편이 맞습니다.
+- 다만 그 경우에도 `.pipeline/operator_request.md`는 빈 정지 신호가 아니라, 사람이 다시 읽었을 때 즉시 맥락을 복원할 수 있는 stop handoff여야 합니다.
 - focused regression만 다시 돌렸다면 그 이유를 적고, full browser 또는 end-to-end verification을 생략했다면 왜 이번 변경과 직접 관련이 없었는지 분명히 적습니다.
+- Playwright-only smoke tightening, selector drift, single-scenario fixture update 같은 브라우저 검수는 isolated scenario rerun을 먼저 적고, `make e2e-test`를 생략했다면 shared browser helper 변경이 없었는지, release/ready 판정 라운드가 아닌지 같이 남기는 편이 맞습니다.
 - `route-level`, `handler-level`, `helper-level` completeness 공백은 현재 shipped user flow를 지키는 경우가 아니라면 기본적으로 리스크 메모에 가깝게 다루고, 다음 기능 슬라이스의 자동 기본값으로 승격하지 않습니다.

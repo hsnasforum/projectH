@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
-from json import JSONDecodeError
 from pathlib import Path
 import threading
 from typing import Any, Dict
@@ -15,6 +13,7 @@ from core.approval import (
     normalize_source_message_id,
 )
 from storage.errors import SaveConflictError, SessionCorruptError
+from storage.json_store_base import atomic_write, json_path, read_json, utc_now_iso
 from core.contracts import (
     ALLOWED_CANDIDATE_CONFIRMATION_LABELS,
     ALLOWED_CONTENT_REASON_LABELS,
@@ -42,10 +41,10 @@ class SessionStore:
         self._lock = threading.RLock()
 
     def _path(self, session_id: str) -> Path:
-        return self.base_dir / f"{session_id}.json"
+        return json_path(self.base_dir, session_id, sanitise=False)
 
     def _now(self) -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return utc_now_iso()
 
     def _default_session(self, session_id: str) -> Dict[str, Any]:
         now = self._now()
@@ -789,16 +788,9 @@ class SessionStore:
     def _save(self, session_id: str, data: Dict[str, Any]) -> None:
         with self._lock:
             path = self._path(session_id)
-            temp_path = path.with_name(f"{path.name}.{uuid4().hex[:8]}.tmp")
             data["_version"] = data.get("_version", 0) + 1
             data["updated_at"] = self._now()
-            encoded = json.dumps(data, ensure_ascii=False, indent=2)
-            try:
-                temp_path.write_text(encoded, encoding="utf-8")
-                temp_path.replace(path)
-            except BaseException:
-                temp_path.unlink(missing_ok=True)
-                raise
+            atomic_write(path, data)
 
     def _backup_corrupt_session_file(self, path: Path) -> Path | None:
         if not path.exists():
@@ -818,9 +810,8 @@ class SessionStore:
         with self._lock:
             path = self._path(session_id)
             if path.exists():
-                try:
-                    loaded = json.loads(path.read_text(encoding="utf-8"))
-                except (JSONDecodeError, OSError):
+                loaded = read_json(path)
+                if not isinstance(loaded, dict):
                     self._backup_corrupt_session_file(path)
                     recovered = self._default_session(session_id)
                     self._save(session_id, recovered)

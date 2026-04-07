@@ -4,7 +4,8 @@
 # ============================================================
 #
 # 사전 조건:
-#   pip install pyinstaller   (Windows Python 또는 WSL 안에서)
+#   - Windows exe: Windows Python/PowerShell에서 pyinstaller 설치
+#   - WSL/Linux 빌드: venv 안에서 pyinstaller 설치
 #
 # 실행:
 #   bash scripts/build-gui-exe.sh
@@ -29,37 +30,66 @@ echo "========================"
 echo "Project: $PROJECT_ROOT"
 echo ""
 
-# PyInstaller 확인
-if ! command -v pyinstaller &>/dev/null; then
-    echo "[ERROR] PyInstaller가 설치되어 있지 않습니다."
-    echo "        pip install pyinstaller"
+PYINSTALLER_CMD=()
+TKINTER_CHECK_CMD=()
+
+if python3 -m PyInstaller --version &>/dev/null; then
+    PYINSTALLER_CMD=(python3 -m PyInstaller)
+    TKINTER_CHECK_CMD=(python3 -c "import tkinter")
+elif python -m PyInstaller --version &>/dev/null; then
+    PYINSTALLER_CMD=(python -m PyInstaller)
+    TKINTER_CHECK_CMD=(python -c "import tkinter")
+elif py -3 -m PyInstaller --version &>/dev/null; then
+    PYINSTALLER_CMD=(py -3 -m PyInstaller)
+    TKINTER_CHECK_CMD=(py -3 -c "import tkinter")
+elif command -v pyinstaller &>/dev/null; then
+    PYINSTALLER_CMD=(pyinstaller)
+    if command -v python3 &>/dev/null; then
+        TKINTER_CHECK_CMD=(python3 -c "import tkinter")
+    elif command -v python &>/dev/null; then
+        TKINTER_CHECK_CMD=(python -c "import tkinter")
+    fi
+else
+    echo "[ERROR] 현재 bash 환경에서 PyInstaller를 찾지 못했습니다."
+    echo "        Windows PowerShell에서 설치한 pyinstaller는 WSL/bash에서 보이지 않을 수 있습니다."
+    echo "        - PowerShell에서 직접 빌드: scripts/PACKAGING.md 방법 B"
+    echo "        - bash/WSL에서 빌드: python3 -m venv .venv-build && . .venv-build/bin/activate && python -m pip install pyinstaller"
     exit 1
 fi
 
 # tkinter 확인
-python3 -c "import tkinter" 2>/dev/null || {
-    echo "[ERROR] python3-tk가 설치되어 있지 않습니다."
-    echo "        sudo apt install python3-tk"
-    exit 1
-}
+if [ "${#TKINTER_CHECK_CMD[@]}" -gt 0 ]; then
+    "${TKINTER_CHECK_CMD[@]}" 2>/dev/null || {
+        echo "[ERROR] 현재 빌드 Python 환경에서 tkinter를 import하지 못했습니다."
+        echo "        - WSL/bash 빌드: sudo apt install python3-tk"
+        echo "        - Windows Python 빌드: tkinter 포함 Python 사용"
+        exit 1
+    }
+fi
 
 # 번들에 포함할 런타임 자산 확인
-ASSETS=(
-    "start-pipeline.sh"
-    "stop-pipeline.sh"
-    "watcher_core.py"
-    "schemas/agent_manifest.schema.json"
-    "schemas/job_state.schema.json"
+# 형식: "label|source|dest"
+ASSET_SPECS=(
+    "start-pipeline.sh|start-pipeline.sh|_data"
+    "stop-pipeline.sh|stop-pipeline.sh|_data"
+    "watcher_core.py|watcher_core.py|_data"
+    "token_usage_shared.py|pipeline_gui/token_usage_shared.py|_data"
+    "token_dashboard_shared.py|pipeline_gui/token_dashboard_shared.py|_data"
+    "agent_manifest.schema.json|schemas/agent_manifest.schema.json|_data/schemas"
+    "job_state.schema.json|schemas/job_state.schema.json|_data/schemas"
+    "token-runtime|_data|_data"
+    ".pipeline/README.md|.pipeline/README.md|_data/.pipeline"
 )
 
 echo "Checking bundled assets..."
 MISSING=0
-for asset in "${ASSETS[@]}"; do
-    if [ ! -f "$PROJECT_ROOT/$asset" ]; then
-        echo "  [WARN] Missing: $asset"
+for spec in "${ASSET_SPECS[@]}"; do
+    IFS='|' read -r label source dest <<< "$spec"
+    if [ ! -e "$PROJECT_ROOT/$source" ]; then
+        echo "  [WARN] Missing: $source"
         MISSING=1
     else
-        echo "  [OK]   $asset"
+        echo "  [OK]   $label -> $dest"
     fi
 done
 
@@ -82,27 +112,21 @@ if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
     SEP=";"
 fi
 
-ADD_DATA_ARGS=""
-for asset in "${ASSETS[@]}"; do
-    if [ -f "$PROJECT_ROOT/$asset" ]; then
-        # 대상 경로: _data/<원래_경로>
-        DEST_DIR="_data/$(dirname "$asset")"
-        ADD_DATA_ARGS="$ADD_DATA_ARGS --add-data ${asset}${SEP}${DEST_DIR}"
+ADD_DATA_ARGS=()
+for spec in "${ASSET_SPECS[@]}"; do
+    IFS='|' read -r _label source dest <<< "$spec"
+    if [ -e "$PROJECT_ROOT/$source" ]; then
+        ADD_DATA_ARGS+=(--add-data "${source}${SEP}${dest}")
     fi
 done
 
-# .pipeline/README.md도 포함 (있으면)
-if [ -f "$PROJECT_ROOT/.pipeline/README.md" ]; then
-    ADD_DATA_ARGS="$ADD_DATA_ARGS --add-data .pipeline/README.md${SEP}_data/.pipeline"
-fi
-
-pyinstaller \
+"${PYINSTALLER_CMD[@]}" \
     --onefile \
     --noconsole \
     --name "pipeline-gui" \
     --clean \
     --paths "$PROJECT_ROOT" \
-    $ADD_DATA_ARGS \
+    "${ADD_DATA_ARGS[@]}" \
     pipeline-gui.py
 
 echo ""
@@ -110,9 +134,14 @@ echo "Build complete."
 echo "Output: $PROJECT_ROOT/dist/pipeline-gui"
 echo ""
 echo "번들된 자산:"
-for asset in "${ASSETS[@]}"; do
-    if [ -f "$PROJECT_ROOT/$asset" ]; then
-        echo "  _data/$asset"
+for spec in "${ASSET_SPECS[@]}"; do
+    IFS='|' read -r label source dest <<< "$spec"
+    if [ -e "$PROJECT_ROOT/$source" ]; then
+        if [ "$dest" = "." ]; then
+            echo "  $(basename "$source")/"
+        else
+            echo "  $dest/$(basename "$source")"
+        fi
     fi
 done
 echo ""

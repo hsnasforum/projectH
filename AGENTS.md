@@ -104,9 +104,14 @@ Priority order:
   - tracked verification rerun notes and truth-reconciliation handoff results
 - `report/`
   - occasional whole-project trajectory audits or milestone-level review memos
+  - `report/gemini/` stores Gemini advisory or mediation logs
 - `.pipeline/`
   - rolling automation handoff slots for the single-Codex tmux flow
-  - `codex_feedback.md` is the primary next-Claude handoff slot written after verification
+  - `claude_handoff.md` is the Claude-only execution slot in the current stage-3 flow
+  - `gemini_request.md` is the Codex -> Gemini arbitration request slot in the current stage-3 flow
+  - `gemini_advice.md` is the Gemini -> Codex advisory slot in the current stage-3 flow
+  - `operator_request.md` is the operator-only stop slot in the current stage-3 flow
+  - `codex_feedback.md` is optional scratch or legacy compatibility text and is no longer part of the execution path
   - `gpt_prompt.md` is an optional or legacy scratch slot and is no longer part of the canonical flow
 - `.agents/skills/`, `.claude/skills/`
   - reusable repo-specific skills
@@ -160,21 +165,41 @@ Current source-of-truth docs live in the root `docs/` directory.
   - read the newest same-day `/verify` note if one exists
   - rerun the requested verification honestly
   - leave or update the persistent `/verify` note
-  - write the next Claude-facing handoff to `.pipeline/codex_feedback.md`
-- `.pipeline/codex_feedback.md` is the primary rolling latest-slot file for automation.
-- `.pipeline/codex_feedback.md` should always declare one explicit handoff status:
-  - `STATUS: implement`
-  - `STATUS: needs_operator`
-- `STATUS: implement` means Codex already fixed one exact next slice and Claude should implement that slice only.
-- `STATUS: needs_operator` means Codex did not truthfully fix one next slice yet; Claude must not self-select a slice from that handoff.
-- `STATUS: needs_operator` must not be left as a bare stop line alone. It should also record:
+  - write the next Claude-facing execution handoff to `.pipeline/claude_handoff.md` when one exact slice is fixed
+  - write `.pipeline/gemini_request.md` when Codex needs a third-party tie-break before operator escalation
+  - if an active Claude session asks a live side question such as context exhaustion, session rollover, or continue-vs-switch, use `.pipeline/gemini_request.md` only as Codex↔Gemini coordination and relay the answer back to Claude as a short lane reply instead of rewriting `.pipeline/claude_handoff.md` mid-session
+  - write `.pipeline/operator_request.md` when automation must stop for a real operator decision
+- `.pipeline/claude_handoff.md` is the current Claude-only execution slot.
+- `.pipeline/claude_handoff.md` should declare `STATUS: implement` only.
+- `.pipeline/gemini_request.md` is the current Codex -> Gemini arbitration slot.
+- `.pipeline/gemini_request.md` should declare `STATUS: request_open` only while pending.
+- `.pipeline/gemini_advice.md` is the current Gemini -> Codex advisory slot.
+- `.pipeline/gemini_advice.md` should declare `STATUS: advice_ready` only while pending.
+- `.pipeline/session_arbitration_draft.md` is an optional watcher-generated non-canonical draft slot.
+- `.pipeline/session_arbitration_draft.md` should declare `STATUS: draft_only` only, and must not be treated as a stop/go execution signal.
+- `.pipeline/operator_request.md` is the current operator-only stop slot.
+- `.pipeline/operator_request.md` should declare `STATUS: needs_operator` only, and should record:
   - why automation is stopping now
   - which latest `/work` and `/verify` pair the stop is based on
-  - what the operator must decide before the file can return to `STATUS: implement`
-- In automation, the status line itself is the control signal. If the operator wants to stop automatic Claude execution, change `STATUS`, not just the surrounding prose.
+  - what the operator must decide before automation can resume
+- Gemini is advisory only:
+  - it may write `report/gemini/...md`
+  - it may write `.pipeline/gemini_advice.md`
+  - it must not directly write `.pipeline/claude_handoff.md` or `.pipeline/operator_request.md`
+  - it should prefer file edit/write tools for advisory output instead of shell heredoc or shell redirection
+  - watcher prompts for Gemini should prefer explicit `@path` file mentions and exact advisory output paths over loose path prose
+  - if the advice is answering an active Claude session's side question, Codex should relay that answer as a short lane reply and keep `.pipeline/claude_handoff.md` unchanged until the session boundary or next round handoff
+- `.pipeline/codex_feedback.md` may still exist as optional scratch, but Claude should not rely on it as a direct execution slot.
+- In automation, the newest control file wins:
+  - `.pipeline/claude_handoff.md` → Claude 실행
+  - `.pipeline/gemini_request.md` → Gemini 실행
+  - `.pipeline/gemini_advice.md` → Codex follow-up
+  - `.pipeline/operator_request.md` → 자동 진행 중단, operator 대기
+- `.pipeline/session_arbitration_draft.md` is not a control file. watcher may write it as a draft only after an active Claude session shows the escalation pattern and the lanes are settled enough for arbitration: Codex/Gemini panes must be idle, and Claude must be either idle or stably showing the escalation text for a short settle window. watcher should clear that draft again when Claude activity resumes or canonical Gemini/operator control opens, and should suppress immediate same-fingerprint rewrites for a short cooldown. Codex must explicitly decide whether to ignore it, answer Claude directly, or promote it into `.pipeline/gemini_request.md`.
 - `.pipeline/gpt_prompt.md` may remain as an optional or legacy scratch slot, but it is no longer required for the canonical flow.
 - Persistent truth still lives in `/work` and `/verify`; if `.pipeline` disagrees with them, trust the latest `/work` and `/verify`.
 - watcher guarantees file-detection and pane-delivery only. If Claude or Codex is busy, interrupted, or not actually ready to receive input, that is a lane/session-state issue rather than a `.pipeline` contract issue.
+- `.pipeline/claude_handoff.md` is the round-start execution contract, not a live side-channel. Mid-session Gemini arbitration answers should normally return to Claude as a short lane reply so later troubleshooting can still compare the finished work against the unchanged handoff that started the round.
 
 ## Codex Review Scope
 
@@ -186,15 +211,16 @@ Current source-of-truth docs live in the root `docs/` directory.
   - the round did not widen scope away from current MVP priorities
 - Treat `/verify` as the review report for the latest Claude round plus a narrow direction guard, not as a mandatory full-repository diagnosis.
 - After that review, Codex should either:
-  - choose one exact next slice and write `STATUS: implement`, or
-  - explicitly stop automation with `STATUS: needs_operator`
+  - choose one exact next slice and write `STATUS: implement` to `.pipeline/claude_handoff.md`, or
+  - write `.pipeline/gemini_request.md` when a third-party tie-break is needed, or
+  - explicitly stop automation with `.pipeline/operator_request.md`
 - When the latest `/work` and `/verify` already closed one family truthfully, prefer automatic next-slice selection over `needs_operator` if one smaller same-family follow-up remains.
 - Default automatic tie-break order is:
   - same-family current-risk reduction
   - same-family user-visible improvement
   - new quality axis
   - internal cleanup
-- If Codex writes `STATUS: needs_operator`, the handoff should still explain the stop reason and the missing operator decision instead of leaving the rolling slot empty.
+- If Codex stops with `.pipeline/operator_request.md`, the stop request should still explain the reason and the missing operator decision instead of leaving the rolling slot empty.
 - Do not push slice selection back onto Claude with wording such as "continue only if you can find a good slice."
 - Use a broader whole-project audit only when explicitly requested or when a milestone, release, or trajectory check is needed.
 - When a broader audit is needed, record it under `report/` so it does not overwrite the meaning of `/verify`.
@@ -208,6 +234,7 @@ Current source-of-truth docs live in the root `docs/` directory.
 - Do not choose the next slice only because a route, helper, contract family, or handler-level regression is still incomplete.
 - Do not let uncovered verification gaps alone drive roadmap priority unless they block a currently shipped user flow.
 - Prefer slices that the user can see, feel, or directly benefit from over internal completeness work.
+- Do not choose a micro-slice when one slightly larger bounded slice can close the same user-visible or current-risk unit within the same verification family.
 - If the latest round already closed one family truthfully, prefer the next smallest same-family current-risk reduction before opening a different quality axis.
 - When multiple plausible slices remain, choose in this order unless a newer `/verify` gives a stronger reason otherwise:
   - current-risk reduction
@@ -232,10 +259,13 @@ Current source-of-truth docs live in the root `docs/` directory.
 
 - Verification should be risk-based, not maximal by default.
 - Run the narrowest relevant check first.
+- For Playwright-only smoke tightening, selector-only drift fixes, or single-scenario fixture updates, rerun the isolated affected browser scenario first instead of jumping straight to the full browser suite.
 - Use full browser or end-to-end verification only when:
   - a browser-visible contract changed
   - a release or ready decision is being made
   - a current browser flow is suspected broken
+  - the change touched shared browser helpers or multiple browser scenarios
+  - an isolated browser rerun suggests broader browser-family drift
 - Do not treat every focused service or handler regression as a reason to rerun the full browser suite.
 - Do not let uncovered route-level regressions automatically become the next product slice unless they protect a currently shipped user-facing contract.
 
@@ -259,7 +289,9 @@ Current source-of-truth docs live in the root `docs/` directory.
 13. Use `trace-implementer` for small additive grounded-brief trace or memory-foundation implementation slices that must keep current UI stable while moving code, tests, and docs together.
 14. Use `round-handoff` when a Codex round is complete and you need to re-check the latest `/work` note, rerun honest verification, leave or update a `/verify` note, and draft the next operator prompt without overstating progress.
 15. In the single-Codex tmux flow, keep Codex responsible for rerun verification and next-Claude feedback together; do not reintroduce a second canonical Codex lane unless the docs are updated again.
-16. In automation handoff, Claude should implement only `STATUS: implement` handoffs. If the handoff says `STATUS: needs_operator`, Claude should wait instead of choosing a slice.
+16. In automation handoff, Claude should implement only `.pipeline/claude_handoff.md` when it says `STATUS: implement`. Gemini와 operator stop files must not be routed to Claude.
+17. Prefer extending existing shared helpers, queries, scripts, and prompts over adding near-copy code paths. If temporary duplication is unavoidable, say why and leave a clear cleanup path.
+18. Do not split one coherent task into many ultra-small slices just to keep rounds tiny. Prefer the smallest coherent reviewable slice that closes meaningful progress when the files and verification path naturally belong together.
 
 ## Personalization / Learning Rules
 
@@ -279,12 +311,16 @@ Current source-of-truth docs live in the root `docs/` directory.
 - Meaningful implementation or operator-flow work should leave a closeout note under `work/<month>/<day>/YYYY-MM-DD-<slug>.md`.
 - Meaningful verification-backed handoff or independent rerun-check work should leave a verification note under `verify/<month>/<day>/YYYY-MM-DD-<slug>.md`.
 - Occasional whole-project, milestone, or trajectory audits should leave a report under `report/YYYY-MM-DD-<slug>.md`.
-- `.pipeline/codex_feedback.md` may mirror the latest handoff for automation, but it never replaces the persistent `/work` and `/verify` notes.
+- `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, `.pipeline/gemini_advice.md`, `.pipeline/operator_request.md`, and optional scratch files like `.pipeline/codex_feedback.md` never replace the persistent `/work` and `/verify` notes.
 - `.pipeline/gpt_prompt.md` may remain as an optional or legacy scratch slot, but it is not required in the canonical single-Codex flow.
-- In the single-Codex flow:
+- In the current stage-3 single-Codex flow:
   - Claude finishes implementation and leaves `/work`
   - Codex reruns verification and leaves `/verify`
-  - Codex then writes `.pipeline/codex_feedback.md` for the next Claude round
+  - Codex then writes `.pipeline/claude_handoff.md` for the next Claude round when one exact slice is fixed
+  - if Codex cannot narrow one exact slice yet, Codex writes `.pipeline/gemini_request.md`
+  - Gemini writes `.pipeline/gemini_advice.md` plus `report/gemini/...md`
+  - Codex then writes the final `.pipeline/claude_handoff.md` or `.pipeline/operator_request.md`
+  - if automation must stop, Codex writes `.pipeline/operator_request.md`
 - `/verify` should stay tied to the latest Claude round. Do not turn every verification note into a whole-project audit.
 - Before starting a new meaningful round, check the newest note in today's `work/<month>/<day>/` folder. If there is no note for today, read the newest note from the previous day.
 - Before starting a verification-backed handoff round, read the newest `work/<month>/<day>/` note first and then the newest note in today's `verify/<month>/<day>/` folder if one exists.
@@ -415,6 +451,7 @@ Examples:
 Update:
 - `AGENTS.md`
 - `CLAUDE.md`
+- `GEMINI.md`
 - `PROJECT_CUSTOM_INSTRUCTIONS.md`
 - relevant files under `plandoc/`
 - `docs/MILESTONES.md` or `docs/TASK_BACKLOG.md` if near-term execution priorities moved
@@ -423,12 +460,13 @@ Update:
 Update:
 - `AGENTS.md`
 - `CLAUDE.md`
+- `GEMINI.md`
 - `PROJECT_CUSTOM_INSTRUCTIONS.md`
 - `.codex/config.toml` if Codex defaults, skill enablement, or agent registry changed
 - `work/README.md` and `verify/README.md` if `/work` or `/verify` logging rules changed
 - matching files in `.agents/skills/`, `.claude/skills/`, `.codex/agents/`, `.claude/agents/`
 
-### If Codex / Claude operator config changes
+### If Codex / Claude / Gemini operator config changes
 Examples:
 - `.codex/config.toml`
 - `.codex/agents/*.toml`
@@ -438,6 +476,7 @@ Examples:
 Update:
 - `AGENTS.md`
 - `CLAUDE.md`
+- `GEMINI.md`
 - `PROJECT_CUSTOM_INSTRUCTIONS.md`
 - `work/README.md` and `verify/README.md` if operator logging, handoff policy, or verification-note policy changed
 - the mirrored config / agent / skill files that represent the same role
@@ -453,6 +492,8 @@ Common checks:
   - `python3 -m unittest -v`
 - focused smoke slices:
   - `python3 -m unittest -v tests.test_smoke tests.test_web_app`
+- isolated browser scenario rerun:
+  - `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "<scenario>" --reporter=line`
 - browser smoke:
   - `make e2e-test`
 

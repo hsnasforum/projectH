@@ -17,6 +17,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+from config.runtime_hosts import (
+    browser_host_for_bind,
+    resolve_bind_host,
+    running_in_wsl,
+    windows_fallback_host,
+)
+
 PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parent.parent))
 PIPELINE_DIR = PROJECT_ROOT / ".pipeline"
 CONTROLLER_PORT = int(os.environ.get("CONTROLLER_PORT", "8780"))
@@ -24,6 +31,25 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 # Session name: pipeline-gui.py / start-pipeline.sh / watcher_core.py와 동일 규칙
 _SESSION_PREFIX = "aip"
+
+
+def _running_in_wsl() -> bool:
+    return running_in_wsl()
+
+
+def _controller_bind_host() -> str:
+    return resolve_bind_host(explicit_host=os.environ.get("CONTROLLER_HOST"))
+
+
+def _controller_browser_host(bind_host: str) -> str:
+    return browser_host_for_bind(bind_host)
+
+
+def _controller_windows_fallback_host() -> str | None:
+    return windows_fallback_host()
+
+
+CONTROLLER_HOST = _controller_bind_host()
 
 
 def _session_name_for_project(project: Path) -> str:
@@ -418,10 +444,16 @@ class ControllerHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    print(f"Pipeline Controller: http://127.0.0.1:{CONTROLLER_PORT}/controller")
+    browser_host = _controller_browser_host(CONTROLLER_HOST)
+    fallback_host = _controller_windows_fallback_host()
+    print(f"Pipeline Controller: http://{browser_host}:{CONTROLLER_PORT}/controller")
     print(f"  Project: {PROJECT_ROOT}")
-    print(f"  API: http://127.0.0.1:{CONTROLLER_PORT}/api/state")
-    server = ThreadingHTTPServer(("127.0.0.1", CONTROLLER_PORT), ControllerHandler)
+    print(f"  API: http://{browser_host}:{CONTROLLER_PORT}/api/state")
+    if CONTROLLER_HOST != browser_host:
+        print(f"  Bind: {CONTROLLER_HOST}:{CONTROLLER_PORT} (WSL -> Windows 브라우저 접근용)")
+    if fallback_host and fallback_host != browser_host:
+        print(f"  Windows fallback: http://{fallback_host}:{CONTROLLER_PORT}/controller")
+    server = ThreadingHTTPServer((CONTROLLER_HOST, CONTROLLER_PORT), ControllerHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

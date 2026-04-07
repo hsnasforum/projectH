@@ -11,6 +11,11 @@ from urllib.parse import parse_qs, urlparse
 
 from app.localization import localize_text
 from app.serializers import SerializerMixin
+from config.runtime_hosts import (
+    browser_host_for_bind,
+    resolve_bind_host,
+    windows_fallback_host,
+)
 from core.contracts import (
     ContentVerdict,
     FeedbackLabel,
@@ -248,7 +253,10 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/":
-            self._send_html(HTTPStatus.OK, self.server.service.render_index())
+            self.send_response(int(HTTPStatus.FOUND))
+            self.send_header("Location", "/app")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
             return
         if parsed.path == "/api/config":
             self._send_json(HTTPStatus.OK, self.server.service.get_config())
@@ -270,6 +278,9 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             self._serve_static(parsed.path)
             return
         if parsed.path == "/app" or parsed.path == "/app/":
+            self._serve_shipped_app()
+            return
+        if parsed.path == "/app-preview" or parsed.path == "/app-preview/":
             self._serve_react_app()
             return
         if parsed.path.startswith("/assets/"):
@@ -457,10 +468,13 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
 
     _REACT_DIST_DIR = Path(__file__).resolve().parent / "static" / "dist"
 
+    def _serve_shipped_app(self) -> None:
+        self._send_html(HTTPStatus.OK, self.server.service.render_index())
+
     def _serve_react_app(self) -> None:
         index_path = self._REACT_DIST_DIR / "index.html"
         if not index_path.is_file():
-            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "React 앱 빌드가 없습니다. app/frontend에서 npm run build를 실행해 주세요."}})
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "React preview 빌드가 없습니다. app/frontend에서 npm run build를 실행해 주세요."}})
             return
         try:
             data = index_path.read_bytes()
@@ -541,15 +555,31 @@ def build_parser() -> Any:
     return parser
 
 
+def _effective_web_host(*, args_host: str | None, settings: AppSettings) -> str:
+    if args_host is not None:
+        explicit_host = args_host
+    elif settings.web_host != "127.0.0.1":
+        explicit_host = settings.web_host
+    else:
+        explicit_host = ""
+    return resolve_bind_host(explicit_host=explicit_host)
+
+
 def main() -> int:
     args = build_parser().parse_args()
     settings = AppSettings.from_env()
-    host = args.host or settings.web_host
+    host = _effective_web_host(args_host=args.host, settings=settings)
     port = args.port or settings.web_port
+    browser_host = browser_host_for_bind(host)
+    fallback_host = windows_fallback_host()
 
     service = WebAppService(settings=settings)
     server = LocalOnlyHTTPServer((host, port), service)
-    print(f"로컬 웹 셸이 http://{host}:{port} 에서 실행 중입니다.")
+    print(f"로컬 웹 셸이 http://{browser_host}:{port}/app 에서 실행 중입니다.")
+    if host != browser_host:
+        print(f"  Bind: {host}:{port} (WSL -> Windows 브라우저 접근용)")
+    if fallback_host and fallback_host != browser_host:
+        print(f"  Windows fallback: http://{fallback_host}:{port}/app")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

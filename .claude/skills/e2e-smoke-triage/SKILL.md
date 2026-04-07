@@ -25,6 +25,11 @@ Use this skill when browser smoke is failing or likely to drift.
 4. docs/tests that must be updated
 5. what should be manually rechecked
 
+## Verification Order
+- start with the isolated failing Playwright scenario first
+- expand to nearby scenario reruns only if shared selectors, shared browser helpers, or family-level drift is suspected
+- use full `make e2e-test` only when the change widened browser-visible behavior, touched shared browser helpers, or the round is making a ready / release claim
+
 ## Repo-Specific Coverage
 Current smoke suite covers:
 - file summary with evidence and summary-range

@@ -7,16 +7,15 @@ with delta analysis, fingerprint, and lifecycle status.
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
-from json import JSONDecodeError
-from pathlib import Path
 import threading
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from core.contracts import CandidateFamily, CorrectionStatus
 from core.delta_analysis import compute_correction_delta
+
+from .json_store_base import utc_now_iso, json_path, atomic_write, read_json, scan_json_dir
 
 
 class CorrectionStore:
@@ -26,37 +25,10 @@ class CorrectionStore:
         self._lock = threading.RLock()
 
     def _path(self, correction_id: str) -> Path:
-        safe_id = correction_id.replace("/", "-").replace("\\", "-").strip()
-        return self.base_dir / f"{safe_id}.json"
-
-    def _now(self) -> str:
-        return datetime.now(timezone.utc).isoformat()
-
-    def _atomic_write(self, path: Path, data: dict[str, Any]) -> None:
-        temp_path = path.with_name(f"{path.name}.{uuid4().hex[:8]}.tmp")
-        encoded = json.dumps(data, ensure_ascii=False, indent=2)
-        try:
-            temp_path.write_text(encoded, encoding="utf-8")
-            temp_path.replace(path)
-        except BaseException:
-            temp_path.unlink(missing_ok=True)
-            raise
-
-    def _read(self, path: Path) -> dict[str, Any] | None:
-        if not path.exists():
-            return None
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (JSONDecodeError, OSError):
-            return None
+        return json_path(self.base_dir, correction_id)
 
     def _scan_all(self) -> list[dict[str, Any]]:
-        results: list[dict[str, Any]] = []
-        for p in self.base_dir.glob("*.json"):
-            data = self._read(p)
-            if data and isinstance(data.get("correction_id"), str):
-                results.append(data)
-        return results
+        return [d for d in scan_json_dir(self.base_dir) if isinstance(d.get("correction_id"), str)]
 
     # -- Core operations --
 
@@ -76,10 +48,8 @@ class CorrectionStore:
             return None
 
         with self._lock:
-            # Check for existing corrections with same fingerprint to get recurrence count
             existing = self._find_by_fingerprint_unlocked(delta.delta_fingerprint)
 
-            # Deduplicate: don't record same (artifact_id, source_message_id, fingerprint) twice
             for ex in existing:
                 if (
                     ex.get("artifact_id") == artifact_id
@@ -89,14 +59,13 @@ class CorrectionStore:
                     return ex
 
             recurrence_count = len(existing) + 1
-            now = self._now()
+            now = utc_now_iso()
 
-            # Update existing records' recurrence count and last_seen_at
             for ex in existing:
                 ex["recurrence_count"] = recurrence_count
                 ex["last_seen_at"] = now
                 ex["updated_at"] = now
-                self._atomic_write(self._path(ex["correction_id"]), ex)
+                atomic_write(self._path(ex["correction_id"]), ex)
 
             correction_id = f"correction-{uuid4().hex[:12]}"
             record: dict[str, Any] = {
@@ -122,25 +91,25 @@ class CorrectionStore:
                 "created_at": now,
                 "updated_at": now,
             }
-            self._atomic_write(self._path(correction_id), record)
+            atomic_write(self._path(correction_id), record)
             return record
 
     def get(self, correction_id: str) -> dict[str, Any] | None:
         with self._lock:
-            return self._read(self._path(correction_id))
+            return read_json(self._path(correction_id))
 
     # -- Lifecycle transitions --
 
     def _transition(self, correction_id: str, status: str, timestamp_field: str) -> dict[str, Any] | None:
         with self._lock:
-            record = self._read(self._path(correction_id))
+            record = read_json(self._path(correction_id))
             if record is None:
                 return None
-            now = self._now()
+            now = utc_now_iso()
             record["status"] = status
             record[timestamp_field] = now
             record["updated_at"] = now
-            self._atomic_write(self._path(correction_id), record)
+            atomic_write(self._path(correction_id), record)
             return record
 
     def confirm_correction(self, correction_id: str) -> dict[str, Any] | None:
@@ -173,7 +142,6 @@ class CorrectionStore:
             return [r for r in self._scan_all() if r.get("session_id") == session_id]
 
     def find_recurring_patterns(self, *, session_id: str | None = None) -> list[dict[str, Any]]:
-        """Return pattern groups with 2+ corrections sharing the same fingerprint."""
         with self._lock:
             all_records = self._scan_all()
             if session_id:

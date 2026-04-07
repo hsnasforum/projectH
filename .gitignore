@@ -48,9 +48,26 @@ build/
 .pipeline/locks/
 .pipeline/manifests/
 .pipeline/*.pid
+.pipeline/gui-runtime/
+.pipeline/live-arb-smoke-*/
+.pipeline/usage/
+.pipeline/usage-bench/
+.pipeline/claude_handoff.md
+.pipeline/gemini_request.md
+.pipeline/gemini_advice.md
+.pipeline/operator_request.md
+.pipeline/session_arbitration_draft.md
 
 # Superpowers brainstorm sessions
 .superpowers/
 
 # Windows metadata
 *:Zone.Identifier
+
+# Local scratch / backup artifacts
+app/web.py.dirty
+pipeline-gui-monolith.py.bak
+ab_results_backup.txt
+pipeline.zip
+projectH.zip
+NUL

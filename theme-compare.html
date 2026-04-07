@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Pipeline GUI Theme Compare</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Consolas', 'Monaco', monospace; background: #0a0a0a; color: #ccc; padding: 20px; }
+h1 { text-align: center; color: #888; margin-bottom: 30px; font-size: 18px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; max-width: 1400px; margin: 0 auto; }
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+.theme-card {
+  border-radius: 12px;
+  padding: 20px;
+  border: 1px solid #333;
+}
+.theme-card h2 {
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+.theme-card .subtitle {
+  font-size: 11px;
+  margin-bottom: 16px;
+  opacity: 0.6;
+}
+
+/* ── Mini GUI mockup ── */
+.mini-gui {
+  border-radius: 8px;
+  overflow: hidden;
+}
+.mini-header {
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.mini-header .title { font-size: 13px; font-weight: bold; }
+.mini-header .mode-btns { display: flex; gap: 4px; }
+.mini-header .mode-btn {
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 10px;
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+}
+.mini-header .status {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: bold;
+}
+.mini-body { padding: 12px; }
+.mini-row { display: flex; gap: 10px; margin-bottom: 10px; }
+.mini-card {
+  flex: 1;
+  padding: 10px;
+  border-radius: 6px;
+  font-size: 10px;
+}
+.mini-card .label { font-size: 9px; margin-bottom: 6px; opacity: 0.6; }
+.mini-card .value { font-size: 11px; }
+.mini-card .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; }
+
+.btn-row { display: flex; gap: 6px; margin-bottom: 10px; }
+.mini-btn {
+  padding: 5px 12px;
+  border-radius: 4px;
+  font-size: 10px;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.agent-row { display: flex; gap: 8px; margin-bottom: 10px; }
+.agent-card {
+  flex: 1;
+  padding: 8px;
+  border-radius: 6px;
+  text-align: center;
+  font-size: 10px;
+}
+.agent-card .agent-name { font-size: 10px; font-weight: bold; margin-bottom: 4px; }
+.agent-card .agent-status { font-size: 11px; font-weight: bold; }
+.agent-card .agent-note { font-size: 9px; opacity: 0.6; margin-top: 2px; }
+
+.mini-log {
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 9px;
+  line-height: 1.6;
+  max-height: 80px;
+  overflow: hidden;
+}
+
+.toast {
+  text-align: center;
+  padding: 6px 16px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: bold;
+  margin-bottom: 10px;
+}
+
+/* ── Color swatches ── */
+.swatches { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
+.swatch {
+  width: 40px; height: 28px;
+  border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 7px;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+</style>
+</head>
+<body>
+
+<h1>Pipeline GUI — Theme Compare</h1>
+
+<div class="grid">
+
+<!-- ═══════════ CURRENT ═══════════ -->
+<div class="theme-card" style="background: #0f0f0f; border-color: #2a2a2a;">
+  <h2 style="color: #e0e0e0;">Current (Cold Dark)</h2>
+  <p class="subtitle" style="color: #9ca3af;">현재 적용된 톤 — 순 검정 + 회색 + 노란 accent</p>
+  <div class="mini-gui" style="background: #0f0f0f;">
+    <div class="mini-header" style="background: #161616;">
+      <span class="title" style="color: #60a5fa;">Pipeline Launcher</span>
+      <div class="mode-btns">
+        <button class="mode-btn" style="background: #333; color: #e0e0e0;">Home</button>
+        <button class="mode-btn" style="background: #1a1a1a; color: #9ca3af;">Guide</button>
+      </div>
+      <span class="status" style="background: #0f2f23; color: #34d399;">Running</span>
+    </div>
+    <div class="mini-body" style="background: #0f0f0f;">
+      <div class="toast" style="background: #1e3a5f; color: #93c5fd;">▶ Pipeline started</div>
+      <div class="mini-row">
+        <div class="mini-card" style="background: #171717; border: 1px solid #2a2a2a;">
+          <div class="label" style="color: #9ca3af;">System</div>
+          <div class="value" style="color: #34d399;"><span class="dot" style="background: #34d399;"></span>Pipeline: Running</div>
+          <div class="value" style="color: #34d399;"><span class="dot" style="background: #34d399;"></span>Watcher: Alive</div>
+          <div class="value" style="color: #34d399;"><span class="dot" style="background: #34d399;"></span>Setup: Ready</div>
+        </div>
+        <div class="mini-card" style="background: #171717; border: 1px solid #2a2a2a;">
+          <div class="label" style="color: #9ca3af;">Artifacts</div>
+          <div class="value" style="color: #f59e0b;">Latest work: smoke-test.md</div>
+          <div class="value" style="color: #f59e0b;">Latest verify: smoke-verify.md</div>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="mini-btn" style="background: #1a1a1a; color: #d1d5db;">⚙ Setup</button>
+        <button class="mini-btn" style="background: #1a1a1a; color: #d1d5db;">▶ Start</button>
+        <button class="mini-btn" style="background: #1a1a1a; color: #d1d5db;">■ Stop</button>
+        <button class="mini-btn" style="background: #1a1a1a; color: #d1d5db;">↻ Restart</button>
+      </div>
+      <div class="agent-row">
+        <div class="agent-card" style="background: #111; border: 2px solid #34d399;">
+          <div class="agent-name" style="color: #e0e0e0;">Claude</div>
+          <div class="agent-status" style="color: #34d399;">WORKING</div>
+          <div class="agent-note">3m 22s</div>
+        </div>
+        <div class="agent-card" style="background: #111; border: 1px solid #2a2a2a;">
+          <div class="agent-name" style="color: #e0e0e0;">Codex</div>
+          <div class="agent-status" style="color: #60a5fa;">READY</div>
+          <div class="agent-note">대기 중</div>
+        </div>
+        <div class="agent-card" style="background: #111; border: 1px solid #2a2a2a;">
+          <div class="agent-name" style="color: #e0e0e0;">Gemini</div>
+          <div class="agent-status" style="color: #60a5fa;">READY</div>
+          <div class="agent-note">대기 중</div>
+        </div>
+      </div>
+      <div class="mini-log" style="background: #121212; color: #a1a1aa;">
+        [21:03:53] WatcherCore v2.1 started<br>
+        [21:04:01] initial turn: codex<br>
+        [21:04:01] new job: smoke-test detected
+      </div>
+    </div>
+  </div>
+  <div class="swatches">
+    <div class="swatch" style="background: #0f0f0f; color: #666;">bg</div>
+    <div class="swatch" style="background: #171717; color: #666;">card</div>
+    <div class="swatch" style="background: #f59e0b; color: #000;">acc</div>
+    <div class="swatch" style="background: #60a5fa; color: #000;">blue</div>
+    <div class="swatch" style="background: #34d399; color: #000;">ok</div>
+    <div class="swatch" style="background: #ef4444; color: #fff;">err</div>
+  </div>
+</div>
+
+<!-- ═══════════ WARM DARK (남색) ═══════════ -->
+<div class="theme-card" style="background: #121218; border-color: #2a2d3a;">
+  <h2 style="color: #e2e4ea;">A. Warm Dark (남색)</h2>
+  <p class="subtitle" style="color: #8b92a8;">VS Code Dark+ 느낌 — 깊은 남색 + amber accent</p>
+  <div class="mini-gui" style="background: #121218;">
+    <div class="mini-header" style="background: #181820;">
+      <span class="title" style="color: #7cacf8;">Pipeline Launcher</span>
+      <div class="mode-btns">
+        <button class="mode-btn" style="background: #363b4e; color: #e2e4ea;">Home</button>
+        <button class="mode-btn" style="background: #1e2030; color: #8b92a8;">Guide</button>
+      </div>
+      <span class="status" style="background: #0f2f23; color: #34d399;">Running</span>
+    </div>
+    <div class="mini-body" style="background: #121218;">
+      <div class="toast" style="background: #1a2744; color: #93c5fd;">▶ Pipeline started</div>
+      <div class="mini-row">
+        <div class="mini-card" style="background: #1a1a24; border: 1px solid #2a2d3a;">
+          <div class="label" style="color: #8b92a8;">System</div>
+          <div class="value" style="color: #34d399;"><span class="dot" style="background: #34d399;"></span>Pipeline: Running</div>
+          <div class="value" style="color: #34d399;"><span class="dot" style="background: #34d399;"></span>Watcher: Alive</div>
+          <div class="value" style="color: #34d399;"><span class="dot" style="background: #34d399;"></span>Setup: Ready</div>
+        </div>
+        <div class="mini-card" style="background: #1a1a24; border: 1px solid #2a2d3a;">
+          <div class="label" style="color: #8b92a8;">Artifacts</div>
+          <div class="value" style="color: #f0a050;">Latest work: smoke-test.md</div>
+          <div class="value" style="color: #f0a050;">Latest verify: smoke-verify.md</div>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="mini-btn" style="background: #1e2030; color: #c8cad5;">⚙ Setup</button>
+        <button class="mini-btn" style="background: #1e2030; color: #c8cad5;">▶ Start</button>
+        <button class="mini-btn" style="background: #1e2030; color: #c8cad5;">■ Stop</button>
+        <button class="mini-btn" style="background: #1e2030; color: #c8cad5;">↻ Restart</button>
+      </div>
+      <div class="agent-row">
+        <div class="agent-card" style="background: #16161e; border: 2px solid #34d399;">
+          <div class="agent-name" style="color: #e2e4ea;">Claude</div>
+          <div class="agent-status" style="color: #34d399;">WORKING</div>
+          <div class="agent-note" style="color: #8b92a8;">3m 22s</div>
+        </div>
+        <div class="agent-card" style="background: #16161e; border: 1px solid #2a2d3a;">
+          <div class="agent-name" style="color: #e2e4ea;">Codex</div>
+          <div class="agent-status" style="color: #7cacf8;">READY</div>
+          <div class="agent-note" style="color: #8b92a8;">대기 중</div>
+        </div>
+        <div class="agent-card" style="background: #16161e; border: 1px solid #2a2d3a;">
+          <div class="agent-name" style="color: #e2e4ea;">Gemini</div>
+          <div class="agent-status" style="color: #7cacf8;">READY</div>
+          <div class="agent-note" style="color: #8b92a8;">대기 중</div>
+        </div>
+      </div>
+      <div class="mini-log" style="background: #14141c; color: #8b92a8;">
+        [21:03:53] WatcherCore v2.1 started<br>
+        [21:04:01] initial turn: codex<br>
+        [21:04:01] new job: smoke-test detected
+      </div>
+    </div>
+  </div>
+  <div class="swatches">
+    <div class="swatch" style="background: #121218; color: #666;">bg</div>
+    <div class="swatch" style="background: #1a1a24; color: #666;">card</div>
+    <div class="swatch" style="background: #f0a050; color: #000;">acc</div>
+    <div class="swatch" style="background: #7cacf8; color: #000;">blue</div>
+    <div class="swatch" style="background: #34d399; color: #000;">ok</div>
+    <div class="swatch" style="background: #ef4444; color: #fff;">err</div>
+  </div>
+</div>
+
+<!-- ═══════════ WARM GRAY ═══════════ -->
+<div class="theme-card" style="background: #171614; border-color: #33302a;">
+  <h2 style="color: #e8e4de;">B. Warm Gray (갈색)</h2>
+  <p class="subtitle" style="color: #a09888;">Notion / Linear 느낌 — 따뜻한 차콜 + 테라코타</p>
+  <div class="mini-gui" style="background: #171614;">
+    <div class="mini-header" style="background: #1e1c18;">
+      <span class="title" style="color: #e8985a;">Pipeline Launcher</span>
+      <div class="mode-btns">
+        <button class="mode-btn" style="background: #3a362e; color: #e8e4de;">Home</button>
+        <button class="mode-btn" style="background: #242220; color: #a09888;">Guide</button>
+      </div>
+      <span class="status" style="background: #1a2e1a; color: #6bcf8e;">Running</span>
+    </div>
+    <div class="mini-body" style="background: #171614;">
+      <div class="toast" style="background: #2a2418; color: #e8c48a;">▶ Pipeline started</div>
+      <div class="mini-row">
+        <div class="mini-card" style="background: #1e1d1a; border: 1px solid #33302a;">
+          <div class="label" style="color: #a09888;">System</div>
+          <div class="value" style="color: #6bcf8e;"><span class="dot" style="background: #6bcf8e;"></span>Pipeline: Running</div>
+          <div class="value" style="color: #6bcf8e;"><span class="dot" style="background: #6bcf8e;"></span>Watcher: Alive</div>
+          <div class="value" style="color: #6bcf8e;"><span class="dot" style="background: #6bcf8e;"></span>Setup: Ready</div>
+        </div>
+        <div class="mini-card" style="background: #1e1d1a; border: 1px solid #33302a;">
+          <div class="label" style="color: #a09888;">Artifacts</div>
+          <div class="value" style="color: #e8985a;">Latest work: smoke-test.md</div>
+          <div class="value" style="color: #e8985a;">Latest verify: smoke-verify.md</div>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="mini-btn" style="background: #242220; color: #d0ccc4;">⚙ Setup</button>
+        <button class="mini-btn" style="background: #242220; color: #d0ccc4;">▶ Start</button>
+        <button class="mini-btn" style="background: #242220; color: #d0ccc4;">■ Stop</button>
+        <button class="mini-btn" style="background: #242220; color: #d0ccc4;">↻ Restart</button>
+      </div>
+      <div class="agent-row">
+        <div class="agent-card" style="background: #1a1918; border: 2px solid #6bcf8e;">
+          <div class="agent-name" style="color: #e8e4de;">Claude</div>
+          <div class="agent-status" style="color: #6bcf8e;">WORKING</div>
+          <div class="agent-note" style="color: #a09888;">3m 22s</div>
+        </div>
+        <div class="agent-card" style="background: #1a1918; border: 1px solid #33302a;">
+          <div class="agent-name" style="color: #e8e4de;">Codex</div>
+          <div class="agent-status" style="color: #c4a67a;">READY</div>
+          <div class="agent-note" style="color: #a09888;">대기 중</div>
+        </div>
+        <div class="agent-card" style="background: #1a1918; border: 1px solid #33302a;">
+          <div class="agent-name" style="color: #e8e4de;">Gemini</div>
+          <div class="agent-status" style="color: #c4a67a;">READY</div>
+          <div class="agent-note" style="color: #a09888;">대기 중</div>
+        </div>
+      </div>
+      <div class="mini-log" style="background: #151412; color: #a09888;">
+        [21:03:53] WatcherCore v2.1 started<br>
+        [21:04:01] initial turn: codex<br>
+        [21:04:01] new job: smoke-test detected
+      </div>
+    </div>
+  </div>
+  <div class="swatches">
+    <div class="swatch" style="background: #171614; color: #666;">bg</div>
+    <div class="swatch" style="background: #1e1d1a; color: #666;">card</div>
+    <div class="swatch" style="background: #e8985a; color: #000;">acc</div>
+    <div class="swatch" style="background: #c4a67a; color: #000;">gold</div>
+    <div class="swatch" style="background: #6bcf8e; color: #000;">ok</div>
+    <div class="swatch" style="background: #e05252; color: #fff;">err</div>
+  </div>
+</div>
+
+<!-- ═══════════ DEEP PURPLE ═══════════ -->
+<div class="theme-card" style="background: #13111a; border-color: #2d2640;">
+  <h2 style="color: #e4e0f0;">C. Deep Purple (보라)</h2>
+  <p class="subtitle" style="color: #9088b0;">Discord / Figma 느낌 — 보라빛 + 라벤더 accent</p>
+  <div class="mini-gui" style="background: #13111a;">
+    <div class="mini-header" style="background: #1a1622;">
+      <span class="title" style="color: #c084fc;">Pipeline Launcher</span>
+      <div class="mode-btns">
+        <button class="mode-btn" style="background: #362e50; color: #e4e0f0;">Home</button>
+        <button class="mode-btn" style="background: #201a30; color: #9088b0;">Guide</button>
+      </div>
+      <span class="status" style="background: #0f2f23; color: #34d399;">Running</span>
+    </div>
+    <div class="mini-body" style="background: #13111a;">
+      <div class="toast" style="background: #251840; color: #d8b4fe;">▶ Pipeline started</div>
+      <div class="mini-row">
+        <div class="mini-card" style="background: #1c1825; border: 1px solid #2d2640;">
+          <div class="label" style="color: #9088b0;">System</div>
+          <div class="value" style="color: #34d399;"><span class="dot" style="background: #34d399;"></span>Pipeline: Running</div>
+          <div class="value" style="color: #34d399;"><span class="dot" style="background: #34d399;"></span>Watcher: Alive</div>
+          <div class="value" style="color: #34d399;"><span class="dot" style="background: #34d399;"></span>Setup: Ready</div>
+        </div>
+        <div class="mini-card" style="background: #1c1825; border: 1px solid #2d2640;">
+          <div class="label" style="color: #9088b0;">Artifacts</div>
+          <div class="value" style="color: #c084fc;">Latest work: smoke-test.md</div>
+          <div class="value" style="color: #c084fc;">Latest verify: smoke-verify.md</div>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="mini-btn" style="background: #201a30; color: #d0ccdf;">⚙ Setup</button>
+        <button class="mini-btn" style="background: #201a30; color: #d0ccdf;">▶ Start</button>
+        <button class="mini-btn" style="background: #201a30; color: #d0ccdf;">■ Stop</button>
+        <button class="mini-btn" style="background: #201a30; color: #d0ccdf;">↻ Restart</button>
+      </div>
+      <div class="agent-row">
+        <div class="agent-card" style="background: #171320; border: 2px solid #34d399;">
+          <div class="agent-name" style="color: #e4e0f0;">Claude</div>
+          <div class="agent-status" style="color: #34d399;">WORKING</div>
+          <div class="agent-note" style="color: #9088b0;">3m 22s</div>
+        </div>
+        <div class="agent-card" style="background: #171320; border: 1px solid #2d2640;">
+          <div class="agent-name" style="color: #e4e0f0;">Codex</div>
+          <div class="agent-status" style="color: #c084fc;">READY</div>
+          <div class="agent-note" style="color: #9088b0;">대기 중</div>
+        </div>
+        <div class="agent-card" style="background: #171320; border: 1px solid #2d2640;">
+          <div class="agent-name" style="color: #e4e0f0;">Gemini</div>
+          <div class="agent-status" style="color: #c084fc;">READY</div>
+          <div class="agent-note" style="color: #9088b0;">대기 중</div>
+        </div>
+      </div>
+      <div class="mini-log" style="background: #110f18; color: #9088b0;">
+        [21:03:53] WatcherCore v2.1 started<br>
+        [21:04:01] initial turn: codex<br>
+        [21:04:01] new job: smoke-test detected
+      </div>
+    </div>
+  </div>
+  <div class="swatches">
+    <div class="swatch" style="background: #13111a; color: #666;">bg</div>
+    <div class="swatch" style="background: #1c1825; color: #666;">card</div>
+    <div class="swatch" style="background: #c084fc; color: #000;">acc</div>
+    <div class="swatch" style="background: #d8b4fe; color: #000;">lav</div>
+    <div class="swatch" style="background: #34d399; color: #000;">ok</div>
+    <div class="swatch" style="background: #f06060; color: #fff;">err</div>
+  </div>
+</div>
+
+</div>
+
+<p style="text-align: center; margin-top: 30px; color: #555; font-size: 11px;">
+  각 테마는 동일한 GUI 레이아웃에 색상만 다르게 적용한 예시입니다.
+</p>
+
+</body>
+</html>

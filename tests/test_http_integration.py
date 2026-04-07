@@ -13,8 +13,9 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+from unittest.mock import patch
 
-from app.web import LocalOnlyHTTPServer, WebAppService
+from app.web import LocalAssistantHandler, LocalOnlyHTTPServer, WebAppService
 from config.settings import AppSettings
 from tools.file_reader import FileReaderTool
 from tools.file_search import FileSearchTool
@@ -132,13 +133,11 @@ class HTTPIntegrationBase(unittest.TestCase):
 
 
 class TestGetEndpoints(HTTPIntegrationBase):
-    def test_get_root_returns_html(self) -> None:
+    def test_get_root_redirects_to_app(self) -> None:
         resp = self.get("/")
-        self.assertEqual(resp.status, 200)
-        content_type = resp.getheader("Content-Type", "")
-        self.assertIn("text/html", content_type)
-        body = resp.read().decode("utf-8")
-        self.assertIn("local-ai-assistant", body)
+        self.assertEqual(resp.status, 302)
+        self.assertEqual(resp.getheader("Location"), "/app")
+        self.assertEqual(resp.read(), b"")
 
     def test_get_api_config(self) -> None:
         resp = self.get("/api/config")
@@ -170,6 +169,44 @@ class TestGetEndpoints(HTTPIntegrationBase):
 
     def test_get_nonexistent_returns_404(self) -> None:
         resp = self.get("/nonexistent")
+        self.assertEqual(resp.status, 404)
+        data = self.read_json(resp)
+        self.assertFalse(data["ok"])
+
+    def test_get_app_serves_shipped_template_shell(self) -> None:
+        resp = self.get("/app")
+        self.assertEqual(resp.status, 200)
+        self.assertIn("text/html", resp.getheader("Content-Type", ""))
+        body = resp.read().decode("utf-8")
+        self.assertIn("요청 실행", body)
+        self.assertIn("advanced-settings", body)
+        self.assertIn("response-copy-text", body)
+
+    def test_get_app_preview_serves_react_build(self) -> None:
+        react_dist = self.tmp_path / "react-dist"
+        react_assets = react_dist / "assets"
+        react_assets.mkdir(parents=True)
+        (react_dist / "index.html").write_text(
+            "<!doctype html><html><body>react preview</body></html>",
+            encoding="utf-8",
+        )
+        (react_assets / "main.js").write_text("console.log('preview');", encoding="utf-8")
+
+        with patch.object(LocalAssistantHandler, "_REACT_DIST_DIR", react_dist):
+            app_resp = self.get("/app-preview")
+            self.assertEqual(app_resp.status, 200)
+            self.assertIn("text/html", app_resp.getheader("Content-Type", ""))
+            self.assertIn("react preview", app_resp.read().decode("utf-8"))
+
+            asset_resp = self.get("/assets/main.js")
+            self.assertEqual(asset_resp.status, 200)
+            self.assertIn("javascript", asset_resp.getheader("Content-Type", ""))
+            self.assertIn("preview", asset_resp.read().decode("utf-8"))
+
+    def test_get_app_preview_returns_404_when_react_build_missing(self) -> None:
+        react_dist = self.tmp_path / "missing-react-dist"
+        with patch.object(LocalAssistantHandler, "_REACT_DIST_DIR", react_dist):
+            resp = self.get("/app-preview")
         self.assertEqual(resp.status, 404)
         data = self.read_json(resp)
         self.assertFalse(data["ok"])

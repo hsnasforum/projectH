@@ -17299,9 +17299,11 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(origin["source_roles"], ["백과 기반"])
             self.assertNotIn("출시일", third["response"]["text"])
             self.assertNotIn("2025", third["response"]["text"])
+            self.assertNotIn("blog.example.com", third["response"]["text"])
             source_paths = third["session"]["active_context"]["source_paths"]
             self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
             self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            self.assertIn("https://blog.example.com/crimson-desert", source_paths)
 
     def test_handle_chat_entity_card_noisy_single_source_claim_excluded_after_natural_reload_second_follow_up(self) -> None:
         """entity-card noisy single-source → 자연어 reload → first follow-up → second follow-up에서
@@ -17356,9 +17358,11 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(origin["source_roles"], ["백과 기반"])
             self.assertNotIn("출시일", fourth["response"]["text"])
             self.assertNotIn("2025", fourth["response"]["text"])
+            self.assertNotIn("blog.example.com", fourth["response"]["text"])
             source_paths = fourth["session"]["active_context"]["source_paths"]
             self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
             self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            self.assertIn("https://blog.example.com/crimson-desert", source_paths)
 
     def test_handle_chat_entity_card_noisy_single_source_claim_excluded_after_history_card_reload_follow_up(self) -> None:
         """entity-card noisy single-source → click reload → first follow-up에서
@@ -17412,9 +17416,11 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(origin["source_roles"], ["백과 기반"])
             self.assertNotIn("출시일", third["response"]["text"])
             self.assertNotIn("2025", third["response"]["text"])
+            self.assertNotIn("blog.example.com", third["response"]["text"])
             source_paths = third["session"]["active_context"]["source_paths"]
             self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
             self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            self.assertIn("https://blog.example.com/crimson-desert", source_paths)
 
     def test_handle_chat_entity_card_noisy_single_source_claim_excluded_after_history_card_reload_second_follow_up(self) -> None:
         """entity-card noisy single-source → click reload → first follow-up → second follow-up에서
@@ -17469,9 +17475,11 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(origin["source_roles"], ["백과 기반"])
             self.assertNotIn("출시일", fourth["response"]["text"])
             self.assertNotIn("2025", fourth["response"]["text"])
+            self.assertNotIn("blog.example.com", fourth["response"]["text"])
             source_paths = fourth["session"]["active_context"]["source_paths"]
             self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
             self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            self.assertIn("https://blog.example.com/crimson-desert", source_paths)
 
 
 if __name__ == "__main__":

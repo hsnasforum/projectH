@@ -6226,9 +6226,11 @@ test("entity-card noisy single-source claim이 자연어 reload 후 follow-up에
   expect(responseText).toContain("교차 확인");
   expect(responseText).not.toContain("출시일");
   expect(responseText).not.toContain("2025");
+  expect(responseText).not.toContain("blog.example.com");
   const contextBox = page.locator("#context-box");
   await expect(contextBox).toContainText("namu.wiki");
   await expect(contextBox).toContainText("ko.wikipedia.org");
+  await expect(contextBox).toContainText("blog.example.com");
 
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
@@ -6300,9 +6302,11 @@ test("entity-card noisy single-source claim이 자연어 reload 후 두 번째 f
   expect(responseText).toContain("교차 확인");
   expect(responseText).not.toContain("출시일");
   expect(responseText).not.toContain("2025");
+  expect(responseText).not.toContain("blog.example.com");
   const contextBox = page.locator("#context-box");
   await expect(contextBox).toContainText("namu.wiki");
   await expect(contextBox).toContainText("ko.wikipedia.org");
+  await expect(contextBox).toContainText("blog.example.com");
 
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
@@ -6367,9 +6371,11 @@ test("history-card entity-card noisy single-source claim이 다시 불러오기 
   const responseText = await page.getByTestId("response-text").textContent();
   expect(responseText).not.toContain("출시일");
   expect(responseText).not.toContain("2025");
+  expect(responseText).not.toContain("blog.example.com");
   const contextBox = page.locator("#context-box");
   await expect(contextBox).toContainText("namu.wiki");
   await expect(contextBox).toContainText("ko.wikipedia.org");
+  await expect(contextBox).toContainText("blog.example.com");
 
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });
@@ -6438,9 +6444,11 @@ test("history-card entity-card noisy single-source claim이 다시 불러오기 
   const responseText = await page.getByTestId("response-text").textContent();
   expect(responseText).not.toContain("출시일");
   expect(responseText).not.toContain("2025");
+  expect(responseText).not.toContain("blog.example.com");
   const contextBox = page.locator("#context-box");
   await expect(contextBox).toContainText("namu.wiki");
   await expect(contextBox).toContainText("ko.wikipedia.org");
+  await expect(contextBox).toContainText("blog.example.com");
 
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
 });

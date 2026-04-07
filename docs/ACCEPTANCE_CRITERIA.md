@@ -1377,17 +1377,17 @@ These are placeholders for the next phase design target and its immediate follow
   - history-card latest-update mixed-source `다시 불러오기` 후 두 번째 follow-up → source path(`store.steampowered.com`, `yna.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` response-origin drift 없음
   - history-card latest-update single-source `다시 불러오기` 후 두 번째 follow-up → source path(`example.com/seoul-weather`) context box 유지 + `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처` response-origin drift 없음
   - history-card latest-update news-only `다시 불러오기` 후 두 번째 follow-up → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` response-origin drift 없음
-  - latest-update mixed-source `방금 검색한 결과 다시 보여줘` 자연어 reload → source path(`store.steampowered.com`, `yna.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` exact field 유지
-  - latest-update single-source `방금 검색한 결과 다시 보여줘` 자연어 reload → source path(`example.com/seoul-weather`) context box 유지 + `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처` exact field 유지
-  - latest-update news-only `방금 검색한 결과 다시 보여줘` 자연어 reload → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` exact field 유지
-  - latest-update mixed-source 자연어 reload 후 follow-up → source path(`store.steampowered.com`, `yna.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` response-origin drift 없음
-  - latest-update mixed-source 자연어 reload 후 두 번째 follow-up → source path(`store.steampowered.com`, `yna.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` response-origin drift 없음
-  - latest-update single-source 자연어 reload 후 follow-up → source path(`example.com/seoul-weather`) context box 유지 + `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처` response-origin drift 없음
-  - latest-update single-source 자연어 reload 후 두 번째 follow-up → source path(`example.com/seoul-weather`) context box 유지 + `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처` response-origin drift 없음
-  - latest-update news-only 자연어 reload 후 follow-up → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` response-origin drift 없음
-  - latest-update news-only 자연어 reload 후 두 번째 follow-up → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` response-origin drift 없음
-  - latest-update noisy community source 자연어 reload 후 follow-up → `보조 커뮤니티`, `brunch` 미노출 + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` 유지
-  - latest-update noisy community source 자연어 reload 후 두 번째 follow-up → `보조 커뮤니티`, `brunch` 미노출 + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` 유지
+  - latest-update mixed-source `방금 검색한 결과 다시 보여줘` browser 자연어 reload → source path(`store.steampowered.com`, `yna.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` exact field 유지
+  - latest-update single-source `방금 검색한 결과 다시 보여줘` browser 자연어 reload → source path(`example.com/seoul-weather`) context box 유지 + `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처` exact field 유지
+  - latest-update news-only `방금 검색한 결과 다시 보여줘` browser 자연어 reload → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` exact field 유지
+  - latest-update mixed-source browser 자연어 reload 후 follow-up → source path(`store.steampowered.com`, `yna.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` response-origin drift 없음
+  - latest-update mixed-source browser 자연어 reload 후 두 번째 follow-up → source path(`store.steampowered.com`, `yna.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` response-origin drift 없음
+  - latest-update single-source browser 자연어 reload 후 follow-up → source path(`example.com/seoul-weather`) context box 유지 + `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처` response-origin drift 없음
+  - latest-update single-source browser 자연어 reload 후 두 번째 follow-up → source path(`example.com/seoul-weather`) context box 유지 + `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처` response-origin drift 없음
+  - latest-update news-only browser 자연어 reload 후 follow-up → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` response-origin drift 없음
+  - latest-update news-only browser 자연어 reload 후 두 번째 follow-up → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` response-origin drift 없음
+  - latest-update noisy community source browser 자연어 reload 후 follow-up → `보조 커뮤니티`, `brunch` 미노출 + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` 유지
+  - latest-update noisy community source browser 자연어 reload 후 두 번째 follow-up → `보조 커뮤니티`, `brunch` 미노출 + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` 유지
   - history-card latest-update noisy community source `다시 불러오기` 후 follow-up → `보조 커뮤니티`, `brunch` 미노출 + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` 유지
   - history-card latest-update noisy community source `다시 불러오기` 후 두 번째 follow-up → `보조 커뮤니티`, `brunch` 미노출 + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` 유지
   - entity-card noisy single-source claim 자연어 reload 후 follow-up → 본문/origin detail에 `출시일`, `2025`, `blog.example.com` 미노출 + `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, source_paths에 `blog.example.com` provenance 포함

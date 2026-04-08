@@ -167,8 +167,8 @@ Current message records include:
   - `response_origin`
   - `evidence`
   - `summary_chunks`
-  - `claim_coverage`
-  - `claim_coverage_progress_summary`
+  - `claim_coverage` — list of slot objects, each containing `slot`, `status`, `status_label`, `value`, `support_count`, `candidate_count`, `source_role`, `rendered_as`; during reinvestigation, slots also carry `previous_status`, `previous_status_label`, `progress_state`, `progress_label`, and `is_focus_slot`
+  - `claim_coverage_progress_summary` — plain-language Korean sentence summarizing the focus-slot reinvestigation outcome (empty string on first investigation)
   - `web_search_history`
   - `feedback`
   - `corrected_text`

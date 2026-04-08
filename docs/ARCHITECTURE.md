@@ -154,10 +154,10 @@ The web shell is the main MVP surface. CLI remains available as a narrower debug
 | `active_context` | object \| null | follow-up context |
 | `response_origin` | object \| null | `{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}` when present; `null` on error paths |
 | `applied_preferences` | list \| null | applied preference records |
-| `evidence` | list | evidence/source items (reuses per-message shape) |
-| `summary_chunks` | list | summary chunk items (reuses per-message shape) |
-| `claim_coverage` | list | claim coverage slots (reuses per-message shape) |
-| `claim_coverage_progress_summary` | string | localized reinvestigation summary |
+| `evidence` | list | evidence/source items (reuses per-message shape; default `[]`) |
+| `summary_chunks` | list | summary chunk items (reuses per-message shape; default `[]`) |
+| `claim_coverage` | list | claim coverage slots (reuses per-message shape; default `[]`) |
+| `claim_coverage_progress_summary` | string | localized reinvestigation summary (default `""`) |
 | `original_response_snapshot` | object \| null | pre-correction snapshot |
 | `corrected_outcome` | object \| null | correction outcome metadata |
 | `approval_reason_record` | object \| null | reject or reissue reason record |

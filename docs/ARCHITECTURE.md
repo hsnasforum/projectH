@@ -193,9 +193,9 @@ Current message records include:
 ### Task Log
 
 Current task log is append-only JSONL and already records actions such as:
-- `request_received`
-- `request_cancelled`
-- `document_context_updated`
+- `request_received` — detail: `{user_text, source_path, search_root, search_query, save_summary, approved, approved_approval_id, rejected_approval_id, reissue_approval_id, corrected_save_message_id, note_path, retry_feedback_label, retry_feedback_reason, retry_target_message_id}`
+- `request_cancelled` — detail: `{user_text, source_path, uploaded_file_name, search_root, search_query}`
+- `document_context_updated` — detail: `{kind, label, source_paths}`
 - `approval_requested` — detail: `{approval_id, artifact_id, source_message_id, note_path, overwrite, save_content_source}` plus optional `source_path` (file/source summary) or `search_query` + `source_paths` (search summary)
 - `approval_granted` — detail: `{approval_id, kind, requested_path, overwrite, artifact_id, source_message_id, save_content_source}`
 - `approval_rejected` — detail: `{approval_id, kind, requested_path, artifact_id, source_message_id, save_content_source, approval_reason_record}`

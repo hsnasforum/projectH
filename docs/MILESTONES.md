@@ -225,7 +225,7 @@
     - the shipped boundary draft and shipped rollback contract remain basis refs, not the disable target
     - aggregate identity, supporting refs, boundary draft, rollback contract, and operator-visible audit trace must remain after disable while only the later applied effect becomes inactive for future apply
     - disable remains separate from rollback reversal, conflict visibility, operator-audit repair, and cross-session counting
-  - the next shipped surface is now also implemented as one read-only aggregate-level `reviewed_memory_disable_contract` with:
+  - the current contract now also emits one read-only aggregate-level `reviewed_memory_disable_contract` with:
     - one `reviewed_memory_disable_contract`
     - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
     - `disable_target_kind = future_applied_reviewed_memory_effect_only`

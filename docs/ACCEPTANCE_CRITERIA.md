@@ -979,7 +979,7 @@ These are placeholders for the next phase design target and its immediate follow
   - one shipped read-only `reviewed_memory_capability_status` now carries current `capability_outcome = unblocked_all_required`
   - current shipped `unblocked_all_required` means draft-planning readiness only for one exact same-session aggregate
   - the current truthful `unblocked_all_required` state requires one matching internal `reviewed_memory_capability_source_refs` family plus one matching `reviewed_memory_capability_basis`, not current contract-object existence alone
-  - that source family stays one additive internal aggregate-scoped helper only:
+  - that source family is one current internal aggregate-scoped helper that stays payload-hidden:
     - `source_version = same_session_reviewed_memory_capability_source_refs_v1`
     - `source_scope = same_session_exact_recurrence_aggregate_only`
     - one `aggregate_identity_ref`

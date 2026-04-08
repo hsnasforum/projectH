@@ -213,7 +213,7 @@
     - the shipped boundary draft remains the scope draft and basis ref, not the rollback target
     - aggregate identity, supporting refs, boundary draft, and operator-visible audit trace must remain after rollback while only the later applied effect deactivates
     - rollback remains separate from disable, conflict visibility, operator-audit repair, and cross-session counting
-  - the next shipped surface is now also implemented as one read-only aggregate-level `reviewed_memory_rollback_contract` with:
+  - the current contract now also emits one read-only aggregate-level `reviewed_memory_rollback_contract` with:
     - one `reviewed_memory_rollback_contract`
     - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
     - `rollback_target_kind = future_applied_reviewed_memory_effect_only`

@@ -301,14 +301,14 @@ The top-level response payload is serialized by `app/serializers.py:_serialize_r
 
 ### Content Fields
 - `text` — localized response text body
-- `note_preview` — localized note preview text (set when save is requested)
-- `selected_source_paths` — list of selected source file paths
+- `note_preview` — localized note preview text, or `null` when no save is requested
+- `selected_source_paths` — list of selected source file paths, or `null`
 
 ### Metadata And Panel Fields (reuse shapes documented in Current Message Fields)
-- `approval` — serialized approval object (see Approval Rules section for field shape)
-- `active_context` — serialized active context for follow-up answers
+- `approval` — serialized approval object (see Approval Rules section for field shape), or `null` when no pending approval exists
+- `active_context` — serialized active context for follow-up answers, or `null`
 - `response_origin` — `{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}` or `null` when absent (e.g. error responses)
-- `applied_preferences` — applied preference records
+- `applied_preferences` — applied preference records, or `null`
 - `evidence` — list of evidence/source items (see Current Message Fields for item shape)
 - `summary_chunks` — list of summary chunk items (see Current Message Fields for item shape)
 - `claim_coverage` — list of claim coverage slot items (see Current Message Fields for slot shape)

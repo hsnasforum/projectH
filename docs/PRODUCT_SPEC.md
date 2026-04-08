@@ -231,7 +231,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
   - not persisted as a separate store field
 - `review_queue_items`
   - read-only pending-review session projection only
-  - derived from current serialized grounded-brief source messages
+  - derived from current `durable_candidate` items with `promotion_eligibility = eligible_for_review` and no matching current `candidate_review_record`
   - not persisted as a separate store field
 
 ### Current Permission Fields

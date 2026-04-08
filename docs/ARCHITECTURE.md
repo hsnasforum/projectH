@@ -190,7 +190,7 @@ Current session payloads may also expose:
   - current items may also expose one read-only `aggregate_promotion_marker`, one read-only `reviewed_memory_precondition_status`, one read-only `reviewed_memory_boundary_draft`, one read-only `reviewed_memory_rollback_contract`, one read-only `reviewed_memory_disable_contract`, one read-only `reviewed_memory_conflict_contract`, one read-only `reviewed_memory_transition_audit_contract`, one read-only `reviewed_memory_unblock_contract`, one read-only `reviewed_memory_capability_status`, and one additive read-only `reviewed_memory_planning_target_ref`
   - not persisted as a separate session-store field
 - computed top-level `review_queue_items`
-  - derived only from current serialized grounded-brief source messages
+  - derived from current `durable_candidate` items with `promotion_eligibility = eligible_for_review` and no matching current `candidate_review_record`
   - not persisted as a separate session-store field
 
 Current message records include:

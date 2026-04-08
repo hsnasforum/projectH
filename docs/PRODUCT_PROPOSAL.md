@@ -23,7 +23,7 @@ projectH aims to become a **teachable local personal agent** that stores user co
 
 ### Facts
 - The repository already supports local file reading, summarization, document search, general chat, follow-up Q&A in document context, approval-gated save, evidence panels, feedback capture, and local session/log storage.
-- Web investigation exists, but it is still a guarded secondary mode with quality work in progress.
+- Web investigation is a permission-gated secondary mode (enabled/disabled/ask per session) under the document-first guardrail, with local JSON history, in-session reload, history-card badges, entity-card / latest-update answer-mode distinction, and claim-coverage panel already shipped.
 - The current phase is not model training and not program operation.
 
 ### Recommendation
@@ -56,11 +56,13 @@ projectH aims to become a **teachable local personal agent** that stores user co
 - streaming progress and cancel
 - response feedback capture
 - PDF text-layer support with OCR-not-supported guidance
-- permission-gated web investigation with local JSON history
+- permission-gated web investigation (enabled/disabled/ask per session) with local JSON history, in-session reload, and history-card badges (answer-mode, verification-strength, source-role trust)
+- entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade
+- claim coverage panel with status tags and actionable hints
 
 ### Core Product Boundaries
 - Core product: local document assistant
-- Secondary mode: evidence-backed web investigation
+- Secondary mode: permission-gated web investigation (enabled/disabled/ask per session) under document-first guardrail
 - Safety baseline: approval-based writes and auditable local traces
 - Vendor stance: model/runtime interchangeable, product identity vendor-neutral
 
@@ -132,7 +134,7 @@ Turn the current document assistant into a **learning-ready document assistant**
 - approval request / approval outcome traces
 - response feedback labels and reasons
 - session history and active context
-- web investigation history when secondary mode is used
+- web investigation local JSON history and history-card badge traces when secondary mode is used
 
 ### Needed Next
 - grounded-brief artifact snapshots

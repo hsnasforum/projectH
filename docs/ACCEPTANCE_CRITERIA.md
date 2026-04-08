@@ -1376,7 +1376,7 @@ These are placeholders for the next phase design target and its immediate follow
   - entity-card 붉은사막 actual-search browser 자연어 reload 후 두 번째 follow-up → source path(`namu.wiki`/`ko.wikipedia.org`) context box 유지 + `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` response-origin exact-field drift 없음
   - history-card latest-update mixed-source `다시 불러오기` 후 두 번째 follow-up → source path(`store.steampowered.com`, `yna.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` response-origin exact-field drift 없음
   - history-card latest-update single-source `다시 불러오기` 후 두 번째 follow-up → source path(`example.com/seoul-weather`) context box 유지 + `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처` response-origin exact-field drift 없음
-  - history-card latest-update news-only `다시 불러오기` 후 두 번째 follow-up → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` response-origin drift 없음
+  - history-card latest-update news-only `다시 불러오기` 후 두 번째 follow-up → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` response-origin exact-field drift 없음
   - latest-update mixed-source `방금 검색한 결과 다시 보여줘` browser 자연어 reload → source path(`store.steampowered.com`, `yna.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` exact field 유지
   - latest-update single-source `방금 검색한 결과 다시 보여줘` browser 자연어 reload → source path(`example.com/seoul-weather`) context box 유지 + `WEB` badge, `최신 확인`, `단일 출처 참고`, `보조 출처` exact field 유지
   - latest-update news-only `방금 검색한 결과 다시 보여줘` browser 자연어 reload → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` exact field 유지

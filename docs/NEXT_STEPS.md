@@ -142,7 +142,7 @@
     - `conflict_visible_reviewed_memory_scope` = competing reviewed-memory targets stay visible before apply inside one `same_session_exact_recurrence_aggregate_only` scope
       - first conflict categories stay fixed at `future_reviewed_memory_candidate_draft_vs_applied_effect` and `future_applied_reviewed_memory_effect_vs_applied_effect`
       - this remains read-only visibility only, not resolver vocabulary
-    - `operator_auditable_reviewed_memory_transition` = any later reviewed-memory transition above the blocked marker keeps one canonical local transition identity, explicit operator-visible timing, and explicit local reason or note boundary; `task_log` may mirror it but does not become canonical, and approval-backed save support / historical adjuncts / review acceptance / queue presence / task-log replay alone do not create canonical transition state
+    - `operator_auditable_reviewed_memory_transition` = every shipped reviewed-memory transition above the blocked marker keeps one canonical local transition identity, explicit operator-visible timing, and explicit local reason or note boundary; `task_log` may mirror it but does not become canonical, and approval-backed save support / historical adjuncts / review acceptance / queue presence / task-log replay alone do not create canonical transition state
   - the current aggregate item now also exposes one read-only boundary draft object:
     - `reviewed_memory_boundary_draft`
     - `boundary_version = fixed_narrow_reviewed_scope_v1`

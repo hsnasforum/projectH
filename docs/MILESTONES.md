@@ -256,7 +256,7 @@
     - current append-only `task_log` may mirror that trace, but it must not become the canonical reviewed-memory transition store
     - approval-backed save support, historical adjuncts, review acceptance, queue presence, and task-log replay alone must not create canonical transition state
     - operator audit stays separate from rollback reversal, disable stop-apply, conflict visibility, and cross-session counting
-  - the next shipped surface is now also implemented as one read-only aggregate-level `reviewed_memory_transition_audit_contract` with:
+  - the current contract now also emits one read-only aggregate-level `reviewed_memory_transition_audit_contract` with:
     - one read-only aggregate-level `reviewed_memory_transition_audit_contract`
     - `audit_version = first_reviewed_memory_transition_identity_v1`
     - `reviewed_scope = same_session_exact_recurrence_aggregate_only`

@@ -208,7 +208,7 @@
     - exact supporting refs
     - `boundary_stage = draft_not_applied`
     - deterministic `drafted_at = last_seen_at`
-  - the next contract decision now also fixes `rollback_ready_reviewed_memory_effect` to one exact future rollback target:
+  - `rollback_ready_reviewed_memory_effect` is now fixed as one shipped rollback contract surface:
     - rollback means reversal of one later applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
     - the shipped boundary draft remains the scope draft and basis ref, not the rollback target
     - aggregate identity, supporting refs, boundary draft, and operator-visible audit trace must remain after rollback while only the later applied effect deactivates

@@ -85,7 +85,7 @@
   - `title`
   - `messages`
   - `pending_approvals`
-  - `permissions` — `{web_search, web_search_label}`
+  - `permissions` — `{web_search, web_search_label}` where `web_search` is `disabled` / `approval` / `enabled` and `web_search_label` is `차단 · 읽기 전용 검색` / `승인 필요 · 읽기 전용 검색` / `허용 · 읽기 전용 검색`
   - `active_context`
   - timestamps
 - Approval state is removed after approval or rejection.

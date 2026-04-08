@@ -115,7 +115,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - response metadata including evidence/source with trust labels, summary chunks with applied-range, response origin (badge/answer-mode/verification/source-role), claim coverage with status tags and fact-strength summary, feedback with label + optional reason, and optional source-message `candidate_confirmation_record` / `candidate_recurrence_key` / `durable_candidate` / `candidate_review_record` / grounded-brief trace fields
 - current session payload can also expose one computed top-level `recurrence_aggregate_candidates` list derived from current same-session serialized source-message `candidate_recurrence_key` records
 - current session payload can also expose one computed top-level `review_queue_items` list derived from eligible current source-message `durable_candidate` records
-- additive JSONL task log for requests, approvals, writes, rejects, reissues, cancels, feedback (`response_feedback_recorded`), candidate-confirmation events, and candidate-review events
+- additive JSONL task log for requests, approvals, writes, rejects, reissues, cancels, feedback, corrections, verdicts, candidate events, stream-cancel (`stream_cancel_requested`), permission updates (`web_search_permission_updated`, `permissions_updated`), and OCR guidance (`ocr_not_supported`)
 - local web-search history JSON with answer-mode/verification/source-role badges when the secondary mode is used
 
 ### Why The Current Phase Must Stay Document-First

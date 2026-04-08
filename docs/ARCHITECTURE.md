@@ -208,6 +208,10 @@ Current task log is append-only JSONL and already records actions such as:
 - `content_reason_note_recorded`
 - `candidate_confirmation_recorded`
 - `candidate_review_recorded`
+- `stream_cancel_requested`
+- `web_search_permission_updated`
+- `permissions_updated`
+- `ocr_not_supported`
 
 ## Approval Contract
 

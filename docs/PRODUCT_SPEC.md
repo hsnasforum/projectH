@@ -314,12 +314,12 @@ The top-level response payload is serialized by `app/serializers.py:_serialize_r
 - `claim_coverage` — list of claim coverage slot items (see Current Message Fields for slot shape)
 - `claim_coverage_progress_summary` — localized focus-slot reinvestigation summary
 
-### Correction And Reason Fields
-- `original_response_snapshot` — `{artifact_id, artifact_kind, draft_text, source_paths, response_origin, summary_chunks_snapshot, evidence_snapshot}` (nested `response_origin` may be `null` when absent)
-- `corrected_outcome` — correction outcome metadata
-- `approval_reason_record` — normalized approval reason on rejected or reissued approvals
-- `content_reason_record` — content reason record on explicit rejection
-- `save_content_source` — `original_draft` or `corrected_text`, indicates which text version is saved
+### Correction And Reason Fields (all `null` when absent)
+- `original_response_snapshot` — `{artifact_id, artifact_kind, draft_text, source_paths, response_origin, summary_chunks_snapshot, evidence_snapshot}` or `null`; nested `response_origin` may also be `null` when absent
+- `corrected_outcome` — correction outcome metadata, or `null`
+- `approval_reason_record` — normalized approval reason on rejected or reissued approvals, or `null`
+- `content_reason_record` — content reason record on explicit rejection, or `null`
+- `save_content_source` — `original_draft` or `corrected_text` indicating which text version is saved, or `null`
 
 ## Response Panels And UI Metadata
 

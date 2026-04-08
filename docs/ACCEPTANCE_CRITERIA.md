@@ -1116,7 +1116,7 @@ These are placeholders for the next phase design target and its immediate follow
   - write-note task-log entries keep the same `artifact_id`
   - `corrected_outcome_recorded` task-log entries keep the same `artifact_id` and `source_message_id`
   - `correction_submitted` task-log entries keep the same `artifact_id` and `source_message_id`
-  - `approval_rejected`, `approval_reissued`, and response-level task-log detail keep the same `approval_reason_record`
+  - `approval_rejected`, `approval_reissued`, and `agent_response` task-log detail keep the same `approval_reason_record` — `agent_response` detail includes `{status, actions, requires_approval, proposed_note_path, saved_note_path, selected_source_paths, has_note_preview, approval_id, artifact_id, artifact_kind, source_message_id, save_content_source, approval_reason_record, active_context_label, evidence_count, summary_chunk_count}`
   - feedback-linked traces keep the same assistant-message linkage and log the resolved `artifact_id`
 - For the first session-local memory signal slice, first checks should verify:
   - a grounded-brief source message can expose one computed `session_local_memory_signal`

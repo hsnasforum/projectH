@@ -619,7 +619,7 @@ The first official artifact is the `grounded brief`.
   - nested `approval_reason_record`
   - canonical session source: the assistant system message created for reject / reissue
   - approval convenience copy: the active reissued approval object when reissue creates a new pending approval
-  - audit mirror: `approval_rejected`, `approval_reissued`, and `agent_response` task-log detail
+  - audit mirror: `approval_rejected`, `approval_reissued`, and `agent_response` task-log detail — `agent_response` detail includes `{status, actions, requires_approval, proposed_note_path, saved_note_path, selected_source_paths, has_note_preview, approval_id, artifact_id, artifact_kind, source_message_id, save_content_source, approval_reason_record, active_context_label, evidence_count, summary_chunk_count}`
 - current implemented content-verdict audit trace:
   - explicit reject action log: `content_verdict_recorded`
   - generic content-outcome mirror: `corrected_outcome_recorded`

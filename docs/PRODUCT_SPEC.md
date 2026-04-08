@@ -100,6 +100,9 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - approval preview
 - saved summary note path when approved
 - response feedback records
+- structured search result preview panel (ordered label with full-path tooltip, match type badge, content snippet)
+- summary source-type label (`문서 요약`, `선택 결과 요약`) in quick meta and transcript meta
+- response origin badge (`WEB`, answer-mode badge, verification label, source-role trust badges) for web investigation responses
 
 ### Approval Points
 - note save approval

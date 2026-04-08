@@ -142,8 +142,8 @@
 22. Grounded-brief source messages can now also persist one candidate-linked `candidate_confirmation_record`, and the response card can record it through one small explicit reuse-confirmation action that stays separate from save approval and from the current `session_local_candidate` object itself.
 23. Current session payloads can now also expose one pending `review_queue_items` list, the existing shell can render it as one compact `검토 후보` section, and one `accept` action can record source-message `candidate_review_record` while leaving the result reviewed-but-not-applied.
 24. Current session payloads can now also expose one optional top-level read-only `recurrence_aggregate_candidates` projection derived only from current same-session serialized source-message `candidate_recurrence_key` records, emitted only for exact identity matches across at least two distinct grounded-brief anchors, and kept separate from `review_queue_items`, promotion, and user-level memory.
-25. Current same-session `recurrence_aggregate_candidates` items can now also expose one read-only `aggregate_promotion_marker` that keeps the aggregate explicitly blocked with `promotion_basis = same_session_exact_recurrence_aggregate`, `promotion_eligibility = blocked_pending_reviewed_memory_boundary`, `reviewed_memory_boundary = not_open`, fixed `marker_version`, and deterministic `derived_at = last_seen_at`.
-26. Current same-session `recurrence_aggregate_candidates` items can now also expose one read-only `reviewed_memory_precondition_status` object that keeps the same blocked state explicit with `status_version = same_session_reviewed_memory_preconditions_v1`, `overall_status = blocked_all_required`, `all_required = true`, ordered fixed precondition ids, and deterministic `evaluated_at = last_seen_at`.
+25. Current same-session `recurrence_aggregate_candidates` items now also expose one read-only `aggregate_promotion_marker` that keeps the aggregate explicitly blocked with `promotion_basis = same_session_exact_recurrence_aggregate`, `promotion_eligibility = blocked_pending_reviewed_memory_boundary`, `reviewed_memory_boundary = not_open`, fixed `marker_version`, and deterministic `derived_at = last_seen_at`.
+26. Current same-session `recurrence_aggregate_candidates` items now also expose one read-only `reviewed_memory_precondition_status` object that keeps the same blocked state explicit with `status_version = same_session_reviewed_memory_preconditions_v1`, `overall_status = blocked_all_required`, `all_required = true`, ordered fixed precondition ids, and deterministic `evaluated_at = last_seen_at`.
 27. The existing shell can now also render one separate aggregate-level read-only `검토 메모 적용 후보` section fed only by current `recurrence_aggregate_candidates`, shown adjacent to `검토 후보` only when aggregates exist; the `검토 메모 적용 시작` submit boundary is now enabled when `capability_outcome = unblocked_all_required` and the user has entered a non-empty reason note (visible but disabled while blocked or while note is empty); clicking the enabled submit now emits one `reviewed_memory_transition_record` with `record_stage = emitted_record_only_not_applied` and persists it under `reviewed_memory_emitted_transition_records`; after emission the same aggregate card shows `검토 메모 적용 실행`, and clicking that apply boundary changes `record_stage` to `applied_pending_result` with `applied_at` added; after the apply boundary the card shows `결과 확정`, and clicking it changes `record_stage` to `applied_with_result` and creates `apply_result` with `result_version = first_reviewed_memory_apply_result_v1`, `applied_effect_kind = reviewed_memory_correction_pattern`, `result_stage = result_recorded_effect_pending`, and `result_at`; the memory effect on future responses is now active (`result_stage = effect_active`); active effects are stored on the session as `reviewed_memory_active_effects`; future responses include a `[검토 메모 활성]` prefix with the operator's reason and pattern fingerprint; stop-apply: `적용 중단` changes `record_stage` to `stopped` and removes the effect; reversal: `적용 되돌리기` changes `record_stage` to `reversed`; conflict-visibility: `충돌 확인` records a `reviewed_memory_conflict_visibility_record` with `record_stage = conflict_visibility_checked`.
 
 ## Next Phase Design Backlog
@@ -333,7 +333,7 @@
   - `same_session_exact_recurrence_aggregate_only`
   - no reviewed-scope enum in the first boundary slice
   - no rename of `candidate_review_record`, `recurrence_aggregate_candidates`, or the current blocked marker into reviewed memory
-64. Current same-session `recurrence_aggregate_candidates` items may now also expose one read-only `reviewed_memory_boundary_draft`:
+64. Current same-session `recurrence_aggregate_candidates` items now also expose one read-only `reviewed_memory_boundary_draft`:
   - `boundary_version = fixed_narrow_reviewed_scope_v1`
   - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
   - one `aggregate_identity_ref`
@@ -364,7 +364,7 @@
   - rollback = reversal of already-applied reviewed-memory effect
   - disable = later stop-apply machinery
   - conflict visibility and operator-audit remain separate preconditions and must not be implied by rollback target definition alone
-70. Current same-session `recurrence_aggregate_candidates` items may now also expose one read-only `reviewed_memory_rollback_contract`:
+70. Current same-session `recurrence_aggregate_candidates` items now also expose one read-only `reviewed_memory_rollback_contract`:
   - `rollback_version = first_reviewed_memory_effect_reversal_v1`
   - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
   - one `aggregate_identity_ref`
@@ -394,7 +394,7 @@
   - disable = stop-apply of already-applied reviewed-memory effect
   - rollback = reversal of already-applied reviewed-memory effect
   - conflict visibility and operator-audit remain separate preconditions and must not be implied by disable target definition alone
-76. Current same-session `recurrence_aggregate_candidates` items may now also expose one read-only `reviewed_memory_disable_contract`:
+76. Current same-session `recurrence_aggregate_candidates` items now also expose one read-only `reviewed_memory_disable_contract`:
   - one `reviewed_memory_disable_contract`
   - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
   - `disable_target_kind = future_applied_reviewed_memory_effect_only`
@@ -422,7 +422,7 @@
 81. Keep conflict visibility separate from current shipped contracts:
   - current `reviewed_memory_boundary_draft`, `reviewed_memory_rollback_contract`, and `reviewed_memory_disable_contract` remain basis refs or neighboring contracts, not the conflict object itself
   - current append-only `task_log` may mirror conflict trace but must not become the canonical conflict store
-82. Current same-session `recurrence_aggregate_candidates` items may now also expose one read-only `reviewed_memory_conflict_contract`:
+82. Current same-session `recurrence_aggregate_candidates` items now also expose one read-only `reviewed_memory_conflict_contract`:
   - one `reviewed_memory_conflict_contract`
   - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
   - `conflict_target_categories`
@@ -453,7 +453,7 @@
   - current `reviewed_memory_boundary_draft`, `reviewed_memory_rollback_contract`, `reviewed_memory_disable_contract`, and `reviewed_memory_conflict_contract` remain basis refs or neighboring contracts, not transition results
   - current `candidate_review_record` must not become the transition record by itself
   - approval-backed save support, historical adjuncts, review acceptance, queue presence, and task-log replay alone must not create canonical transition state
-88. Current same-session `recurrence_aggregate_candidates` items may now also expose one read-only `reviewed_memory_transition_audit_contract`:
+88. Current same-session `recurrence_aggregate_candidates` items now also expose one read-only `reviewed_memory_transition_audit_contract`:
   - one `reviewed_memory_transition_audit_contract`
   - `audit_version = first_reviewed_memory_transition_identity_v1`
   - `reviewed_scope = same_session_exact_recurrence_aggregate_only`

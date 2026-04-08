@@ -119,7 +119,7 @@
     - `disable_ready_reviewed_memory_effect`
     - `conflict_visible_reviewed_memory_scope`
     - `operator_auditable_reviewed_memory_transition`
-  - the current aggregate item may now also expose one read-only precondition status object:
+  - the current aggregate item now also exposes one read-only precondition status object:
     - `reviewed_memory_precondition_status`
     - `status_version = same_session_reviewed_memory_preconditions_v1`
     - `overall_status = blocked_all_required`
@@ -143,7 +143,7 @@
       - first conflict categories stay fixed at `future_reviewed_memory_candidate_draft_vs_applied_effect` and `future_applied_reviewed_memory_effect_vs_applied_effect`
       - this remains read-only visibility only, not resolver vocabulary
     - `operator_auditable_reviewed_memory_transition` = any later reviewed-memory transition above the blocked marker keeps one canonical local transition identity, explicit operator-visible timing, and explicit local reason or note boundary; `task_log` may mirror it but does not become canonical, and approval-backed save support / historical adjuncts / review acceptance / queue presence / task-log replay alone do not create canonical transition state
-  - the current aggregate item may now also expose one read-only boundary draft object:
+  - the current aggregate item now also exposes one read-only boundary draft object:
     - `reviewed_memory_boundary_draft`
     - `boundary_version = fixed_narrow_reviewed_scope_v1`
     - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
@@ -153,7 +153,7 @@
     - optional `supporting_review_refs`
     - `boundary_stage = draft_not_applied`
     - `drafted_at = last_seen_at`
-  - the current aggregate item may now also expose one read-only rollback-contract object:
+  - the current aggregate item now also exposes one read-only rollback-contract object:
     - `reviewed_memory_rollback_contract`
     - `rollback_version = first_reviewed_memory_effect_reversal_v1`
     - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
@@ -163,7 +163,7 @@
     - `rollback_stage = contract_only_not_applied`
     - `audit_trace_expectation = operator_visible_local_transition_required`
     - `defined_at = last_seen_at`
-  - the current aggregate item may now also expose one read-only disable-contract object:
+  - the current aggregate item now also exposes one read-only disable-contract object:
     - `reviewed_memory_disable_contract`
     - `disable_version = first_reviewed_memory_effect_stop_apply_v1`
     - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
@@ -174,7 +174,7 @@
     - `effect_behavior = stop_apply_without_reversal`
     - `audit_trace_expectation = operator_visible_local_transition_required`
     - `defined_at = last_seen_at`
-  - the current aggregate item may now also expose one read-only conflict-contract object:
+  - the current aggregate item now also exposes one read-only conflict-contract object:
     - `reviewed_memory_conflict_contract`
     - `conflict_version = first_reviewed_memory_scope_visibility_v1`
     - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
@@ -186,7 +186,7 @@
     - `conflict_visibility_stage = contract_only_not_resolved`
     - `audit_trace_expectation = operator_visible_local_transition_required`
     - `defined_at = last_seen_at`
-  - the current aggregate item may now also expose one read-only transition-audit-contract object:
+  - the current aggregate item now also exposes one read-only transition-audit-contract object:
     - `reviewed_memory_transition_audit_contract`
     - `audit_version = first_reviewed_memory_transition_identity_v1`
     - `reviewed_scope = same_session_exact_recurrence_aggregate_only`

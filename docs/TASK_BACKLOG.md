@@ -655,7 +655,7 @@
   - it must require one real `canonical_transition_id`
   - it must require one explicit `operator_reason_or_note`
   - it must require one local `emitted_at`
-102. Keep the first materialization slice narrower than later transition vocabulary:
+102. The full transition vocabulary is now shipped (apply, stop-apply, reversal, conflict-visibility):
   - `future_reviewed_memory_stop_apply` is now implemented (it is no longer later); `future_reviewed_memory_reversal` is now also implemented (it is no longer later): after stop-apply the aggregate card shows an `적용 되돌리기` button; clicking it changes `record_stage` to `reversed`, sets `apply_result.result_stage` to `effect_reversed`, and adds `reversed_at`; aggregate identity, supporting refs, and contracts are retained
   - `future_reviewed_memory_conflict_visibility` is now also implemented (it is no longer later): after the effect is reversed the aggregate card shows a `충돌 확인` button; clicking it creates a separate conflict-visibility transition record with `transition_action = future_reviewed_memory_conflict_visibility`, `record_stage = conflict_visibility_checked`, evaluated `conflict_entries` and `conflict_entry_count`, and `source_apply_transition_ref`; the conflict visibility record is separate from the apply transition record and does not mutate it
   - first-round `task_log` mirroring stays optional; canonical emitted record remains sufficient by itself

@@ -1129,7 +1129,7 @@ The next phase should standardize one `grounded brief` artifact.
     - approval-backed save support, historical adjuncts, source-message review acceptance, queue presence, and `task_log` replay do not materialize this basis object
     - current `capability_outcome = unblocked_all_required` is truthful only when the same exact aggregate also exposes both a full matching `reviewed_memory_capability_source_refs` family and this matching capability-basis object
     - current architecture now also emits this basis layer during aggregate serialization when the same aggregate exposes the full matching source family, and `capability_outcome` is now `unblocked_all_required`
-  - current architecture still emits no reviewed-memory candidate store and no reviewed-memory apply path
+  - current architecture still emits no reviewed-memory candidate store; the reviewed-memory apply path (apply / stop-apply / reversal / conflict-visibility) is now shipped
 - current review-layer traces stay downstream from this key:
   - `review_queue_items` remain the pending-only surface for one current `durable_candidate`
   - `candidate_review_record` remains the reviewed-but-not-applied outcome for one current candidate version
@@ -1165,9 +1165,8 @@ The next phase should standardize one `grounded brief` artifact.
     - no disable state machine or disable satisfaction booleans yet
     - no rollback state machine or rollback satisfaction booleans yet
     - no per-precondition satisfaction booleans yet
-    - no current emitted reviewed-memory transition record surface
+    - the emitted reviewed-memory transition record surface is now shipped (apply / stop-apply / reversal / conflict-visibility)
     - no payload-visible reviewed-memory store and no payload-visible proof-record or proof-boundary surface
-    - no reviewed-memory apply
   - no cross-session counting
   - the shipped operator-audit contract now closes the last read-only precondition surface before any apply vocabulary opens
 

@@ -304,7 +304,7 @@
     - one separate read-only `reviewed_memory_capability_basis` now stays above that source family and below the now-shipped emitted transition record
     - current implementation now also emits that basis layer during aggregate serialization because the full matching source family now exists, and `capability_outcome` is now `unblocked_all_required`
     - keep current `unblocked_all_required` smaller than enabled submit, emitted transition records, and reviewed-memory apply
-  - the next contract decision now also fixes readiness-target label narrowing:
+  - readiness-target label narrowing is now fixed and shipped:
     - current shipped truth keeps `eligible_for_reviewed_memory_draft_planning_only` on `reviewed_memory_planning_target_ref.target_label`
     - current meaning stays reviewed-memory draft planning only
     - the current aggregate item now also exposes one additive `reviewed_memory_planning_target_ref` only

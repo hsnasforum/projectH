@@ -194,16 +194,20 @@ Current message records include:
 
 Current task log is append-only JSONL and already records actions such as:
 - `request_received`
+- `request_cancelled`
 - `document_context_updated`
 - `approval_requested`
 - `approval_granted`
 - `approval_rejected`
 - `approval_reissued`
 - `write_note`
-- `content_verdict_recorded`
-- `candidate_confirmation_recorded`
-- `corrected_outcome_recorded`
 - `response_feedback_recorded`
+- `correction_submitted`
+- `corrected_outcome_recorded`
+- `content_verdict_recorded`
+- `content_reason_note_recorded`
+- `candidate_confirmation_recorded`
+- `candidate_review_recorded`
 
 ## Approval Contract
 

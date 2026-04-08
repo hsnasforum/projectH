@@ -94,7 +94,7 @@
 - latest-update news-only natural-reload follow-up + second-follow-up source-path + response-origin exact-field drift-prevention service + browser smoke covering `hankyung.com`, `mk.co.kr`, `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사`
 - latest-update noisy-community natural-reload follow-up + second-follow-up exclusion service + browser smoke covering `보조 커뮤니티`, `brunch` negative in origin detail, response body, context box + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` positive retention
 - latest-update noisy-community click-reload follow-up + second-follow-up exclusion service + browser smoke covering `보조 커뮤니티`, `brunch` negative in origin detail, response body, context box + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` positive retention
-- entity-card noisy single-source claim natural-reload + click-reload follow-up/second-follow-up exclusion + provenance truth-sync: 본문/origin detail에 `출시일`, `2025`, `blog.example.com` 미노출, source_paths/context box에 `blog.example.com` provenance 포함, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지
+- entity-card noisy single-source claim natural-reload + click-reload follow-up/second-follow-up exclusion + provenance exact-field retention: `출시일`, `2025`, `blog.example.com` 본문/detail 미노출, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, source_paths/context box에 `blog.example.com` provenance 포함
 - PDF text-layer support
 - OCR-not-supported guidance
 - response feedback capture

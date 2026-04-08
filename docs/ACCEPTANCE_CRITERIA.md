@@ -103,7 +103,7 @@
   - `save_content_source`, `source_message_id` — present on grounded-brief source messages (after direct approved save) and on save/approval trace messages
   - `approval` — serialized approval object when a pending approval exists (see Approval section for field shape)
   - `original_response_snapshot` — `{artifact_id, artifact_kind, draft_text, source_paths, response_origin, summary_chunks_snapshot, evidence_snapshot}` (snapshot fields reuse same shapes as their message-level counterparts; nested `response_origin` may be `null` when absent)
-  - `session_local_memory_signal`, `superseded_reject_signal`, `historical_save_identity_signal` — grounded-brief source message only; memory-signal roots require the same source-message anchor
+  - `session_local_memory_signal` (requires `original_response_snapshot`), `superseded_reject_signal` (requires eligible `session_local_memory_signal` path), `historical_save_identity_signal` (requires `session_local_memory_signal` with `save_signal`) — grounded-brief source message only; memory-signal roots require the same source-message anchor
   - `session_local_candidate`, `candidate_confirmation_record`, `candidate_recurrence_key`, `durable_candidate`, `candidate_review_record` — grounded-brief source message only; candidate roots and sibling projections require the same source-message anchor
 - Response/session payloads can also serialize one optional source-message `candidate_confirmation_record` and one optional sibling `durable_candidate`, both separate from `session_local_candidate`.
 - Response/session payloads can also serialize one optional source-message `candidate_recurrence_key`, kept separate from `session_local_candidate`, `durable_candidate`, and `candidate_review_record`.

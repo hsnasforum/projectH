@@ -265,8 +265,8 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
   - `corrected_outcome` — owned by the original grounded-brief source message only
   - `content_reason_record` — owned by the original grounded-brief source message only
   - `session_local_memory_signal` — grounded-brief source message only (requires `original_response_snapshot`)
-  - `superseded_reject_signal` — grounded-brief source message only
-  - `historical_save_identity_signal` — grounded-brief source message only
+  - `superseded_reject_signal` — grounded-brief source message only; requires source-message anchor and eligible `session_local_memory_signal` path
+  - `historical_save_identity_signal` — grounded-brief source message only; requires source-message anchor and `session_local_memory_signal` with `save_signal`
   - `session_local_candidate` — grounded-brief source message only (requires same source-message anchor)
   - `candidate_confirmation_record` — grounded-brief source message only (sibling of `session_local_candidate`)
   - `candidate_recurrence_key` — grounded-brief source message only (sibling of `session_local_candidate`)

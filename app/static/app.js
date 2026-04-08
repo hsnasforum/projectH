@@ -2333,6 +2333,9 @@
       if (progressState === "improved" || (prev && curr && prev !== curr && curr === "교차 확인")) {
         return `→ 재조사 결과: ${prev} → ${curr}으로 보강되었습니다.`;
       }
+      if (progressState === "regressed" && prev && curr) {
+        return `→ 재조사 결과: ${prev} → ${curr}으로 약해졌습니다. 추가 교차 검증이 권장됩니다.`;
+      }
       if (curr === "교차 확인") {
         return `→ 재조사 대상이며, 현재 교차 확인 상태입니다.`;
       }

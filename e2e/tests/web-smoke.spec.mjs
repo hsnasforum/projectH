@@ -1083,6 +1083,22 @@ test("claim-coverage panel은 재조사 후 보강된 슬롯을 명확히 표시
   await expect(text).toContainText("단일 출처 → 교차 확인으로 보강되었습니다");
 });
 
+test("claim-coverage panel은 재조사 후 약해진 슬롯을 명확히 표시합니다", async ({ page }) => {
+  await prepareSession(page, "claim-coverage-focus-regressed");
+
+  await page.evaluate(() => {
+    // @ts-ignore — renderClaimCoverage is defined in the page scope
+    renderClaimCoverage([
+      { slot: "이용 형태", status_label: "단일 출처", value: "PC·콘솔", support_count: 1, candidate_count: 1, is_focus_slot: true, progress_label: "약해짐", previous_status_label: "교차 확인", progress_state: "regressed" },
+    ], "이용 형태: 교차 확인 → 단일 출처로 약해짐.");
+  });
+
+  const text = page.locator("#claim-coverage-text");
+  await expect(text).toContainText("재조사 결과");
+  await expect(text).toContainText("교차 확인 → 단일 출처으로 약해졌습니다");
+  await expect(text).toContainText("추가 교차 검증이 권장됩니다");
+});
+
 test("web-search history card header badges는 answer-mode, verification-strength, source-role trust를 올바르게 렌더링합니다", async ({ page }) => {
   await prepareSession(page, "search-history-badges");
 

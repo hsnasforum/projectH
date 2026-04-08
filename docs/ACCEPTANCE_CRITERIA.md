@@ -1063,13 +1063,13 @@ These are placeholders for the next phase design target and its immediate follow
   - that target is shared by the now-materialized rollback handle (and later disable handles when implemented), while each handle still keeps its own matching contract ref and capability meaning
   - the raw-event helper `reviewed_memory_local_effect_presence_event` now materializes only from one exact matching `reviewed_memory_local_effect_presence_fact_source` for the same aggregate
   - the producer helper `reviewed_memory_local_effect_presence_event_producer` now materializes only from one exact matching `reviewed_memory_local_effect_presence_event` for the same aggregate
-  - the source-consumer helper `reviewed_memory_local_effect_presence_record` may materialize only from one exact matching `reviewed_memory_local_effect_presence_event_source` for the same aggregate
+  - the source-consumer helper `reviewed_memory_local_effect_presence_record` now materializes only from one exact matching `reviewed_memory_local_effect_presence_event_source` for the same aggregate
   - that target helper now materializes only from that exact matching source-consumer helper result for the same aggregate
   - current implementation still emits no such handle in payload, even though the internal helper now materializes it and `rollback_source_ref` now resolves only to that same handle
   - current implementation still emits no such target in payload, even though the internal target helper now materializes it only from one exact same-aggregate source-consumer helper result
   - current implementation still emits no payload-visible raw local event, and the internal raw-event helper stays payload-hidden even though it now materializes only when one exact same-aggregate local effect-presence fact source exists above one truthful same-aggregate proof-boundary result that itself materializes from one canonical local proof record
   - current implementation still emits no payload-visible event source or source-consumer record, and no helper may synthesize the source-consumer record from current contract existence or support-only traces
-  - current payload also emits no `reviewed_memory_capability_source_refs` surface because that source layer remains future internal machinery only
+  - current payload emits no `reviewed_memory_capability_source_refs` surface because that source layer is current internal machinery that stays payload-hidden
   - capability-path opening alone does not create `canonical_transition_id`, `operator_reason_or_note`, `emitted_at`, or `reviewed_memory_transition_record`
   - the shipped additive `reviewed_memory_planning_target_ref` stays present as the only current planning-target source after duplicated echo cleanup
   - no extra post-cleanup compatibility note is needed to interpret the current payload; removed echo fields must stay absent from current schema expectations

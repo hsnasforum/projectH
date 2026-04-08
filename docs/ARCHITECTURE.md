@@ -212,9 +212,9 @@ Current task log is append-only JSONL and already records actions such as:
 - `web_search_permission_updated`
 - `permissions_updated`
 - `ocr_not_supported`
-- `web_search_record_loaded`
-- `web_search_retried`
-- `answer_with_active_context`
+- `web_search_record_loaded` — detail: `{query, record_id, record_path, result_count}`
+- `web_search_retried` — detail: `{query, result_count, page_count, record_path, urls, search_queries, deprioritized_urls}` (shared web-search detail shape)
+- `answer_with_active_context` — detail: `{label, source_paths, intent, conversation_mode, retrieved_chunk_count, selected_evidence_count, retry_feedback_label, retry_feedback_reason, retry_target_message_id}`
 - `reviewed_memory_transition_emitted`
 - `reviewed_memory_transition_applied`
 - `reviewed_memory_transition_result_confirmed`

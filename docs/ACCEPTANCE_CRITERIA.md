@@ -89,7 +89,16 @@
   - `active_context` — `{kind, label, source_paths, summary_hint, suggested_prompts, record_path, claim_coverage_progress_summary}`
   - timestamps
 - Approval state is removed after approval or rejection.
-- Response metadata for evidence, summary spans, origin, claim coverage, feedback, grounded-brief artifact fields, `corrected_text`, `corrected_outcome`, `content_reason_record`, and `approval_reason_record` is serializable back into the session.
+- Response metadata is serializable back into the session. Per-message fields include:
+  - `response_origin` — `{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}`
+  - `evidence` — list of `{label, source_name, source_path, snippet, source_role}`
+  - `summary_chunks` — list of `{chunk_id, chunk_index, total_chunks, source_path, source_name, selected_line}`
+  - `claim_coverage` — list of slot objects (see PRODUCT_SPEC for full slot field shape)
+  - `claim_coverage_progress_summary`
+  - `web_search_history` — list of recent search record summaries (see PRODUCT_SPEC for full record shape)
+  - `feedback`
+  - `corrected_text`, `corrected_outcome`, `content_reason_record`, `approval_reason_record`
+  - `original_response_snapshot` — `{artifact_id, artifact_kind, draft_text, source_paths, response_origin, summary_chunks_snapshot, evidence_snapshot}` (snapshot fields reuse same shapes as their message-level counterparts)
 - Response/session payloads can also serialize one optional source-message `candidate_confirmation_record` and one optional sibling `durable_candidate`, both separate from `session_local_candidate`.
 - Response/session payloads can also serialize one optional source-message `candidate_recurrence_key`, kept separate from `session_local_candidate`, `durable_candidate`, and `candidate_review_record`.
 - Session payloads can also serialize one computed top-level `recurrence_aggregate_candidates` list, separate from source-message fields and not persisted as its own store.

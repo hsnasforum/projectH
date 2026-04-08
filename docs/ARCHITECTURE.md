@@ -219,14 +219,14 @@ Current message records include:
   - `content_reason_record`
   - `save_content_source` — also present on save/approval trace messages
   - `source_message_id` — also present on save/approval trace messages
-  - `session_local_memory_signal`
+  - `session_local_memory_signal` — requires `original_response_snapshot`
   - `superseded_reject_signal`
   - `historical_save_identity_signal`
-  - `session_local_candidate`
-  - `candidate_confirmation_record`
-  - `candidate_recurrence_key`
-  - `durable_candidate`
-  - `candidate_review_record`
+  - `session_local_candidate` — requires same source-message anchor
+  - `candidate_confirmation_record` — sibling of `session_local_candidate`
+  - `candidate_recurrence_key` — sibling of `session_local_candidate`
+  - `durable_candidate` — sibling of `session_local_candidate` + `candidate_confirmation_record`
+  - `candidate_review_record` — resolves when `durable_candidate` join matches
 - approval trace message fields:
   - `approval_reason_record` — owned by reject/reissue approval trace messages
   - `save_content_source` — also present on grounded-brief source messages after direct approved save

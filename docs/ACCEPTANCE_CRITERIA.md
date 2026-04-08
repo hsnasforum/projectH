@@ -741,7 +741,7 @@ These are placeholders for the next phase design target and its immediate follow
     - `audit_stage = contract_only_not_emitted`
     - `audit_store_boundary = canonical_transition_record_separate_from_task_log`
     - no reviewed-memory state machine, no reviewed-memory apply result, and no cross-session widening
-  - the first later operator-visible trigger-source slice should stay separate from both the shipped audit contract and the emitted record:
+  - the current shipped operator-visible trigger-source layer stays separate from both the shipped audit contract and the emitted record:
     - choose `Option A`
     - one separate aggregate-level surface fed only by `recurrence_aggregate_candidates`
     - keep it inside the existing shell session stack as one section adjacent to `검토 후보`

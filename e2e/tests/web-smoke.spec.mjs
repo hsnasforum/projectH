@@ -6593,6 +6593,28 @@ test("브라우저 폴더 선택으로 scanned PDF + readable file이 섞인 폴
   await expect(page.locator("#response-search-preview .search-preview-snippet").first()).toContainText("budget");
 });
 
+test("브라우저 폴더 선택으로 scanned PDF + readable file이 섞인 폴더를 검색+요약하면 partial-failure notice와 함께 readable file preview가 유지됩니다", async ({ page }) => {
+  await prepareSession(page, "mixed-folder-skipped-pdf-summary");
+  await page.locator('input[name="request_mode"][value="search"]').check();
+  await page.getByTestId("browser-folder-input").setInputFiles(mixedSearchFixtureDir);
+  await expect(page.locator("#picked-folder-name")).toContainText("2개 파일");
+  await page.getByTestId("search-query").fill("budget");
+
+  await page.getByTestId("submit-request").click();
+
+  // search-plus-summary: response-text is visible with summary body
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  const responseText = await page.getByTestId("response-text").textContent();
+  expect(responseText).toContain("스캔본 또는 이미지형 PDF");
+  expect(responseText).toContain("건너뛰었습니다");
+
+  // search preview panel shows readable file result
+  await expect(page.getByTestId("response-search-preview")).toBeVisible();
+  await expect(page.locator("#response-search-preview .search-preview-item")).toHaveCount(1);
+  await expect(page.locator("#response-search-preview .search-preview-name").first()).toContainText("notes.txt");
+  await expect(page.locator("#response-search-preview .search-preview-snippet").first()).toContainText("budget");
+});
+
 test("브라우저 파일 선택으로 readable text-layer PDF를 선택하면 정상 요약이 됩니다", async ({ page }) => {
   await prepareSession(page, "readable-pdf-success");
   await page.getByTestId("browser-file-input").setInputFiles(readablePdfFixturePath);

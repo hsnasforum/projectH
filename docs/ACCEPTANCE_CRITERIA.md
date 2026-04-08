@@ -1397,6 +1397,7 @@ These are placeholders for the next phase design target and its immediate follow
   - browser file picker scanned/image-only PDF → OCR 미지원 안내(`요약할 수 없습니다`, `이미지형 PDF`, `OCR`, `다음 단계:`) 표시
   - browser folder picker scanned PDF + readable file mixed search → count-only partial-failure notice(`스캔본 또는 이미지형 PDF`, `건너뛰었습니다`) 표시
   - browser file picker readable text-layer PDF → 정상 요약 성공, OCR 안내 미노출, context box + quick meta에 `readable-text-layer.pdf` 표시
+  - browser folder picker mixed scanned-PDF search-plus-summary → partial-failure notice + readable file search preview(`notes.txt`, `budget` snippet) 유지
 
 ### In Progress
 - Improve regression fixtures for weak-slot reinvestigation and source consensus.

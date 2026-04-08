@@ -100,6 +100,7 @@
 - browser file picker scanned/image-only PDF OCR-not-supported guidance smoke
 - browser folder picker scanned PDF + readable file mixed search count-only partial-failure notice smoke
 - browser file picker readable text-layer PDF success summary smoke
+- browser folder picker mixed scanned-PDF search-plus-summary partial-failure + preview retention smoke
 - response feedback capture
 - local web-search history storage
 

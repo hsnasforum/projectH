@@ -188,6 +188,7 @@ Current smoke scenarios:
 76. 브라우저 파일 선택으로 scanned/image-only PDF를 선택하면 OCR 미지원 안내(`요약할 수 없습니다`, `이미지형 PDF`, `다음 단계:`)가 표시되는지 확인
 77. 브라우저 폴더 선택으로 scanned PDF + readable file이 섞인 폴더를 검색하면 count-only partial-failure notice(`스캔본 또는 이미지형 PDF ... 건너뛰었습니다`)가 표시되는지 확인
 78. 브라우저 파일 선택으로 readable text-layer PDF를 선택하면 OCR 안내 없이 정상 요약이 되고, context box와 quick meta에 PDF 파일명이 표시되는지 확인
+79. 브라우저 폴더 선택으로 scanned PDF + readable file이 섞인 폴더를 검색+요약하면 partial-failure notice와 함께 readable file search preview가 유지되는지 확인
 
 `make e2e-test` launches a dedicated Playwright web server for smoke with inherited `LOCAL_AI_MODEL_PROVIDER` / `LOCAL_AI_OLLAMA_MODEL` overrides cleared, `LOCAL_AI_MODEL_PROVIDER=mock` reapplied, and existing servers on the smoke port not reused. Shell overrides such as `LOCAL_AI_MODEL_PROVIDER=ollama` therefore do not change the automated baseline. Other runtimes remain optional and are validated separately.
 

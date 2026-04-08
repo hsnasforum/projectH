@@ -1027,7 +1027,7 @@ These are placeholders for the next phase design target and its immediate follow
     - one local `applied_effect_id`
     - deterministic `present_locally_at`
   - the current `reviewed_memory_local_effect_presence_fact_source_instance` helper now materializes only from one exact matching `reviewed_memory_local_effect_presence_proof_boundary` for the same aggregate
-  - the exact later local fact source beneath that raw helper must stay one shared internal `reviewed_memory_local_effect_presence_fact_source`:
+  - the exact local fact source beneath that raw helper is one now-materialized shared internal `reviewed_memory_local_effect_presence_fact_source`:
     - `fact_source_version = first_same_session_reviewed_memory_local_effect_presence_fact_source_v1`
     - `fact_source_scope = same_session_exact_recurrence_aggregate_only`
     - one `aggregate_identity_ref`
@@ -1038,7 +1038,7 @@ These are placeholders for the next phase design target and its immediate follow
     - `fact_stage = presence_fact_available_local_only`
     - one local `applied_effect_id`
     - deterministic `present_locally_at`
-  - the exact later local effect-presence event above that fact source and beneath that producer helper must stay one shared internal `reviewed_memory_local_effect_presence_event`:
+  - the exact local effect-presence event above that fact source and beneath that producer helper is one now-materialized shared internal `reviewed_memory_local_effect_presence_event`:
     - `event_version = first_same_session_reviewed_memory_local_effect_presence_event_v1`
     - `event_scope = same_session_exact_recurrence_aggregate_only`
     - one `aggregate_identity_ref`
@@ -1060,7 +1060,7 @@ These are placeholders for the next phase design target and its immediate follow
     - `event_stage = presence_event_recorded_local_only`
     - one local `applied_effect_id`
     - deterministic `present_locally_at`
-  - that target must stay shared by later rollback and later disable handles, while each later handle still keeps its own matching contract ref and capability meaning
+  - that target is shared by the now-materialized rollback handle (and later disable handles when implemented), while each handle still keeps its own matching contract ref and capability meaning
   - the raw-event helper `reviewed_memory_local_effect_presence_event` now materializes only from one exact matching `reviewed_memory_local_effect_presence_fact_source` for the same aggregate
   - the producer helper `reviewed_memory_local_effect_presence_event_producer` now materializes only from one exact matching `reviewed_memory_local_effect_presence_event` for the same aggregate
   - the source-consumer helper `reviewed_memory_local_effect_presence_record` may materialize only from one exact matching `reviewed_memory_local_effect_presence_event_source` for the same aggregate

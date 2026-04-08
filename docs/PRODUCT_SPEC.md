@@ -1336,7 +1336,7 @@ The first official artifact is the `grounded brief`.
       - `target_stage = effect_present_local_only`
       - one local `applied_effect_id`
       - `present_locally_at`
-    - the exact later local proof boundary beneath the current fact-source-instance helper should stay one shared internal `reviewed_memory_local_effect_presence_proof_boundary`:
+    - the exact local proof boundary beneath the current fact-source-instance helper is one now-materialized shared internal `reviewed_memory_local_effect_presence_proof_boundary`:
       - `proof_boundary_version = first_same_session_reviewed_memory_local_effect_presence_proof_boundary_v1`
       - `proof_boundary_scope = same_session_exact_recurrence_aggregate_only`
       - one `aggregate_identity_ref`
@@ -1347,7 +1347,7 @@ The first official artifact is the `grounded brief`.
       - `proof_stage = first_presence_proved_local_only`
       - one local `applied_effect_id`
       - `present_locally_at`
-    - the exact later canonical local proof record beneath that proof-boundary helper should stay one internal `reviewed_memory_local_effect_presence_proof_record`:
+    - the exact canonical local proof record beneath that proof-boundary helper is one now-materialized internal `reviewed_memory_local_effect_presence_proof_record`:
       - `proof_record_version = first_same_session_reviewed_memory_local_effect_presence_proof_record_v1`
       - `proof_record_scope = same_session_exact_recurrence_aggregate_only`
       - one `aggregate_identity_ref`
@@ -1364,7 +1364,7 @@ The first official artifact is the `grounded brief`.
       - `present_locally_at` may reuse `first_seen_at` only when the proof record is actually minted at that exact same instant
     - the current `reviewed_memory_local_effect_presence_proof_boundary` helper now materializes only from one exact matching `reviewed_memory_local_effect_presence_proof_record` inside one same-session internal `reviewed_memory_local_effect_presence_proof_record_store` boundary for the same aggregate
     - the current `reviewed_memory_local_effect_presence_fact_source_instance` helper now materializes only from one exact matching `reviewed_memory_local_effect_presence_proof_boundary` for the same aggregate
-    - the exact later local fact source beneath that raw helper should stay one shared internal `reviewed_memory_local_effect_presence_fact_source`:
+    - the exact local fact source beneath that raw helper is one now-materialized shared internal `reviewed_memory_local_effect_presence_fact_source`:
       - `fact_source_version = first_same_session_reviewed_memory_local_effect_presence_fact_source_v1`
       - `fact_source_scope = same_session_exact_recurrence_aggregate_only`
       - one `aggregate_identity_ref`
@@ -1380,7 +1380,7 @@ The first official artifact is the `grounded brief`.
       - do not add a second fact id in the first contract
       - reuse `applied_effect_id` as the first local identity minted exactly at the truthful local fact-source instant
       - keep `present_locally_at` as that same first truthful local instant and reuse `aggregate.last_seen_at` only when it is exactly that instant
-    - the exact later local effect-presence event above that fact source and beneath that producer helper should stay one shared internal `reviewed_memory_local_effect_presence_event`:
+    - the exact local effect-presence event above that fact source and beneath that producer helper is one now-materialized shared internal `reviewed_memory_local_effect_presence_event`:
       - `event_version = first_same_session_reviewed_memory_local_effect_presence_event_v1`
       - `event_scope = same_session_exact_recurrence_aggregate_only`
       - one `aggregate_identity_ref`
@@ -1412,7 +1412,7 @@ The first official artifact is the `grounded brief`.
     - the current target helper now materializes only from that exact matching source-consumer helper result for the same aggregate
     - current contract existence, blocked trigger visibility, approval-backed save support, historical adjuncts, source-message review acceptance, queue presence, and `task_log` replay alone must not invent that handle
     - current contract existence, blocked trigger visibility, approval-backed save support, historical adjuncts, source-message review acceptance, queue presence, and `task_log` replay alone must not invent that shared applied-effect target either
-    - current contract existence, blocked trigger visibility, approval-backed save support, historical adjuncts, source-message review acceptance, queue presence, and `task_log` replay alone must not invent that local fact source, that local effect-presence event, that later producer helper result, that later event-source helper result, or the later source-consumer helper result either
+    - current contract existence, blocked trigger visibility, approval-backed save support, historical adjuncts, source-message review acceptance, queue presence, and `task_log` replay alone must not invent that local fact source, that local effect-presence event, that producer helper result, that event-source helper result, or the source-consumer helper result either
     - the full internal `reviewed_memory_capability_source_refs` family is now complete with all five refs resolved in the current repo
   - the current truthful capability-path basis stays one separate read-only object above that source layer, not a reinterpretation of current contract existence:
     - one current `reviewed_memory_capability_basis`
@@ -1484,11 +1484,11 @@ The first official artifact is the `grounded brief`.
     - that rollback-capability source is one now-materialized internal local `reviewed_memory_reversible_effect_handle` bound to the same exact aggregate, the same exact supporting refs, the same `boundary_source_ref`, and the same `reviewed_memory_rollback_contract`
     - that handle points to one now-materialized shared internal `reviewed_memory_applied_effect_target` for the same exact aggregate, while the handle keeps rollback-only capability meaning through its own matching `rollback_contract_ref`
     - that shared target stays smaller than the handle, smaller than the full source family, and smaller than the now-materialized basis object, the now-shipped emitted transition record, and the now-shipped reviewed-memory apply result
-    - that shared target must later materialize only from one shared internal `reviewed_memory_local_effect_presence_record`, and that source-consumer helper must in turn materialize only from one exact shared internal `reviewed_memory_local_effect_presence_event_source`
-    - that event-source helper must later materialize only from one exact shared internal `reviewed_memory_local_effect_presence_event_producer` for the same exact aggregate, exact supporting refs, and the same `boundary_source_ref`
-    - that producer helper must later materialize only from one exact shared internal `reviewed_memory_local_effect_presence_event`, and that raw-event helper must in turn materialize only from one exact shared internal `reviewed_memory_local_effect_presence_fact_source` for the same exact aggregate, exact supporting refs, and the same `boundary_source_ref`
+    - that shared target materializes only from one shared internal `reviewed_memory_local_effect_presence_record`, and that source-consumer helper in turn materializes only from one exact shared internal `reviewed_memory_local_effect_presence_event_source`
+    - that event-source helper materializes only from one exact shared internal `reviewed_memory_local_effect_presence_event_producer` for the same exact aggregate, exact supporting refs, and the same `boundary_source_ref`
+    - that producer helper materializes only from one exact shared internal `reviewed_memory_local_effect_presence_event`, and that raw-event helper in turn materializes only from one exact shared internal `reviewed_memory_local_effect_presence_fact_source` for the same exact aggregate, exact supporting refs, and the same `boundary_source_ref`
     - `disable_ready_reviewed_memory_effect` is satisfied only when one internal `disable_source_ref` can point to a later effect-capability source that can actually stop apply without claiming reversal
-    - the first honest contract now keeps that later disable-capability source separate from rollback semantics while still allowing it to reuse the same internal `reviewed_memory_local_effect_presence_record` and its underlying shared `reviewed_memory_local_effect_presence_event_source` through the same shared target and its own later disable-side handle with matching `disable_contract_ref`
+    - the first honest contract now keeps the disable-capability source separate from rollback semantics while still allowing it to reuse the same internal `reviewed_memory_local_effect_presence_record` and its underlying shared `reviewed_memory_local_effect_presence_event_source` through the same shared target and its own disable-side handle (when implemented) with matching `disable_contract_ref`
     - `conflict_visible_reviewed_memory_scope` is satisfied only when one internal `conflict_source_ref` can point to a later local source that actually exposes competing reviewed-memory targets inside the same exact scope before apply
     - `operator_auditable_reviewed_memory_transition` is satisfied only when one internal `transition_audit_source_ref` can point to a later local source that can emit canonical transition records separate from `task_log`
   - the first truthful capability path above that family should stay two steps smaller than emitted record:

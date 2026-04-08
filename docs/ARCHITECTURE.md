@@ -857,7 +857,7 @@ The next phase should standardize one `grounded brief` artifact.
     - `defined_at = last_seen_at`
   - the current blocked marker remains correct because the reviewed-memory precondition family gates the unblock path; the reviewed-memory apply path is now shipped above this precondition layer:
     - `reviewed_memory_boundary_defined`
-      - future reviewed memory must have a separate local persistence/apply boundary and one fixed narrow reviewed scope above source-message and aggregate projections
+      - reviewed memory has a separate local persistence/apply boundary and one fixed narrow reviewed scope above source-message and aggregate projections (now shipped as `reviewed_memory_boundary_draft` and the internal proof-record/store layer)
       - the first reviewed scope should stay fixed at `same_session_exact_recurrence_aggregate_only`
       - that scope should be tied to one current aggregate identity plus its exact current supporting refs
       - this is not source-message history, not `candidate_review_record`, not `recurrence_aggregate_candidates`, and not user-level memory

@@ -1126,7 +1126,7 @@ The first official artifact is the `grounded brief`.
     - `defined_at = last_seen_at`
   - the current blocked marker stays truthful only while every reviewed-memory boundary precondition is still missing:
     - `reviewed_memory_boundary_defined`
-      - future reviewed memory must have its own explicit local persistence/apply boundary above source-message and aggregate traces
+      - reviewed memory has its own explicit local persistence/apply boundary above source-message and aggregate traces (now shipped as `reviewed_memory_boundary_draft` and the internal proof-record/store layer)
       - the first reviewed scope should be fixed and narrow:
         - `same_session_exact_recurrence_aggregate_only`
         - tied to one current same-session aggregate identity plus its exact current supporting refs

@@ -640,7 +640,7 @@ These are placeholders for the next phase design target and its immediate follow
     - `defined_at = last_seen_at`
   - same-session aggregate unblock must remain closed until every reviewed-memory precondition is explicit:
     - `reviewed_memory_boundary_defined`
-      - later reviewed memory needs its own local persistence/apply boundary plus one fixed narrow reviewed scope above source-message and aggregate traces
+      - reviewed memory has its own local persistence/apply boundary plus one fixed narrow reviewed scope above source-message and aggregate traces (now shipped as `reviewed_memory_boundary_draft` and the internal proof-record/store layer)
       - the first reviewed scope should stay fixed at `same_session_exact_recurrence_aggregate_only`
       - that scope is tied to one current aggregate identity plus its exact current supporting refs
       - this is not source-message correction history, not `candidate_review_record`, not `recurrence_aggregate_candidates`, and not user-level memory

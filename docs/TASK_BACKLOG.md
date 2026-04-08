@@ -61,7 +61,7 @@
 48. Entity-card dual-probe browser natural-reload exact-field Playwright smoke coverage (`WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반`)
 49. Entity-card dual-probe browser natural-reload follow-up source-path continuity service + Playwright smoke coverage (`pearlabyss.com/ko-KR/Board/Detail?_boardNo=200`, `pearlabyss.com/ko-KR/Board/Detail?_boardNo=300` in context box)
 50. Entity-card dual-probe browser natural-reload follow-up response-origin exact-field drift-prevention service + Playwright smoke coverage (`WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` drift prevention)
-51. Entity-card 붉은사막 actual-search browser natural-reload follow-up source-path + response-origin continuity service + Playwright smoke coverage (`namu.wiki`/`ko.wikipedia.org` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` drift prevention)
+51. Entity-card 붉은사막 actual-search browser natural-reload follow-up source-path + response-origin exact-field drift-prevention service + Playwright smoke coverage (`namu.wiki`/`ko.wikipedia.org` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` drift prevention)
 52. Entity-card 붉은사막 browser natural-reload source-path service + Playwright smoke coverage (`namu.wiki`/`ko.wikipedia.org`/`blog.example.com` provenance in context box)
 53. Entity-card 붉은사막 actual-search browser natural-reload follow-up source-path service + Playwright smoke coverage (`namu.wiki`/`ko.wikipedia.org` in context box)
 54. Entity-card 붉은사막 browser natural-reload follow-up noisy single-source exclusion Playwright smoke coverage (negative `출시일` / `2025` / `blog.example.com` in response text and origin detail + `namu.wiki`, `ko.wikipedia.org`, `blog.example.com` provenance context box continuity)

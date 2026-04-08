@@ -57,11 +57,11 @@
 - history-card latest-update news-only `다시 불러오기` source-path exact-field drift-prevention browser smoke covering `hankyung.com` and `mk.co.kr` in context box after reload
 - history-card latest-update single-source `다시 불러오기` source-path exact-field drift-prevention browser smoke covering `example.com/seoul-weather` in context box after reload
 - history-card latest-update single-source `다시 불러오기` follow-up response-origin exact-field drift-prevention service + browser smoke covering `단일 출처 참고` and `보조 출처` drift prevention
-- history-card latest-update news-only `다시 불러오기` follow-up response-origin continuity service + browser smoke covering `기사 교차 확인` and `보조 기사` drift prevention
+- history-card latest-update news-only `다시 불러오기` follow-up response-origin exact-field drift-prevention service + browser smoke covering `기사 교차 확인` and `보조 기사` drift prevention
 - history-card entity-card `다시 불러오기` follow-up dual-probe source-path + response-origin continuity service + browser smoke covering `pearlabyss.com/200` and `pearlabyss.com/300` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반`
 - history-card latest-update mixed-source `다시 불러오기` follow-up source-path + response-origin exact-field drift-prevention service + browser smoke covering `store.steampowered.com` and `yna.co.kr` in context box, `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반`
 - history-card latest-update single-source `다시 불러오기` follow-up source-path exact-field drift-prevention service + browser smoke covering `example.com/seoul-weather` in context box
-- history-card latest-update news-only `다시 불러오기` follow-up source-path continuity service + browser smoke covering `hankyung.com` and `mk.co.kr` in context box
+- history-card latest-update news-only `다시 불러오기` follow-up source-path exact-field drift-prevention service + browser smoke covering `hankyung.com` and `mk.co.kr` in context box
 - history-card entity-card zero-strong-slot `다시 불러오기` reload response-origin + answer-mode + verification-label + source-path continuity browser smoke covering `WEB` badge, `설명 카드` answer-mode badge, downgraded `설명형 단일 출처`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` in context box
 - history-card entity-card zero-strong-slot `다시 불러오기` follow-up response-origin + source-path continuity service + browser smoke covering `WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` drift prevention
 - history-card entity-card zero-strong-slot click-reload second-follow-up response-origin + source-path continuity service + browser smoke covering `WEB` badge, `설명 카드`, `설명형 단일 출처`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` drift prevention

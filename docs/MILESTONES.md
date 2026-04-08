@@ -311,7 +311,7 @@
     - the cleanup-only pass has now removed the three duplicated target echo fields together
     - docs, payload, and tests now read planning-target meaning only from the shared ref
     - the post-cleanup compatibility-note question is now closed with no extra aftercare note; any later reopening should discuss later broader reviewed-memory machinery only, not a second partial rename or semantic widening
-  - the next contract decision now also fixes the first emitted-transition-record layer:
+  - the first emitted-transition-record layer is now fixed and shipped:
     - keep the shipped `reviewed_memory_transition_audit_contract` contract-only
     - the first operator-visible `future_reviewed_memory_apply` trigger-source affordance is now implemented on one separate aggregate-level surface fed only by `recurrence_aggregate_candidates`
     - keep that surface inside the existing shell session stack as one section adjacent to `검토 후보`, not as a modal or dashboard

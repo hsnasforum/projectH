@@ -305,14 +305,14 @@
     - current implementation now also evaluates one internal `reviewed_memory_local_effect_presence_proof_boundary` helper for that same exact aggregate, and it now materializes one internal same-aggregate proof boundary only from one exact matching canonical local proof record/store entry while reusing the same `applied_effect_id` and `present_locally_at`; that layer stays payload-hidden
     - current implementation now also evaluates one internal `reviewed_memory_local_effect_presence_fact_source_instance` helper for that same exact aggregate, and it now materializes one internal same-aggregate fact-source-instance result only from one exact matching proof-boundary result while reusing the same `applied_effect_id` and `present_locally_at`; that layer stays payload-hidden
     - current implementation now also evaluates one internal `reviewed_memory_local_effect_presence_fact_source` helper for that same exact aggregate, and it now materializes one internal same-aggregate fact-source result only from one exact matching fact-source-instance result while reusing the same `applied_effect_id` and `present_locally_at`; that layer stays payload-hidden
-    - the exact later canonical local proof record beneath that proof-boundary helper should stay one internal `reviewed_memory_local_effect_presence_proof_record`, not `first_seen_at`, not source-message review acceptance, not review-queue presence, not approval-backed save support, not historical adjunct, and not `task_log` replay
+    - the exact canonical local proof record beneath that proof-boundary helper is one now-materialized internal `reviewed_memory_local_effect_presence_proof_record`, not `first_seen_at`, not source-message review acceptance, not review-queue presence, not approval-backed save support, not historical adjunct, and not `task_log` replay
     - current implementation now also evaluates one internal `reviewed_memory_local_effect_presence_event` helper for that same exact aggregate, and it now materializes one internal same-aggregate event result only from one exact matching fact-source result while reusing the same `applied_effect_id` and `present_locally_at`; that layer stays payload-hidden
     - current implementation now also evaluates one internal `reviewed_memory_local_effect_presence_event_producer` helper for that same exact aggregate, and it now materializes one internal same-aggregate producer result only from one exact matching event result while reusing the same `applied_effect_id` and `present_locally_at`; that layer stays payload-hidden
     - current implementation now also evaluates one internal `reviewed_memory_local_effect_presence_event_source` helper for that same exact aggregate, and it now materializes one internal same-aggregate event-source result only from one exact matching producer result while reusing the same `applied_effect_id` and `present_locally_at`; that layer stays payload-hidden
     - current implementation now also evaluates one internal `reviewed_memory_local_effect_presence_record` helper for that same exact aggregate, and it now materializes one internal same-aggregate source-consumer record only from one exact matching event-source helper result while reusing the same `applied_effect_id` and `present_locally_at`; that layer stays payload-hidden
     - current implementation now also evaluates one internal `reviewed_memory_applied_effect_target` helper for that same exact aggregate, and it now materializes one internal same-aggregate shared target only from one exact matching source-consumer helper result while reusing the same `applied_effect_id` and `present_locally_at`; that layer stays payload-hidden
     - current implementation now also evaluates one internal `reviewed_memory_reversible_effect_handle` helper for that same exact aggregate, and it now materializes one internal same-aggregate rollback-capability handle only from one exact matching shared target plus one exact matching rollback contract; that layer stays payload-hidden
-    - the exact future rollback-capability backer should stay one internal local `reviewed_memory_reversible_effect_handle`:
+    - the exact rollback-capability backer is one now-materialized internal local `reviewed_memory_reversible_effect_handle`:
       - `handle_version = first_same_session_reviewed_memory_reversible_effect_handle_v1`
       - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
       - one `aggregate_identity_ref`
@@ -326,7 +326,7 @@
       - one local `handle_id`
       - `defined_at`
     - keep that handle internal and additive; it must stay above the shipped read-only `reviewed_memory_rollback_contract` and below the now-materialized basis object, the now-shipped emitted transition record, and the now-shipped reviewed-memory apply result
-    - the exact later local target beneath that handle should stay one shared internal `reviewed_memory_applied_effect_target`:
+    - the exact local target beneath that handle is one now-materialized shared internal `reviewed_memory_applied_effect_target`:
       - `target_version = first_same_session_reviewed_memory_applied_effect_target_v1`
       - `target_scope = same_session_exact_recurrence_aggregate_only`
       - one `aggregate_identity_ref`
@@ -337,7 +337,7 @@
       - `target_stage = effect_present_local_only`
       - one local `applied_effect_id`
       - `present_locally_at`
-    - the exact later local fact source beneath that raw helper should stay one shared internal `reviewed_memory_local_effect_presence_fact_source`:
+    - the exact local fact source beneath that raw helper is one now-materialized shared internal `reviewed_memory_local_effect_presence_fact_source`:
       - `fact_source_version = first_same_session_reviewed_memory_local_effect_presence_fact_source_v1`
       - `fact_source_scope = same_session_exact_recurrence_aggregate_only`
       - one `aggregate_identity_ref`
@@ -348,7 +348,7 @@
       - `fact_stage = presence_fact_available_local_only`
       - one local `applied_effect_id`
       - `present_locally_at`
-    - the exact later local effect-presence event above that fact source and beneath that producer helper should stay one shared internal `reviewed_memory_local_effect_presence_event`:
+    - the exact local effect-presence event above that fact source and beneath that producer helper is one now-materialized shared internal `reviewed_memory_local_effect_presence_event`:
       - `event_version = first_same_session_reviewed_memory_local_effect_presence_event_v1`
       - `event_scope = same_session_exact_recurrence_aggregate_only`
       - one `aggregate_identity_ref`
@@ -375,7 +375,7 @@
     - the current event-source helper `reviewed_memory_local_effect_presence_event_source` now materializes only from one exact matching `reviewed_memory_local_effect_presence_event_producer` for the same aggregate
     - the current source-consumer helper `reviewed_memory_local_effect_presence_record` now materializes only from one exact matching `reviewed_memory_local_effect_presence_event_source` for the same aggregate
     - the current target helper now materializes only from that exact matching source-consumer helper result for the same aggregate
-    - keep that target internal and additive; it should stay shared by later rollback and later disable handles while each handle still keeps its own matching contract ref and capability meaning
+    - keep that target internal and additive; it is shared by the now-materialized rollback handle (and later disable handles when implemented), while each handle still keeps its own matching contract ref and capability meaning
     - the full internal `reviewed_memory_capability_source_refs` family is now complete with all five refs resolved for the same exact aggregate
     - one current read-only `reviewed_memory_capability_basis`
     - `basis_version = same_session_reviewed_memory_capability_basis_v1`

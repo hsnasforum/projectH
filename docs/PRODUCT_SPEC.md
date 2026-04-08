@@ -1375,7 +1375,7 @@ The first official artifact is the `grounded brief`.
       - `fact_stage = presence_fact_available_local_only`
       - one local `applied_effect_id`
       - `present_locally_at`
-    - this local fact source stays above that proof-boundary helper and above that smaller canonical local proof record/store that first mints `applied_effect_id` and `present_locally_at`, and it stays smaller than the raw-event helper result, the producer helper result, the event-source helper result, the source-consumer helper result, the shared target, the rollback handle, the full source family, the now-materialized basis object, any later `unblocked_all_required`, any emitted transition record, and any reviewed-memory apply result
+    - this local fact source stays above that proof-boundary helper and above that smaller canonical local proof record/store that first mints `applied_effect_id` and `present_locally_at`, and it stays smaller than the raw-event helper result, the producer helper result, the event-source helper result, the source-consumer helper result, the shared target, the rollback handle, the full source family, the now-materialized basis object, the now-shipped `unblocked_all_required`, the now-shipped emitted transition record, and the now-shipped reviewed-memory apply result
     - the first local identity rule should stay minimal:
       - do not add a second fact id in the first contract
       - reuse `applied_effect_id` as the first local identity minted exactly at the truthful local fact-source instant
@@ -1391,8 +1391,8 @@ The first official artifact is the `grounded brief`.
       - `event_stage = presence_observed_local_only`
       - one local `applied_effect_id`
       - `present_locally_at`
-    - this local event is the first later same-aggregate event layer above that smaller fact source and below the producer helper, and it stays smaller than the producer helper result, the event-source helper result, the source-consumer helper result, the shared target, the rollback handle, the full source family, the now-materialized basis object, any later `unblocked_all_required`, any emitted transition record, and any reviewed-memory apply result
-    - the exact local effect-presence event source above that producer-helper result and beneath the source-consumer helper should stay one shared internal `reviewed_memory_local_effect_presence_event_source`:
+    - this local event is the first same-aggregate event layer above that smaller fact source and below the producer helper, and it stays smaller than the producer helper result, the event-source helper result, the source-consumer helper result, the shared target, the rollback handle, the full source family, the now-materialized basis object, the now-shipped `unblocked_all_required`, the now-shipped emitted transition record, and the now-shipped reviewed-memory apply result
+    - the exact local effect-presence event source above that producer-helper result and beneath the source-consumer helper is one now-materialized shared internal `reviewed_memory_local_effect_presence_event_source`:
       - `event_source_version = first_same_session_reviewed_memory_local_effect_presence_event_source_v1`
       - `event_source_scope = same_session_exact_recurrence_aggregate_only`
       - one `aggregate_identity_ref`
@@ -1403,8 +1403,8 @@ The first official artifact is the `grounded brief`.
       - `event_stage = presence_event_recorded_local_only`
       - one local `applied_effect_id`
       - `present_locally_at`
-    - this later internal target should stay shared by the later rollback handle and the later disable handle, while each handle still keeps its own contract linkage and capability meaning
-    - the target itself must not carry `rollback_contract_ref` or `disable_contract_ref`; later handles must bind that shared target back to the matching contract ref separately
+    - this internal target is shared by the now-materialized rollback handle (and later disable handle when implemented), while each handle still keeps its own contract linkage and capability meaning
+    - the target itself must not carry `rollback_contract_ref` or `disable_contract_ref`; handles bind that shared target back to the matching contract ref separately
     - the current raw-event helper `reviewed_memory_local_effect_presence_event` now materializes only from one exact matching `reviewed_memory_local_effect_presence_fact_source` for the same aggregate
     - the current producer helper `reviewed_memory_local_effect_presence_event_producer` now materializes only from one exact matching `reviewed_memory_local_effect_presence_event` for the same aggregate
     - the current event-source helper `reviewed_memory_local_effect_presence_event_source` now materializes only from one exact matching `reviewed_memory_local_effect_presence_event_producer` for the same aggregate

@@ -1071,7 +1071,7 @@ The next phase should standardize one `grounded brief` artifact.
       - `fact_stage = presence_fact_available_local_only`
       - one local `applied_effect_id`
       - `present_locally_at`
-    - the exact later local event above that fact source and beneath that producer helper should stay one shared internal `reviewed_memory_local_effect_presence_event`:
+    - the exact local event above that fact source and beneath that producer helper is one now-materialized shared internal `reviewed_memory_local_effect_presence_event`:
       - `event_version = first_same_session_reviewed_memory_local_effect_presence_event_v1`
       - `event_scope = same_session_exact_recurrence_aggregate_only`
       - one `aggregate_identity_ref`
@@ -1097,7 +1097,7 @@ The next phase should standardize one `grounded brief` artifact.
       - `target_stage = effect_present_local_only`
       - one local `applied_effect_id`
       - `present_locally_at`
-    - the exact local effect-presence event source above that producer-helper result and beneath the source-consumer helper should stay one shared internal `reviewed_memory_local_effect_presence_event_source`:
+    - the exact local effect-presence event source above that producer-helper result and beneath the source-consumer helper is one now-materialized shared internal `reviewed_memory_local_effect_presence_event_source`:
       - `event_source_version = first_same_session_reviewed_memory_local_effect_presence_event_source_v1`
       - `event_source_scope = same_session_exact_recurrence_aggregate_only`
       - one `aggregate_identity_ref`

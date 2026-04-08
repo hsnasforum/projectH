@@ -1049,7 +1049,7 @@ These are placeholders for the next phase design target and its immediate follow
     - `event_stage = presence_observed_local_only`
     - one local `applied_effect_id`
     - deterministic `present_locally_at`
-  - the exact local effect-presence event source beneath that target must stay one shared internal `reviewed_memory_local_effect_presence_event_source`:
+  - the exact local effect-presence event source beneath that target is one now-materialized shared internal `reviewed_memory_local_effect_presence_event_source`:
     - `event_source_version = first_same_session_reviewed_memory_local_effect_presence_event_source_v1`
     - `event_source_scope = same_session_exact_recurrence_aggregate_only`
     - one `aggregate_identity_ref`

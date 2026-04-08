@@ -117,7 +117,7 @@
 - Identity and trace fields — `artifact_id` (nullable), `artifact_kind` (nullable), `source_message_id` (nullable) — are present when a grounded-brief artifact exists.
 - Content fields — `text`, `note_preview` (nullable), `selected_source_paths` (default `[]`) — carry the response body and source context.
 - Metadata fields — `approval` (nullable), `active_context` (nullable), `response_origin` (nullable), `applied_preferences` (nullable), `evidence` (default `[]`), `summary_chunks` (default `[]`), `claim_coverage` (default `[]`), `claim_coverage_progress_summary` (default `""`) — reuse shapes documented in Session And Trace Gates and PRODUCT_SPEC.
-- Correction fields — `original_response_snapshot` (nullable), `corrected_outcome` (nullable), `approval_reason_record` (nullable), `content_reason_record` (nullable), `save_content_source` (nullable) — all `null` when absent; carry pre-correction state and reason records when present.
+- Correction fields — `original_response_snapshot` (nullable), `corrected_outcome` (nullable), `approval_reason_record` (nullable), `content_reason_record` (nullable), `save_content_source` (`original_draft` | `corrected_text` | `null`) — all `null` when absent; carry pre-correction state and reason records when present.
 - Service tests (`tests/test_web_app.py`) and browser smoke tests (`tests/test_smoke.py`) lock the control fields and their expected values.
 - See ARCHITECTURE for the full field table and PRODUCT_SPEC for field-level documentation.
 

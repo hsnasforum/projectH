@@ -208,10 +208,10 @@ Current task log is append-only JSONL and already records actions such as:
 - `content_reason_note_recorded` — detail: `{message_id, artifact_id, artifact_kind, source_message_id, reason_scope, reason_label, reason_note, content_reason_record}`
 - `candidate_confirmation_recorded` — detail: `{message_id, artifact_id, source_message_id, candidate_id, candidate_family, candidate_updated_at, confirmation_scope, confirmation_label}`
 - `candidate_review_recorded` — detail: `{message_id, artifact_id, source_message_id, candidate_id, candidate_family, candidate_updated_at, review_scope, review_action, review_status}`
-- `stream_cancel_requested`
-- `web_search_permission_updated`
-- `permissions_updated`
-- `ocr_not_supported`
+- `stream_cancel_requested` — detail: `{request_id}`
+- `web_search_permission_updated` — detail: `{web_search}`
+- `permissions_updated` — detail: `{web_search}`
+- `ocr_not_supported` — detail: `{source_path, error}`
 - `web_search_record_loaded` — detail: `{query, record_id, record_path, result_count}`
 - `web_search_retried` — detail: `{query, result_count, page_count, record_path, urls, search_queries, deprioritized_urls}` (shared web-search detail shape)
 - `answer_with_active_context` — detail: `{label, source_paths, intent, conversation_mode, retrieved_chunk_count, selected_evidence_count, retry_feedback_label, retry_feedback_reason, retry_target_message_id}`

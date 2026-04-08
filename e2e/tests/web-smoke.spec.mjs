@@ -6608,6 +6608,20 @@ test("브라우저 폴더 선택으로 scanned PDF + readable file이 섞인 폴
   await expect(lastAssistant.locator(".search-preview-match").first()).toHaveText("내용 일치");
   await expect(lastAssistant.locator(".search-preview-snippet").first()).toBeVisible();
   await expect(lastAssistant.locator(".search-preview-snippet").first()).toContainText("budget");
+
+  // selected path list retains readable result only
+  await expect(page.locator("#selected-text")).toHaveText("mixed-search-folder/notes.txt");
+
+  // selected-copy button is visible and copies the path
+  await expect(page.getByTestId("selected-copy")).toBeVisible();
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.getByTestId("selected-copy").click();
+  await expect(page.locator("#notice-box")).toHaveText("선택 경로를 복사했습니다.");
+  const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
+  expect(clipboardText).toBe("mixed-search-folder/notes.txt");
+
+  // transcript body (pre) should be hidden for search-only
+  await expect(lastAssistant.locator("pre")).toHaveCount(0);
 });
 
 test("브라우저 폴더 선택으로 scanned PDF + readable file이 섞인 폴더를 검색+요약하면 partial-failure notice와 함께 readable file preview가 유지됩니다", async ({ page }) => {

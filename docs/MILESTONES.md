@@ -99,6 +99,7 @@
 - OCR-not-supported guidance
 - browser file picker scanned/image-only PDF OCR-not-supported guidance smoke
 - browser folder picker scanned PDF + readable file mixed search count-only partial-failure notice smoke
+- browser file picker readable text-layer PDF success summary smoke
 - response feedback capture
 - local web-search history storage
 

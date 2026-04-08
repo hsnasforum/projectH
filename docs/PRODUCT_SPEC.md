@@ -305,12 +305,11 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 ## Web Investigation Rules
 
 ### Implemented
-- read-only external search
-- permission-gated execution
-- local JSON record storage
-- response origin and source-role labeling
-- entity-card / latest-update distinction
-- claim coverage and slot reinvestigation scaffolding
+- read-only external search with permission-gated execution (enabled/disabled/ask per session)
+- local JSON record storage with in-session history reload and history-card display (answer-mode, verification-strength, source-role trust badges in header)
+- response origin with `WEB` badge, answer-mode badge, color-coded verification-strength badge, and color-coded source-role trust badges in origin detail
+- entity-card / latest-update answer-mode distinction with separate verification labels and source-role surfaces; entity-card verification badge downgraded from strong (`설명형 다중 출처 합의`) when no claim slot has cross-verified status
+- claim coverage panel with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`), actionable hints for weak or unresolved slots, color-coded fact-strength summary bar, and slot reinvestigation scaffolding
 
 ### In Progress
 - stronger source consensus

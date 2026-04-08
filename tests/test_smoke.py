@@ -954,7 +954,7 @@ class SmokeTest(unittest.TestCase):
             self.assertIn("메이플스토리는 넥슨이 서비스하거나 배급하는 액션 RPG 게임입니다.", response.text)
             self.assertIn("이용 형태는 온라인입니다.", response.text)
             self.assertTrue("한 줄 정의:" in response.text or "한 줄 정의 (교차 확인 부족):" in response.text)
-            self.assertIn("단일 출처 정보 (교차 확인 부족, 추가 확인 필요):", response.text)
+            self.assertIn("단일 출처 정보 [단일 출처] (추가 확인 필요):", response.text)
             self.assertNotIn("협업 이벤트", response.text)
             self.assertEqual(response.active_context["source_paths"][0], "https://namu.wiki/w/%EB%A9%94%EC%9D%B4%ED%94%8C%EC%8A%A4%ED%86%A0%EB%A6%AC")
 
@@ -1025,10 +1025,10 @@ class SmokeTest(unittest.TestCase):
             self.assertTrue("한 줄 정의:" in response.text or "한 줄 정의 (교차 확인 부족):" in response.text)
             self.assertIn("메이플스토리는 넥슨이 서비스하는 온라인 액션 RPG 게임이다.", response.text)
             self.assertIn("근거 출처:", response.text)
-            self.assertIn("확인된 사실:", response.text)
+            self.assertIn("확인된 사실 [교차 확인]:", response.text)
             self.assertIn("서비스/배급: 넥슨", response.text)
             self.assertIn("이용 형태: 온라인", response.text)
-            self.assertIn("단일 출처 정보 (교차 확인 부족, 추가 확인 필요):", response.text)
+            self.assertIn("단일 출처 정보 [단일 출처] (추가 확인 필요):", response.text)
             self.assertIn("장르/성격: 액션 RPG 게임", response.text)
             self.assertIn("[백과 기반]", response.text)
             self.assertNotIn("영상 더보기", response.text)
@@ -1381,8 +1381,8 @@ class SmokeTest(unittest.TestCase):
 
             self.assertEqual(response.actions_taken, ["web_search"])
             self.assertTrue("한 줄 정의:" in response.text or "한 줄 정의 (교차 확인 부족):" in response.text)
-            self.assertIn("단일 출처 정보 (교차 확인 부족, 추가 확인 필요):", response.text)
-            self.assertIn("확인되지 않은 항목:", response.text)
+            self.assertIn("단일 출처 정보 [단일 출처] (추가 확인 필요):", response.text)
+            self.assertIn("확인되지 않은 항목 [미확인]:", response.text)
             # Exact qualifier wording for trusted single-source claims
             self.assertIn("개발: 펄어비스 (단일 출처, 백과 기반, 확정 표현 주의)", response.text)
             self.assertIn("서비스/배급: 교차 확인 가능한 근거를 찾지 못했습니다.", response.text)

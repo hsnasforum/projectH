@@ -287,10 +287,10 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - claim verification / coverage panel where applicable, with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`) leading each slot line, actionable hints for weak or unresolved slots, source role with trust level labels, a color-coded fact-strength summary bar above the response text, and entity-card verification badge downgrade from strong when no claim slot has cross-verified status
 - web search history panel with source previews, answer-mode badges, color-coded verification-strength badges, and color-coded source-role trust badges in history cards
 - progress box and cancel button during streaming
+- verified-vs-uncertain explanation: response-body section headers annotated with matching status tags (`확인된 사실 [교차 확인]`, `단일 출처 정보 [단일 출처]`, `확인되지 않은 항목 [미확인]`), claim-coverage panel hint maps tags to explanations
 
 ### In Progress
 - clearer slot-level reinvestigation UX
-- stronger explanation of verified vs uncertain claims
 
 ## PDF Handling
 
@@ -312,6 +312,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - claim coverage panel with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`), actionable hints for weak or unresolved slots, color-coded fact-strength summary bar, and slot reinvestigation scaffolding
 - entity-card agreement-over-noise baseline: multi-source consensus items preferred before single-source claims, noisy single-source items capped
 - weak-slot reinvestigation baseline: weak/missing slots targeted first in reinvestigation suggestions, weak slots rendered as uncertain rather than stable facts, progress and focus-slot state recorded
+- verified-vs-uncertain explanation: response-body sections annotated with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`) matching claim-coverage panel statuses
 
 ### In Progress
 - (Current shipped baseline covers agreement-over-noise and weak-slot reinvestigation; see `docs/TASK_BACKLOG.md` Current Phase In Progress for future quality-improvement direction.)

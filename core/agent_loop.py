@@ -4544,13 +4544,13 @@ class AgentLoop:
 
         if primary_claims:
             lines.append("")
-            lines.append("확인된 사실:")
+            lines.append("확인된 사실 [교차 확인]:")
             for claim in primary_claims:
                 support_suffix = f" (교차 확인 {claim.support_count}건)" if claim.support_count >= 2 else ""
                 lines.append(f"- {claim.slot}: {claim.value}{support_suffix}")
         if weak_claims:
             lines.append("")
-            lines.append("단일 출처 정보 (교차 확인 부족, 추가 확인 필요):")
+            lines.append("단일 출처 정보 [단일 출처] (추가 확인 필요):")
             for claim in weak_claims:
                 _slot_cov = core_coverage.get(claim.slot)
                 role_label = (
@@ -4569,7 +4569,7 @@ class AgentLoop:
                 lines.append(f"- {claim.slot}: {claim.value} (교차 확인 {claim.support_count}건)")
         if unresolved_slots:
             lines.append("")
-            lines.append("확인되지 않은 항목:")
+            lines.append("확인되지 않은 항목 [미확인]:")
             for slot in unresolved_slots:
                 lines.append(f"- {slot}: 교차 확인 가능한 근거를 찾지 못했습니다.")
         lines.append("")
@@ -5725,12 +5725,12 @@ class AgentLoop:
 
         # Build output
         if confirmed:
-            lines.append("확인된 사실:")
+            lines.append("확인된 사실 [교차 확인]:")
             lines.extend(confirmed[:5])
 
         if still_single:
             lines.append("")
-            lines.append("단일 출처 정보 (교차 확인 필요):")
+            lines.append("단일 출처 정보 [단일 출처] (추가 확인 필요):")
             lines.extend(still_single[:4])
 
         if community_only:
@@ -5740,7 +5740,7 @@ class AgentLoop:
 
         # Unverified notice
         if not confirmed and not still_single:
-            lines.append("확인된 사실:")
+            lines.append("확인된 사실 [교차 확인]:")
             lines.append("- 교차 확인된 정보가 충분하지 않습니다.")
             if community_only:
                 lines.append("")

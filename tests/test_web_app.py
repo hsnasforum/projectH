@@ -9434,11 +9434,11 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(payload["ok"])
             text = payload["response"]["text"]
             # weak slot (단일 출처)과 missing slot이 별도 섹션으로 분리
-            self.assertIn("단일 출처 정보 (교차 확인 부족, 추가 확인 필요):", text)
-            self.assertIn("확인되지 않은 항목:", text)
+            self.assertIn("단일 출처 정보 [단일 출처] (추가 확인 필요):", text)
+            self.assertIn("확인되지 않은 항목 [미확인]:", text)
             # weak slot은 "단일 출처" 문구 포함
-            uncertain_start = text.index("단일 출처 정보 (교차 확인 부족, 추가 확인 필요):")
-            needs_check_start = text.index("확인되지 않은 항목:")
+            uncertain_start = text.index("단일 출처 정보 [단일 출처] (추가 확인 필요):")
+            needs_check_start = text.index("확인되지 않은 항목 [미확인]:")
             uncertain_section = text[uncertain_start:needs_check_start]
             self.assertIn("단일 출처", uncertain_section)
             # missing slot은 "교차 확인 가능한 근거를 찾지 못했습니다" 문구 포함
@@ -9498,10 +9498,10 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
             text = second["response"]["text"]
             # weak/missing 섹션 분리 유지
-            self.assertIn("단일 출처 정보 (교차 확인 부족, 추가 확인 필요):", text)
-            self.assertIn("확인되지 않은 항목:", text)
-            uncertain_start = text.index("단일 출처 정보 (교차 확인 부족, 추가 확인 필요):")
-            needs_check_start = text.index("확인되지 않은 항목:")
+            self.assertIn("단일 출처 정보 [단일 출처] (추가 확인 필요):", text)
+            self.assertIn("확인되지 않은 항목 [미확인]:", text)
+            uncertain_start = text.index("단일 출처 정보 [단일 출처] (추가 확인 필요):")
+            needs_check_start = text.index("확인되지 않은 항목 [미확인]:")
             self.assertIn("단일 출처", text[uncertain_start:needs_check_start])
             self.assertIn("교차 확인 가능한 근거를 찾지 못했습니다", text[needs_check_start:])
             # claim_coverage에 weak + missing 모두 존재
@@ -9560,10 +9560,10 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(second["ok"])
             self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
             text = second["response"]["text"]
-            self.assertIn("단일 출처 정보 (교차 확인 부족, 추가 확인 필요):", text)
-            self.assertIn("확인되지 않은 항목:", text)
-            uncertain_start = text.index("단일 출처 정보 (교차 확인 부족, 추가 확인 필요):")
-            needs_check_start = text.index("확인되지 않은 항목:")
+            self.assertIn("단일 출처 정보 [단일 출처] (추가 확인 필요):", text)
+            self.assertIn("확인되지 않은 항목 [미확인]:", text)
+            uncertain_start = text.index("단일 출처 정보 [단일 출처] (추가 확인 필요):")
+            needs_check_start = text.index("확인되지 않은 항목 [미확인]:")
             self.assertIn("단일 출처", text[uncertain_start:needs_check_start])
             self.assertIn("교차 확인 가능한 근거를 찾지 못했습니다", text[needs_check_start:])
             coverage = second["response"]["claim_coverage"]
@@ -9727,7 +9727,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertGreaterEqual(len(strong_items), 1, "첫 응답에 strong slot이 최소 1개 존재해야 합니다")
 
             # 첫 응답: agreement-backed fact가 텍스트에 포함
-            self.assertIn("확인된 사실:", first_text)
+            self.assertIn("확인된 사실 [교차 확인]:", first_text)
             self.assertIn("교차 확인", first_text)
 
             # 첫 응답: noisy single-source claim 미노출
@@ -9758,7 +9758,7 @@ class WebAppServiceTest(unittest.TestCase):
             )
 
             # reload: 사실 카드 섹션 유지
-            self.assertIn("확인된 사실:", reload_text, "reload 후에도 확인된 사실 섹션이 유지되어야 합니다")
+            self.assertIn("확인된 사실 [교차 확인]:", reload_text, "reload 후에도 확인된 사실 섹션이 유지되어야 합니다")
             self.assertIn("교차 확인", reload_text)
 
             # reload: noisy single-source claim 미노출
@@ -9853,7 +9853,7 @@ class WebAppServiceTest(unittest.TestCase):
             first_text = first["response"]["text"]
 
             # 첫 응답: agreement-backed fact 유지, noisy claim 미노출
-            self.assertIn("확인된 사실:", first_text)
+            self.assertIn("확인된 사실 [교차 확인]:", first_text)
             self.assertIn("교차 확인", first_text)
             self.assertNotIn("출시일", first_text)
             self.assertNotIn("2025", first_text)
@@ -9880,7 +9880,7 @@ class WebAppServiceTest(unittest.TestCase):
             reload_text = second["response"]["text"]
 
             # reload: agreement-backed 사실 카드 유지
-            self.assertIn("확인된 사실:", reload_text, "자연어 reload 후에도 확인된 사실 섹션이 유지되어야 합니다")
+            self.assertIn("확인된 사실 [교차 확인]:", reload_text, "자연어 reload 후에도 확인된 사실 섹션이 유지되어야 합니다")
             self.assertIn("교차 확인", reload_text)
 
             # reload: noisy single-source claim 미노출

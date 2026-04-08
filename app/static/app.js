@@ -2380,8 +2380,8 @@
       renderPanelHint(
         claimCoverageHint,
         progressText
-          ? `${progressText} 교차 확인은 여러 출처 합의, 단일 출처는 신뢰 가능한 1개 출처 기준, 미확인은 추가 조사 필요 상태입니다.`
-          : "교차 확인은 여러 출처 합의, 단일 출처는 신뢰 가능한 1개 출처 기준, 미확인은 추가 조사 필요 상태입니다."
+          ? `${progressText} [교차 확인] 여러 출처가 합의한 사실, [단일 출처] 1개 출처에서만 확인된 정보, [미확인] 추가 조사가 필요한 항목입니다.`
+          : "[교차 확인] 여러 출처가 합의한 사실, [단일 출처] 1개 출처에서만 확인된 정보, [미확인] 추가 조사가 필요한 항목입니다."
       );
       if (claimCoverageScrollRegion) claimCoverageScrollRegion.scrollTop = 0;
       claimCoverageText.textContent = lines.join("\n");

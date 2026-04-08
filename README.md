@@ -191,7 +191,7 @@ Current smoke scenarios:
 79. 브라우저 폴더 선택으로 scanned PDF + readable file이 섞인 폴더를 검색+요약하면 partial-failure notice + readable file preview exact fields(`1. notes.txt`, `mixed-search-folder/notes.txt` tooltip, `내용 일치`, `budget` snippet) + transcript preview exact fields가 유지되는지 확인
 80. claim-coverage panel에서 재조사 대상(`is_focus_slot`) 슬롯이 단일 출처/미확인 상태일 때 전용 설명 라인(`아직 단일 출처 상태입니다`, `아직 확인되지 않았습니다`)이 표시되고, 비재조사 슬롯에는 미표시되는지 확인
 81. claim-coverage panel에서 재조사 후 보강된(`improved`) 슬롯이 `재조사 결과: 단일 출처 → 교차 확인으로 보강되었습니다` 설명을 표시하는지 확인
-82. claim-coverage panel에서 재조사 후 약해진(`regressed`) 슬롯이 `재조사 결과: 교차 확인 → 단일 출처으로 약해졌습니다. 추가 교차 검증이 권장됩니다` 설명을 표시하는지 확인
+82. claim-coverage panel에서 재조사 후 약해진(`regressed`) 슬롯이 `재조사 결과: 교차 확인 → 단일 출처로 약해졌습니다. 추가 교차 검증이 권장됩니다` 설명을 표시하는지 확인
 
 `make e2e-test` launches a dedicated Playwright web server for smoke with inherited `LOCAL_AI_MODEL_PROVIDER` / `LOCAL_AI_OLLAMA_MODEL` overrides cleared, `LOCAL_AI_MODEL_PROVIDER=mock` reapplied, and existing servers on the smoke port not reused. Shell overrides such as `LOCAL_AI_MODEL_PROVIDER=ollama` therefore do not change the automated baseline. Other runtimes remain optional and are validated separately.
 

@@ -1095,7 +1095,7 @@ test("claim-coverage panel은 재조사 후 약해진 슬롯을 명확히 표시
 
   const text = page.locator("#claim-coverage-text");
   await expect(text).toContainText("재조사 결과");
-  await expect(text).toContainText("교차 확인 → 단일 출처으로 약해졌습니다");
+  await expect(text).toContainText("교차 확인 → 단일 출처로 약해졌습니다");
   await expect(text).toContainText("추가 교차 검증이 권장됩니다");
 });
 

@@ -294,10 +294,10 @@ The top-level response payload is serialized by `app/serializers.py:_serialize_r
 - `follow_up_suggestions` — list of localized follow-up suggestion strings
 - `search_results` — list of `{path, matched_on, snippet}` for document search result preview
 
-### Identity And Trace Fields
-- `artifact_id` — stable artifact identifier for grounded-brief responses
-- `artifact_kind` — artifact type (e.g. `grounded_brief`)
-- `source_message_id` — source message anchor for save trace linkage
+### Identity And Trace Fields (`null` when no grounded-brief artifact exists)
+- `artifact_id` — stable artifact identifier for grounded-brief responses, or `null`
+- `artifact_kind` — artifact type (e.g. `grounded_brief`), or `null`
+- `source_message_id` — source message anchor for save trace linkage, or `null`
 
 ### Content Fields
 - `text` — localized response text body

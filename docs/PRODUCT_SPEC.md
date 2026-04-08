@@ -274,13 +274,13 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
   - `candidate_review_record`
   - `selected_source_paths`
   - `saved_note_path`
-  - `save_content_source` — owned by save/approval trace messages
+  - `save_content_source` — present on grounded-brief source messages after direct approved save, and on save/approval trace messages
   - `note_preview`
   - `approval_reason_record` — owned by reject/reissue approval trace messages
-  - `source_message_id` — owned by save/approval trace messages linking back to the source message
+  - `source_message_id` — present on grounded-brief source messages and on save/approval trace messages linking back to the source message
   - approval metadata
 
-Not all optional fields appear on every message. Correction-related fields (`original_response_snapshot`, `corrected_text`, `corrected_outcome`, `content_reason_record`) live only on the original grounded-brief source message. Approval-linked trace fields (`approval_reason_record`, `save_content_source`, `source_message_id`) live on reject/reissue/save system responses. Non-source system messages do not become the correction source-of-truth surface.
+Not all optional fields appear on every message. Correction-related fields (`original_response_snapshot`, `corrected_text`, `corrected_outcome`, `content_reason_record`) live only on the original grounded-brief source message. `approval_reason_record` lives on reject/reissue system responses. `save_content_source` and `source_message_id` can appear on both the grounded-brief source message (after direct approved save) and on save/approval trace messages. Non-source system messages do not become the correction source-of-truth surface.
 
 ## Current Response Payload Contract
 

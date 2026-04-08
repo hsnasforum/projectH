@@ -310,11 +310,11 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - response origin with `WEB` badge, answer-mode badge, color-coded verification-strength badge, and color-coded source-role trust badges in origin detail
 - entity-card / latest-update answer-mode distinction with separate verification labels and source-role surfaces; entity-card verification badge downgraded from strong (`설명형 다중 출처 합의`) when no claim slot has cross-verified status
 - claim coverage panel with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`), actionable hints for weak or unresolved slots, color-coded fact-strength summary bar, and slot reinvestigation scaffolding
+- entity-card agreement-over-noise baseline: multi-source consensus items preferred before single-source claims, noisy single-source items capped
+- weak-slot reinvestigation baseline: weak/missing slots targeted first in reinvestigation suggestions, weak slots rendered as uncertain rather than stable facts, progress and focus-slot state recorded
 
 ### In Progress
-- stronger source consensus
-- better weak-slot reinvestigation
-- better suppression of noisy or irrelevant sources
+- (Current shipped baseline covers agreement-over-noise and weak-slot reinvestigation; see `docs/TASK_BACKLOG.md` Current Phase In Progress for future quality-improvement direction.)
 
 ### Open Question
 - How much automatic reinvestigation should happen before the system stops and reports uncertainty?

@@ -37,6 +37,8 @@
 - Web investigation history is saved locally and can be reloaded in-session. History cards show answer-mode, verification-strength, and source-role trust badges in the header for quick scanning. Entity-card verification badge is downgraded from strong (`설명형 다중 출처 합의`) when no claim slot has cross-verified (`strong`) status, preventing header badge from overstating actual fact coverage. Latest-update responses remain clearly separated from entity-card responses; the response origin area shows a separate answer-mode badge (`설명 카드` or `최신 확인`).
 - Claim coverage slots show source role with trust level (`공식 기반 (신뢰도 높음)`, `보조 커뮤니티 (신뢰도 낮음)`, etc.) on a dedicated line to help users judge source quality at a glance.
 - Response origin detail for web investigation shows source roles with compact trust labels (`출처 유형 공식 기반(높음), 보조 기사(보통)`).
+- Entity-card web investigation prefers agreement-backed facts (multi-source consensus) over noisy single-source claims; single-source items are included only after consensus items and capped.
+- Weak or missing claim-coverage slots stay uncertain (`rendered_as = "uncertain"`) instead of surfacing as stable facts. Reinvestigation targets weak/missing slots first and records progress and focus-slot state.
 - Copy-to-clipboard buttons with purpose-specific labels: `본문 복사`, `저장 경로 복사`, `승인 경로 복사`, `검색 기록 경로 복사`, `경로 복사` (selected source paths panel). All share one `copyTextValue()` helper. Both the success path (`navigator.clipboard.writeText` rejection) and the fallback path (`execCommand("copy")` failure) show a clipboard-specific failure notice instead of a generic error or false success. The response copy success path happy case is covered by Playwright scenario-1 assertions for button state gating and actual clipboard write verification. The rejection and fallback failure branches are verified by code review only (not reachable in current Chromium-based Playwright baseline).
 - Assistant responses can store a feedback label and optional reason.
 - Grounded-brief summary responses can persist one stable `artifact_id` plus `artifact_kind = grounded_brief`.
@@ -50,8 +52,7 @@
 - Current session payloads and the existing shell can now also expose one local `review_queue_items` / `검토 후보` surface fed only by current `durable_candidate` items with `promotion_eligibility = eligible_for_review`, plus one `accept`-only reviewed-but-not-applied action that records source-message `candidate_review_record`.
 
 ### In Progress
-- Entity-card web investigation should prioritize agreement-backed facts over noisy snippets.
-- Reinvestigation should improve weak slots before weak facts are shown as stable facts.
+- (No web-investigation items currently in progress; see `docs/TASK_BACKLOG.md` Current Phase In Progress for future quality-improvement direction.)
 
 ### Not Implemented
 - OCR execution

@@ -149,7 +149,7 @@ The web shell is the main MVP surface. CLI remains available as a narrower debug
 | `source_message_id` | string \| null | source message anchor for save trace |
 | `text` | string | localized response text body |
 | `note_preview` | string \| null | localized note preview for save request |
-| `selected_source_paths` | list \| null | selected source file paths |
+| `selected_source_paths` | list | selected source file paths (default `[]`) |
 | `approval` | object \| null | serialized approval (see Approval Contract) |
 | `active_context` | object \| null | follow-up context |
 | `response_origin` | object \| null | `{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}` when present; `null` on error paths |

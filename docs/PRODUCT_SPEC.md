@@ -302,7 +302,7 @@ The top-level response payload is serialized by `app/serializers.py:_serialize_r
 ### Content Fields
 - `text` — localized response text body
 - `note_preview` — localized note preview text, or `null` when no save is requested
-- `selected_source_paths` — list of selected source file paths, or `null`
+- `selected_source_paths` — list of selected source file paths (default `[]`, never `null`)
 
 ### Metadata And Panel Fields (reuse shapes documented in Current Message Fields)
 - `approval` — serialized approval object (see Approval Rules section for field shape), or `null` when no pending approval exists

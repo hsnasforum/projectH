@@ -94,7 +94,7 @@
 81. History-card entity-card noisy single-source claim click-reload second-follow-up exclusion + provenance truth-sync (`출시일`, `2025`, `blog.example.com` 본문/detail 미노출, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, source_paths/context box에 `blog.example.com` provenance 포함)
 82. Browser file picker scanned/image-only PDF OCR-not-supported guidance Playwright smoke coverage (`요약할 수 없습니다`, `이미지형 PDF`, `OCR`, `다음 단계:`)
 83. Browser folder picker scanned PDF + readable file mixed search count-only partial-failure notice + preview exact-field + selected-path/copy + transcript hidden Playwright smoke coverage (`스캔본 또는 이미지형 PDF`, `건너뛰었습니다`, `1. notes.txt`, `내용 일치`, `budget` snippet, `mixed-search-folder/notes.txt` selected path/copy, transcript body hidden)
-84. Browser file picker readable text-layer PDF success summary Playwright smoke coverage (`readable-text-layer.pdf`, 정상 요약, OCR 안내 미노출)
+84. Browser file picker readable text-layer PDF success summary Playwright smoke coverage (OCR guidance 미노출, visible summary body with extracted text `local-first approval-based document assistant`, context box + quick meta `readable-text-layer.pdf`, `문서 요약` label)
 85. Browser folder picker mixed scanned-PDF search-plus-summary partial-failure + preview exact-field + transcript preview exact-field Playwright smoke coverage (`스캔본 또는 이미지형 PDF`, `건너뛰었습니다`, `1. notes.txt`, `mixed-search-folder/notes.txt` tooltip, `내용 일치`, `budget` snippet, transcript preview 동일 exact fields)
 
 ## Current Phase In Progress

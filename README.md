@@ -187,7 +187,7 @@ Current smoke scenarios:
 75. history-card entity-card noisy single-source claim(`출시일`/`2025`/`blog.example.com`)이 `다시 불러오기` 후 두 번째 follow-up에서도 미노출되고, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`/`ko.wikipedia.org`/`blog.example.com` provenance가 유지되는지 확인
 76. 브라우저 파일 선택으로 scanned/image-only PDF를 선택하면 OCR 미지원 안내(`요약할 수 없습니다`, `이미지형 PDF`, `다음 단계:`)가 표시되는지 확인
 77. 브라우저 폴더 선택으로 scanned PDF + readable file이 섞인 폴더를 검색하면 count-only partial-failure notice + readable file preview exact fields(`1. notes.txt`, `내용 일치`, `budget` snippet) + selected path/copy(`mixed-search-folder/notes.txt`) + hidden body + transcript preview + transcript body hidden이 유지되는지 확인
-78. 브라우저 파일 선택으로 readable text-layer PDF를 선택하면 OCR 안내 없이 정상 요약이 되고, context box와 quick meta에 PDF 파일명이 표시되는지 확인
+78. 브라우저 파일 선택으로 readable text-layer PDF를 선택하면 OCR guidance 미노출, visible summary body에 extracted text(`local-first approval-based document assistant`) 포함, context box + quick meta에 `readable-text-layer.pdf` 표시, quick meta `문서 요약` label이 유지되는지 확인
 79. 브라우저 폴더 선택으로 scanned PDF + readable file이 섞인 폴더를 검색+요약하면 partial-failure notice + readable file preview exact fields(`1. notes.txt`, `mixed-search-folder/notes.txt` tooltip, `내용 일치`, `budget` snippet) + transcript preview exact fields가 유지되는지 확인
 
 `make e2e-test` launches a dedicated Playwright web server for smoke with inherited `LOCAL_AI_MODEL_PROVIDER` / `LOCAL_AI_OLLAMA_MODEL` overrides cleared, `LOCAL_AI_MODEL_PROVIDER=mock` reapplied, and existing servers on the smoke port not reused. Shell overrides such as `LOCAL_AI_MODEL_PROVIDER=ollama` therefore do not change the automated baseline. Other runtimes remain optional and are validated separately.

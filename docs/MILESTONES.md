@@ -99,7 +99,7 @@
 - OCR-not-supported guidance
 - browser file picker scanned/image-only PDF OCR-not-supported guidance smoke
 - browser folder picker scanned PDF + readable file mixed search count-only partial-failure notice + preview exact-field + selected-path/copy + transcript hidden smoke
-- browser file picker readable text-layer PDF success summary smoke
+- browser file picker readable text-layer PDF success summary smoke covering OCR guidance 미노출 + visible summary body with extracted text + context box/quick meta `readable-text-layer.pdf` + `문서 요약` label
 - browser folder picker mixed scanned-PDF search-plus-summary partial-failure + preview exact-field + transcript preview exact-field smoke
 - response feedback capture
 - local web-search history storage

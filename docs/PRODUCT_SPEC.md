@@ -97,8 +97,8 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - evidence/source panel with source-role trust labels
 - summary span/applied-range panel showing which chunks were used
 - active context metadata
-- approval preview
-- saved summary note path when approved
+- approval preview with request-time snapshot, requested save path, and overwrite warning when target already exists
+- saved summary note path (`saved_note_path`) returned after approval, linked in response detail for user confirmation
 - response feedback records
 - structured search result preview panel (ordered label with full-path tooltip, match type badge, content snippet)
 - summary source-type label (`문서 요약`, `선택 결과 요약`) in quick meta and transcript meta

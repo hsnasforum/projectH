@@ -6608,17 +6608,23 @@ test("브라우저 폴더 선택으로 scanned PDF + readable file이 섞인 폴
   expect(responseText).toContain("스캔본 또는 이미지형 PDF");
   expect(responseText).toContain("건너뛰었습니다");
 
-  // search preview panel shows readable file result
+  // search preview panel shows readable file result with exact fields
   await expect(page.getByTestId("response-search-preview")).toBeVisible();
   await expect(page.locator("#response-search-preview .search-preview-item")).toHaveCount(1);
-  await expect(page.locator("#response-search-preview .search-preview-name").first()).toContainText("notes.txt");
+  await expect(page.locator("#response-search-preview .search-preview-name").first()).toHaveText("1. notes.txt");
+  await expect(page.locator("#response-search-preview .search-preview-name").first()).toHaveAttribute("title", "mixed-search-folder/notes.txt");
+  await expect(page.locator("#response-search-preview .search-preview-match").first()).toHaveText("내용 일치");
+  await expect(page.locator("#response-search-preview .search-preview-snippet").first()).toBeVisible();
   await expect(page.locator("#response-search-preview .search-preview-snippet").first()).toContainText("budget");
 
-  // transcript preview panel also retains readable file result
+  // transcript preview panel also retains readable file result with exact fields
   const lastAssistant = page.locator("#transcript .message.assistant").last();
   await expect(lastAssistant.locator(".search-preview-panel")).toBeVisible();
   await expect(lastAssistant.locator(".search-preview-item")).toHaveCount(1);
-  await expect(lastAssistant.locator(".search-preview-name").first()).toContainText("notes.txt");
+  await expect(lastAssistant.locator(".search-preview-name").first()).toHaveText("1. notes.txt");
+  await expect(lastAssistant.locator(".search-preview-name").first()).toHaveAttribute("title", "mixed-search-folder/notes.txt");
+  await expect(lastAssistant.locator(".search-preview-match").first()).toHaveText("내용 일치");
+  await expect(lastAssistant.locator(".search-preview-snippet").first()).toBeVisible();
   await expect(lastAssistant.locator(".search-preview-snippet").first()).toContainText("budget");
 });
 

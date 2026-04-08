@@ -1319,7 +1319,7 @@ These are placeholders for the next phase design target and its immediate follow
 ### Current Gates
 - Unit/service regression uses `python3 -m unittest -v`.
 - Playwright webServer launch clears inherited provider/model overrides, forces `LOCAL_AI_MODEL_PROVIDER=mock`, and does not reuse an already running smoke-port server, so operator shell state must not change the automated smoke baseline.
-- Playwright smoke covers 17 core browser scenarios:
+- Playwright smoke covers 79 core browser scenarios:
   - file summary with panels, source filename assertion in both quick-meta and transcript meta, and `문서 요약` source-type label assertion in both quick-meta and transcript meta
   - browser file picker with source filename and `문서 요약` source-type label assertion in both quick-meta and transcript meta
   - browser folder picker with `선택 결과 요약` source-type label and multi-source count-based metadata (`출처 2개`) assertion in both quick-meta and transcript meta, plus response detail preview panel alongside summary body with both cards' ordered labels, full-path tooltips, match badges (`파일명 일치` / `내용 일치`), and snippet text content, and transcript preview panel with item count, both cards' ordered labels, full-path tooltips, match badges (`파일명 일치` / `내용 일치`), and snippet text content
@@ -1334,7 +1334,7 @@ These are placeholders for the next phase design target and its immediate follow
   - same-session recurrence aggregate path renders one separate local read-only `검토 메모 적용 후보` section, shows `검토 메모 적용 시작` enabled with a mandatory reason textarea when `capability_outcome = unblocked_all_required` (disabled while blocked or while the textarea is empty), keeps that action distinct from `검토 수락`, emits one `reviewed_memory_transition_record` with `record_stage = emitted_record_only_not_applied` on enabled submit, then shows `검토 메모 적용 실행` after emission and moves that same record to `applied_pending_result` with `applied_at` set on apply-boundary click, then shows `결과 확정` after the apply boundary and moves `record_stage` to `applied_with_result` with one `apply_result` object (`result_version = first_reviewed_memory_apply_result_v1`, `applied_effect_kind = reviewed_memory_correction_pattern`, `result_stage = result_recorded_effect_pending`, `result_at`) on confirm click, confirming the memory effect on future responses is now active (`result_stage = effect_active`) with active effects stored on the session as `reviewed_memory_active_effects` and future responses including a `[검토 메모 활성]` prefix
   - streaming cancel
   - general chat negative source-type label contract (no `문서 요약` / `선택 결과 요약` in quick-meta or transcript meta)
-  - claim-coverage panel rendering contract with `[교차 확인]`, `[단일 출처]`, `[미확인]` leading status tags and actionable hints
+  - claim-coverage panel rendering contract with `[교차 확인]`, `[단일 출처]`, `[미확인]` leading status tags, actionable hints, and focus-slot reinvestigation explanation (improved/regressed/unchanged with natural Korean particle normalization)
   - web-search history card header badges: answer-mode badge, verification-strength badge with CSS class, source-role trust badge compact label with trust class
   - history-card entity-card `다시 불러오기` click → reloaded response `WEB` badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail 유지
   - history-card latest-update `다시 불러오기` click → reloaded response `WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail 유지

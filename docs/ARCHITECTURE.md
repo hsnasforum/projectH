@@ -221,6 +221,7 @@ Current task log is append-only JSONL and already records actions such as:
 - `reviewed_memory_transition_stopped`
 - `reviewed_memory_transition_reversed`
 - `reviewed_memory_conflict_visibility_checked`
+- `agent_response`
 
 ## Approval Contract
 

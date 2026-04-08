@@ -95,7 +95,7 @@
 82. Browser file picker scanned/image-only PDF OCR-not-supported guidance Playwright smoke coverage (`요약할 수 없습니다`, `이미지형 PDF`, `OCR`, `다음 단계:`)
 83. Browser folder picker scanned PDF + readable file mixed search count-only partial-failure notice + preview exact-field + selected-path/copy + transcript hidden Playwright smoke coverage (`스캔본 또는 이미지형 PDF`, `건너뛰었습니다`, `1. notes.txt`, `내용 일치`, `budget` snippet, `mixed-search-folder/notes.txt` selected path/copy, transcript body hidden)
 84. Browser file picker readable text-layer PDF success summary Playwright smoke coverage (`readable-text-layer.pdf`, 정상 요약, OCR 안내 미노출)
-85. Browser folder picker mixed scanned-PDF search-plus-summary partial-failure + preview retention Playwright smoke coverage (`스캔본 또는 이미지형 PDF`, `건너뛰었습니다`, `notes.txt` preview + `budget` snippet 유지)
+85. Browser folder picker mixed scanned-PDF search-plus-summary partial-failure + preview exact-field + transcript preview exact-field Playwright smoke coverage (`스캔본 또는 이미지형 PDF`, `건너뛰었습니다`, `1. notes.txt`, `mixed-search-folder/notes.txt` tooltip, `내용 일치`, `budget` snippet, transcript preview 동일 exact fields)
 
 ## Current Phase In Progress
 

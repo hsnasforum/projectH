@@ -209,7 +209,7 @@
     - `boundary_stage = draft_not_applied`
     - deterministic `drafted_at = last_seen_at`
   - `rollback_ready_reviewed_memory_effect` is now fixed as one shipped rollback contract surface:
-    - rollback means reversal of one later applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
+    - rollback means reversal of one applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
     - the shipped boundary draft remains the scope draft and basis ref, not the rollback target
     - aggregate identity, supporting refs, boundary draft, and operator-visible audit trace must remain after rollback while only the applied effect deactivates
     - rollback remains separate from disable, conflict visibility, operator-audit repair, and cross-session counting
@@ -221,7 +221,7 @@
     - `audit_trace_expectation = operator_visible_local_transition_required`
     - deterministic `defined_at = last_seen_at`
   - `disable_ready_reviewed_memory_effect` is now fixed as one shipped disable contract surface:
-    - disable means stop-apply of one later applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
+    - disable means stop-apply of one applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
     - the shipped boundary draft and shipped rollback contract remain basis refs, not the disable target
     - aggregate identity, supporting refs, boundary draft, rollback contract, and operator-visible audit trace must remain after disable while only the applied effect becomes inactive
     - disable remains separate from rollback reversal, conflict visibility, operator-audit repair, and cross-session counting

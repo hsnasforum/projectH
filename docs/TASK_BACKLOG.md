@@ -349,7 +349,7 @@
   - do not widen into cross-session counting or user-level memory
 66. Fix `rollback_ready_reviewed_memory_effect` to one exact future rollback target only:
   - rollback means applied reviewed-memory effect reversal, not source-message correction-history rewind
-  - the first rollback target stays one later applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
+  - the first rollback target stays one applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
   - the shipped `reviewed_memory_boundary_draft` remains a scope draft and basis ref, not the rollback target
 67. Keep rollback narrower than delete or rewrite semantics:
   - rollback must not delete `candidate_review_record`
@@ -358,7 +358,7 @@
   - boundary-draft deletion must not become canonical rollback
 68. Keep rollback output boundaries exact:
   - aggregate identity, supporting refs, boundary draft, and operator-visible audit trace must remain after rollback
-  - only later applied reviewed-memory influence may deactivate
+  - only applied reviewed-memory influence may deactivate
   - current append-only `task_log` may mirror rollback trace but must not become the canonical rollback store
 69. Keep rollback separate from disable, conflict visibility, and operator audit:
   - rollback = reversal of already-applied reviewed-memory effect
@@ -379,7 +379,7 @@
   - it must not widen into cross-session scope
 72. Fix `disable_ready_reviewed_memory_effect` to one exact future stop-apply target only:
   - disable means applied reviewed-memory effect stop-apply, not source-message correction-history rewrite
-  - the first disable target stays one later applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
+  - the first disable target stays one applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
   - the shipped `reviewed_memory_boundary_draft` and shipped `reviewed_memory_rollback_contract` remain basis refs, not the disable target
 73. Keep disable narrower than delete or reversal semantics:
   - disable must not delete `candidate_review_record`
@@ -388,7 +388,7 @@
   - disable must not be treated as rollback reversal
 74. Keep disable output boundaries exact:
   - aggregate identity, supporting refs, boundary draft, rollback contract, and operator-visible audit trace must remain after disable
-  - only later applied reviewed-memory influence may become inactive
+  - only applied reviewed-memory influence may become inactive
   - current append-only `task_log` may mirror disable trace but must not become the canonical disable store
 75. Keep disable separate from rollback, conflict visibility, and operator audit:
   - disable = stop-apply of already-applied reviewed-memory effect

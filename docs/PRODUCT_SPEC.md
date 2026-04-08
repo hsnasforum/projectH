@@ -321,6 +321,8 @@ The top-level response payload is serialized by `app/serializers.py:_serialize_r
 - `content_reason_record` — content reason record on explicit rejection, or `null`
 - `save_content_source` — `original_draft` or `corrected_text` indicating which text version is saved, or `null`
 
+Service tests (`tests/test_web_app.py`) and Python smoke tests (`tests/test_smoke.py`) lock the control fields, correction/save field anchors, and their expected values. Playwright browser smoke (`e2e/tests/web-smoke.spec.mjs`) covers the browser-visible contract separately.
+
 ## Response Panels And UI Metadata
 
 ### Implemented

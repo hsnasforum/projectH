@@ -96,7 +96,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - summary text
 - evidence/source panel with source-role trust labels
 - summary span/applied-range panel showing which chunks were used
-- active context metadata
+- active context metadata (`active_context` session field for follow-up answers, updated by correction-submit `summary_hint`)
 - approval preview with request-time snapshot, requested save path, and overwrite warning when target already exists
 - saved summary note path (`saved_note_path`) returned after approval, linked in response detail for user confirmation
 - response feedback records with label + optional reason, linked via `response_feedback_recorded` audit event

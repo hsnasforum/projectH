@@ -267,16 +267,16 @@
     - `audit_store_boundary = canonical_transition_record_separate_from_task_log`
     - `post_transition_invariants = aggregate_identity_and_contract_refs_retained`
     - deterministic `defined_at = last_seen_at`
-    - no reviewed-memory apply, no resolver, and no cross-session widening
-  - the next contract decision now fixes exact same-session unblock semantics before any apply or emitted-transition vocabulary reopens:
+    - no resolver and no cross-session widening; the reviewed-memory apply / emitted-transition vocabulary is now shipped above this planning-target layer
+  - exact same-session unblock semantics are now fixed and shipped:
     - shipped boundary / rollback / disable / conflict / transition-audit objects remain `contract exists` only
     - none of those read-only objects counts as `satisfied` by itself
     - the first same-session unblock threshold stays binary and all-required:
       - current shipped `reviewed_memory_unblock_contract.unblock_status = blocked_all_required`
       - current shipped `reviewed_memory_capability_status.capability_outcome = unblocked_all_required`
     - `reviewed_memory_planning_target_ref.target_label = eligible_for_reviewed_memory_draft_planning_only` remains the right narrow label, and it means draft planning only
-    - the shipped readiness surface now stays one read-only `reviewed_memory_unblock_contract`, still not apply, not emitted transition record, and not cross-session counting
-  - the next contract decision now also fixes how future satisfied capability outcome should reopen:
+    - the shipped readiness surface stays one read-only `reviewed_memory_unblock_contract`; the apply path and emitted transition record are now shipped above the readiness layer; cross-session counting remains later
+  - the shipped capability outcome is now fixed:
     - keep the shipped `reviewed_memory_unblock_contract` as the blocked-threshold contract only
     - the shipped separate read-only `reviewed_memory_capability_status` now carries current `capability_outcome = unblocked_all_required`
     - the current truthful `unblocked_all_required` state requires one separate internal `reviewed_memory_capability_source_refs`, not current contract-object existence alone

@@ -58,7 +58,7 @@ projectH aims to become a **teachable local personal agent** that stores user co
 - PDF text-layer support with OCR-not-supported guidance
 - permission-gated web investigation (enabled/disabled/ask per session) with local JSON history, in-session reload, and history-card badges (answer-mode, verification-strength, source-role trust)
 - entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade
-- claim coverage panel with status tags and actionable hints
+- claim coverage panel with status tags, actionable hints, and dedicated plain-language focus-slot reinvestigation explanation (improved/regressed/unchanged)
 
 ### Core Product Boundaries
 - Core product: local document assistant

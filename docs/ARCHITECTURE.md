@@ -220,8 +220,8 @@ Current message records include:
   - `save_content_source` — also present on save/approval trace messages
   - `source_message_id` — also present on save/approval trace messages
   - `session_local_memory_signal` — requires `original_response_snapshot`
-  - `superseded_reject_signal`
-  - `historical_save_identity_signal`
+  - `superseded_reject_signal` — requires source-message anchor and eligible `session_local_memory_signal` path
+  - `historical_save_identity_signal` — requires source-message anchor and `session_local_memory_signal` with `save_signal`
   - `session_local_candidate` — requires same source-message anchor
   - `candidate_confirmation_record` — sibling of `session_local_candidate`
   - `candidate_recurrence_key` — sibling of `session_local_candidate`

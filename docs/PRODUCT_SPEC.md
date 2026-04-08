@@ -1156,7 +1156,7 @@ The first official artifact is the `grounded brief`.
       - this is not a `corrected_text` diff viewer, not `candidate_review_record` promotion into a conflict object, not `candidate_recurrence_key` recalculation, and not aggregate identity-history rewrite
       - this must not auto-resolve, auto-disable, auto-rollback, or auto-apply anything
     - `operator_auditable_reviewed_memory_transition`
-      - any later reviewed-memory transition above the blocked marker must leave one explicit local operator-visible trace with canonical transition identity
+      - every shipped reviewed-memory transition above the blocked marker leaves one explicit local operator-visible trace with canonical transition identity
       - the first transition action vocabulary should stay fixed and narrow:
         - `future_reviewed_memory_apply`
         - `future_reviewed_memory_stop_apply`

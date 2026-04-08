@@ -663,7 +663,7 @@ These are placeholders for the next phase design target and its immediate follow
         - `future_applied_reviewed_memory_effect_vs_applied_effect`
       - conflict visibility must not be treated as a `corrected_text` diff viewer, `candidate_review_record` conflict promotion, aggregate-history rewrite, or any automatic resolver
     - `operator_auditable_reviewed_memory_transition`
-      - any later reviewed-memory transition above the blocked marker leaves one explicit operator-visible local trace with canonical transition identity
+      - every shipped reviewed-memory transition above the blocked marker leaves one explicit operator-visible local trace with canonical transition identity
       - fixed transition action vocabulary must stay narrow:
         - `future_reviewed_memory_apply`
         - `future_reviewed_memory_stop_apply`

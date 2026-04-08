@@ -886,7 +886,7 @@ The next phase should standardize one `grounded brief` artifact.
         - no auto-rollback
         - no auto-apply
     - `operator_auditable_reviewed_memory_transition`
-      - any later reviewed-memory transition above the blocked marker must leave one explicit operator-visible local trace with canonical transition identity
+      - every shipped reviewed-memory transition above the blocked marker leaves one explicit operator-visible local trace with canonical transition identity
       - the first transition action vocabulary should stay fixed and narrow:
         - `future_reviewed_memory_apply`
         - `future_reviewed_memory_stop_apply`

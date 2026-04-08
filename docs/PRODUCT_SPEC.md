@@ -1199,7 +1199,7 @@ The first official artifact is the `grounded brief`.
   - the marker remains read-only and blocked:
     - no repeated-signal promotion
     - no reviewed-memory candidate store
-    - no reviewed-memory apply path
+    - the reviewed-memory apply path is now shipped above this planning-target marker layer
     - no cross-session counting
   - the status object remains equally conservative:
     - `overall_status = blocked_all_required` remains the only current shipped status

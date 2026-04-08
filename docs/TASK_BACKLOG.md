@@ -92,6 +92,8 @@
 79. Entity-card noisy single-source claim natural-reload second-follow-up exclusion + provenance truth-sync (`출시일`, `2025`, `blog.example.com` 본문/detail 미노출, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, source_paths/context box에 `blog.example.com` provenance 포함)
 80. History-card entity-card noisy single-source claim click-reload follow-up exclusion + provenance truth-sync (`출시일`, `2025`, `blog.example.com` 본문/detail 미노출, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, source_paths/context box에 `blog.example.com` provenance 포함)
 81. History-card entity-card noisy single-source claim click-reload second-follow-up exclusion + provenance truth-sync (`출시일`, `2025`, `blog.example.com` 본문/detail 미노출, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, source_paths/context box에 `blog.example.com` provenance 포함)
+82. Browser file picker scanned/image-only PDF OCR-not-supported guidance Playwright smoke coverage (`요약할 수 없습니다`, `이미지형 PDF`, `OCR`, `다음 단계:`)
+83. Browser folder picker scanned PDF + readable file mixed search count-only partial-failure notice Playwright smoke coverage (`스캔본 또는 이미지형 PDF`, `건너뛰었습니다`)
 
 ## Current Phase In Progress
 

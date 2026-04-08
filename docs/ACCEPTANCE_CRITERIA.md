@@ -1394,6 +1394,8 @@ These are placeholders for the next phase design target and its immediate follow
   - entity-card noisy single-source claim(`출시일`/`2025`/`blog.example.com`) browser 자연어 reload 후 두 번째 follow-up → 미노출 + `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`/`ko.wikipedia.org`/`blog.example.com` provenance 유지
   - history-card entity-card noisy single-source claim(`출시일`/`2025`/`blog.example.com`) `다시 불러오기` 후 follow-up → 미노출 + `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`/`ko.wikipedia.org`/`blog.example.com` provenance 유지
   - history-card entity-card noisy single-source claim(`출시일`/`2025`/`blog.example.com`) `다시 불러오기` 후 두 번째 follow-up → 미노출 + `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`/`ko.wikipedia.org`/`blog.example.com` provenance 유지
+  - browser file picker scanned/image-only PDF → OCR 미지원 안내(`요약할 수 없습니다`, `이미지형 PDF`, `OCR`, `다음 단계:`) 표시
+  - browser folder picker scanned PDF + readable file mixed search → count-only partial-failure notice(`스캔본 또는 이미지형 PDF`, `건너뛰었습니다`) 표시
 
 ### In Progress
 - Improve regression fixtures for weak-slot reinvestigation and source consensus.

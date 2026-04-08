@@ -10,6 +10,8 @@ const longFixturePath = path.join(fixtureDir, "long-summary-fixture.md");
 const searchFixtureDir = path.join(fixtureDir, "picked-search-folder");
 const searchFixtureBudgetPath = path.join(searchFixtureDir, "budget-plan.md");
 const searchFixtureMemoPath = path.join(searchFixtureDir, "memo.md");
+const scannedPdfFixturePath = path.join(fixtureDir, "scanned-stub.pdf");
+const mixedSearchFixtureDir = path.join(fixtureDir, "mixed-search-folder");
 const searchFolderRelBudgetPath = path.basename(searchFixtureDir) + "/budget-plan.md";
 const searchFolderRelMemoPath = path.basename(searchFixtureDir) + "/memo.md";
 const initialNotePath = path.join(noteDir, "initial-note.md");
@@ -100,6 +102,14 @@ function ensureLongFixture() {
     ["# Memo", "", "other notes", "budget reference"].join("\n"),
     "utf-8"
   );
+  // Minimal valid PDF with one empty page — triggers OcrRequiredError
+  const scannedPdfBytes = Buffer.from(
+    "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R>>endobj\nxref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n190\n%%EOF"
+  );
+  fs.writeFileSync(scannedPdfFixturePath, scannedPdfBytes);
+  fs.mkdirSync(mixedSearchFixtureDir, { recursive: true });
+  fs.writeFileSync(path.join(mixedSearchFixtureDir, "scan.pdf"), scannedPdfBytes);
+  fs.writeFileSync(path.join(mixedSearchFixtureDir, "notes.txt"), "hello world budget reference", "utf-8");
   fs.mkdirSync(path.dirname(correctedBridgeNotePath), { recursive: true });
   fs.rmSync(initialNotePath, { force: true });
   fs.rmSync(revisedNotePath, { force: true });
@@ -6537,4 +6547,36 @@ test("history-card entity-card noisy single-source claim(출시일/2025/blog.exa
   await expect(contextBox).toContainText("blog.example.com");
 
   try { fs.unlinkSync(recordPath); fs.rmdirSync(recordDir); } catch (_) {}
+});
+
+test("브라우저 파일 선택으로 scanned/image-only PDF를 선택하면 OCR 미지원 안내가 표시됩니다", async ({ page }) => {
+  await prepareSession(page, "scanned-pdf-ocr");
+  await page.getByTestId("browser-file-input").setInputFiles(scannedPdfFixturePath);
+  await expect(page.locator("#picked-file-name")).toContainText("scanned-stub.pdf");
+
+  await page.getByTestId("submit-request").click();
+
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  const responseText = await page.getByTestId("response-text").textContent();
+  expect(responseText).toContain("요약할 수 없습니다");
+  expect(responseText).toContain("OCR");
+  expect(responseText).toContain("이미지형 PDF");
+  expect(responseText).toContain("다음 단계:");
+});
+
+test("브라우저 폴더 선택으로 scanned PDF + readable file이 섞인 폴더를 검색하면 count-only partial-failure notice가 표시됩니다", async ({ page }) => {
+  await prepareSession(page, "mixed-folder-skipped-pdf");
+  await page.locator('input[name="request_mode"][value="search"]').check();
+  await page.getByTestId("browser-folder-input").setInputFiles(mixedSearchFixtureDir);
+  await expect(page.locator("#picked-folder-name")).toContainText("2개 파일");
+  await page.getByTestId("search-query").fill("budget");
+  await page.locator("#search-only").check();
+
+  await page.getByTestId("submit-request").click();
+
+  // search-only hides response-text but populates it; wait for search preview then read hidden text
+  await expect(page.getByTestId("response-search-preview")).toBeVisible();
+  const responseText = await page.getByTestId("response-text").textContent();
+  expect(responseText).toContain("스캔본 또는 이미지형 PDF");
+  expect(responseText).toContain("건너뛰었습니다");
 });

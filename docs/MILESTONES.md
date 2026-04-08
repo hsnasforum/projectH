@@ -97,6 +97,8 @@
 - entity-card noisy single-source claim natural-reload + click-reload follow-up/second-follow-up exclusion + provenance exact-field retention: `출시일`, `2025`, `blog.example.com` 본문/detail 미노출, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, source_paths/context box에 `blog.example.com` provenance 포함
 - PDF text-layer support
 - OCR-not-supported guidance
+- browser file picker scanned/image-only PDF OCR-not-supported guidance smoke
+- browser folder picker scanned PDF + readable file mixed search count-only partial-failure notice smoke
 - response feedback capture
 - local web-search history storage
 

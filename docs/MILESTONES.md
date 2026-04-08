@@ -53,8 +53,8 @@
 - history-card entity-card `다시 불러오기` dual-probe source-path + response-origin continuity browser smoke covering `pearlabyss.com/200` and `pearlabyss.com/300` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` after reload
 - history-card latest-update `다시 불러오기` mixed-source source-path + response-origin exact-field drift-prevention browser smoke covering `store.steampowered.com` and `yna.co.kr` in context box, `WEB` badge, `최신 확인`, `공식+기사 교차 확인`, `보조 기사` · `공식 기반` after reload
 - history-card latest-update single-source `다시 불러오기` verification-label exact-field drift-prevention browser smoke covering `단일 출처 참고` and `보조 출처` in origin detail after reload
-- history-card latest-update news-only `다시 불러오기` verification-label continuity browser smoke covering `기사 교차 확인` and `보조 기사` in origin detail after reload
-- history-card latest-update news-only `다시 불러오기` source-path continuity browser smoke covering `hankyung.com` and `mk.co.kr` in context box after reload
+- history-card latest-update news-only `다시 불러오기` verification-label exact-field drift-prevention browser smoke covering `기사 교차 확인` and `보조 기사` in origin detail after reload
+- history-card latest-update news-only `다시 불러오기` source-path exact-field drift-prevention browser smoke covering `hankyung.com` and `mk.co.kr` in context box after reload
 - history-card latest-update single-source `다시 불러오기` source-path exact-field drift-prevention browser smoke covering `example.com/seoul-weather` in context box after reload
 - history-card latest-update single-source `다시 불러오기` follow-up response-origin continuity service + browser smoke covering `단일 출처 참고` and `보조 출처` drift prevention
 - history-card latest-update news-only `다시 불러오기` follow-up response-origin continuity service + browser smoke covering `기사 교차 확인` and `보조 기사` drift prevention

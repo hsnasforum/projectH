@@ -212,6 +212,9 @@ Current task log is append-only JSONL and already records actions such as:
 - `web_search_permission_updated`
 - `permissions_updated`
 - `ocr_not_supported`
+- `web_search_record_loaded`
+- `web_search_retried`
+- `answer_with_active_context`
 
 ## Approval Contract
 

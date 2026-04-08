@@ -286,13 +286,13 @@ The top-level response payload is serialized by `app/serializers.py:_serialize_r
 
 ### Control Fields (drive shell behavior and test assertions)
 - `status` — response status string, one of the `ResponseStatus` enum values defined in `core/contracts.py`: `answer`, `error`, `needs_approval`, `saved`
-- `actions_taken` — list of actions taken during processing
+- `actions_taken` — list of actions taken during processing (default `[]`, never `null`)
 - `requires_approval` — boolean, `true` when the response requires explicit user approval before save
 - `proposed_note_path` — proposed file path for note save, or `null` when no save is requested
 - `saved_note_path` — actual saved file path after approval grant and write, or `null`
 - `web_search_record_path` — path to the local web-search history JSON record, or `null` when no web investigation record exists
-- `follow_up_suggestions` — list of localized follow-up suggestion strings
-- `search_results` — list of `{path, matched_on, snippet}` for document search result preview
+- `follow_up_suggestions` — list of localized follow-up suggestion strings (default `[]`, never `null`)
+- `search_results` — list of `{path, matched_on, snippet}` for document search result preview (default `[]`, never `null`)
 
 ### Identity And Trace Fields (`null` when no grounded-brief artifact exists)
 - `artifact_id` — stable artifact identifier for grounded-brief responses, or `null`

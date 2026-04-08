@@ -95,8 +95,8 @@
 - latest-update noisy-community natural-reload follow-up + second-follow-up exclusion service + browser smoke covering `보조 커뮤니티`, `brunch` negative in origin detail, response body, context box + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` positive retention
 - latest-update noisy-community click-reload follow-up + second-follow-up exclusion service + browser smoke covering `보조 커뮤니티`, `brunch` negative in origin detail, response body, context box + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` positive retention
 - entity-card noisy single-source claim natural-reload + click-reload follow-up/second-follow-up exclusion + provenance exact-field retention: `출시일`, `2025`, `blog.example.com` 본문/detail 미노출, `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`, `ko.wikipedia.org` 유지, source_paths/context box에 `blog.example.com` provenance 포함
-- PDF text-layer support
-- OCR-not-supported guidance
+- PDF text-layer support: readable text-layer PDF → visible summary body with `문서 요약` label + context box/quick meta PDF filename
+- OCR-not-supported guidance: scanned/image-only PDF → visible response guidance with `요약할 수 없습니다`, `OCR`, `이미지형 PDF`, `다음 단계:`
 - browser file picker scanned/image-only PDF OCR-not-supported guidance smoke covering visible response guidance with exact strings `요약할 수 없습니다`, `OCR`, `이미지형 PDF`, `다음 단계:`
 - browser folder picker scanned PDF + readable file mixed search count-only partial-failure notice + preview exact-field + selected-path/copy + transcript hidden smoke
 - browser file picker readable text-layer PDF success summary smoke covering OCR guidance 미노출 + visible summary body with extracted text + context box/quick meta `readable-text-layer.pdf` + `문서 요약` label

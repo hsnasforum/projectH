@@ -4,7 +4,7 @@
 
 ### Current Product
 - The shipped contract remains a local-first document assistant web MVP.
-- Web investigation remains a secondary mode.
+- Web investigation remains a permission-gated secondary mode (enabled/disabled/ask per session) under the document-first guardrail.
 - The current release candidate is the `app.web` browser shell; pipeline/controller/operator tooling remains outside the release gate.
 
 ### Next Phase

@@ -239,6 +239,10 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
   - `disabled`
   - `approval`
   - `enabled`
+- `permissions.web_search_label`
+  - `차단 · 읽기 전용 검색`
+  - `승인 필요 · 읽기 전용 검색`
+  - `허용 · 읽기 전용 검색`
 
 ### Current Message Fields
 - required:

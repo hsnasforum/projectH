@@ -216,7 +216,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - `title`
 - `messages`
 - `pending_approvals` — list of serialized approval objects (see Approval section for field shape)
-- `permissions` — `{web_search, web_search_label}` where `web_search` is `disabled` / `approval` / `enabled`
+- `permissions` — `{web_search, web_search_label}` where `web_search` is `disabled` / `approval` / `enabled` and `web_search_label` is `차단 · 읽기 전용 검색` / `승인 필요 · 읽기 전용 검색` / `허용 · 읽기 전용 검색`
 - `active_context` — `{kind, label, source_paths, summary_hint, suggested_prompts, record_path, claim_coverage_progress_summary}`; updated by correction-submit `summary_hint`
 - `created_at`
 - `updated_at`

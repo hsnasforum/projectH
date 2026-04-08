@@ -6613,6 +6613,13 @@ test("브라우저 폴더 선택으로 scanned PDF + readable file이 섞인 폴
   await expect(page.locator("#response-search-preview .search-preview-item")).toHaveCount(1);
   await expect(page.locator("#response-search-preview .search-preview-name").first()).toContainText("notes.txt");
   await expect(page.locator("#response-search-preview .search-preview-snippet").first()).toContainText("budget");
+
+  // transcript preview panel also retains readable file result
+  const lastAssistant = page.locator("#transcript .message.assistant").last();
+  await expect(lastAssistant.locator(".search-preview-panel")).toBeVisible();
+  await expect(lastAssistant.locator(".search-preview-item")).toHaveCount(1);
+  await expect(lastAssistant.locator(".search-preview-name").first()).toContainText("notes.txt");
+  await expect(lastAssistant.locator(".search-preview-snippet").first()).toContainText("budget");
 });
 
 test("브라우저 파일 선택으로 readable text-layer PDF를 선택하면 정상 요약이 됩니다", async ({ page }) => {

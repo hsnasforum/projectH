@@ -201,17 +201,24 @@ Current message records include:
 - optional response metadata such as:
   - `artifact_id`
   - `artifact_kind`
-  - `original_response_snapshot`
-  - `response_origin` — `{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}`
+  - `response_origin` — `{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}` when present; omitted from the session message when absent (unlike the top-level response payload, which returns `null`)
   - `evidence` — list of `{label, source_name, source_path, snippet, source_role}`
   - `summary_chunks` — list of `{chunk_id, chunk_index, total_chunks, source_path, source_name, selected_line}`
   - `claim_coverage` — list of slot objects, each containing `slot`, `status`, `status_label`, `value`, `support_count`, `candidate_count`, `source_role`, `rendered_as` (`fact_card` / `uncertain` / `not_rendered`); during reinvestigation, slots also carry `previous_status`, `previous_status_label`, `progress_state` (`improved` / `regressed` / `unchanged`), `progress_label`, and `is_focus_slot`
   - `claim_coverage_progress_summary` — plain-language Korean sentence summarizing the focus-slot reinvestigation outcome (empty string on first investigation)
   - `web_search_history` — list of recent search record summaries (up to 8), each containing `record_id`, `query`, `created_at`, `result_count`, `page_count`, `record_path`, `summary_head`, `answer_mode` (`entity_card` / `latest_update` / `general`), `verification_label`, `source_roles` (list of role strings), `claim_coverage_summary` (`strong` / `weak` / `missing` counts), and `pages_preview` (list of `{title, url, excerpt, text_preview, char_count}`)
   - `feedback`
+  - `selected_source_paths`
+  - `saved_note_path`
+  - `note_preview`
+  - approval metadata
+- grounded-brief source message fields (owned by original source message only):
+  - `original_response_snapshot` — `{artifact_id, artifact_kind, draft_text, source_paths, response_origin, summary_chunks_snapshot, evidence_snapshot}`; nested `response_origin` may be `null` when absent
   - `corrected_text`
   - `corrected_outcome`
   - `content_reason_record`
+  - `save_content_source` — also present on save/approval trace messages
+  - `source_message_id` — also present on save/approval trace messages
   - `session_local_memory_signal`
   - `superseded_reject_signal`
   - `historical_save_identity_signal`
@@ -220,13 +227,10 @@ Current message records include:
   - `candidate_recurrence_key`
   - `durable_candidate`
   - `candidate_review_record`
-  - `selected_source_paths`
-  - `saved_note_path`
-  - `note_preview`
-  - `save_content_source`
-  - `source_message_id`
-  - `approval_reason_record`
-  - approval metadata
+- approval trace message fields:
+  - `approval_reason_record` — owned by reject/reissue approval trace messages
+  - `save_content_source` — also present on grounded-brief source messages after direct approved save
+  - `source_message_id` — links back to the original source message
 
 ### Task Log
 

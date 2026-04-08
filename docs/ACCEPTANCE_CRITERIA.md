@@ -85,7 +85,7 @@
   - `title`
   - `messages`
   - `pending_approvals`
-  - `permissions`
+  - `permissions` — `{web_search, web_search_label}`
   - `active_context`
   - timestamps
 - Approval state is removed after approval or rejection.

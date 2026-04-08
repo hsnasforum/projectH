@@ -111,7 +111,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - web-search permission gate for permission-gated secondary-mode web investigation (disabled/approval/enabled per session)
 
 ### Stored Evidence, Logs, And Feedback
-- session JSON with messages, `active_context` (follow-up context updated by correction-submit `summary_hint`), `pending_approvals`, `permissions` (including web-search permission state), timestamps
+- session JSON with messages, `active_context` (follow-up context updated by correction-submit `summary_hint`), `pending_approvals`, `permissions` (`{web_search, web_search_label}`), timestamps
 - response metadata including evidence/source with trust labels, summary chunks with applied-range, response origin (badge/answer-mode/verification/source-role), claim coverage with status tags and fact-strength summary, feedback with label + optional reason, and optional source-message `candidate_confirmation_record` / `candidate_recurrence_key` / `durable_candidate` / `candidate_review_record` / grounded-brief trace fields
 - current session payload can also expose one computed top-level `recurrence_aggregate_candidates` list derived from current same-session serialized source-message `candidate_recurrence_key` records
 - current session payload can also expose one computed top-level `review_queue_items` list derived from eligible current source-message `durable_candidate` records

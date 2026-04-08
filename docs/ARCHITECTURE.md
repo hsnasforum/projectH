@@ -1086,7 +1086,7 @@ The next phase should standardize one `grounded brief` artifact.
       - do not add a second proof id in the first contract
       - reuse `applied_effect_id` as the first local identity minted at the truthful canonical proof-record instant beneath the proof-boundary helper
       - reuse `aggregate.last_seen_at` only when it is exactly that same first truthful local instant
-    - the exact later local target beneath that handle should stay one shared internal `reviewed_memory_applied_effect_target`:
+    - the exact local target beneath that handle is one now-materialized shared internal `reviewed_memory_applied_effect_target`:
       - `target_version = first_same_session_reviewed_memory_applied_effect_target_v1`
       - `target_scope = same_session_exact_recurrence_aggregate_only`
       - one `aggregate_identity_ref`

@@ -1002,7 +1002,7 @@ These are placeholders for the next phase design target and its immediate follow
   - current implementation may also evaluate one internal `reviewed_memory_local_effect_presence_record` helper for that same exact aggregate, and it now materializes one internal same-aggregate source-consumer record only from one exact matching event-source helper result while reusing the same `applied_effect_id` and `present_locally_at`
   - current implementation may also evaluate one internal `reviewed_memory_applied_effect_target` helper for that same exact aggregate, and it now materializes one internal same-aggregate shared target only from one exact matching source-consumer helper result while reusing the same `applied_effect_id` and `present_locally_at`
   - current implementation may also evaluate one internal `reviewed_memory_reversible_effect_handle` helper for that same exact aggregate, and it now materializes one internal same-aggregate rollback-capability handle only from one exact matching shared target plus one exact matching rollback contract
-  - the exact later rollback-capability backer for `rollback_source_ref` must stay one internal local `reviewed_memory_reversible_effect_handle`:
+  - the exact rollback-capability backer for `rollback_source_ref` is one now-materialized internal local `reviewed_memory_reversible_effect_handle`:
     - `handle_version = first_same_session_reviewed_memory_reversible_effect_handle_v1`
     - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
     - one `aggregate_identity_ref`
@@ -1015,7 +1015,7 @@ These are placeholders for the next phase design target and its immediate follow
     - `effect_stage = handle_defined_not_applied`
     - one local `handle_id`
     - deterministic `defined_at`
-  - the exact later local target beneath that handle must stay one shared internal `reviewed_memory_applied_effect_target`:
+  - the exact local target beneath that handle is one now-materialized shared internal `reviewed_memory_applied_effect_target`:
     - `target_version = first_same_session_reviewed_memory_applied_effect_target_v1`
     - `target_scope = same_session_exact_recurrence_aggregate_only`
     - one `aggregate_identity_ref`

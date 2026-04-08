@@ -1311,7 +1311,7 @@ The first official artifact is the `grounded brief`.
     - current implementation now also evaluates one internal `reviewed_memory_local_effect_presence_record` helper for that same exact aggregate, and it now materializes one internal same-aggregate source-consumer record only from one exact matching event-source helper result while reusing the same `applied_effect_id` and `present_locally_at`; that layer stays payload-hidden
     - current implementation now also evaluates one internal `reviewed_memory_applied_effect_target` helper for that same exact aggregate, and it now materializes one internal same-aggregate shared target only from one exact matching source-consumer helper result while reusing the same `applied_effect_id` and `present_locally_at`; that layer stays payload-hidden
     - current implementation now also evaluates one internal `reviewed_memory_reversible_effect_handle` helper for that same exact aggregate, and it now materializes one internal same-aggregate rollback-capability handle only from one exact matching shared target plus one exact matching rollback contract; that layer stays payload-hidden
-    - the exact future real rollback-capability backer should stay one later internal local `reviewed_memory_reversible_effect_handle`:
+    - the exact rollback-capability backer is one now-materialized internal local `reviewed_memory_reversible_effect_handle`:
       - `handle_version = first_same_session_reviewed_memory_reversible_effect_handle_v1`
       - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
       - one `aggregate_identity_ref`
@@ -1324,8 +1324,8 @@ The first official artifact is the `grounded brief`.
       - `effect_stage = handle_defined_not_applied`
       - one local `handle_id`
       - `defined_at`
-    - this later internal handle remains above the shipped read-only `reviewed_memory_rollback_contract` and below any later payload-visible basis object, emitted transition record, or reviewed-memory apply result
-    - the exact later local target beneath that handle should stay one shared internal `reviewed_memory_applied_effect_target`:
+    - this internal handle remains above the shipped read-only `reviewed_memory_rollback_contract` and below the now-materialized basis object, the now-shipped emitted transition record, and the now-shipped reviewed-memory apply result
+    - the exact local target beneath that handle is one now-materialized shared internal `reviewed_memory_applied_effect_target`:
       - `target_version = first_same_session_reviewed_memory_applied_effect_target_v1`
       - `target_scope = same_session_exact_recurrence_aggregate_only`
       - one `aggregate_identity_ref`
@@ -1481,9 +1481,9 @@ The first official artifact is the `grounded brief`.
     - `reviewed_memory_boundary_defined` is satisfied only when one internal `boundary_source_ref` can bind one exact aggregate identity plus exact supporting refs above the current boundary draft
     - current implementation now resolves that first backer against one canonical local aggregate trigger-affordance ref with the fixed action label `검토 메모 적용 시작`; that lower internal ref still serializes `trigger_state = visible_disabled`, while the current operator-facing aggregate-card submit boundary above it is enabled when `capability_outcome = unblocked_all_required` and the user has entered a non-empty reason note
     - `rollback_ready_reviewed_memory_effect` is satisfied only when one internal `rollback_source_ref` can point to a later effect-capability source that can actually reverse one future applied reviewed-memory effect without changing aggregate identity
-    - that later rollback-capability source should stay one internal local `reviewed_memory_reversible_effect_handle` bound to the same exact aggregate, the same exact supporting refs, the same `boundary_source_ref`, and the same `reviewed_memory_rollback_contract`
-    - that handle must later point to one shared internal `reviewed_memory_applied_effect_target` for the same exact aggregate, while the handle keeps rollback-only capability meaning through its own matching `rollback_contract_ref`
-    - that shared target must stay smaller than the handle, smaller than the full source family, and smaller than the now-materialized basis object, any later emitted transition record, or any later reviewed-memory apply result
+    - that rollback-capability source is one now-materialized internal local `reviewed_memory_reversible_effect_handle` bound to the same exact aggregate, the same exact supporting refs, the same `boundary_source_ref`, and the same `reviewed_memory_rollback_contract`
+    - that handle points to one now-materialized shared internal `reviewed_memory_applied_effect_target` for the same exact aggregate, while the handle keeps rollback-only capability meaning through its own matching `rollback_contract_ref`
+    - that shared target stays smaller than the handle, smaller than the full source family, and smaller than the now-materialized basis object, the now-shipped emitted transition record, and the now-shipped reviewed-memory apply result
     - that shared target must later materialize only from one shared internal `reviewed_memory_local_effect_presence_record`, and that source-consumer helper must in turn materialize only from one exact shared internal `reviewed_memory_local_effect_presence_event_source`
     - that event-source helper must later materialize only from one exact shared internal `reviewed_memory_local_effect_presence_event_producer` for the same exact aggregate, exact supporting refs, and the same `boundary_source_ref`
     - that producer helper must later materialize only from one exact shared internal `reviewed_memory_local_effect_presence_event`, and that raw-event helper must in turn materialize only from one exact shared internal `reviewed_memory_local_effect_presence_fact_source` for the same exact aggregate, exact supporting refs, and the same `boundary_source_ref`

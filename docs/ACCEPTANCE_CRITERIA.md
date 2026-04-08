@@ -589,21 +589,21 @@ These are placeholders for the next phase design target and its immediate follow
     - reviewed memory remains later, separate, rollbackable, disableable, conflict-visible, and operator-auditable
   - review acceptance may later strengthen confidence, but it must never replace aggregate identity
   - approval-backed save, `session_local_memory_signal`, `superseded_reject_signal`, `historical_save_identity_signal`, queue presence, fixed statement text, `candidate_family` alone, and task-log replay alone must never act as promotion basis
-  - the current contract may now emit only the smallest blocked marker inside each current aggregate item:
+  - the current contract now emits the smallest blocked marker inside each current aggregate item:
     - one read-only aggregate-level promotion-eligibility marker only
     - `promotion_basis = same_session_exact_recurrence_aggregate`
     - `promotion_eligibility = blocked_pending_reviewed_memory_boundary`
     - `reviewed_memory_boundary = not_open`
     - `marker_version = same_session_blocked_reviewed_memory_v1`
     - `derived_at = last_seen_at`
-  - the current contract may now also emit one read-only aggregate-level precondition status object inside each current aggregate item:
+  - the current contract now also emits one read-only aggregate-level precondition status object inside each current aggregate item:
     - `reviewed_memory_precondition_status`
     - `status_version = same_session_reviewed_memory_preconditions_v1`
     - `overall_status = blocked_all_required`
     - `all_required = true`
     - ordered `preconditions`
     - `evaluated_at = last_seen_at`
-  - the current contract may now also emit one read-only aggregate-level boundary draft object inside each current aggregate item:
+  - the current contract now also emits one read-only aggregate-level boundary draft object inside each current aggregate item:
     - `reviewed_memory_boundary_draft`
     - `boundary_version = fixed_narrow_reviewed_scope_v1`
     - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
@@ -613,7 +613,7 @@ These are placeholders for the next phase design target and its immediate follow
     - optional `supporting_review_refs`
     - `boundary_stage = draft_not_applied`
     - `drafted_at = last_seen_at`
-  - the current contract may now also emit one read-only aggregate-level rollback-contract object inside each current aggregate item:
+  - the current contract now also emits one read-only aggregate-level rollback-contract object inside each current aggregate item:
     - `reviewed_memory_rollback_contract`
     - `rollback_version = first_reviewed_memory_effect_reversal_v1`
     - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
@@ -625,7 +625,7 @@ These are placeholders for the next phase design target and its immediate follow
     - `rollback_stage = contract_only_not_applied`
     - `audit_trace_expectation = operator_visible_local_transition_required`
     - `defined_at = last_seen_at`
-  - the current contract may now also emit one read-only aggregate-level disable-contract object inside each current aggregate item:
+  - the current contract now also emits one read-only aggregate-level disable-contract object inside each current aggregate item:
     - `reviewed_memory_disable_contract`
     - `disable_version = first_reviewed_memory_effect_stop_apply_v1`
     - `reviewed_scope = same_session_exact_recurrence_aggregate_only`

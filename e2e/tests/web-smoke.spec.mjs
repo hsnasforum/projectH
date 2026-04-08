@@ -6587,10 +6587,27 @@ test("브라우저 폴더 선택으로 scanned PDF + readable file이 섞인 폴
   expect(responseText).toContain("스캔본 또는 이미지형 PDF");
   expect(responseText).toContain("건너뛰었습니다");
 
-  // successful-result retention: readable notes.txt still appears in search preview
+  // successful-result retention: readable notes.txt with exact fields in response-detail preview
   await expect(page.locator("#response-search-preview .search-preview-item")).toHaveCount(1);
-  await expect(page.locator("#response-search-preview .search-preview-name").first()).toContainText("notes.txt");
+  await expect(page.locator("#response-search-preview .search-preview-name").first()).toHaveText("1. notes.txt");
+  await expect(page.locator("#response-search-preview .search-preview-name").first()).toHaveAttribute("title", "mixed-search-folder/notes.txt");
+  await expect(page.locator("#response-search-preview .search-preview-match").first()).toHaveText("내용 일치");
+  await expect(page.locator("#response-search-preview .search-preview-snippet").first()).toBeVisible();
   await expect(page.locator("#response-search-preview .search-preview-snippet").first()).toContainText("budget");
+
+  // search-only hides response body and copy button
+  await expect(page.getByTestId("response-text")).toBeHidden();
+  await expect(page.getByTestId("response-copy-text")).toBeHidden();
+
+  // transcript preview panel retains exact fields
+  const lastAssistant = page.locator("#transcript .message.assistant").last();
+  await expect(lastAssistant.locator(".search-preview-panel")).toBeVisible();
+  await expect(lastAssistant.locator(".search-preview-item")).toHaveCount(1);
+  await expect(lastAssistant.locator(".search-preview-name").first()).toHaveText("1. notes.txt");
+  await expect(lastAssistant.locator(".search-preview-name").first()).toHaveAttribute("title", "mixed-search-folder/notes.txt");
+  await expect(lastAssistant.locator(".search-preview-match").first()).toHaveText("내용 일치");
+  await expect(lastAssistant.locator(".search-preview-snippet").first()).toBeVisible();
+  await expect(lastAssistant.locator(".search-preview-snippet").first()).toContainText("budget");
 });
 
 test("브라우저 폴더 선택으로 scanned PDF + readable file이 섞인 폴더를 검색+요약하면 partial-failure notice와 함께 readable file preview가 유지됩니다", async ({ page }) => {

@@ -99,6 +99,7 @@
   - `feedback`
   - `corrected_text`, `corrected_outcome`, `content_reason_record`, `approval_reason_record`
   - `selected_source_paths`, `saved_note_path`, `note_preview`, `save_content_source`, `source_message_id`
+  - `approval` — serialized approval object when a pending approval exists (see Approval section for field shape)
   - `original_response_snapshot` — `{artifact_id, artifact_kind, draft_text, source_paths, response_origin, summary_chunks_snapshot, evidence_snapshot}` (snapshot fields reuse same shapes as their message-level counterparts)
 - Response/session payloads can also serialize one optional source-message `candidate_confirmation_record` and one optional sibling `durable_candidate`, both separate from `session_local_candidate`.
 - Response/session payloads can also serialize one optional source-message `candidate_recurrence_key`, kept separate from `session_local_candidate`, `durable_candidate`, and `candidate_review_record`.

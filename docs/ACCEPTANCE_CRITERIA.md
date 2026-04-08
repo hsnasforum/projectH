@@ -654,9 +654,9 @@ These are placeholders for the next phase design target and its immediate follow
       - reviewed-memory effect can stop applying without deleting candidate traces, aggregate evidence, the current boundary draft, or the current rollback contract
       - the disable target stays fixed at one applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
       - disable must not mean deleting `candidate_review_record`, deleting `candidate_recurrence_key`, mutating `recurrence_aggregate_candidates`, deleting `reviewed_memory_boundary_draft`, deleting `reviewed_memory_rollback_contract`, or claiming rollback reversal
-      - after disable, aggregate identity, supporting refs, the current boundary draft, the current rollback contract, and operator-visible audit trace remain while only the later applied effect may become inactive for future apply
+      - after disable, aggregate identity, supporting refs, the current boundary draft, the current rollback contract, and operator-visible audit trace remain while only the applied effect may become inactive
     - `conflict_visible_reviewed_memory_scope`
-      - future reviewed-memory layer must keep competing reviewed-memory targets visible before apply inside one reviewed scope
+      - reviewed-memory layer must keep competing reviewed-memory targets visible inside one reviewed scope
       - the first visible scope must stay fixed at `same_session_exact_recurrence_aggregate_only`
       - the first visible conflict categories must stay fixed and narrow:
         - `future_reviewed_memory_candidate_draft_vs_applied_effect`

@@ -865,16 +865,16 @@ The next phase should standardize one `grounded brief` artifact.
       - reviewed-memory effect must be reversible without mutating source-message records or aggregate identity
       - the rollback target stays fixed at one applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
       - the shipped `reviewed_memory_boundary_draft` remains the scope draft and basis reference, not the rollback target itself
-      - rollback means explicit local reversal of later applied influence, not rewinding `corrected_text`, deleting `candidate_review_record`, deleting `candidate_recurrence_key`, or rewriting aggregate history
+      - rollback means explicit local reversal of applied influence, not rewinding `corrected_text`, deleting `candidate_review_record`, deleting `candidate_recurrence_key`, or rewriting aggregate history
       - after rollback, aggregate identity, supporting refs, the current boundary draft, and operator-visible rollback trace must remain while only the applied effect deactivates
     - `disable_ready_reviewed_memory_effect`
       - reviewed-memory effect must support explicit local stop-apply without deleting candidate traces, aggregate evidence, the current boundary draft, or the current rollback contract
       - the disable target stays fixed at one applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
       - disable means influence stop without claiming reversal of the already-applied effect
       - this is not candidate deletion, not review reject, and not rollback of source-message correction history
-      - after disable, aggregate identity, supporting refs, the current boundary draft, the current rollback contract, and operator-visible disable trace must remain while only the later applied effect becomes inactive for future apply
+      - after disable, aggregate identity, supporting refs, the current boundary draft, the current rollback contract, and operator-visible disable trace must remain while only the applied effect becomes inactive
     - `conflict_visible_reviewed_memory_scope`
-      - future reviewed-memory layer must keep competing reviewed-memory targets visible before any later apply inside one reviewed scope
+      - reviewed-memory layer must keep competing reviewed-memory targets visible inside one reviewed scope
       - the first conflict-visible scope should stay fixed at `same_session_exact_recurrence_aggregate_only`
       - the first conflict categories should stay fixed and narrow:
         - `future_reviewed_memory_candidate_draft_vs_applied_effect`

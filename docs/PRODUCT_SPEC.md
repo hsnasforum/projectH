@@ -106,9 +106,9 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - claim coverage panel with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`), actionable hints for weak or unresolved slots, and a color-coded fact-strength summary bar for web investigation responses
 
 ### Approval Points
-- note save approval
-- save-path reissue approval
-- web-search permission when secondary investigation is used
+- note save approval (approval object with request-time snapshot, requested save path, overwrite warning when target already exists)
+- save-path reissue approval (new approval object issued when save path is changed after initial approval)
+- web-search permission gate for permission-gated secondary-mode web investigation (enabled/disabled/ask per session)
 
 ### Stored Evidence, Logs, And Feedback
 - session JSON with messages, active context, pending approvals, permissions, timestamps

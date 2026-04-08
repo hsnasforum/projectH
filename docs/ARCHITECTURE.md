@@ -215,6 +215,12 @@ Current task log is append-only JSONL and already records actions such as:
 - `web_search_record_loaded`
 - `web_search_retried`
 - `answer_with_active_context`
+- `reviewed_memory_transition_emitted`
+- `reviewed_memory_transition_applied`
+- `reviewed_memory_transition_result_confirmed`
+- `reviewed_memory_transition_stopped`
+- `reviewed_memory_transition_reversed`
+- `reviewed_memory_conflict_visibility_checked`
 
 ## Approval Contract
 

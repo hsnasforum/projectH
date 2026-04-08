@@ -196,7 +196,7 @@ Current task log is append-only JSONL and already records actions such as:
 - `request_received` — detail: `{user_text, source_path, search_root, search_query, save_summary, approved, approved_approval_id, rejected_approval_id, reissue_approval_id, corrected_save_message_id, note_path, retry_feedback_label, retry_feedback_reason, retry_target_message_id}`
 - `request_cancelled` — detail: `{user_text, source_path, uploaded_file_name, search_root, search_query}`
 - `document_context_updated` — detail: `{kind, label, source_paths}`
-- `request_intent_classified` — detail: `{kind, query, score, reasons, freshness_risk, answer_mode, suggestion_kind, suggestion_query, suggestion_score, suggestion_reasons, suggestion_freshness_risk}`
+- `request_intent_classified` — detail: `{kind, query, score, reasons, freshness_risk, answer_mode, suggestion_kind, suggestion_query, suggestion_score, suggestion_reasons, suggestion_freshness_risk, suggestion_answer_mode}`
 - `read_search_results` — detail: `{search_query, selected_match_count, selected_paths, selected_file_metadata}` where each file metadata entry is `{resolved_path, content_format, extraction_method, encoding_used}`
 - `summarize_search_results` — detail: `{search_query, source_count}`
 - `read_uploaded_file` — detail: `{requested_name, resolved_path, size_bytes, content_format, extraction_method, encoding_used}`

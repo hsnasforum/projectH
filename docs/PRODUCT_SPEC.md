@@ -309,10 +309,10 @@ The top-level response payload is serialized by `app/serializers.py:_serialize_r
 - `active_context` — serialized active context for follow-up answers, or `null`
 - `response_origin` — `{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}` or `null` when absent (e.g. error responses)
 - `applied_preferences` — applied preference records, or `null`
-- `evidence` — list of evidence/source items (see Current Message Fields for item shape)
-- `summary_chunks` — list of summary chunk items (see Current Message Fields for item shape)
-- `claim_coverage` — list of claim coverage slot items (see Current Message Fields for slot shape)
-- `claim_coverage_progress_summary` — localized focus-slot reinvestigation summary
+- `evidence` — list of evidence/source items (see Current Message Fields for item shape; default `[]`, never `null`)
+- `summary_chunks` — list of summary chunk items (see Current Message Fields for item shape; default `[]`, never `null`)
+- `claim_coverage` — list of claim coverage slot items (see Current Message Fields for slot shape; default `[]`, never `null`)
+- `claim_coverage_progress_summary` — localized focus-slot reinvestigation summary (default `""`, never `null`)
 
 ### Correction And Reason Fields (all `null` when absent)
 - `original_response_snapshot` — `{artifact_id, artifact_kind, draft_text, source_paths, response_origin, summary_chunks_snapshot, evidence_snapshot}` or `null`; nested `response_origin` may also be `null` when absent

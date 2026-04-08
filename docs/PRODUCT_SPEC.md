@@ -93,7 +93,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - local folders searched through the document-search flow
 
 ### Current Outputs
-- summary text
+- summary text (visible final Korean summary body for local file/uploaded document/readable PDF, visible summary body for selected search results in search-plus-summary path, source-anchored faithfulness rule)
 - evidence/source panel with source-role trust labels
 - summary span/applied-range panel showing which chunks were used
 - active context metadata (`active_context` session field for follow-up answers, updated by correction-submit `summary_hint`)

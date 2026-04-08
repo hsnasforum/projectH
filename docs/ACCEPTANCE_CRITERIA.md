@@ -934,7 +934,7 @@ These are placeholders for the next phase design target and its immediate follow
   - task-log-like replay data still does not materialize the object
   - `transition_record_version` stays `first_reviewed_memory_transition_record_v1`
   - `transition_action` stays within the shipped fixed vocabulary
-  - the first implementation emits only `future_reviewed_memory_apply`; stop-apply (`future_reviewed_memory_stop_apply`) is now also implemented (see stop-apply regression below); reversal (`future_reviewed_memory_reversal`) is now also implemented (see reversal regression below); conflict-visibility remains closed
+  - the first implementation emits only `future_reviewed_memory_apply`; stop-apply (`future_reviewed_memory_stop_apply`) is now also implemented (see stop-apply regression below); reversal (`future_reviewed_memory_reversal`) is now also implemented (see reversal regression below); conflict-visibility (`future_reviewed_memory_conflict_visibility`) is now also implemented (see conflict-visibility regression below)
   - `reviewed_scope`, aggregate identity, and exact supporting refs mirror the same exact aggregate scope
   - `operator_reason_or_note` is explicit and non-empty
   - `record_stage` stays `emitted_record_only_not_applied`
@@ -954,7 +954,7 @@ These are placeholders for the next phase design target and its immediate follow
   - aggregate identity, supporting refs, boundary draft, rollback contract, disable contract, and operator-visible audit trace remain after stop-apply
   - stop-apply is distinct from rollback reversal: rolled-back state is not the same as stopped state
   - reversal (`future_reviewed_memory_reversal`) is now also implemented: after the effect is stopped (`record_stage = stopped`), the aggregate card shows an `적용 되돌리기` button; clicking it changes `record_stage` to `reversed`, sets `apply_result.result_stage` to `effect_reversed`, and adds `reversed_at`; aggregate identity, supporting refs, and contracts are retained; reversal is separate from stop-apply
-  - conflict-visibility remains closed; it is later than reversal
+  - conflict-visibility (`future_reviewed_memory_conflict_visibility`) is now also implemented: after reversal the aggregate card shows a `충돌 확인` button; clicking it records a `reviewed_memory_conflict_visibility_record` with `record_stage = conflict_visibility_checked`
 - Focused regression for the shipped reversal slice (`future_reviewed_memory_reversal`) should verify at least:
   - `future_reviewed_memory_reversal` is now implemented and is no longer future-only
   - the reversal action is available only after stop-apply (`record_stage = stopped`)
@@ -964,7 +964,7 @@ These are placeholders for the next phase design target and its immediate follow
   - clicking `적용 되돌리기` adds `reversed_at` to the record
   - aggregate identity, supporting refs, boundary draft, rollback contract, disable contract, and operator-visible audit trace remain after reversal
   - reversal is distinct from stop-apply: `reversed` state is not the same as `stopped` state
-  - conflict-visibility remains closed; it is later than reversal
+  - conflict-visibility (`future_reviewed_memory_conflict_visibility`) is now also implemented: after reversal the aggregate card shows a `충돌 확인` button; clicking it records a `reviewed_memory_conflict_visibility_record` with `record_stage = conflict_visibility_checked`
 - Focused regression for the shipped same-session-unblock slice should verify at least:
   - current shipped boundary / rollback / disable / conflict / transition-audit objects alone never move the aggregate out of `blocked_all_required`
   - same-session unblock requires all five preconditions to be satisfied through later reviewed-memory-layer machinery, not by read-only contract-object existence

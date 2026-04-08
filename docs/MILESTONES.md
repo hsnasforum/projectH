@@ -201,7 +201,7 @@
   - `reviewed_memory_boundary_defined` is now fixed to one shipped narrow reviewed scope:
     - `same_session_exact_recurrence_aggregate_only`
     - one later reviewed-memory boundary draft remains narrower than reviewed-memory store/apply and narrower than user-level memory
-  - the next shipped surface is now also implemented as one read-only aggregate-level `reviewed_memory_boundary_draft` with:
+  - the current contract now also emits one read-only aggregate-level `reviewed_memory_boundary_draft` with:
     - `boundary_version = fixed_narrow_reviewed_scope_v1`
     - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
     - `aggregate_identity_ref`

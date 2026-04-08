@@ -1077,7 +1077,7 @@ These are placeholders for the next phase design target and its immediate follow
   - fake `reviewed_memory_capability_source_refs` input must not resolve the internal helper family
   - fake `reviewed_memory_capability_basis` input must not widen `reviewed_memory_capability_status`
   - emitted transition records, reviewed-memory apply, repeated-signal promotion, and cross-session counting remain separate later surfaces
-- Focused regression for the first future review-action slice should verify at least:
+- Focused regression for the current shipped review-action slice should verify at least:
   - a review action can target only a current source-message `durable_candidate`, not `session_local_candidate` alone
   - a matching `candidate_review_record` requires the same `artifact_id`, `source_message_id`, `candidate_id`, and `candidate_updated_at`
   - approval-backed save support alone still cannot create review eligibility or review outcome

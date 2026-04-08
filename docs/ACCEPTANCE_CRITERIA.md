@@ -645,14 +645,14 @@ These are placeholders for the next phase design target and its immediate follow
       - that scope is tied to one current aggregate identity plus its exact current supporting refs
       - this is not source-message correction history, not `candidate_review_record`, not `recurrence_aggregate_candidates`, and not user-level memory
     - `rollback_ready_reviewed_memory_effect`
-      - later reviewed-memory effect can be reversed without rewriting source-message traces or aggregate identity
-      - the first rollback target must stay fixed at one later applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
+      - reviewed-memory effect can be reversed without rewriting source-message traces or aggregate identity
+      - the rollback target stays fixed at one applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
       - the current `reviewed_memory_boundary_draft` remains a draft and basis ref, not the rollback target
       - rollback must not mean rewinding `corrected_text`, deleting `candidate_review_record`, deleting `candidate_recurrence_key`, mutating `recurrence_aggregate_candidates`, or treating boundary-draft deletion as canonical rollback
-      - after rollback, aggregate identity, supporting refs, the current boundary draft, and operator-visible audit trace remain while only the later applied effect may deactivate
+      - after rollback, aggregate identity, supporting refs, the current boundary draft, and operator-visible audit trace remain while only the applied effect may deactivate
     - `disable_ready_reviewed_memory_effect`
-      - later reviewed-memory effect can stop applying without deleting candidate traces, aggregate evidence, the current boundary draft, or the current rollback contract
-      - the first disable target must stay fixed at one later applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
+      - reviewed-memory effect can stop applying without deleting candidate traces, aggregate evidence, the current boundary draft, or the current rollback contract
+      - the disable target stays fixed at one applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
       - disable must not mean deleting `candidate_review_record`, deleting `candidate_recurrence_key`, mutating `recurrence_aggregate_candidates`, deleting `reviewed_memory_boundary_draft`, deleting `reviewed_memory_rollback_contract`, or claiming rollback reversal
       - after disable, aggregate identity, supporting refs, the current boundary draft, the current rollback contract, and operator-visible audit trace remain while only the later applied effect may become inactive for future apply
     - `conflict_visible_reviewed_memory_scope`

@@ -855,22 +855,22 @@ The next phase should standardize one `grounded brief` artifact.
     - `effect_behavior = stop_apply_without_reversal`
     - `audit_trace_expectation = operator_visible_local_transition_required`
     - `defined_at = last_seen_at`
-  - the current blocked marker remains correct only because the reviewed-memory boundary is still missing every required precondition:
+  - the current blocked marker remains correct because the reviewed-memory precondition family gates the unblock path; the reviewed-memory apply path is now shipped above this precondition layer:
     - `reviewed_memory_boundary_defined`
       - future reviewed memory must have a separate local persistence/apply boundary and one fixed narrow reviewed scope above source-message and aggregate projections
       - the first reviewed scope should stay fixed at `same_session_exact_recurrence_aggregate_only`
       - that scope should be tied to one current aggregate identity plus its exact current supporting refs
       - this is not source-message history, not `candidate_review_record`, not `recurrence_aggregate_candidates`, and not user-level memory
     - `rollback_ready_reviewed_memory_effect`
-      - future reviewed-memory effect must be reversible without mutating source-message records or aggregate identity
-      - the first rollback target must stay fixed at one later applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
+      - reviewed-memory effect must be reversible without mutating source-message records or aggregate identity
+      - the rollback target stays fixed at one applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
       - the shipped `reviewed_memory_boundary_draft` remains the scope draft and basis reference, not the rollback target itself
       - rollback means explicit local reversal of later applied influence, not rewinding `corrected_text`, deleting `candidate_review_record`, deleting `candidate_recurrence_key`, or rewriting aggregate history
-      - after rollback, aggregate identity, supporting refs, the current boundary draft, and operator-visible rollback trace must remain while only the later applied effect deactivates
+      - after rollback, aggregate identity, supporting refs, the current boundary draft, and operator-visible rollback trace must remain while only the applied effect deactivates
     - `disable_ready_reviewed_memory_effect`
-      - future reviewed-memory effect must support explicit local stop-apply without deleting candidate traces, aggregate evidence, the current boundary draft, or the current rollback contract
-      - the first disable target must stay fixed at one later applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
-      - disable means future influence stop without claiming reversal of the already-applied effect
+      - reviewed-memory effect must support explicit local stop-apply without deleting candidate traces, aggregate evidence, the current boundary draft, or the current rollback contract
+      - the disable target stays fixed at one applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
+      - disable means influence stop without claiming reversal of the already-applied effect
       - this is not candidate deletion, not review reject, and not rollback of source-message correction history
       - after disable, aggregate identity, supporting refs, the current boundary draft, the current rollback contract, and operator-visible disable trace must remain while only the later applied effect becomes inactive for future apply
     - `conflict_visible_reviewed_memory_scope`

@@ -1028,6 +1028,61 @@ test("claim-coverage panel은 status tag와 행동 힌트를 올바르게 렌더
   await expect(hint).toContainText("[미확인] 추가 조사가 필요한 항목입니다");
 });
 
+test("claim-coverage panel은 재조사 대상 슬롯의 진행 상태를 명확히 렌더링합니다", async ({ page }) => {
+  await prepareSession(page, "claim-coverage-focus-slot");
+
+  await page.evaluate(() => {
+    // @ts-ignore — renderClaimCoverage is defined in the page scope
+    renderClaimCoverage([
+      { slot: "장르", status_label: "교차 확인", value: "오픈월드 액션 어드벤처", support_count: 3, candidate_count: 3, is_focus_slot: false },
+      { slot: "이용 형태", status_label: "단일 출처", value: "PC·콘솔", support_count: 1, candidate_count: 1, is_focus_slot: true, progress_label: "유지", previous_status_label: "단일 출처", progress_state: "unchanged" },
+      { slot: "출시일", status_label: "미확인", value: "", support_count: 0, candidate_count: 0, is_focus_slot: true, progress_label: "유지", previous_status_label: "미확인", progress_state: "unchanged" },
+    ], "이용 형태: 단일 출처 상태 유지.");
+  });
+
+  const text = page.locator("#claim-coverage-text");
+  // Focus-slot with 단일 출처 shows dedicated explanation
+  await expect(text).toContainText("재조사 대상");
+  await expect(text).toContainText("아직 단일 출처 상태입니다");
+  await expect(text).toContainText("추가 교차 검증이 권장됩니다");
+
+  // Focus-slot with 미확인 shows dedicated explanation
+  await expect(text).toContainText("아직 확인되지 않았습니다");
+  await expect(text).toContainText("추가 출처가 필요합니다");
+
+  // Non-focus slot should NOT have focus explanation
+  const fullText = await text.textContent();
+  const lines = fullText.split("\n");
+  const genreLine = lines.find((l) => l.includes("장르"));
+  expect(genreLine).not.toContain("재조사 대상");
+
+  // Focus-slot progress should NOT appear in meta parts (moved to explanation line)
+  const focusLines = lines.filter((l) => l.includes("이용 형태") || l.includes("출시일"));
+  for (const line of focusLines) {
+    // meta line with 변화: should not exist for focus slots
+    const followingLines = lines.slice(lines.indexOf(line) + 1, lines.indexOf(line) + 5);
+    for (const fl of followingLines) {
+      if (/^\s*\d+\./.test(fl)) break;
+      expect(fl).not.toContain("변화:");
+    }
+  }
+});
+
+test("claim-coverage panel은 재조사 후 보강된 슬롯을 명확히 표시합니다", async ({ page }) => {
+  await prepareSession(page, "claim-coverage-focus-improved");
+
+  await page.evaluate(() => {
+    // @ts-ignore — renderClaimCoverage is defined in the page scope
+    renderClaimCoverage([
+      { slot: "이용 형태", status_label: "교차 확인", value: "PC·콘솔", support_count: 2, candidate_count: 2, is_focus_slot: true, progress_label: "보강", previous_status_label: "단일 출처", progress_state: "improved" },
+    ], "이용 형태: 단일 출처 → 교차 확인으로 보강.");
+  });
+
+  const text = page.locator("#claim-coverage-text");
+  await expect(text).toContainText("재조사 결과");
+  await expect(text).toContainText("단일 출처 → 교차 확인으로 보강되었습니다");
+});
+
 test("web-search history card header badges는 answer-mode, verification-strength, source-role trust를 올바르게 렌더링합니다", async ({ page }) => {
   await prepareSession(page, "search-history-badges");
 

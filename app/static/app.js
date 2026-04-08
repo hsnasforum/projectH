@@ -2326,6 +2326,25 @@
       return `${label} (${previousLabel} → ${currentLabel})`;
     }
 
+    function buildFocusSlotExplanation(item) {
+      const prev = String(item.previous_status_label || "").trim();
+      const curr = String(item.status_label || "").trim();
+      const progressState = String(item.progress_state || "").trim();
+      if (progressState === "improved" || (prev && curr && prev !== curr && curr === "교차 확인")) {
+        return `→ 재조사 결과: ${prev} → ${curr}으로 보강되었습니다.`;
+      }
+      if (curr === "교차 확인") {
+        return `→ 재조사 대상이며, 현재 교차 확인 상태입니다.`;
+      }
+      if (curr === "단일 출처") {
+        return `→ 재조사 대상이지만, 아직 단일 출처 상태입니다. 추가 교차 검증이 권장됩니다.`;
+      }
+      if (curr === "미확인") {
+        return `→ 재조사 대상이지만, 아직 확인되지 않았습니다. 추가 출처가 필요합니다.`;
+      }
+      return `→ 재조사 대상 슬롯입니다.`;
+    }
+
     function renderClaimCoverage(claimCoverage, progressSummary = "") {
       const items = Array.isArray(claimCoverage) ? claimCoverage.filter((item) => item && typeof item === "object") : [];
       const summaryLabel = formatClaimCoverageSummary(items);
@@ -2359,7 +2378,9 @@
         if (value) {
           lines.push(`   값: ${value}`);
         }
-        if (statusLabel === "미확인") {
+        if (item.is_focus_slot) {
+          lines.push(`   ${buildFocusSlotExplanation(item)}`);
+        } else if (statusLabel === "미확인") {
           lines.push(`   → 추가 출처가 필요합니다.`);
         } else if (statusLabel === "단일 출처") {
           lines.push(`   → 1개 출처만 확인됨. 교차 검증이 권장됩니다.`);
@@ -2371,7 +2392,7 @@
         if (supportCount > 0) metaParts.push(`근거 ${supportCount}건`);
         if (candidateCount > supportCount) metaParts.push(`후보 ${candidateCount}건`);
         if (renderedAs) metaParts.push(`표시: ${renderedAs}`);
-        if (progressLabel) metaParts.push(`변화: ${progressLabel}`);
+        if (!item.is_focus_slot && progressLabel) metaParts.push(`변화: ${progressLabel}`);
         if (metaParts.length > 0) {
           lines.push(`   ${metaParts.join(" · ")}`);
         }

@@ -325,7 +325,7 @@
       - `effect_stage = handle_defined_not_applied`
       - one local `handle_id`
       - `defined_at`
-    - keep that handle internal and additive; it must stay above the shipped read-only `reviewed_memory_rollback_contract` and below the now-materialized basis object, any later emitted transition record, or any later reviewed-memory apply result
+    - keep that handle internal and additive; it must stay above the shipped read-only `reviewed_memory_rollback_contract` and below the now-materialized basis object, the now-shipped emitted transition record, and the now-shipped reviewed-memory apply result
     - the exact later local target beneath that handle should stay one shared internal `reviewed_memory_applied_effect_target`:
       - `target_version = first_same_session_reviewed_memory_applied_effect_target_v1`
       - `target_scope = same_session_exact_recurrence_aggregate_only`

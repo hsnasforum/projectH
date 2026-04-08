@@ -234,7 +234,7 @@
     - it is not an emitted transition record, apply result, or transition state machine
     - it keeps `audit_store_boundary = canonical_transition_record_separate_from_task_log`
     - it does not open apply, conflict repair, operator repair, or cross-session counting in the same slice
-  - the next unresolved layer now starts above the shipped blocked trigger-source affordance:
+  - the trigger-source / emitted-record layer is now shipped above the shipped blocked trigger-source affordance:
     - keep the shipped `reviewed_memory_transition_audit_contract` contract-only in the current payload
     - the current shell now renders the first operator-visible `future_reviewed_memory_apply` trigger-source affordance on one separate aggregate-level surface fed only by `recurrence_aggregate_candidates`
     - keep that surface inside the existing shell session stack as one section adjacent to `검토 후보`

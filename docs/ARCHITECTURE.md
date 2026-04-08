@@ -203,7 +203,7 @@ Current task log is append-only JSONL and already records actions such as:
 - `write_note` — detail: `{artifact_id, source_message_id, note_path, save_content_source}` plus optional `approval_id`, `source_paths`, and optional `source_path` (file/source summary) or `search_query` (search summary)
 - `response_feedback_recorded` — detail: `{message_id, artifact_id, artifact_kind, feedback_label, feedback_reason}`
 - `correction_submitted` — detail: `{message_id, artifact_id, artifact_kind, source_message_id, corrected_text_length}`
-- `corrected_outcome_recorded` — detail: `{message_id, artifact_id, artifact_kind, source_message_id, outcome}` plus optional `approval_id`, `saved_note_path`, `corrected_text_length`, or `content_reason_record`
+- `corrected_outcome_recorded` — detail: `{outcome, recorded_at, artifact_id, source_message_id}` plus optional `approval_id`, `saved_note_path`, `corrected_text_length` (correction path), or `content_reason_record` (reject path); emitted from both feedback handler and save/write paths
 - `content_verdict_recorded` — detail: `{message_id, artifact_id, artifact_kind, source_message_id, content_verdict, content_reason_record}`
 - `content_reason_note_recorded` — detail: `{message_id, artifact_id, artifact_kind, source_message_id, reason_scope, reason_label, reason_note, content_reason_record}`
 - `candidate_confirmation_recorded`

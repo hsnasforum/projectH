@@ -103,7 +103,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - structured search result preview panel (ordered label with full-path tooltip, match type badge, content snippet)
 - summary source-type label (`문서 요약`, `선택 결과 요약`) in quick meta and transcript meta
 - response origin badge (`WEB`, answer-mode badge, verification label, source-role trust badges) for web investigation responses
-- claim coverage panel with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`), actionable hints for weak or unresolved slots, and a color-coded fact-strength summary bar for web investigation responses
+- claim coverage panel with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`), actionable hints for weak or unresolved slots, a color-coded fact-strength summary bar, and a dedicated plain-language focus-slot reinvestigation explanation (improved/regressed/unchanged) for web investigation responses
 
 ### Approval Points
 - note save approval (approval object with request-time snapshot, requested save path, overwrite warning when target already exists)
@@ -151,7 +151,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 ### 4. Web Investigation
 - permission-gated read-only external search (enabled/disabled/ask per session)
 - stores local JSON history with in-session reload and history-card display (answer-mode, verification-strength, source-role trust badges)
-- supports entity-card and latest-update answer-mode distinction with separate verification labels, source-role surfaces, claim coverage panel (status tags, actionable hints, fact-strength summary bar), and entity-card strong-badge downgrade
+- supports entity-card and latest-update answer-mode distinction with separate verification labels, source-role surfaces, claim coverage panel (status tags, actionable hints, fact-strength summary bar, focus-slot reinvestigation explanation), and entity-card strong-badge downgrade
 - remains a **secondary mode** with document-first guardrail rather than the main product identity
 
 ## Local Web Shell
@@ -307,7 +307,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - local JSON record storage with in-session history reload and history-card display (answer-mode, verification-strength, source-role trust badges in header)
 - response origin with `WEB` badge, answer-mode badge, color-coded verification-strength badge, and color-coded source-role trust badges in origin detail
 - entity-card / latest-update answer-mode distinction with separate verification labels and source-role surfaces; entity-card verification badge downgraded from strong (`설명형 다중 출처 합의`) when no claim slot has cross-verified status
-- claim coverage panel with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`), actionable hints for weak or unresolved slots, color-coded fact-strength summary bar, and slot reinvestigation scaffolding
+- claim coverage panel with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`), actionable hints for weak or unresolved slots, color-coded fact-strength summary bar, and dedicated plain-language focus-slot reinvestigation explanation (improved/regressed/unchanged)
 - entity-card agreement-over-noise baseline: multi-source consensus items preferred before single-source claims, noisy single-source items capped
 - weak-slot reinvestigation baseline: weak/missing slots targeted first in reinvestigation suggestions, weak slots rendered as uncertain rather than stable facts, progress and focus-slot state recorded
 - verified-vs-uncertain explanation: response-body sections annotated with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`) matching claim-coverage panel statuses

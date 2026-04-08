@@ -66,7 +66,7 @@
 - PDF text-layer reading: readable text-layer PDF는 visible summary body로 정상 요약되고(`문서 요약` label, context box/quick meta/transcript meta에 PDF 파일명 표시), scanned/image-only PDF는 visible OCR-not-supported guidance(`요약할 수 없습니다`, `OCR`, `이미지형 PDF`, `다음 단계:`)를 반환
 - uploaded folder search shows a count-only partial-failure notice when some files cannot be read, while retaining readable-file result preview (search-only and search-plus-summary both preserve preview cards with ordered label, full-path tooltip, match badge, and snippet for successfully read files)
 - permission-gated web investigation with local JSON history, answer-mode badges, color-coded verification-strength badges (entity-card verification badge is downgraded from strong when no claim slot has cross-verified status), and color-coded source-role trust badges in history cards
-- claim coverage panel with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`), actionable hints for weak or unresolved slots, source role with trust level labels, and a color-coded fact-strength summary bar above the response text for web investigation
+- claim coverage panel with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`), actionable hints for weak or unresolved slots, source role with trust level labels, a color-coded fact-strength summary bar above the response text, and a dedicated plain-language focus-slot reinvestigation explanation (improved/regressed/unchanged) for web investigation
 
 ## Chosen Next-Phase Artifact
 

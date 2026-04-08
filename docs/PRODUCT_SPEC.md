@@ -217,7 +217,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - `messages`
 - `pending_approvals`
 - `permissions`
-- `active_context`
+- `active_context` — `{kind, label, source_paths, summary_hint, suggested_prompts, record_path, claim_coverage_progress_summary}`; updated by correction-submit `summary_hint`
 - `created_at`
 - `updated_at`
 
@@ -250,7 +250,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
   - `artifact_id`
   - `artifact_kind`
   - `original_response_snapshot`
-  - `response_origin`
+  - `response_origin` — `{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}`
   - `evidence`
   - `summary_chunks`
   - `claim_coverage` — list of slot objects, each containing `slot`, `status`, `status_label`, `value`, `support_count`, `candidate_count`, `source_role`, `rendered_as` (`fact_card` / `uncertain` / `not_rendered`); during reinvestigation, slots also carry `previous_status`, `previous_status_label`, `progress_state` (`improved` / `regressed` / `unchanged`), `progress_label`, and `is_focus_slot`

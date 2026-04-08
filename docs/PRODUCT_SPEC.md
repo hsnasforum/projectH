@@ -1136,8 +1136,8 @@ The first official artifact is the `grounded brief`.
       - reviewed-memory effect must be reversible without rewriting source-message traces, `candidate_recurrence_key`, or aggregate evidence
       - the rollback target stays fixed at one applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
       - the current `reviewed_memory_boundary_draft` remains a scope draft and basis ref, not the rollback target itself
-      - rollback means explicit local operator-driven reversal of that later applied effect and stop of that effect's future influence
-      - this is rollback of future reviewed-memory effect, not rollback of explicit corrected-text history
+      - rollback means explicit local operator-driven reversal of that applied effect and stop of that effect's influence
+      - this is rollback of applied reviewed-memory effect, not rollback of explicit corrected-text history
       - this must not delete `candidate_review_record`, delete `candidate_recurrence_key`, rewrite aggregate identity history, or treat boundary-draft deletion as canonical rollback
       - after rollback, aggregate identity, supporting refs, the current boundary draft, and operator-visible audit trace should remain while only the applied effect may deactivate
     - `disable_ready_reviewed_memory_effect`

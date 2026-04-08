@@ -12,8 +12,8 @@ Long term, projectH aims to become a **teachable local personal agent** that acc
 
 ### Current Contract
 - The shipped contract is still a local-first document assistant.
-- The web shell supports file summary, document search, general chat, approval-based save, reissue approval, evidence/source panels, summary-range metadata, response-origin badges, streaming cancel, PDF text-layer reading, and permission-gated web investigation with local history.
-- Web investigation remains a **secondary mode**, not the core product identity.
+- The web shell supports file summary, document search, general chat, approval-based save, reissue approval, evidence/source panels, summary-range metadata, response-origin badges, streaming cancel, PDF text-layer reading, and permission-gated web investigation (enabled/disabled/ask per session) with local JSON history, in-session reload, and history-card badges.
+- Web investigation remains a **secondary mode** under the document-first guardrail, not the core product identity.
 - The current phase is **not** model training and **not** general program control.
 
 ### Next Phase Design Target
@@ -76,8 +76,9 @@ The first official artifact is the `grounded brief`.
 - streaming progress and cancel
 - response feedback capture
 - PDF text-layer support with OCR-not-supported guidance
-- permission-gated web investigation with local JSON history
-- claim coverage / verification state and in-session history reload
+- permission-gated web investigation (enabled/disabled/ask per session) with local JSON history, in-session reload, and history-card badges (answer-mode, verification-strength, source-role trust)
+- entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade
+- claim coverage panel with status tags and actionable hints
 - Playwright smoke coverage for core browser flows
 
 ### Not Implemented
@@ -103,7 +104,7 @@ The first official artifact is the `grounded brief`.
 - saved note approvals and rejection events
 - response feedback labels and reasons
 - session history and active document context
-- web investigation traces when the secondary mode is used
+- web investigation local JSON history and history-card badge traces when the secondary mode is used
 
 ### Should Be Added In The Next Phase
 - artifact-scoped original response snapshots

@@ -253,7 +253,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - optional:
   - `artifact_id`
   - `artifact_kind`
-  - `original_response_snapshot`
+  - `original_response_snapshot` — owned by the original grounded-brief source message only
   - `response_origin` — `{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}`
   - `evidence` — list of `{label, source_name, source_path, snippet, source_role}`
   - `summary_chunks` — list of `{chunk_id, chunk_index, total_chunks, source_path, source_name, selected_line}`
@@ -261,9 +261,9 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
   - `claim_coverage_progress_summary` — plain-language Korean sentence summarizing the focus-slot reinvestigation outcome (empty string on first investigation)
   - `web_search_history` — list of recent search record summaries (up to 8), each containing `record_id`, `query`, `created_at`, `result_count`, `page_count`, `record_path`, `summary_head`, `answer_mode` (`entity_card` / `latest_update` / `general`), `verification_label`, `source_roles` (list of role strings), `claim_coverage_summary` (`strong` / `weak` / `missing` counts), and `pages_preview` (list of `{title, url, excerpt, text_preview, char_count}`)
   - `feedback`
-  - `corrected_text`
-  - `corrected_outcome`
-  - `content_reason_record`
+  - `corrected_text` — owned by the original grounded-brief source message only
+  - `corrected_outcome` — owned by the original grounded-brief source message only
+  - `content_reason_record` — owned by the original grounded-brief source message only
   - `session_local_memory_signal`
   - `superseded_reject_signal`
   - `historical_save_identity_signal`
@@ -274,11 +274,13 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
   - `candidate_review_record`
   - `selected_source_paths`
   - `saved_note_path`
-  - `save_content_source`
+  - `save_content_source` — owned by save/approval trace messages
   - `note_preview`
-  - `approval_reason_record`
-  - `source_message_id`
+  - `approval_reason_record` — owned by reject/reissue approval trace messages
+  - `source_message_id` — owned by save/approval trace messages linking back to the source message
   - approval metadata
+
+Not all optional fields appear on every message. Correction-related fields (`original_response_snapshot`, `corrected_text`, `corrected_outcome`, `content_reason_record`) live only on the original grounded-brief source message. Approval-linked trace fields (`approval_reason_record`, `save_content_source`, `source_message_id`) live on reject/reissue/save system responses. Non-source system messages do not become the correction source-of-truth surface.
 
 ## Current Response Payload Contract
 

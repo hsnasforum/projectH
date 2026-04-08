@@ -97,8 +97,10 @@
   - `claim_coverage_progress_summary`
   - `web_search_history` — list of recent search record summaries (see PRODUCT_SPEC for full record shape)
   - `feedback`
-  - `corrected_text`, `corrected_outcome`, `content_reason_record`, `approval_reason_record`
-  - `selected_source_paths`, `saved_note_path`, `note_preview`, `save_content_source`, `source_message_id`
+  - `corrected_text`, `corrected_outcome`, `content_reason_record` — owned by the original grounded-brief source message only
+  - `approval_reason_record` — owned by reject/reissue approval trace messages
+  - `selected_source_paths`, `saved_note_path`, `note_preview`
+  - `save_content_source`, `source_message_id` — owned by save/approval trace messages
   - `approval` — serialized approval object when a pending approval exists (see Approval section for field shape)
   - `original_response_snapshot` — `{artifact_id, artifact_kind, draft_text, source_paths, response_origin, summary_chunks_snapshot, evidence_snapshot}` (snapshot fields reuse same shapes as their message-level counterparts; nested `response_origin` may be `null` when absent)
   - `session_local_memory_signal`, `superseded_reject_signal`, `historical_save_identity_signal` — optional per-message memory-signal roots

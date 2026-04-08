@@ -99,7 +99,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - active context metadata
 - approval preview with request-time snapshot, requested save path, and overwrite warning when target already exists
 - saved summary note path (`saved_note_path`) returned after approval, linked in response detail for user confirmation
-- response feedback records
+- response feedback records with label + optional reason, linked via `response_feedback_recorded` audit event
 - structured search result preview panel (ordered label with full-path tooltip, match type badge, content snippet)
 - summary source-type label (`문서 요약`, `선택 결과 요약`) in quick meta and transcript meta
 - response origin badge (`WEB`, answer-mode badge, verification label, source-role trust badges) for web investigation responses

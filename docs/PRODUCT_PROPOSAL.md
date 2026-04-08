@@ -23,7 +23,7 @@ projectH aims to become a **teachable local personal agent** that stores user co
 
 ### Facts
 - The repository already supports local file reading, summarization, document search, general chat, follow-up Q&A in document context, approval-gated save, evidence panels, feedback capture, and local session/log storage.
-- Web investigation is a permission-gated secondary mode (enabled/disabled/ask per session) under the document-first guardrail, with local JSON history, in-session reload, history-card badges, entity-card / latest-update answer-mode distinction, and claim-coverage panel already shipped.
+- Web investigation is a permission-gated secondary mode (disabled/approval/enabled per session) under the document-first guardrail, with local JSON history, in-session reload, history-card badges, entity-card / latest-update answer-mode distinction, and claim-coverage panel already shipped.
 - The current phase is not model training and not program operation.
 
 ### Recommendation
@@ -56,13 +56,13 @@ projectH aims to become a **teachable local personal agent** that stores user co
 - streaming progress and cancel
 - response feedback capture
 - PDF text-layer support with OCR-not-supported guidance
-- permission-gated web investigation (enabled/disabled/ask per session) with local JSON history, in-session reload, and history-card badges (answer-mode, verification-strength, source-role trust)
+- permission-gated web investigation (disabled/approval/enabled per session) with local JSON history, in-session reload, and history-card badges (answer-mode, verification-strength, source-role trust)
 - entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade
 - claim coverage panel with status tags, actionable hints, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved)
 
 ### Core Product Boundaries
 - Core product: local document assistant
-- Secondary mode: permission-gated web investigation (enabled/disabled/ask per session) under document-first guardrail
+- Secondary mode: permission-gated web investigation (disabled/approval/enabled per session) under document-first guardrail
 - Safety baseline: approval-based writes and auditable local traces
 - Vendor stance: model/runtime interchangeable, product identity vendor-neutral
 

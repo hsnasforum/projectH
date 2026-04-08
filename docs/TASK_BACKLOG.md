@@ -4,7 +4,7 @@
 
 - shipped contract: local-first document assistant web MVP
 - current release candidate: `app.web` browser shell only
-- secondary mode: permission-gated web investigation (enabled/disabled/ask per session) under document-first guardrail
+- secondary mode: permission-gated web investigation (disabled/approval/enabled per session) under document-first guardrail
 - next phase target: correction / approval / preference memory around one official `grounded brief`
 - long-term north star: teachable local personal agent with later approval-gated local action
 - operator tooling (`controller.server`, `pipeline_gui/`, `windows-launchers/`, `_data/`) remains outside the current release gate unless explicitly promoted

@@ -12,7 +12,7 @@ Long term, projectH aims to become a **teachable local personal agent** that acc
 
 ### Current Contract
 - The shipped contract is still a local-first document assistant.
-- The web shell supports file summary, document search, general chat, approval-based save, reissue approval, evidence/source panels, summary-range metadata, response-origin badges, streaming cancel, PDF text-layer reading, and permission-gated web investigation (enabled/disabled/ask per session) with local JSON history, in-session reload, and history-card badges.
+- The web shell supports file summary, document search, general chat, approval-based save, reissue approval, evidence/source panels, summary-range metadata, response-origin badges, streaming cancel, PDF text-layer reading, and permission-gated web investigation (disabled/approval/enabled per session) with local JSON history, in-session reload, and history-card badges.
 - Web investigation remains a **secondary mode** under the document-first guardrail, not the core product identity.
 - The current phase is **not** model training and **not** general program control.
 
@@ -76,7 +76,7 @@ The first official artifact is the `grounded brief`.
 - streaming progress and cancel
 - response feedback capture
 - PDF text-layer support with OCR-not-supported guidance
-- permission-gated web investigation (enabled/disabled/ask per session) with local JSON history, in-session reload, and history-card badges (answer-mode, verification-strength, source-role trust)
+- permission-gated web investigation (disabled/approval/enabled per session) with local JSON history, in-session reload, and history-card badges (answer-mode, verification-strength, source-role trust)
 - entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade
 - claim coverage panel with status tags, actionable hints, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved)
 - Playwright smoke coverage for core browser flows

@@ -108,7 +108,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 ### Approval Points
 - note save approval (approval object with request-time snapshot, requested save path, overwrite warning when target already exists)
 - save-path reissue approval (new approval object issued when save path is changed after initial approval)
-- web-search permission gate for permission-gated secondary-mode web investigation (enabled/disabled/ask per session)
+- web-search permission gate for permission-gated secondary-mode web investigation (disabled/approval/enabled per session)
 
 ### Stored Evidence, Logs, And Feedback
 - session JSON with messages, `active_context` (follow-up context updated by correction-submit `summary_hint`), `pending_approvals`, `permissions` (including web-search permission state), timestamps
@@ -149,7 +149,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - may reuse active context when appropriate
 
 ### 4. Web Investigation
-- permission-gated read-only external search (enabled/disabled/ask per session)
+- permission-gated read-only external search (disabled/approval/enabled per session)
 - stores local JSON history with in-session reload and history-card display (answer-mode, verification-strength, source-role trust badges)
 - supports entity-card and latest-update answer-mode distinction with separate verification labels, source-role surfaces, claim coverage panel (status tags, actionable hints, fact-strength summary bar, focus-slot reinvestigation explanation), and entity-card strong-badge downgrade
 - remains a **secondary mode** with document-first guardrail rather than the main product identity
@@ -303,7 +303,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 ## Web Investigation Rules
 
 ### Implemented
-- read-only external search with permission-gated execution (enabled/disabled/ask per session)
+- read-only external search with permission-gated execution (disabled/approval/enabled per session)
 - local JSON record storage with in-session history reload and history-card display (answer-mode, verification-strength, source-role trust badges in header)
 - response origin with `WEB` badge, answer-mode badge, color-coded verification-strength badge, and color-coded source-role trust badges in origin detail
 - entity-card / latest-update answer-mode distinction with separate verification labels and source-role surfaces; entity-card verification badge downgraded from strong (`설명형 다중 출처 합의`) when no claim slot has cross-verified status

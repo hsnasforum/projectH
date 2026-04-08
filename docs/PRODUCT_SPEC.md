@@ -411,7 +411,7 @@ The first official artifact is the `grounded brief`.
   - `artifact_kind`
   - `draft_text`
   - `source_paths`
-  - `response_origin`
+  - `response_origin` — same shape as message-level `response_origin` (`{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}`)
   - `summary_chunks_snapshot`
   - `evidence_snapshot`
 - the assistant message remains the raw source-of-truth surface
@@ -476,7 +476,7 @@ The first official artifact is the `grounded brief`.
   - `artifact_kind`
   - `draft_text`
   - `source_paths`
-  - `response_origin`
+  - `response_origin` — same shape as message-level `response_origin`
   - `summary_chunks_snapshot`
   - `evidence_snapshot`
 - current source of truth:

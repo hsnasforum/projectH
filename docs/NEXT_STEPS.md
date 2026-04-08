@@ -203,7 +203,7 @@
     - `audit_store_boundary = canonical_transition_record_separate_from_task_log`
     - `post_transition_invariants = aggregate_identity_and_contract_refs_retained`
     - `defined_at = last_seen_at`
-  - exact same-session unblock semantics should now stay fixed before any emitted transition record or apply vocabulary opens:
+  - exact same-session unblock semantics are now fixed; the emitted transition record and apply vocabulary are shipped above this unblock layer:
     - shipped boundary / rollback / disable / conflict / transition-audit objects remain `contract exists` only
     - current contract-object presence alone must never count as `satisfied`
     - approval-backed save support, historical adjuncts, review acceptance, queue presence, and `task_log` mirror existence must remain outside readiness

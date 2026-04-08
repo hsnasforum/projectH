@@ -299,11 +299,11 @@
 52. Stage future coverage as manual placeholder first, service fixtures next, unit helpers after that, and e2e only when review / rollback UI exists.
 53. Keep the shipped same-session `recurrence_aggregate_candidates` promotion-ineligible:
   - exact aggregate identity remains necessary but insufficient for repeated-signal promotion
-  - no post-aggregate apply path, no reviewed-memory candidate store, and no cross-session counting in the current contract
+  - the post-aggregate reviewed-memory apply path is now shipped (apply / stop-apply / reversal / conflict-visibility); no reviewed-memory candidate store and no cross-session counting in the current contract
 56. Keep the first post-aggregate reviewed-memory boundary explicit and separate:
   - `candidate_review_record` remains one source-message reviewed-but-not-applied trace
   - `recurrence_aggregate_candidates` remains one same-session grouping surface
-  - reviewed memory remains later than rollback, disable, conflict, and operator-audit rules
+  - reviewed-memory apply, stop-apply, reversal, and conflict-visibility are now shipped; rollback, disable, and operator-audit rules remain later
 57. Keep the shipped post-aggregate surface as one read-only aggregate-level promotion-eligibility marker only:
   - `promotion_basis = same_session_exact_recurrence_aggregate`
   - `promotion_eligibility = blocked_pending_reviewed_memory_boundary`

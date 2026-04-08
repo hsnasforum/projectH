@@ -6586,6 +6586,11 @@ test("브라우저 폴더 선택으로 scanned PDF + readable file이 섞인 폴
   const responseText = await page.getByTestId("response-text").textContent();
   expect(responseText).toContain("스캔본 또는 이미지형 PDF");
   expect(responseText).toContain("건너뛰었습니다");
+
+  // successful-result retention: readable notes.txt still appears in search preview
+  await expect(page.locator("#response-search-preview .search-preview-item")).toHaveCount(1);
+  await expect(page.locator("#response-search-preview .search-preview-name").first()).toContainText("notes.txt");
+  await expect(page.locator("#response-search-preview .search-preview-snippet").first()).toContainText("budget");
 });
 
 test("브라우저 파일 선택으로 readable text-layer PDF를 선택하면 정상 요약이 됩니다", async ({ page }) => {

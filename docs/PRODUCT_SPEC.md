@@ -315,7 +315,7 @@ The top-level response payload is serialized by `app/serializers.py:_serialize_r
 - `claim_coverage_progress_summary` — localized focus-slot reinvestigation summary
 
 ### Correction And Reason Fields
-- `original_response_snapshot` — `{artifact_id, artifact_kind, draft_text, source_paths, response_origin, summary_chunks_snapshot, evidence_snapshot}`
+- `original_response_snapshot` — `{artifact_id, artifact_kind, draft_text, source_paths, response_origin, summary_chunks_snapshot, evidence_snapshot}` (nested `response_origin` may be `null` when absent)
 - `corrected_outcome` — correction outcome metadata
 - `approval_reason_record` — normalized approval reason on rejected or reissued approvals
 - `content_reason_record` — content reason record on explicit rejection
@@ -456,7 +456,7 @@ The first official artifact is the `grounded brief`.
   - `artifact_kind`
   - `draft_text`
   - `source_paths`
-  - `response_origin` — same shape as message-level `response_origin` (`{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}`)
+  - `response_origin` — same shape as message-level `response_origin` (`{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}`) or `null` when absent
   - `summary_chunks_snapshot` — same shape as message-level `summary_chunks`
   - `evidence_snapshot` — same shape as message-level `evidence`
 - the assistant message remains the raw source-of-truth surface
@@ -521,7 +521,7 @@ The first official artifact is the `grounded brief`.
   - `artifact_kind`
   - `draft_text`
   - `source_paths`
-  - `response_origin` — same shape as message-level `response_origin`
+  - `response_origin` — same shape as message-level `response_origin` or `null` when absent
   - `summary_chunks_snapshot` — same shape as message-level `summary_chunks`
   - `evidence_snapshot` — same shape as message-level `evidence`
 - current source of truth:

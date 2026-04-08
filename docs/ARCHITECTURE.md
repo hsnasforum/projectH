@@ -365,7 +365,7 @@ The next phase should standardize one `grounded brief` artifact.
   - `original_response_snapshot.artifact_kind`
   - `original_response_snapshot.draft_text`
   - `original_response_snapshot.source_paths`
-  - `original_response_snapshot.response_origin` — same shape as message-level `response_origin` (`{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}`)
+  - `original_response_snapshot.response_origin` — same shape as message-level `response_origin` (`{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}`) or `null` when absent
   - `original_response_snapshot.summary_chunks_snapshot` — same shape as message-level `summary_chunks`
   - `original_response_snapshot.evidence_snapshot` — same shape as message-level `evidence`
 - current source-of-truth layering:

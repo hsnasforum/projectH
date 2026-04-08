@@ -14891,7 +14891,8 @@ class WebAppServiceTest(unittest.TestCase):
 
     def test_handle_chat_entity_card_reload_preserves_stored_summary_text(self) -> None:
         """entity-card 검색 → load_web_search_record_id reload에서
-        show-only 응답 본문이 initial stored summary_text를 그대로 포함합니다."""
+        show-only 응답 본문이 stored summary_text의 헤더를 현재 tagged
+        contract로 정규화하여 포함합니다."""
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             settings = AppSettings(
@@ -14980,8 +14981,14 @@ class WebAppServiceTest(unittest.TestCase):
                 }
             )
             self.assertTrue(second["ok"])
-            # reload 응답 본문에 stored summary text가 그대로 포함
-            self.assertIn(stored_summary, second["response"]["text"])
+            # reload 응답 본문에 tagged-header 정규화된 summary가 포함
+            from core.agent_loop import AgentLoop
+            normalized = AgentLoop._normalize_legacy_summary_headers(stored_summary)
+            self.assertIn(normalized, second["response"]["text"])
+            # 정규화 후 tagged header가 실제로 존재
+            response_text = second["response"]["text"]
+            if "확인된 사실" in stored_summary:
+                self.assertIn("확인된 사실 [교차 확인]:", response_text)
 
     def test_handle_chat_entity_card_reload_preserves_stored_response_origin(self) -> None:
         """entity-card 검색 → load_web_search_record_id reload에서

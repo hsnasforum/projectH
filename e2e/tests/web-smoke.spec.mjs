@@ -1847,8 +1847,7 @@ test("history-card entity-card 다시 불러오기 후 noisy single-source claim
   expect(originDetailText).not.toContain("blog.example.com");
 
   // Response body: wait for content to render, then check positive and negative assertions
-  await expect(page.getByTestId("response-text")).toContainText("확인된 사실:");
-  await expect(page.getByTestId("response-text")).toContainText("교차 확인");
+  await expect(page.getByTestId("response-text")).toContainText("확인된 사실 [교차 확인]:");
   const responseText = await page.getByTestId("response-text").textContent();
   expect(responseText).not.toContain("출시일");
   expect(responseText).not.toContain("2025");
@@ -4323,8 +4322,7 @@ test("entity-card 붉은사막 검색 결과 자연어 reload에서 WEB badge, �
   expect(originDetailText).not.toContain("출시일");
   expect(originDetailText).not.toContain("2025");
   expect(originDetailText).not.toContain("blog.example.com");
-  await expect(page.getByTestId("response-text")).toContainText("확인된 사실:");
-  await expect(page.getByTestId("response-text")).toContainText("교차 확인");
+  await expect(page.getByTestId("response-text")).toContainText("확인된 사실 [교차 확인]:");
   const responseText = await page.getByTestId("response-text").textContent();
   expect(responseText).not.toContain("출시일");
   expect(responseText).not.toContain("2025");
@@ -6325,8 +6323,7 @@ test("entity-card noisy single-source claim(출시일/2025/blog.example.com)이 
   expect(originDetailText).not.toContain("2025");
   expect(originDetailText).not.toContain("blog.example.com");
   const responseText = await page.getByTestId("response-text").textContent();
-  expect(responseText).toContain("확인된 사실:");
-  expect(responseText).toContain("교차 확인");
+  expect(responseText).toContain("확인된 사실 [교차 확인]:");
   expect(responseText).not.toContain("출시일");
   expect(responseText).not.toContain("2025");
   expect(responseText).not.toContain("blog.example.com");
@@ -6401,8 +6398,7 @@ test("entity-card noisy single-source claim(출시일/2025/blog.example.com)이 
   expect(originDetailText).not.toContain("2025");
   expect(originDetailText).not.toContain("blog.example.com");
   const responseText = await page.getByTestId("response-text").textContent();
-  expect(responseText).toContain("확인된 사실:");
-  expect(responseText).toContain("교차 확인");
+  expect(responseText).toContain("확인된 사실 [교차 확인]:");
   expect(responseText).not.toContain("출시일");
   expect(responseText).not.toContain("2025");
   expect(responseText).not.toContain("blog.example.com");

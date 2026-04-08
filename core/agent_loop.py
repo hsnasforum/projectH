@@ -5580,6 +5580,29 @@ class AgentLoop:
             "claim_coverage_progress_summary": str(claim_coverage_progress_summary or "").strip(),
         }
 
+    @staticmethod
+    def _normalize_legacy_summary_headers(text: str) -> str:
+        """Upgrade legacy untagged section headers to the current tagged contract.
+
+        Stored records may carry older wording; this normalizes at reload time
+        so the browser always shows the current tagged headers."""
+        import re
+        # 확인된 사실: → 확인된 사실 [교차 확인]:
+        text = re.sub(r"확인된 사실(?!\s*\[):", "확인된 사실 [교차 확인]:", text)
+        # 단일 출처 정보 (교차 확인 부족, 추가 확인 필요): → 단일 출처 정보 [단일 출처] (추가 확인 필요):
+        text = text.replace(
+            "단일 출처 정보 (교차 확인 부족, 추가 확인 필요):",
+            "단일 출처 정보 [단일 출처] (추가 확인 필요):",
+        )
+        # 단일 출처 정보 (교차 확인 필요): → 단일 출처 정보 [단일 출처] (추가 확인 필요):
+        text = text.replace(
+            "단일 출처 정보 (교차 확인 필요):",
+            "단일 출처 정보 [단일 출처] (추가 확인 필요):",
+        )
+        # 확인되지 않은 항목: → 확인되지 않은 항목 [미확인]:
+        text = re.sub(r"확인되지 않은 항목(?!\s*\[):", "확인되지 않은 항목 [미확인]:", text)
+        return text
+
     def _summarize_web_search_results(
         self,
         *,
@@ -6250,7 +6273,7 @@ class AgentLoop:
         )
         stored_summary_text = str(record.get("summary_text") or "").strip()
         if stored_summary_text:
-            summary_text = stored_summary_text
+            summary_text = self._normalize_legacy_summary_headers(stored_summary_text)
         else:
             stored_intent_kind = SearchIntentKind.EXTERNAL_FACT if stored_answer_mode == AnswerMode.ENTITY_CARD else None
             summary_text = self._summarize_web_search_results(

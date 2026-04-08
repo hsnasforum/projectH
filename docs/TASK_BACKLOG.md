@@ -650,7 +650,7 @@
   - current implementation must not synthesize the object from current read-only surfaces without an actual enabled-submit action
   - the current aggregate serializer and focused regression now enforce correct emission only at the enabled-submit boundary
 101. Keep the first truthful emitted action to one exact first trigger only:
-  - the first emitted-transition-record implementation may materialize only for `future_reviewed_memory_apply`
+  - the current shipped emitted-transition-record materializes only for `future_reviewed_memory_apply`
   - it must require one exact same-session aggregate already at truthful `unblocked_all_required`
   - it must require one real `canonical_transition_id`
   - it must require one explicit `operator_reason_or_note`

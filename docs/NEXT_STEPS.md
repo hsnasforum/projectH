@@ -399,8 +399,8 @@
     - no apply result
     - no cross-session scope
   - keep the aggregate surface read-only, non-promoting, and separate from `review_queue_items`, reviewed history, and user-level memory
-  - do not reopen repeated-signal promotion, same-family merge helper work, reviewed-memory apply, or cross-session counting before the full precondition family exists and is satisfied
-  - keep the current truthful `unblocked_all_required` layer and the current enabled aggregate-card submit boundary separate from any later emitted transition record or reviewed-memory apply vocabulary
+  - do not reopen repeated-signal promotion, same-family merge helper work, or cross-session counting; reviewed-memory apply is now shipped above the precondition family
+  - the current truthful `unblocked_all_required` layer and the current enabled aggregate-card submit boundary are now shipped alongside the emitted transition record and reviewed-memory apply vocabulary
   - the post-cleanup aftercare question is now also closed:
     - keep the shipped read-only `reviewed_memory_planning_target_ref`
     - preserve the shipped `eligible_for_reviewed_memory_draft_planning_only` meaning

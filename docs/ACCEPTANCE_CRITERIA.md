@@ -791,7 +791,7 @@ These are placeholders for the next phase design target and its immediate follow
     - `satisfaction_basis_boundary = canonical_reviewed_memory_layer_capabilities_only`
     - `partial_state_policy = partial_states_not_materialized`
     - no emitted transition record and no reviewed-memory apply result
-  - the current repo may now emit one separate read-only basis object:
+  - the current contract now emits one separate read-only basis object:
     - one current `reviewed_memory_capability_basis`
     - `basis_version = same_session_reviewed_memory_capability_basis_v1`
     - `reviewed_scope = same_session_exact_recurrence_aggregate_only`

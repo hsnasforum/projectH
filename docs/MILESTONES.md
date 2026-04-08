@@ -71,7 +71,7 @@
 - entity-card dual-probe browser natural-reload source-path continuity smoke covering `pearlabyss.com/ko-KR/Board/Detail?_boardNo=200`, `pearlabyss.com/ko-KR/Board/Detail?_boardNo=300` in context box after `방금 검색한 결과 다시 보여줘`
 - entity-card dual-probe browser natural-reload exact-field smoke covering `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` retention after `방금 검색한 결과 다시 보여줘`
 - entity-card dual-probe browser natural-reload follow-up source-path continuity smoke covering `pearlabyss.com/ko-KR/Board/Detail?_boardNo=200`, `pearlabyss.com/ko-KR/Board/Detail?_boardNo=300` in context box after natural reload + follow-up
-- entity-card dual-probe browser natural-reload follow-up response-origin continuity smoke covering `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` drift prevention
+- entity-card dual-probe browser natural-reload follow-up response-origin exact-field drift-prevention smoke covering `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `공식 기반` · `백과 기반` drift prevention
 - entity-card 붉은사막 actual-search browser natural-reload follow-up source-path + response-origin continuity smoke covering `namu.wiki`/`ko.wikipedia.org` in context box, `WEB` badge, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반` drift prevention
 - entity-card 붉은사막 browser natural-reload source-path smoke covering `namu.wiki`/`ko.wikipedia.org`/`blog.example.com` provenance in context box after `방금 검색한 결과 다시 보여줘`
 - entity-card 붉은사막 actual-search browser natural-reload follow-up source-path smoke covering `namu.wiki`/`ko.wikipedia.org` in context box after natural reload + follow-up

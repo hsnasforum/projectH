@@ -293,7 +293,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 ### Implemented
 - text-layer PDFs are read through the local file-reading path
 - scanned/image-only PDFs return explicit OCR-not-supported guidance
-- uploaded folder search returns a count-only partial-failure notice when some files cannot be read, while still returning results from successfully read files (separate from OCR-not-supported guidance)
+- uploaded folder search returns a count-only partial-failure notice when some files cannot be read, while retaining readable-file result preview with ordered label, full-path tooltip, match badge, and snippet; search-only path preserves selected path/copy, hidden response body, transcript preview, and transcript body hidden; search-plus-summary path preserves visible summary body alongside preview cards in both response detail and transcript (separate from OCR-not-supported guidance)
 
 ### Not Implemented
 - OCR

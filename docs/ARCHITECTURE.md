@@ -229,6 +229,7 @@ Current task log is append-only JSONL and already records actions such as:
 - `reviewed_memory_transition_reversed` — detail: `{canonical_transition_id, aggregate_fingerprint, record_stage, reversed_at}`
 - `reviewed_memory_conflict_visibility_checked` — detail: `{canonical_transition_id, transition_action, aggregate_fingerprint, source_apply_transition_ref, conflict_entry_count, record_stage, checked_at}`
 - `agent_response` — detail: `{status, actions, requires_approval, proposed_note_path, saved_note_path, selected_source_paths, has_note_preview, approval_id, artifact_id, artifact_kind, source_message_id, save_content_source, approval_reason_record, active_context_label, evidence_count, summary_chunk_count}`
+- `agent_error` — detail: `{error}`
 
 ## Approval Contract
 

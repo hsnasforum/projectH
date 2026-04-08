@@ -233,7 +233,7 @@
     - `effect_behavior = stop_apply_without_reversal`
     - `audit_trace_expectation = operator_visible_local_transition_required`
     - deterministic `defined_at = last_seen_at`
-  - the next contract decision now fixes `conflict_visible_reviewed_memory_scope` before any apply vocabulary opens:
+  - `conflict_visible_reviewed_memory_scope` is now fixed; the apply vocabulary is now shipped above this contract layer:
     - conflict visibility means operator-visible read-only exposure of competing reviewed-memory targets inside one `same_session_exact_recurrence_aggregate_only` scope
     - the first conflict categories stay fixed at:
       - `future_reviewed_memory_candidate_draft_vs_applied_effect`
@@ -245,8 +245,8 @@
     - `conflict_visibility_stage = contract_only_not_resolved`
     - `audit_trace_expectation = operator_visible_local_transition_required`
     - deterministic `defined_at = last_seen_at`
-    - no reviewed-memory apply, no resolver, and no cross-session widening
-  - the next contract decision now fixes `operator_auditable_reviewed_memory_transition` before any apply vocabulary opens:
+    - no resolver and no cross-session widening; the reviewed-memory apply path is now shipped above this contract layer
+  - `operator_auditable_reviewed_memory_transition` is now fixed; the apply vocabulary is now shipped above this contract layer:
     - operator audit means one canonical local transition identity above the current conflict-visible scope
     - the first transition action vocabulary stays fixed at:
       - `future_reviewed_memory_apply`

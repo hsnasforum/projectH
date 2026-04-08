@@ -220,7 +220,7 @@
     - `rollback_stage = contract_only_not_applied`
     - `audit_trace_expectation = operator_visible_local_transition_required`
     - deterministic `defined_at = last_seen_at`
-  - the next contract decision should now also fix `disable_ready_reviewed_memory_effect` to one exact future stop-apply target:
+  - `disable_ready_reviewed_memory_effect` is now fixed as one shipped disable contract surface:
     - disable means stop-apply of one later applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
     - the shipped boundary draft and shipped rollback contract remain basis refs, not the disable target
     - aggregate identity, supporting refs, boundary draft, rollback contract, and operator-visible audit trace must remain after disable while only the later applied effect becomes inactive for future apply

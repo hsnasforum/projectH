@@ -215,12 +215,12 @@ Current task log is append-only JSONL and already records actions such as:
 - `web_search_record_loaded` — detail: `{query, record_id, record_path, result_count}`
 - `web_search_retried` — detail: `{query, result_count, page_count, record_path, urls, search_queries, deprioritized_urls}` (shared web-search detail shape)
 - `answer_with_active_context` — detail: `{label, source_paths, intent, conversation_mode, retrieved_chunk_count, selected_evidence_count, retry_feedback_label, retry_feedback_reason, retry_target_message_id}`
-- `reviewed_memory_transition_emitted`
-- `reviewed_memory_transition_applied`
-- `reviewed_memory_transition_result_confirmed`
-- `reviewed_memory_transition_stopped`
-- `reviewed_memory_transition_reversed`
-- `reviewed_memory_conflict_visibility_checked`
+- `reviewed_memory_transition_emitted` — detail: `{canonical_transition_id, transition_action, aggregate_fingerprint, operator_reason_or_note, record_stage, emitted_at}`
+- `reviewed_memory_transition_applied` — detail: `{canonical_transition_id, transition_action, aggregate_fingerprint, record_stage, applied_at}`
+- `reviewed_memory_transition_result_confirmed` — detail: `{canonical_transition_id, aggregate_fingerprint, record_stage, applied_effect_kind, result_stage, result_at}`
+- `reviewed_memory_transition_stopped` — detail: `{canonical_transition_id, aggregate_fingerprint, record_stage, stopped_at}`
+- `reviewed_memory_transition_reversed` — detail: `{canonical_transition_id, aggregate_fingerprint, record_stage, reversed_at}`
+- `reviewed_memory_conflict_visibility_checked` — detail: `{canonical_transition_id, transition_action, aggregate_fingerprint, source_apply_transition_ref, conflict_entry_count, record_stage, checked_at}`
 - `agent_response` — detail: `{status, actions, requires_approval, proposed_note_path, saved_note_path, selected_source_paths, has_note_preview, approval_id, artifact_id, artifact_kind, source_message_id, save_content_source, approval_reason_record, active_context_label, evidence_count, summary_chunk_count}`
 
 ## Approval Contract

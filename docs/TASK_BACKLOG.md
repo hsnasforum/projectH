@@ -316,8 +316,8 @@
   - `conflict_visible_reviewed_memory_scope`
   - `operator_auditable_reviewed_memory_transition`
 60. Keep each unblock precondition truthful and separate:
-  - rollback reverses later reviewed-memory effect, not source-message correction history
-  - disable stops later apply, not candidate deletion
+  - rollback reverses applied reviewed-memory effect, not source-message correction history
+  - disable stops applied effect, not candidate deletion
   - conflict visibility means reviewed-signal conflict across aggregates within the same reviewed scope, not only same-source edit conflict
   - operator-audit means explicit operator-visible transition trace, not task-log promoted to canonical
 61. Require all unblock preconditions before any same-session aggregate can leave `blocked_pending_reviewed_memory_boundary`:
@@ -348,7 +348,7 @@
   - no cross-session scope
   - do not widen into cross-session counting or user-level memory
 66. Fix `rollback_ready_reviewed_memory_effect` to one exact future rollback target only:
-  - rollback means later reviewed-memory effect reversal, not source-message correction-history rewind
+  - rollback means applied reviewed-memory effect reversal, not source-message correction-history rewind
   - the first rollback target stays one later applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
   - the shipped `reviewed_memory_boundary_draft` remains a scope draft and basis ref, not the rollback target
 67. Keep rollback narrower than delete or rewrite semantics:
@@ -378,7 +378,7 @@
   - it must not become a rollback state machine
   - it must not widen into cross-session scope
 72. Fix `disable_ready_reviewed_memory_effect` to one exact future stop-apply target only:
-  - disable means later reviewed-memory effect stop-apply, not source-message correction-history rewrite
+  - disable means applied reviewed-memory effect stop-apply, not source-message correction-history rewrite
   - the first disable target stays one later applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
   - the shipped `reviewed_memory_boundary_draft` and shipped `reviewed_memory_rollback_contract` remain basis refs, not the disable target
 73. Keep disable narrower than delete or reversal semantics:

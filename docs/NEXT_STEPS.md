@@ -131,14 +131,14 @@
       - the first reviewed scope should stay fixed at `same_session_exact_recurrence_aggregate_only`
       - that scope is tied to one current same-session `recurrence_aggregate_candidates` item plus its exact current supporting refs
       - the first boundary should not open a small reviewed-scope enum yet
-    - `rollback_ready_reviewed_memory_effect` = later reviewed-memory effect can be reversed without rewriting source-message traces or aggregate evidence
-      - the first rollback target should stay fixed at one later applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
+    - `rollback_ready_reviewed_memory_effect` = applied reviewed-memory effect can be reversed without rewriting source-message traces or aggregate evidence
+      - the rollback target stays fixed at one applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
       - the shipped `reviewed_memory_boundary_draft` stays a scope draft and basis ref, not the rollback target
-      - rollback should remove only later applied influence while leaving aggregate identity, supporting refs, the boundary draft, and operator-visible audit trace intact
-    - `disable_ready_reviewed_memory_effect` = later reviewed-memory effect can stop applying without deleting candidate traces, aggregate evidence, the boundary draft, or the rollback contract
-      - the first disable target should stay fixed at one later applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
+      - rollback removes only applied influence while leaving aggregate identity, supporting refs, the boundary draft, and operator-visible audit trace intact
+    - `disable_ready_reviewed_memory_effect` = applied reviewed-memory effect can stop applying without deleting candidate traces, aggregate evidence, the boundary draft, or the rollback contract
+      - the disable target stays fixed at one applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
       - the shipped `reviewed_memory_boundary_draft` and shipped `reviewed_memory_rollback_contract` stay basis refs, not the disable target
-      - disable should stop only later applied influence while leaving aggregate identity, supporting refs, the boundary draft, the rollback contract, and operator-visible audit trace intact
+      - disable stops only applied influence while leaving aggregate identity, supporting refs, the boundary draft, the rollback contract, and operator-visible audit trace intact
     - `conflict_visible_reviewed_memory_scope` = competing reviewed-memory targets stay visible before apply inside one `same_session_exact_recurrence_aggregate_only` scope
       - first conflict categories stay fixed at `future_reviewed_memory_candidate_draft_vs_applied_effect` and `future_applied_reviewed_memory_effect_vs_applied_effect`
       - this remains read-only visibility only, not resolver vocabulary

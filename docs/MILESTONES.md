@@ -197,7 +197,7 @@
     - `conflict_visible_reviewed_memory_scope`
     - `operator_auditable_reviewed_memory_transition`
   - the smallest shipped surface remains the read-only aggregate-level promotion-eligibility marker only, not reviewed-memory apply or cross-session counting
-  - the next shipped surface is now also implemented as one read-only aggregate-level `reviewed_memory_precondition_status` object with fixed overall blocked state and deterministic `evaluated_at = last_seen_at`
+  - the current contract now also emits one read-only aggregate-level `reviewed_memory_precondition_status` object with fixed overall blocked state and deterministic `evaluated_at = last_seen_at`
   - the next contract decision now also fixes `reviewed_memory_boundary_defined` to one fixed narrow reviewed scope:
     - `same_session_exact_recurrence_aggregate_only`
     - one later reviewed-memory boundary draft remains narrower than reviewed-memory store/apply and narrower than user-level memory

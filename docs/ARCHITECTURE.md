@@ -136,7 +136,7 @@ The web shell is the main MVP surface. CLI remains available as a narrower debug
 
 | Field | Type | Role |
 |-------|------|------|
-| `status` | string | response status (`needs_approval`, `completed`, etc.) — shell control |
+| `status` | string | response status — one of `answer`, `error`, `needs_approval`, `saved` (`core/contracts.py:ResponseStatus`) — shell control |
 | `actions_taken` | list | actions taken during processing — shell control |
 | `requires_approval` | bool | `true` when save needs explicit approval — shell control |
 | `proposed_note_path` | string \| null | proposed save path — shell control |

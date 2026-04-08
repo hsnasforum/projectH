@@ -113,7 +113,7 @@
 
 ### Response Payload Contract
 - The top-level response payload (`app/serializers.py:_serialize_response`) returns a fixed set of fields on every assistant response.
-- Shell control fields — `status`, `actions_taken`, `requires_approval`, `proposed_note_path`, `saved_note_path`, `web_search_record_path`, `follow_up_suggestions`, `search_results` — are directly consumed by `app/static/app.js` to gate approval UI, save confirmation, search preview, and follow-up rendering.
+- Shell control fields — `status` (one of `answer`, `error`, `needs_approval`, `saved` per `core/contracts.py:ResponseStatus`), `actions_taken`, `requires_approval`, `proposed_note_path`, `saved_note_path`, `web_search_record_path`, `follow_up_suggestions`, `search_results` — are directly consumed by `app/static/app.js` to gate approval UI, save confirmation, search preview, and follow-up rendering.
 - Identity and trace fields — `artifact_id`, `artifact_kind`, `source_message_id` — are present when a grounded-brief artifact exists.
 - Content fields — `text`, `note_preview`, `selected_source_paths` — carry the response body and source context.
 - Metadata fields — `approval`, `active_context`, `response_origin`, `applied_preferences`, `evidence`, `summary_chunks`, `claim_coverage`, `claim_coverage_progress_summary` — reuse shapes documented in Session And Trace Gates and PRODUCT_SPEC.

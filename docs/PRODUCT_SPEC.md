@@ -285,7 +285,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 The top-level response payload is serialized by `app/serializers.py:_serialize_response` and returned to the shell on every assistant response. Current top-level fields:
 
 ### Control Fields (drive shell behavior and test assertions)
-- `status` — response status string (e.g. `needs_approval`, `completed`)
+- `status` — response status string, one of the `ResponseStatus` enum values defined in `core/contracts.py`: `answer`, `error`, `needs_approval`, `saved`
 - `actions_taken` — list of actions taken during processing
 - `requires_approval` — boolean, `true` when the response requires explicit user approval before save
 - `proposed_note_path` — proposed file path for note save (set when save is requested)

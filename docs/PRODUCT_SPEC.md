@@ -288,7 +288,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - web search history panel with source previews, answer-mode badges, color-coded verification-strength badges, and color-coded source-role trust badges in history cards
 - progress box and cancel button during streaming
 - verified-vs-uncertain explanation: response-body section headers annotated with matching status tags (`확인된 사실 [교차 확인]`, `단일 출처 정보 [단일 출처]`, `확인되지 않은 항목 [미확인]`), claim-coverage panel hint maps tags to explanations
-- slot-level reinvestigation UX: claim-coverage panel shows a dedicated plain-language explanation line for each `is_focus_slot` slot, telling the user whether the slot improved, regressed, stayed single-source, or remains unresolved after reinvestigation; non-focus slots keep the lighter status/hint rendering
+- slot-level reinvestigation UX: claim-coverage panel shows a dedicated plain-language explanation line for each `is_focus_slot` slot, telling the user whether the slot was reinforced, regressed, is still single-source, or is still unresolved after reinvestigation; non-focus slots keep the lighter status/hint rendering
 
 ## PDF Handling
 

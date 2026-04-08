@@ -255,7 +255,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
   - `summary_chunks`
   - `claim_coverage` — list of slot objects, each containing `slot`, `status`, `status_label`, `value`, `support_count`, `candidate_count`, `source_role`, `rendered_as` (`fact_card` / `uncertain` / `not_rendered`); during reinvestigation, slots also carry `previous_status`, `previous_status_label`, `progress_state` (`improved` / `regressed` / `unchanged`), `progress_label`, and `is_focus_slot`
   - `claim_coverage_progress_summary` — plain-language Korean sentence summarizing the focus-slot reinvestigation outcome (empty string on first investigation)
-  - `web_search_history`
+  - `web_search_history` — list of recent search record summaries (up to 8), each containing `record_id`, `query`, `created_at`, `result_count`, `page_count`, `record_path`, `summary_head`, `answer_mode` (`entity_card` / `latest_update` / `general`), `verification_label`, `source_roles` (list of role strings), `claim_coverage_summary` (`strong` / `weak` / `missing` counts), and `pages_preview` (list of `{title, url, excerpt, text_preview, char_count}`)
   - `feedback`
   - `corrected_text`
   - `corrected_outcome`

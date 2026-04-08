@@ -201,11 +201,11 @@ Current task log is append-only JSONL and already records actions such as:
 - `approval_rejected` — detail: `{approval_id, kind, requested_path, artifact_id, source_message_id, save_content_source, approval_reason_record}`
 - `approval_reissued` — detail: `{old_approval_id, new_approval_id, old_requested_path, new_requested_path, overwrite, source_paths, artifact_id, source_message_id, save_content_source, approval_reason_record}`
 - `write_note` — detail: `{artifact_id, source_message_id, note_path, save_content_source}` plus optional `approval_id`, `source_paths`, and optional `source_path` (file/source summary) or `search_query` (search summary)
-- `response_feedback_recorded`
-- `correction_submitted`
-- `corrected_outcome_recorded`
-- `content_verdict_recorded`
-- `content_reason_note_recorded`
+- `response_feedback_recorded` — detail: `{message_id, artifact_id, artifact_kind, feedback_label, feedback_reason}`
+- `correction_submitted` — detail: `{message_id, artifact_id, artifact_kind, source_message_id, corrected_text_length}`
+- `corrected_outcome_recorded` — detail: `{message_id, artifact_id, artifact_kind, source_message_id, outcome}` plus optional `approval_id`, `saved_note_path`, `corrected_text_length`, or `content_reason_record`
+- `content_verdict_recorded` — detail: `{message_id, artifact_id, artifact_kind, source_message_id, content_verdict, content_reason_record}`
+- `content_reason_note_recorded` — detail: `{message_id, artifact_id, artifact_kind, source_message_id, reason_scope, reason_label, reason_note, content_reason_record}`
 - `candidate_confirmation_recorded`
 - `candidate_review_recorded`
 - `stream_cancel_requested`

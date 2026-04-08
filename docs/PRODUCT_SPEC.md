@@ -94,8 +94,8 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 
 ### Current Outputs
 - summary text
-- evidence items
-- summary chunk metadata
+- evidence/source panel with source-role trust labels
+- summary span/applied-range panel showing which chunks were used
 - active context metadata
 - approval preview
 - saved summary note path when approved

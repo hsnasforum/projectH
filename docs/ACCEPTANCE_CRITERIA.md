@@ -803,7 +803,7 @@ These are placeholders for the next phase design target and its immediate follow
     - `evaluated_at`
     - current contract-object existence alone must not materialize this basis object
     - approval-backed save support, historical adjuncts, source-message review acceptance, queue presence, and `task_log` replay alone must not materialize this basis object
-- the current contract still must not emit a repeated-signal promotion object, a reviewed-memory candidate store, or a reviewed-memory apply path
+- the current contract still must not emit a repeated-signal promotion object or a reviewed-memory candidate store; the reviewed-memory apply path (apply / stop-apply / reversal / conflict-visibility) is now shipped and lives above the planning-target / recurrence-key guardrail layer
 - Focused service or web-app regression for the current recurrence-key slice should keep verifying that:
   - the first `durable_candidate` projection appears only when the same current source message still exposes both matching current-candidate and confirmation traces
   - approval-backed save support stays distinguishable from explicit confirmation support

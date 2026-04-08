@@ -280,6 +280,47 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
   - `source_message_id`
   - approval metadata
 
+## Current Response Payload Contract
+
+The top-level response payload is serialized by `app/serializers.py:_serialize_response` and returned to the shell on every assistant response. Current top-level fields:
+
+### Control Fields (drive shell behavior and test assertions)
+- `status` — response status string (e.g. `needs_approval`, `completed`)
+- `actions_taken` — list of actions taken during processing
+- `requires_approval` — boolean, `true` when the response requires explicit user approval before save
+- `proposed_note_path` — proposed file path for note save (set when save is requested)
+- `saved_note_path` — actual saved file path (set after approval grant and write)
+- `web_search_record_path` — path to the local web-search history JSON record (set when web investigation stores a record)
+- `follow_up_suggestions` — list of localized follow-up suggestion strings
+- `search_results` — list of `{path, matched_on, snippet}` for document search result preview
+
+### Identity And Trace Fields
+- `artifact_id` — stable artifact identifier for grounded-brief responses
+- `artifact_kind` — artifact type (e.g. `grounded_brief`)
+- `source_message_id` — source message anchor for save trace linkage
+
+### Content Fields
+- `text` — localized response text body
+- `note_preview` — localized note preview text (set when save is requested)
+- `selected_source_paths` — list of selected source file paths
+
+### Metadata And Panel Fields (reuse shapes documented in Current Message Fields)
+- `approval` — serialized approval object (see Approval Rules section for field shape)
+- `active_context` — serialized active context for follow-up answers
+- `response_origin` — `{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}`
+- `applied_preferences` — applied preference records
+- `evidence` — list of evidence/source items (see Current Message Fields for item shape)
+- `summary_chunks` — list of summary chunk items (see Current Message Fields for item shape)
+- `claim_coverage` — list of claim coverage slot items (see Current Message Fields for slot shape)
+- `claim_coverage_progress_summary` — localized focus-slot reinvestigation summary
+
+### Correction And Reason Fields
+- `original_response_snapshot` — `{artifact_id, artifact_kind, draft_text, source_paths, response_origin, summary_chunks_snapshot, evidence_snapshot}`
+- `corrected_outcome` — correction outcome metadata
+- `approval_reason_record` — normalized approval reason on reissued approvals
+- `content_reason_record` — content reason record on explicit rejection
+- `save_content_source` — `original_draft` or `corrected_text`, indicates which text version is saved
+
 ## Response Panels And UI Metadata
 
 ### Implemented

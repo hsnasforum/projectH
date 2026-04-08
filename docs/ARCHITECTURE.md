@@ -130,6 +130,44 @@ The web shell is the main MVP surface. CLI remains available as a narrower debug
 5. response renders source roles and claim coverage state
 6. search history is stored locally
 
+## Current Response Payload Contract
+
+`app/serializers.py:_serialize_response` produces the top-level JSON object returned to the shell on every assistant response. The full field set is:
+
+| Field | Type | Role |
+|-------|------|------|
+| `status` | string | response status (`needs_approval`, `completed`, etc.) — shell control |
+| `actions_taken` | list | actions taken during processing — shell control |
+| `requires_approval` | bool | `true` when save needs explicit approval — shell control |
+| `proposed_note_path` | string \| null | proposed save path — shell control |
+| `saved_note_path` | string \| null | actual saved path after approval — shell control |
+| `web_search_record_path` | string \| null | local web-search history record path — shell control |
+| `follow_up_suggestions` | list[string] | localized follow-up suggestions — shell control |
+| `search_results` | list[`{path, matched_on, snippet}`] | document search preview — shell control |
+| `artifact_id` | string \| null | stable artifact identifier |
+| `artifact_kind` | string \| null | artifact type (e.g. `grounded_brief`) |
+| `source_message_id` | string \| null | source message anchor for save trace |
+| `text` | string | localized response text body |
+| `note_preview` | string \| null | localized note preview for save request |
+| `selected_source_paths` | list \| null | selected source file paths |
+| `approval` | object \| null | serialized approval (see Approval Contract) |
+| `active_context` | object \| null | follow-up context |
+| `response_origin` | object | `{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}` |
+| `applied_preferences` | list \| null | applied preference records |
+| `evidence` | list | evidence/source items (reuses per-message shape) |
+| `summary_chunks` | list | summary chunk items (reuses per-message shape) |
+| `claim_coverage` | list | claim coverage slots (reuses per-message shape) |
+| `claim_coverage_progress_summary` | string | localized reinvestigation summary |
+| `original_response_snapshot` | object \| null | pre-correction snapshot |
+| `corrected_outcome` | object \| null | correction outcome metadata |
+| `approval_reason_record` | object \| null | reissue reason record |
+| `content_reason_record` | object \| null | explicit rejection reason record |
+| `save_content_source` | string \| null | `original_draft` or `corrected_text` |
+
+The eight control fields (`status`, `actions_taken`, `requires_approval`, `proposed_note_path`, `saved_note_path`, `web_search_record_path`, `follow_up_suggestions`, `search_results`) are directly consumed by `app/static/app.js` to drive approval UI, save confirmation, search preview, and follow-up rendering. Focused service tests (`tests/test_web_app.py`) and browser smoke tests (`tests/test_smoke.py`) lock these fields and their expected values.
+
+Nested field shapes (evidence items, summary chunks, claim coverage slots, approval objects, response origin) are documented in their respective existing sections and are not duplicated here.
+
 ## Current Persistence Surfaces
 
 ### Session JSON

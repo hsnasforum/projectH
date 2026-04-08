@@ -111,12 +111,12 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - web-search permission gate for permission-gated secondary-mode web investigation (enabled/disabled/ask per session)
 
 ### Stored Evidence, Logs, And Feedback
-- session JSON with messages, active context, pending approvals, permissions, timestamps
-- response metadata including evidence, summary chunks, response origin, claim coverage, claim-coverage progress summary, feedback, and optional source-message `candidate_confirmation_record` / `candidate_recurrence_key` / `durable_candidate` / `candidate_review_record`
+- session JSON with messages, `active_context` (follow-up context updated by correction-submit `summary_hint`), `pending_approvals`, `permissions` (including web-search permission state), timestamps
+- response metadata including evidence/source with trust labels, summary chunks with applied-range, response origin (badge/answer-mode/verification/source-role), claim coverage with status tags and fact-strength summary, feedback with label + optional reason, and optional source-message `candidate_confirmation_record` / `candidate_recurrence_key` / `durable_candidate` / `candidate_review_record` / grounded-brief trace fields
 - current session payload can also expose one computed top-level `recurrence_aggregate_candidates` list derived from current same-session serialized source-message `candidate_recurrence_key` records
 - current session payload can also expose one computed top-level `review_queue_items` list derived from eligible current source-message `durable_candidate` records
-- JSONL task log for requests, approvals, writes, rejects, reissues, cancels, feedback, candidate-confirmation events, and candidate-review events
-- local web-search history JSON when the secondary mode is used
+- additive JSONL task log for requests, approvals, writes, rejects, reissues, cancels, feedback (`response_feedback_recorded`), candidate-confirmation events, and candidate-review events
+- local web-search history JSON with answer-mode/verification/source-role badges when the secondary mode is used
 
 ### Why The Current Phase Must Stay Document-First
 - The document loop is the most grounded and auditable workflow in the current codebase.

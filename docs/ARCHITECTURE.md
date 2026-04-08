@@ -795,11 +795,11 @@ The next phase should standardize one `grounded brief` artifact.
   - choose `Option A` for the current MVP:
     - every current same-session `recurrence_aggregate_candidates` item stays promotion-ineligible
     - aggregate identity is necessary but still insufficient for promotion
-  - current source-message traces remain separate from any later reviewed-memory layer:
+  - current source-message traces remain separate from the shipped reviewed-memory layer:
     - `durable_candidate` remains one source-message explicit-confirmation projection
     - `candidate_review_record` remains one source-message reviewed-but-not-applied trace
     - `recurrence_aggregate_candidates` remains one same-session cross-source grouping projection
-    - reviewed memory remains a later rollbackable, disableable, conflict-visible, operator-auditable layer above those current surfaces
+    - reviewed memory is now a shipped rollbackable, disableable, conflict-visible, operator-auditable layer above those current surfaces (apply / stop-apply / reversal / conflict-visibility are shipped; promotion and cross-session counting remain later)
   - valid future promotion inputs remain narrow:
     - exact same-session aggregate identity from current `recurrence_aggregate_candidates`
     - distinct grounded-brief anchors only

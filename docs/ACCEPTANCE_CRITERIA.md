@@ -582,11 +582,11 @@ These are placeholders for the next phase design target and its immediate follow
   - choose `Option A`:
     - current same-session `recurrence_aggregate_candidates` stay promotion-ineligible
     - exact aggregate identity is necessary, but still insufficient, for any later promotion work
-  - current source-message traces must remain narrower than any later reviewed-memory layer:
+  - current source-message traces must remain narrower than the shipped reviewed-memory layer:
     - `candidate_review_record` remains reviewed-but-not-applied and source-message-anchored
     - `durable_candidate` remains source-message-anchored
     - `recurrence_aggregate_candidates` remains same-session-only and read-only
-    - reviewed memory remains later, separate, rollbackable, disableable, conflict-visible, and operator-auditable
+    - reviewed memory is now shipped, separate, rollbackable, disableable, conflict-visible, and operator-auditable (apply / stop-apply / reversal / conflict-visibility are shipped; promotion and cross-session counting remain later)
   - review acceptance may later strengthen confidence, but it must never replace aggregate identity
   - approval-backed save, `session_local_memory_signal`, `superseded_reject_signal`, `historical_save_identity_signal`, queue presence, fixed statement text, `candidate_family` alone, and task-log replay alone must never act as promotion basis
   - the current contract now emits the smallest blocked marker inside each current aggregate item:

@@ -307,7 +307,7 @@ The top-level response payload is serialized by `app/serializers.py:_serialize_r
 ### Metadata And Panel Fields (reuse shapes documented in Current Message Fields)
 - `approval` — serialized approval object (see Approval Rules section for field shape)
 - `active_context` — serialized active context for follow-up answers
-- `response_origin` — `{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}`
+- `response_origin` — `{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}` or `null` when absent (e.g. error responses)
 - `applied_preferences` — applied preference records
 - `evidence` — list of evidence/source items (see Current Message Fields for item shape)
 - `summary_chunks` — list of summary chunk items (see Current Message Fields for item shape)

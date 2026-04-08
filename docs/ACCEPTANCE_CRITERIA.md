@@ -90,7 +90,7 @@
   - timestamps
 - Approval state is removed after approval or rejection.
 - Response metadata is serializable back into the session. Per-message fields include:
-  - `response_origin` — `{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}`
+  - `response_origin` — `{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}` or `null` when absent (e.g. error responses)
   - `evidence` — list of `{label, source_name, source_path, snippet, source_role}`
   - `summary_chunks` — list of `{chunk_id, chunk_index, total_chunks, source_path, source_name, selected_line}`
   - `claim_coverage` — list of slot objects (see PRODUCT_SPEC for full slot field shape)

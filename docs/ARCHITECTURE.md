@@ -152,7 +152,7 @@ The web shell is the main MVP surface. CLI remains available as a narrower debug
 | `selected_source_paths` | list \| null | selected source file paths |
 | `approval` | object \| null | serialized approval (see Approval Contract) |
 | `active_context` | object \| null | follow-up context |
-| `response_origin` | object | `{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}` |
+| `response_origin` | object \| null | `{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}` when present; `null` on error paths |
 | `applied_preferences` | list \| null | applied preference records |
 | `evidence` | list | evidence/source items (reuses per-message shape) |
 | `summary_chunks` | list | summary chunk items (reuses per-message shape) |

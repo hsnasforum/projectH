@@ -196,11 +196,11 @@ Current task log is append-only JSONL and already records actions such as:
 - `request_received`
 - `request_cancelled`
 - `document_context_updated`
-- `approval_requested` — detail: `{approval_id, artifact_id, source_message_id, note_path, overwrite, save_content_source}` plus optional mode-specific extras
+- `approval_requested` — detail: `{approval_id, artifact_id, source_message_id, note_path, overwrite, save_content_source}` plus optional `source_path` (file/source summary) or `search_query` + `source_paths` (search summary)
 - `approval_granted` — detail: `{approval_id, kind, requested_path, overwrite, artifact_id, source_message_id, save_content_source}`
 - `approval_rejected` — detail: `{approval_id, kind, requested_path, artifact_id, source_message_id, save_content_source, approval_reason_record}`
 - `approval_reissued` — detail: `{old_approval_id, new_approval_id, old_requested_path, new_requested_path, overwrite, source_paths, artifact_id, source_message_id, save_content_source, approval_reason_record}`
-- `write_note` — detail: `{artifact_id, source_message_id, note_path, save_content_source}` plus optional `approval_id`, `source_paths`, and mode-specific extras
+- `write_note` — detail: `{artifact_id, source_message_id, note_path, save_content_source}` plus optional `approval_id`, `source_paths`, and optional `source_path` (file/source summary) or `search_query` (search summary)
 - `response_feedback_recorded`
 - `correction_submitted`
 - `corrected_outcome_recorded`

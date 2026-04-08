@@ -160,7 +160,7 @@ The web shell is the main MVP surface. CLI remains available as a narrower debug
 | `claim_coverage_progress_summary` | string | localized reinvestigation summary |
 | `original_response_snapshot` | object \| null | pre-correction snapshot |
 | `corrected_outcome` | object \| null | correction outcome metadata |
-| `approval_reason_record` | object \| null | reissue reason record |
+| `approval_reason_record` | object \| null | reject or reissue reason record |
 | `content_reason_record` | object \| null | explicit rejection reason record |
 | `save_content_source` | string \| null | `original_draft` or `corrected_text` |
 
@@ -287,7 +287,7 @@ Current approval object shape:
 - `source_paths`
 - `created_at`
 - `save_content_source = original_draft | corrected_text` for the current shipped save-note path
-- optional `approval_reason_record` on reissued approvals
+- optional `approval_reason_record` on rejected or reissued approvals
 
 Related request paths:
 - `approved_approval_id`

@@ -197,7 +197,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - `source_paths`
 - `created_at`
 - `save_content_source = original_draft | corrected_text` for the current shipped save-note flow
-- optional `approval_reason_record` on reissued approvals
+- optional `approval_reason_record` on rejected or reissued approvals
 
 ### Current Approval Request Paths
 - `approved_approval_id`
@@ -317,7 +317,7 @@ The top-level response payload is serialized by `app/serializers.py:_serialize_r
 ### Correction And Reason Fields
 - `original_response_snapshot` — `{artifact_id, artifact_kind, draft_text, source_paths, response_origin, summary_chunks_snapshot, evidence_snapshot}`
 - `corrected_outcome` — correction outcome metadata
-- `approval_reason_record` — normalized approval reason on reissued approvals
+- `approval_reason_record` — normalized approval reason on rejected or reissued approvals
 - `content_reason_record` — content reason record on explicit rejection
 - `save_content_source` — `original_draft` or `corrected_text`, indicates which text version is saved
 

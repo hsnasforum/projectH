@@ -239,7 +239,7 @@
       - `future_reviewed_memory_candidate_draft_vs_applied_effect`
       - `future_applied_reviewed_memory_effect_vs_applied_effect`
     - conflict visibility stays separate from rollback reversal, disable stop-apply, operator-audit repair, and cross-session counting
-  - the next shipped surface is now also implemented as one read-only aggregate-level `reviewed_memory_conflict_contract` with:
+  - the current contract now also emits one read-only aggregate-level `reviewed_memory_conflict_contract` with:
     - one read-only aggregate-level `reviewed_memory_conflict_contract`
     - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
     - `conflict_visibility_stage = contract_only_not_resolved`

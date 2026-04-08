@@ -291,8 +291,8 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 ## PDF Handling
 
 ### Implemented
-- text-layer PDFs are read through the local file-reading path
-- scanned/image-only PDFs return explicit OCR-not-supported guidance
+- text-layer PDFs are read and produce a visible summary body with `문서 요약` label and PDF filename in context box/quick meta/transcript meta
+- scanned/image-only PDFs return visible OCR-not-supported guidance with exact strings `요약할 수 없습니다`, `OCR`, `이미지형 PDF`, `다음 단계:`
 - uploaded folder search returns a count-only partial-failure notice when some files cannot be read, while retaining readable-file result preview with ordered label, full-path tooltip, match badge, and snippet; search-only path preserves selected path/copy, hidden response body, transcript preview, and transcript body hidden; search-plus-summary path preserves visible summary body alongside preview cards in both response detail and transcript (separate from OCR-not-supported guidance)
 
 ### Not Implemented

@@ -118,7 +118,7 @@
 - Content fields — `text`, `note_preview` (nullable), `selected_source_paths` (default `[]`) — carry the response body and source context.
 - Metadata fields — `approval` (nullable), `active_context` (nullable), `response_origin` (nullable), `applied_preferences` (nullable), `evidence` (default `[]`), `summary_chunks` (default `[]`), `claim_coverage` (default `[]`), `claim_coverage_progress_summary` (default `""`) — reuse shapes documented in Session And Trace Gates and PRODUCT_SPEC.
 - Correction fields — `original_response_snapshot` (nullable), `corrected_outcome` (nullable), `approval_reason_record` (nullable), `content_reason_record` (nullable), `save_content_source` (`original_draft` | `corrected_text` | `null`) — all `null` when absent; carry pre-correction state and reason records when present.
-- Service tests (`tests/test_web_app.py`) and browser smoke tests (`tests/test_smoke.py`) lock the control fields and their expected values. The same tests also lock correction/save field anchors including `original_response_snapshot`, `corrected_outcome`, `save_content_source`, `approval_reason_record`, and `content_reason_record`.
+- Service tests (`tests/test_web_app.py`) and Python smoke tests (`tests/test_smoke.py`) lock the control fields and their expected values. The same tests also lock correction/save field anchors including `original_response_snapshot`, `corrected_outcome`, `save_content_source`, `approval_reason_record`, and `content_reason_record`. Playwright browser smoke (`e2e/tests/web-smoke.spec.mjs`) covers the browser-visible contract separately.
 - See ARCHITECTURE for the full field table and PRODUCT_SPEC for field-level documentation.
 
 ### Open Questions

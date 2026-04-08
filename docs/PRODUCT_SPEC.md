@@ -264,14 +264,14 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
   - `corrected_text` — owned by the original grounded-brief source message only
   - `corrected_outcome` — owned by the original grounded-brief source message only
   - `content_reason_record` — owned by the original grounded-brief source message only
-  - `session_local_memory_signal`
-  - `superseded_reject_signal`
-  - `historical_save_identity_signal`
-  - `session_local_candidate`
-  - `candidate_confirmation_record`
-  - `candidate_recurrence_key`
-  - `durable_candidate`
-  - `candidate_review_record`
+  - `session_local_memory_signal` — grounded-brief source message only (requires `original_response_snapshot`)
+  - `superseded_reject_signal` — grounded-brief source message only
+  - `historical_save_identity_signal` — grounded-brief source message only
+  - `session_local_candidate` — grounded-brief source message only (requires same source-message anchor)
+  - `candidate_confirmation_record` — grounded-brief source message only (sibling of `session_local_candidate`)
+  - `candidate_recurrence_key` — grounded-brief source message only (sibling of `session_local_candidate`)
+  - `durable_candidate` — grounded-brief source message only (sibling of `session_local_candidate` + `candidate_confirmation_record`)
+  - `candidate_review_record` — grounded-brief source message only (resolves when `durable_candidate` join matches)
   - `selected_source_paths`
   - `saved_note_path`
   - `save_content_source` — present on grounded-brief source messages after direct approved save, and on save/approval trace messages

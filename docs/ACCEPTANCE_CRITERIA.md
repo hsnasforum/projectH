@@ -113,9 +113,9 @@
 
 ### Response Payload Contract
 - The top-level response payload (`app/serializers.py:_serialize_response`) returns a fixed set of fields on every assistant response.
-- Shell control fields — `status` (one of `answer`, `error`, `needs_approval`, `saved` per `core/contracts.py:ResponseStatus`), `actions_taken`, `requires_approval`, `proposed_note_path`, `saved_note_path`, `web_search_record_path`, `follow_up_suggestions`, `search_results` — are directly consumed by `app/static/app.js` to gate approval UI, save confirmation, search preview, and follow-up rendering.
-- Identity and trace fields — `artifact_id`, `artifact_kind`, `source_message_id` — are present when a grounded-brief artifact exists.
-- Content fields — `text`, `note_preview`, `selected_source_paths` — carry the response body and source context.
+- Shell control fields — `status` (one of `answer`, `error`, `needs_approval`, `saved` per `core/contracts.py:ResponseStatus`), `actions_taken` (default `[]`), `requires_approval`, `proposed_note_path` (nullable), `saved_note_path` (nullable), `web_search_record_path` (nullable), `follow_up_suggestions` (default `[]`), `search_results` (default `[]`) — are directly consumed by `app/static/app.js` to gate approval UI, save confirmation, search preview, and follow-up rendering.
+- Identity and trace fields — `artifact_id` (nullable), `artifact_kind` (nullable), `source_message_id` (nullable) — are present when a grounded-brief artifact exists.
+- Content fields — `text`, `note_preview` (nullable), `selected_source_paths` (default `[]`) — carry the response body and source context.
 - Metadata fields — `approval` (nullable), `active_context` (nullable), `response_origin` (nullable), `applied_preferences` (nullable), `evidence` (default `[]`), `summary_chunks` (default `[]`), `claim_coverage` (default `[]`), `claim_coverage_progress_summary` (default `""`) — reuse shapes documented in Session And Trace Gates and PRODUCT_SPEC.
 - Correction fields — `original_response_snapshot`, `corrected_outcome`, `approval_reason_record`, `content_reason_record`, `save_content_source` — carry pre-correction state and reason records.
 - Service tests (`tests/test_web_app.py`) and browser smoke tests (`tests/test_smoke.py`) lock the control fields and their expected values.

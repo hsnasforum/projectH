@@ -137,13 +137,13 @@ The web shell is the main MVP surface. CLI remains available as a narrower debug
 | Field | Type | Role |
 |-------|------|------|
 | `status` | string | response status — one of `answer`, `error`, `needs_approval`, `saved` (`core/contracts.py:ResponseStatus`) — shell control |
-| `actions_taken` | list | actions taken during processing — shell control |
+| `actions_taken` | list | actions taken during processing (default `[]`) — shell control |
 | `requires_approval` | bool | `true` when save needs explicit approval — shell control |
 | `proposed_note_path` | string \| null | proposed save path — shell control |
 | `saved_note_path` | string \| null | actual saved path after approval — shell control |
 | `web_search_record_path` | string \| null | local web-search history record path — shell control |
-| `follow_up_suggestions` | list[string] | localized follow-up suggestions — shell control |
-| `search_results` | list[`{path, matched_on, snippet}`] | document search preview — shell control |
+| `follow_up_suggestions` | list[string] | localized follow-up suggestions (default `[]`) — shell control |
+| `search_results` | list[`{path, matched_on, snippet}`] | document search preview (default `[]`) — shell control |
 | `artifact_id` | string \| null | stable artifact identifier |
 | `artifact_kind` | string \| null | artifact type (e.g. `grounded_brief`) |
 | `source_message_id` | string \| null | source message anchor for save trace |

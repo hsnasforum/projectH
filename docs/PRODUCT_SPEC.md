@@ -1839,7 +1839,7 @@ Long term, projectH aims to become a teachable local personal agent that can lat
   - corrected-save first bridge path
   - corrected-save saved snapshot remains while late reject and later re-correct move the latest state separately
   - candidate-linked explicit confirmation plus pending `검토 후보` `accept`, reviewed-but-not-applied queue removal, and later stale-clear
-  - streaming cancel
+  - streaming progress + cancel
 
 ### In Progress
 - broader evaluation coverage for investigation-quality regressions

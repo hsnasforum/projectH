@@ -106,7 +106,7 @@ The web shell is the main MVP surface. CLI remains available as a narrower debug
 1. user chooses a local path or browser-picked file
 2. file is read locally
 3. summary is generated
-4. evidence and summary-range panels are attached
+4. evidence/source panel and summary span / applied-range panel are attached
 5. save is optional and approval-gated
 
 ### B. Document Search
@@ -1316,7 +1316,7 @@ The next phase should standardize one `grounded brief` artifact.
 - Playwright browser smoke (`make e2e-test`)
 
 ### Browser Smoke Coverage
-- file summary with evidence and summary-range panels
+- file summary with evidence/source panel and summary span / applied-range panel
 - browser file picker
 - browser folder picker for search
 - approval reissue
@@ -1327,7 +1327,7 @@ The next phase should standardize one `grounded brief` artifact.
 - candidate-linked explicit confirmation path with read-only `검토 후보` appearance and later stale-clear
 - same-session recurrence aggregate path with one separate `검토 메모 적용 후보` section, `검토 메모 적용 시작` enabled with mandatory reason textarea when `capability_outcome = unblocked_all_required` (disabled while blocked or note empty), emitted `reviewed_memory_transition_record` with `record_stage = emitted_record_only_not_applied` on enabled submit, preserved `review_queue_items` separation, `검토 메모 적용 실행` apply button visible after transition record emission, clicking apply changes `record_stage` to `applied_pending_result` and adds `applied_at`, `결과 확정` button visible after apply boundary, clicking it changes `record_stage` to `applied_with_result` and creates `apply_result` with `result_version = first_reviewed_memory_apply_result_v1`, `applied_effect_kind = reviewed_memory_correction_pattern`, `result_stage = effect_active`, and `result_at`, and the memory effect on future responses is now active (`result_stage = effect_active`) with active effects stored on the session as `reviewed_memory_active_effects` and future responses including a `[검토 메모 활성]` prefix with the operator's reason and pattern fingerprint; stop-apply: after the effect is active the card shows `적용 중단`; clicking it changes `record_stage` to `stopped`, sets `apply_result.result_stage` to `effect_stopped`, and removes the effect from `reviewed_memory_active_effects`; reversal: after stop the card shows `적용 되돌리기`; clicking it changes `record_stage` to `reversed`, sets `apply_result.result_stage` to `effect_reversed`, and adds `reversed_at`; conflict-visibility: after reversal the card shows `충돌 확인`; clicking it creates a separate `reviewed_memory_conflict_visibility_record` with `transition_action = future_reviewed_memory_conflict_visibility`, `record_stage = conflict_visibility_checked`, `source_apply_transition_ref`, evaluated `conflict_entries`, and `conflict_entry_count`
 - corrected-save saved snapshot remains while late reject and later re-correct move the latest state separately
-- streaming cancel
+- streaming progress + cancel
 
 ### Next-Phase Eval Placeholder
 - use named fixture families rather than one broad placeholder bucket:
@@ -1356,7 +1356,7 @@ The next phase should standardize one `grounded brief` artifact.
 - session timeline
 - approval + reissue approval flow
 - evidence/source panel
-- summary-range panel
+- summary span / applied-range panel
 - response origin badge
 - applied-preferences badge (`선호 N건 반영`) on assistant messages when `applied_preferences` is non-empty
 - streaming progress and cancel

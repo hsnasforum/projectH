@@ -15,7 +15,7 @@
 2. File summary / document search / general chat modes
 3. Active document context for follow-up questions
 4. Approval-based save and reissue approval flow
-5. Evidence/source panel and summary-range panel
+5. Evidence/source panel, structured search result preview panel, summary source-type labels, and summary span / applied-range panel
 6. Response-origin badges
 7. Streaming progress and cancel
 8. Response feedback capture with label/reason

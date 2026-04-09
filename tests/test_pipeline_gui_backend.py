@@ -125,34 +125,31 @@ class TestParseControlSlots(unittest.TestCase):
 class TestParseControlSlotsWindowsBranch(unittest.TestCase):
     """Exercise the IS_WINDOWS / _run branch via mocking."""
 
-    def test_windows_stat_uses_subsecond_format(self):
-        """stat -c %Y.%N produces sub-second mtime on the Windows path."""
+    def test_windows_find_printf_produces_subsecond_mtime(self):
+        """find -printf '%T@' produces real sub-second epoch floats on WSL."""
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             pipeline = project / ".pipeline"
             pipeline.mkdir()
-            # Write valid slots so _read_slot_status can find them on native path
             (pipeline / "claude_handoff.md").write_text("STATUS: implement\n")
             (pipeline / "operator_request.md").write_text("STATUS: needs_operator\n")
 
-            call_count = {"n": 0}
-            stat_responses = {
-                "claude_handoff.md": "1712700000.500000000",
-                "operator_request.md": "1712700000.100000000",
+            find_count = {"n": 0}
+            # Real find -printf '%T@\n' output: epoch seconds with fractional nanoseconds
+            find_responses = {
+                "claude_handoff.md": "1712700000.5000000000",
+                "operator_request.md": "1712700000.1000000000",
             }
 
-            original_run = None
-
             def fake_run(cmd, **kwargs):
-                if isinstance(cmd, list) and len(cmd) >= 3 and cmd[0] == "stat":
-                    call_count["n"] += 1
-                    for fname, resp in stat_responses.items():
-                        if fname in str(cmd[-1]):
-                            return 0, resp
+                if isinstance(cmd, list) and cmd[0] == "find":
+                    find_count["n"] += 1
+                    for fname, resp in find_responses.items():
+                        if fname in str(cmd[1]):
+                            return 0, resp + "\n"
                     return 1, ""
                 if isinstance(cmd, list) and cmd[0] == "head":
-                    # Let _read_slot_status fall through to native
-                    for fname in stat_responses:
+                    for fname in find_responses:
                         if fname in str(cmd[-1]):
                             return 0, (pipeline / fname).read_text()
                     return 1, ""
@@ -163,12 +160,47 @@ class TestParseControlSlotsWindowsBranch(unittest.TestCase):
                  mock.patch("pipeline_gui.backend._wsl_path_str", side_effect=str):
                 result = parse_control_slots(project)
 
-            self.assertGreater(call_count["n"], 0, "stat must be called on Windows path")
+            self.assertGreater(find_count["n"], 0, "find must be called on Windows path")
             self.assertIsNotNone(result["active"])
             self.assertEqual(result["active"]["file"], "claude_handoff.md")
             self.assertAlmostEqual(result["active"]["mtime"], 1712700000.5, places=1)
             self.assertEqual(len(result["stale"]), 1)
             self.assertEqual(result["stale"][0]["file"], "operator_request.md")
+
+    def test_windows_find_same_second_resolved_by_fractional(self):
+        """Same integer second but different fractional part must pick the newer slot."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            pipeline = project / ".pipeline"
+            pipeline.mkdir()
+            (pipeline / "claude_handoff.md").write_text("STATUS: implement\n")
+            (pipeline / "gemini_request.md").write_text("STATUS: request_open\n")
+
+            find_responses = {
+                "claude_handoff.md": "1712700000.2000000000",
+                "gemini_request.md": "1712700000.8000000000",
+            }
+
+            def fake_run(cmd, **kwargs):
+                if isinstance(cmd, list) and cmd[0] == "find":
+                    for fname, resp in find_responses.items():
+                        if fname in str(cmd[1]):
+                            return 0, resp + "\n"
+                    return 1, ""
+                if isinstance(cmd, list) and cmd[0] == "head":
+                    for fname in find_responses:
+                        if fname in str(cmd[-1]):
+                            return 0, (pipeline / fname).read_text()
+                    return 1, ""
+                return 1, ""
+
+            with mock.patch("pipeline_gui.backend.IS_WINDOWS", True), \
+                 mock.patch("pipeline_gui.backend._run", side_effect=fake_run), \
+                 mock.patch("pipeline_gui.backend._wsl_path_str", side_effect=str):
+                result = parse_control_slots(project)
+
+            self.assertEqual(result["active"]["file"], "gemini_request.md")
+            self.assertAlmostEqual(result["active"]["mtime"], 1712700000.8, places=1)
 
 
 class TestFormatControlSummary(unittest.TestCase):

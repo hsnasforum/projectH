@@ -273,14 +273,15 @@ def parse_control_slots(project: Path) -> dict[str, object]:
     for filename, expected_status in _CONTROL_SLOTS.items():
         slot_path = pipeline_dir / filename
         if IS_WINDOWS:
-            code, stat_out = _run(
-                ["stat", "-c", "%Y.%N", _wsl_path_str(slot_path)],
+            wsl_path = _wsl_path_str(slot_path)
+            code, find_out = _run(
+                ["find", wsl_path, "-maxdepth", "0", "-printf", "%T@\\n"],
                 timeout=FILE_QUERY_TIMEOUT,
             )
             if code != 0:
                 continue
             try:
-                mtime = float(stat_out.strip())
+                mtime = float(find_out.strip())
             except ValueError:
                 continue
         else:

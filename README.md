@@ -29,9 +29,14 @@
 
 위 제외 항목들은 현재 repo 안에 함께 존재하지만, 이번 릴리즈 게이트의 기본 판정 대상은 아닙니다.
 
+### Current Reviewed-Memory Boundary
+- `grounded brief` 1개가 공식 artifact로 고정됨
+- review queue (`검토 후보`)와 aggregate apply trigger (`검토 메모 적용 후보`)는 이미 출하
+- emitted/apply/result/active-effect 경로 및 stop-apply / reversal / conflict-visibility도 이미 출하
+
 ### Next Phase Design Target
-- `grounded brief` 1개를 공식 artifact로 고정
-- 그 artifact를 기준으로 correction / approval / preference memory를 구조화
+- 출하된 reviewed-memory 기반 위에 broader structured correction memory를 구조화
+- durable preference memory, cross-session memory, user-level memory는 아직 미출하
 - 이 단계는 문서 설계 계약 고정 단계이며, 아직 모델 학습이나 프로그램 조작 구현 단계가 아닙니다
 
 ### Long-Term North Star

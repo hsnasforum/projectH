@@ -5,7 +5,8 @@
 - shipped contract: local-first document assistant web MVP with response feedback capture, grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, and artifact-linked reject/reissue reason traces
 - current release candidate: `app.web` browser shell only
 - secondary mode: permission-gated web investigation (disabled/approval/enabled per session) under document-first guardrail
-- next phase target: correction / approval / preference memory around one official `grounded brief`
+- current reviewed-memory boundary: review queue (`검토 후보`), aggregate apply trigger (`검토 메모 적용 후보`), emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility are shipped
+- next phase target: broader structured correction memory and durable preference memory around the shipped `grounded brief`; cross-session memory remains later
 - long-term north star: teachable local personal agent with later approval-gated local action
 - operator tooling (`controller.server`, `pipeline_gui/`, `windows-launchers/`, `_data/`) remains outside the current release gate unless explicitly promoted
 

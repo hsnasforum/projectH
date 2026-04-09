@@ -11,9 +11,14 @@ This repository implements a **local-first document assistant web MVP** with exp
 - web investigation is a permission-gated secondary mode (disabled/approval/enabled per session) under the document-first guardrail, with local JSON history, in-session reload, history-card badges (answer-mode, verification-strength, source-role trust), entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade, and a claim-coverage panel with status tags, actionable hints, and focus-slot reinvestigation explanation
 - approval currently governs note saving only
 
+### Current Reviewed-Memory Boundary
+- the first reviewed-memory slice is shipped: review queue (`검토 후보`), aggregate apply trigger (`검토 메모 적용 후보`), emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility
+- the `grounded brief` is fixed as the official artifact
+
 ### Next Design Target
-- the next phase adds a correction / approval / preference memory layer around one official `grounded brief` artifact
-- current rounds can still land small additive trace fields on the existing session/task-log surfaces, but no separate artifact store or new review UI is introduced here
+- the next phase extends the shipped reviewed-memory boundary into broader structured correction memory and durable preference memory
+- cross-session memory and user-level memory remain later
+- current rounds can still land small additive trace fields on the existing session/task-log surfaces, but no separate artifact store is introduced here
 
 ## Layered Structure
 

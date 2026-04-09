@@ -90,11 +90,15 @@ The first official artifact is the `grounded brief`.
 - This phase is the minimum bridge between a static assistant and a teachable assistant.
 - It creates measurable assets for future personalization without pretending that a personalized model already exists.
 
+## Current Reviewed-Memory Boundary
+
+The first reviewed-memory slice is already shipped: review queue (`검토 후보`), aggregate apply trigger (`검토 메모 적용 후보`), emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility.
+
 ## Next Phase Design Target
 
 ### Goal
 
-Turn the current document assistant into a **learning-ready document assistant** that can remember correction and preference signals locally and use them in later responses.
+Extend the shipped reviewed-memory boundary into a **learning-ready document assistant** that can remember correction and preference signals locally and use them in later responses. Broader structured correction memory, durable preference memory, and cross-session memory remain the next phase.
 
 ### Minimum Contract
 - one `grounded brief` artifact identity per save-worthy document result

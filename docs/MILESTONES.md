@@ -7,8 +7,11 @@
 - Web investigation remains a permission-gated secondary mode (disabled/approval/enabled per session) under the document-first guardrail.
 - The current release candidate is the `app.web` browser shell; pipeline/controller/operator tooling remains outside the release gate.
 
+### Current Reviewed-Memory Boundary
+- The first reviewed-memory slice is shipped: review queue (`검토 후보`), aggregate apply trigger (`검토 메모 적용 후보`), emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility.
+
 ### Next Phase
-- The next phase is a correction / approval / preference memory layer for document work.
+- The next phase extends the shipped reviewed-memory boundary into broader structured correction memory and durable preference memory for document work. Cross-session memory remains later.
 
 ### Long-Term North Star
 - The long-term direction is a teachable local personal agent with later approval-gated local action.

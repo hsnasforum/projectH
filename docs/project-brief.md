@@ -16,9 +16,13 @@ Long term, projectH aims to become a **teachable local personal agent** that acc
 - Web investigation remains a **secondary mode** under the document-first guardrail, not the core product identity.
 - The current phase is **not** model training and **not** general program control.
 
-### Next Phase Design Target
-- The next phase is a **correction / approval / preference memory** layer around one official artifact.
+### Current Reviewed-Memory Boundary
+- The first reviewed-memory slice is shipped: review queue (`검토 후보`), aggregate apply trigger (`검토 메모 적용 후보`), emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility.
 - The chosen artifact is the `grounded brief`.
+
+### Next Phase Design Target
+- The next phase extends the shipped reviewed-memory boundary into broader **structured correction memory** and **durable preference memory**.
+- Cross-session memory and user-level memory remain later.
 - This phase is about building **learning-ready local assets**, not claiming that the model already learns by itself.
 
 ### Long-Term North Star

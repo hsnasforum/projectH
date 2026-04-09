@@ -8,7 +8,7 @@ This repository implements a **local-first document assistant web MVP** with exp
 
 ### Current Contract
 - current shipped behavior is the document-first MVP
-- web investigation remains a secondary mode
+- web investigation is a permission-gated secondary mode (disabled/approval/enabled per session) under the document-first guardrail, with local JSON history, in-session reload, history-card badges (answer-mode, verification-strength, source-role trust), entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade, and a claim-coverage panel with status tags, actionable hints, and focus-slot reinvestigation explanation
 - approval currently governs note saving only
 
 ### Next Design Target
@@ -127,8 +127,9 @@ The web shell is the main MVP surface. CLI remains available as a narrower debug
 2. permission gate is checked
 3. search results and page extracts are collected
 4. claim extraction / slot coverage / reinvestigation may run
-5. response renders source roles and claim coverage state
-6. search history is stored locally
+5. response renders source-role trust labels, verification-strength label, answer-mode badge, and claim-coverage panel with status tags, actionable hints, and focus-slot reinvestigation explanation
+6. entity-card / latest-update answer-mode distinction applies with separate verification labels and entity-card strong-badge downgrade
+7. search history is stored locally with in-session reload and history-card badges (answer-mode, verification-strength, source-role trust)
 
 ## Current Response Payload Contract
 
@@ -1361,7 +1362,9 @@ The next phase should standardize one `grounded brief` artifact.
 - applied-preferences badge (`선호 N건 반영`) on assistant messages when `applied_preferences` is non-empty
 - streaming progress and cancel
 - feedback capture on assistant messages
-- claim coverage state and reinvestigation helpers
+- claim-coverage panel with status tags, actionable hints, and focus-slot reinvestigation explanation
+- entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade
+- web-investigation history-card badges (answer-mode, verification-strength, source-role trust) and in-session reload
 
 ### In Progress
 - higher-quality entity-card investigation

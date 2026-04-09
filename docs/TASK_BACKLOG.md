@@ -362,7 +362,7 @@
   - current append-only `task_log` may mirror rollback trace but must not become the canonical rollback store
 69. Keep rollback separate from disable, conflict visibility, and operator audit:
   - rollback = reversal of already-applied reviewed-memory effect
-  - disable = stop-apply of applied reviewed-memory effect; the disable contract surface is shipped read-only while the disable state machine remains later
+  - disable = stop-apply of applied reviewed-memory effect; the disable contract surface is shipped read-only and the stop-apply lifecycle (`future_reviewed_memory_stop_apply`) is shipped on `record_stage`; per-precondition disable satisfaction booleans remain later
   - conflict visibility and operator-audit remain separate preconditions and must not be implied by rollback target definition alone
 70. Current same-session `recurrence_aggregate_candidates` items now also expose one read-only `reviewed_memory_rollback_contract`:
   - `rollback_version = first_reviewed_memory_effect_reversal_v1`

@@ -190,7 +190,7 @@
 - the first post-aggregate promotion boundary is now also fixed as a contract:
   - choose `Option A`: the shipped same-session aggregates remain promotion-ineligible
   - exact aggregate identity remains necessary but still insufficient for repeated-signal promotion
-  - reviewed-memory apply, stop-apply, reversal, and conflict-visibility are now shipped above the exact unblock precondition family; rollback, disable, and operator-audit contract surfaces are also shipped as read-only objects (state machines and satisfaction booleans remain later):
+  - reviewed-memory apply, stop-apply, reversal, and conflict-visibility are now shipped above the exact unblock precondition family; rollback, disable, and operator-audit contract surfaces are also shipped as read-only objects; the capability-status path is materialized (`unblocked_all_required`) while per-precondition satisfaction booleans and repeated-signal promotion remain later:
     - `reviewed_memory_boundary_defined`
     - `rollback_ready_reviewed_memory_effect`
     - `disable_ready_reviewed_memory_effect`

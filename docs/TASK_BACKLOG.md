@@ -303,7 +303,7 @@
 56. Keep the first post-aggregate reviewed-memory boundary explicit and separate:
   - `candidate_review_record` remains one source-message reviewed-but-not-applied trace
   - `recurrence_aggregate_candidates` remains one same-session grouping surface
-  - reviewed-memory apply, stop-apply, reversal, and conflict-visibility are now shipped; rollback, disable, and operator-audit contract surfaces are shipped as read-only while their state machines and satisfaction booleans remain later
+  - reviewed-memory apply, stop-apply, reversal, and conflict-visibility are now shipped; rollback, disable, and operator-audit contract surfaces are shipped as read-only objects; the capability-status path is materialized (`unblocked_all_required`) while per-precondition satisfaction booleans and repeated-signal promotion remain later
 57. Keep the shipped post-aggregate surface as one read-only aggregate-level promotion-eligibility marker only:
   - `promotion_basis = same_session_exact_recurrence_aggregate`
   - `promotion_eligibility = blocked_pending_reviewed_memory_boundary`

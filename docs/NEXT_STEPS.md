@@ -533,7 +533,7 @@
 - this shipped recurrence-key primitive still comes before broader `edit` / `reject` / `defer` or reviewed-history work:
   - review actions still operate on one current source-message candidate version
   - repeated-signal promotion needs the first truthful same-session cross-source aggregate before same-family aggregation can be honest
-- broader review actions and user-level memory remain premature because the repo still has no `edit` / `reject` / `defer` API, no payload-visible reviewed-memory store or proof-record / proof-boundary surface, and no cross-session counting; rollback / disable contract surfaces are shipped as read-only while their state machines remain later.
+- broader review actions and user-level memory remain premature because the repo still has no `edit` / `reject` / `defer` API, no payload-visible reviewed-memory store or proof-record / proof-boundary surface, and no cross-session counting; rollback / disable contract surfaces are shipped as read-only objects and the capability-status path plus apply / stop-apply / reversal / conflict-visibility lifecycle are already shipped above them; per-precondition satisfaction booleans and repeated-signal promotion remain later.
 
 ## Still Later Stage After This Slice
 - separate artifact store beyond the current message surface

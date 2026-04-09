@@ -329,7 +329,7 @@
   - no reviewed-memory apply
   - no repeated-signal promotion
   - no user-level memory
-63. Fix `reviewed_memory_boundary_defined` to one first narrow reviewed scope only:
+63. Keep the shipped `reviewed_memory_boundary_defined` fixed to one narrow reviewed scope:
   - `same_session_exact_recurrence_aggregate_only`
   - no reviewed-scope enum in the first boundary slice
   - no rename of `candidate_review_record`, `recurrence_aggregate_candidates`, or the current blocked marker into reviewed memory
@@ -406,7 +406,7 @@
   - it must remain contract-only and read-only
   - it must not become a disable state machine
   - it must not widen into cross-session scope
-78. Fix `conflict_visible_reviewed_memory_scope` to one exact same-session visibility boundary only:
+78. Keep the shipped `conflict_visible_reviewed_memory_scope` fixed to one exact same-session visibility boundary:
   - conflict visibility means operator-visible read-only exposure of competing reviewed-memory targets inside `same_session_exact_recurrence_aggregate_only`
   - it must remain tied to one current aggregate identity plus its exact supporting refs
   - it must stay broader than same-source-message edit conflict alone without widening into cross-session scope
@@ -433,7 +433,7 @@
   - it must remain contract-only and read-only
   - it must not become a conflict resolver
   - it must not widen into cross-session counting
-84. Fix `operator_auditable_reviewed_memory_transition` to one exact local transition-trace contract only:
+84. Keep the shipped `operator_auditable_reviewed_memory_transition` fixed to one exact local transition-trace contract:
   - operator audit must remain separate from current evidence traces and separate from conflict visibility itself
   - current append-only `task_log` may mirror the trace but must not become the canonical reviewed-memory audit store
 85. Keep operator-audit target boundary exact:
@@ -472,7 +472,7 @@
   - each current object means only `contract exists`
   - object existence must not count as `satisfied`
   - approval-backed save support, historical adjuncts, review acceptance, queue presence, and `task_log` mirror existence must remain outside satisfaction basis
-91. Fix first same-session unblock semantics as binary and all-required:
+91. Keep the shipped same-session unblock semantics fixed as binary and all-required:
   - unblock may occur only when all five reviewed-memory preconditions are satisfied through later machinery
   - the first widened vocabulary should stay binary:
     - `blocked_all_required`

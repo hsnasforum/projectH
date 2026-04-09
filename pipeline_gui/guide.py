@@ -21,19 +21,21 @@ Claude -> Codex -> (필요 시 Gemini -> Codex) -> Claude
 Gemini는 항상 호출되는 기본 단계가 아닙니다.
 Codex가 tie-break가 필요하다고 판단할 때만 호출됩니다.
 
-## 시작 시 첫 에이전트 결정
+## 시작 시 첫 에이전트 결정 (newest-valid-control 기준)
 
-파이프라인이 시작/재시작될 때 watcher는 아래 우선순위로 첫 agent를 결정합니다.
+파이프라인이 시작/재시작될 때 watcher는 **가장 최신의 유효한 control 슬롯**을 기준으로 첫 agent를 결정합니다.
+오래된 control 파일은 더 새로운 유효한 슬롯이 존재하면 비활성(inactive/stale) 상태로 무시됩니다.
 
-1. operator_request가 최신 pending이면 -> operator 대기
-2. gemini_request가 최신 pending이면 -> Gemini
-3. gemini_advice가 최신 pending이면 -> Codex follow-up
-4. 최신 /work가 same-day /verify보다 새로우면 -> Codex
-5. claude_handoff가 STATUS: implement이면 -> Claude
+1. 최신 유효 슬롯이 operator_request (STATUS: needs_operator)이면 -> operator 대기
+2. 최신 유효 슬롯이 gemini_request (STATUS: request_open)이면 -> Gemini
+3. 최신 유효 슬롯이 gemini_advice (STATUS: advice_ready)이면 -> Codex follow-up
+4. 최신 /work가 same-day /verify보다 새로우면 -> Codex (미검증 구현 우선 검증)
+5. 최신 유효 슬롯이 claude_handoff (STATUS: implement)이면 -> Claude
 6. 모든 파일이 비어 있으면 -> Claude (초기 상태)
 7. 그 외 -> Codex
 
 implement handoff가 있어도 최신 /work가 아직 검증되지 않았다면 Codex가 먼저 들어갑니다.
+오래된 pending 파일이 남아 있어도 더 새로운 유효 슬롯이 있으면 오래된 파일은 무시됩니다.
 
 ## 에이전트별 역할과 호출 조건
 
@@ -47,6 +49,11 @@ implement handoff가 있어도 최신 /work가 아직 검증되지 않았다면 
 역할:
 - 지정된 정확한 슬라이스 구현
 - 구현 closeout을 /work/...에 기록
+
+implement_blocked:
+- 핸드오프를 실행할 수 없으면 Claude는 STATUS: implement_blocked를 emit합니다
+- watcher가 implement_blocked를 감지하면 자동으로 Codex triage로 전환합니다
+- operator stop을 직접 열지 않고, Codex가 재분류하여 다음 행동을 결정합니다
 
 쓰면 안 되는 파일:
 - .pipeline/gemini_request.md
@@ -95,7 +102,10 @@ Gemini가 .pipeline/gemini_advice.md를 STATUS: advice_ready로 갱신하면 wat
 
 Codex -> gemini_request.md -> Gemini -> gemini_advice.md -> watcher -> Codex follow-up
 
-## control file 우선순위
+## control file 우선순위 (newest-valid-control)
+
+watcher는 가장 최신의 유효한 control 슬롯만 실행 입력으로 사용합니다.
+오래된 control 파일은 비활성(inactive/stale) 상태로, 더 새로운 유효 슬롯이 존재하면 무시됩니다.
 
 - .pipeline/claude_handoff.md -> Claude 실행
 - .pipeline/gemini_request.md -> Gemini 실행
@@ -145,6 +155,13 @@ Codex 기본 우선순위:
 - 왜 멈추는지
 - 어떤 /work, /verify 기준으로 멈췄는지
 - operator가 무엇을 결정해야 하는지
+
+## implement_blocked 자동 전환
+
+Claude가 STATUS: implement_blocked를 emit하면:
+- watcher가 이를 감지하고 자동으로 Codex triage 라운드를 시작합니다
+- operator stop을 직접 열지 않습니다
+- Codex가 block 사유를 분석하고 다음 슬라이스를 재선택하거나, 필요하면 operator stop 또는 Gemini 자문을 결정합니다
 
 ## 운영 원칙
 

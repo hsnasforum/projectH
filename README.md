@@ -134,7 +134,7 @@ Current smoke scenarios:
 12. same-session recurrence aggregate path renders one separate `검토 메모 적용 후보` section only after an aggregate exists, keeps `검토 메모 적용 시작` visible but disabled, keeps the queue-side `검토 수락` separate, and preserves `reviewed_memory_transition_record` absence
 13. streaming cancel
 14. general chat negative source-type label contract (no `문서 요약` / `선택 결과 요약` in quick-meta or transcript meta)
-15. claim-coverage panel rendering contract with `[교차 확인]`, `[단일 출처]`, `[미확인]` leading status tags, actionable hints, and focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved with natural Korean particle normalization)
+15. claim-coverage panel rendering contract with `[교차 확인]`, `[단일 출처]`, `[미확인]` leading status tags, actionable hints, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved with natural Korean particle normalization)
 16. web-search history card header badges: answer-mode badge (`설명 카드` / `최신 확인`), verification-strength badge (`검증 강` / `검증 중` / `검증 약` with CSS class), source-role trust badge compact label (`공식 기반(높음)` / `보조 기사(보통)` / `보조 커뮤니티(낮음)` with trust class)
 17. history-card entity-card `다시 불러오기` 클릭 후 reloaded response의 `WEB` origin badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail 유지 확인
 18. history-card latest-update `다시 불러오기` 클릭 후 reloaded response의 `WEB` origin badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail 유지 확인

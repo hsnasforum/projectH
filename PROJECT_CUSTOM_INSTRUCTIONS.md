@@ -9,9 +9,12 @@
 - 파일 요약 / 문서 검색 / 일반 채팅
 - 승인 기반 저장
 - approval 재발급(reissue) 흐름
-- 근거/출처 패널
-- 요약 반영 구간 패널
+- 근거/출처 패널 (source-role trust labels 포함)
+- structured search result preview panel
+- summary source-type labels (`문서 요약` / `선택 결과 요약`)
+- 요약 반영 구간 패널 (summary span / applied-range)
 - response origin 배지
+- applied-preferences badge (`선호 N건 반영`)
 - 스트리밍 진행 표시와 취소
 - PDF text-layer 읽기와 OCR 미지원 안내
 - 권한 게이트 기반 웹 조사와 로컬 JSON 기록
@@ -62,6 +65,9 @@
 ## 6. `/work` / `/verify` 작업기록 규칙
 - 의미 있는 구현/운영 작업이 끝나면 `work/<월>/<일>/YYYY-MM-DD-<slug>.md` 형식으로 closeout 메모를 남깁니다.
 - 의미 있는 검증 재실행 / truth 재대조 / 다음 라운드 handoff 작업이 끝나면 `verify/<월>/<일>/YYYY-MM-DD-<slug>.md` 형식으로 verification 메모를 남깁니다.
+- `work/`, `verify/`, `report/` 같은 persistent 기록은 기본적으로 한국어로 남깁니다.
+- `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, `.pipeline/gemini_advice.md`, `.pipeline/operator_request.md` 같은 execution/control 슬롯은 기본적으로 영어 중심 실행 지시로 유지합니다.
+- 다만 파일 경로, 테스트 이름, selector, field name, literal code identifier는 기록 언어와 무관하게 원문 그대로 둡니다.
 - `.pipeline/claude_handoff.md`는 현재 Claude 실행용 rolling 최신 슬롯입니다.
 - `.pipeline/gemini_request.md`는 현재 Codex -> Gemini arbitration 요청 슬롯입니다.
 - `.pipeline/gemini_advice.md`는 현재 Gemini -> Codex advisory 슬롯입니다.
@@ -142,6 +148,7 @@
   - 같은 family의 가장 작은 user-visible improvement
   - 그 다음 새로운 quality axis
   - 마지막으로 internal cleanup
+- 다만 같은 날 same-family docs-only truth-sync가 이미 3회 이상 반복됐다면, Codex는 더 작은 docs-only micro-slice를 자동 생성하지 말고 남은 drift를 한 번에 닫는 bounded bundle이나 Gemini/operator escalation으로 전환하는 편이 맞습니다.
 - `STATUS: needs_operator`는 위 순서로도 한 후보를 truthful하게 못 고를 때나, approval-record / truth-sync 문제가 새 구현보다 먼저일 때만 사용합니다.
 - 따라서 stop/go 실행 신호는 `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, `.pipeline/gemini_advice.md`, `.pipeline/operator_request.md`에서만 읽습니다. `.pipeline/codex_feedback.md`는 optional scratch로만 남길 수 있습니다.
 - 다만 `STATUS: needs_operator`로 멈출 때도, operator가 다음 결정을 내릴 수 있도록 최소한의 stop reason과 next decision context를 남겨야 합니다.

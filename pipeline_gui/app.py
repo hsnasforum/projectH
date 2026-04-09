@@ -36,7 +36,7 @@ from .backend import (
     current_verify_activity, parse_control_slots, format_control_summary,
 )
 from .agents import (
-    STATUS_COLORS, ANSI_RE,
+    STATUS_COLORS, ANSI_RE, AGENT_INDEX_NAMES,
     _extract_run_summary, format_elapsed, _parse_elapsed,
     extract_quota_note, detect_agent_status, capture_agent_panes,
     rejoin_wrapped_pane_lines, format_focus_output,
@@ -300,11 +300,11 @@ class PipelineGUI:
         )
         if code != 0 or not output:
             return (
-                [("Claude", "OFF", "", ""), ("Codex", "OFF", "", ""), ("Gemini", "OFF", "", "")],
+                [(name, "OFF", "", "") for name in AGENT_INDEX_NAMES.values()],
                 {},
             )
 
-        names = {0: "Claude", 1: "Codex", 2: "Gemini"}
+        names = AGENT_INDEX_NAMES
         hints = watcher_runtime_hints(self.project)
         agents: list[tuple[str, str, str, str]] = []
         pane_map: dict[str, str] = {}
@@ -2333,6 +2333,7 @@ class PipelineGUI:
         elif cached_result_current and self._setup_current_result_payload:
             effective_result_payload = self._setup_current_result_payload
 
+        can_promote = False
         if effective_result_payload:
             self._setup_current_result_payload = effective_result_payload
             replayed_result = self._setup_result_replays_last_applied(

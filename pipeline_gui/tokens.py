@@ -18,6 +18,7 @@ from .token_usage_shared import (
 )
 
 _CACHE_TTL_SECONDS = 30.0
+_TOKEN_CACHE_MAX_SIZE = 8
 _TOKEN_CACHE: dict[str, tuple[float, dict[str, dict[str, object]]]] = {}
 _DEFAULT_USAGE_SOURCES = {
     "Claude": "~/.claude/projects",
@@ -65,16 +66,16 @@ def format_token_usage_note(summary: dict[str, object]) -> str:
     parts: list[str] = []
     used_percent = summary.get("used_percent")
     if isinstance(used_percent, (int, float)):
-        parts.append(f"{round(float(used_percent))}% used")
+        parts.append(f"{round(float(used_percent))}% 사용")
     session_tokens = int(summary.get("session_tokens", 0) or 0)
     if session_tokens > 0:
-        parts.append(f"Sess {format_compact_count(session_tokens)}")
+        parts.append(f"세션 {format_compact_count(session_tokens)}")
     today_tokens = int(summary.get("today_tokens", 0) or 0)
     if today_tokens > 0 and today_tokens != session_tokens:
-        parts.append(f"Today {format_compact_count(today_tokens)}")
+        parts.append(f"오늘 {format_compact_count(today_tokens)}")
     reset_at = str(summary.get("reset_at") or "")
     if reset_at and used_percent is not None:
-        parts.append(f"Reset {reset_at}")
+        parts.append(f"리셋 {reset_at}")
     return " · ".join(parts[:3])
 
 
@@ -115,5 +116,8 @@ def collect_token_usage(project: Path) -> dict[str, dict[str, object]]:
     else:
         result = _shared_collect_all_token_usage()
     result = _normalize_result(result)
+    if len(_TOKEN_CACHE) >= _TOKEN_CACHE_MAX_SIZE:
+        oldest_key = min(_TOKEN_CACHE, key=lambda k: _TOKEN_CACHE[k][0])
+        del _TOKEN_CACHE[oldest_key]
     _TOKEN_CACHE[cache_key] = (now, result)
     return result

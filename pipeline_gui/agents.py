@@ -12,6 +12,9 @@ from .platform import (
     _wsl_path_str, _run,
 )
 from .project import _session_name_for
+from .setup_profile import SETUP_AGENT_ORDER
+
+AGENT_INDEX_NAMES: dict[int, str] = {i: name for i, name in enumerate(SETUP_AGENT_ORDER)}
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 BOX_DRAWING_ONLY_RE = re.compile(r"^[\s\-_=~│┃┆┊┌┐└┘├┤┬┴┼╭╮╯╰•·●○■□▶◀▸▹▾▿▴▵>*]+$")
@@ -252,7 +255,7 @@ def capture_agent_panes(project: Path, history_lines: int = 180, session: str = 
         ["tmux", "list-panes", "-t", f"{sess}:0", "-F", "#{pane_index}|#{pane_id}|#{pane_dead}"],
         timeout=TMUX_QUERY_TIMEOUT,
     )
-    names = {0: "Claude", 1: "Codex", 2: "Gemini"}
+    names = AGENT_INDEX_NAMES
     results: dict[str, str] = {}
     if code != 0 or not output:
         return results

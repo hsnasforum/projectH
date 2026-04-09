@@ -1,6 +1,11 @@
 """UI constants, color scheme, font definitions, widget builders."""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .app import PipelineGUI
+
 from tkinter import (
     Frame, Label, Button, Text, Entry, Checkbutton,
     StringVar, LEFT, RIGHT, BOTH, X, Y, END, WORD, DISABLED, NORMAL,
@@ -80,7 +85,7 @@ def make_hover_btn(parent: Frame, text: str, cmd, font, color: str = BTN_BG,
 # Section builders — each takes the app instance and builds one UI section
 # ═══════════════════════════════════════════════════════════════
 
-def build_header(app) -> None:
+def build_header(app: PipelineGUI) -> None:
     """Top console bar: title + mode tabs + status badge."""
     f = app._fonts
     top = Frame(app.root, bg=HEADER_BG, padx=16, pady=8)
@@ -128,7 +133,7 @@ def build_header(app) -> None:
     app.status_label.pack(side=RIGHT)
 
 
-def build_project_bar(app, content: Frame) -> None:
+def build_project_bar(app: PipelineGUI, content: Frame) -> None:
     """Project path entry + browse/apply + recent quick select."""
     from .platform import IS_WINDOWS, _wsl_path_str
     f = app._fonts
@@ -171,7 +176,7 @@ def build_project_bar(app, content: Frame) -> None:
     app._refresh_recent_buttons()
 
 
-def build_control_bar(app, content: Frame) -> None:
+def build_control_bar(app: PipelineGUI, content: Frame) -> None:
     """Control panel buttons."""
     f = app._fonts
     ctrl_bar = Frame(content, bg="#0e0e14")
@@ -202,7 +207,7 @@ def build_control_bar(app, content: Frame) -> None:
     app._action_in_progress = False
 
 
-def build_status_panels(app, content: Frame) -> None:
+def build_status_panels(app: PipelineGUI, content: Frame) -> None:
     """System + Artifacts overview cards."""
     f = app._fonts
     overview = Frame(content, bg=BG)
@@ -223,12 +228,82 @@ def build_status_panels(app, content: Frame) -> None:
     app.poll_state_label.pack(anchor="w", pady=(0, 2))
     app.setup_state_label = Label(system_card, textvariable=app.setup_var, font=f["body"], bg=CARD_BG, fg="#e0a040", anchor="w")
     app.setup_state_label.pack(anchor="w")
+    app._runtime_launch_label = Label(
+        system_card,
+        textvariable=app._runtime_launch_var,
+        font=f["small"],
+        bg=CARD_BG,
+        fg="#d8dae0",
+        anchor="w",
+        justify=LEFT,
+        wraplength=360,
+    )
+    app._runtime_launch_label.pack(anchor="w", pady=(4, 0))
+
+    control_group = Frame(system_card, bg=CARD_BG)
+    control_group.pack(fill=X, pady=(8, 0))
+
+    app.active_control_box = Frame(
+        control_group,
+        bg="#101826",
+        padx=8,
+        pady=6,
+        highlightthickness=1,
+        highlightbackground="#1d4ed8",
+    )
+    app.active_control_box.pack(fill=X)
+    app.active_control_title_label = Label(
+        app.active_control_box,
+        text="ACTIVE CONTROL",
+        font=f["section"],
+        bg="#101826",
+        fg="#60a5fa",
+        anchor="w",
+    )
+    app.active_control_title_label.pack(anchor="w")
     app.active_control_var = StringVar(value="활성 제어: —")
-    app.active_control_label = Label(system_card, textvariable=app.active_control_var, font=f["small"], bg=CARD_BG, fg="#60a5fa", anchor="w")
+    app.active_control_label = Label(
+        app.active_control_box,
+        textvariable=app.active_control_var,
+        font=f["small"],
+        bg="#101826",
+        fg="#93c5fd",
+        anchor="w",
+        justify=LEFT,
+        wraplength=360,
+    )
     app.active_control_label.pack(anchor="w", pady=(4, 0))
+
+    app.stale_control_box = Frame(
+        control_group,
+        bg="#14161d",
+        padx=8,
+        pady=6,
+        highlightthickness=1,
+        highlightbackground="#374151",
+    )
+    app.stale_control_title_label = Label(
+        app.stale_control_box,
+        text="INACTIVE / STALE",
+        font=f["section"],
+        bg="#14161d",
+        fg="#94a3b8",
+        anchor="w",
+    )
+    app.stale_control_title_label.pack(anchor="w")
     app.stale_control_var = StringVar(value="")
-    app.stale_control_label = Label(system_card, textvariable=app.stale_control_var, font=f["small"], bg=CARD_BG, fg="#6b7280", anchor="w")
-    app.stale_control_label.pack(anchor="w")
+    app.stale_control_label = Label(
+        app.stale_control_box,
+        textvariable=app.stale_control_var,
+        font=f["small"],
+        bg="#14161d",
+        fg="#94a3b8",
+        anchor="w",
+        justify=LEFT,
+        wraplength=360,
+    )
+    app.stale_control_label.pack(anchor="w", pady=(4, 0))
+    app._stale_control_box_visible = False
 
     file_card = make_card(overview)
     file_card.pack(side=LEFT, fill=BOTH, expand=True, padx=(6, 0))
@@ -246,7 +321,7 @@ def build_status_panels(app, content: Frame) -> None:
     app._verify_label.pack(anchor="w")
 
 
-def build_agent_cards(app, content: Frame) -> None:
+def build_agent_cards(app: PipelineGUI, content: Frame) -> None:
     """Three agent status cards: Claude, Codex, Gemini."""
     f = app._fonts
     agent_section = Frame(content, bg=BG)
@@ -284,7 +359,7 @@ def build_agent_cards(app, content: Frame) -> None:
             widget.configure(cursor="hand2")
 
 
-def build_token_panel(app, content: Frame) -> None:
+def build_token_panel(app: PipelineGUI, content: Frame) -> None:
     """Token overview panel with read-only metrics and maintenance actions."""
     f = app._fonts
     token_card = make_card(content)
@@ -337,7 +412,7 @@ def build_token_panel(app, content: Frame) -> None:
     action_lbl.pack(anchor="w", pady=(4, 0))
 
 
-def build_console_panels(app, content: Frame) -> None:
+def build_console_panels(app: PipelineGUI, content: Frame) -> None:
     """Agent output pane + watcher log pane (PanedWindow) + Guide mode + toast."""
     f = app._fonts
 
@@ -417,7 +492,7 @@ def build_console_panels(app, content: Frame) -> None:
     app.root.after(120, app._set_initial_pane_split)
 
 
-def build_setup_panels(app) -> None:
+def build_setup_panels(app: PipelineGUI) -> None:
     """Setup mode screen: left inputs, right derived state/preview."""
     f = app._fonts
     root = app._setup_frame
@@ -564,7 +639,7 @@ def build_setup_panels(app) -> None:
     Label(right, text="설정 해석", font=f["section"], bg=CARD_BG, fg=SUB_FG).pack(anchor="w")
     Label(
         right,
-        text="지원 수준, 유효성 요약, 미리보기 요약, 적용 준비 상태를 보여줍니다.",
+        text="초안 지원 수준과 현재 실행 프로필, 유효성 요약, 미리보기 요약, 적용 준비 상태를 보여줍니다.",
         font=f["small"],
         bg=CARD_BG,
         fg="#7c8798",
@@ -578,12 +653,19 @@ def build_setup_panels(app) -> None:
     )
     app._setup_mode_state_label.pack(anchor="w", pady=(4, 10))
 
-    Label(right, text="지원 수준", font=f["section"], bg=CARD_BG, fg="#8fa0b8").pack(anchor="w")
+    Label(right, text="초안 지원 수준", font=f["section"], bg=CARD_BG, fg="#8fa0b8").pack(anchor="w")
     app._setup_support_label = Label(
         right, textvariable=app._setup_support_level_var, font=f["body"], bg=CARD_BG, fg="#d8dae0",
         anchor="w", justify=LEFT, wraplength=420,
     )
     app._setup_support_label.pack(anchor="w", pady=(4, 10))
+
+    Label(right, text="실행 프로필", font=f["section"], bg=CARD_BG, fg="#8fa0b8").pack(anchor="w")
+    app._setup_runtime_profile_label = Label(
+        right, textvariable=app._setup_runtime_profile_var, font=f["body"], bg=CARD_BG, fg="#d8dae0",
+        anchor="w", justify=LEFT, wraplength=420,
+    )
+    app._setup_runtime_profile_label.pack(anchor="w", pady=(4, 10))
 
     Label(right, text="유효성 요약", font=f["section"], bg=CARD_BG, fg="#8fa0b8").pack(anchor="w")
     app._setup_validation_label = Label(

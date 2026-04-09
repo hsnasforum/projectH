@@ -18,6 +18,8 @@ Current implemented focus:
 - response origin badges
 - applied-preferences badge (`선호 N건 반영`)
 - streaming progress and cancel
+- response feedback capture
+- grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, and artifact-linked reject/reissue reason traces
 - PDF text-layer support with OCR-not-supported guidance
 - permission-gated web investigation (disabled/approval/enabled per session) with local JSON history, in-session reload, and history-card badges (answer-mode, verification-strength, source-role trust)
 - entity-card / latest-update answer-mode distinction with separate verification labels

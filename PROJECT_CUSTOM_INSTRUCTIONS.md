@@ -16,6 +16,8 @@
 - response origin 배지
 - applied-preferences badge (`선호 N건 반영`)
 - 스트리밍 진행 표시와 취소
+- 응답 피드백 수집
+- grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, and artifact-linked reject/reissue reason traces
 - PDF text-layer 읽기와 OCR 미지원 안내
 - 권한 게이트 기반 웹 조사 (disabled/approval/enabled per session) with local JSON history, in-session reload, and history-card badges (answer-mode, verification-strength, source-role trust)
 - entity-card / latest-update answer-mode distinction with separate verification labels

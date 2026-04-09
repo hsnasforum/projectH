@@ -140,11 +140,15 @@ Turn the current document assistant into a **learning-ready document assistant**
 - session history and active context
 - web investigation local JSON history and history-card badge traces when secondary mode is used
 
+### Already Shipped Foundations
+- grounded-brief artifact trace anchors (`artifact_id`, `artifact_kind`, `source_message_id`)
+- original-response snapshot and corrected-outcome capture (`original_response_snapshot`, `corrected_outcome`, `save_content_source`)
+- artifact-linked reject / reissue reason traces (`approval_reason_record`, `content_reason_record`)
+- corrected-save linkage on the same source anchor
+
 ### Needed Next
-- grounded-brief artifact snapshots
-- corrected output pairs
+- structured correction-memory schema (beyond current trace foundations)
 - durable preference-rule candidates
-- artifact-linked rejection reasons
 - eval fixtures for repeated document jobs
 
 ## What Not To Build Now

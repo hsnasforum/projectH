@@ -85,11 +85,16 @@ The first official artifact is the `grounded brief`.
 - claim coverage panel with status tags, actionable hints, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved)
 - Playwright smoke coverage for core browser flows
 
+### Already Shipped Foundations
+- `grounded brief` artifact identity (`artifact_id`, `artifact_kind`, `source_message_id` trace anchors)
+- original-response snapshot and corrected-outcome capture (`original_response_snapshot`, `corrected_outcome`, `save_content_source`)
+- artifact-linked reject / reissue reason traces (`approval_reason_record`, `content_reason_record`)
+- corrected-save linkage on the same source anchor
+
 ### Not Implemented
 - OCR
 - overwrite approval execution
-- `grounded brief` artifact identity
-- structured correction-memory schema
+- structured correction-memory schema (beyond current trace foundations)
 - durable preference memory
 - approval-gated local tool or program operation
 - personalized local model training or proprietary model training

@@ -219,7 +219,7 @@ class PipelineGUI:
         self._setup_verify_error_var = StringVar(value="")
         self._setup_advisory_error_var = StringVar(value="")
         self._setup_mode_state_var = StringVar(value=_SETUP_STATE_LABELS["DraftOnly"])
-        self._setup_support_level_var = StringVar(value=_SETUP_SUPPORT_LABELS["supported"])
+        self._setup_support_level_var = StringVar(value="확인 중")
         self._setup_runtime_profile_var = StringVar(value="실행 프로필: 확인 중")
         self._setup_validation_var = StringVar(value="유효성 문제 없음.")
         self._setup_preview_summary_var = StringVar(value="생성된 미리보기 없음.")
@@ -2086,7 +2086,15 @@ class PipelineGUI:
             write_json=self._setup_write_json,
             should_promote=self._setup_preview_can_promote_canonical,
             protected_setup_ids=self._setup_protected_staged_setup_ids,
+            on_complete=lambda: self._schedule_refresh_setup_mode_state(),
         )
+
+    def _schedule_refresh_setup_mode_state(self) -> None:
+        """비동기 executor 완료 후 main thread에서 setup state를 갱신합니다."""
+        try:
+            self.root.after(0, self._refresh_setup_mode_state)
+        except Exception:
+            pass
 
     def _setup_execute_apply_roundtrip(
         self,
@@ -2111,6 +2119,7 @@ class PipelineGUI:
             write_json=self._setup_write_json,
             should_promote=self._setup_result_can_promote_canonical,
             protected_setup_ids=self._setup_protected_staged_setup_ids,
+            on_complete=lambda: self._schedule_refresh_setup_mode_state(),
         )
 
     def _setup_result_feedback_lines(

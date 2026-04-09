@@ -103,6 +103,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - structured search result preview panel (ordered label with full-path tooltip, match type badge, content snippet)
 - summary source-type label (`문서 요약`, `선택 결과 요약`) in quick meta and transcript meta
 - response origin badge (`WEB`, answer-mode badge, verification label, source-role trust badges) for web investigation responses
+- applied-preferences badge (`선호 N건 반영`) on assistant messages when `applied_preferences` is non-empty, with tooltip showing preference descriptions
 - claim coverage panel with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`), actionable hints for weak or unresolved slots, a color-coded fact-strength summary bar, and a dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved) for web investigation responses
 
 ### Approval Points
@@ -310,7 +311,7 @@ The top-level response payload is serialized by `app/serializers.py:_serialize_r
 - `approval` — serialized approval object (see Approval Rules section for field shape), or `null` when no pending approval exists
 - `active_context` — serialized active context for follow-up answers, or `null`
 - `response_origin` — `{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}` or `null` when absent (e.g. error responses)
-- `applied_preferences` — applied preference records, or `null`
+- `applied_preferences` — applied preference records, or `null`; when non-empty the assistant message renders a `선호 N건 반영` badge with tooltip showing preference descriptions
 - `evidence` — list of evidence/source items (see Current Message Fields for item shape; default `[]`, never `null`)
 - `summary_chunks` — list of summary chunk items (see Current Message Fields for item shape; default `[]`, never `null`)
 - `claim_coverage` — list of claim coverage slot items (see Current Message Fields for slot shape; default `[]`, never `null`)
@@ -332,6 +333,7 @@ Service tests (`tests/test_web_app.py`) and Python smoke tests (`tests/test_smok
 - summary source-type label (`문서 요약` for local document summary, `선택 결과 요약` for selected search results) in both quick-meta bar and transcript message meta; single-source responses show basename-based `출처 <filename>` in both surfaces, multi-source responses show count-based `출처 N개` instead of raw filenames; general chat responses carry no source-type label
 - summary span / applied-range panel
 - response origin badge with separate answer-mode badge for web investigation (`설명 카드` / `최신 확인`), source-role trust labels, and verification strength tags in origin detail
+- applied-preferences badge (`선호 N건 반영`) on assistant messages when `applied_preferences` is non-empty, with tooltip showing preference descriptions
 - copy-to-clipboard buttons: `본문 복사`, `저장 경로 복사`, `승인 경로 복사`, `검색 기록 경로 복사`, `경로 복사` (selected source paths panel); all share one helper that shows clipboard-specific failure notice on both success-path rejection and fallback failure
 - claim verification / coverage panel where applicable, with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`) leading each slot line, actionable hints for weak or unresolved slots, source role with trust level labels, a color-coded fact-strength summary bar above the response text, and entity-card verification badge downgrade from strong when no claim slot has cross-verified status
 - web search history panel with source previews, answer-mode badges, color-coded verification-strength badges, and color-coded source-role trust badges in history cards

@@ -153,7 +153,7 @@ The web shell is the main MVP surface. CLI remains available as a narrower debug
 | `approval` | object \| null | serialized approval (see Approval Contract) |
 | `active_context` | object \| null | follow-up context |
 | `response_origin` | object \| null | `{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}` when present; `null` on error paths |
-| `applied_preferences` | list \| null | applied preference records |
+| `applied_preferences` | list \| null | applied preference records; when non-empty the assistant message renders a `선호 N건 반영` badge with tooltip |
 | `evidence` | list | evidence/source items (reuses per-message shape; default `[]`) |
 | `summary_chunks` | list | summary chunk items (reuses per-message shape; default `[]`) |
 | `claim_coverage` | list | claim coverage slots (reuses per-message shape; default `[]`) |
@@ -1358,6 +1358,7 @@ The next phase should standardize one `grounded brief` artifact.
 - evidence/source panel
 - summary-range panel
 - response origin badge
+- applied-preferences badge (`선호 N건 반영`) on assistant messages when `applied_preferences` is non-empty
 - streaming progress and cancel
 - feedback capture on assistant messages
 - claim coverage state and reinvestigation helpers

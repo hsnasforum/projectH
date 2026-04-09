@@ -41,7 +41,7 @@ Responsibilities:
 - orchestration
 - request mode and web-search intent classification
 - approval gating and reissue approval flow
-- evidence and summary-range selection
+- evidence/source and summary span / applied-range selection
 - active document context handling
 - web investigation ranking, claim extraction, slot coverage, and reinvestigation
 
@@ -113,7 +113,7 @@ The web shell is the main MVP surface. CLI remains available as a narrower debug
 1. user provides search root or browser-picked folder
 2. search returns selected sources
 3. summary is generated from selected results
-4. evidence and summary-range metadata are attached
+4. evidence/source and summary span / applied-range metadata are attached
 5. save is optional and approval-gated
 
 ### C. Approval Save

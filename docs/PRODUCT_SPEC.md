@@ -132,7 +132,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - for short documents, the current short-summary prompt stays document-oriented and may keep narrative-friendly flow reconstruction when the source is a local file or uploaded document
 - for long documents, reduce chunk notes into one final summary while keeping summary chunks visible as evidence anchors
 - the current long-summary chunk-note and reduce prompts stay document-oriented and may keep narrative-friendly flow reconstruction when the source is a local file or uploaded document
-- attach evidence and summary-range metadata
+- attach evidence/source and summary span / applied-range metadata
 - optionally request approval-gated save
 
 ### 2. Document Search
@@ -142,7 +142,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - when multiple selected results are short enough to avoid chunking, the current short-summary prompt stays search-result-oriented and prioritizes shared facts, meaningful differences, key actions or decisions, and grounded conclusion over narrative retelling; when only a single result is selected, the short-summary prompt uses non-comparative wording focused on main facts, actions, and grounded conclusion without cross-result comparison
 - when multiple selected results are long enough to trigger chunking and reduce, the reduce prompt stays search-result-oriented and prioritizes shared facts, meaningful differences, key actions or decisions, and grounded conclusion over narrative retelling; when only a single result triggers chunking, the reduce prompt uses non-comparative wording focused on main facts, actions, and grounded conclusion without cross-result comparison
 - when chunking is triggered, per-chunk chunk-note prompts follow the same result-count split: multi-result chunk notes prioritize source-backed facts and meaningful differences, while single-result chunk notes use non-comparative wording focused on main facts, actions, and grounded takeaway without cross-result comparison
-- attach evidence and summary-range metadata
+- attach evidence/source and summary span / applied-range metadata
 - optionally request approval-gated save
 
 ### 3. General Chat
@@ -1829,7 +1829,7 @@ Long term, projectH aims to become a teachable local personal agent that can lat
 ### Implemented
 - unit and service regression through `python3 -m unittest -v`
 - Playwright smoke coverage for:
-  - file summary with evidence and summary range
+  - file summary with evidence/source panel and summary span / applied-range panel
   - browser file picker
   - browser folder picker search
   - approval reissue

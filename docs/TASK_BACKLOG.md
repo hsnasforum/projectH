@@ -344,7 +344,7 @@
   - deterministic `drafted_at = last_seen_at`
 65. Keep the shipped `reviewed_memory_boundary_draft` narrower than reviewed-memory store/apply:
   - no readiness or satisfaction tracker
-  - no apply result
+  - reviewed-memory apply result is shipped separately above the capability path; boundary draft does not carry it
   - no cross-session scope
   - do not widen into cross-session counting or user-level memory
 66. Keep the shipped `reviewed_memory_rollback_contract` as one exact rollback contract surface with shipped target definition:

@@ -396,7 +396,7 @@
     - no eligibility transition
   - do not widen the shipped boundary draft yet:
     - no readiness or satisfaction tracker
-    - no apply result
+    - reviewed-memory apply result is shipped separately above the capability path; boundary draft does not carry it
     - no cross-session scope
   - keep the aggregate surface read-only, non-promoting, and separate from `review_queue_items`, reviewed history, and user-level memory
   - do not reopen repeated-signal promotion, same-family merge helper work, or cross-session counting; reviewed-memory apply is now shipped above the precondition family

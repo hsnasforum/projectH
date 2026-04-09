@@ -19,8 +19,9 @@ Current implemented focus:
 - applied-preferences badge (`선호 N건 반영`)
 - streaming progress and cancel
 - PDF text-layer support with OCR-not-supported guidance
-- permission-gated web investigation with local JSON history
-- claim coverage / verification state and history reload
+- permission-gated web investigation (disabled/approval/enabled per session) with local JSON history, in-session reload, and history-card badges (answer-mode, verification-strength, source-role trust)
+- entity-card / latest-update answer-mode distinction with separate verification labels
+- claim-coverage panel with status tags, actionable hints, and focus-slot reinvestigation explanation
 - Playwright smoke coverage for the browser MVP
 
 ## Product Priorities

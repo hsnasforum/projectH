@@ -17,8 +17,9 @@
 - applied-preferences badge (`선호 N건 반영`)
 - 스트리밍 진행 표시와 취소
 - PDF text-layer 읽기와 OCR 미지원 안내
-- 권한 게이트 기반 웹 조사와 로컬 JSON 기록
-- claim coverage / verification 상태와 검색 기록 재활용
+- 권한 게이트 기반 웹 조사 (disabled/approval/enabled per session) with local JSON history, in-session reload, and history-card badges (answer-mode, verification-strength, source-role trust)
+- entity-card / latest-update answer-mode distinction with separate verification labels
+- claim-coverage panel with status tags, actionable hints, and focus-slot reinvestigation explanation
 - Playwright 스모크 검증
 
 항상 아래 원칙을 따르세요.

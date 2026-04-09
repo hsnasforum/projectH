@@ -196,11 +196,11 @@
     - `disable_ready_reviewed_memory_effect`
     - `conflict_visible_reviewed_memory_scope`
     - `operator_auditable_reviewed_memory_transition`
-  - the smallest shipped surface remains the read-only aggregate-level promotion-eligibility marker only, not reviewed-memory apply or cross-session counting
+  - the smallest shipped promotion surface remains the read-only aggregate-level promotion-eligibility marker only; the reviewed-memory apply path (apply / stop-apply / reversal / conflict-visibility) is shipped separately above the precondition family while promotion and cross-session counting remain later
   - the current contract now also emits one read-only aggregate-level `reviewed_memory_precondition_status` object with fixed overall blocked state and deterministic `evaluated_at = last_seen_at`
   - `reviewed_memory_boundary_defined` is now fixed to one shipped narrow reviewed scope:
     - `same_session_exact_recurrence_aggregate_only`
-    - one later reviewed-memory boundary draft remains narrower than reviewed-memory store/apply and narrower than user-level memory
+    - the shipped reviewed-memory boundary draft remains read-only and narrower than reviewed-memory store; the apply path is shipped separately while cross-session counting and user-level memory remain later
   - the current contract now also emits one read-only aggregate-level `reviewed_memory_boundary_draft` with:
     - `boundary_version = fixed_narrow_reviewed_scope_v1`
     - `reviewed_scope = same_session_exact_recurrence_aggregate_only`

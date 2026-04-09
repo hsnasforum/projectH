@@ -112,7 +112,7 @@
 
 ## Next 3 Implementation Priorities
 
-1. Keep the shipped read-only aggregate-level `reviewed_memory_precondition_status` fixed at overall blocked-only and do not widen it into per-precondition satisfaction or eligibility transition before actual reviewed-memory apply result machinery exists.
+1. Keep the shipped read-only aggregate-level `reviewed_memory_precondition_status` fixed at overall blocked-only and do not widen it into per-precondition satisfaction or eligibility transition; the reviewed-memory apply result is shipped (apply / stop-apply / reversal / conflict-visibility) while per-precondition satisfaction booleans and promotion remain later.
 2. Keep `edit` / `reject` / `defer`, broader scope suggestion, merge-helper reopen, broader save-history replay, durable-candidate application, user-level memory, and broader operator work in later slices until the recurrence boundary and review boundary both stay small and non-confusing.
 3. The reviewed-memory apply result, stop-apply (`future_reviewed_memory_stop_apply`), reversal (`future_reviewed_memory_reversal`), and conflict visibility (`future_reviewed_memory_conflict_visibility`) are now all implemented: after the effect is reversed (`record_stage = reversed`), the aggregate card shows a `충돌 확인` button; clicking it creates a separate conflict-visibility transition record with `transition_action = future_reviewed_memory_conflict_visibility`, `record_stage = conflict_visibility_checked`, evaluated `conflict_entries` and `conflict_entry_count`, and `source_apply_transition_ref`; the conflict visibility record is separate from the apply transition record. Keep repeated-signal promotion, broader durable promotion, and cross-session counting later than the now-shipped conflict visibility.
 
@@ -303,7 +303,7 @@
 56. Keep the first post-aggregate reviewed-memory boundary explicit and separate:
   - `candidate_review_record` remains one source-message reviewed-but-not-applied trace
   - `recurrence_aggregate_candidates` remains one same-session grouping surface
-  - reviewed-memory apply, stop-apply, reversal, and conflict-visibility are now shipped; rollback, disable, and operator-audit rules remain later
+  - reviewed-memory apply, stop-apply, reversal, and conflict-visibility are now shipped; rollback, disable, and operator-audit contract surfaces are shipped as read-only while their state machines and satisfaction booleans remain later
 57. Keep the shipped post-aggregate surface as one read-only aggregate-level promotion-eligibility marker only:
   - `promotion_basis = same_session_exact_recurrence_aggregate`
   - `promotion_eligibility = blocked_pending_reviewed_memory_boundary`
@@ -347,7 +347,7 @@
   - no apply result
   - no cross-session scope
   - do not widen into cross-session counting or user-level memory
-66. Fix `rollback_ready_reviewed_memory_effect` to one exact future rollback target only:
+66. Keep the shipped `reviewed_memory_rollback_contract` as one exact rollback contract surface with shipped target definition:
   - rollback means applied reviewed-memory effect reversal, not source-message correction-history rewind
   - the first rollback target stays one applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
   - the shipped `reviewed_memory_boundary_draft` remains a scope draft and basis ref, not the rollback target
@@ -362,7 +362,7 @@
   - current append-only `task_log` may mirror rollback trace but must not become the canonical rollback store
 69. Keep rollback separate from disable, conflict visibility, and operator audit:
   - rollback = reversal of already-applied reviewed-memory effect
-  - disable = later stop-apply machinery
+  - disable = stop-apply of applied reviewed-memory effect; the disable contract surface is shipped read-only while the disable state machine remains later
   - conflict visibility and operator-audit remain separate preconditions and must not be implied by rollback target definition alone
 70. Current same-session `recurrence_aggregate_candidates` items now also expose one read-only `reviewed_memory_rollback_contract`:
   - `rollback_version = first_reviewed_memory_effect_reversal_v1`
@@ -377,7 +377,7 @@
   - it must remain contract-only and read-only
   - it must not become a rollback state machine
   - it must not widen into cross-session scope
-72. Fix `disable_ready_reviewed_memory_effect` to one exact future stop-apply target only:
+72. Keep the shipped `reviewed_memory_disable_contract` as one exact disable contract surface with shipped target definition:
   - disable means applied reviewed-memory effect stop-apply, not source-message correction-history rewrite
   - the first disable target stays one applied reviewed-memory effect inside `same_session_exact_recurrence_aggregate_only`
   - the shipped `reviewed_memory_boundary_draft` and shipped `reviewed_memory_rollback_contract` remain basis refs, not the disable target

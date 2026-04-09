@@ -326,7 +326,7 @@
 62. Keep the shipped aggregate-level `reviewed_memory_precondition_status` object narrow and blocked-only:
   - no per-precondition satisfaction booleans yet
   - no payload-visible reviewed-memory store and no payload-visible proof-record or proof-boundary surface
-  - no reviewed-memory apply
+  - the reviewed-memory apply path is shipped above this status object; no apply-result fields on the status object itself
   - no repeated-signal promotion
   - no user-level memory
 63. Keep the shipped `reviewed_memory_boundary_defined` fixed to one narrow reviewed scope:
@@ -473,7 +473,7 @@
   - object existence must not count as `satisfied`
   - approval-backed save support, historical adjuncts, review acceptance, queue presence, and `task_log` mirror existence must remain outside satisfaction basis
 91. Keep the shipped same-session unblock semantics fixed as binary and all-required:
-  - unblock may occur only when all five reviewed-memory preconditions are satisfied through later machinery
+  - unblock is shipped: `reviewed_memory_capability_status.capability_outcome = unblocked_all_required` materializes when the current source-family-plus-basis path is present; per-precondition satisfaction booleans and resolver machinery remain later
   - the first widened vocabulary should stay binary:
     - `blocked_all_required`
     - `unblocked_all_required`

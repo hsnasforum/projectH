@@ -194,6 +194,113 @@ def tmux_attach(session: str) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Control-slot parsing (newest-valid-control semantics)
+# ---------------------------------------------------------------------------
+
+_CONTROL_SLOTS = {
+    "claude_handoff.md": "implement",
+    "gemini_request.md": "request_open",
+    "gemini_advice.md": "advice_ready",
+    "operator_request.md": "needs_operator",
+}
+
+_SLOT_LABELS = {
+    "claude_handoff.md": "Claude 실행",
+    "gemini_request.md": "Gemini 실행",
+    "gemini_advice.md": "Codex follow-up",
+    "operator_request.md": "operator 대기",
+}
+
+
+def _read_slot_status(path: Path) -> str | None:
+    """Return the STATUS value from a control slot file, or None."""
+    if IS_WINDOWS:
+        code, content = _run(["head", "-5", _wsl_path_str(path)], timeout=FILE_QUERY_TIMEOUT)
+        if code != 0:
+            return None
+        text = content
+    else:
+        if not path.exists():
+            return None
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+    for line in text.splitlines()[:10]:
+        stripped = line.strip()
+        if stripped.startswith("STATUS:"):
+            return stripped.split(":", 1)[1].strip()
+    return None
+
+
+def parse_control_slots(project: Path) -> dict[str, object]:
+    """Parse the four canonical control slots and return active/stale info.
+
+    Returns a dict with:
+      - ``active``: ``{"file": str, "status": str, "label": str, "mtime": float}`` or ``None``
+      - ``stale``: list of ``{"file": str, "status": str, "label": str, "mtime": float}``
+    """
+    pipeline_dir = project / ".pipeline"
+    entries: list[dict[str, object]] = []
+
+    for filename, expected_status in _CONTROL_SLOTS.items():
+        slot_path = pipeline_dir / filename
+        if IS_WINDOWS:
+            code, stat_out = _run(
+                ["stat", "-c", "%Y", _wsl_path_str(slot_path)],
+                timeout=FILE_QUERY_TIMEOUT,
+            )
+            if code != 0:
+                continue
+            try:
+                mtime = float(stat_out.strip())
+            except ValueError:
+                continue
+        else:
+            if not slot_path.exists():
+                continue
+            try:
+                mtime = slot_path.stat().st_mtime
+            except OSError:
+                continue
+
+        status = _read_slot_status(slot_path)
+        if status != expected_status:
+            continue  # invalid status — not a valid control slot
+
+        entries.append({
+            "file": filename,
+            "status": status,
+            "label": _SLOT_LABELS[filename],
+            "mtime": mtime,
+        })
+
+    if not entries:
+        return {"active": None, "stale": []}
+
+    entries.sort(key=lambda e: e["mtime"], reverse=True)  # type: ignore[arg-type]
+    return {"active": entries[0], "stale": entries[1:]}
+
+
+def format_control_summary(parsed: dict[str, object]) -> tuple[str, str]:
+    """Return (active_text, stale_text) for display in the system card."""
+    active = parsed.get("active")
+    if active is None:
+        active_text = "활성 제어: 없음"
+    else:
+        active_text = f"활성 제어: {active['label']} ({active['file']})"  # type: ignore[index]
+
+    stale_list = parsed.get("stale", [])
+    if not stale_list:
+        stale_text = ""
+    else:
+        names = ", ".join(s["file"] for s in stale_list)  # type: ignore[index]
+        stale_text = f"비활성: {names}"
+
+    return active_text, stale_text
+
+
 def token_usage_db_path(project: Path) -> Path:
     return project / ".pipeline" / "usage" / "usage.db"
 

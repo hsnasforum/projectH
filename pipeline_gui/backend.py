@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 import time
@@ -15,9 +16,65 @@ from .platform import (
     _wsl_path_str, _windows_to_wsl_mount, _run, _hidden_subprocess_kwargs,
     _normalize_token_runtime_asset_path, _wsl_wrap, resolve_packaged_file, resolve_project_runtime_file,
 )
+from .formatting import time_ago as time_ago  # noqa: F811 — canonical + re-export
 from .project import _session_name_for
+from .setup_profile import join_display_resolver_messages, resolve_project_active_profile
 
 DEFAULT_TOKEN_SINCE_DAYS = 7
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_VERIFY_ACTIVE_STATUSES = {"VERIFY_PENDING", "VERIFY_RUNNING"}
+_VERIFY_ACTIVITY_LABELS = {
+    "VERIFY_PENDING": "Codex 검증 준비 중",
+    "VERIFY_RUNNING": "Codex 검증 실행 중",
+}
+
+
+def _read_log_lines(path: Path, *, tail_count: int) -> list[str]:
+    if IS_WINDOWS:
+        code, content = _run(["tail", "-n", str(tail_count), _wsl_path_str(path)], timeout=FILE_QUERY_TIMEOUT)
+        if code != 0:
+            return []
+        return content.splitlines()
+    if not path.exists():
+        return []
+    try:
+        from collections import deque
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return [line.rstrip("\n") for line in deque(f, maxlen=tail_count)]
+    except OSError:
+        return []
+
+
+def _clean_log_lines(lines: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    for line in lines:
+        stripped = _ANSI_RE.sub("", line).strip()
+        if not stripped:
+            continue
+        if set(stripped) == {"="}:
+            continue
+        cleaned.append(stripped)
+    return cleaned
+
+
+def _read_json_file(path: Path) -> dict[str, object] | None:
+    if IS_WINDOWS:
+        code, content = _run(["cat", _wsl_path_str(path)], timeout=FILE_QUERY_TIMEOUT)
+        if code != 0 or not content.strip():
+            return None
+        text = content
+    else:
+        if not path.exists():
+            return None
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def tmux_alive(session: str = "") -> bool:
@@ -92,56 +149,156 @@ def latest_md(directory: Path) -> tuple[str, float]:
         return rel, best_mtime
 
 
-def time_ago(mtime: float) -> str:
-    if mtime == 0:
-        return ""
-    diff = int(time.time() - mtime)
-    if diff < 60:
-        return f"{diff}초 전"
-    if diff < 3600:
-        return f"{diff // 60}분 전"
-    return f"{diff // 3600}시간 전"
 
 
 def watcher_log_tail(project: Path, lines: int = 5) -> list[str]:
     log_path = project / ".pipeline" / "logs" / "experimental" / "watcher.log"
-    if IS_WINDOWS:
-        code, content = _run(["tail", "-n", str(max(lines * 8, 40)), _wsl_path_str(log_path)], timeout=FILE_QUERY_TIMEOUT)
-        if code != 0:
-            content = ""
-        if not content:
-            return ["(로그 없음)"]
-        all_lines = content.splitlines()
-    else:
-        if not log_path.exists():
-            return ["(로그 없음)"]
-        try:
-            all_lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            return ["(읽기 실패)"]
+    all_lines = _read_log_lines(log_path, tail_count=max(lines * 8, 40))
+    if not all_lines:
+        return ["(로그 없음)"]
     filtered = [l for l in all_lines if "suppressed" not in l and "A/B ratio" not in l]
     return filtered[-lines:] if filtered else ["(이벤트 없음)"]
 
 
+def pipeline_start_log_tail(project: Path, lines: int = 5) -> list[str]:
+    log_path = project / ".pipeline" / "logs" / "experimental" / "pipeline-launcher-start.log"
+    all_lines = _read_log_lines(log_path, tail_count=max(lines * 8, 40))
+    if not all_lines:
+        return ["(로그 없음)"]
+    cleaned = _clean_log_lines(all_lines)
+    return cleaned[-lines:] if cleaned else ["(이벤트 없음)"]
+
+
+def pipeline_start_failure_hint(project: Path) -> str:
+    lines = pipeline_start_log_tail(project, lines=12)
+    if not lines or lines[0].startswith("("):
+        return ""
+    keywords = (
+        "launch blocked",
+        "blocked",
+        "error",
+        "failed",
+        "failure",
+        "차단",
+        "실패",
+        "없음",
+        "missing",
+        "not found",
+        "cannot",
+        "찾지 못",
+    )
+    for line in reversed(lines):
+        lower = line.lower()
+        if any(keyword in lower for keyword in keywords):
+            return line
+    return lines[-1]
+
+
+def watcher_start_observed(project: Path, *, not_before: float) -> bool:
+    log_path = project / ".pipeline" / "logs" / "experimental" / "watcher.log"
+    if IS_WINDOWS:
+        code, stat_text = _run(["stat", "-c", "%Y", _wsl_path_str(log_path)], timeout=FILE_QUERY_TIMEOUT)
+        if code != 0 or not stat_text.strip():
+            return False
+        try:
+            log_mtime = float(stat_text.strip())
+        except ValueError:
+            return False
+    else:
+        if not log_path.exists():
+            return False
+        try:
+            log_mtime = log_path.stat().st_mtime
+        except OSError:
+            return False
+    if log_mtime < not_before:
+        return False
+
+    lines = watcher_log_tail(project, lines=12)
+    if not lines or lines[0].startswith("("):
+        return False
+    markers = (
+        "WatcherCore v2.1 started",
+        "initial turn:",
+        "notify_claude:",
+        "notify_gemini:",
+        "notify_codex_followup:",
+        "waiting_for_claude:",
+    )
+    return any(any(marker in line for marker in markers) for line in lines)
+
+
+def confirm_pipeline_start(
+    project: Path,
+    session: str,
+    *,
+    start_requested_at: float,
+    action_label: str = "시작",
+    progress_callback: Callable[[str], None] | None = None,
+    timeout_seconds: int = 15,
+    sleep_fn: Callable[[float], None] | None = None,
+) -> tuple[bool, str]:
+    sleeper = sleep_fn or time.sleep
+    for sec in range(timeout_seconds):
+        sleeper(1)
+        session_alive = tmux_alive(session)
+        watcher_ok, _watcher_pid = watcher_alive(project)
+        watcher_seen = watcher_start_observed(project, not_before=start_requested_at - 1.0)
+        if session_alive:
+            if watcher_ok:
+                return True, f"파이프라인 {action_label} 완료"
+            if watcher_seen:
+                return True, f"파이프라인 {action_label} 완료 (watcher 확인)"
+            if sec >= 10:
+                hint = pipeline_start_failure_hint(project)
+                suffix = f" — {hint}" if hint else ""
+                return (
+                    False,
+                    f"{action_label} 불완전: tmux 세션은 있으나 watcher가 감지되지 않았습니다 "
+                    f"— .pipeline/logs/experimental/ 오류를 확인해 주세요{suffix}",
+                )
+            if progress_callback is not None:
+                progress_callback(f"{action_label} 중... tmux 확인, watcher 대기 중 ({sec + 1}초)")
+            continue
+        if watcher_ok or watcher_seen:
+            return True, f"파이프라인 {action_label} 완료 (watcher 확인)"
+        if sec >= 5 and progress_callback is not None:
+            progress_callback(f"{action_label} 중... tmux 세션 대기 중 ({sec + 1}초)")
+
+    hint = pipeline_start_failure_hint(project)
+    suffix = f" — {hint}" if hint else ""
+    return (
+        False,
+        f"{action_label} 실패: 15초 안에 tmux 세션 '{session}'가 감지되지 않았습니다 "
+        f"— launcher script가 오류로 종료됐을 수 있습니다{suffix}",
+    )
+
+
 def pipeline_start(project: Path, session: str = "") -> str:
     sess = session or _session_name_for(project)
+    resolved = resolve_project_active_profile(project)
+    controls = dict(resolved.get("controls") or {})
+    if not bool(controls.get("launch_allowed")):
+        detail = join_display_resolver_messages(resolved) or "Active profile launch is blocked."
+        return f"실행 차단: {detail}"
     try:
         script = resolve_project_runtime_file(project, "start-pipeline.sh")
     except FileNotFoundError:
         return "start-pipeline.sh 없음"
+    log_path = project / ".pipeline" / "logs" / "experimental" / "pipeline-launcher-start.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     if IS_WINDOWS:
         wsl_script = _windows_to_wsl_mount(script)
         wsl_project = _wsl_path_str(project)
-        subprocess.Popen(
-            ["wsl.exe", "-d", WSL_DISTRO, "--cd", wsl_project, "--",
-             "bash", "-l", wsl_script, wsl_project,
-             "--mode", "experimental", "--no-attach", "--session", sess],
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            creationflags=CREATE_NO_WINDOW,
-        )
+        with log_path.open("w", encoding="utf-8") as logf:
+            subprocess.Popen(
+                ["wsl.exe", "-d", WSL_DISTRO, "--cd", wsl_project, "--",
+                 "bash", "-l", wsl_script, wsl_project,
+                 "--mode", "experimental", "--no-attach", "--session", sess],
+                stdin=subprocess.DEVNULL, stdout=logf, stderr=subprocess.STDOUT,
+                creationflags=CREATE_NO_WINDOW,
+            )
     else:
-        log_path = project / ".pipeline" / "logs" / "experimental" / "pipeline-launcher-start.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("w", encoding="utf-8") as logf:
             subprocess.Popen(
                 ["bash", "-l", str(script), str(project),
@@ -318,6 +475,42 @@ def parse_control_slots(project: Path) -> dict[str, object]:
     return {"active": entries[0], "stale": entries[1:]}
 
 
+def current_verify_activity(project: Path) -> dict[str, object] | None:
+    state_dir = project / ".pipeline" / "state"
+    if not state_dir.exists():
+        return None
+
+    best_entry: dict[str, object] | None = None
+    best_key: tuple[float, float, float, str] | None = None
+    for state_path in state_dir.glob("*.json"):
+        data = _read_json_file(state_path)
+        if data is None:
+            continue
+        status = str(data.get("status") or "").strip()
+        if status not in _VERIFY_ACTIVE_STATUSES:
+            continue
+        artifact_path = str(data.get("artifact_path") or "").strip()
+        if not artifact_path:
+            continue
+        dispatch_at = float(data.get("last_dispatch_at") or 0.0)
+        updated_at = float(data.get("updated_at") or 0.0)
+        activity_at = float(data.get("last_activity_at") or dispatch_at or updated_at)
+        sort_key = (activity_at, dispatch_at, updated_at, state_path.name)
+        if best_key is None or sort_key > best_key:
+            artifact_name = PurePosixPath(artifact_path).name or Path(artifact_path).name or artifact_path
+            best_key = sort_key
+            best_entry = {
+                "job_id": str(data.get("job_id") or ""),
+                "status": status,
+                "label": _VERIFY_ACTIVITY_LABELS.get(status, "Codex 검증"),
+                "artifact_path": artifact_path,
+                "artifact_name": artifact_name,
+                "last_dispatch_at": dispatch_at,
+                "last_activity_at": activity_at,
+            }
+    return best_entry
+
+
 def _slot_provenance(entry: dict[str, object]) -> str:
     """Return 'seq N' or 'mtime fallback' for a parsed control-slot entry."""
     seq = entry.get("control_seq")
@@ -326,10 +519,21 @@ def _slot_provenance(entry: dict[str, object]) -> str:
     return "mtime fallback"
 
 
-def format_control_summary(parsed: dict[str, object]) -> tuple[str, str]:
+def format_control_summary(
+    parsed: dict[str, object],
+    *,
+    verify_activity: dict[str, object] | None = None,
+) -> tuple[str, str]:
     """Return (active_text, stale_text) for display in the system card."""
     active = parsed.get("active")
-    if active is None:
+    if verify_activity is not None:
+        artifact_name = str(verify_activity.get("artifact_name") or "latest /work")
+        phase_label = str(verify_activity.get("label") or "Codex 검증")
+        active_text = f"활성 제어: {phase_label} ({artifact_name})"
+        if active is not None:
+            prov = _slot_provenance(active)  # type: ignore[arg-type]
+            active_text += f" · 대기 제어 {active['label']} ({active['file']}, {prov})"  # type: ignore[index]
+    elif active is None:
         active_text = "활성 제어: 없음"
     else:
         prov = _slot_provenance(active)  # type: ignore[arg-type]

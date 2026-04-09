@@ -29,6 +29,7 @@ import traceback
 from pathlib import Path
 from typing import NamedTuple
 
+from pipeline_gui.formatting import time_ago, format_elapsed
 from pipeline_gui.project import _session_name_for
 from pipeline_gui.setup_profile import (
     join_resolver_messages,
@@ -362,26 +363,6 @@ def start_log_tail(project: Path, lines: int = 3) -> list[str]:
         return ["(읽기 실패)"]
 
 
-def time_ago(mtime: float) -> str:
-    if mtime == 0:
-        return ""
-    diff = int(time.time() - mtime)
-    if diff < 60:
-        return f"{diff}초 전"
-    if diff < 3600:
-        return f"{diff // 60}분 전"
-    return f"{diff // 3600}시간 전"
-
-
-def format_elapsed(seconds: float) -> str:
-    total = max(0, int(seconds))
-    mins, secs = divmod(total, 60)
-    hours, mins = divmod(mins, 60)
-    if hours > 0:
-        return f"{hours}h {mins}m"
-    if mins > 0:
-        return f"{mins}m {secs}s"
-    return f"{secs}s"
 
 
 def watcher_runtime_hints(project: Path) -> dict[str, tuple[str, str]]:

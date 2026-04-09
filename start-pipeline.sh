@@ -54,6 +54,73 @@ resolve_data_file() {
 TOKEN_COLLECTOR_PY="$(resolve_data_file token_collector.py)"
 WATCHER_CORE_PY="$(resolve_data_file watcher_core.py)"
 
+check_launch_gate() {
+    PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - "$PROJECT_ROOT" <<'PY'
+from pathlib import Path
+import sys
+
+from pipeline_gui.setup_profile import (
+    join_display_resolver_messages,
+    join_resolver_messages,
+    resolve_project_active_profile,
+)
+
+project = Path(sys.argv[1]).resolve()
+resolved = resolve_project_active_profile(project)
+controls = dict(resolved.get("controls") or {})
+if bool(controls.get("launch_allowed")):
+    raise SystemExit(0)
+detail = join_resolver_messages(resolved) or "Active profile launch is blocked."
+detail = join_display_resolver_messages(resolved) or detail
+print(f"Launch blocked: {detail}")
+raise SystemExit(1)
+PY
+}
+
+load_runtime_adapter_env() {
+    local exports_text
+    exports_text="$(
+        PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - "$PROJECT_ROOT" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+
+from pipeline_gui.setup_profile import SETUP_AGENT_ORDER, resolve_project_runtime_adapter
+
+adapter = resolve_project_runtime_adapter(Path(sys.argv[1]).resolve())
+controls = dict(adapter.get("controls") or {})
+enabled = {str(name).strip() for name in list(adapter.get("enabled_lanes") or []) if str(name).strip()}
+role_owners = dict(adapter.get("role_owners") or {})
+messages = [str(item).strip() for item in list(adapter.get("messages") or []) if str(item).strip()]
+order = {name: idx for idx, name in enumerate(SETUP_AGENT_ORDER)}
+
+values = {
+    "RUNTIME_SUPPORT_LEVEL": str(adapter.get("support_level") or "blocked"),
+    "RUNTIME_ENABLED_LANES": ",".join(sorted(enabled, key=lambda item: order.get(item, len(order)))),
+    "RUNTIME_MESSAGES": " | ".join(messages),
+    "LANE_CLAUDE_ENABLED": "1" if "Claude" in enabled else "0",
+    "LANE_CODEX_ENABLED": "1" if "Codex" in enabled else "0",
+    "LANE_GEMINI_ENABLED": "1" if "Gemini" in enabled else "0",
+    "ROLE_IMPLEMENT_OWNER": str(role_owners.get("implement") or ""),
+    "ROLE_VERIFY_OWNER": str(role_owners.get("verify") or ""),
+    "ROLE_ADVISORY_OWNER": str(role_owners.get("advisory") or ""),
+    "CTRL_ADVISORY_ENABLED": "1" if controls.get("advisory_enabled") else "0",
+    "CTRL_OPERATOR_STOP_ENABLED": "1" if controls.get("operator_stop_enabled") else "0",
+    "CTRL_SESSION_ARBITRATION_ENABLED": "1" if controls.get("session_arbitration_enabled") else "0",
+}
+
+for key, value in values.items():
+    print(f"{key}={shlex.quote(str(value))}")
+PY
+    )" || return 1
+    local tmpfile
+    tmpfile="$(mktemp)" || return 1
+    printf '%s\n' "$exports_text" > "$tmpfile"
+    # shellcheck disable=SC1090
+    . "$tmpfile"
+    rm -f "$tmpfile"
+}
+
 # CLI 경로 탐지 — non-interactive shell에서도 nvm/npm global을 찾을 수 있도록
 # 1차: 현재 PATH에서 탐색
 # 2차: nvm 로드 후 재시도
@@ -139,6 +206,33 @@ launch_agent_in_pane() {
     return 0
 }
 
+launch_disabled_lane_in_pane() {
+    local pane_target="$1"
+    local lane_name="$2"
+    local message
+    printf -v message "Physical lane %s disabled by active runtime plan; no runtime role is routed here." "$lane_name"
+    tmux respawn-pane -k -t "$pane_target" -c "$PROJECT_ROOT" "printf '%s\n' \"$message\"; exec bash" >/dev/null 2>&1 || {
+        echo -e "${YELLOW}  ${lane_name} disabled placeholder respawn 실패${NC}"
+        return 1
+    }
+    return 0
+}
+
+launch_runtime_lane() {
+    local pane_target="$1"
+    local lane_name="$2"
+    local enabled_flag="$3"
+    local cmd_text="$4"
+
+    if [ "$enabled_flag" = "1" ]; then
+        launch_agent_in_pane "$pane_target" "$lane_name" "$cmd_text"
+        wait_for_cli_ready "$pane_target" "$lane_name"
+        return $?
+    fi
+
+    launch_disabled_lane_in_pane "$pane_target" "$lane_name"
+}
+
 require_agent_bin() {
     local label="$1"
     local path="$2"
@@ -188,6 +282,15 @@ echo -e "${CYAN}  AI Pipeline Launcher  [mode: $MODE]${NC}"
 echo -e "${CYAN}============================================${NC}"
 echo -e "  프로젝트: $PROJECT_ROOT"
 echo ""
+
+if ! check_launch_gate; then
+    exit 1
+fi
+
+if ! load_runtime_adapter_env; then
+    echo -e "${YELLOW}  runtime adapter를 읽지 못했습니다${NC}"
+    exit 1
+fi
 
 # ------------------------------------------------------------
 # 1. 기존 프로세스 정리
@@ -270,9 +373,15 @@ tmux set-window-option -t "$SESSION" window-status-current-format "#[bold]#I:#W"
 tmux set-option -u -t "$SESSION" status-format[1] 2>/dev/null || true
 tmux set-window-option -t "$SESSION:0" remain-on-exit on >/dev/null 2>&1 || true
 
-require_agent_bin "Claude" "$CLAUDE_BIN" || exit 1
-require_agent_bin "Codex" "$CODEX_BIN" || exit 1
-require_agent_bin "Gemini" "$GEMINI_BIN" || exit 1
+if [ "$LANE_CLAUDE_ENABLED" = "1" ]; then
+    require_agent_bin "Claude" "$CLAUDE_BIN" || exit 1
+fi
+if [ "$LANE_CODEX_ENABLED" = "1" ]; then
+    require_agent_bin "Codex" "$CODEX_BIN" || exit 1
+fi
+if [ "$LANE_GEMINI_ENABLED" = "1" ]; then
+    require_agent_bin "Gemini" "$GEMINI_BIN" || exit 1
+fi
 
 # Capture pane IDs for reliable targeting (pane index can shift)
 CLAUDE_PANE=$(tmux display-message -t "$SESSION:0.0" -p '#{pane_id}')
@@ -280,17 +389,15 @@ CODEX_PANE=$(tmux split-window -P -F '#{pane_id}' -h -t "$CLAUDE_PANE" -c "$PROJ
 GEMINI_PANE=$(tmux split-window -P -F '#{pane_id}' -h -t "$CODEX_PANE" -c "$PROJECT_ROOT" "bash")
 tmux select-layout -t "$SESSION:0" even-horizontal
 
-launch_agent_in_pane "$CLAUDE_PANE" "Claude" "exec \"$CLAUDE_BIN\" --dangerously-skip-permissions"
-launch_agent_in_pane "$CODEX_PANE" "Codex" "exec \"$CODEX_BIN\" --ask-for-approval never --disable apps"
-launch_agent_in_pane "$GEMINI_PANE" "Gemini" "exec \"$GEMINI_BIN\" --approval-mode auto_edit"
+launch_runtime_lane "$CLAUDE_PANE" "Claude" "$LANE_CLAUDE_ENABLED" "exec \"$CLAUDE_BIN\" --dangerously-skip-permissions"
+launch_runtime_lane "$CODEX_PANE" "Codex" "$LANE_CODEX_ENABLED" "exec \"$CODEX_BIN\" --ask-for-approval never --disable apps"
+launch_runtime_lane "$GEMINI_PANE" "Gemini" "$LANE_GEMINI_ENABLED" "exec \"$GEMINI_BIN\" --approval-mode auto_edit"
 
-echo -e "${GRAY}  Claude pane: $CLAUDE_PANE  Codex pane: $CODEX_PANE  Gemini pane: $GEMINI_PANE${NC}"
-
-echo -e "${GRAY}  tmux: $SESSION (Claude=$CLAUDE_PANE / Codex=$CODEX_PANE / Gemini=$GEMINI_PANE)${NC}"
-
-wait_for_cli_ready "$CLAUDE_PANE" "Claude"
-wait_for_cli_ready "$CODEX_PANE" "Codex"
-wait_for_cli_ready "$GEMINI_PANE" "Gemini"
+echo -e "${GRAY}  lane panes: Claude=$CLAUDE_PANE  Codex=$CODEX_PANE  Gemini=$GEMINI_PANE${NC}"
+echo -e "${GRAY}  tmux scaffold: $SESSION (lane Claude=$CLAUDE_PANE / lane Codex=$CODEX_PANE / lane Gemini=$GEMINI_PANE)${NC}"
+echo -e "${GRAY}  runtime roles: implement->${ROLE_IMPLEMENT_OWNER:-—} verify->${ROLE_VERIFY_OWNER:-—} advisory->${ROLE_ADVISORY_OWNER:-—}${NC}"
+echo -e "${GRAY}  runtime plan: enabled=${RUNTIME_ENABLED_LANES:-—}${NC}"
+echo -e "${GRAY}  runtime controls: advisory=${CTRL_ADVISORY_ENABLED} operator_stop=${CTRL_OPERATOR_STOP_ENABLED} session_arbitration=${CTRL_SESSION_ARBITRATION_ENABLED}${NC}"
 sleep 1
 
 # ------------------------------------------------------------
@@ -309,10 +416,10 @@ fi
 
 if [ "$MODE" = "experimental" ] || [ "$MODE" = "both" ]; then
     echo -e "${GREEN}[4/4] experimental watcher 시작 중...${NC}"
-    VERIFY_PROMPT="ROLE: codex_verify\nSTATE: verify_pending\nLATEST_WORK: {latest_work_path}\nLATEST_VERIFY: {latest_verify_path}\nREAD_FIRST:\n- AGENTS.md\n- work/README.md\n- verify/README.md\n- .pipeline/README.md\nOUTPUTS:\n- /verify verification note if needed\n- .pipeline/claude_handoff.md for STATUS: implement\n- .pipeline/gemini_request.md when Codex cannot narrow after tie-break\n- .pipeline/operator_request.md only when Gemini still cannot resolve it\nRULES:\n- latest /work first, then same-day latest /verify if any\n- never route needs_operator to Claude\n- keep one exact next slice or one exact operator decision only"
-    CLAUDE_PROMPT="ROLE: claude_implement\nSTATE: implement\nHANDOFF: .pipeline/claude_handoff.md\nREAD_FIRST:\n- CLAUDE.md\n- .pipeline/claude_handoff.md"
-    GEMINI_PROMPT="ROLE: gemini_arbitrate\nSTATE: codex_needs_tiebreak\nOpen these files now:\n- @GEMINI.md\n- {gemini_request_mention}\n- @AGENTS.md\n- {latest_work_mention}\n- {latest_verify_mention}\nWrite exactly two files using edit/write tools only:\n- advisory log: {gemini_report_path}\n- recommendation slot: {gemini_advice_path}\nDo not use shell heredoc, shell redirection, cat > file, or printf > file.\nDo not modify any other repo files.\nKeep the recommendation short and exact."
-    CODEX_FOLLOWUP_PROMPT="ROLE: codex_followup\nSTATE: gemini_advice_ready\nREQUEST: .pipeline/gemini_request.md\nADVICE: .pipeline/gemini_advice.md\nLATEST_WORK: {latest_work_path}\nLATEST_VERIFY: {latest_verify_path}\nREAD_FIRST:\n- AGENTS.md\n- verify/README.md\n- .pipeline/README.md\n- .pipeline/gemini_request.md\n- .pipeline/gemini_advice.md"
+    VERIFY_PROMPT="ROLE: verify\nROLE_OWNER: {runtime_verify_owner}\nSTATE: verify_pending\nNEXT_CONTROL_SEQ: {next_control_seq}\nLATEST_WORK: {latest_work_path}\nLATEST_VERIFY: {latest_verify_path}\nRUNTIME_ENABLED_LANES: {runtime_enabled_lanes}\nREAD_FIRST:\n- {runtime_verify_read_first_doc}\n- work/README.md\n- verify/README.md\n- .pipeline/README.md\nSCOPE_HINT:\n{verify_scope_hint}\nOUTPUTS:\n- /verify verification note if needed\n- .pipeline/claude_handoff.md for STATUS: implement + CONTROL_SEQ: {next_control_seq}\n- .pipeline/gemini_request.md when Codex cannot narrow after tie-break + CONTROL_SEQ: {next_control_seq}\n- .pipeline/operator_request.md only when Gemini still cannot resolve it + CONTROL_SEQ: {next_control_seq}\nRULES:\n- role ownership is runtime metadata only; keep this verify contract lane-neutral\n- latest /work first, then same-day latest /verify if any\n- never route needs_operator to Claude\n- when writing a control slot, put CONTROL_SEQ immediately after STATUS and use exactly {next_control_seq}\n- keep one exact next slice or one exact operator decision only"
+    IMPLEMENT_PROMPT="ROLE: implement\nROLE_OWNER: {runtime_implement_owner}\nSTATE: implement_ready\nHANDOFF: {active_handoff_path}\nHANDOFF_SHA: {active_handoff_sha}\nRUNTIME_ENABLED_LANES: {runtime_enabled_lanes}\nREAD_FIRST:\n- {runtime_implement_read_first_doc}\n- work/README.md\n- .pipeline/README.md\n- {active_handoff_path}\nRULES:\n- role ownership is runtime metadata only; keep this implement contract lane-neutral\n- implement only the bounded slice from the handoff\n- if the slice is completed, leave a `/work` closeout note; `.pipeline` does not replace `/work`\n- do not use `report/` as the primary implementation closeout for a normal implement round\n- do not ask the operator to choose among options\n- do not self-select the next slice\n- do not write or update .pipeline/gemini_request.md or .pipeline/operator_request.md\n- if the handoff is blocked or not actionable, emit the exact sentinel below and stop\nBLOCKED_SENTINEL:\nSTATUS: implement_blocked\nBLOCK_REASON: <short_reason>\nREQUEST: verify_triage\nHANDOFF: {active_handoff_path}\nHANDOFF_SHA: {active_handoff_sha}\nBLOCK_ID: {active_handoff_sha}:<short_reason>"
+    ADVISORY_PROMPT="ROLE: advisory\nROLE_OWNER: {runtime_advisory_owner}\nSTATE: advisory_request_open\nNEXT_CONTROL_SEQ: {next_control_seq}\nRUNTIME_ENABLED_LANES: {runtime_enabled_lanes}\nOpen these files now:\n- @{runtime_advisory_read_first_doc}\n- .pipeline/README.md\n- {gemini_request_mention}\n- {latest_work_mention}\n- {latest_verify_mention}\nWrite exactly two files using edit/write tools only:\n- advisory log: {gemini_report_path}\n- recommendation slot: {gemini_advice_path} with STATUS: advice_ready and CONTROL_SEQ: {next_control_seq}\nKeep this advisory contract role-neutral even if the owner lane is not the default advisory lane.\nDo not use shell heredoc, shell redirection, cat > file, or printf > file.\nDo not modify any other repo files.\nWrite CONTROL_SEQ immediately after STATUS using exactly {next_control_seq}.\nKeep the recommendation short and exact."
+    FOLLOWUP_PROMPT="ROLE: followup\nROLE_OWNER: {runtime_verify_owner}\nSTATE: advisory_advice_ready\nNEXT_CONTROL_SEQ: {next_control_seq}\nREQUEST: .pipeline/gemini_request.md\nADVICE: .pipeline/gemini_advice.md\nLATEST_WORK: {latest_work_path}\nLATEST_VERIFY: {latest_verify_path}\nRUNTIME_ENABLED_LANES: {runtime_enabled_lanes}\nREAD_FIRST:\n- {runtime_verify_read_first_doc}\n- verify/README.md\n- .pipeline/README.md\n- .pipeline/gemini_request.md\n- .pipeline/gemini_advice.md\nOUTPUTS:\n- .pipeline/claude_handoff.md for STATUS: implement + CONTROL_SEQ: {next_control_seq}\n- .pipeline/operator_request.md for STATUS: needs_operator + CONTROL_SEQ: {next_control_seq}\nRULES:\n- role ownership is runtime metadata only; keep this followup contract lane-neutral\n- when writing a control slot, put CONTROL_SEQ immediately after STATUS and use exactly {next_control_seq}"
     EXP_LOG_QUOTED=$(printf '%q' "$PROJECT_ROOT/.pipeline/logs/experimental/watcher.log")
     EXP_CMD=(
         python3 "$WATCHER_CORE_PY"
@@ -323,9 +430,9 @@ if [ "$MODE" = "experimental" ] || [ "$MODE" = "both" ]; then
         --claude-pane-target "$CLAUDE_PANE"
         --gemini-pane-target "$GEMINI_PANE"
         --verify-prompt "$VERIFY_PROMPT"
-        --claude-prompt "$CLAUDE_PROMPT"
-        --gemini-prompt "$GEMINI_PROMPT"
-        --codex-followup-prompt "$CODEX_FOLLOWUP_PROMPT"
+        --implement-prompt "$IMPLEMENT_PROMPT"
+        --advisory-prompt "$ADVISORY_PROMPT"
+        --followup-prompt "$FOLLOWUP_PROMPT"
         --startup-grace 8
         --lease-ttl 600
     )

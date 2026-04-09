@@ -6,6 +6,7 @@ import re
 import time
 from pathlib import Path
 
+from .formatting import format_elapsed as format_elapsed  # noqa: F811 — canonical + re-export
 from .platform import (
     IS_WINDOWS, TMUX_QUERY_TIMEOUT, FILE_QUERY_TIMEOUT,
     _wsl_path_str, _run,
@@ -28,11 +29,19 @@ WATCHER_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")
 _JOB_ID_RE = re.compile(r"new job:\s*(\S+)")
 _STATE_TRANS_RE = re.compile(r"state\s+\S+\s+(\S+)\s*→\s*(\S+)")
 _ELAPSED_RE = re.compile(r"(\d+)\s*(h|m|s)")
+_CLAUDE_PROMPT_ONLY_RE = re.compile(r"^[❯›⏵>]+$")
+_RECENT_PROGRESS_LINE_RE = re.compile(
+    r"^[+•●◦○▪✻✶*\-]?\s*[A-Za-z][A-Za-z-]*ing(?:\.\.\.|…)?(?:\s*[|│].*)?$",
+    re.IGNORECASE,
+)
 _BUSY_PATTERNS = (
     "working (",        # ◦ Working (36s • esc to interrupt)
     "working for ",     # Worked for 1m 25s (transition text)
     "• working",        # • Working ...
     "◦ working",        # ◦ Working ...
+    "noodling",
+    "crunching",
+    "growing",
     "waiting for background",
     "background terminal",
     "cascading",
@@ -41,9 +50,24 @@ _BUSY_PATTERNS = (
     "leavering",
     "flumoxing",
     "philosophising",
-    "sautéed",
     "thinking",
     "esc to interrupt",
+)
+_CLAUDE_STRONG_LIVE_BUSY_PATTERNS = (
+    "noodling",
+    "crunching",
+    "growing",
+    "background terminal",
+    "waiting for background",
+    "waited for background",
+    "without interrupting claude's current work",
+    "cascading",
+    "lollygagging",
+    "hashing",
+    "leavering",
+    "flumoxing",
+    "philosophising",
+    "thinking",
 )
 
 STATUS_COLORS = {
@@ -84,15 +108,6 @@ def _extract_run_summary(log_lines: list[str]) -> dict[str, str]:
     return {"job": job, "phase": phase, "turn": turn, "ts": ts}
 
 
-def format_elapsed(seconds: float) -> str:
-    total = max(0, int(seconds))
-    mins, secs = divmod(total, 60)
-    hours, mins = divmod(mins, 60)
-    if hours > 0:
-        return f"{hours}h {mins}m"
-    if mins > 0:
-        return f"{mins}m {secs}s"
-    return f"{secs}s"
 
 
 def _parse_elapsed(note: str) -> float:
@@ -116,6 +131,33 @@ def _recent_nonempty_lines(pane_text: str, limit: int = 24) -> list[str]:
 def _recent_busy_indicator(pane_text: str, limit: int = 18) -> bool:
     recent_lower = "\n".join(_recent_nonempty_lines(pane_text, limit)).lower()
     return any(pattern in recent_lower for pattern in _BUSY_PATTERNS)
+
+
+def _has_recent_claude_ready_prompt(recent_lines: list[str]) -> bool:
+    tail = recent_lines[-4:]
+    for line in tail:
+        stripped = line.strip()
+        lowered = stripped.lower()
+        if "bypass permissions" in lowered:
+            return True
+        if _CLAUDE_PROMPT_ONLY_RE.match(stripped):
+            return True
+    return False
+
+
+def _has_recent_live_progress_line(recent_lines: list[str]) -> bool:
+    for line in recent_lines[-6:]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        lowered = stripped.lower()
+        if "working (" in lowered or "worked for " in lowered:
+            continue
+        if "sautéed" in lowered or "baked" in lowered:
+            continue
+        if _RECENT_PROGRESS_LINE_RE.match(stripped):
+            return True
+    return False
 
 
 def extract_working_note(lines: list[str]) -> str:
@@ -156,10 +198,16 @@ def detect_agent_status(label: str, pane_text: str) -> tuple[str, str]:
     if not lines:
         return "DEAD", ""
     lower = pane_text.lower()
-    recent_lower = "\n".join(_recent_nonempty_lines(pane_text, 18)).lower()
+    recent_lines = _recent_nonempty_lines(pane_text, 18)
+    recent_lower = "\n".join(recent_lines).lower()
+    has_recent_claude_prompt = label == "Claude" and _has_recent_claude_ready_prompt(recent_lines)
     has_recent_busy = _recent_busy_indicator(pane_text)
+    has_recent_live_progress = _has_recent_live_progress_line(recent_lines)
+    if has_recent_claude_prompt and not has_recent_live_progress and not any(pattern in recent_lower for pattern in _CLAUDE_STRONG_LIVE_BUSY_PATTERNS):
+        return "READY", ""
     if (
         has_recent_busy
+        or has_recent_live_progress
         or "waited for background" in recent_lower
         or "without interrupting claude's current work" in recent_lower
     ):
@@ -175,6 +223,27 @@ def detect_agent_status(label: str, pane_text: str) -> tuple[str, str]:
     if label == "Gemini" and ("type your message" in lower or "gemini cli" in lower or "workspace" in lower):
         return "READY", ""
     return "BOOTING", ""
+
+
+def merge_agent_status_hint(
+    label: str,
+    status: str,
+    note: str,
+    hint: tuple[str, str] | None,
+) -> tuple[str, str]:
+    if not hint:
+        return status, note
+    hint_status, hint_note = hint
+    if hint_status == "WORKING":
+        if status in {"BOOTING", "OFF"}:
+            return "WORKING", hint_note or note
+        if label == "Claude" and status == "READY":
+            return "WORKING", hint_note or note
+        if status == "WORKING" and hint_note:
+            return "WORKING", hint_note
+    elif hint_status == "READY" and status == "BOOTING":
+        return "READY", ""
+    return status, note
 
 
 def capture_agent_panes(project: Path, history_lines: int = 180, session: str = "") -> dict[str, str]:

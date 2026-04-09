@@ -1,11 +1,13 @@
 """Platform detection, WSL path conversion, and subprocess wrappers."""
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path, PurePosixPath
 
 IS_WINDOWS = sys.platform == "win32"
@@ -16,6 +18,7 @@ TMUX_QUERY_TIMEOUT = 5.0 if IS_WINDOWS else 2.0
 FILE_QUERY_TIMEOUT = 10.0 if IS_WINDOWS else 5.0
 GUI_RUNTIME_SUBDIR = PurePosixPath(".pipeline") / "gui-runtime" / "_data"
 _STAGED_RUNTIME_KEYS: set[str] = set()
+_STAGED_RUNTIME_LOCK = threading.Lock()
 _RUNTIME_STAGE_REQUIRED = (
     "start-pipeline.sh",
     "stop-pipeline.sh",
@@ -111,53 +114,79 @@ def _staged_runtime_complete(runtime_root: Path) -> bool:
     return all((runtime_root / rel).exists() for rel in _RUNTIME_STAGE_REQUIRED)
 
 
+def _file_sha256(path: Path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def _files_match(source: Path, dest: Path) -> bool:
+    source_sig = _file_sha256(source)
+    if not source_sig:
+        return False
+    return source_sig == _file_sha256(dest)
+
+
+def _staged_runtime_matches_packaged_assets(runtime_root: Path) -> bool:
+    for name in _RUNTIME_STAGE_REQUIRED:
+        staged = runtime_root / name
+        if not staged.exists():
+            return False
+        try:
+            source = resolve_packaged_file(name)
+        except FileNotFoundError:
+            return False
+        if not _files_match(source, staged):
+            return False
+    return True
+
+
 def ensure_staged_runtime_root(project: Path | str) -> Path:
     project_key = _wsl_path_str(project)
     runtime_root_wsl = _project_runtime_root(project)
     runtime_root_win = _wsl_to_windows_unc(str(runtime_root_wsl))
 
-    # Fast path: already staged and complete
-    if project_key in _STAGED_RUNTIME_KEYS and _staged_runtime_complete(runtime_root_win):
-        return Path(str(runtime_root_wsl))
-
-    # Also check if staged dir already exists and is complete (from previous exe run)
-    if runtime_root_win.exists() and _staged_runtime_complete(runtime_root_win):
-        _STAGED_RUNTIME_KEYS.add(project_key)
-        return Path(str(runtime_root_wsl))
-
-    # Need to stage: copy from packaged bundle
-    try:
-        source_root = resolve_packaged_file("start-pipeline.sh").parent
-    except FileNotFoundError:
-        # If packaged files are missing, check if staged dir is partially usable
-        if runtime_root_win.exists():
-            _STAGED_RUNTIME_KEYS.add(project_key)
-            return Path(str(runtime_root_wsl))
-        raise
-
-    runtime_root_win.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(source_root, runtime_root_win, dirs_exist_ok=True)
-
-    # Copy helper scripts that live outside the main _data/ tree
-    for helper_name in ("token_usage_shared.py", "token_dashboard_shared.py"):
-        helper_dst = runtime_root_win / helper_name
-        if helper_dst.exists():
-            continue  # Already staged (from copytree or previous run)
+    with _STAGED_RUNTIME_LOCK:
+        # Need to stage: copy from packaged bundle
         try:
-            helper_src = resolve_packaged_file(helper_name)
+            source_root = resolve_packaged_file("start-pipeline.sh").parent
+        except FileNotFoundError:
+            # If packaged files are missing, check if staged dir is partially usable
+            if runtime_root_win.exists():
+                _STAGED_RUNTIME_KEYS.add(project_key)
+                return Path(str(runtime_root_wsl))
+            raise
+
+        if runtime_root_win.exists() and _staged_runtime_complete(runtime_root_win):
+            if _staged_runtime_matches_packaged_assets(runtime_root_win):
+                _STAGED_RUNTIME_KEYS.add(project_key)
+                return Path(str(runtime_root_wsl))
+
+        runtime_root_win.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source_root, runtime_root_win, dirs_exist_ok=True)
+
+        # Copy helper scripts that live outside the main _data/ tree
+        for helper_name in ("token_usage_shared.py", "token_dashboard_shared.py"):
+            try:
+                helper_src = resolve_packaged_file(helper_name)
+            except FileNotFoundError:
+                pass  # Best-effort: may already be in staged dir from copytree
+                continue
+            helper_dst = runtime_root_win / helper_name
+            if _files_match(helper_src, helper_dst):
+                continue
             helper_dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(helper_src, helper_dst)
-        except FileNotFoundError:
-            pass  # Best-effort: may already be in staged dir from copytree
 
-    if not _staged_runtime_complete(runtime_root_win):
-        missing = [name for name in _RUNTIME_STAGE_REQUIRED if not (runtime_root_win / name).exists()]
-        raise FileNotFoundError(
-            f"staged runtime incomplete at {runtime_root_wsl}: missing {', '.join(missing)}"
-        )
+        if not _staged_runtime_complete(runtime_root_win):
+            missing = [name for name in _RUNTIME_STAGE_REQUIRED if not (runtime_root_win / name).exists()]
+            raise FileNotFoundError(
+                f"staged runtime incomplete at {runtime_root_wsl}: missing {', '.join(missing)}"
+            )
 
-    _STAGED_RUNTIME_KEYS.add(project_key)
-    return Path(str(runtime_root_wsl))
+        _STAGED_RUNTIME_KEYS.add(project_key)
+        return Path(str(runtime_root_wsl))
 
 
 def resolve_project_runtime_file(project: Path | str, name: str) -> Path:

@@ -700,7 +700,7 @@ The next phase should standardize one `grounded brief` artifact.
   - no review queue semantics beyond `promotion_eligibility = eligible_for_review`
   - no automatic promotion to user-level memory
 - current practical next path:
-  - keep the shipped read-only review queue consuming those `durable_candidate` records without opening any apply / rollback or user-level-memory layer yet
+  - the shipped read-only review queue consumes those `durable_candidate` records; the reviewed-memory apply / stop-apply / reversal / conflict-visibility lifecycle is now also shipped above the aggregate path; user-level memory still remains later
   - repeated-signal promotion remains blocked until a truthful recurrence key exists beyond family alone
 
 ### First Truthful Recurrence-Key Contract

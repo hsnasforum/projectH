@@ -151,7 +151,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 
 ### 4. Web Investigation
 - permission-gated read-only external search (disabled/approval/enabled per session)
-- stores local JSON history with in-session reload and history-card display (answer-mode, verification-strength, source-role trust badges)
+- stores local JSON history with in-session reload and history-card badges (answer-mode badges, color-coded verification-strength badges, color-coded source-role trust badges)
 - supports entity-card and latest-update answer-mode distinction with separate verification labels, source-role surfaces, claim coverage panel (status tags, actionable hints, fact-strength summary bar, dedicated plain-language focus-slot reinvestigation explanation covering reinforced / regressed / still single-source / still unresolved), and entity-card strong-badge downgrade
 - remains a **secondary mode** with document-first guardrail rather than the main product identity
 

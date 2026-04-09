@@ -21,7 +21,7 @@
 - PDF text-layer 읽기와 OCR 미지원 안내
 - 권한 게이트 기반 웹 조사 (disabled/approval/enabled per session) with local JSON history, in-session reload, and history-card badges (answer-mode badges, color-coded verification-strength badges, color-coded source-role trust badges)
 - entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade
-- claim-coverage panel with status tags, actionable hints, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved)
+- claim-coverage panel with status tags, actionable hints, source role with trust level labels, color-coded fact-strength summary bar, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved)
 - review queue (`검토 후보`), aggregate apply trigger (`검토 메모 적용 후보`), emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility
 - Playwright 스모크 검증
 

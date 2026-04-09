@@ -234,12 +234,38 @@ def _read_slot_status(path: Path) -> str | None:
     return None
 
 
+def _read_slot_control_seq(path: Path) -> int | None:
+    """Return CONTROL_SEQ from a control slot file, or None."""
+    if IS_WINDOWS:
+        code, content = _run(["head", "-10", _wsl_path_str(path)], timeout=FILE_QUERY_TIMEOUT)
+        if code != 0:
+            return None
+        text = content
+    else:
+        if not path.exists():
+            return None
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+
+    for line in text.splitlines()[:10]:
+        stripped = line.strip()
+        if stripped.startswith("CONTROL_SEQ:"):
+            try:
+                value = int(stripped.split(":", 1)[1].strip())
+            except ValueError:
+                return None
+            return value if value >= 0 else None
+    return None
+
+
 def parse_control_slots(project: Path) -> dict[str, object]:
     """Parse the four canonical control slots and return active/stale info.
 
     Returns a dict with:
-      - ``active``: ``{"file": str, "status": str, "label": str, "mtime": float}`` or ``None``
-      - ``stale``: list of ``{"file": str, "status": str, "label": str, "mtime": float}``
+      - ``active``: ``{"file": str, "status": str, "label": str, "mtime": float, "control_seq": int | None}`` or ``None``
+      - ``stale``: list of ``{"file": str, "status": str, "label": str, "mtime": float, "control_seq": int | None}``
     """
     pipeline_dir = project / ".pipeline"
     entries: list[dict[str, object]] = []
@@ -248,7 +274,7 @@ def parse_control_slots(project: Path) -> dict[str, object]:
         slot_path = pipeline_dir / filename
         if IS_WINDOWS:
             code, stat_out = _run(
-                ["stat", "-c", "%Y", _wsl_path_str(slot_path)],
+                ["stat", "-c", "%Y.%N", _wsl_path_str(slot_path)],
                 timeout=FILE_QUERY_TIMEOUT,
             )
             if code != 0:
@@ -274,12 +300,20 @@ def parse_control_slots(project: Path) -> dict[str, object]:
             "status": status,
             "label": _SLOT_LABELS[filename],
             "mtime": mtime,
+            "control_seq": _read_slot_control_seq(slot_path),
         })
 
     if not entries:
         return {"active": None, "stale": []}
 
-    entries.sort(key=lambda e: e["mtime"], reverse=True)  # type: ignore[arg-type]
+    entries.sort(
+        key=lambda e: (
+            e["control_seq"] is not None,
+            e["control_seq"] if e["control_seq"] is not None else -1,
+            e["mtime"],
+        ),
+        reverse=True,
+    )
     return {"active": entries[0], "stale": entries[1:]}
 
 

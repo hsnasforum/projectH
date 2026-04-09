@@ -26,10 +26,16 @@ class _Var:
 class _Widget:
     def __init__(self) -> None:
         self.state = None
+        self._fg = None
+        self._bg = None
 
     def configure(self, **kwargs: object) -> None:
         if "state" in kwargs:
             self.state = kwargs["state"]
+        if "fg" in kwargs:
+            self._fg = kwargs["fg"]
+        if "bg" in kwargs:
+            self._bg = kwargs["bg"]
 
 
 def _make_setup_gui(project: Path, *, adapter=None) -> PipelineGUI:
@@ -815,26 +821,127 @@ class PipelineGuiAppTest(unittest.TestCase):
         self.assertEqual(text, "폴링: 마지막 실행 4초 전")
         self.assertEqual(color, "#666666")
 
-    def test_apply_snapshot_sets_control_slot_vars(self) -> None:
-        gui = PipelineGUI.__new__(PipelineGUI)
-        gui.active_control_var = _Var()
-        gui.stale_control_var = _Var()
-        gui.active_control_label = _Widget()
-        gui.stale_control_label = _Widget()
-
-        control_slots = {
+    def test_apply_snapshot_control_slot_normal_active(self) -> None:
+        """_apply_snapshot sets control vars and blue color for normal active slot."""
+        gui = self._make_snapshot_gui()
+        snapshot = self._base_snapshot()
+        snapshot["control_slots"] = {
             "active": {"file": "claude_handoff.md", "status": "implement", "label": "Claude 실행", "mtime": 1.0},
             "stale": [{"file": "operator_request.md", "status": "needs_operator", "label": "operator 대기", "mtime": 0.5}],
         }
-        from pipeline_gui.backend import format_control_summary
-        active_text, stale_text = format_control_summary(control_slots)
-
-        gui.active_control_var.set(active_text)
-        gui.stale_control_var.set(stale_text)
-
+        PipelineGUI._apply_snapshot(gui, snapshot)
         self.assertIn("Claude 실행", gui.active_control_var.get())
         self.assertIn("operator_request.md", gui.stale_control_var.get())
         self.assertIn("비활성", gui.stale_control_var.get())
+        self.assertEqual(gui.active_control_label._fg, "#60a5fa")
+
+    def test_apply_snapshot_control_slot_needs_operator_red(self) -> None:
+        """_apply_snapshot uses red color when active control is needs_operator."""
+        gui = self._make_snapshot_gui()
+        snapshot = self._base_snapshot()
+        snapshot["control_slots"] = {
+            "active": {"file": "operator_request.md", "status": "needs_operator", "label": "operator 대기", "mtime": 1.0},
+            "stale": [],
+        }
+        PipelineGUI._apply_snapshot(gui, snapshot)
+        self.assertIn("operator 대기", gui.active_control_var.get())
+        self.assertEqual(gui.active_control_label._fg, "#f87171")
+
+    def test_apply_snapshot_control_slot_no_active_gray(self) -> None:
+        """_apply_snapshot uses gray color when no active control slot."""
+        gui = self._make_snapshot_gui()
+        snapshot = self._base_snapshot()
+        snapshot["control_slots"] = {"active": None, "stale": []}
+        PipelineGUI._apply_snapshot(gui, snapshot)
+        self.assertEqual(gui.active_control_var.get(), "활성 제어: 없음")
+        self.assertEqual(gui.stale_control_var.get(), "")
+        self.assertEqual(gui.active_control_label._fg, "#6b7280")
+
+    @staticmethod
+    def _make_snapshot_gui():
+        """Build a minimal PipelineGUI stub sufficient for _apply_snapshot."""
+        gui = PipelineGUI.__new__(PipelineGUI)
+        gui._last_snapshot = {}
+        gui._last_poll_at = 0.0
+        gui.selected_agent = "Claude"
+        gui._auto_focus_agent = False
+        gui._working_since = {}
+        gui._action_in_progress = False
+        gui._setup_state = "ready"
+        # System card vars
+        gui.pipeline_var = _Var()
+        gui.status_var = _Var()
+        gui.status_label = _Widget()
+        gui.pipeline_state_label = _Widget()
+        gui.watcher_var = _Var()
+        gui.watcher_state_label = _Widget()
+        gui.poll_var = _Var()
+        gui.poll_state_label = _Widget()
+        gui.active_control_var = _Var()
+        gui.active_control_label = _Widget()
+        gui.stale_control_var = _Var()
+        gui.stale_control_label = _Widget()
+        # Artifact vars
+        gui.work_var = _Var()
+        gui._work_label = _Widget()
+        gui.verify_var = _Var()
+        gui._verify_label = _Widget()
+        gui._run_context_var = _Var()
+        gui._run_context_label = _Widget()
+        gui._artifacts_title_var = _Var()
+        # Focus / log
+        gui.focus_title_var = _Var()
+        gui.focus_text = type("FakeText", (), {
+            "get": lambda self, *a: "",
+            "configure": lambda self, **kw: None,
+            "delete": lambda self, *a: None,
+            "insert": lambda self, *a: None,
+            "see": lambda self, *a: None,
+        })()
+        gui._log_title_var = _Var()
+        gui.log_text = type("FakeText", (), {
+            "get": lambda self, *a: "",
+            "configure": lambda self, **kw: None,
+            "delete": lambda self, *a: None,
+            "insert": lambda self, *a: None,
+            "see": lambda self, *a: None,
+        })()
+        gui.agent_labels = []
+        # Token vars
+        gui._token_status_var = _Var()
+        gui._token_totals_var = _Var()
+        gui._token_agents_var = _Var()
+        gui._token_selected_var = _Var()
+        gui._token_jobs_var = _Var()
+        gui._token_action_var = _Var()
+        gui._fmt_count = PipelineGUI._fmt_count.__get__(gui, PipelineGUI)
+        # Stubs for methods called during _apply_snapshot
+        gui._update_poll_freshness = lambda: None
+        gui._apply_token_dashboard = lambda dashboard: None
+        gui._update_text_if_changed = lambda widget, text: None
+        gui._set_main_button_states = lambda **kw: None
+        return gui
+
+    @staticmethod
+    def _base_snapshot():
+        """Return a minimal valid snapshot dict."""
+        return {
+            "session_ok": False,
+            "watcher_alive": False,
+            "watcher_pid": None,
+            "agents": [],
+            "pane_map": {},
+            "token_usage": {},
+            "token_dashboard": None,
+            "work_name": "—",
+            "work_mtime": 0.0,
+            "verify_name": "—",
+            "verify_mtime": 0.0,
+            "log_lines": [],
+            "run_summary": {},
+            "control_slots": {"active": None, "stale": []},
+            "polled_at": time.time(),
+        }
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 
 ## Mission
 
-Build and maintain a **local-first AI assistant web MVP** for personal document work, with the first reviewed-memory slice shipped (review queue, aggregate apply trigger, and active-effect path).
+Build and maintain a **local-first AI assistant web MVP** for personal document work, with the first reviewed-memory slice shipped (review queue, aggregate apply trigger, emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility).
 
 The product should help users:
 - read local files

@@ -2,7 +2,7 @@
 
 ## One-Line Current Product Definition
 
-projectH is a **local-first document assistant web MVP** that reads private files, produces grounded summaries, saves notes only through explicit approval, and ships the first reviewed-memory slice (review queue, aggregate apply trigger, and active-effect path).
+projectH is a **local-first document assistant web MVP** that reads private files, produces grounded summaries, saves notes only through explicit approval, and ships the first reviewed-memory slice (review queue, aggregate apply trigger, emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility).
 
 ## One-Line Long-Term North Star
 
@@ -11,7 +11,7 @@ Long term, projectH aims to become a **teachable local personal agent** that acc
 ## Product Layer Split
 
 ### Current Contract
-- The shipped contract is still a local-first document assistant with the first reviewed-memory slice (review queue, aggregate apply trigger, and active-effect path).
+- The shipped contract is still a local-first document assistant with the first reviewed-memory slice (review queue, aggregate apply trigger, emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility).
 - The web shell supports file summary, document search, general chat, approval-based save, reissue approval, evidence/source panel, structured search result preview panel, summary source-type labels, summary span / applied-range panel, response-origin badges, applied-preferences badge, response feedback capture, grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, artifact-linked reject/reissue reason traces, review queue (`검토 후보`), aggregate apply trigger (`검토 메모 적용 후보`), reviewed-memory active-effect path, streaming progress + cancel, PDF text-layer reading, and permission-gated web investigation (disabled/approval/enabled per session) with local JSON history, in-session reload, history-card badges (answer-mode, verification-strength, source-role trust), entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade, and a claim-coverage panel with status tags, actionable hints, and focus-slot reinvestigation explanation.
 - Web investigation remains a **secondary mode** under the document-first guardrail, not the core product identity.
 - The current phase is **not** model training and **not** general program control.

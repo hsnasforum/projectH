@@ -3,7 +3,7 @@
 ## Status
 
 - Document status: active proposal aligned to the current repository and the 2026-03-26 staged roadmap
-- Current shipped contract: local-first document assistant web MVP with the first reviewed-memory slice (review queue, aggregate apply trigger, and active-effect path)
+- Current shipped contract: local-first document assistant web MVP with the first reviewed-memory slice (review queue, aggregate apply trigger, emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility)
 - This document separates:
   - current contract
   - next phase design target
@@ -13,7 +13,7 @@
 
 ### Current Product
 
-projectH is a **local-first document assistant web MVP** for turning private working documents into grounded summaries and approval-gated notes, with the first reviewed-memory slice shipped (review queue, aggregate apply trigger, and active-effect path).
+projectH is a **local-first document assistant web MVP** for turning private working documents into grounded summaries and approval-gated notes, with the first reviewed-memory slice shipped (review queue, aggregate apply trigger, emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility).
 
 ### Long-Term North Star
 
@@ -22,7 +22,7 @@ projectH aims to become a **teachable local personal agent** that stores user co
 ## Decision Frame
 
 ### Facts
-- The repository already supports local file reading, summarization, document search, general chat, follow-up Q&A in document context, approval-gated save, evidence panels, response feedback capture, grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, artifact-linked reject/reissue reason traces, the first reviewed-memory slice (review queue, aggregate apply trigger, and active-effect path), and local session/log storage.
+- The repository already supports local file reading, summarization, document search, general chat, follow-up Q&A in document context, approval-gated save, evidence panels, response feedback capture, grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, artifact-linked reject/reissue reason traces, the first reviewed-memory slice (review queue, aggregate apply trigger, emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility), and local session/log storage.
 - Web investigation is a permission-gated secondary mode (disabled/approval/enabled per session) under the document-first guardrail, with local JSON history, in-session reload, history-card badges (answer-mode, verification-strength, source-role trust), entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade, and a claim-coverage panel with status tags, actionable hints, and focus-slot reinvestigation explanation already shipped.
 - The current phase is not model training and not program operation.
 

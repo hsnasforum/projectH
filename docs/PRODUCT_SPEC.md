@@ -3,7 +3,7 @@
 ## Status
 
 - Document status: current implementation spec with staged product framing
-- Current shipped contract: local-first document assistant web MVP with the first reviewed-memory slice (review queue, aggregate apply trigger, and active-effect path)
+- Current shipped contract: local-first document assistant web MVP with the first reviewed-memory slice (review queue, aggregate apply trigger, emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility)
 - Current release-candidate scope: `python3 -m app.web` browser shell
 - Internal/operator tooling such as `controller.server`, `pipeline_gui/`, `windows-launchers/`, and `_data/` pipeline helpers remains outside the current release gate
 - This document separates:
@@ -15,7 +15,7 @@
 
 ### Current Product
 
-projectH is a **local-first document assistant web MVP** that reads local files, produces grounded responses with visible evidence, saves notes only through explicit approval, captures response feedback, anchors grounded-brief artifact traces, records original-response snapshots, corrected-outcome capture, corrected-save bridge, and artifact-linked reject/reissue reason traces, and ships the first reviewed-memory slice (review queue, aggregate apply trigger, and active-effect path).
+projectH is a **local-first document assistant web MVP** that reads local files, produces grounded responses with visible evidence, saves notes only through explicit approval, captures response feedback, anchors grounded-brief artifact traces, records original-response snapshots, corrected-outcome capture, corrected-save bridge, and artifact-linked reject/reissue reason traces, and ships the first reviewed-memory slice (review queue, aggregate apply trigger, emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility).
 
 ### Long-Term North Star
 
@@ -24,7 +24,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 ## Current Contract
 
 ### Product Framing
-- The current MVP is a local-first document assistant with response feedback capture, grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, artifact-linked reject/reissue reason traces, and the first reviewed-memory slice (review queue, aggregate apply trigger, and active-effect path).
+- The current MVP is a local-first document assistant with response feedback capture, grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, artifact-linked reject/reissue reason traces, and the first reviewed-memory slice (review queue, aggregate apply trigger, emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility).
 - Web investigation is a secondary mode, not the core product identity.
 - The current phase is not model training.
 - The current phase is not local tool or program operation.
@@ -967,7 +967,7 @@ The first official artifact is the `grounded brief`.
 - current eligibility and guardrail rules:
   - one matching `candidate_confirmation_record` is enough to materialize one source-message-anchored `durable_candidate`
   - repeated same-session signals without a truthful recurrence key remain insufficient even when `candidate_family` matches
-  - the current read-only review queue surfaces that eligible record for inspection, and the reviewed-memory first slice (review queue, aggregate apply trigger, and active-effect path) is now shipped; user-level memory still remains later
+  - the current read-only review queue surfaces that eligible record for inspection, and the reviewed-memory first slice (review queue, aggregate apply trigger, emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility) is now shipped; user-level memory still remains later
   - no suggested scope fields are emitted at this step
   - promotion still does not mean reviewed memory or user-level memory
 - first truthful recurrence-key contract is now implemented and remains separate from the shipped `durable_candidate` / review surfaces:

@@ -2,7 +2,7 @@
 
 ## Current Identity
 
-This repository is a **local-first document assistant web MVP** with the first reviewed-memory slice shipped (review queue, aggregate apply trigger, and active-effect path), not a generic chatbot starter.
+This repository is a **local-first document assistant web MVP** with the first reviewed-memory slice shipped (review queue, aggregate apply trigger, emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility), not a generic chatbot starter.
 
 Long term, it is a stepping stone toward a **teachable local personal agent** that can absorb user corrections and later expand into constrained program operation under approval.
 

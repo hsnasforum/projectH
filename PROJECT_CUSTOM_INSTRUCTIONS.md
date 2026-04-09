@@ -1,4 +1,4 @@
-이 저장소는 **로컬 퍼스트 문서 비서 웹 MVP**이며, 첫 번째 reviewed-memory slice (review queue `검토 후보`, aggregate apply trigger `검토 메모 적용 후보`, active-effect path)가 출하되어 있습니다.
+이 저장소는 **로컬 퍼스트 문서 비서 웹 MVP**이며, 첫 번째 reviewed-memory slice (review queue `검토 후보`, aggregate apply trigger `검토 메모 적용 후보`, emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility)가 출하되어 있습니다.
 
 다만 장기 북극성은 단순 문서 비서가 아니라, 사용자가 하나씩 가르치고 나중에는 프로그램 조작까지 확장할 수 있는 **학습 준비형 로컬 개인 에이전트**입니다.
 현재 단계는 그 장기 목표를 위한 첫 단계이며, 아직 프로그램 조작이나 모델 자체 학습을 구현한 상태는 아닙니다.

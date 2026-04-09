@@ -3,7 +3,7 @@
 ## Framing
 
 ### Current Product
-- The shipped contract remains a local-first document assistant web MVP with response feedback capture, grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, artifact-linked reject/reissue reason traces, and the first reviewed-memory slice (review queue, aggregate apply trigger, and active-effect path).
+- The shipped contract remains a local-first document assistant web MVP with response feedback capture, grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, artifact-linked reject/reissue reason traces, and the first reviewed-memory slice (review queue, aggregate apply trigger, emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility).
 - Web investigation remains a permission-gated secondary mode (disabled/approval/enabled per session) under the document-first guardrail.
 - The current release candidate is the `app.web` browser shell; pipeline/controller/operator tooling remains outside the release gate.
 

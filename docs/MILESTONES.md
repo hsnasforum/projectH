@@ -26,7 +26,7 @@
 ### Milestone 2: Web MVP Shell
 - local web shell
 - recent sessions and timeline
-- response cards and note preview
+- response cards with note preview, structured search result preview panel, evidence/source panel, summary source-type labels (`문서 요약` / `선택 결과 요약`), and summary span / applied-range panel
 - approval card UX
 - reissue approval flow
 - response origin badge

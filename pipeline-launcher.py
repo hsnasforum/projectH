@@ -29,6 +29,13 @@ import traceback
 from pathlib import Path
 from typing import NamedTuple
 
+from pipeline_gui.project import _session_name_for
+from pipeline_gui.setup_profile import (
+    join_resolver_messages,
+    resolve_project_active_profile,
+    resolve_project_runtime_adapter,
+)
+
 
 # ── 프로젝트 경로 결정 ────────────────────────────────────────
 
@@ -54,7 +61,8 @@ def parse_args() -> tuple[Path, bool]:
     return Path.cwd().resolve(), line_mode
 
 
-SESSION_NAME = "ai-pipeline"
+def resolved_session_name(project: Path) -> str:
+    return _session_name_for(project)
 
 
 def launcher_error_log(project: Path) -> Path:
@@ -281,8 +289,8 @@ def _run(cmd: list[str], timeout: float = 5.0) -> tuple[int, str]:
         return -1, ""
 
 
-def tmux_alive() -> bool:
-    code, _ = _run(["tmux", "has-session", "-t", SESSION_NAME])
+def tmux_alive(session: str) -> bool:
+    code, _ = _run(["tmux", "has-session", "-t", session])
     return code == 0
 
 
@@ -457,7 +465,13 @@ def watcher_runtime_hints(project: Path) -> dict[str, tuple[str, str]]:
 
 # ── 파이프라인 제어 ────────────────────────────────────────────
 
-def pipeline_start(project: Path) -> str:
+def pipeline_start(project: Path, session: str = "") -> str:
+    resolved_session = session or resolved_session_name(project)
+    resolved = resolve_project_active_profile(project)
+    controls = dict(resolved.get("controls") or {})
+    if not bool(controls.get("launch_allowed")):
+        detail = join_resolver_messages(resolved) or "Active profile launch is blocked."
+        return f"실행 차단: {detail}"
     script = project / "start-pipeline.sh"
     if not script.exists():
         return "start-pipeline.sh 없음"
@@ -467,7 +481,17 @@ def pipeline_start(project: Path) -> str:
     # launcher에서는 start-pipeline.sh의 tmux attach를 건너뛰고 백그라운드로 기동합니다.
     with log_path.open("w", encoding="utf-8") as logf:
         subprocess.Popen(
-            ["bash", "-l", str(script), str(project), "--mode", "experimental", "--no-attach"],
+            [
+                "bash",
+                "-l",
+                str(script),
+                str(project),
+                "--mode",
+                "experimental",
+                "--no-attach",
+                "--session",
+                resolved_session,
+            ],
             cwd=str(project),
             stdout=logf,
             stderr=subprocess.STDOUT,
@@ -477,33 +501,40 @@ def pipeline_start(project: Path) -> str:
     return "시작 요청됨"
 
 
-def pipeline_stop(project: Path) -> str:
+def pipeline_stop(project: Path, session: str = "") -> str:
+    resolved_session = session or resolved_session_name(project)
     script = project / "stop-pipeline.sh"
     if not script.exists():
         return "stop-pipeline.sh 없음"
     subprocess.run(
-        ["bash", str(script), str(project)],
+        ["bash", str(script), str(project), "--session", resolved_session],
         capture_output=True, timeout=15,
     )
     return "중지 완료"
 
 
-def pipeline_restart(project: Path) -> str:
-    pipeline_stop(project)
+def pipeline_restart(project: Path, session: str = "") -> str:
+    resolved_session = session or resolved_session_name(project)
+    resolved = resolve_project_active_profile(project)
+    controls = dict(resolved.get("controls") or {})
+    if not bool(controls.get("launch_allowed")):
+        detail = join_resolver_messages(resolved) or "Active profile launch is blocked."
+        return f"실행 차단: {detail}"
+    pipeline_stop(project, resolved_session)
     time.sleep(2)
-    pipeline_start(project)
+    pipeline_start(project, resolved_session)
     return "재시작 요청됨"
 
 
-def tmux_attach() -> None:
+def tmux_attach(session: str) -> None:
     """curses를 일시 해제하고 tmux attach 실행."""
-    os.system(f"tmux attach -t {SESSION_NAME}")
+    subprocess.run(["tmux", "attach", "-t", session])
 
 
-def wait_for_pipeline_ready(project: Path, timeout_sec: float = 12.0) -> tuple[bool, str]:
+def wait_for_pipeline_ready(project: Path, session: str, timeout_sec: float = 12.0) -> tuple[bool, str]:
     started_at = time.time()
     while time.time() - started_at < timeout_sec:
-        session_ok = tmux_alive()
+        session_ok = tmux_alive(session)
         watcher_ok, _ = watcher_alive(project)
         if session_ok and watcher_ok:
             return True, "기동 완료"
@@ -578,13 +609,32 @@ def detect_agent_status(label: str, lines: list[str]) -> tuple[str, str, str]:
     return "BOOTING", "", " / ".join(lines[-2:]) if len(lines) >= 2 else lines[-1]
 
 
-def pane_snapshots(project: Path) -> list[AgentSnapshot]:
+def runtime_lane_name_map(project: Path) -> dict[int, str]:
+    lane_configs = list(resolve_project_runtime_adapter(project).get("lane_configs") or [])
+    lane_names = {
+        int(cfg.get("pane_index", idx)): str(cfg.get("name") or f"Pane {idx}")
+        for idx, cfg in enumerate(lane_configs)
+        if isinstance(cfg, dict)
+    }
+    for pane_index in range(3):
+        lane_names.setdefault(pane_index, f"Pane {pane_index}")
+    return lane_names
+
+
+def pane_snapshots(project: Path, session: str) -> list[AgentSnapshot]:
+    runtime_adapter = resolve_project_runtime_adapter(project)
+    lane_configs = list(runtime_adapter.get("lane_configs") or [])
+    lane_by_index = {
+        int(cfg.get("pane_index", idx)): cfg
+        for idx, cfg in enumerate(lane_configs)
+        if isinstance(cfg, dict)
+    }
     code, output = _run(
         [
             "tmux",
             "list-panes",
             "-t",
-            f"{SESSION_NAME}:0",
+            f"{session}:0",
             "-F",
             "#{pane_index}|#{pane_id}|#{pane_dead}",
         ],
@@ -592,8 +642,6 @@ def pane_snapshots(project: Path) -> list[AgentSnapshot]:
     )
     if code != 0 or not output:
         return []
-
-    lane_names = {0: "Claude", 1: "Codex", 2: "Gemini"}
     runtime_hints = watcher_runtime_hints(project)
     summaries: list[AgentSnapshot] = []
     for raw in output.splitlines():
@@ -603,7 +651,13 @@ def pane_snapshots(project: Path) -> list[AgentSnapshot]:
         except ValueError:
             continue
 
-        label = lane_names.get(pane_index, f"Pane {pane_index}")
+        lane_config = lane_by_index.get(pane_index, {})
+        label = str(lane_config.get("name") or f"Pane {pane_index}")
+        roles = [str(role) for role in list(lane_config.get("roles") or []) if str(role).strip()]
+        role_note = f"roles={','.join(roles)}" if roles else ""
+        if lane_config and not bool(lane_config.get("enabled")):
+            summaries.append(AgentSnapshot(label, "OFF", role_note, "(disabled by active profile)"))
+            continue
         if pane_dead == "1":
             summaries.append(AgentSnapshot(label, "DEAD", "", "(pane dead)"))
             continue
@@ -637,14 +691,17 @@ def pane_snapshots(project: Path) -> list[AgentSnapshot]:
 
         if len(snippet) > 110:
             snippet = snippet[:107] + "..."
-        summaries.append(AgentSnapshot(label, status, status_note, snippet))
+        detail = snippet
+        if role_note:
+            detail = f"{role_note} · {snippet}" if snippet else role_note
+        summaries.append(AgentSnapshot(label, status, status_note, detail))
     return summaries
 
 
-def capture_agent_pane(agent_index: int, lines: int = 200) -> list[str]:
+def capture_agent_pane(session: str, agent_index: int, lines: int = 200) -> list[str]:
     """지정 agent pane의 최근 출력을 가져옵니다."""
     code, output = _run(
-        ["tmux", "list-panes", "-t", f"{SESSION_NAME}:0", "-F", "#{pane_index}|#{pane_id}|#{pane_dead}"],
+        ["tmux", "list-panes", "-t", f"{session}:0", "-F", "#{pane_index}|#{pane_id}|#{pane_dead}"],
         timeout=2.0,
     )
     if code != 0 or not output:
@@ -672,8 +729,8 @@ def capture_agent_pane(agent_index: int, lines: int = 200) -> list[str]:
     return ["(pane 없음)"]
 
 
-def build_snapshot(project: Path) -> list[str]:
-    session_ok = tmux_alive()
+def build_snapshot(project: Path, session: str) -> list[str]:
+    session_ok = tmux_alive(session)
     watcher_ok, watcher_pid = watcher_alive(project)
     work_name, work_mtime = latest_md(project / "work")
     verify_name, verify_mtime = latest_md(project / "verify")
@@ -695,7 +752,7 @@ def build_snapshot(project: Path) -> list[str]:
         lines.extend([f"  {line}" for line in log_lines])
     else:
         lines.append("  (이벤트 없음)")
-    pane_lines = pane_snapshots(project)
+    pane_lines = pane_snapshots(project, session)
     if pane_lines:
         lines.extend([
             "",
@@ -728,11 +785,12 @@ def clear_screen() -> None:
 
 
 def show_follow_view(project: Path, title: str, seconds: int = 8) -> None:
+    session = resolved_session_name(project)
     end_at = time.time() + seconds
     while time.time() < end_at:
         remaining = max(0, int(end_at - time.time()) + 1)
         clear_screen()
-        for line in build_snapshot(project):
+        for line in build_snapshot(project, session):
             print(line)
         print("")
         print(f"{title} ({remaining}s)")
@@ -740,10 +798,11 @@ def show_follow_view(project: Path, title: str, seconds: int = 8) -> None:
 
 
 def run_line_mode(project: Path) -> None:
+    session = resolved_session_name(project)
     message = ""
     while True:
         clear_screen()
-        for line in build_snapshot(project):
+        for line in build_snapshot(project, session):
             print(line)
         if message:
             print("")
@@ -759,25 +818,29 @@ def run_line_mode(project: Path) -> None:
         if cmd == "q":
             break
         if cmd == "s":
-            message = pipeline_start(project)
-            ok, status = wait_for_pipeline_ready(project)
+            message = pipeline_start(project, session)
+            if message != "시작 요청됨":
+                message = f"START: {message}"
+                continue
+            ok, status = wait_for_pipeline_ready(project, session)
             show_follow_view(project, "Start 후 live status", seconds=8)
             message = f"START: {status if ok else status}"
             continue
         if cmd == "t":
-            message = f"STOP: {pipeline_stop(project)}"
+            message = f"STOP: {pipeline_stop(project, session)}"
             continue
         if cmd == "r":
-            pipeline_stop(project)
-            time.sleep(2)
-            pipeline_start(project)
-            ok, status = wait_for_pipeline_ready(project)
+            restart_message = pipeline_restart(project, session)
+            if restart_message != "재시작 요청됨":
+                message = f"RESTART: {restart_message}"
+                continue
+            ok, status = wait_for_pipeline_ready(project, session)
             show_follow_view(project, "Restart 후 live status", seconds=8)
             message = f"RESTART: {status if ok else status}"
             continue
         if cmd == "a":
-            if tmux_alive():
-                tmux_attach()
+            if tmux_alive(session):
+                tmux_attach(session)
                 message = "ATTACH: tmux에서 돌아왔습니다."
             else:
                 message = "ATTACH: tmux 세션이 없습니다. 먼저 start 하세요."
@@ -791,7 +854,14 @@ def run_line_mode(project: Path) -> None:
 
 # ── curses TUI ─────────────────────────────────────────────────
 
-def draw(stdscr: curses.window, project: Path, message: str, pending_state: str = "", focused_agent: int | None = None) -> None:
+def draw(
+    stdscr: curses.window,
+    project: Path,
+    session: str,
+    message: str,
+    pending_state: str = "",
+    focused_agent: int | None = None,
+) -> None:
     stdscr.erase()
     h, w = stdscr.getmaxyx()
     if h < 10 or w < 40:
@@ -835,7 +905,7 @@ def draw(stdscr: curses.window, project: Path, message: str, pending_state: str 
     row += 1
 
     # 상태
-    session_ok = tmux_alive()
+    session_ok = tmux_alive(session)
     w_alive, w_pid = watcher_alive(project)
 
     safe_addstr(stdscr, row, 0, "│ ", CYAN)
@@ -871,11 +941,17 @@ def draw(stdscr: curses.window, project: Path, message: str, pending_state: str 
 
     # 키 안내
     safe_addstr(stdscr, row, 0, "│ ", CYAN)
+    lane_names = runtime_lane_name_map(project)
     if focused_agent is not None:
-        agent_names = {0: "Claude", 1: "Codex", 2: "Gemini"}
-        keys = f"[0/Esc] 전체  [1]Claude [2]Codex [3]Gemini  ── 포커스: {agent_names.get(focused_agent, '?')}"
+        keys = (
+            f"[0/Esc] 전체  [1]{lane_names.get(0, '?')} [2]{lane_names.get(1, '?')} [3]{lane_names.get(2, '?')}  "
+            f"── 포커스: {lane_names.get(focused_agent, '?')}"
+        )
     else:
-        keys = "[S]Start [T]Stop [R]Restart [A]Attach [1]Claude [2]Codex [3]Gemini [Q]Quit"
+        keys = (
+            f"[S]Start [T]Stop [R]Restart [A]Attach "
+            f"[1]{lane_names.get(0, '?')} [2]{lane_names.get(1, '?')} [3]{lane_names.get(2, '?')} [Q]Quit"
+        )
     safe_addstr(stdscr, row, 2, keys[:max(0, w - 4)], WHITE | curses.A_BOLD)
     safe_addstr(stdscr, row, w - 1, "│", CYAN)
     row += 1
@@ -926,7 +1002,7 @@ def draw(stdscr: curses.window, project: Path, message: str, pending_state: str 
         row += 1
 
     # agent 상태
-    snapshots = pane_snapshots(project)
+    snapshots = pane_snapshots(project, session)
     if snapshots and row < h - 5:
         safe_addstr(stdscr, row, 0, f"├{border}┤", CYAN)
         row += 1
@@ -940,6 +1016,7 @@ def draw(stdscr: curses.window, project: Path, message: str, pending_state: str 
             "READY": GREEN,
             "BOOTING": YELLOW,
             "DEAD": RED,
+            "OFF": WHITE,
         }
         for i, snap in enumerate(snapshots):
             if row >= h - 4:
@@ -978,8 +1055,7 @@ def draw(stdscr: curses.window, project: Path, message: str, pending_state: str 
     if focused_agent is not None and row < h - 4:
         safe_addstr(stdscr, row, 0, f"├{border}┤", CYAN)
         row += 1
-        agent_names = {0: "Claude", 1: "Codex", 2: "Gemini"}
-        viewer_title = f"  {agent_names.get(focused_agent, '?')} pane output (read-only)"
+        viewer_title = f"  {lane_names.get(focused_agent, '?')} pane output (read-only)"
         safe_addstr(stdscr, row, 0, "│ ", CYAN)
         safe_addstr(stdscr, row, 2, viewer_title, WHITE | curses.A_BOLD)
         safe_addstr(stdscr, row, w - 1, "│", CYAN)
@@ -992,7 +1068,7 @@ def draw(stdscr: curses.window, project: Path, message: str, pending_state: str 
             content_width = 10
 
         available_rows = h - row - 3  # 메시지 + 하단 테두리용 여유
-        pane_lines = capture_agent_pane(focused_agent, lines=available_rows * 3)
+        pane_lines = capture_agent_pane(session, focused_agent, lines=available_rows * 3)
 
         cleaned = _reflow_focused_lines(pane_lines)
 
@@ -1036,6 +1112,7 @@ def draw(stdscr: curses.window, project: Path, message: str, pending_state: str 
 
 def main(stdscr: curses.window) -> None:
     project, _ = parse_args()
+    session = resolved_session_name(project)
 
     curses.curs_set(0)
     stdscr.nodelay(True)
@@ -1056,7 +1133,7 @@ def main(stdscr: curses.window) -> None:
         if pending_state and time.time() > pending_state_expire:
             pending_state = ""
 
-        session_ok = tmux_alive()
+        session_ok = tmux_alive(session)
         watcher_ok, _ = watcher_alive(project)
         if session_ok or watcher_ok:
             pending_state = ""
@@ -1075,7 +1152,7 @@ def main(stdscr: curses.window) -> None:
 
         # 포커스 모드에서는 더 빠른 폴링으로 실시간감 제공
         stdscr.timeout(500 if focused_agent is not None else 1000)
-        draw(stdscr, project, display_message, pending_state, focused_agent)
+        draw(stdscr, project, session, display_message, pending_state, focused_agent)
 
         key = stdscr.getch()
         if key == -1:
@@ -1086,14 +1163,18 @@ def main(stdscr: curses.window) -> None:
         if ch == "q":
             break
         elif ch == "s":
-            msg = pipeline_start(project)
+            msg = pipeline_start(project, session)
             message = f"START: {msg}"
             message_expire = time.time() + 5
-            pending_state = "초기화 중... tmux/watcher 기동까지 몇 초 걸릴 수 있습니다."
-            pending_state_expire = time.time() + 15
-            pending_started_at = time.time()
+            if msg == "시작 요청됨":
+                pending_state = "초기화 중... tmux/watcher 기동까지 몇 초 걸릴 수 있습니다."
+                pending_state_expire = time.time() + 15
+                pending_started_at = time.time()
+            else:
+                pending_state = ""
+                pending_started_at = 0.0
         elif ch == "t":
-            msg = pipeline_stop(project)
+            msg = pipeline_stop(project, session)
             message = f"STOP: {msg}"
             message_expire = time.time() + 5
             pending_state = ""
@@ -1101,18 +1182,22 @@ def main(stdscr: curses.window) -> None:
         elif ch == "r":
             message = "RESTART: 재시작 중..."
             message_expire = time.time() + 10
-            draw(stdscr, project, message, pending_state, focused_agent)
-            msg = pipeline_restart(project)
+            draw(stdscr, project, session, message, pending_state, focused_agent)
+            msg = pipeline_restart(project, session)
             message = f"RESTART: {msg}"
             message_expire = time.time() + 5
-            pending_state = "초기화 중... tmux/watcher 기동까지 몇 초 걸릴 수 있습니다."
-            pending_state_expire = time.time() + 15
-            pending_started_at = time.time()
+            if msg == "재시작 요청됨":
+                pending_state = "초기화 중... tmux/watcher 기동까지 몇 초 걸릴 수 있습니다."
+                pending_state_expire = time.time() + 15
+                pending_started_at = time.time()
+            else:
+                pending_state = ""
+                pending_started_at = 0.0
         elif ch == "a":
-            if tmux_alive():
+            if tmux_alive(session):
                 # curses 일시 해제 → tmux attach → 복귀
                 curses.endwin()
-                tmux_attach()
+                tmux_attach(session)
                 stdscr = curses.initscr()
                 curses.curs_set(0)
                 stdscr.nodelay(True)

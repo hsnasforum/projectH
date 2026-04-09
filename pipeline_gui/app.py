@@ -31,15 +31,16 @@ from .project import (
 from .backend import (
     tmux_alive, watcher_alive, latest_md, time_ago,
     watcher_log_tail, pipeline_start, pipeline_stop, tmux_attach, token_collector_alive,
+    confirm_pipeline_start,
     backfill_token_history, rebuild_token_db,
-    parse_control_slots, format_control_summary,
+    current_verify_activity, parse_control_slots, format_control_summary,
 )
 from .agents import (
     STATUS_COLORS, ANSI_RE,
     _extract_run_summary, format_elapsed, _parse_elapsed,
     extract_quota_note, detect_agent_status, capture_agent_panes,
     rejoin_wrapped_pane_lines, format_focus_output,
-    watcher_runtime_hints,
+    watcher_runtime_hints, merge_agent_status_hint,
 )
 from .setup import (
     _HARD_BLOCKERS, _SOFT_WARNINGS,
@@ -47,7 +48,18 @@ from .setup import (
     _check_hard_blockers, _check_soft_warnings,
     _check_missing_guides, _create_guide_file, _GUIDE_TEMPLATES,
 )
-from .setup_profile import fingerprint_payload
+from .setup_profile import (
+    active_profile_fingerprint,
+    build_last_applied_record,
+    canonical_setup_payload_for_fingerprint,
+    cleanup_stale_setup_artifacts,
+    display_resolver_messages,
+    fingerprint_payload,
+    join_display_resolver_messages,
+    reconcile_last_applied,
+    resolve_active_profile,
+    resolve_project_active_profile,
+)
 from .view import (
     BG, FG, ACCENT, SUB_FG, BTN_BG, BTN_FG,
     CARD_BG, CARD_BORDER, LOG_BG, HEADER_BG, AGENT_CARD_BG,
@@ -65,6 +77,7 @@ _SETUP_AGENT_ORDER = ("Claude", "Codex", "Gemini")
 _SETUP_STATE_ORDER = (
     "InvalidConfig",
     "ApplyPending",
+    "RecoveryNeeded",
     "ApplyFailed",
     "Applied",
     "PreviewReady",
@@ -88,16 +101,22 @@ _SETUP_STATE_LABELS = {
     "PreviewWaiting": "미리보기 대기 중",
     "PreviewReady": "미리보기 준비됨",
     "ApplyPending": "적용 진행 중",
+    "RecoveryNeeded": "복구 필요",
     "ApplyFailed": "적용 실패",
     "Applied": "적용 완료",
     "InvalidConfig": "잘못된 설정",
 }
 _SETUP_SUPPORT_LABELS = {
     "supported": "지원",
-    "supported_with_warnings": "경고 포함 지원",
     "experimental": "실험적",
-    "INVALID CONFIG": "잘못된 설정",
+    "blocked": "차단",
 }
+_SETUP_SUPPORT_STYLES = {
+    "supported": {"fg": "#4ade80", "bg": CARD_BG},
+    "experimental": {"fg": "#fbbf24", "bg": "#2a2112"},
+    "blocked": {"fg": "#f87171", "bg": "#2a1418"},
+}
+_SETUP_DEFAULT_APPLY_RESULT_MESSAGE = "설정 적용 결과가 도착했습니다."
 
 
 def _setup_state_label(state: str) -> str:
@@ -106,6 +125,7 @@ def _setup_state_label(state: str) -> str:
 
 def _setup_support_label(level: str) -> str:
     return _SETUP_SUPPORT_LABELS.get(level, level)
+
 
 class PipelineGUI:
     def __init__(self, project: Path) -> None:
@@ -128,6 +148,7 @@ class PipelineGUI:
         self._token_usage_refresh_in_flight = False
         self._token_usage_lock = threading.Lock()
         self._setup_state: str = "unknown"  # unknown / checking / ready / missing / failed
+        self._setup_state_detail: str = ""
         self._project_valid, self._project_error = validate_project_root(project)
         if self._project_valid:
             boot_ok, boot_error = bootstrap_project_root(project)
@@ -168,6 +189,7 @@ class PipelineGUI:
         self._setup_current_preview_payload: dict[str, object] | None = None
         self._setup_current_apply_payload: dict[str, object] | None = None
         self._setup_current_result_payload: dict[str, object] | None = None
+        self._setup_current_support_resolution: dict[str, object] | None = None
         self._setup_draft_saved = False
         self._setup_dirty = False
         self._setup_has_error = False
@@ -177,6 +199,7 @@ class PipelineGUI:
         self._setup_infos: list[str] = []
         self._setup_restart_required = False
         self._setup_cleanup_history: list[str] = []
+        self._runtime_launch_resolution: dict[str, object] | None = None
 
         self._setup_agent_vars = {
             name: BooleanVar(value=True) for name in _SETUP_AGENT_ORDER
@@ -197,6 +220,7 @@ class PipelineGUI:
         self._setup_advisory_error_var = StringVar(value="")
         self._setup_mode_state_var = StringVar(value=_SETUP_STATE_LABELS["DraftOnly"])
         self._setup_support_level_var = StringVar(value=_SETUP_SUPPORT_LABELS["supported"])
+        self._setup_runtime_profile_var = StringVar(value="실행 프로필: 확인 중")
         self._setup_validation_var = StringVar(value="유효성 문제 없음.")
         self._setup_preview_summary_var = StringVar(value="생성된 미리보기 없음.")
         self._setup_current_setup_id_var = StringVar(value="—")
@@ -204,6 +228,7 @@ class PipelineGUI:
         self._setup_apply_readiness_var = StringVar(value="적용 비활성: 먼저 미리보기를 생성하세요")
         self._setup_restart_notice_var = StringVar(value="")
         self._setup_cleanup_summary_var = StringVar(value="아직 정리 기록이 없습니다.")
+        self._runtime_launch_var = StringVar(value="실행 프로필: 확인 중")
 
     def _set_initial_window_geometry(self) -> None:
         screen_w = max(1280, self.root.winfo_screenwidth())
@@ -311,18 +336,7 @@ class PipelineGUI:
             # status 판정 (agent_snapshots 로직)
             status, note = detect_agent_status(label, cleaned)
             quota = extract_quota_note(cleaned)
-            hint = hints.get(label)
-            if hint:
-                hint_status, hint_note = hint
-                if hint_status == "WORKING":
-                    if status in {"BOOTING", "OFF"}:
-                        status = "WORKING"
-                        note = hint_note or note
-                    elif status == "WORKING" and hint_note:
-                        note = hint_note
-                elif hint_status == "READY" and status == "BOOTING":
-                    status = "READY"
-                    note = ""
+            status, note = merge_agent_status_hint(label, status, note, hints.get(label))
             agents.append((label, status, note, quota))
 
             # output (capture_agent_panes 로직)
@@ -467,6 +481,10 @@ class PipelineGUI:
         self.msg_var.set(self._project_error)
         self.setup_var.set("설정: —")
         self.setup_state_label.configure(fg="#888888")
+        if hasattr(self, "_runtime_launch_var"):
+            self._runtime_launch_var.set("실행 프로필: —")
+        if hasattr(self, "_runtime_launch_label"):
+            self._runtime_launch_label.configure(fg="#888888")
         self._set_main_button_states(all_disabled=True)
 
     def _tick_elapsed(self) -> None:
@@ -792,6 +810,7 @@ class PipelineGUI:
         summary_lines = watcher_log_tail(self.project, lines=50)
         run_summary = _extract_run_summary(summary_lines)
         control_slots = parse_control_slots(self.project)
+        verify_activity = current_verify_activity(self.project)
 
         return {
             "session_ok": session_ok,
@@ -808,6 +827,7 @@ class PipelineGUI:
             "log_lines": log_lines,
             "run_summary": run_summary,
             "control_slots": control_slots,
+            "verify_activity": verify_activity,
             "polled_at": polled_at,
         }
 
@@ -848,19 +868,51 @@ class PipelineGUI:
             self.watcher_var.set("워처: ✗ 비활성")
             self.watcher_state_label.configure(fg="#ef4444")
         self._update_poll_freshness()
+        launch_resolution = self._resolve_runtime_active_profile()
+        self._apply_runtime_launch_presentation(launch_resolution)
 
         # Control slot summary
         control_slots = snapshot.get("control_slots", {})
-        active_text, stale_text = format_control_summary(control_slots)
+        verify_activity = snapshot.get("verify_activity")
+        active_text, stale_text = format_control_summary(control_slots, verify_activity=verify_activity)
         self.active_control_var.set(active_text)
         active = control_slots.get("active")
-        if active is None:
-            self.active_control_label.configure(fg="#6b7280")
+        if verify_activity is not None and not (
+            active is not None and active.get("status") == "needs_operator"  # type: ignore[union-attr]
+        ):
+            active_fg = "#93c5fd"
+            active_box_bg = "#101826"
+            active_box_border = "#1d4ed8"
+            active_title_fg = "#60a5fa"
+        elif active is None:
+            active_fg = "#9ca3af"
+            active_box_bg = "#141418"
+            active_box_border = "#30363d"
+            active_title_fg = "#6b7280"
         elif active.get("status") == "needs_operator":  # type: ignore[union-attr]
-            self.active_control_label.configure(fg="#f87171")
+            active_fg = "#fca5a5"
+            active_box_bg = "#2a1015"
+            active_box_border = "#7f1d1d"
+            active_title_fg = "#f87171"
         else:
-            self.active_control_label.configure(fg="#60a5fa")
+            active_fg = "#93c5fd"
+            active_box_bg = "#101826"
+            active_box_border = "#1d4ed8"
+            active_title_fg = "#60a5fa"
+        self.active_control_box.configure(bg=active_box_bg, highlightbackground=active_box_border)
+        self.active_control_title_label.configure(bg=active_box_bg, fg=active_title_fg)
+        self.active_control_label.configure(bg=active_box_bg, fg=active_fg)
         self.stale_control_var.set(stale_text)
+        if stale_text:
+            self.stale_control_box.configure(bg="#14161d", highlightbackground="#374151")
+            self.stale_control_title_label.configure(bg="#14161d", fg="#94a3b8")
+            self.stale_control_label.configure(bg="#14161d", fg="#94a3b8")
+            if not getattr(self, "_stale_control_box_visible", False):
+                self.stale_control_box.pack(fill=X, pady=(6, 0))
+                self._stale_control_box_visible = True
+        elif getattr(self, "_stale_control_box_visible", False):
+            self.stale_control_box.pack_forget()
+            self._stale_control_box_visible = False
 
         working_labels = [label for label, status, _note, _quota in agents if status == "WORKING"]
         if self.selected_agent not in {label for label, _s, _n, _q in agents}:
@@ -1026,10 +1078,12 @@ class PipelineGUI:
         )
         self._update_text_if_changed(self.log_text, log_text)
 
-        can_start = not session_ok and self._setup_state == "ready"
+        can_launch = self._runtime_launch_allowed(launch_resolution)
+        can_start = not session_ok and can_launch
         self._set_main_button_states(
             all_disabled=self._action_in_progress,
             can_start=can_start,
+            can_restart=session_ok and can_launch,
             session_ok=session_ok,
         )
         self._refresh_setup_mode_state()
@@ -1326,6 +1380,7 @@ class PipelineGUI:
             "preview": setup_dir / "preview.json",
             "apply": setup_dir / "apply.json",
             "result": setup_dir / "result.json",
+            "last_applied": setup_dir / "last_applied.json",
         }
 
     def _setup_default_profile(self) -> dict[str, object]:
@@ -1431,17 +1486,15 @@ class PipelineGUI:
         return payload
 
     def _setup_payload_for_fingerprint(self, payload: dict[str, object]) -> dict[str, object]:
-        return {
-            "schema_version": int(payload.get("schema_version") or 1),
-            "selected_agents": list(payload.get("selected_agents", []) or []),
-            "role_bindings": dict(payload.get("role_bindings", {}) or {}),
-            "role_options": dict(payload.get("role_options", {}) or {}),
-            "mode_flags": dict(payload.get("mode_flags", {}) or {}),
-            "executor_override": str(payload.get("executor_override") or "auto"),
-        }
+        normalized = canonical_setup_payload_for_fingerprint(payload)
+        normalized["schema_version"] = int(normalized.get("schema_version") or 1)
+        return normalized
 
     def _setup_fingerprint(self, payload: dict[str, object]) -> str:
         return fingerprint_payload(self._setup_payload_for_fingerprint(payload))
+
+    def _setup_active_profile_fingerprint(self, payload: dict[str, object]) -> str:
+        return active_profile_fingerprint(payload)
 
     def _setup_preview_fingerprint(
         self,
@@ -1509,53 +1562,71 @@ class PipelineGUI:
             return False, "현재 draft 파일이 바뀌어 active 승격을 보류했습니다."
         return True, ""
 
-    def _setup_support_level(
+    def _setup_resolve_support(self, form_payload: dict[str, object]) -> dict[str, object]:
+        return resolve_active_profile(form_payload)
+
+    def _resolve_runtime_active_profile(self) -> dict[str, object]:
+        resolved = resolve_project_active_profile(self.project)
+        self._runtime_launch_resolution = resolved
+        return resolved
+
+    def _runtime_resolution_messages(self, resolved: dict[str, object]) -> list[str]:
+        return display_resolver_messages(resolved)
+
+    def _runtime_resolution_detail(self, resolved: dict[str, object]) -> str:
+        return " / ".join(self._runtime_resolution_messages(resolved))
+
+    def _runtime_resolution_feedback_lines(self, resolved: dict[str, object]) -> list[str]:
+        detail_lines = self._runtime_resolution_messages(resolved)
+        if not detail_lines:
+            return []
+        status = str(resolved.get("resolution_state") or "")
+        prefix = "오류" if status in {"broken", "needs_migration"} else "경고"
+        return [f"{prefix}: 현재 runtime {line}" for line in detail_lines]
+
+    def _apply_runtime_launch_presentation(self, resolved: dict[str, object]) -> None:
+        support_level = str(resolved.get("support_level") or "blocked")
+        detail = self._runtime_resolution_detail(resolved) or join_display_resolver_messages(resolved)
+        text = f"실행 프로필: {_setup_support_label(support_level)}"
+        if detail:
+            text = f"{text} — {detail}"
+        if hasattr(self, "_runtime_launch_var"):
+            self._runtime_launch_var.set(text)
+        if hasattr(self, "_setup_runtime_profile_var"):
+            self._setup_runtime_profile_var.set(text)
+        if hasattr(self, "_runtime_launch_label"):
+            style = _SETUP_SUPPORT_STYLES.get(support_level, _SETUP_SUPPORT_STYLES["blocked"])
+            self._runtime_launch_label.configure(fg=style["fg"])
+        if hasattr(self, "_setup_runtime_profile_label"):
+            style = _SETUP_SUPPORT_STYLES.get(support_level, _SETUP_SUPPORT_STYLES["blocked"])
+            self._setup_runtime_profile_label.configure(fg=style["fg"])
+
+    def _runtime_launch_allowed(self, resolved: dict[str, object] | None = None) -> bool:
+        resolution = resolved or self._resolve_runtime_active_profile()
+        controls = dict(resolution.get("controls") or {})
+        return self._setup_state in ("ready", "ready_warn") and bool(controls.get("launch_allowed"))
+
+    def _setup_support_banner_lines(
         self,
-        form_payload: dict[str, object],
-        *,
-        has_error: bool,
-        warnings: list[str],
-    ) -> str:
-        if has_error:
-            return "INVALID CONFIG"
-        selected = list(form_payload.get("selected_agents", []) or [])
-        selected_set = set(selected)
-        bindings = dict(form_payload.get("role_bindings", {}) or {})
-        implement = str(bindings.get("implement") or "")
-        verify = str(bindings.get("verify") or "")
-        advisory = str(bindings.get("advisory") or "")
-        advisory_enabled = bool((form_payload.get("role_options", {}) or {}).get("advisory_enabled"))
+        support_level: str,
+        controls: dict[str, object],
+    ) -> list[str]:
+        if not bool(controls.get("banner_required")):
+            return []
+        if support_level == "experimental":
+            return ["안내: 현재 조합은 실험적 프로필입니다. 수동 확인이 더 필요할 수 있습니다."]
+        if support_level == "blocked":
+            return ["경고: 현재 프로필은 차단 상태입니다. 미리보기만 허용되고 적용과 launch는 차단됩니다."]
+        return []
 
-        level = "experimental"
-        if (
-            selected_set == {"Claude", "Codex", "Gemini"}
-            and implement == "Claude"
-            and verify == "Codex"
-            and advisory_enabled
-            and advisory == "Gemini"
-        ):
-            level = "supported"
-        elif (
-            selected_set == {"Claude", "Codex"}
-            and implement == "Claude"
-            and verify == "Codex"
-            and (not advisory_enabled or advisory in {"", "Codex"})
-        ):
-            level = "supported"
-        elif selected_set == {"Codex", "Gemini"} and implement == "Codex" and verify == "Codex":
-            level = "supported_with_warnings"
-        elif selected_set == {"Claude", "Gemini"} and implement == "Claude" and verify == "Claude":
-            level = "supported_with_warnings"
-        elif len(selected) == 1 and selected[0] == "Gemini":
-            level = "experimental"
-        elif len(selected) == 1:
-            level = "supported_with_warnings"
-        elif selected_set:
-            level = "supported_with_warnings"
-
-        if warnings and level == "supported":
-            return "supported_with_warnings"
-        return level
+    def _update_setup_support_presentation(self, support_level: str) -> None:
+        if not hasattr(self, "_setup_support_label"):
+            return
+        style = _SETUP_SUPPORT_STYLES.get(support_level, _SETUP_SUPPORT_STYLES["blocked"])
+        self._setup_support_label.configure(
+            fg=style["fg"],
+            bg=style["bg"],
+        )
 
     def _setup_validate(self, form_payload: dict[str, object]) -> tuple[list[str], list[str], list[str]]:
         selected = list(form_payload.get("selected_agents", []) or [])
@@ -1596,10 +1667,6 @@ class PipelineGUI:
             warnings.append("검증 역할이 비어 있습니다. 자체 검증 또는 수동 확인이 필요할 수 있습니다.")
         if session_arbitration_enabled and not advisory_enabled:
             warnings.append("세션 중재는 자문 역할이 비활성일 때 사용할 수 없습니다.")
-
-        support_level = self._setup_support_level(form_payload, has_error=bool(errors), warnings=warnings)
-        if support_level == "experimental":
-            warnings.append("현재 조합은 실험적 프로필입니다. 수동 확인이 더 필요할 수 있습니다.")
 
         effective_executor = self._setup_effective_executor(form_payload)
         if executor_override == "auto" and effective_executor != "auto":
@@ -1681,9 +1748,9 @@ class PipelineGUI:
         if removed_count <= 0 and not include_noop:
             return
         if removed_count > 0:
-            line = f"{source_label}: 오래된 staged 파일 {removed_count}개 정리"
+            line = f"{source_label}: 오래된 setup 파일 {removed_count}개 정리"
         else:
-            line = f"{source_label}: 정리할 오래된 staged 파일이 없습니다"
+            line = f"{source_label}: 정리할 오래된 setup 파일이 없습니다"
         history = list(self._setup_cleanup_history)
         history.insert(0, line)
         self._setup_cleanup_history = history[:5]
@@ -1696,6 +1763,7 @@ class PipelineGUI:
             preview_payload=read_json(paths["preview"]),
             apply_payload=read_json(paths["apply"]),
             result_payload=read_json(paths["result"]),
+            last_applied_payload=read_json(paths["last_applied"]),
         )
         self._setup_record_cleanup_result(source_label="초기 정리", removed_count=len(removed))
 
@@ -1706,17 +1774,27 @@ class PipelineGUI:
         preview_payload: dict[str, object] | None,
         apply_payload: dict[str, object] | None,
         result_payload: dict[str, object] | None,
+        last_applied_payload: dict[str, object] | None = None,
     ) -> list[Path]:
         paths = self._setup_paths()
-        return self._setup_executor_adapter.cleanup_staged_files(
-            setup_dir=paths["setup_dir"],
-            protected_setup_ids=self._setup_protected_staged_setup_ids(
-                request_payload=request_payload,
-                preview_payload=preview_payload,
-                apply_payload=apply_payload,
-                result_payload=result_payload,
-            ),
+        protected_setup_ids = self._setup_protected_staged_setup_ids(
+            request_payload=request_payload,
+            preview_payload=preview_payload,
+            apply_payload=apply_payload,
+            result_payload=result_payload,
+            last_applied_payload=last_applied_payload,
         )
+        removed = cleanup_stale_setup_artifacts(
+            setup_dir=paths["setup_dir"],
+            protected_setup_ids=protected_setup_ids,
+        )
+        removed.extend(
+            self._setup_executor_adapter.cleanup_staged_files(
+                setup_dir=paths["setup_dir"],
+                protected_setup_ids=protected_setup_ids,
+            )
+        )
+        return removed
 
     def _on_setup_clean_staged(self) -> None:
         if not self._project_valid:
@@ -1726,11 +1804,13 @@ class PipelineGUI:
         preview_payload = read_json(paths["preview"])
         apply_payload = read_json(paths["apply"])
         result_payload = read_json(paths["result"])
+        last_applied_payload = read_json(paths["last_applied"])
         removed = self._setup_cleanup_staged_files(
             request_payload=request_payload,
             preview_payload=preview_payload,
             apply_payload=apply_payload,
             result_payload=result_payload,
+            last_applied_payload=last_applied_payload,
         )
         self._setup_record_cleanup_result(
             source_label="수동 정리",
@@ -1740,9 +1820,9 @@ class PipelineGUI:
         self._refresh_setup_mode_state()
         self._set_toast_style("success")
         if removed:
-            self.msg_var.set(f"오래된 staged 파일 {len(removed)}개를 정리했습니다")
+            self.msg_var.set(f"오래된 setup 파일 {len(removed)}개를 정리했습니다")
         else:
-            self.msg_var.set("정리할 오래된 staged 파일이 없습니다")
+            self.msg_var.set("정리할 오래된 setup 파일이 없습니다")
         self._clear_msg_later()
 
     def _update_setup_widget_options(self) -> None:
@@ -1851,7 +1931,18 @@ class PipelineGUI:
         active_payload = read_json(self._setup_paths()["active"])
         if not active_payload:
             return True
-        return self._setup_fingerprint(active_payload) != self._setup_fingerprint(payload)
+        return self._setup_active_profile_fingerprint(active_payload) != self._setup_active_profile_fingerprint(payload)
+
+    def _setup_active_matches_current_form(
+        self,
+        active_payload: dict[str, object] | None,
+        form_payload: dict[str, object],
+    ) -> bool:
+        if not active_payload or self._setup_dirty:
+            return False
+        return self._setup_active_profile_fingerprint(active_payload) == self._setup_active_profile_fingerprint(
+            form_payload
+        )
 
     def _setup_build_preview_payload(
         self,
@@ -1861,11 +1952,10 @@ class PipelineGUI:
         draft_fingerprint: str,
     ) -> dict[str, object]:
         errors, warnings, infos = self._setup_validate(form_payload)
-        support_level = self._setup_support_level(
-            form_payload,
-            has_error=bool(errors),
-            warnings=warnings,
-        )
+        support_resolution = self._setup_resolve_support(form_payload)
+        support_level = str(support_resolution.get("support_level") or "blocked")
+        controls = dict(support_resolution.get("controls") or {})
+        messages = list(support_resolution.get("messages") or [])
         effective_executor = self._setup_effective_executor(form_payload)
         preview_fingerprint = self._setup_preview_fingerprint(
             form_payload,
@@ -1894,7 +1984,9 @@ class PipelineGUI:
             "preview_fingerprint": preview_fingerprint,
             "effective_executor": effective_executor,
             "support_level": support_level,
-            "support_level_label": _setup_support_label(support_level),
+            "controls": controls,
+            "messages": messages,
+            "effective_runtime_plan": support_resolution.get("effective_runtime_plan"),
             "warnings": warnings,
             "infos": infos,
             "planned_changes": {
@@ -1946,16 +2038,22 @@ class PipelineGUI:
         preview_payload: dict[str, object] | None = None,
         apply_payload: dict[str, object] | None = None,
         result_payload: dict[str, object] | None = None,
+        last_applied_payload: dict[str, object] | None = None,
         extra_setup_ids: tuple[str, ...] = (),
     ) -> set[str]:
         protected: set[str] = {item for item in extra_setup_ids if item}
-        del preview_payload
-        del result_payload
         payloads = (
             request_payload,
             apply_payload,
+            last_applied_payload,
             getattr(self, "_setup_current_request_payload", None),
             self._setup_current_apply_payload,
+        )
+        current_only_payloads = (
+            preview_payload,
+            result_payload,
+            self._setup_current_preview_payload,
+            self._setup_current_result_payload,
         )
         if self._setup_mode_state in {"PreviewWaiting", "ApplyPending"} and self._setup_current_setup_id:
             protected.add(self._setup_current_setup_id)
@@ -1964,6 +2062,12 @@ class PipelineGUI:
                 continue
             setup_id = str(payload.get("setup_id") or "").strip()
             if setup_id:
+                protected.add(setup_id)
+        for payload in current_only_payloads:
+            if not payload:
+                continue
+            setup_id = str(payload.get("setup_id") or "").strip()
+            if setup_id and setup_id == self._setup_current_setup_id:
                 protected.add(setup_id)
         return {item for item in protected if item}
 
@@ -2002,7 +2106,7 @@ class PipelineGUI:
                 "effective_executor": self._setup_effective_executor(form_payload),
                 "restart_required": bool(preview_payload.get("restart_required")),
                 "draft_fingerprint": current_draft_fingerprint,
-                "message": "설정 적용 결과가 도착했습니다.",
+                "message": _SETUP_DEFAULT_APPLY_RESULT_MESSAGE,
             },
             write_json=self._setup_write_json,
             should_promote=self._setup_result_can_promote_canonical,
@@ -2034,13 +2138,97 @@ class PipelineGUI:
         else:
             if errors:
                 lines.extend(f"오류: {msg}" for msg in errors if str(msg).strip())
-            if message:
+            if message and message != _SETUP_DEFAULT_APPLY_RESULT_MESSAGE:
                 lines.append(f"안내: {message}")
         if warnings:
             lines.extend(f"경고: {msg}" for msg in warnings if str(msg).strip())
         if infos:
             lines.extend(f"안내: {msg}" for msg in infos if str(msg).strip())
         return lines
+
+    def _setup_sync_last_applied_record(
+        self,
+        *,
+        active_payload: dict[str, object],
+        result_payload: dict[str, object],
+        fallback_executor: str,
+    ) -> dict[str, object]:
+        record = build_last_applied_record(
+            setup_id=str(result_payload.get("setup_id") or ""),
+            approved_preview_fingerprint=str(result_payload.get("approved_preview_fingerprint") or ""),
+            active_payload=active_payload,
+            restart_required=bool(result_payload.get("restart_required")),
+            executor=str(result_payload.get("effective_executor") or fallback_executor or "auto"),
+            applied_at=str(result_payload.get("finished_at") or utc_now_iso()),
+        )
+        path = self._setup_paths()["last_applied"]
+        current_payload = read_json(path)
+        if current_payload != record:
+            self._setup_write_json(path, record)
+        return record
+
+    @staticmethod
+    def _setup_result_replays_last_applied(
+        result_payload: dict[str, object] | None,
+        last_applied_payload: dict[str, object] | None,
+        *,
+        active_exists: bool,
+    ) -> bool:
+        if active_exists or not result_payload or not isinstance(last_applied_payload, dict):
+            return False
+        result_setup_id = str(result_payload.get("setup_id") or "").strip()
+        result_approved = str(result_payload.get("approved_preview_fingerprint") or "").strip()
+        return bool(
+            result_setup_id
+            and result_approved
+            and result_setup_id == str(last_applied_payload.get("setup_id") or "").strip()
+            and result_approved == str(last_applied_payload.get("approved_preview_fingerprint") or "").strip()
+        )
+
+    def _setup_reconcile_last_applied(self) -> dict[str, object]:
+        paths = self._setup_paths()
+        active_path = paths["active"]
+        last_applied_path = paths["last_applied"]
+        return reconcile_last_applied(
+            active_payload=read_json(active_path),
+            last_applied_payload=read_json(last_applied_path),
+            active_exists=active_path.exists(),
+            last_applied_exists=last_applied_path.exists(),
+        )
+
+    def _setup_last_applied_feedback_lines(self, reconciliation: dict[str, object]) -> list[str]:
+        status = str(reconciliation.get("status") or "")
+        setup_id = str(reconciliation.get("setup_id") or "").strip()
+        executor = str(reconciliation.get("executor") or "").strip()
+        prefix = f"최근 적용 기록({setup_id}" if setup_id else "최근 적용 기록("
+        if setup_id and executor:
+            prefix += f", 실행자 {executor}"
+        elif executor:
+            prefix += f"실행자 {executor}"
+        prefix += ")"
+        if status == "ok" and bool(reconciliation.get("restart_required")):
+            return [f"안내: {prefix}이 active profile과 일치합니다."]
+        if status == "mismatch":
+            if not str(reconciliation.get("current_active_profile_fingerprint") or "").strip():
+                return [f"경고: {prefix}은 있지만 active profile이 없습니다. 설정을 다시 적용하거나 active profile을 복구해 주세요."]
+            return [f"경고: {prefix}과 active profile이 다릅니다. preview/apply를 다시 확인해 주세요."]
+        if status == "broken":
+            return ["오류: 최근 적용 기록을 확인할 수 없어 restart reconciliation을 완료하지 못했습니다."]
+        return []
+
+    def _setup_last_applied_notice_text(self, reconciliation: dict[str, object], *, state: str) -> str:
+        if state == "Applied" and self._setup_restart_required:
+            return "설정 적용이 끝났습니다. active profile을 읽으려면 watcher/launcher를 재시작하세요."
+        status = str(reconciliation.get("status") or "")
+        if status == "ok" and bool(reconciliation.get("restart_required")):
+            return "최근 적용 기록이 active profile과 일치합니다."
+        if status == "mismatch":
+            if not str(reconciliation.get("current_active_profile_fingerprint") or "").strip():
+                return "최근 적용 기록은 있지만 active profile이 없어 recovery가 필요합니다."
+            return "최근 적용 기록과 active profile이 달라 restart reconciliation이 필요합니다."
+        if status == "broken":
+            return "최근 적용 기록을 읽지 못해 restart reconciliation을 확인할 수 없습니다."
+        return ""
 
     def _refresh_setup_mode_state(self) -> None:
         if not hasattr(self, "_setup_mode_state_var"):
@@ -2054,6 +2242,27 @@ class PipelineGUI:
         preview_payload = read_json(paths["preview"])
         apply_payload = read_json(paths["apply"])
         result_payload = read_json(paths["result"])
+        active_payload = read_json(paths["active"])
+        last_applied_payload = read_json(paths["last_applied"])
+        disk_setup_truth_exists = any(
+            path.exists()
+            for path in (
+                paths["active"],
+                paths["request"],
+                paths["preview"],
+                paths["apply"],
+                paths["result"],
+                paths["last_applied"],
+            )
+        )
+
+        if not disk_setup_truth_exists:
+            self._setup_current_setup_id = ""
+            self._setup_current_preview_fingerprint = ""
+            self._setup_current_request_payload = None
+            self._setup_current_preview_payload = None
+            self._setup_current_apply_payload = None
+            self._setup_current_result_payload = None
 
         self._setup_current_draft_fingerprint = current_draft_fingerprint
         self._setup_draft_saved = bool(
@@ -2067,6 +2276,8 @@ class PipelineGUI:
         self._setup_infos = infos
         self._setup_has_error = bool(errors)
         self._setup_has_warning = bool(warnings)
+        support_resolution = self._setup_resolve_support(form_payload)
+        self._setup_current_support_resolution = support_resolution
 
         request_current = bool(
             request_payload
@@ -2124,23 +2335,41 @@ class PipelineGUI:
 
         if effective_result_payload:
             self._setup_current_result_payload = effective_result_payload
-            can_promote, promotion_failed_message = self._setup_result_can_promote_active(
+            replayed_result = self._setup_result_replays_last_applied(
                 effective_result_payload,
-                self._setup_current_apply_payload,
-                self._setup_current_preview_payload,
-                self._setup_current_setup_id,
-                draft_payload,
-                current_draft_fingerprint,
-                self._setup_fingerprint,
+                last_applied_payload,
+                active_exists=paths["active"].exists(),
             )
-            if can_promote:
-                self._setup_promote_active_profile(draft_payload, source_setup_id=self._setup_current_setup_id)
+            if replayed_result:
+                self._setup_restart_required = False
+            else:
+                can_promote, promotion_failed_message = self._setup_result_can_promote_active(
+                    effective_result_payload,
+                    self._setup_current_apply_payload,
+                    self._setup_current_preview_payload,
+                    self._setup_current_setup_id,
+                    draft_payload,
+                    current_draft_fingerprint,
+                    self._setup_fingerprint,
+                )
+            if not replayed_result and can_promote:
+                promoted_active_payload = self._setup_promote_active_profile(
+                    draft_payload,
+                    source_setup_id=self._setup_current_setup_id,
+                )
+                last_applied_payload = self._setup_sync_last_applied_record(
+                    active_payload=promoted_active_payload,
+                    result_payload=effective_result_payload,
+                    fallback_executor=self._setup_effective_executor(form_payload),
+                )
                 self._setup_restart_required = bool(effective_result_payload.get("restart_required"))
-            elif str(effective_result_payload.get("status") or "") == "applied":
+            elif not replayed_result and str(effective_result_payload.get("status") or "") == "applied":
                 promotion_failed = True
         else:
             self._setup_current_result_payload = None
             self._setup_restart_required = False
+
+        active_matches_current = self._setup_active_matches_current_form(active_payload, form_payload)
 
         state = "DraftOnly"
         if self._setup_has_error:
@@ -2158,21 +2387,29 @@ class PipelineGUI:
             and not promotion_failed
         ):
             state = "Applied"
+        elif active_matches_current:
+            state = "Applied"
         elif preview_current:
             state = "PreviewReady"
         elif request_current:
             state = "PreviewWaiting"
+        reconciliation = self._setup_reconcile_last_applied()
+        reconciliation_status = str(reconciliation.get("status") or "")
+        if state == "Applied" and reconciliation_status in {"mismatch", "broken"}:
+            state = "RecoveryNeeded"
+
         self._setup_mode_state = state
         self._update_setup_widget_options()
 
         self._setup_apply_inline_errors(errors)
-        support_level = self._setup_support_level(
-            form_payload,
-            has_error=self._setup_has_error,
-            warnings=warnings,
-        )
+        display_support_level = str(support_resolution.get("support_level") or "blocked")
+        display_controls = dict(support_resolution.get("controls") or {})
+        if preview_current and self._setup_current_preview_payload:
+            display_support_level = str(self._setup_current_preview_payload.get("support_level") or display_support_level)
+            display_controls = dict(self._setup_current_preview_payload.get("controls") or display_controls)
         self._setup_mode_state_var.set(_setup_state_label(state))
-        self._setup_support_level_var.set(_setup_support_label(support_level))
+        self._setup_support_level_var.set(_setup_support_label(display_support_level))
+        self._update_setup_support_presentation(display_support_level)
         self._setup_current_setup_id_var.set(self._setup_current_setup_id or "—")
         self._setup_current_preview_fingerprint_var.set(self._setup_current_preview_fingerprint or "—")
 
@@ -2180,6 +2417,9 @@ class PipelineGUI:
             self._setup_current_result_payload,
             current_setup_id=self._setup_current_setup_id,
         )
+        validation_lines.extend(self._setup_support_banner_lines(display_support_level, display_controls))
+        validation_lines.extend(self._setup_last_applied_feedback_lines(reconciliation))
+        validation_lines.extend(self._runtime_resolution_feedback_lines(self._resolve_runtime_active_profile()))
         if errors:
             validation_lines.extend(f"오류: {msg}" for msg in errors)
         if promotion_failed_message:
@@ -2197,28 +2437,44 @@ class PipelineGUI:
                 stale_preview=stale_preview,
             )
         )
-        self._setup_restart_notice_var.set(
-            "설정 적용이 끝났습니다. active profile을 읽으려면 watcher/launcher를 재시작하세요."
-            if state == "Applied" and self._setup_restart_required
-            else ""
+        self._setup_restart_notice_var.set(self._setup_last_applied_notice_text(reconciliation, state=state))
+        self._setup_apply_readiness_var.set(
+            self._setup_apply_readiness_text(
+                state,
+                preview_current,
+                self._setup_current_preview_payload,
+            )
         )
-        self._setup_apply_readiness_var.set(self._setup_apply_readiness_text(state, preview_current))
         self._update_setup_action_buttons()
         removed = self._setup_cleanup_staged_files(
             request_payload=request_payload,
             preview_payload=preview_payload,
             apply_payload=apply_payload,
             result_payload=result_payload,
+            last_applied_payload=last_applied_payload,
         )
         self._setup_record_cleanup_result(source_label="자동 정리", removed_count=len(removed))
+        self._sync_start_button_state()
 
-    def _setup_apply_readiness_text(self, state: str, preview_current: bool) -> str:
+    def _setup_apply_readiness_text(
+        self,
+        state: str,
+        preview_current: bool,
+        preview_payload: dict[str, object] | None = None,
+    ) -> str:
+        preview_controls = dict((preview_payload or {}).get("controls") or {})
+        if preview_current and preview_payload and not bool(preview_controls.get("apply_allowed")):
+            return "적용 비활성: 현재 프로필은 차단 상태여서 미리보기만 가능합니다"
         if state == "InvalidConfig":
             return "적용 비활성: 설정이 올바르지 않습니다"
         if state == "PreviewWaiting":
             return "적용 비활성: 현재 초안 기준 미리보기를 기다리는 중입니다"
         if state == "ApplyPending":
             return "적용 비활성: 이미 적용이 진행 중입니다"
+        if state == "RecoveryNeeded":
+            if preview_current and preview_payload and bool(preview_controls.get("apply_allowed")):
+                return "적용 가능: active profile 복구를 위해 현재 미리보기를 다시 적용할 수 있습니다"
+            return "적용 비활성: active profile 복구를 위해 미리보기를 다시 생성하세요"
         if state == "Applied" and not self._setup_dirty:
             return "적용 비활성: active profile이 현재 초안과 이미 같습니다"
         if not preview_current:
@@ -2230,15 +2486,17 @@ class PipelineGUI:
     def _update_setup_action_buttons(self) -> None:
         if not hasattr(self, "btn_setup_save_draft"):
             return
-        valid = not self._setup_has_error and self._project_valid
         action_pending = self._setup_mode_state in {"PreviewWaiting", "ApplyPending"}
         applied_current = self._setup_mode_state == "Applied" and not self._setup_dirty
         preview_current = bool(self._setup_current_preview_payload)
         action_blocked = self._action_in_progress or action_pending
+        support_resolution = self._setup_current_support_resolution or self._setup_resolve_support(self._setup_collect_form_payload())
+        support_controls = dict(support_resolution.get("controls") or {})
+        preview_controls = dict((self._setup_current_preview_payload or {}).get("controls") or {})
 
-        save_enabled = valid and not action_blocked and ((self._setup_dirty or not self._setup_draft_saved) and not applied_current)
-        generate_enabled = valid and not action_blocked and not applied_current
-        apply_enabled = (self._setup_mode_state == "PreviewReady") and not action_blocked
+        save_enabled = self._project_valid and not action_blocked and ((self._setup_dirty or not self._setup_draft_saved) and not applied_current)
+        generate_enabled = self._project_valid and not action_blocked and not applied_current and bool(support_controls.get("preview_allowed", True))
+        apply_enabled = preview_current and bool(preview_controls.get("apply_allowed")) and not action_blocked
 
         self.btn_setup_save_draft.configure(state=NORMAL if save_enabled else DISABLED)
         self.btn_setup_generate_preview.configure(state=NORMAL if generate_enabled else DISABLED)
@@ -2259,16 +2517,17 @@ class PipelineGUI:
         draft_payload: dict[str, object],
         *,
         source_setup_id: str,
-    ) -> None:
+    ) -> dict[str, object]:
         paths = self._setup_paths()
         active_payload = read_json(paths["active"])
         if (
             active_payload
             and str((active_payload.get("metadata") or {}).get("source_setup_id") or "") == source_setup_id
         ):
-            return
+            return active_payload
         promoted = self._setup_active_payload(draft_payload, source_setup_id=source_setup_id)
         self._setup_write_json(paths["active"], promoted)
+        return promoted
 
     def _setup_generate_setup_id(self) -> str:
         stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -2322,7 +2581,7 @@ class PipelineGUI:
         self._refresh_setup_mode_state()
 
     def _on_setup_save_draft(self) -> None:
-        if self._setup_has_error or not self._project_valid:
+        if not self._project_valid:
             return
         payload = self._setup_draft_payload(self._setup_collect_form_payload())
         self._setup_write_json(self._setup_paths()["draft"], payload)
@@ -2334,65 +2593,95 @@ class PipelineGUI:
         self._clear_msg_later()
 
     def _on_setup_generate_preview(self) -> None:
-        if self._setup_has_error or not self._project_valid:
+        if not self._project_valid:
             return
-        if self._setup_dirty or not self._setup_draft_saved:
-            self._on_setup_save_draft()
-        form_payload = self._setup_collect_form_payload()
-        self._setup_current_setup_id = self._setup_generate_setup_id()
-        request_payload = {
-            "status": "setup_requested",
-            "setup_id": self._setup_current_setup_id,
-            "schema_version": 1,
-            "project_root": str(self.project),
-            "selected_agents": list(form_payload.get("selected_agents", []) or []),
-            "role_bindings": dict(form_payload.get("role_bindings", {}) or {}),
-            "role_options": dict(form_payload.get("role_options", {}) or {}),
-            "mode_flags": dict(form_payload.get("mode_flags", {}) or {}),
-            "config_paths": {
-                "active": ".pipeline/config/agent_profile.json",
-                "draft": ".pipeline/config/agent_profile.draft.json",
-            },
-            "draft_fingerprint": self._setup_current_draft_fingerprint,
-            "executor_candidate": self._setup_effective_executor(form_payload),
-        }
-        self._setup_current_preview_payload = None
-        self._setup_current_preview_fingerprint = ""
-        self._setup_current_request_payload = request_payload
-        self._setup_current_apply_payload = None
-        self._setup_current_result_payload = None
-        self._setup_write_json(self._setup_paths()["request"], request_payload)
-        self._setup_execute_preview_roundtrip(request_payload, form_payload)
-        self._refresh_setup_mode_state()
-        self._set_toast_style("success")
-        self.msg_var.set("설정 미리보기를 요청했습니다")
-        self._clear_msg_later()
+        try:
+            if self._setup_dirty or not self._setup_draft_saved:
+                self._on_setup_save_draft()
+            form_payload = self._setup_collect_form_payload()
+            support_resolution = self._setup_resolve_support(form_payload)
+            support_controls = dict(support_resolution.get("controls") or {})
+            if not bool(support_controls.get("preview_allowed", True)):
+                self._set_toast_style("error")
+                self.msg_var.set("미리보기 생성 실패: 현재 프로필은 preview만 허용되지 않는 상태입니다.")
+                self._clear_msg_later(8000)
+                return
+            self._setup_current_setup_id = self._setup_generate_setup_id()
+            request_payload = {
+                "status": "setup_requested",
+                "setup_id": self._setup_current_setup_id,
+                "schema_version": 1,
+                "project_root": str(self.project),
+                "selected_agents": list(form_payload.get("selected_agents", []) or []),
+                "role_bindings": dict(form_payload.get("role_bindings", {}) or {}),
+                "role_options": dict(form_payload.get("role_options", {}) or {}),
+                "mode_flags": dict(form_payload.get("mode_flags", {}) or {}),
+                "config_paths": {
+                    "active": ".pipeline/config/agent_profile.json",
+                    "draft": ".pipeline/config/agent_profile.draft.json",
+                },
+                "draft_fingerprint": self._setup_current_draft_fingerprint,
+                "executor_candidate": self._setup_effective_executor(form_payload),
+                "support_level": str(support_resolution.get("support_level") or "blocked"),
+                "controls": support_controls,
+                "messages": list(support_resolution.get("messages") or []),
+                "effective_runtime_plan": support_resolution.get("effective_runtime_plan"),
+            }
+            self._setup_current_preview_payload = None
+            self._setup_current_preview_fingerprint = ""
+            self._setup_current_request_payload = request_payload
+            self._setup_current_apply_payload = None
+            self._setup_current_result_payload = None
+            self._setup_write_json(self._setup_paths()["request"], request_payload)
+            self._setup_execute_preview_roundtrip(request_payload, form_payload)
+            self._refresh_setup_mode_state()
+            self._set_toast_style("progress")
+            self.msg_var.set("설정 미리보기를 요청했습니다")
+            self._clear_msg_later()
+        except Exception as exc:
+            self._set_toast_style("error")
+            self.msg_var.set(f"미리보기 요청 실패: {exc}")
+            self._clear_msg_later(10000)
 
     def _on_setup_apply(self) -> None:
-        if self._setup_mode_state != "PreviewReady" or not self._setup_current_preview_payload:
+        if not self._setup_current_preview_payload:
+            self._set_toast_style("error")
+            self.msg_var.set("적용 실패: 먼저 현재 초안 기준 미리보기를 생성해 주세요.")
+            self._clear_msg_later(8000)
             return
-        form_payload = self._setup_collect_form_payload()
-        apply_payload = {
-            "status": "apply_requested",
-            "setup_id": self._setup_current_setup_id,
-            "schema_version": 1,
-            "approved_at": utc_now_iso(),
-            "approved_preview_fingerprint": self._setup_current_preview_fingerprint,
-            "executor": self._setup_effective_executor(form_payload),
-        }
-        self._setup_write_json(self._setup_paths()["apply"], apply_payload)
-        self._setup_current_apply_payload = apply_payload
-        self._setup_current_result_payload = None
-        self._setup_execute_apply_roundtrip(
-            apply_payload,
-            form_payload,
-            self._setup_current_preview_payload,
-            self._setup_current_draft_fingerprint,
-        )
-        self._refresh_setup_mode_state()
-        self._set_toast_style("success")
-        self.msg_var.set("설정 적용을 요청했습니다")
-        self._clear_msg_later()
+        preview_controls = dict(self._setup_current_preview_payload.get("controls") or {})
+        if not bool(preview_controls.get("apply_allowed")):
+            self._set_toast_style("error")
+            self.msg_var.set("적용 실패: 현재 미리보기 조합은 apply가 차단되어 있습니다.")
+            self._clear_msg_later(8000)
+            return
+        try:
+            form_payload = self._setup_collect_form_payload()
+            apply_payload = {
+                "status": "apply_requested",
+                "setup_id": self._setup_current_setup_id,
+                "schema_version": 1,
+                "approved_at": utc_now_iso(),
+                "approved_preview_fingerprint": self._setup_current_preview_fingerprint,
+                "executor": self._setup_effective_executor(form_payload),
+            }
+            self._setup_write_json(self._setup_paths()["apply"], apply_payload)
+            self._setup_current_apply_payload = apply_payload
+            self._setup_current_result_payload = None
+            self._setup_execute_apply_roundtrip(
+                apply_payload,
+                form_payload,
+                self._setup_current_preview_payload,
+                self._setup_current_draft_fingerprint,
+            )
+            self._refresh_setup_mode_state()
+            self._set_toast_style("progress")
+            self.msg_var.set("설정 적용을 요청했습니다")
+            self._clear_msg_later()
+        except Exception as exc:
+            self._set_toast_style("error")
+            self.msg_var.set(f"적용 요청 실패: {exc}")
+            self._clear_msg_later(10000)
 
     def _on_setup_confirm_restart(self) -> None:
         if self._setup_mode_state != "Applied" or not self._setup_restart_required:
@@ -2417,6 +2706,7 @@ class PipelineGUI:
         *,
         all_disabled: bool,
         can_start: bool = False,
+        can_restart: bool | None = None,
         session_ok: bool = False,
     ) -> None:
         if all_disabled:
@@ -2428,10 +2718,11 @@ class PipelineGUI:
             self.btn_token_backfill.configure(state=DISABLED)
             self.btn_token_rebuild.configure(state=DISABLED)
             return
+        restart_enabled = session_ok if can_restart is None else can_restart
         self.btn_setup.configure(state=NORMAL)
         self.btn_start.configure(state=NORMAL if can_start else DISABLED)
         self.btn_stop.configure(state=NORMAL if session_ok else DISABLED)
-        self.btn_restart.configure(state=NORMAL if session_ok else DISABLED)
+        self.btn_restart.configure(state=NORMAL if restart_enabled else DISABLED)
         self.btn_attach.configure(state=NORMAL if session_ok else DISABLED)
         self.btn_token_backfill.configure(state=NORMAL)
         self.btn_token_rebuild.configure(state=NORMAL)
@@ -2556,40 +2847,84 @@ class PipelineGUI:
             text += f" · 백업 {Path(backup_path).name}"
         return text
 
-    def _clear_msg_later(self, delay_ms: int = 6000) -> None:
+    def _clear_msg_later(self, delay_ms: int | None = 6000) -> None:
+        if delay_ms is None:
+            return
         self.root.after(delay_ms, lambda: self.msg_var.set("") if not self._action_in_progress else None)
 
     # ── Setup state ──
 
+    def _setup_state_presentation(self, resolved: dict[str, object] | None = None) -> tuple[str, str]:
+        state = self._setup_state
+        detail = self._setup_state_detail
+        if state == "ready":
+            text = "설정: ● 준비됨"
+            color = "#34d399"
+        elif state == "ready_warn":
+            text = f"설정: ● 준비됨 ({detail})"
+            color = "#f59e0b"
+        elif state == "checking":
+            text = f"설정: … {detail or '점검 중'}"
+            color = "#f59e0b"
+        elif state == "missing":
+            text = f"설정: ■ 누락 {detail}"
+            color = "#ef4444"
+        elif state == "failed":
+            text = f"설정: ■ {detail or '설치 실패'}"
+            color = "#ef4444"
+        else:
+            text = "설정: — 알 수 없음"
+            color = "#888888"
+
+        if state not in {"ready", "ready_warn"} or not resolved:
+            return text, color
+
+        controls = dict(resolved.get("controls") or {})
+        support_level = str(resolved.get("support_level") or "")
+        runtime_detail = self._runtime_resolution_detail(resolved) or join_display_resolver_messages(resolved)
+        if not bool(controls.get("launch_allowed")):
+            suffix = "실행 차단"
+            if runtime_detail:
+                suffix = f"{suffix}: {runtime_detail}"
+            return f"{text} / {suffix}", "#ef4444"
+        if support_level == "experimental":
+            suffix = "실험적"
+            if runtime_detail:
+                suffix = f"{suffix}: {runtime_detail}"
+            return f"{text} / {suffix}", "#f59e0b"
+        return text, color
+
+    def _apply_setup_state_presentation(self, resolved: dict[str, object] | None = None) -> None:
+        if not hasattr(self, "setup_var") or not hasattr(self, "setup_state_label"):
+            return
+        text, color = self._setup_state_presentation(resolved)
+        self.setup_var.set(text)
+        self.setup_state_label.configure(fg=color)
+
     def _set_setup_state(self, state: str, detail: str = "") -> None:
         """Setup 상태 UI를 갱신합니다. main thread에서 호출해야 합니다."""
         self._setup_state = state
-        if state == "ready":
-            self.setup_var.set("설정: ● 준비됨")
-            self.setup_state_label.configure(fg="#34d399")
-        elif state == "ready_warn":
-            self.setup_var.set(f"설정: ● 준비됨 ({detail})")
-            self.setup_state_label.configure(fg="#f59e0b")
-        elif state == "checking":
-            self.setup_var.set(f"설정: … {detail or '점검 중'}")
-            self.setup_state_label.configure(fg="#f59e0b")
-        elif state == "missing":
-            self.setup_var.set(f"설정: ■ 누락 {detail}")
-            self.setup_state_label.configure(fg="#ef4444")
-        elif state == "failed":
-            self.setup_var.set(f"설정: ■ {detail or '설치 실패'}")
-            self.setup_state_label.configure(fg="#ef4444")
-        else:
-            self.setup_var.set("설정: — 알 수 없음")
-            self.setup_state_label.configure(fg="#888888")
+        self._setup_state_detail = detail
+        self._apply_setup_state_presentation(self._runtime_launch_resolution)
         self._sync_start_button_state()
 
     def _sync_start_button_state(self) -> None:
         """Setup 상태에 따라 Start 버튼 활성/비활성."""
         if self._action_in_progress:
             return
-        can_start = self._setup_state in ("ready", "ready_warn")
-        self.btn_start.configure(state=NORMAL if can_start else DISABLED)
+        resolved = self._resolve_runtime_active_profile()
+        self._apply_runtime_launch_presentation(resolved)
+        self._apply_setup_state_presentation(resolved)
+        session_ok = False
+        if self._last_snapshot is not None:
+            session_ok = bool(self._last_snapshot.get("session_ok"))
+        elif hasattr(self, "_session_name"):
+            session_ok = tmux_alive(self._session_name)
+        can_launch = self._runtime_launch_allowed(resolved)
+        if hasattr(self, "btn_start"):
+            self.btn_start.configure(state=NORMAL if (not session_ok and can_launch) else DISABLED)
+        if hasattr(self, "btn_restart"):
+            self.btn_restart.configure(state=NORMAL if (session_ok and can_launch) else DISABLED)
 
     def _msg(self, text: str) -> None:
         """Background thread에서 안전하게 하단 메시지 갱신."""
@@ -2605,8 +2940,11 @@ class PipelineGUI:
             result[0] = messagebox.askyesno(title, msg, icon=icon)
 
         self.root.after(0, _ask)
-        while result[0] is None:
+        deadline = time.time() + 30.0
+        while result[0] is None and time.time() < deadline:
             time.sleep(0.1)
+        if result[0] is None:
+            return False
         return bool(result[0])
 
     # ── Setup/Check ──
@@ -2831,6 +3169,13 @@ class PipelineGUI:
             self.msg_var.set("설정이 완료되지 않았습니다. 먼저 설정 화면에서 실행 전제를 확인하세요.")
             self._clear_msg_later(5000)
             return
+        launch_resolution = self._resolve_runtime_active_profile()
+        self._apply_runtime_launch_presentation(launch_resolution)
+        if not self._runtime_launch_allowed(launch_resolution):
+            self._set_toast_style("error")
+            self.msg_var.set(self._runtime_resolution_detail(launch_resolution) or "Active profile launch is blocked.")
+            self._clear_msg_later(8000)
+            return
         self._lock_buttons("▶ 파이프라인 시작 중...")
         threading.Thread(target=self._do_start, daemon=True).start()
 
@@ -2854,37 +3199,25 @@ class PipelineGUI:
                     return
 
             self.root.after(0, lambda: self.msg_var.set("▶ 파이프라인 시작 중..."))
-            pipeline_start(self.project, self._session_name)
+            start_requested_at = time.time()
+            start_result = pipeline_start(self.project, self._session_name)
+            if start_result != "시작 요청됨":
+                self.root.after(0, lambda msg=start_result: self._unlock_buttons(f"▶ 시작 차단: {msg}", is_error=True))
+                self.root.after(0, lambda: self._clear_msg_later(10000))
+                return
 
-            # 최대 15초 대기 — 단계별 진단
-            for sec in range(15):
-                time.sleep(1)
-                if tmux_alive(self._session_name):
-                    # tmux OK — watcher도 확인
-                    w_alive, w_pid = watcher_alive(self.project)
-                    if w_alive:
-                        self.root.after(0, lambda: self._unlock_buttons("▶ 파이프라인 시작 완료"))
-                        self.root.after(0, lambda: self._clear_msg_later())
-                        return
-                    if sec >= 10:
-                        self.root.after(0, lambda: self._unlock_buttons(
-                            f"▶ 시작 불완전: tmux 세션은 있으나 watcher가 감지되지 않았습니다 "
-                            f"— .pipeline/logs/experimental/ 오류를 확인해 주세요", is_error=True))
-                        self.root.after(0, lambda: self._clear_msg_later(12000))
-                        return
-                    # watcher 아직 안 뜸 — 조금 더 대기
-                    self.root.after(0, lambda s=sec: self.msg_var.set(
-                        f"▶ 시작 중... tmux 확인, watcher 대기 중 ({s+1}초)"))
-                    continue
-                # tmux도 아직 없음
-                if sec >= 5:
-                    self.root.after(0, lambda s=sec: self.msg_var.set(
-                        f"▶ 시작 중... tmux 세션 대기 중 ({s+1}초)"))
-
-            # 15초 후에도 tmux 없음
-            self.root.after(0, lambda: self._unlock_buttons(
-                f"▶ 시작 실패: 15초 안에 tmux 세션 '{self._session_name}'가 감지되지 않았습니다 "
-                f"— launcher script가 오류로 종료됐을 수 있습니다", is_error=True))
+            ok, detail = confirm_pipeline_start(
+                self.project,
+                self._session_name,
+                start_requested_at=start_requested_at,
+                action_label="시작",
+                progress_callback=lambda message: self.root.after(
+                    0,
+                    lambda m=message: self.msg_var.set(f"▶ {m}"),
+                ),
+            )
+            self.root.after(0, lambda d=detail, success=ok: self._unlock_buttons(f"▶ {d}", is_error=not success))
+            self.root.after(0, lambda: self._clear_msg_later(10000 if not ok else None))
         except Exception as e:
             self.root.after(0, lambda: self._unlock_buttons(f"▶ 시작 실패: {e}", is_error=True))
         self.root.after(0, lambda: self._clear_msg_later(10000))
@@ -2926,6 +3259,18 @@ class PipelineGUI:
     def _on_restart(self) -> None:
         if self._action_in_progress:
             return
+        if self._setup_state not in ("ready", "ready_warn"):
+            self._set_toast_style("error")
+            self.msg_var.set("설정이 완료되지 않았습니다. 먼저 설정 화면에서 실행 전제를 확인하세요.")
+            self._clear_msg_later(5000)
+            return
+        launch_resolution = self._resolve_runtime_active_profile()
+        self._apply_runtime_launch_presentation(launch_resolution)
+        if not self._runtime_launch_allowed(launch_resolution):
+            self._set_toast_style("error")
+            self.msg_var.set(self._runtime_resolution_detail(launch_resolution) or "Active profile launch is blocked.")
+            self._clear_msg_later(8000)
+            return
         self._lock_buttons("↻ 파이프라인 재시작 중...")
         threading.Thread(target=self._do_restart, daemon=True).start()
 
@@ -2950,31 +3295,24 @@ class PipelineGUI:
             time.sleep(1)
 
             # ── Start 단계 (Start와 동일한 진단) ──
-            pipeline_start(self.project, self._session_name)
-            for sec in range(15):
-                time.sleep(1)
-                if tmux_alive(self._session_name):
-                    w_alive, w_pid = watcher_alive(self.project)
-                    if w_alive:
-                        self.root.after(0, lambda: self._unlock_buttons("↻ 파이프라인 재시작 완료"))
-                        self.root.after(0, lambda: self._clear_msg_later())
-                        return
-                    if sec >= 10:
-                        self.root.after(0, lambda: self._unlock_buttons(
-                            "↻ 재시작 불완전: tmux는 있으나 watcher가 감지되지 않았습니다 "
-                            "— .pipeline/logs/experimental/을 확인해 주세요", is_error=True))
-                        self.root.after(0, lambda: self._clear_msg_later(12000))
-                        return
-                    self.root.after(0, lambda s=sec: self.msg_var.set(
-                        f"↻ 재시작 중... tmux 확인, watcher 대기 중 ({s+1}초)"))
-                    continue
-                if sec >= 5:
-                    self.root.after(0, lambda s=sec: self.msg_var.set(
-                        f"↻ 재시작 중... tmux 세션 대기 중 ({s+1}초)"))
-
-            self.root.after(0, lambda: self._unlock_buttons(
-                f"↻ 재시작 실패: 15초 안에 tmux 세션 '{self._session_name}'가 감지되지 않았습니다",
-                is_error=True))
+            start_requested_at = time.time()
+            start_result = pipeline_start(self.project, self._session_name)
+            if start_result != "시작 요청됨":
+                self.root.after(0, lambda msg=start_result: self._unlock_buttons(f"↻ 재시작 차단: {msg}", is_error=True))
+                self.root.after(0, lambda: self._clear_msg_later(10000))
+                return
+            ok, detail = confirm_pipeline_start(
+                self.project,
+                self._session_name,
+                start_requested_at=start_requested_at,
+                action_label="재시작",
+                progress_callback=lambda message: self.root.after(
+                    0,
+                    lambda m=message: self.msg_var.set(f"↻ {m}"),
+                ),
+            )
+            self.root.after(0, lambda d=detail, success=ok: self._unlock_buttons(f"↻ {d}", is_error=not success))
+            self.root.after(0, lambda: self._clear_msg_later(10000 if not ok else None))
         except Exception as e:
             self.root.after(0, lambda: self._unlock_buttons(f"↻ 재시작 실패: {e}", is_error=True))
         self.root.after(0, lambda: self._clear_msg_later(10000))

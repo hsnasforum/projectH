@@ -183,7 +183,7 @@ These are placeholders for the next phase design target and its immediate follow
 - Promotion from `durable_candidate` to future user-level memory should remain out of scope.
 
 ### Implemented Next-Phase Entry Slice
-- The first implementation slice is `artifact_id` linkage, not review queue or user-level memory.
+- The first implementation slice was `artifact_id` linkage; the review queue (`검토 후보`), aggregate apply trigger (`검토 메모 적용 후보`), and reviewed-memory active-effect path are now shipped in later slices above this entry slice. User-level memory still remains later.
 - A grounded-brief response now gains:
   - `artifact_id`
   - `artifact_kind = grounded_brief`

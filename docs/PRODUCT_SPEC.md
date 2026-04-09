@@ -412,7 +412,7 @@ The first official artifact is the `grounded brief`.
 - no separate artifact store in the first slice
 - no corrected-save auto-rebase or unsaved-editor save path in the first slice
 - no content-level `rejected` outcome capture in that initial artifact slice
-- no review queue
+- review queue (`검토 후보`) and aggregate apply trigger (`검토 메모 적용 후보`) are now shipped in later slices above this entry slice
 - no future user-level memory
 - no UI expansion requirement
 
@@ -967,7 +967,7 @@ The first official artifact is the `grounded brief`.
 - current eligibility and guardrail rules:
   - one matching `candidate_confirmation_record` is enough to materialize one source-message-anchored `durable_candidate`
   - repeated same-session signals without a truthful recurrence key remain insufficient even when `candidate_family` matches
-  - the current read-only review queue may surface that eligible record for inspection, but reviewed memory and user-level memory still remain closed
+  - the current read-only review queue surfaces that eligible record for inspection, and the reviewed-memory first slice (review queue, aggregate apply trigger, and active-effect path) is now shipped; user-level memory still remains later
   - no suggested scope fields are emitted at this step
   - promotion still does not mean reviewed memory or user-level memory
 - first truthful recurrence-key contract is now implemented and remains separate from the shipped `durable_candidate` / review surfaces:

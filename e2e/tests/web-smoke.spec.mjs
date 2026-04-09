@@ -1110,6 +1110,7 @@ test("web-search history card header badges는 answer-mode, verification-strengt
         answer_mode: "entity_card",
         verification_label: "공식+기사 교차 확인",
         source_roles: ["공식 기반", "보조 기사"],
+        claim_coverage_progress_summary: "출생일: 단일 출처 → 교차 확인으로 보강되었습니다.",
         result_count: 5,
         page_count: 3,
         created_at: new Date().toISOString(),
@@ -1162,6 +1163,9 @@ test("web-search history card header badges는 answer-mode, verification-strengt
   await expect(card1Roles.nth(0)).toHaveClass(/trust-high/);
   await expect(card1Roles.nth(1)).toHaveText("보조 기사(보통)");
   await expect(card1Roles.nth(1)).toHaveClass(/trust-medium/);
+  // progress summary visible in card meta
+  const card1Meta = card1.locator(".meta");
+  await expect(card1Meta).toContainText("출생일: 단일 출처 → 교차 확인으로 보강되었습니다.");
 
   // Card 2: latest_update — answer-mode badge, medium verification, medium source role
   const card2 = cards.nth(1);

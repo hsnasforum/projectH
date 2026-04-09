@@ -318,20 +318,32 @@ def parse_control_slots(project: Path) -> dict[str, object]:
     return {"active": entries[0], "stale": entries[1:]}
 
 
+def _slot_provenance(entry: dict[str, object]) -> str:
+    """Return 'seq N' or 'mtime fallback' for a parsed control-slot entry."""
+    seq = entry.get("control_seq")
+    if seq is not None:
+        return f"seq {seq}"
+    return "mtime fallback"
+
+
 def format_control_summary(parsed: dict[str, object]) -> tuple[str, str]:
     """Return (active_text, stale_text) for display in the system card."""
     active = parsed.get("active")
     if active is None:
         active_text = "활성 제어: 없음"
     else:
-        active_text = f"활성 제어: {active['label']} ({active['file']})"  # type: ignore[index]
+        prov = _slot_provenance(active)  # type: ignore[arg-type]
+        active_text = f"활성 제어: {active['label']} ({active['file']}, {prov})"  # type: ignore[index]
 
     stale_list = parsed.get("stale", [])
     if not stale_list:
         stale_text = ""
     else:
-        names = ", ".join(s["file"] for s in stale_list)  # type: ignore[index]
-        stale_text = f"비활성: {names}"
+        parts = []
+        for s in stale_list:
+            prov = _slot_provenance(s)  # type: ignore[arg-type]
+            parts.append(f"{s['file']} ({prov})")  # type: ignore[index]
+        stale_text = f"비활성: {', '.join(parts)}"
 
     return active_text, stale_text
 

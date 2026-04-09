@@ -219,8 +219,32 @@ class TestFormatControlSummary(unittest.TestCase):
         active_text, stale_text = format_control_summary(parsed)
         self.assertIn("Claude 실행", active_text)
         self.assertIn("claude_handoff.md", active_text)
+        self.assertIn("mtime fallback", active_text)
         self.assertIn("operator_request.md", stale_text)
         self.assertIn("비활성", stale_text)
+        self.assertIn("mtime fallback", stale_text)
+
+    def test_active_with_control_seq_shows_seq(self):
+        parsed = {
+            "active": {"file": "claude_handoff.md", "status": "implement", "label": "Claude 실행", "mtime": 1.0, "control_seq": 5},
+            "stale": [],
+        }
+        active_text, _ = format_control_summary(parsed)
+        self.assertIn("seq 5", active_text)
+        self.assertNotIn("mtime fallback", active_text)
+
+    def test_stale_with_mixed_provenance(self):
+        parsed = {
+            "active": {"file": "claude_handoff.md", "status": "implement", "label": "Claude 실행", "mtime": 1.0, "control_seq": 3},
+            "stale": [
+                {"file": "operator_request.md", "status": "needs_operator", "label": "operator 대기", "mtime": 0.5, "control_seq": 2},
+                {"file": "gemini_request.md", "status": "request_open", "label": "Gemini 실행", "mtime": 0.3},
+            ],
+        }
+        active_text, stale_text = format_control_summary(parsed)
+        self.assertIn("seq 3", active_text)
+        self.assertIn("operator_request.md (seq 2)", stale_text)
+        self.assertIn("gemini_request.md (mtime fallback)", stale_text)
 
     def test_active_only_no_stale_text(self):
         parsed = {

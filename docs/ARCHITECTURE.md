@@ -7,7 +7,7 @@ This repository implements a **local-first document assistant web MVP** with exp
 ## Current Contract Vs Next Design Target
 
 ### Current Contract
-- current shipped behavior is the document-first MVP with response feedback capture, grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, and artifact-linked reject/reissue reason traces
+- current shipped behavior is the document-first MVP with response feedback capture, grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, artifact-linked reject/reissue reason traces, and the first reviewed-memory slice (review queue, aggregate apply trigger, and active-effect path)
 - web investigation is a permission-gated secondary mode (disabled/approval/enabled per session) under the document-first guardrail, with local JSON history, in-session reload, history-card badges (answer-mode, verification-strength, source-role trust), entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade, and a claim-coverage panel with status tags, actionable hints, and focus-slot reinvestigation explanation
 - approval currently governs note saving only
 

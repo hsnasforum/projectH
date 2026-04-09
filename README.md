@@ -9,6 +9,7 @@
 - 로컬 퍼스트 문서 비서 웹 MVP
 - 핵심 루프: 문서 읽기 -> grounded summary -> 후속 질의 -> 승인 기반 저장
 - 응답 피드백 수집, grounded-brief trace anchor, corrected-outcome capture, corrected-save bridge, reject/reissue reason traces
+- review queue (`검토 후보`), aggregate apply trigger (`검토 메모 적용 후보`), reviewed-memory active-effect path
 - 웹 조사는 secondary mode
 
 ## Release Candidate Scope

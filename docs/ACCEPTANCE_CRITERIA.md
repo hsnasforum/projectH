@@ -698,14 +698,14 @@ These are placeholders for the next phase design target and its immediate follow
     - docs, payload, and tests now read planning-target meaning only from `reviewed_memory_planning_target_ref`
     - no fallback target string, no partial cleanup, and no hidden drift is allowed
     - no readiness or satisfaction tracker
-    - no apply result
+    - reviewed-memory apply result is shipped separately above the capability path and does not live on this planning-target surface
     - no cross-session scope
   - the shipped rollback-contract slice should also stay read-only and narrow:
     - `reviewed_memory_rollback_contract` keeps `rollback_target_kind = future_applied_reviewed_memory_effect_only`
     - it keeps one `aggregate_identity_ref` plus exact supporting refs visible
     - it keeps `rollback_stage = contract_only_not_applied`
     - it keeps `audit_trace_expectation = operator_visible_local_transition_required`
-    - no payload-visible reviewed-memory store, no payload-visible proof-record or proof-boundary surface, no reviewed-memory apply result, and no cross-session widening
+    - no payload-visible reviewed-memory store, no payload-visible proof-record or proof-boundary surface, and no cross-session widening; reviewed-memory apply result is shipped separately above the capability path and does not live on this rollback contract
   - the shipped disable-contract slice should also stay read-only and narrow:
     - one `reviewed_memory_disable_contract`
     - `disable_target_kind = future_applied_reviewed_memory_effect_only`
@@ -714,7 +714,7 @@ These are placeholders for the next phase design target and its immediate follow
     - `disable_stage = contract_only_not_applied`
     - `effect_behavior = stop_apply_without_reversal`
     - `audit_trace_expectation = operator_visible_local_transition_required`
-    - no payload-visible reviewed-memory store, no payload-visible proof-record or proof-boundary surface, no reviewed-memory apply result, and no cross-session widening
+    - no payload-visible reviewed-memory store, no payload-visible proof-record or proof-boundary surface, and no cross-session widening; reviewed-memory apply result is shipped separately above the capability path and does not live on this disable contract
   - the shipped conflict-visible slice should stay read-only and narrow:
     - one `reviewed_memory_conflict_contract`
     - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
@@ -725,7 +725,7 @@ These are placeholders for the next phase design target and its immediate follow
       - `future_applied_reviewed_memory_effect_vs_applied_effect`
     - `conflict_visibility_stage = contract_only_not_resolved`
     - `audit_trace_expectation = operator_visible_local_transition_required`
-    - no reviewed-memory resolver, no reviewed-memory apply result, and no cross-session widening
+    - no reviewed-memory resolver and no cross-session widening; reviewed-memory apply result is shipped separately above the capability path and does not live on this conflict contract
   - the shipped operator-audit slice should stay read-only and narrow:
     - one `reviewed_memory_transition_audit_contract`
     - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
@@ -740,7 +740,7 @@ These are placeholders for the next phase design target and its immediate follow
     - `operator_visible_reason_boundary = explicit_reason_or_note_required`
     - `audit_stage = contract_only_not_emitted`
     - `audit_store_boundary = canonical_transition_record_separate_from_task_log`
-    - no reviewed-memory state machine, no reviewed-memory apply result, and no cross-session widening
+    - no reviewed-memory state machine and no cross-session widening; reviewed-memory apply result is shipped separately above the capability path and does not live on this audit contract
   - the current shipped operator-visible trigger-source layer stays separate from both the shipped audit contract and the emitted record:
     - choose `Option A`
     - one separate aggregate-level surface fed only by `recurrence_aggregate_candidates`
@@ -773,14 +773,14 @@ These are placeholders for the next phase design target and its immediate follow
     - `task_log_mirror_relation = mirror_allowed_not_canonical`
     - `emitted_at`
     - persisted on the session under `reviewed_memory_emitted_transition_records`
-    - no reviewed-memory apply result and no user-level memory write
+    - no user-level memory write; reviewed-memory apply result is shipped separately above the capability path and does not live on this emitted transition record surface
   - the shipped unblock slice should stay read-only and narrow:
     - one `reviewed_memory_unblock_contract`
     - exact `required_preconditions`
     - `unblock_status = blocked_all_required`
     - `satisfaction_basis_boundary = canonical_reviewed_memory_layer_capabilities_only`
     - `partial_state_policy = partial_states_not_materialized`
-    - no per-precondition satisfaction matrix, no emitted transition record, and no reviewed-memory apply result
+    - no per-precondition satisfaction matrix and no emitted transition record on this surface; reviewed-memory apply result is shipped separately above the capability path and does not live on this unblock contract
   - the shipped satisfied capability outcome should stay on one separate read-only surface:
     - one `reviewed_memory_capability_status`
     - `capability_version = same_session_reviewed_memory_capabilities_v1`
@@ -790,7 +790,7 @@ These are placeholders for the next phase design target and its immediate follow
       - no later wider capability-outcome state is currently defined in the MVP slice
     - `satisfaction_basis_boundary = canonical_reviewed_memory_layer_capabilities_only`
     - `partial_state_policy = partial_states_not_materialized`
-    - no emitted transition record and no reviewed-memory apply result
+    - no emitted transition record on this surface; reviewed-memory apply result is shipped separately above the capability path and does not live on this capability status
   - the current contract now emits one separate read-only basis object:
     - one current `reviewed_memory_capability_basis`
     - `basis_version = same_session_reviewed_memory_capability_basis_v1`

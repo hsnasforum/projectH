@@ -1448,7 +1448,7 @@ The first official artifact is the `grounded brief`.
     - it does not mean repeated-signal promotion, cross-session counting, or user-level memory opened
   - the shipped boundary draft remains equally conservative:
     - no readiness or satisfaction tracker
-    - no reviewed-memory apply result
+    - reviewed-memory apply result is shipped separately above the capability path; boundary draft does not carry it
     - no cross-session scope
   - the shipped rollback contract remains equally conservative:
     - it stays contract-only above the shipped boundary draft
@@ -1466,7 +1466,7 @@ The first official artifact is the `grounded brief`.
     - `disable_stage = contract_only_not_applied`
     - `effect_behavior = stop_apply_without_reversal`
     - `audit_trace_expectation = operator_visible_local_transition_required`
-    - no reviewed-memory apply result, no store write, and no cross-session widening
+    - reviewed-memory apply result is shipped separately above the capability path and does not live on this disable contract; no payload-visible store write and no cross-session widening
 - current next practical path:
   - the current read-only review queue now consumes only `promotion_eligibility = eligible_for_review` `durable_candidate` records
   - the current first `accept` review action now also consumes that same current source-message-anchored basis instead of inventing a second canonical candidate source

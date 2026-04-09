@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This repository implements a **local-first document assistant web MVP** with explicit approval for risky actions and transparent evidence handling.
+This repository implements a **local-first document assistant web MVP** with explicit approval for risky actions, transparent evidence handling, and the first reviewed-memory slice (review queue, aggregate apply trigger, and active-effect path).
 
 ## Current Contract Vs Next Design Target
 

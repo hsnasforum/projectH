@@ -1363,8 +1363,8 @@ These are placeholders for the next phase design target and its immediate follow
   - streaming progress + cancel
   - general chat negative source-type label contract (no `문서 요약` / `선택 결과 요약` in quick-meta or transcript meta)
   - claim-coverage panel rendering contract with `[교차 확인]`, `[단일 출처]`, `[미확인]` leading status tags, actionable hints, source role with trust level labels, color-coded fact-strength summary bar, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved with natural Korean particle normalization)
-  - web-search history card header badges: answer-mode badge, verification-strength badge with CSS class, source-role trust badge compact label with trust class
-  - history-card entity-card `다시 불러오기` click → reloaded response `WEB` badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail 유지
+  - web-search history card header badges: answer-mode badge, verification-strength badge with CSS class, source-role trust badge compact label with trust class, investigation progress summary text when `claim_coverage_progress_summary` is non-empty
+  - history-card entity-card `다시 불러오기` click → history card investigation progress summary 표시 + reloaded response `WEB` badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail 유지
   - history-card latest-update `다시 불러오기` click → reloaded response `WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail 유지
   - history-card entity-card `다시 불러오기` 후 follow-up → `WEB` badge, `설명 카드` answer-mode badge, `설명형 단일 출처` verification label, `백과 기반` source-role detail drift 없음
   - history-card latest-update `다시 불러오기` 후 follow-up → `WEB` badge, `최신 확인` answer-mode badge, `공식+기사 교차 확인` verification label, `보조 기사` · `공식 기반` source-role detail drift 없음

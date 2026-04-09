@@ -2959,6 +2959,10 @@
         if (claimCoverageSummary) {
           detailLines.push(`사실 검증 ${claimCoverageSummary}`);
         }
+        const progressSummary = (item.claim_coverage_progress_summary || "").trim();
+        if (progressSummary) {
+          detailLines.push(progressSummary);
+        }
         if (detailLines.length > 0) {
           const detailMeta = document.createElement("div");
           detailMeta.className = "meta";

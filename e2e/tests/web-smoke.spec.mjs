@@ -1261,6 +1261,7 @@ test("history-card entity-card 다시 불러오기 클릭 후 WEB badge, 설명 
           page_count: 0,
           created_at: record.created_at,
           record_path: recordPath,
+          claim_coverage_progress_summary: "단일 출처 상태 1건, 미확인 1건.",
         },
       ],
     }
@@ -1268,6 +1269,11 @@ test("history-card entity-card 다시 불러오기 클릭 후 WEB badge, 설명 
 
   const historyBox = page.locator("#search-history-box");
   await expect(historyBox).toBeVisible();
+
+  // History card should surface the progress summary text
+  const historyCard = historyBox.locator(".history-item").first();
+  await expect(historyCard).toContainText("단일 출처 상태 1건, 미확인 1건.");
+
   const reloadButton = historyBox.locator(".history-item-actions button.secondary").first();
   await expect(reloadButton).toHaveText("다시 불러오기");
 

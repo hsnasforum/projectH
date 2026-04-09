@@ -282,6 +282,9 @@ class SerializerMixin:
                         CoverageStatus.WEAK: int((item.get("claim_coverage_summary") or {}).get(CoverageStatus.WEAK) or 0),
                         CoverageStatus.MISSING: int((item.get("claim_coverage_summary") or {}).get(CoverageStatus.MISSING) or 0),
                     },
+                    "claim_coverage_progress_summary": localize_text(
+                        str(item.get("claim_coverage_progress_summary") or "")
+                    ).strip(),
                     "pages_preview": [
                         {
                             "title": localize_text(str(page.get("title") or "")),

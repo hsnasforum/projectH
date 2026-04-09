@@ -260,7 +260,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
   - `summary_chunks` — list of `{chunk_id, chunk_index, total_chunks, source_path, source_name, selected_line}`
   - `claim_coverage` — list of slot objects, each containing `slot`, `status`, `status_label`, `value`, `support_count`, `candidate_count`, `source_role`, `rendered_as` (`fact_card` / `uncertain` / `not_rendered`); during reinvestigation, slots also carry `previous_status`, `previous_status_label`, `progress_state` (`improved` / `regressed` / `unchanged`), `progress_label`, and `is_focus_slot`
   - `claim_coverage_progress_summary` — plain-language Korean sentence summarizing the focus-slot reinvestigation outcome (empty string on first investigation)
-  - `web_search_history` — list of recent search record summaries (up to 8), each containing `record_id`, `query`, `created_at`, `result_count`, `page_count`, `record_path`, `summary_head`, `answer_mode` (`entity_card` / `latest_update` / `general`), `verification_label`, `source_roles` (list of role strings), `claim_coverage_summary` (`strong` / `weak` / `missing` counts), and `pages_preview` (list of `{title, url, excerpt, text_preview, char_count}`)
+  - `web_search_history` — list of recent search record summaries (up to 8), each containing `record_id`, `query`, `created_at`, `result_count`, `page_count`, `record_path`, `summary_head`, `answer_mode` (`entity_card` / `latest_update` / `general`), `verification_label`, `source_roles` (list of role strings), `claim_coverage_summary` (`strong` / `weak` / `missing` counts), `claim_coverage_progress_summary` (plain-language Korean progress text, empty string when absent), and `pages_preview` (list of `{title, url, excerpt, text_preview, char_count}`)
   - `feedback`
   - `corrected_text` — owned by the original grounded-brief source message only
   - `corrected_outcome` — owned by the original grounded-brief source message only
@@ -336,7 +336,7 @@ Service tests (`tests/test_web_app.py`) and Python smoke tests (`tests/test_smok
 - applied-preferences badge (`선호 N건 반영`) on assistant messages when `applied_preferences` is non-empty, with tooltip showing preference descriptions
 - copy-to-clipboard buttons: `본문 복사`, `저장 경로 복사`, `승인 경로 복사`, `검색 기록 경로 복사`, `경로 복사` (selected source paths panel); all share one helper that shows clipboard-specific failure notice on both success-path rejection and fallback failure
 - claim verification / coverage panel where applicable, with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`) leading each slot line, actionable hints for weak or unresolved slots, source role with trust level labels, a color-coded fact-strength summary bar above the response text, and entity-card verification badge downgrade from strong when no claim slot has cross-verified status
-- web search history panel with source previews, answer-mode badges, color-coded verification-strength badges, and color-coded source-role trust badges in history cards
+- web search history panel with source previews, answer-mode badges, color-coded verification-strength badges, color-coded source-role trust badges, and investigation progress summary text in history cards
 - progress box and cancel button during streaming
 - verified-vs-uncertain explanation: response-body section headers annotated with matching status tags (`확인된 사실 [교차 확인]`, `단일 출처 정보 [단일 출처]`, `확인되지 않은 항목 [미확인]`), claim-coverage panel hint maps tags to explanations
 - slot-level reinvestigation UX: claim-coverage panel shows a dedicated plain-language explanation line for each `is_focus_slot` slot, telling the user whether the slot was reinforced, regressed, is still single-source, or is still unresolved after reinvestigation; non-focus slots keep the lighter status/hint rendering
@@ -355,7 +355,7 @@ Service tests (`tests/test_web_app.py`) and Python smoke tests (`tests/test_smok
 
 ### Implemented
 - read-only external search with permission-gated execution (disabled/approval/enabled per session)
-- local JSON record storage with in-session history reload and history-card display (answer-mode, verification-strength, source-role trust badges in header)
+- local JSON record storage with in-session history reload and history-card display (answer-mode, verification-strength, source-role trust badges, and investigation progress summary in header)
 - response origin with `WEB` badge, answer-mode badge, color-coded verification-strength badge, and color-coded source-role trust badges in origin detail
 - entity-card / latest-update answer-mode distinction with separate verification labels and source-role surfaces; entity-card verification badge downgraded from strong (`설명형 다중 출처 합의`) when no claim slot has cross-verified status
 - claim coverage panel with status tags (`[교차 확인]`, `[단일 출처]`, `[미확인]`), actionable hints for weak or unresolved slots, source role with trust level labels, color-coded fact-strength summary bar, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved)

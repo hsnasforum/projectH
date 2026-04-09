@@ -9646,6 +9646,90 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(general["source_roles"], [])
 
 
+    def test_web_search_store_list_summaries_includes_claim_coverage_progress_summary(self) -> None:
+        """WebSearchStore.save → list_session_record_summaries가
+        claim_coverage_progress_summary를 포함하는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            store = WebSearchStore(base_dir=str(Path(tmp_dir) / "web-search"))
+            session_id = "progress-summary-session"
+
+            # record with progress summary
+            store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[{"url": "https://example.com/a", "snippet": "결과 A"}],
+                summary_text="entity card summary",
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "장르", "status": "weak", "status_label": "단일 출처"},
+                ],
+                claim_coverage_progress_summary="단일 출처 상태 1건.",
+            )
+
+            # record without progress summary
+            store.save(
+                session_id=session_id,
+                query="일반 검색",
+                permission="enabled",
+                results=[{"url": "https://example.com/b", "snippet": "결과 B"}],
+                summary_text="general summary",
+                response_origin=None,
+            )
+
+            summaries = store.list_session_record_summaries(session_id)
+            self.assertEqual(len(summaries), 2)
+
+            by_query = {s["query"]: s for s in summaries}
+
+            entity = by_query["붉은사막"]
+            self.assertEqual(entity["claim_coverage_progress_summary"], "단일 출처 상태 1건.")
+
+            general = by_query["일반 검색"]
+            self.assertEqual(general["claim_coverage_progress_summary"], "")
+
+    def test_web_search_history_serializer_includes_claim_coverage_progress_summary(self) -> None:
+        """session.web_search_history 직렬화가
+        claim_coverage_progress_summary를 포함하는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            # Directly save a record with progress summary through the store
+            service.web_search_store.save(
+                session_id="serializer-progress-session",
+                query="붉은사막",
+                permission="enabled",
+                results=[{"url": "https://example.com/a", "snippet": "s"}],
+                summary_text="entity card summary",
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "장르", "status": "weak", "status_label": "단일 출처"},
+                ],
+                claim_coverage_progress_summary="단일 출처 상태 1건.",
+            )
+
+            history = service._serialize_web_search_history("serializer-progress-session")
+            self.assertEqual(len(history), 1)
+            self.assertEqual(history[0]["claim_coverage_progress_summary"], "단일 출처 상태 1건.")
+
     def test_handle_chat_entity_card_multi_source_agreement_retained_after_history_card_reload(self) -> None:
         """multi-source entity-card에서 agreement-backed 사실 카드 텍스트가
         load_web_search_record_id reload 후에도 유지되고,

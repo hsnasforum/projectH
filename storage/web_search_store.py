@@ -314,6 +314,7 @@ class WebSearchStore:
                         if str(item).strip()
                     ],
                     "claim_coverage_summary": self._summarize_claim_coverage(record.get("claim_coverage")),
+                    "claim_coverage_progress_summary": str(record.get("claim_coverage_progress_summary") or "").strip(),
                     "pages_preview": self._build_pages_preview(record),
                 }
             )

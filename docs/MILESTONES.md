@@ -111,7 +111,7 @@
 ## In Progress
 
 ### Milestone 4: Secondary-Mode Investigation Hardening
-- claim-based entity-card shaping
+- claim-based entity-card shaping (history-card progress summary surfacing shipped)
 - slot coverage and reinvestigation
 - source role labeling
 - stronger official/news/wiki/community weighting

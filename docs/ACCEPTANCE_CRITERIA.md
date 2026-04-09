@@ -842,7 +842,7 @@ These are placeholders for the next phase design target and its immediate follow
   - `evaluated_at` stays deterministic by reusing aggregate `last_seen_at`
   - all listed preconditions stay required before any later eligibility transition can occur
   - partially satisfied states remain unimplemented and the aggregate stays blocked
-  - no payload-visible reviewed-memory store, no payload-visible proof-record or proof-boundary surface, no reviewed-memory apply, and no cross-session counting open in that slice
+  - no payload-visible reviewed-memory store, no payload-visible proof-record or proof-boundary surface, and no cross-session counting open in that slice; the reviewed-memory apply path is shipped above this status object
   - current `candidate_recurrence_key`, `recurrence_aggregate_candidates`, `candidate_review_record`, `durable_candidate`, and `review_queue_items` semantics remain unchanged
 - Focused regression for the current aggregate-level boundary-draft slice should verify at least:
   - only already-materialized same-session aggregates can surface the draft object
@@ -967,13 +967,13 @@ These are placeholders for the next phase design target and its immediate follow
   - conflict-visibility (`future_reviewed_memory_conflict_visibility`) is now also implemented: after reversal the aggregate card shows a `충돌 확인` button; clicking it records a `reviewed_memory_conflict_visibility_record` with `record_stage = conflict_visibility_checked`
 - Focused regression for the shipped same-session-unblock slice should verify at least:
   - current shipped boundary / rollback / disable / conflict / transition-audit objects alone never move the aggregate out of `blocked_all_required`
-  - same-session unblock requires all five preconditions to be satisfied through later reviewed-memory-layer machinery, not by read-only contract-object existence
+  - same-session unblock is shipped: `reviewed_memory_capability_status.capability_outcome = unblocked_all_required` materializes when the current source-family-plus-basis path is present, not by read-only contract-object existence alone; per-precondition satisfaction booleans and resolver machinery remain later
   - the current binary capability vocabulary stays:
     - `blocked_all_required`
     - `unblocked_all_required`
   - `eligible_for_reviewed_memory_draft_planning_only` still means draft planning only
   - the current shipped target label now lives only on `reviewed_memory_planning_target_ref.target_label`
-  - emitted transition records, reviewed-memory apply, repeated-signal promotion, and cross-session counting remain closed in that slice
+  - emitted transition records and reviewed-memory apply are shipped above this unblock slice; repeated-signal promotion and cross-session counting remain later
 - Focused regression for the first later satisfaction-surface slice should verify at least:
   - the shipped `reviewed_memory_unblock_contract` remains the blocked-threshold contract only
   - one shipped read-only `reviewed_memory_capability_status` now carries current `capability_outcome = unblocked_all_required`

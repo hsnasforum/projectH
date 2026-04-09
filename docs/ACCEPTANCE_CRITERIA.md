@@ -22,7 +22,7 @@
 - Reissuing an approval with a new path creates a new approval instead of writing immediately.
 - Response feedback capture is shipped on each assistant message.
 - Grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, and artifact-linked reject/reissue reason traces are shipped.
-- Review queue (`검토 후보`), aggregate apply trigger (`검토 메모 적용 후보`), and reviewed-memory active-effect path (apply / stop-apply / reversal / conflict-visibility) are shipped.
+- Review queue (`검토 후보`), aggregate apply trigger (`검토 메모 적용 후보`), and emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility are shipped.
 - Recent results can show:
   - evidence/source panel with source-role trust labels (`[공식 기반(높음)]`, `[보조 기사(보통)]`, etc.) on each evidence item
   - summary span / applied-range panel

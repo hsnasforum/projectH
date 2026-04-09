@@ -24,7 +24,7 @@ Current implemented focus:
 - permission-gated web investigation (disabled/approval/enabled per session) with local JSON history, in-session reload, and history-card badges (answer-mode, verification-strength, source-role trust)
 - entity-card / latest-update answer-mode distinction with separate verification labels
 - claim-coverage panel with status tags, actionable hints, and focus-slot reinvestigation explanation
-- review queue (`검토 후보`), aggregate apply trigger (`검토 메모 적용 후보`), and reviewed-memory active-effect path (apply / stop-apply / reversal / conflict-visibility)
+- review queue (`검토 후보`), aggregate apply trigger (`검토 메모 적용 후보`), and emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility
 - Playwright smoke coverage for the browser MVP
 
 ## Product Priorities

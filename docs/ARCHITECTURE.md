@@ -1135,7 +1135,7 @@ The next phase should standardize one `grounded brief` artifact.
   - `candidate_review_record` remains the reviewed-but-not-applied outcome for one current candidate version
   - reviewed acceptance may later strengthen repeated-signal promotion evidence, but it must not replace the recurrence key itself
 - this contract should come before broader `edit` / `reject` / `defer` expansion because those actions still operate on one source-message candidate version, while the recurrence-key-plus-same-session-aggregate boundary is the first truthful cross-source identity needed before same-family aggregation or repeated-signal promotion can be honest
-  - this contract should also come before repeated-signal promotion because current architecture still has no separate reviewed-memory boundary, no rollback / disable surface, no operator-audit repair surface, and no cross-session conflict boundary above the aggregate
+  - this contract should also come before repeated-signal promotion because current architecture ships rollback / disable / conflict / operator-audit contract surfaces as read-only and the apply / stop-apply / reversal / conflict-visibility lifecycle above them, but still has no payload-visible reviewed-memory store, no cross-session counting, and no repeated-signal promotion
   - the next architecture widening should still stay closed:
     - keep the shipped readiness surface separate from the blocked-only status object:
       - one read-only `reviewed_memory_unblock_contract`

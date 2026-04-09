@@ -529,11 +529,11 @@
   - current same-session aggregates remain promotion-ineligible
   - current source-message review traces remain reviewed-but-not-applied and do not become reviewed memory
   - the smallest blocked marker is now shipped on each current aggregate item
-  - the exact same-session unblock precondition family is now fixed, and the read-only precondition-status surface is now also shipped, but repeated-signal promotion is still premature because the repo still has no payload-visible reviewed-memory store, no payload-visible proof-record or proof-boundary surface, and no rollback / disable / conflict / operator-audit layer above that first aggregate projection.
+  - the exact same-session unblock precondition family is now fixed, and the read-only precondition-status surface is now also shipped; rollback / disable / conflict / operator-audit contract surfaces are shipped as read-only and the apply / stop-apply / reversal / conflict-visibility lifecycle is shipped above them; repeated-signal promotion is still premature because the repo still has no payload-visible reviewed-memory store, no payload-visible proof-record or proof-boundary surface, and no cross-session counting.
 - this shipped recurrence-key primitive still comes before broader `edit` / `reject` / `defer` or reviewed-history work:
   - review actions still operate on one current source-message candidate version
   - repeated-signal promotion needs the first truthful same-session cross-source aggregate before same-family aggregation can be honest
-- broader review actions and user-level memory remain premature because the repo still has no `edit` / `reject` / `defer` API, no precondition-satisfying rollback / disable layer, and no payload-visible reviewed-memory store or proof-record / proof-boundary surface.
+- broader review actions and user-level memory remain premature because the repo still has no `edit` / `reject` / `defer` API, no payload-visible reviewed-memory store or proof-record / proof-boundary surface, and no cross-session counting; rollback / disable contract surfaces are shipped as read-only while their state machines remain later.
 
 ## Still Later Stage After This Slice
 - separate artifact store beyond the current message surface

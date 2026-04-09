@@ -8,6 +8,7 @@
 ### Current Shipped Contract
 - 로컬 퍼스트 문서 비서 웹 MVP
 - 핵심 루프: 문서 읽기 -> grounded summary -> 후속 질의 -> 승인 기반 저장
+- 응답 피드백 수집, grounded-brief trace anchor, corrected-outcome capture, corrected-save bridge, reject/reissue reason traces
 - 웹 조사는 secondary mode
 
 ## Release Candidate Scope
@@ -42,6 +43,8 @@
 현재 구현된 웹 MVP는 아래를 포함합니다.
 
 - local web shell (`python3 -m app.web`)
+- response feedback capture
+- grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, and artifact-linked reject/reissue reason traces
 - recent sessions / conversation timeline with per-message timestamps
 - file summary / document search / general chat
 - document search responses include a structured search result preview panel showing each matched file's ordered label (with full path tooltip), match type badge (`파일명 일치` / `내용 일치`), and a content snippet; both search-only and search-plus-summary responses carry the same `search_results` data; search-only responses hide the redundant text body in both the transcript and the response detail box, letting the preview cards serve as the primary surface; search-only responses also show a `선택 경로 복사` button that copies the selected path list to clipboard with a `선택 경로를 복사했습니다` notice; search-plus-summary responses show the visible summary body alongside preview cards in both the response detail and the transcript

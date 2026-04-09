@@ -7,6 +7,8 @@
   - file summary / document search / general chat
   - approval-based save
   - reissue approval flow
+  - response feedback capture
+  - grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, and artifact-linked reject/reissue reason traces
   - evidence/source panel with source-role trust labels
   - structured search result preview panel
   - summary source-type labels (`문서 요약` / `선택 결과 요약`)

@@ -22,6 +22,7 @@
 - 권한 게이트 기반 웹 조사 (disabled/approval/enabled per session) with local JSON history, in-session reload, and history-card badges (answer-mode, verification-strength, source-role trust)
 - entity-card / latest-update answer-mode distinction with separate verification labels
 - claim-coverage panel with status tags, actionable hints, and focus-slot reinvestigation explanation
+- review queue (`검토 후보`), aggregate apply trigger (`검토 메모 적용 후보`), reviewed-memory active-effect path (apply / stop-apply / reversal / conflict-visibility)
 - Playwright 스모크 검증
 
 항상 아래 원칙을 따르세요.

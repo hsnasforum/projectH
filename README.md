@@ -45,7 +45,7 @@
 
 ## Current Product Slice
 
-현재 구현된 웹 MVP는 아래를 포함합니다.
+현재 구현된 웹 MVP는 아래를 포함합니다. (review queue `검토 후보`, aggregate apply trigger `검토 메모 적용 후보`, reviewed-memory active-effect 경로 포함)
 
 - local web shell (`python3 -m app.web`)
 - response feedback capture

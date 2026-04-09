@@ -186,7 +186,7 @@
   - one aggregate requires at least two distinct grounded-brief source-message anchors with the same exact recurrence identity
   - review acceptance may appear only as optional support and must not replace the recurrence identity
   - `confidence_marker` currently stays fixed at `same_session_exact_key_match`
-  - cross-session counting remains later than local store, rollback, conflict, and reviewed-memory rules
+  - cross-session counting remains later; the same-session layers (local store, rollback, conflict, and reviewed-memory boundary) and the apply lifecycle are already shipped above the capability path
 - the first post-aggregate promotion boundary is now also fixed as a contract:
   - choose `Option A`: the shipped same-session aggregates remain promotion-ineligible
   - exact aggregate identity remains necessary but still insufficient for repeated-signal promotion

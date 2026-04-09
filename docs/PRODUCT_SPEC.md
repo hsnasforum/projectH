@@ -1019,7 +1019,7 @@ The first official artifact is the `grounded brief`.
 - the first post-key aggregation boundary is now implemented as one current session-level read-only `recurrence_aggregate_candidates` projection:
   - same-session only:
     - current persisted session state is enough to derive the first aggregate surface without inventing a second canonical store
-    - cross-session counting remains later than explicit local-store, rollback, conflict, and reviewed-memory boundary rules
+    - cross-session counting remains later; the same-session layers (local-store, rollback, conflict, and reviewed-memory boundary) and the apply lifecycle are already shipped above the capability path
   - one aggregate identity should require the same:
     - `candidate_family`
     - `key_scope`

@@ -51,9 +51,13 @@ projectH aims to become a **teachable local personal agent** that stores user co
 - file summary / document search / general chat modes
 - active document context for follow-up questions
 - approval-based save and save-path reissue
-- evidence/source panel and summary-range panel
+- evidence/source panel with source-role trust labels
+- structured search result preview panel
+- summary source-type labels (`문서 요약` / `선택 결과 요약`)
+- summary span / applied-range panel
 - response-origin badge
-- streaming progress and cancel
+- applied-preferences badge (`선호 N건 반영`)
+- streaming progress + cancel
 - response feedback capture
 - PDF text-layer support with OCR-not-supported guidance
 - permission-gated web investigation (disabled/approval/enabled per session) with local JSON history, in-session reload, and history-card badges (answer-mode, verification-strength, source-role trust)

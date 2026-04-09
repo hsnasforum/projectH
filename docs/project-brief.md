@@ -12,7 +12,7 @@ Long term, projectH aims to become a **teachable local personal agent** that acc
 
 ### Current Contract
 - The shipped contract is still a local-first document assistant.
-- The web shell supports file summary, document search, general chat, approval-based save, reissue approval, evidence/source panels, summary-range metadata, response-origin badges, streaming cancel, PDF text-layer reading, and permission-gated web investigation (disabled/approval/enabled per session) with local JSON history, in-session reload, and history-card badges.
+- The web shell supports file summary, document search, general chat, approval-based save, reissue approval, evidence/source panel, structured search result preview panel, summary source-type labels, summary span / applied-range panel, response-origin badges, applied-preferences badge, streaming progress + cancel, PDF text-layer reading, and permission-gated web investigation (disabled/approval/enabled per session) with local JSON history, in-session reload, and history-card badges.
 - Web investigation remains a **secondary mode** under the document-first guardrail, not the core product identity.
 - The current phase is **not** model training and **not** general program control.
 
@@ -71,9 +71,13 @@ The first official artifact is the `grounded brief`.
 - file summary / document search / general chat
 - active document context for follow-up questions
 - approval-based save and reissue approval
-- evidence/source panel and summary-range panel
+- evidence/source panel with source-role trust labels
+- structured search result preview panel
+- summary source-type labels (`문서 요약` / `선택 결과 요약`)
+- summary span / applied-range panel
 - response-origin badges
-- streaming progress and cancel
+- applied-preferences badge (`선호 N건 반영`)
+- streaming progress + cancel
 - response feedback capture
 - PDF text-layer support with OCR-not-supported guidance
 - permission-gated web investigation (disabled/approval/enabled per session) with local JSON history, in-session reload, and history-card badges (answer-mode, verification-strength, source-role trust)

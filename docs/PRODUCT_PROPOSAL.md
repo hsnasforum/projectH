@@ -3,7 +3,7 @@
 ## Status
 
 - Document status: active proposal aligned to the current repository and the 2026-03-26 staged roadmap
-- Current shipped contract: local-first document assistant web MVP
+- Current shipped contract: local-first document assistant web MVP with the first reviewed-memory slice (review queue, aggregate apply trigger, and active-effect path)
 - This document separates:
   - current contract
   - next phase design target
@@ -13,7 +13,7 @@
 
 ### Current Product
 
-projectH is a **local-first document assistant web MVP** for turning private working documents into grounded summaries and approval-gated notes.
+projectH is a **local-first document assistant web MVP** for turning private working documents into grounded summaries and approval-gated notes, with the first reviewed-memory slice shipped (review queue, aggregate apply trigger, and active-effect path).
 
 ### Long-Term North Star
 

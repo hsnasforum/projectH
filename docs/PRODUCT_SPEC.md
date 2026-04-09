@@ -3,7 +3,7 @@
 ## Status
 
 - Document status: current implementation spec with staged product framing
-- Current shipped contract: local-first document assistant web MVP
+- Current shipped contract: local-first document assistant web MVP with the first reviewed-memory slice (review queue, aggregate apply trigger, and active-effect path)
 - Current release-candidate scope: `python3 -m app.web` browser shell
 - Internal/operator tooling such as `controller.server`, `pipeline_gui/`, `windows-launchers/`, and `_data/` pipeline helpers remains outside the current release gate
 - This document separates:

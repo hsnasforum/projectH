@@ -2,7 +2,7 @@
 
 ## One-Line Current Product Definition
 
-projectH is a **local-first document assistant web MVP** that reads private files, produces grounded summaries, and saves notes only through explicit approval.
+projectH is a **local-first document assistant web MVP** that reads private files, produces grounded summaries, saves notes only through explicit approval, and ships the first reviewed-memory slice (review queue, aggregate apply trigger, and active-effect path).
 
 ## One-Line Long-Term North Star
 

@@ -1,6 +1,6 @@
 # projectH
 
-`projectH`는 **로컬 퍼스트 문서 비서 웹 MVP**입니다.
+`projectH`는 **로컬 퍼스트 문서 비서 웹 MVP**이며, 첫 번째 reviewed-memory slice (review queue `검토 후보`, aggregate apply trigger `검토 메모 적용 후보`, active-effect path)가 출하되어 있습니다.
 사용자는 로컬 파일을 읽고, 요약하고, 검색하고, 필요할 때만 승인 기반으로 저장할 수 있습니다. 웹 검색은 핵심 제품이 아니라 **보조 조사 모드**로 제한적으로 붙어 있습니다.
 
 ## Phase Split

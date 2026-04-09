@@ -1477,7 +1477,7 @@ The first official artifact is the `grounded brief`.
     - `disable_ready_reviewed_memory_effect`
     - `conflict_visible_reviewed_memory_scope`
     - `operator_auditable_reviewed_memory_transition`
-  - satisfying the full family later means one exact internal capability-source family can resolve actual reviewed-memory-layer presence for the same exact aggregate scope:
+  - satisfying the full family means one exact internal capability-source family resolves actual reviewed-memory-layer presence for the same exact aggregate scope; this path is now shipped through the current source-family-plus-basis chain:
     - `reviewed_memory_boundary_defined` is satisfied only when one internal `boundary_source_ref` can bind one exact aggregate identity plus exact supporting refs above the current boundary draft
     - current implementation now resolves that first backer against one canonical local aggregate trigger-affordance ref with the fixed action label `검토 메모 적용 시작`; that lower internal ref still serializes `trigger_state = visible_disabled`, while the current operator-facing aggregate-card submit boundary above it is enabled when `capability_outcome = unblocked_all_required` and the user has entered a non-empty reason note
     - `rollback_ready_reviewed_memory_effect` is satisfied only when one internal `rollback_source_ref` can point to an effect-capability source that can actually reverse one applied reviewed-memory effect without changing aggregate identity
@@ -1513,7 +1513,7 @@ The first official artifact is the `grounded brief`.
     - do not reintroduce duplicated target echo fields as hidden fallbacks
     - do not add a post-cleanup compatibility note that restates removed echo fields as active current schema; root spec text should stay shared-ref-only
   - the next widening should still stay closed:
-    - current shipped contract objects remain `contract exists` only until later machinery can satisfy them
+    - current shipped contract objects remain `contract exists` as read-only surfaces; the current truthful `unblocked_all_required` state materializes through the shipped source-family-plus-basis path above them, not through contract-object existence alone
     - keep the shipped transition-audit contract contract-only while the emitted `reviewed_memory_transition_record` is the layer above it
     - the current shell now exposes the first operator-visible trigger-source affordance on one separate aggregate-level surface fed only by `recurrence_aggregate_candidates`, not on source-message cards and not in `review_queue_items`
     - keep that aggregate surface inside the existing shell session stack as one separate section adjacent to `검토 후보`, not as a modal, dashboard, or workspace

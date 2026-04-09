@@ -677,7 +677,7 @@ These are placeholders for the next phase design target and its immediate follow
     - approval-backed save support, historical adjuncts, review acceptance, queue presence, and `task_log` mirror existence still do not satisfy readiness
     - partial satisfaction may later surface only through one read-only aggregate-level status object
     - partial satisfaction must not widen `promotion_eligibility`
-    - same-session unblock later must still remain separate from cross-session counting
+    - same-session unblock is shipped and must remain separate from cross-session counting
     - current shipped status object must not invent per-precondition satisfied / unsatisfied booleans
     - the first same-session unblock threshold must stay binary:
       - current shipped `reviewed_memory_unblock_contract.unblock_status = blocked_all_required`

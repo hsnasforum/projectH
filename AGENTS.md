@@ -32,9 +32,12 @@ The repository currently implements a Python-based local web shell with:
 - file summary / document search / general chat modes
 - approval-based save flow
 - reissue approval flow for changing save paths
-- evidence and source panel
+- evidence/source panel with source-role trust labels
+- structured search result preview panel
+- summary source-type labels (`문서 요약` / `선택 결과 요약`)
 - summary span / applied-range panel
 - response origin badge (`MOCK`, `OLLAMA`, `WEB`, `SYSTEM`)
+- applied-preferences badge (`선호 N건 반영`)
 - streaming progress and cancel
 - PDF text-layer reading and OCR-not-supported guidance
 - permission-gated web investigation with local JSON history
@@ -99,11 +102,11 @@ Priority order:
 - `plandoc/`
   - strategic and staged roadmap documents that sit above the current shipped contract
 - `work/`
-  - tracked Codex round closeout notes and operator handoff context
+  - tracked Korean closeout notes and operator handoff context
 - `verify/`
-  - tracked verification rerun notes and truth-reconciliation handoff results
+  - tracked Korean verification rerun notes and truth-reconciliation handoff results
 - `report/`
-  - occasional whole-project trajectory audits or milestone-level review memos
+  - occasional Korean whole-project trajectory audits or milestone-level review memos
   - `report/gemini/` stores Gemini advisory or mediation logs
 - `.pipeline/`
   - rolling automation handoff slots for the single-Codex tmux flow
@@ -197,6 +200,9 @@ Current source-of-truth docs live in the root `docs/` directory.
   - `.pipeline/operator_request.md` → 자동 진행 중단, operator 대기
 - `.pipeline/session_arbitration_draft.md` is not a control file. watcher may write it as a draft only after an active Claude session shows the escalation pattern and the lanes are settled enough for arbitration: Codex/Gemini panes must be idle, and Claude must be either idle or stably showing the escalation text for a short settle window. watcher should clear that draft again when Claude activity resumes or canonical Gemini/operator control opens, and should suppress immediate same-fingerprint rewrites for a short cooldown. Codex must explicitly decide whether to ignore it, answer Claude directly, or promote it into `.pipeline/gemini_request.md`.
 - `.pipeline/gpt_prompt.md` may remain as an optional or legacy scratch slot, but it is no longer required for the canonical flow.
+- Persistent records in `/work`, `/verify`, and `report/` should default to Korean unless the user explicitly asks otherwise.
+- Execution-facing rolling slots in `.pipeline/` should default to concise English-led instructions so Claude, Codex, and Gemini can execute exact slices without translation drift.
+- File paths, test names, selectors, field names, and literal code identifiers should stay in their original form even inside Korean records or English execution slots.
 - Persistent truth still lives in `/work` and `/verify`; if `.pipeline` disagrees with them, trust the latest `/work` and `/verify`.
 - watcher guarantees file-detection and pane-delivery only. If Claude or Codex is busy, interrupted, or not actually ready to receive input, that is a lane/session-state issue rather than a `.pipeline` contract issue.
 - `.pipeline/claude_handoff.md` is the round-start execution contract, not a live side-channel. Mid-session Gemini arbitration answers should normally return to Claude as a short lane reply so later troubleshooting can still compare the finished work against the unchanged handoff that started the round.
@@ -220,6 +226,9 @@ Current source-of-truth docs live in the root `docs/` directory.
   - same-family user-visible improvement
   - new quality axis
   - internal cleanup
+- However, if the same day already contains 3 or more same-family docs-only truth-sync rounds in a row, Codex must not auto-select yet another narrower docs-only micro-slice from that family. At that point Codex should either:
+  - choose one slightly larger but still bounded docs-only bundle that closes the remaining same-family drift in one round, or
+  - open `.pipeline/gemini_request.md` or `.pipeline/operator_request.md` instead of extending the docs-only micro-loop
 - If Codex stops with `.pipeline/operator_request.md`, the stop request should still explain the reason and the missing operator decision instead of leaving the rolling slot empty.
 - Do not push slice selection back onto Claude with wording such as "continue only if you can find a good slice."
 - Use a broader whole-project audit only when explicitly requested or when a milestone, release, or trajectory check is needed.
@@ -236,6 +245,7 @@ Current source-of-truth docs live in the root `docs/` directory.
 - Prefer slices that the user can see, feel, or directly benefit from over internal completeness work.
 - Do not choose a micro-slice when one slightly larger bounded slice can close the same user-visible or current-risk unit within the same verification family.
 - If the latest round already closed one family truthfully, prefer the next smallest same-family current-risk reduction before opening a different quality axis.
+- But if same-day history already shows 3 or more consecutive same-family docs-only truth-sync rounds, stop shrinking that family into smaller docs-only slices. Close the remaining docs-only drift as one bounded bundle or escalate instead.
 - When multiple plausible slices remain, choose in this order unless a newer `/verify` gives a stronger reason otherwise:
   - current-risk reduction
   - same-family user-visible improvement
@@ -311,6 +321,8 @@ Current source-of-truth docs live in the root `docs/` directory.
 - Meaningful implementation or operator-flow work should leave a closeout note under `work/<month>/<day>/YYYY-MM-DD-<slug>.md`.
 - Meaningful verification-backed handoff or independent rerun-check work should leave a verification note under `verify/<month>/<day>/YYYY-MM-DD-<slug>.md`.
 - Occasional whole-project, milestone, or trajectory audits should leave a report under `report/YYYY-MM-DD-<slug>.md`.
+- Persistent notes under `work/`, `verify/`, and `report/` should default to Korean.
+- Rolling execution slots under `.pipeline/` should default to English-led execution prompts.
 - `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, `.pipeline/gemini_advice.md`, `.pipeline/operator_request.md`, and optional scratch files like `.pipeline/codex_feedback.md` never replace the persistent `/work` and `/verify` notes.
 - `.pipeline/gpt_prompt.md` may remain as an optional or legacy scratch slot, but it is not required in the canonical single-Codex flow.
 - In the current stage-3 single-Codex flow:

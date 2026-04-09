@@ -11,8 +11,12 @@ Current implemented focus:
 - recent sessions and timeline
 - file summary / document search / general chat
 - approval-based save and reissue approval
-- evidence/source panel and summary-range panel
+- evidence/source panel with source-role trust labels
+- structured search result preview panel
+- summary source-type labels (`문서 요약` / `선택 결과 요약`)
+- summary span / applied-range panel
 - response origin badges
+- applied-preferences badge (`선호 N건 반영`)
 - streaming progress and cancel
 - PDF text-layer support with OCR-not-supported guidance
 - permission-gated web investigation with local JSON history
@@ -110,6 +114,9 @@ And if helper-agent or repo-skill files changed, also sync:
 - Meaningful work should leave a closeout note at `work/<month>/<day>/YYYY-MM-DD-<slug>.md`.
 - Meaningful verification-backed handoff or rerun-check work should leave a verification note at `verify/<month>/<day>/YYYY-MM-DD-<slug>.md`.
 - Gemini advisory or mediation work should leave a note at `report/gemini/YYYY-MM-DD-<slug>.md`.
+- Persistent notes in `work/`, `verify/`, and `report/` default to Korean unless the user explicitly asks otherwise.
+- Execution slots in `.pipeline/` default to concise English-led instructions.
+- File paths, test names, selectors, and literal code ids should stay in their original form inside either Korean notes or English execution slots.
 - `.pipeline/claude_handoff.md` is the current execution slot for Claude and may be overwritten between rounds; it does not replace `/work` or `/verify`.
 - `.pipeline/gemini_request.md` and `.pipeline/gemini_advice.md` are current arbitration slots; they do not replace `/work` or `/verify`.
 - `.pipeline/operator_request.md` is the current stop slot for operator-only decisions and may be overwritten; it does not replace `/work` or `/verify`.
@@ -132,6 +139,7 @@ And if helper-agent or repo-skill files changed, also sync:
 - A `needs_operator` stop request should never be interpreted as "choose your own next slice." It is a stopped state with an explained reason, not an invitation to improvise.
 - If Codex relays a short side answer during an active session because Gemini arbitrated a context-exhaustion, session-rollover, or continue-vs-switch question, treat that reply as lane guidance for the current session only. Do not reinterpret it as a new `.pipeline/claude_handoff.md`.
 - Codex may auto-fix the next slice without operator intervention when the latest `/work` and `/verify` already closed one family and one smaller same-family current-risk reduction clearly remains.
+- If Codex instead bundles several remaining docs-only truth-sync lines from one family into one bounded handoff after repeated same-day docs-only rounds, treat that bundled handoff as intentional. Do not re-split it into smaller docs-only micro-slices yourself.
 - In automation, the newest control file is the signal. A prose change without a status change should not be treated as a stop/go override.
 - `gpt_prompt.md` is optional or legacy and should not be treated as required for the canonical flow.
 - If `.pipeline` contents disagree with persistent notes, trust `/work` and `/verify`.
@@ -140,6 +148,7 @@ And if helper-agent or repo-skill files changed, also sync:
 ## Current Handoff Interpretation Rules
 
 - Read `.pipeline/claude_handoff.md` as the latest execution handoff, but keep current MVP priorities above internal completeness.
+- Expect `.pipeline/claude_handoff.md` to be written in concise English-led execution language; do not rewrite that handoff into Korean before implementing it.
 - Do not self-select a new slice from `.pipeline/claude_handoff.md`.
 - If `.pipeline/claude_handoff.md` says `STATUS: implement`, implement that one slice only.
 - If `.pipeline/gemini_request.md` or `.pipeline/gemini_advice.md` is the newest pending control file, wait instead of creating a new `/work` round.

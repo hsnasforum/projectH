@@ -31,12 +31,21 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional
+
+_PROJECT_IMPORT_ROOT = os.environ.get("PROJECT_ROOT") or os.getcwd()
+if _PROJECT_IMPORT_ROOT:
+    project_import_path = str(Path(_PROJECT_IMPORT_ROOT).resolve())
+    if project_import_path not in sys.path:
+        sys.path.insert(0, project_import_path)
+
+from pipeline_gui.setup_profile import resolve_project_runtime_adapter
 
 # jsonschema는 선택적 의존성 — 없으면 필수 필드 구조 검증만 수행
 try:
@@ -76,6 +85,9 @@ log = logging.getLogger("watcher_core")
 
 SCHEMA_VERSION = 1
 ROUND_NOTE_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-.+\.md$")
+ROUND_NOTE_SECTION_RE = re.compile(r"^##\s+(.+?)\s*$")
+ROUND_NOTE_PATH_RE = re.compile(r"(?<!@)(?:\./)?([A-Za-z0-9_.\-/]+?\.[A-Za-z0-9]+)")
+ROUND_NOTE_METADATA_ONLY_PREFIXES = ("work/", "verify/", "report/", ".pipeline/", "pipeline/")
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +233,14 @@ def compute_multi_file_sig(paths: list[Path]) -> str:
     return "|".join(parts)
 
 
+def compute_file_sha256(path: Path) -> str:
+    """파일 내용 기준 sha256 hex. 읽을 수 없으면 빈 문자열."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
 def build_md_tree_snapshot(root: Path) -> dict[str, str]:
     """root 하위 .md 파일의 상대경로 → 시그니처 스냅샷."""
     snapshot: dict[str, str] = {}
@@ -299,6 +319,16 @@ class LeaseData:
     started_at:    float
     lease_ttl_sec: int
     pane_target:   str
+
+
+@dataclass
+class ControlSignal:
+    kind:        str
+    path:        Path
+    status:      str
+    mtime:       float
+    sig:         str
+    control_seq: int = -1
 
 
 class PaneLease:
@@ -683,6 +713,34 @@ _LIVE_SESSION_ESCALATION_FALLBACK_KEYWORDS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+_IMPLEMENT_BLOCKED_STATUS_RE = re.compile(r"^\s*STATUS:\s*implement_blocked\s*$", re.IGNORECASE)
+_IMPLEMENT_BLOCKED_FIELD_RE = re.compile(r"^\s*([A-Z_]+):\s*(.+?)\s*$")
+_IMPLEMENT_BLOCKED_WRAP_KEYS = {"HANDOFF", "HANDOFF_SHA", "BLOCK_ID"}
+_IMPLEMENT_ALREADY_DONE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\balready completed\b", re.IGNORECASE),
+    re.compile(r"\balready addressed\b", re.IGNORECASE),
+    re.compile(r"\bthe work described in the handoff was already completed\b", re.IGNORECASE),
+    re.compile(r"\bthe handoff was already completed\b", re.IGNORECASE),
+    re.compile(r"핸드오프.*이미.*완료", re.IGNORECASE),
+    re.compile(r"슬라이스.*이미.*완료", re.IGNORECASE),
+    re.compile(r"이미 완료된 상태", re.IGNORECASE),
+)
+_IMPLEMENT_NO_CHANGE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bno uncommitted changes\b", re.IGNORECASE),
+    re.compile(r"\bno remaining\b", re.IGNORECASE),
+    re.compile(r"\bno generic instances remain\b", re.IGNORECASE),
+    re.compile(r"추가로 변경할 파일이 없", re.IGNORECASE),
+    re.compile(r"변경할 파일이 없", re.IGNORECASE),
+    re.compile(r"잔존 없음", re.IGNORECASE),
+)
+_IMPLEMENT_FORBIDDEN_MENU_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"다음\s+중\s+하나를\s+선택", re.IGNORECASE),
+    re.compile(r"choose one of the following", re.IGNORECASE),
+    re.compile(r"which option should i", re.IGNORECASE),
+    re.compile(r"select (?:one|an option)", re.IGNORECASE),
+    re.compile(r"operator.*choose", re.IGNORECASE),
+)
+
 
 def _normalize_escalation_line(line: str) -> str:
     normalized = line.strip().lower()
@@ -752,6 +810,144 @@ def _extract_live_session_escalation(text: str) -> Optional[dict[str, object]]:
         "reasons": matched_reasons,
         "excerpt_lines": excerpt_lines[:8],
         "fingerprint": fingerprint,
+    }
+
+
+def _normalize_control_path_hint(path_hint: str) -> str:
+    return path_hint.strip().lstrip("./").replace("\\", "/")
+
+
+def _extract_claude_implement_blocked_signal(
+    text: str,
+    active_handoff_path: str = "",
+    active_handoff_sha: str = "",
+) -> Optional[dict[str, object]]:
+    """Return an explicit implement_blocked sentinel if present in recent Claude output."""
+    if not text.strip():
+        return None
+
+    recent_lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    if not recent_lines:
+        return None
+    recent_lines = recent_lines[-80:]
+
+    for idx in range(len(recent_lines) - 1, -1, -1):
+        if not _IMPLEMENT_BLOCKED_STATUS_RE.match(recent_lines[idx]):
+            continue
+
+        block_lines = [recent_lines[idx].strip()]
+        fields: dict[str, str] = {}
+        current_key = ""
+        for line in recent_lines[idx + 1: idx + 12]:
+            stripped = line.strip()
+            block_lines.append(stripped)
+            match = _IMPLEMENT_BLOCKED_FIELD_RE.match(line)
+            if match:
+                current_key = match.group(1).upper()
+                fields[current_key] = match.group(2).strip()
+                continue
+            if (
+                current_key in _IMPLEMENT_BLOCKED_WRAP_KEYS
+                and stripped
+                and not _line_looks_like_input_prompt(stripped)
+            ):
+                fields[current_key] = fields.get(current_key, "") + stripped
+
+        request = fields.get("REQUEST", "").lower()
+        if request and request not in {"verify_triage", "codex_triage"}:
+            return None
+
+        handoff_hint = fields.get("HANDOFF", "")
+        if active_handoff_path and handoff_hint:
+            if _normalize_control_path_hint(handoff_hint) != _normalize_control_path_hint(active_handoff_path):
+                return None
+
+        handoff_sig = fields.get("HANDOFF_SHA") or fields.get("HANDOFF_SIG") or ""
+        if active_handoff_sha and handoff_sig and handoff_sig != active_handoff_sha:
+            return None
+
+        block_reason = fields.get("BLOCK_REASON", "implement_blocked").strip().lower() or "implement_blocked"
+        fingerprint_source = "|".join(
+            [
+                "sentinel",
+                active_handoff_sha or handoff_sig,
+                block_reason,
+                "|".join(_normalize_escalation_line(line) for line in block_lines[:6]),
+            ]
+        )
+        fingerprint = fields.get("BLOCK_ID", "").strip() or hashlib.sha1(
+            fingerprint_source.encode("utf-8")
+        ).hexdigest()
+        return {
+            "source": "sentinel",
+            "reason": block_reason,
+            "excerpt_lines": block_lines[:6],
+            "fingerprint": fingerprint,
+            "handoff_hint": handoff_hint,
+        }
+    return None
+
+
+def _extract_claude_forbidden_menu_signal(text: str, active_handoff_sha: str = "") -> Optional[dict[str, object]]:
+    """Detect forbidden operator-choice text in recent Claude output as a soft blocked signal."""
+    if not text.strip():
+        return None
+
+    recent_lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not recent_lines:
+        return None
+    hot_window = recent_lines[-16:]
+    matched_lines = [
+        line for line in hot_window
+        if any(pattern.search(line) for pattern in _IMPLEMENT_FORBIDDEN_MENU_PATTERNS)
+    ]
+    if not matched_lines:
+        return None
+
+    fingerprint_source = "|".join(
+        ["soft_blocked", active_handoff_sha, *(_normalize_escalation_line(line) for line in matched_lines[:6])]
+    )
+    return {
+        "source": "soft_blocked",
+        "reason": "forbidden_operator_menu",
+        "excerpt_lines": matched_lines[:6],
+        "fingerprint": hashlib.sha1(fingerprint_source.encode("utf-8")).hexdigest(),
+        "handoff_hint": "",
+    }
+
+
+def _extract_claude_completed_handoff_signal(text: str, active_handoff_sha: str = "") -> Optional[dict[str, object]]:
+    """Detect Claude saying the current handoff is already complete / no-op."""
+    if not text.strip():
+        return None
+
+    recent_lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not recent_lines:
+        return None
+    hot_window = recent_lines[-24:]
+    done_lines = [
+        line for line in hot_window
+        if any(pattern.search(line) for pattern in _IMPLEMENT_ALREADY_DONE_PATTERNS)
+    ]
+    noop_lines = [
+        line for line in hot_window
+        if any(pattern.search(line) for pattern in _IMPLEMENT_NO_CHANGE_PATTERNS)
+    ]
+    if not done_lines:
+        return None
+    if not noop_lines and not any("handoff" in line.lower() for line in done_lines):
+        return None
+
+    excerpt_lines = (done_lines + noop_lines)[:6]
+    fingerprint_source = "|".join(
+        ["soft_completed", active_handoff_sha, *(_normalize_escalation_line(line) for line in excerpt_lines)]
+    )
+    return {
+        "source": "soft_completed",
+        "reason": "handoff_already_completed",
+        "excerpt_lines": excerpt_lines,
+        "fingerprint": hashlib.sha1(fingerprint_source.encode("utf-8")).hexdigest(),
+        "handoff_hint": "",
     }
 
 
@@ -983,6 +1179,7 @@ class StateMachine:
         dedupe:                 DedupeGuard,
         collector:              ManifestCollector,
         verify_pane_target:     str,
+        verify_pane_type:       str,
         verify_prompt_template: str,
         verify_context_builder: Optional[Callable[[JobState], dict[str, str]]],
         completion_paths:       list[Path],
@@ -995,6 +1192,7 @@ class StateMachine:
         self.dedupe                 = dedupe
         self.collector              = collector
         self.verify_pane_target     = verify_pane_target
+        self.verify_pane_type       = verify_pane_type
         self.verify_prompt_template = verify_prompt_template
         self.verify_context_builder = verify_context_builder
         self.completion_paths       = completion_paths
@@ -1057,7 +1255,12 @@ class StateMachine:
             prompt_context.update(self.verify_context_builder(job))
 
         prompt = _normalize_prompt_text(self.verify_prompt_template.format(**prompt_context))
-        ok = tmux_send_keys(self.verify_pane_target, prompt, self.dry_run, pane_type="codex")
+        ok = tmux_send_keys(
+            self.verify_pane_target,
+            prompt,
+            self.dry_run,
+            pane_type=self.verify_pane_type,
+        )
 
         if ok:
             self.dedupe.mark_dispatch(
@@ -1217,7 +1420,7 @@ class WatcherCore:
 
         self.watch_dir     = Path(config["watch_dir"])
         self.artifact_root = self.watch_dir.parent
-        self.repo_root     = Path(config.get("repo_root", str(self.artifact_root)))
+        self.repo_root     = Path(config.get("repo_root", str(self.artifact_root))).resolve()
         self.verify_dir    = self.artifact_root / "verify"
         self.report_gemini_dir = self.artifact_root / "report" / "gemini"
         self.state_dir     = base / "state"
@@ -1233,7 +1436,13 @@ class WatcherCore:
         self.startup_grace_sec = float(config.get("startup_grace_sec", 8.0))
         self.session_arbitration_settle_sec = float(config.get("session_arbitration_settle_sec", 5.0))
         self.session_arbitration_cooldown_sec = float(config.get("session_arbitration_cooldown_sec", 300.0))
+        self.implement_blocked_settle_sec = float(config.get("implement_blocked_settle_sec", 5.0))
+        self.implement_blocked_cooldown_sec = float(config.get("implement_blocked_cooldown_sec", 300.0))
         self.started_at = time.time()
+        self.runtime_adapter = resolve_project_runtime_adapter(self.repo_root)
+        self.runtime_controls = dict(self.runtime_adapter.get("controls") or {})
+        self.runtime_role_owners = dict(self.runtime_adapter.get("role_owners") or {})
+        self.runtime_lane_configs = list(self.runtime_adapter.get("lane_configs") or [])
 
         # rolling handoff 슬롯
         self.claude_handoff_path    = base / "claude_handoff.md"      # Claude-only execution slot
@@ -1247,53 +1456,137 @@ class WatcherCore:
             self.operator_request_path,
         ]
         # pane target: 명시 인자 우선, 없으면 project-aware session 기반 default
-        repo_root_str = config.get("repo_root", str(self.artifact_root))
+        repo_root_str = str(self.repo_root)
         _sess = _session_name_for_project(repo_root_str)
         _def_claude, _def_codex, _def_gemini = _default_pane_targets(_sess)
         self.claude_pane_target  = config.get("claude_pane_target", _def_claude)
         self.gemini_pane_target  = config.get("gemini_pane_target", _def_gemini)
         self.codex_pane_target   = config.get("verify_pane_target", _def_codex)
-        self.claude_prompt       = _normalize_prompt_text(config.get(
-            "claude_prompt",
-            "ROLE: claude_implement\n"
-            "STATE: implement\n"
-            "HANDOFF: .pipeline/claude_handoff.md\n"
+        self.agent_pane_targets = {
+            "Claude": self.claude_pane_target,
+            "Codex": self.codex_pane_target,
+            "Gemini": self.gemini_pane_target,
+        }
+        self.implement_prompt       = _normalize_prompt_text(
+            config.get("implement_prompt")
+            or config.get("claude_prompt")
+            or
+            "ROLE: implement\n"
+            "ROLE_OWNER: {runtime_implement_owner}\n"
+            "STATE: implement_ready\n"
+            "HANDOFF: {active_handoff_path}\n"
+            "HANDOFF_SHA: {active_handoff_sha}\n"
+            "RUNTIME_ENABLED_LANES: {runtime_enabled_lanes}\n"
             "READ_FIRST:\n"
-            "- CLAUDE.md\n"
-            "- .pipeline/claude_handoff.md",
-        ))
-        self.gemini_prompt       = _normalize_prompt_text(config.get(
-            "gemini_prompt",
-            "ROLE: gemini_arbitrate\n"
-            "STATE: codex_needs_tiebreak\n"
+            "- {runtime_implement_read_first_doc}\n"
+            "- work/README.md\n"
+            "- .pipeline/README.md\n"
+            "- {active_handoff_path}\n"
+            "RULES:\n"
+            "- role ownership is runtime metadata only; keep this implement contract lane-neutral\n"
+            "- implement only the bounded slice from the handoff\n"
+            "- if the slice is completed, leave a `/work` closeout note; `.pipeline` does not replace `/work`\n"
+            "- do not use `report/` as the primary implementation closeout for a normal implement round\n"
+            "- do not ask the operator to choose among options\n"
+            "- do not self-select the next slice\n"
+            "- do not write or update .pipeline/gemini_request.md or .pipeline/operator_request.md\n"
+            "- if the handoff is blocked or not actionable, emit the exact sentinel below and stop\n"
+            "BLOCKED_SENTINEL:\n"
+            "STATUS: implement_blocked\n"
+            "BLOCK_REASON: <short_reason>\n"
+            "REQUEST: verify_triage\n"
+            "HANDOFF: {active_handoff_path}\n"
+            "HANDOFF_SHA: {active_handoff_sha}\n"
+            "BLOCK_ID: {active_handoff_sha}:<short_reason>"
+        )
+        self.advisory_prompt       = _normalize_prompt_text(
+            config.get("advisory_prompt")
+            or config.get("gemini_prompt")
+            or
+            "ROLE: advisory\n"
+            "ROLE_OWNER: {runtime_advisory_owner}\n"
+            "STATE: advisory_request_open\n"
+            "NEXT_CONTROL_SEQ: {next_control_seq}\n"
+            "RUNTIME_ENABLED_LANES: {runtime_enabled_lanes}\n"
             "Open these files now:\n"
-            "- @GEMINI.md\n"
+            "- {runtime_advisory_read_first_doc}\n"
+            "- .pipeline/README.md\n"
             "- {gemini_request_mention}\n"
-            "- @AGENTS.md\n"
             "- {latest_work_mention}\n"
             "- {latest_verify_mention}\n"
             "Write exactly two files using edit/write tools only:\n"
             "- advisory log: {gemini_report_path}\n"
-            "- recommendation slot: {gemini_advice_path}\n"
+            "- recommendation slot: {gemini_advice_path} with STATUS: advice_ready and CONTROL_SEQ: {next_control_seq}\n"
+            "Keep this advisory contract role-neutral even if the owner lane is not the default advisory lane.\n"
             "Do not use shell heredoc, shell redirection, cat > file, or printf > file.\n"
             "Do not modify any other repo files.\n"
-            "Keep the recommendation short and exact.",
-        ))
-        self.codex_followup_prompt = _normalize_prompt_text(config.get(
-            "codex_followup_prompt",
-            "ROLE: codex_followup\n"
-            "STATE: gemini_advice_ready\n"
+            "Write CONTROL_SEQ immediately after STATUS using exactly {next_control_seq}.\n"
+            "Keep the recommendation short and exact."
+        )
+        self.followup_prompt = _normalize_prompt_text(
+            config.get("followup_prompt")
+            or config.get("codex_followup_prompt")
+            or
+            "ROLE: followup\n"
+            "ROLE_OWNER: {runtime_verify_owner}\n"
+            "STATE: advisory_advice_ready\n"
+            "NEXT_CONTROL_SEQ: {next_control_seq}\n"
             "REQUEST: .pipeline/gemini_request.md\n"
             "ADVICE: .pipeline/gemini_advice.md\n"
             "LATEST_WORK: {latest_work_path}\n"
             "LATEST_VERIFY: {latest_verify_path}\n"
+            "RUNTIME_ENABLED_LANES: {runtime_enabled_lanes}\n"
             "READ_FIRST:\n"
-            "- AGENTS.md\n"
+            "- {runtime_verify_read_first_doc}\n"
             "- verify/README.md\n"
             "- .pipeline/README.md\n"
             "- .pipeline/gemini_request.md\n"
-            "- .pipeline/gemini_advice.md",
-        ))
+            "- .pipeline/gemini_advice.md\n"
+            "OUTPUTS:\n"
+            "- .pipeline/claude_handoff.md for STATUS: implement + CONTROL_SEQ: {next_control_seq}\n"
+            "- .pipeline/operator_request.md for STATUS: needs_operator + CONTROL_SEQ: {next_control_seq}\n"
+            "RULES:\n"
+            "- role ownership is runtime metadata only; keep this followup contract lane-neutral\n"
+            "- when writing a control slot, put CONTROL_SEQ immediately after STATUS and use exactly {next_control_seq}"
+        )
+        self.verify_triage_prompt = _normalize_prompt_text(
+            config.get("verify_triage_prompt")
+            or config.get("codex_blocked_triage_prompt")
+            or
+            "ROLE: verify_triage\n"
+            "ROLE_OWNER: {runtime_verify_owner}\n"
+            "STATE: implement_blocked\n"
+            "HANDOFF: {active_handoff_path}\n"
+            "HANDOFF_SHA: {active_handoff_sha}\n"
+            "BLOCK_SOURCE: {blocked_source}\n"
+            "BLOCK_REASON: {blocked_reason}\n"
+            "BLOCK_ID: {blocked_fingerprint}\n"
+            "NEXT_CONTROL_SEQ: {next_control_seq}\n"
+            "RUNTIME_ENABLED_LANES: {runtime_enabled_lanes}\n"
+            "ACTIVE_CONTROL: {active_control_status} {active_control_path}\n"
+            "ACTIVE_CONTROL_SEQ: {active_control_seq}\n"
+            "LATEST_WORK: {latest_work_path}\n"
+            "LATEST_VERIFY: {latest_verify_path}\n"
+            "BLOCK_EXCERPT:\n"
+            "{blocked_excerpt}\n"
+            "READ_FIRST:\n"
+            "- {runtime_verify_read_first_doc}\n"
+            "- verify/README.md\n"
+            "- .pipeline/README.md\n"
+            "- {active_handoff_path}\n"
+            "- {latest_work_path}\n"
+            "- {latest_verify_path}\n"
+            "OUTPUTS:\n"
+            "- .pipeline/claude_handoff.md for STATUS: implement + CONTROL_SEQ: {next_control_seq}\n"
+            "- .pipeline/gemini_request.md for STATUS: request_open + CONTROL_SEQ: {next_control_seq}\n"
+            "- .pipeline/operator_request.md for STATUS: needs_operator + CONTROL_SEQ: {next_control_seq}\n"
+            "RULES:\n"
+            "- treat this as blocked implement recovery under the verify role, not as a fresh docs/code verification round\n"
+            "- when writing a control slot, put CONTROL_SEQ immediately after STATUS and use exactly {next_control_seq}\n"
+            "- write exactly one next control outcome\n"
+            "- do not leave Claude waiting on an operator-choice menu\n"
+            "- only use STATUS: needs_operator if the next exact slice still cannot be narrowed truthfully"
+        )
 
         # rolling 슬롯 시그니처 추적 (mtime_ns + size + hash)
         self._last_claude_handoff_sig: str = self._get_path_sig(self.claude_handoff_path)
@@ -1301,10 +1594,15 @@ class WatcherCore:
         self._last_gemini_advice_sig: str = self._get_path_sig(self.gemini_advice_path)
         self._last_operator_request_sig: str = self._get_path_sig(self.operator_request_path)
         self._last_session_arbitration_draft_sig: str = self._get_path_sig(self.session_arbitration_draft_path)
+        self._pending_claude_handoff_sig: str = ""
         self._last_session_arbitration_fingerprint: str = ""
         self._session_arbitration_snapshot_fingerprints: dict[str, str] = {}
         self._session_arbitration_snapshot_changed_at: dict[str, float] = {}
         self._session_arbitration_cooldowns: dict[str, float] = {}
+        self._last_claude_blocked_fingerprint: str = ""
+        self._claude_blocked_snapshot_fingerprints: dict[str, str] = {}
+        self._claude_blocked_snapshot_changed_at: dict[str, float] = {}
+        self._claude_blocked_cooldowns: dict[str, float] = {}
         # 시작 시 이미 Claude 차례인지 판단하는 플래그
         self._initial_turn_checked: bool = False
         # Claude 차례일 때: 시작 시점 work/ 스냅샷
@@ -1336,15 +1634,91 @@ class WatcherCore:
             lease=self.lease,
             dedupe=self.dedupe,
             collector=self.collector,
-            verify_pane_target=config.get("verify_pane_target", _def_codex),
+            verify_pane_target=self._role_pane_target("verify") or config.get("verify_pane_target", _def_codex),
+            verify_pane_type=self._role_pane_type("verify"),
             verify_prompt_template=config.get(
                 "verify_prompt_template",
-                "verify job={job_id} round={round} path={artifact_path}",
+                "ROLE: verify\n"
+                "ROLE_OWNER: {runtime_verify_owner}\n"
+                "STATE: verify_pending\n"
+                "NEXT_CONTROL_SEQ: {next_control_seq}\n"
+                "LATEST_WORK: {latest_work_path}\n"
+                "LATEST_VERIFY: {latest_verify_path}\n"
+                "RUNTIME_ENABLED_LANES: {runtime_enabled_lanes}\n"
+                "READ_FIRST:\n"
+                "- {runtime_verify_read_first_doc}\n"
+                "- work/README.md\n"
+                "- verify/README.md\n"
+                "- .pipeline/README.md\n"
+                "SCOPE_HINT:\n"
+                "{verify_scope_hint}\n"
+                "OUTPUTS:\n"
+                "- /verify verification note if needed\n"
+                "- .pipeline/claude_handoff.md for STATUS: implement + CONTROL_SEQ: {next_control_seq}\n"
+                "- .pipeline/gemini_request.md when Codex cannot narrow after tie-break + CONTROL_SEQ: {next_control_seq}\n"
+                "- .pipeline/operator_request.md only when Gemini still cannot resolve it + CONTROL_SEQ: {next_control_seq}\n"
+                "RULES:\n"
+                "- role ownership is runtime metadata only; keep this verify contract lane-neutral\n"
+                "- latest /work first, then same-day latest /verify if any\n"
+                "- never route needs_operator to Claude\n"
+                "- when writing a control slot, put CONTROL_SEQ immediately after STATUS and use exactly {next_control_seq}\n"
+                "- keep one exact next slice or one exact operator decision only",
             ),
             verify_context_builder=self._build_verify_prompt_context,
             completion_paths=self.completion_paths,
             error_log=self.events_dir / "errors.jsonl",
             dry_run=self.dry_run,
+        )
+
+    # ------------------------------------------------------------------
+    def _lane_config(self, lane_name: str | None) -> Optional[dict[str, object]]:
+        if not lane_name:
+            return None
+        for lane in self.runtime_lane_configs:
+            if str(lane.get("name") or "") == lane_name:
+                return lane
+        return None
+
+    # ------------------------------------------------------------------
+    def _role_owner(self, role_name: str) -> Optional[str]:
+        owner = str(self.runtime_role_owners.get(role_name) or "").strip()
+        return owner or None
+
+    # ------------------------------------------------------------------
+    def _role_read_first_doc(self, role_name: str) -> str:
+        owner = self._role_owner(role_name) or ""
+        if owner == "Claude":
+            return "CLAUDE.md"
+        if owner == "Gemini":
+            return "GEMINI.md"
+        return "AGENTS.md"
+
+    # ------------------------------------------------------------------
+    def _role_pane_target(self, role_name: str) -> str:
+        owner = self._role_owner(role_name)
+        if not owner:
+            return ""
+        return str(self.agent_pane_targets.get(owner) or "")
+
+    # ------------------------------------------------------------------
+    def _role_pane_type(self, role_name: str) -> str:
+        lane = self._lane_config(self._role_owner(role_name))
+        pane_type = str((lane or {}).get("pane_type") or "").strip()
+        return pane_type or "claude"
+
+    # ------------------------------------------------------------------
+    def _advisory_enabled(self) -> bool:
+        return bool(self.runtime_controls.get("advisory_enabled")) and bool(self._role_owner("advisory"))
+
+    # ------------------------------------------------------------------
+    def _operator_stop_enabled(self) -> bool:
+        return bool(self.runtime_controls.get("operator_stop_enabled"))
+
+    # ------------------------------------------------------------------
+    def _session_arbitration_enabled(self) -> bool:
+        return (
+            self._advisory_enabled()
+            and bool(self.runtime_controls.get("session_arbitration_enabled"))
         )
 
     # ------------------------------------------------------------------
@@ -1359,6 +1733,70 @@ class WatcherCore:
     def _get_path_sig(self, path: Path) -> str:
         """path 파일 시그니처 반환. 없으면 빈 문자열."""
         return compute_file_sig(path)
+
+    # ------------------------------------------------------------------
+    def _get_path_sha256(self, path: Path) -> str:
+        return compute_file_sha256(path)
+
+    # ------------------------------------------------------------------
+    def _get_valid_control_signal(self, path: Path, expected_status: str, kind: str) -> Optional[ControlSignal]:
+        if kind in {"gemini_request", "gemini_advice"} and not self._advisory_enabled():
+            return None
+        if kind == "operator_request" and not self._operator_stop_enabled():
+            return None
+        status = self._read_status_from_path(path)
+        if status != expected_status:
+            return None
+        mtime = self._get_path_mtime(path)
+        if mtime == 0.0:
+            return None
+        return ControlSignal(
+            kind=kind,
+            path=path,
+            status=status,
+            mtime=mtime,
+            sig=self._get_path_sig(path),
+            control_seq=self._read_control_seq_from_path(path),
+        )
+
+    # ------------------------------------------------------------------
+    def _get_active_control_signal(self) -> Optional[ControlSignal]:
+        candidates = [
+            self._get_valid_control_signal(self.claude_handoff_path, "implement", "claude_handoff"),
+            self._get_valid_control_signal(self.gemini_request_path, "request_open", "gemini_request"),
+            self._get_valid_control_signal(self.gemini_advice_path, "advice_ready", "gemini_advice"),
+            self._get_valid_control_signal(self.operator_request_path, "needs_operator", "operator_request"),
+        ]
+        valid = [candidate for candidate in candidates if candidate is not None]
+        if not valid:
+            return None
+        return max(
+            valid,
+            key=lambda signal: (
+                signal.control_seq >= 0,
+                signal.control_seq,
+                signal.mtime,
+                signal.path.name,
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    def _get_next_control_seq(self) -> int:
+        candidates = [
+            self._get_valid_control_signal(self.claude_handoff_path, "implement", "claude_handoff"),
+            self._get_valid_control_signal(self.gemini_request_path, "request_open", "gemini_request"),
+            self._get_valid_control_signal(self.gemini_advice_path, "advice_ready", "gemini_advice"),
+            self._get_valid_control_signal(self.operator_request_path, "needs_operator", "operator_request"),
+        ]
+        seqs = [candidate.control_seq for candidate in candidates if candidate is not None and candidate.control_seq >= 0]
+        if not seqs:
+            return 1
+        return max(seqs) + 1
+
+    # ------------------------------------------------------------------
+    def _is_active_control(self, path: Path, expected_status: str) -> bool:
+        active = self._get_active_control_signal()
+        return active is not None and active.path == path and active.status == expected_status
 
     # ------------------------------------------------------------------
     def _repo_relative(self, path: Optional[Path]) -> str:
@@ -1382,7 +1820,10 @@ class WatcherCore:
         if not root.exists():
             return None
         for md in root.rglob("*.md"):
-            if not self._is_canonical_round_note(root, md):
+            if root == self.watch_dir:
+                if not self._is_dispatchable_work_note(md):
+                    continue
+            elif not self._is_canonical_round_note(root, md):
                 continue
             try:
                 mt = md.stat().st_mtime
@@ -1406,6 +1847,27 @@ class WatcherCore:
         if len(rel.parts) < 3:
             return False
         return bool(ROUND_NOTE_NAME_RE.match(path.name))
+
+    # ------------------------------------------------------------------
+    def _is_metadata_only_work_note(self, work_path: Path) -> bool:
+        if not self._is_canonical_round_note(self.watch_dir, work_path):
+            return False
+        changed_paths = [path.lstrip("./") for path in self._extract_changed_file_paths_from_round_note(work_path)]
+        if not changed_paths:
+            # "변경 파일" 섹션이 비었거나 "- 없음"만 있으면 메타 문서로 취급
+            return True
+        work_rel = self._repo_relative(work_path)
+        return all(
+            path == work_rel or path.startswith(ROUND_NOTE_METADATA_ONLY_PREFIXES)
+            for path in changed_paths
+        )
+
+    # ------------------------------------------------------------------
+    def _is_dispatchable_work_note(self, work_path: Path) -> bool:
+        return (
+            self._is_canonical_round_note(self.watch_dir, work_path)
+            and not self._is_metadata_only_work_note(work_path)
+        )
 
     # ------------------------------------------------------------------
     def _get_latest_same_day_verify_path(self, work_path: Optional[Path]) -> Optional[Path]:
@@ -1440,6 +1902,7 @@ class WatcherCore:
         latest_verify = self._get_latest_same_day_verify_path(latest_work)
         gemini_report_hint = self._infer_gemini_report_hint(latest_work)
         gemini_report_path = self.report_gemini_dir / gemini_report_hint
+        active_control = self._get_active_control_signal()
         return {
             "latest_work_path": self._repo_relative(latest_work),
             "latest_verify_path": self._repo_relative(latest_verify),
@@ -1454,19 +1917,109 @@ class WatcherCore:
             "latest_verify_mention": self._path_mention(latest_verify),
             "gemini_request_mention": self._path_mention(self.gemini_request_path),
             "gemini_advice_mention": self._path_mention(self.gemini_advice_path),
+            "active_control_path": self._repo_relative(active_control.path if active_control else None),
+            "active_control_status": active_control.status if active_control else "none",
+            "active_control_sig": active_control.sig if active_control else "",
+            "active_control_seq": str(active_control.control_seq if active_control and active_control.control_seq >= 0 else "none"),
+            "next_control_seq": str(self._get_next_control_seq()),
+            "runtime_enabled_lanes": ",".join(self.runtime_adapter.get("enabled_lanes") or []),
+            "runtime_implement_owner": self._role_owner("implement") or "none",
+            "runtime_verify_owner": self._role_owner("verify") or "none",
+            "runtime_advisory_owner": self._role_owner("advisory") or "none",
+            "runtime_implement_read_first_doc": self._role_read_first_doc("implement"),
+            "runtime_verify_read_first_doc": self._role_read_first_doc("verify"),
+            "runtime_advisory_read_first_doc": self._role_read_first_doc("advisory"),
+            "runtime_advisory_enabled": "true" if self.runtime_controls.get("advisory_enabled") else "false",
+            "runtime_operator_stop_enabled": "true" if self.runtime_controls.get("operator_stop_enabled") else "false",
+            "runtime_session_arbitration_enabled": "true" if self.runtime_controls.get("session_arbitration_enabled") else "false",
         }
+
+    # ------------------------------------------------------------------
+    def _extract_changed_file_paths_from_round_note(self, work_path: Optional[Path]) -> list[str]:
+        if work_path is None or not work_path.exists():
+            return []
+        try:
+            lines = work_path.read_text().splitlines()
+        except OSError:
+            return []
+
+        in_changed_files = False
+        collected: list[str] = []
+        for raw_line in lines:
+            line = raw_line.rstrip()
+            section = ROUND_NOTE_SECTION_RE.match(line.strip())
+            if section:
+                in_changed_files = section.group(1).strip() == "변경 파일"
+                continue
+            if not in_changed_files:
+                continue
+            if not line.strip():
+                continue
+            if line.lstrip().startswith("-"):
+                bullet = line.lstrip()[1:].strip()
+                if bullet == "없음":
+                    continue
+                for match in ROUND_NOTE_PATH_RE.finditer(bullet):
+                    collected.append(match.group(1).lstrip("./"))
+        return collected
+
+    # ------------------------------------------------------------------
+    def _verify_scope_hint_for_work(self, work_path: Optional[Path]) -> tuple[str, str]:
+        changed_paths = self._extract_changed_file_paths_from_round_note(work_path)
+        if changed_paths and all(path.endswith(".md") for path in changed_paths):
+            return (
+                "docs_only",
+                "- docs-only truth-sync round detected from `## 변경 파일`\n"
+                "- re-check the changed markdown docs against current code/docs truth first\n"
+                "- prefer `git diff --check` and direct file comparison; do not widen into unit or Playwright reruns unless the work note itself claims code/test/runtime changes\n"
+                "- if truthful, keep `/verify` concise and move directly to one exact next slice",
+            )
+        return (
+            "standard",
+            "- standard verification round\n"
+            "- rerun only the narrowest checks actually needed for the claimed changes",
+        )
 
     # ------------------------------------------------------------------
     def _build_verify_prompt_context(self, job: JobState) -> dict[str, str]:
         artifact = Path(job.artifact_path)
+        verify_scope_label, verify_scope_hint = self._verify_scope_hint_for_work(artifact)
         return {
             "artifact_path": job.artifact_path,
+            "verify_scope_label": verify_scope_label,
+            "verify_scope_hint": verify_scope_hint,
             **self._build_runtime_prompt_context(artifact),
         }
 
     # ------------------------------------------------------------------
     def _format_runtime_prompt(self, template: str, work_path: Optional[Path] = None) -> str:
         return _normalize_prompt_text(template.format(**self._build_runtime_prompt_context(work_path)))
+
+    # ------------------------------------------------------------------
+    def _build_implement_prompt_context(self, handoff_path: Optional[Path] = None) -> dict[str, str]:
+        handoff = handoff_path or self.claude_handoff_path
+        return {
+            **self._build_runtime_prompt_context(),
+            "active_handoff_path": self._repo_relative(handoff),
+            "active_handoff_sha": self._get_path_sha256(handoff),
+        }
+
+    # ------------------------------------------------------------------
+    def _format_implement_prompt(self, handoff_path: Optional[Path] = None) -> str:
+        return _normalize_prompt_text(self.implement_prompt.format(**self._build_implement_prompt_context(handoff_path)))
+
+    # ------------------------------------------------------------------
+    def _format_verify_triage_prompt(self, signal: dict[str, object]) -> str:
+        context = {
+            **self._build_implement_prompt_context(self.claude_handoff_path),
+            "blocked_source": str(signal.get("source", "sentinel")),
+            "blocked_reason": str(signal.get("reason", "implement_blocked")),
+            "blocked_fingerprint": str(signal.get("fingerprint", "")),
+            "blocked_excerpt": "\n".join(
+                f"- {line}" for line in signal.get("excerpt_lines", [])
+            ) or "- (없음)",
+        }
+        return _normalize_prompt_text(self.verify_triage_prompt.format(**context))
 
     # ------------------------------------------------------------------
     def _read_status_from_path(self, path: Path) -> Optional[str]:
@@ -1482,59 +2035,61 @@ class WatcherCore:
         return None
 
     # ------------------------------------------------------------------
+    def _read_control_seq_from_path(self, path: Path) -> int:
+        """지정 control 파일의 CONTROL_SEQ 값을 읽는다. 없거나 invalid면 -1."""
+        try:
+            with path.open() as f:
+                for line in f:
+                    stripped = line.strip()
+                    if stripped.startswith("CONTROL_SEQ:"):
+                        raw = stripped.split(":", 1)[1].strip()
+                        try:
+                            value = int(raw)
+                        except ValueError:
+                            return -1
+                        return value if value >= 0 else -1
+        except OSError:
+            return -1
+        return -1
+
+    # ------------------------------------------------------------------
     def _get_latest_implement_handoff(self) -> tuple[Optional[Path], float]:
         """Claude가 읽을 최신 implement handoff 슬롯을 고른다."""
-        if self._read_status_from_path(self.claude_handoff_path) != "implement":
+        if not self._is_active_control(self.claude_handoff_path, "implement"):
             return None, 0.0
         return self.claude_handoff_path, self._get_path_mtime(self.claude_handoff_path)
 
     # ------------------------------------------------------------------
     def _get_pending_operator_mtime(self) -> float:
         """operator_request가 실제 pending stop이면 mtime을 반환한다."""
-        if self._read_status_from_path(self.operator_request_path) == "needs_operator":
+        if self._is_active_control(self.operator_request_path, "needs_operator"):
             return self._get_path_mtime(self.operator_request_path)
         return 0.0
 
     # ------------------------------------------------------------------
     def _get_gemini_request_mtime(self) -> float:
-        if self._read_status_from_path(self.gemini_request_path) == "request_open":
+        if self._is_active_control(self.gemini_request_path, "request_open"):
             return self._get_path_mtime(self.gemini_request_path)
         return 0.0
 
     # ------------------------------------------------------------------
     def _get_gemini_advice_mtime(self) -> float:
-        if self._read_status_from_path(self.gemini_advice_path) == "advice_ready":
+        if self._is_active_control(self.gemini_advice_path, "advice_ready"):
             return self._get_path_mtime(self.gemini_advice_path)
         return 0.0
 
     # ------------------------------------------------------------------
     def _get_pending_gemini_request_mtime(self) -> float:
-        request_mtime = self._get_gemini_request_mtime()
-        advice_mtime = self._get_gemini_advice_mtime()
-        control_mtime = max(
-            self._get_path_mtime(self.claude_handoff_path),
-            self._get_pending_operator_mtime(),
-        )
-        if request_mtime > 0.0 and request_mtime > advice_mtime and request_mtime >= control_mtime:
-            return request_mtime
-        return 0.0
+        return self._get_gemini_request_mtime()
 
     # ------------------------------------------------------------------
     def _get_pending_gemini_advice_mtime(self) -> float:
-        request_mtime = self._get_gemini_request_mtime()
-        advice_mtime = self._get_gemini_advice_mtime()
-        control_mtime = max(
-            self._get_path_mtime(self.claude_handoff_path),
-            self._get_pending_operator_mtime(),
-        )
-        if advice_mtime > 0.0 and advice_mtime >= request_mtime and advice_mtime > control_mtime:
-            return advice_mtime
-        return 0.0
+        return self._get_gemini_advice_mtime()
 
     # ------------------------------------------------------------------
     def _operator_blocks_handoff(self, handoff_mtime: float) -> bool:
-        pending_mtime = self._get_pending_operator_mtime()
-        return pending_mtime > 0.0 and pending_mtime >= handoff_mtime
+        del handoff_mtime
+        return self._is_active_control(self.operator_request_path, "needs_operator")
 
     # ------------------------------------------------------------------
     def _get_work_tree_snapshot(self) -> dict[str, str]:
@@ -1543,7 +2098,7 @@ class WatcherCore:
         if not self.watch_dir.exists():
             return snapshot
         for md in self.watch_dir.rglob("*.md"):
-            if not self._is_canonical_round_note(self.watch_dir, md):
+            if not self._is_dispatchable_work_note(md):
                 continue
             sig = compute_file_sig(md)
             if not sig:
@@ -1560,7 +2115,7 @@ class WatcherCore:
         """work/ 내 최신 .md 파일의 mtime 반환. 없으면 0.0."""
         latest = 0.0
         for md in self.watch_dir.rglob("*.md"):
-            if not self._is_canonical_round_note(self.watch_dir, md):
+            if not self._is_dispatchable_work_note(md):
                 continue
             try:
                 mt = md.stat().st_mtime
@@ -1619,55 +2174,174 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _notify_claude(self, reason: str, handoff_path: Optional[Path] = None) -> None:
         """Claude pane에 다음 작업 프롬프트 전송."""
-        log.info("notify_claude: reason=%s target=%s", reason, self.claude_pane_target)
+        target = self._role_pane_target("implement")
+        pane_type = self._role_pane_type("implement")
+        if not target:
+            log.warning("notify_claude skipped: no implement owner target")
+            return
+        log.info("notify_claude: reason=%s target=%s owner=%s", reason, target, self._role_owner("implement"))
         self._log_raw(
             "claude_notify",
             str(handoff_path or self.claude_handoff_path),
             "turn_signal",
             {"reason": reason},
         )
-        tmux_send_keys(self.claude_pane_target, self.claude_prompt, self.dry_run, pane_type="claude")
+        prompt = self._format_implement_prompt(handoff_path)
+        tmux_send_keys(target, prompt, self.dry_run, pane_type=pane_type)
 
     # ------------------------------------------------------------------
     def _notify_gemini(self, reason: str) -> None:
         """Gemini pane에 arbitration 프롬프트 전송."""
-        log.info("notify_gemini: reason=%s target=%s", reason, self.gemini_pane_target)
+        if not self._advisory_enabled():
+            log.info("notify_gemini skipped: advisory disabled")
+            self._log_raw(
+                "gemini_notify_skipped",
+                str(self.gemini_request_path),
+                "turn_signal",
+                {"reason": "runtime_advisory_disabled"},
+            )
+            return
+        target = self._role_pane_target("advisory")
+        pane_type = self._role_pane_type("advisory")
+        if not target:
+            log.info("notify_gemini skipped: no advisory owner target")
+            self._log_raw(
+                "gemini_notify_skipped",
+                str(self.gemini_request_path),
+                "turn_signal",
+                {"reason": "missing_advisory_target"},
+            )
+            return
+        log.info("notify_gemini: reason=%s target=%s owner=%s", reason, target, self._role_owner("advisory"))
         self._log_raw(
             "gemini_notify",
             str(self.gemini_request_path),
             "turn_signal",
             {"reason": reason},
         )
-        prompt = self._format_runtime_prompt(self.gemini_prompt)
-        tmux_send_keys(self.gemini_pane_target, prompt, self.dry_run, pane_type="gemini")
+        prompt = self._format_runtime_prompt(self.advisory_prompt)
+        tmux_send_keys(target, prompt, self.dry_run, pane_type=pane_type)
 
     # ------------------------------------------------------------------
     def _notify_codex_followup(self, reason: str) -> None:
         """Gemini advice 이후 Codex가 최종 결론을 쓰도록 재호출."""
-        log.info("notify_codex_followup: reason=%s target=%s", reason, self.codex_pane_target)
+        target = self._role_pane_target("verify")
+        pane_type = self._role_pane_type("verify")
+        if not target:
+            log.warning("notify_codex_followup skipped: no verify owner target")
+            return
+        log.info("notify_codex_followup: reason=%s target=%s owner=%s", reason, target, self._role_owner("verify"))
         self._log_raw(
             "codex_followup_notify",
             str(self.gemini_advice_path),
             "turn_signal",
             {"reason": reason},
         )
-        prompt = self._format_runtime_prompt(self.codex_followup_prompt)
-        tmux_send_keys(self.codex_pane_target, prompt, self.dry_run, pane_type="codex")
+        prompt = self._format_runtime_prompt(self.followup_prompt)
+        tmux_send_keys(target, prompt, self.dry_run, pane_type=pane_type)
+
+    # ------------------------------------------------------------------
+    def _notify_codex_blocked_triage(self, signal: dict[str, object], reason: str) -> bool:
+        target = self._role_pane_target("verify")
+        pane_type = self._role_pane_type("verify")
+        if not target:
+            return False
+        codex_snapshot = _capture_pane_text(target)
+        if not _pane_text_is_idle(codex_snapshot):
+            self._log_raw(
+                "codex_blocked_triage_skipped",
+                str(self.claude_handoff_path),
+                "turn_signal",
+                {"reason": "codex_busy", "blocked_reason": signal.get("reason", "implement_blocked")},
+            )
+            return False
+
+        prompt = self._format_verify_triage_prompt(signal)
+        self._log_raw(
+            "codex_blocked_triage_notify",
+            str(self.claude_handoff_path),
+            "turn_signal",
+            {
+                "reason": reason,
+                "blocked_reason": signal.get("reason", "implement_blocked"),
+                "blocked_source": signal.get("source", "sentinel"),
+                "blocked_fingerprint": signal.get("fingerprint", ""),
+            },
+        )
+        ok = tmux_send_keys(target, prompt, self.dry_run, pane_type=pane_type)
+        if ok:
+            self._last_claude_blocked_fingerprint = str(signal.get("fingerprint", ""))
+            self._clear_session_arbitration_draft("claude_blocked_triage")
+        return ok
+
+    # ------------------------------------------------------------------
+    def _claude_handoff_verify_active(self) -> bool:
+        return self.lease.is_active("slot_verify")
+
+    # ------------------------------------------------------------------
+    def _claude_handoff_dispatch_state(self, handoff_mtime: float) -> dict[str, bool]:
+        operator_blocked = self._operator_blocks_handoff(handoff_mtime)
+        pending_verify = self._latest_work_needs_verify()
+        verify_active = self._claude_handoff_verify_active()
+        return {
+            "operator_blocked": operator_blocked,
+            "pending_verify": pending_verify,
+            "verify_active": verify_active,
+            "dispatchable": not operator_blocked and not pending_verify and not verify_active,
+        }
+
+    # ------------------------------------------------------------------
+    def _flush_pending_claude_handoff(self) -> None:
+        pending_sig = self._pending_claude_handoff_sig
+        if not pending_sig:
+            return
+
+        current_sig = self._get_path_sig(self.claude_handoff_path)
+        if not current_sig or current_sig != pending_sig:
+            self._pending_claude_handoff_sig = ""
+            return
+
+        status = self._read_status_from_path(self.claude_handoff_path) or "missing"
+        handoff_mtime = self._get_path_mtime(self.claude_handoff_path)
+        dispatch_state = self._claude_handoff_dispatch_state(handoff_mtime)
+        if status != "implement":
+            self._pending_claude_handoff_sig = ""
+            return
+        if not dispatch_state["dispatchable"]:
+            return
+
+        log.info("pending claude handoff ready: STATUS=implement → Claude 차례")
+        self._clear_claude_blocked_state("claude_handoff_pending_release")
+        self._notify_claude("claude_handoff_pending_release", self.claude_handoff_path)
+        self._pending_claude_handoff_sig = ""
 
     # ------------------------------------------------------------------
     def _check_pipeline_signal_updates(self) -> None:
         """handoff/operator 슬롯 시그니처를 확인하고 Claude 라우팅을 결정한다."""
+        active_control = self._get_active_control_signal()
+
         operator_sig = self._get_path_sig(self.operator_request_path)
         if operator_sig and operator_sig != self._last_operator_request_sig:
             self._last_operator_request_sig = operator_sig
             status = self._read_status_from_path(self.operator_request_path) or "missing"
-            if status == "needs_operator":
+            if active_control is not None and active_control.path == self.operator_request_path:
                 log.info("operator request updated: STATUS=needs_operator → Claude notify 차단")
+                self._clear_claude_blocked_state("operator_request_pending")
                 self._log_raw(
                     "operator_request_pending",
                     str(self.operator_request_path),
                     "turn_signal",
                     {"status": status},
+                )
+            else:
+                self._log_raw(
+                    "operator_request_stale",
+                    str(self.operator_request_path),
+                    "turn_signal",
+                    {
+                        "status": status,
+                        "active_control": active_control.kind if active_control else "none",
+                    },
                 )
 
         gemini_request_sig = self._get_path_sig(self.gemini_request_path)
@@ -1677,13 +2351,17 @@ class WatcherCore:
             status = self._read_status_from_path(self.gemini_request_path) or "missing"
             if request_mtime > 0.0 and self._get_pending_operator_mtime() == 0.0:
                 log.info("gemini request updated: STATUS=request_open → Gemini 차례")
+                self._clear_claude_blocked_state("gemini_request_pending")
                 self._notify_gemini("gemini_request_updated")
             else:
                 self._log_raw(
                     "gemini_notify_skipped",
                     str(self.gemini_request_path),
                     "turn_signal",
-                    {"status": status},
+                    {
+                        "status": status,
+                        "active_control": active_control.kind if active_control else "none",
+                    },
                 )
 
         gemini_advice_sig = self._get_path_sig(self.gemini_advice_path)
@@ -1693,13 +2371,17 @@ class WatcherCore:
             status = self._read_status_from_path(self.gemini_advice_path) or "missing"
             if advice_mtime > 0.0 and self._get_pending_operator_mtime() == 0.0:
                 log.info("gemini advice updated: STATUS=advice_ready → Codex follow-up")
+                self._clear_claude_blocked_state("gemini_advice_pending")
                 self._notify_codex_followup("gemini_advice_updated")
             else:
                 self._log_raw(
                     "codex_followup_notify_skipped",
                     str(self.gemini_advice_path),
                     "turn_signal",
-                    {"status": status},
+                    {
+                        "status": status,
+                        "active_control": active_control.kind if active_control else "none",
+                    },
                 )
 
         handoff_sig = self._get_path_sig(self.claude_handoff_path)
@@ -1707,10 +2389,26 @@ class WatcherCore:
             self._last_claude_handoff_sig = handoff_sig
             status = self._read_status_from_path(self.claude_handoff_path) or "missing"
             handoff_mtime = self._get_path_mtime(self.claude_handoff_path)
-            if status == "implement" and not self._operator_blocks_handoff(handoff_mtime) and not self._latest_work_needs_verify():
+            dispatch_state = self._claude_handoff_dispatch_state(handoff_mtime)
+            if (
+                active_control is not None
+                and active_control.path == self.claude_handoff_path
+                and status == "implement"
+                and dispatch_state["dispatchable"]
+            ):
                 log.info("claude handoff updated: STATUS=implement → Claude 차례")
+                self._clear_claude_blocked_state("claude_handoff_updated")
                 self._notify_claude("claude_handoff_updated", self.claude_handoff_path)
+                self._pending_claude_handoff_sig = ""
             else:
+                if (
+                    active_control is not None
+                    and active_control.path == self.claude_handoff_path
+                    and status == "implement"
+                    and dispatch_state["verify_active"]
+                ):
+                    self._clear_claude_blocked_state("claude_handoff_pending_release")
+                    self._pending_claude_handoff_sig = handoff_sig
                 log.info("claude handoff updated: STATUS=%s → Claude notify 건너뜀", status)
                 self._log_raw(
                     "claude_notify_skipped",
@@ -1718,10 +2416,14 @@ class WatcherCore:
                     "turn_signal",
                     {
                         "status": status,
-                        "operator_blocked": self._operator_blocks_handoff(handoff_mtime),
-                        "pending_verify": self._latest_work_needs_verify(),
+                        "operator_blocked": dispatch_state["operator_blocked"],
+                        "pending_verify": dispatch_state["pending_verify"],
+                        "verify_active": dispatch_state["verify_active"],
+                        "active_control": active_control.kind if active_control else "none",
                     },
                 )
+
+        self._flush_pending_claude_handoff()
 
     # ------------------------------------------------------------------
     def _log_raw(self, event: str, path: str, job_id: str,
@@ -1797,6 +2499,90 @@ class WatcherCore:
         self._session_arbitration_snapshot_changed_at = {}
 
     # ------------------------------------------------------------------
+    def _clear_claude_blocked_state(self, reason: str) -> None:
+        fingerprint = self._last_claude_blocked_fingerprint
+        if fingerprint:
+            self._claude_blocked_cooldowns[fingerprint] = (
+                time.time() + self.implement_blocked_cooldown_sec
+            )
+            self._log_raw(
+                "claude_blocked_cleared",
+                str(self.claude_handoff_path),
+                "claude_session",
+                {"reason": reason, "blocked_fingerprint": fingerprint},
+            )
+        self._last_claude_blocked_fingerprint = ""
+        self._claude_blocked_snapshot_fingerprints = {}
+        self._claude_blocked_snapshot_changed_at = {}
+
+    # ------------------------------------------------------------------
+    def _claude_blocked_snapshot_stable_sec(self, snapshot: str) -> float:
+        now = time.time()
+        fingerprint = hashlib.sha1(snapshot.encode("utf-8")).hexdigest()
+        if self._claude_blocked_snapshot_fingerprints.get("claude") != fingerprint:
+            self._claude_blocked_snapshot_fingerprints["claude"] = fingerprint
+            self._claude_blocked_snapshot_changed_at["claude"] = now
+            return 0.0
+        changed_at = self._claude_blocked_snapshot_changed_at.get("claude", now)
+        return max(0.0, now - changed_at)
+
+    # ------------------------------------------------------------------
+    def _check_claude_implement_blocked(self) -> bool:
+        handoff_path, _ = self._get_latest_implement_handoff()
+        if handoff_path is None:
+            self._clear_claude_blocked_state("handoff_inactive")
+            return False
+
+        implement_target = self._role_pane_target("implement")
+        if not implement_target:
+            self._clear_claude_blocked_state("implement_target_missing")
+            return False
+        claude_snapshot = _capture_pane_text(implement_target)
+        handoff_path_rel = self._repo_relative(handoff_path)
+        handoff_sha = self._get_path_sha256(handoff_path)
+
+        signal = _extract_claude_implement_blocked_signal(
+            claude_snapshot,
+            active_handoff_path=handoff_path_rel,
+            active_handoff_sha=handoff_sha,
+        )
+        soft_signal: Optional[dict[str, object]] = None
+        if signal is None:
+            soft_signal = _extract_claude_completed_handoff_signal(claude_snapshot, active_handoff_sha=handoff_sha)
+            if soft_signal is None:
+                soft_signal = _extract_claude_forbidden_menu_signal(claude_snapshot, active_handoff_sha=handoff_sha)
+            if (
+                soft_signal is not None
+                and self._claude_blocked_snapshot_stable_sec(claude_snapshot) >= self.implement_blocked_settle_sec
+            ):
+                signal = soft_signal
+
+        if signal is None:
+            if soft_signal is not None:
+                return False
+            self._clear_claude_blocked_state("signal_cleared")
+            return False
+
+        fingerprint = str(signal["fingerprint"])
+        if fingerprint == self._last_claude_blocked_fingerprint:
+            return True
+        if time.time() < self._claude_blocked_cooldowns.get(fingerprint, 0.0):
+            return False
+
+        self._log_raw(
+            "claude_blocked_detected",
+            str(handoff_path),
+            "claude_session",
+            {
+                "blocked_source": signal.get("source", "sentinel"),
+                "blocked_reason": signal.get("reason", "implement_blocked"),
+                "blocked_fingerprint": fingerprint,
+            },
+        )
+        self._notify_codex_blocked_triage(signal, "claude_implement_blocked")
+        return True
+
+    # ------------------------------------------------------------------
     def _pane_snapshot_stable_sec(self, pane_name: str, snapshot: str) -> float:
         now = time.time()
         fingerprint = hashlib.sha1(snapshot.encode("utf-8")).hexdigest()
@@ -1809,11 +2595,18 @@ class WatcherCore:
 
     # ------------------------------------------------------------------
     def _claude_session_arbitration_ready(self, pane_snapshots: dict[str, str]) -> bool:
-        if _is_pane_dead(self.claude_pane_target):
+        if not self._session_arbitration_enabled():
             return False
-        if _is_pane_dead(self.codex_pane_target):
+        implement_target = self._role_pane_target("implement")
+        verify_target = self._role_pane_target("verify")
+        advisory_target = self._role_pane_target("advisory")
+        if not implement_target or not verify_target or not advisory_target:
             return False
-        if _is_pane_dead(self.gemini_pane_target):
+        if _is_pane_dead(implement_target):
+            return False
+        if _is_pane_dead(verify_target):
+            return False
+        if _is_pane_dead(advisory_target):
             return False
         if not _pane_text_is_idle(pane_snapshots["codex"]):
             return False
@@ -1830,6 +2623,9 @@ class WatcherCore:
     def _check_claude_live_session_escalation(self) -> None:
         if not self._waiting_for_claude:
             return
+        if not self._session_arbitration_enabled():
+            self._clear_session_arbitration_draft("session_arbitration_disabled")
+            return
         if self._get_pending_operator_mtime() > 0.0:
             self._clear_session_arbitration_draft("operator_request_pending")
             return
@@ -1841,9 +2637,9 @@ class WatcherCore:
             return
 
         pane_snapshots = {
-            "claude": _capture_pane_text(self.claude_pane_target),
-            "codex": _capture_pane_text(self.codex_pane_target),
-            "gemini": _capture_pane_text(self.gemini_pane_target),
+            "claude": _capture_pane_text(self._role_pane_target("implement")),
+            "codex": _capture_pane_text(self._role_pane_target("verify")),
+            "gemini": _capture_pane_text(self._role_pane_target("advisory")),
         }
         signal = _extract_live_session_escalation(pane_snapshots["claude"])
         if signal is None:
@@ -1887,9 +2683,12 @@ class WatcherCore:
     def run(self) -> None:
         log.info(
             "WatcherCore v2.1 started  watch_dir=%s  dry_run=%s  poll=%.1fs  "
-            "startup_grace=%.1fs  jsonschema=%s  claude_pane=%s",
+            "startup_grace=%.1fs  jsonschema=%s  implement_pane=%s  verify_pane=%s  enabled_lanes=%s",
             self.watch_dir, self.dry_run, self.poll_interval,
-            self.startup_grace_sec, _JSONSCHEMA_AVAILABLE, self.claude_pane_target,
+            self.startup_grace_sec, _JSONSCHEMA_AVAILABLE,
+            self._role_pane_target("implement"),
+            self._role_pane_target("verify"),
+            ",".join(self.runtime_adapter.get("enabled_lanes") or []),
         )
         last_report_at = time.time()
         report_interval_sec = 60.0
@@ -1982,6 +2781,8 @@ class WatcherCore:
 
         # --- Claude 차례 대기 중이면 work/ 감시 건너뜀 ---
         if self._waiting_for_claude:
+            if self._check_claude_implement_blocked():
+                return
             self._check_claude_live_session_escalation()
             # work/ 전체 스냅샷이 달라졌는지 확인
             current_snapshot = self._get_work_tree_snapshot()
@@ -1991,12 +2792,13 @@ class WatcherCore:
             self._waiting_for_claude = False
             self._work_baseline_snapshot = {}
             self._clear_session_arbitration_draft("claude_activity_resumed")
+            self._clear_claude_blocked_state("claude_activity_resumed")
             log.info("claude activity detected by snapshot diff, resuming codex dispatch")
 
         # --- work/ 디렉터리 감시 (Claude → Codex 방향) ---
         # baseline과 동일하게 가장 최신 파일 1개만 처리
         all_mds = sorted(
-            (p for p in self.watch_dir.rglob("*.md") if self._is_canonical_round_note(self.watch_dir, p)),
+            (p for p in self.watch_dir.rglob("*.md") if self._is_dispatchable_work_note(p)),
             key=lambda p: p.stat().st_mtime if p.exists() else 0,
             reverse=True,
         )
@@ -2076,13 +2878,19 @@ def main() -> None:
     parser.add_argument("--startup-grace",        type=float, default=8.0)
     parser.add_argument("--lease-ttl",            type=int,   default=900)
     parser.add_argument("--verify-prompt",         default="",
-                        help="Codex pane에 보낼 프롬프트 (기본: 내부 job ID 형식)")
+                        help="verify role prompt (기본: 내부 verify contract)")
+    parser.add_argument("--implement-prompt",      default="",
+                        help="implement role prompt")
+    parser.add_argument("--advisory-prompt",       default="",
+                        help="advisory role prompt")
+    parser.add_argument("--followup-prompt",       default="",
+                        help="followup role prompt")
     parser.add_argument("--claude-prompt",         default="",
-                        help="Claude pane에 보낼 프롬프트 (feedback 갱신 시)")
+                        help=argparse.SUPPRESS)
     parser.add_argument("--gemini-prompt",         default="",
-                        help="Gemini pane에 보낼 arbitration 프롬프트")
+                        help=argparse.SUPPRESS)
     parser.add_argument("--codex-followup-prompt", default="",
-                        help="Gemini advice 이후 Codex follow-up 프롬프트")
+                        help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     config: dict = {
@@ -2104,11 +2912,17 @@ def main() -> None:
         config["gemini_pane_target"] = args.gemini_pane_target
     if args.verify_prompt:
         config["verify_prompt_template"] = args.verify_prompt
-    if args.claude_prompt:
+    if args.implement_prompt:
+        config["implement_prompt"] = args.implement_prompt
+    elif args.claude_prompt:
         config["claude_prompt"] = args.claude_prompt
-    if args.gemini_prompt:
+    if args.advisory_prompt:
+        config["advisory_prompt"] = args.advisory_prompt
+    elif args.gemini_prompt:
         config["gemini_prompt"] = args.gemini_prompt
-    if args.codex_followup_prompt:
+    if args.followup_prompt:
+        config["followup_prompt"] = args.followup_prompt
+    elif args.codex_followup_prompt:
         config["codex_followup_prompt"] = args.codex_followup_prompt
     if args.manifest_schema_path:
         config["manifest_schema_path"] = args.manifest_schema_path

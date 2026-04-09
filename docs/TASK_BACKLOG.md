@@ -2,7 +2,7 @@
 
 ## Current Product Identity
 
-- shipped contract: local-first document assistant web MVP
+- shipped contract: local-first document assistant web MVP with response feedback capture, grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, and artifact-linked reject/reissue reason traces
 - current release candidate: `app.web` browser shell only
 - secondary mode: permission-gated web investigation (disabled/approval/enabled per session) under document-first guardrail
 - next phase target: correction / approval / preference memory around one official `grounded brief`

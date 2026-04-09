@@ -20,6 +20,8 @@
 - Save requests return an approval object and do not write immediately.
 - The note-path input placeholder shows the default notes directory from the server config so users know where notes will be saved when the path is left empty. Covered by one focused unit test (`get_config` includes `notes_dir`) and one Playwright scenario-1 assertion (placeholder contains default directory).
 - Reissuing an approval with a new path creates a new approval instead of writing immediately.
+- Response feedback capture is shipped on each assistant message.
+- Grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, and artifact-linked reject/reissue reason traces are shipped.
 - Recent results can show:
   - evidence/source panel with source-role trust labels (`[공식 기반(높음)]`, `[보조 기사(보통)]`, etc.) on each evidence item
   - summary span / applied-range panel

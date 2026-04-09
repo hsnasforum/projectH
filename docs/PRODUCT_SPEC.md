@@ -15,7 +15,7 @@
 
 ### Current Product
 
-projectH is a **local-first document assistant web MVP** that reads local files, produces grounded responses with visible evidence, and saves notes only through explicit approval.
+projectH is a **local-first document assistant web MVP** that reads local files, produces grounded responses with visible evidence, saves notes only through explicit approval, captures response feedback, anchors grounded-brief artifact traces, and records original-response snapshots, corrected-outcome capture, corrected-save bridge, and artifact-linked reject/reissue reason traces.
 
 ### Long-Term North Star
 
@@ -24,7 +24,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 ## Current Contract
 
 ### Product Framing
-- The current MVP is a local-first document assistant.
+- The current MVP is a local-first document assistant with response feedback capture, grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, and artifact-linked reject/reissue reason traces.
 - Web investigation is a secondary mode, not the core product identity.
 - The current phase is not model training.
 - The current phase is not local tool or program operation.

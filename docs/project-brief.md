@@ -79,7 +79,7 @@ The first official artifact is the `grounded brief`.
 - structured search result preview panel
 - summary source-type labels (`문서 요약` / `선택 결과 요약`)
 - summary span / applied-range panel
-- response-origin badges
+- response origin badge with separate answer-mode badge for web investigation, source-role trust labels, and verification strength tags in origin detail
 - applied-preferences badge (`선호 N건 반영`)
 - streaming progress + cancel
 - response feedback capture

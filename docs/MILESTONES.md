@@ -32,7 +32,7 @@
 - response cards with note preview, structured search result preview panel, evidence/source panel, summary source-type labels (`문서 요약` / `선택 결과 요약`), and summary span / applied-range panel
 - approval card UX
 - reissue approval flow
-- response origin badge
+- response origin badge with separate answer-mode badge for web investigation, source-role trust labels, and verification strength tags in origin detail
 - applied-preferences badge (`선호 N건 반영`) on assistant messages when `applied_preferences` is non-empty, with tooltip showing preference descriptions
 - streaming progress and cancel
 

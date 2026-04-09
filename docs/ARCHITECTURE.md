@@ -1363,7 +1363,7 @@ The next phase should standardize one `grounded brief` artifact.
 - approval + reissue approval flow
 - evidence/source panel
 - summary span / applied-range panel
-- response origin badge
+- response origin badge with separate answer-mode badge for web investigation, source-role trust labels, and verification strength tags in origin detail
 - applied-preferences badge (`선호 N건 반영`) on assistant messages when `applied_preferences` is non-empty
 - streaming progress and cancel
 - feedback capture on assistant messages

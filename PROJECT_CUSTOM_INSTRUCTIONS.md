@@ -13,7 +13,7 @@
 - structured search result preview panel
 - summary source-type labels (`문서 요약` / `선택 결과 요약`)
 - 요약 반영 구간 패널 (summary span / applied-range)
-- response origin 배지
+- response origin badge with separate answer-mode badge for web investigation, source-role trust labels, and verification strength tags in origin detail
 - applied-preferences badge (`선호 N건 반영`)
 - 스트리밍 진행 표시와 취소
 - 응답 피드백 수집

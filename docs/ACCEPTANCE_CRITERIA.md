@@ -26,7 +26,7 @@
 - Recent results can show:
   - evidence/source panel with source-role trust labels (`[공식 기반(높음)]`, `[보조 기사(보통)]`, etc.) on each evidence item
   - summary span / applied-range panel
-  - response origin badge
+  - response origin badge with separate answer-mode badge for web investigation, source-role trust labels, and verification strength tags in origin detail
   - applied-preferences badge (`선호 N건 반영`) when `applied_preferences` is non-empty, with tooltip showing preference descriptions
   - summary source-type label (`문서 요약` for local document summary, `선택 결과 요약` for selected search results) in both the quick-meta bar and transcript message meta; single-source responses show basename-based `출처 <filename>` in both surfaces, multi-source responses show count-based `출처 N개` instead of raw filenames; general chat responses carry no source-type label
   - claim coverage or verification state where applicable, with status tag (`[교차 확인]`, `[단일 출처]`, `[미확인]`) leading each slot line, actionable hints for weak or unresolved slots, source role with trust level labels, a color-coded fact-strength summary bar above the response text when claim coverage data exists, and a dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved)

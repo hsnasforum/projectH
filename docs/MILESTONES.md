@@ -30,6 +30,7 @@
 - approval card UX
 - reissue approval flow
 - response origin badge
+- applied-preferences badge (`선호 N건 반영`) on assistant messages when `applied_preferences` is non-empty, with tooltip showing preference descriptions
 - streaming progress and cancel
 
 ### Milestone 3: Core QA And Trace Baseline

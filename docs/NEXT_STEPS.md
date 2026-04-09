@@ -10,6 +10,7 @@
   - evidence/source panel
   - summary-range panel
   - response origin badge
+  - applied-preferences badge (`선호 N건 반영`) on assistant messages when `applied_preferences` is non-empty, with tooltip showing preference descriptions
   - streaming cancel
   - PDF text-layer handling with OCR-not-supported guidance
 - Web investigation is a permission-gated secondary mode (disabled/approval/enabled per session) under a document-first guardrail, with local JSON history supporting in-session reload and history-card badges (answer-mode, verification-strength, source-role trust), entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade, and a claim-coverage panel with status tags, actionable hints, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved).

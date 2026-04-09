@@ -422,6 +422,7 @@ if [ "$MODE" = "experimental" ] || [ "$MODE" = "both" ]; then
     FOLLOWUP_PROMPT="ROLE: followup\nROLE_OWNER: {runtime_verify_owner}\nSTATE: advisory_advice_ready\nNEXT_CONTROL_SEQ: {next_control_seq}\nREQUEST: .pipeline/gemini_request.md\nADVICE: .pipeline/gemini_advice.md\nLATEST_WORK: {latest_work_path}\nLATEST_VERIFY: {latest_verify_path}\nRUNTIME_ENABLED_LANES: {runtime_enabled_lanes}\nREAD_FIRST:\n- {runtime_verify_read_first_doc}\n- verify/README.md\n- .pipeline/README.md\n- .pipeline/gemini_request.md\n- .pipeline/gemini_advice.md\nOUTPUTS:\n- .pipeline/claude_handoff.md for STATUS: implement + CONTROL_SEQ: {next_control_seq}\n- .pipeline/operator_request.md for STATUS: needs_operator + CONTROL_SEQ: {next_control_seq}\nRULES:\n- role ownership is runtime metadata only; keep this followup contract lane-neutral\n- when writing a control slot, put CONTROL_SEQ immediately after STATUS and use exactly {next_control_seq}"
     EXP_LOG_QUOTED=$(printf '%q' "$PROJECT_ROOT/.pipeline/logs/experimental/watcher.log")
     EXP_CMD=(
+        env "PROJECT_ROOT=$PROJECT_ROOT" "PYTHONPATH=$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
         python3 "$WATCHER_CORE_PY"
         --watch-dir "$PROJECT_ROOT/work"
         --base-dir "$PROJECT_ROOT/.pipeline"

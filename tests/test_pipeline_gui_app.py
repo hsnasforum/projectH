@@ -831,8 +831,10 @@ class PipelineGuiAppTest(unittest.TestCase):
         }
         PipelineGUI._apply_snapshot(gui, snapshot)
         self.assertIn("Claude 실행", gui.active_control_var.get())
+        self.assertIn("mtime fallback", gui.active_control_var.get())
         self.assertIn("operator_request.md", gui.stale_control_var.get())
         self.assertIn("비활성", gui.stale_control_var.get())
+        self.assertIn("mtime fallback", gui.stale_control_var.get())
         self.assertEqual(gui.active_control_label._fg, "#60a5fa")
 
     def test_apply_snapshot_control_slot_needs_operator_red(self) -> None:
@@ -856,6 +858,31 @@ class PipelineGuiAppTest(unittest.TestCase):
         self.assertEqual(gui.active_control_var.get(), "활성 제어: 없음")
         self.assertEqual(gui.stale_control_var.get(), "")
         self.assertEqual(gui.active_control_label._fg, "#6b7280")
+
+    def test_apply_snapshot_control_slot_seq_provenance(self) -> None:
+        """_apply_snapshot passes through 'seq N' provenance for slots with CONTROL_SEQ."""
+        gui = self._make_snapshot_gui()
+        snapshot = self._base_snapshot()
+        snapshot["control_slots"] = {
+            "active": {"file": "claude_handoff.md", "status": "implement", "label": "Claude 실행", "mtime": 1.0, "control_seq": 7},
+            "stale": [{"file": "gemini_request.md", "status": "request_open", "label": "Gemini 실행", "mtime": 0.5, "control_seq": 5}],
+        }
+        PipelineGUI._apply_snapshot(gui, snapshot)
+        self.assertIn("seq 7", gui.active_control_var.get())
+        self.assertNotIn("mtime fallback", gui.active_control_var.get())
+        self.assertIn("seq 5", gui.stale_control_var.get())
+
+    def test_apply_snapshot_control_slot_mtime_fallback_provenance(self) -> None:
+        """_apply_snapshot passes through 'mtime fallback' for slots without CONTROL_SEQ."""
+        gui = self._make_snapshot_gui()
+        snapshot = self._base_snapshot()
+        snapshot["control_slots"] = {
+            "active": {"file": "gemini_advice.md", "status": "advice_ready", "label": "Codex follow-up", "mtime": 2.0},
+            "stale": [],
+        }
+        PipelineGUI._apply_snapshot(gui, snapshot)
+        self.assertIn("mtime fallback", gui.active_control_var.get())
+        self.assertNotIn("seq ", gui.active_control_var.get())
 
     @staticmethod
     def _make_snapshot_gui():

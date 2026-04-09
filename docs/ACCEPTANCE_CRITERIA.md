@@ -577,7 +577,7 @@ These are placeholders for the next phase design target and its immediate follow
   - `durable_candidate` remains supporting context only and must not become a second aggregate-ref list in this slice
   - approval-backed save, `session_local_memory_signal`, `superseded_reject_signal`, `historical_save_identity_signal`, queue presence, fixed statement text, `candidate_family` alone, and task-log replay alone must never act as aggregate basis
   - the first aggregate surface must remain separate from source-message `candidate_recurrence_key`, separate from `review_queue_items`, and separate from any reviewed-memory or user-level-memory store
-  - cross-session counting should remain out of scope until a later local store, rollback, conflict, and reviewed-memory boundary exists
+  - cross-session counting remains later because the repo still has no payload-visible reviewed-memory store and no cross-session scope; the current local boundary, rollback, conflict, and operator-audit contract surfaces are shipped as read-only
 - The first post-aggregate promotion boundary should stay contract-only and conservative:
   - choose `Option A`:
     - current same-session `recurrence_aggregate_candidates` stay promotion-ineligible
@@ -638,7 +638,7 @@ These are placeholders for the next phase design target and its immediate follow
     - `effect_behavior = stop_apply_without_reversal`
     - `audit_trace_expectation = operator_visible_local_transition_required`
     - `defined_at = last_seen_at`
-  - same-session aggregate unblock must remain closed until every reviewed-memory precondition is explicit:
+  - same-session aggregate unblock is now shipped with every reviewed-memory precondition explicit; the current shipped `unblocked_all_required` path materializes through the source-family-plus-basis chain:
     - `reviewed_memory_boundary_defined`
       - reviewed memory has its own local persistence/apply boundary plus one fixed narrow reviewed scope above source-message and aggregate traces (now shipped as `reviewed_memory_boundary_draft` and the internal proof-record/store layer)
       - the first reviewed scope should stay fixed at `same_session_exact_recurrence_aggregate_only`

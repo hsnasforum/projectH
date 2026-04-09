@@ -105,7 +105,7 @@
   - `candidate_review_record` may appear only as optional `supporting_review_refs` when it still matches the same current source-message candidate version
   - `confidence_marker` currently stays fixed at `same_session_exact_key_match`
   - approval-backed save, `superseded_reject_signal`, `historical_save_identity_signal`, queue presence, fixed statement text, and task-log replay stay out of aggregate identity
-  - current aggregates stay promotion-ineligible until the full reviewed-memory precondition family exists and is satisfied
+  - current aggregates stay promotion-ineligible; the full reviewed-memory precondition family is shipped and the capability satisfaction path is open while promotion and cross-session counting remain later
   - the first post-aggregate surface is now shipped as that smallest blocked marker only:
     - `aggregate_promotion_marker`
     - `promotion_basis = same_session_exact_recurrence_aggregate`

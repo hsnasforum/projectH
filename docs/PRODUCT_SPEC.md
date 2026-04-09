@@ -1471,7 +1471,7 @@ The first official artifact is the `grounded brief`.
   - the current read-only review queue now consumes only `promotion_eligibility = eligible_for_review` `durable_candidate` records
   - the current first `accept` review action now also consumes that same current source-message-anchored basis instead of inventing a second canonical candidate source
   - the shipped `candidate_recurrence_key` plus shipped same-session `recurrence_aggregate_candidates` now provide the first truthful cross-source recurrence surface, and the shipped `aggregate_promotion_marker`, `reviewed_memory_precondition_status`, `reviewed_memory_boundary_draft`, `reviewed_memory_rollback_contract`, `reviewed_memory_disable_contract`, `reviewed_memory_conflict_contract`, `reviewed_memory_transition_audit_contract`, `reviewed_memory_unblock_contract`, `reviewed_memory_capability_status`, plus additive `reviewed_memory_planning_target_ref` now make the current blocked boundary plus shared planning-only target explicit; the reviewed-memory apply path is now shipped above this precondition family; promotion and cross-session counting remain later
-  - current same-session aggregates still remain promotion-ineligible until the exact reviewed-memory precondition family is satisfied in full:
+  - current same-session aggregates still remain promotion-ineligible; the current shipped capability path satisfies the full precondition family through the source-family-plus-basis chain while promotion and cross-session counting remain later:
     - `reviewed_memory_boundary_defined`
     - `rollback_ready_reviewed_memory_effect`
     - `disable_ready_reviewed_memory_effect`

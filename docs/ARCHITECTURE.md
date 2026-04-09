@@ -8,7 +8,7 @@ This repository implements a **local-first document assistant web MVP** with exp
 
 ### Current Contract
 - current shipped behavior is the document-first MVP with response feedback capture, grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, artifact-linked reject/reissue reason traces, and the first reviewed-memory slice (review queue, aggregate apply trigger, emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility)
-- web investigation is a permission-gated secondary mode (disabled/approval/enabled per session) under the document-first guardrail, with local JSON history, in-session reload, history-card badges (answer-mode, verification-strength, source-role trust), entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade, and a claim-coverage panel with status tags, actionable hints, and focus-slot reinvestigation explanation
+- web investigation is a permission-gated secondary mode (disabled/approval/enabled per session) under the document-first guardrail, with local JSON history, in-session reload, history-card badges (answer-mode, verification-strength, source-role trust), entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade, and a claim-coverage panel with status tags, actionable hints, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved)
 - approval currently governs note saving only
 
 ### Current Reviewed-Memory Boundary
@@ -132,7 +132,7 @@ The web shell is the main MVP surface. CLI remains available as a narrower debug
 2. permission gate is checked
 3. search results and page extracts are collected
 4. claim extraction / slot coverage / reinvestigation may run
-5. response renders source-role trust labels, verification-strength label, answer-mode badge, and claim-coverage panel with status tags, actionable hints, and focus-slot reinvestigation explanation
+5. response renders source-role trust labels, verification-strength label, answer-mode badge, and claim-coverage panel with status tags, actionable hints, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved)
 6. entity-card / latest-update answer-mode distinction applies with separate verification labels and entity-card strong-badge downgrade
 7. search history is stored locally with in-session reload and history-card badges (answer-mode, verification-strength, source-role trust)
 
@@ -1367,7 +1367,7 @@ The next phase should standardize one `grounded brief` artifact.
 - applied-preferences badge (`선호 N건 반영`) on assistant messages when `applied_preferences` is non-empty
 - streaming progress and cancel
 - feedback capture on assistant messages
-- claim-coverage panel with status tags, actionable hints, and focus-slot reinvestigation explanation
+- claim-coverage panel with status tags, actionable hints, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved)
 - entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade
 - web-investigation history-card badges (answer-mode, verification-strength, source-role trust) and in-session reload
 

@@ -28,6 +28,8 @@
   - `windows-launchers/`
   - `_data/` 기반 pipeline/token collector tooling
 
+repo 안의 internal/operator tooling은 릴리즈 게이트 밖이지만 계속 유지됩니다. 현재 `pipeline_gui` 운영 화면은 오른쪽 파일 박스를 `라운드 기록`으로 표시하고, generic한 "산출물 없음" 식 wording 대신 최신 `/work`·`/verify`와 현재 라운드 receipt 미기록 상태를 구분해 보여줍니다.
+
 위 제외 항목들은 현재 repo 안에 함께 존재하지만, 이번 릴리즈 게이트의 기본 판정 대상은 아닙니다.
 
 ### Current Reviewed-Memory Boundary

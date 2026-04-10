@@ -16,6 +16,8 @@
 - 한 verification 라운드가 끝날 때 실제 재실행한 검증, 실제 코드/문서 대조 결과, 현재 truth, 남은 리스크를 한 파일에 정리합니다.
 - 기본 모드에서 verification 메모는 "이번 Claude `/work` 주장이 맞는가"를 확인하는 검수 결과서여야 합니다.
 - verification 메모는 인위적으로 잘게 쪼갠 micro-round보다, 하나의 의미 있는 bounded slice가 truthfully 닫혔는지 확인하는 단위로 남기는 편이 맞습니다.
+- `/verify` verification note는 기본적으로 한국어로 적습니다.
+- 다만 파일 경로, 테스트 이름, selector, field name, literal code identifier는 원문을 그대로 유지합니다.
 - 새 verification 메모에는 아래 섹션을 이 순서로 둡니다:
   - `## 변경 파일`
   - `## 사용 skill`
@@ -35,6 +37,8 @@
 - `/verify`는 `/work`를 대체하지 않습니다. 최신 구현 truth는 항상 최신 `/work`부터 읽고 시작합니다.
 - `.pipeline/claude_handoff.md`와 `.pipeline/operator_request.md`는 자동화용 rolling handoff 슬롯이며, 최신 verification truth를 편하게 넘기기 위한 보조 수단일 뿐 `/verify`를 대체하지 않습니다.
 - `.pipeline/gemini_request.md`와 `.pipeline/gemini_advice.md`는 arbitration용 rolling 슬롯이며, 최신 verification truth를 편하게 넘기기 위한 보조 수단일 뿐 `/verify`를 대체하지 않습니다.
+- `.pipeline` execution/control 슬롯은 `/verify`와 달리 기본적으로 영어 중심 실행 지시를 유지하는 편이 맞습니다.
+- canonical control slot은 pending일 때 `CONTROL_SEQ`를 함께 써서 newest-valid-control 판정을 `CONTROL_SEQ` 우선 / `mtime` 보조로 유지하는 편이 맞습니다.
 - `.pipeline/session_arbitration_draft.md`는 watcher가 active Claude session의 escalation pattern을 감지했고 Codex/Gemini가 idle이며 Claude가 idle이거나 짧게 settle된 상태일 때만 남길 수 있는 draft_only 메모이며, 검증 truth나 canonical arbitration 슬롯을 대체하지 않습니다. resolved 조건이 생기면 watcher가 정리할 수 있고, 같은 fingerprint는 짧은 cooldown 동안 반복 생성하지 않습니다.
 - `.pipeline/codex_feedback.md`는 optional scratch 또는 legacy compatibility text일 뿐이며, 실행 신호로는 쓰지 않습니다.
 - `.pipeline/gpt_prompt.md`는 optional/legacy scratch 슬롯로 남길 수 있지만, canonical single-Codex 흐름의 필수 단계는 아닙니다.
@@ -57,6 +61,8 @@
   - Gemini가 `.pipeline/gemini_advice.md`에 `STATUS: advice_ready`
   - 멈춰야 하는 경우 `.pipeline/operator_request.md`에 `STATUS: needs_operator`
   를 남깁니다. persistent verification truth는 항상 `/verify`가 먼저입니다.
+- 따라서 pane 안 reasoning만 남기거나 next control slot만 먼저 갱신하는 것은 canonical verification closeout이 아닙니다. `/verify`를 먼저 남기거나 갱신한 뒤에만 다음 control slot을 쓰는 편이 맞습니다.
+- watcher가 Claude lane의 `STATUS: implement_blocked` sentinel을 감지한 경우에도, Codex는 그 blocked triage를 `.pipeline/claude_handoff.md` / `.pipeline/gemini_request.md` / `.pipeline/operator_request.md` 중 하나의 최신 valid control로 닫는 편이 맞습니다.
 - `STATUS: needs_operator`를 쓸 때는 bare stop line만 남기지 말고, 최소한 stop reason, 근거가 된 latest `/work`와 `/verify`, 그리고 operator가 다음에 무엇을 정해야 하는지를 같이 남깁니다.
 - `/verify`의 1차 목적은 현재 truth를 정직하게 다시 맞추는 것입니다. 다음 슬라이스 제안은 가능하지만, 단순한 uncovered regression 채우기보다 현재 MVP 우선순위를 먼저 통과해야 합니다.
 - `/verify`의 1차 목적은 repo 전체 상태를 새로 재판정하는 것이 아니라, 최신 Claude 라운드가 truthful한지 확인하고 그 범위 안에서 다음 한 슬라이스를 좁게 제안하는 것입니다.
@@ -67,6 +73,7 @@
   - same-family user-visible improvement
   - new quality axis
   - internal cleanup
+- 다만 같은 날 same-family docs-only truth-sync가 이미 3회 이상 반복됐다면, `/verify`는 또 하나의 더 작은 docs-only micro-slice를 기본 제안으로 내지 않는 편이 맞습니다. 이 경우 남은 drift를 한 번에 닫는 bounded bundle이나 Gemini/operator escalation을 먼저 검토합니다.
 - 따라서 `/verify`에서 바로 다음 단일 슬라이스를 고르지 못했다면, Claude에게 선택권을 넘기지 말고 `.pipeline/operator_request.md`를 `STATUS: needs_operator`로 남기는 편이 맞습니다.
 - 다만 operator escalation 전에 Gemini arbitration이 도움이 되는 경우, 먼저 `.pipeline/gemini_request.md`를 열고 Gemini recommendation을 받은 뒤 Codex가 다시 한 번 exact slice를 좁히는 편이 맞습니다.
 - 다만 그 Gemini arbitration이 active Claude session의 context exhaustion, session rollover, continue-vs-switch 같은 side question을 다루는 경우에는, Codex가 그 답을 Claude에게 짧은 lane reply로만 relay하고 `.pipeline/claude_handoff.md`는 session boundary 전까지 그대로 두는 편이 맞습니다.

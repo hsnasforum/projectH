@@ -408,7 +408,13 @@ async function poll() {
 
 async function apiPost(path) {
   try {
-    await fetch(path, { method: "POST" });
+    const res = await fetch(path, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok || data.ok === false) {
+      alert("요청 실패: " + (data.error || "unknown error"));
+      setTimeout(poll, 250);
+      return;
+    }
     setTimeout(poll, 1500);
   } catch (e) {
     alert("요청 실패: " + e.message);

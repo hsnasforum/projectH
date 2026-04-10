@@ -3,6 +3,7 @@ import tempfile
 import time
 import unittest
 import json
+import itertools
 from pathlib import Path
 from unittest import mock
 
@@ -37,6 +38,38 @@ def _write_active_profile(root: Path, payload: dict | None = None) -> None:
 
 
 def _write_work_note(path: Path, changed_files: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    changed_lines = "\n".join(f"- `{changed}`" for changed in changed_files) or "- 없음"
+    path.write_text(
+        "\n".join(
+            [
+                f"# {path.stem}",
+                "",
+                "## 변경 파일",
+                changed_lines,
+                "",
+                "## 사용 skill",
+                "- 없음",
+                "",
+                "## 변경 이유",
+                "- 테스트",
+                "",
+                "## 핵심 변경",
+                "- 테스트",
+                "",
+                "## 검증",
+                "- 없음",
+                "",
+                "## 남은 리스크",
+                "- 없음",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_verify_note(path: Path, changed_files: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     changed_lines = "\n".join(f"- `{changed}`" for changed in changed_files) or "- 없음"
     path.write_text(
@@ -561,7 +594,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             args, kwargs = send.call_args
             self.assertEqual(args[0], "codex-pane")
             self.assertIn("ROLE: verify_triage", args[1])
-            self.assertIn("ROLE_OWNER: Codex", args[1])
+            self.assertIn("OWNER: Codex", args[1])
             self.assertIn("BLOCK_REASON: handoff_not_actionable", args[1])
             self.assertIn("BLOCK_ID: block-001", args[1])
             self.assertEqual(kwargs.get("pane_type"), "codex")
@@ -903,28 +936,39 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
             followup_prompt = core._format_runtime_prompt(core.followup_prompt)
 
             self.assertIn("ROLE: implement", implement_prompt)
-            self.assertIn("ROLE_OWNER: Codex", implement_prompt)
+            self.assertIn("OWNER: Codex", implement_prompt)
             self.assertNotIn("claude_implement", implement_prompt)
             self.assertNotIn("CLAUDE.md", implement_prompt)
             self.assertIn("AGENTS.md", implement_prompt)
             self.assertIn("work/README.md", implement_prompt)
-            self.assertIn("leave a `/work` closeout note", implement_prompt)
-            self.assertIn("do not use `report/` as the primary implementation closeout", implement_prompt)
+            self.assertIn("GOAL:", implement_prompt)
+            self.assertIn("leave one `/work` closeout and stop", implement_prompt)
+            self.assertIn("do not commit, push, publish a branch/PR, or choose the next slice", implement_prompt)
+            self.assertNotIn(".pipeline/README.md", implement_prompt)
 
             self.assertIn("ROLE: verify", verify_prompt)
-            self.assertIn("ROLE_OWNER: Claude", verify_prompt)
+            self.assertIn("OWNER: Claude", verify_prompt)
             self.assertNotIn("codex_verify", verify_prompt)
             self.assertIn("CLAUDE.md", verify_prompt)
+            self.assertIn("GOAL:", verify_prompt)
+            self.assertIn("leave or update `/verify` before any next control slot", verify_prompt)
+            self.assertIn("same-day same-family docs-only truth-sync already repeated 3+ times", verify_prompt)
+            self.assertIn(".pipeline/claude_handoff.md (STATUS: implement, CONTROL_SEQ:", verify_prompt)
+            self.assertNotIn(".pipeline/README.md", verify_prompt)
+            self.assertNotIn("never route needs_operator to Claude", verify_prompt)
 
             self.assertIn("ROLE: advisory", advisory_prompt)
-            self.assertIn("ROLE_OWNER: Gemini", advisory_prompt)
+            self.assertIn("OWNER: Gemini", advisory_prompt)
             self.assertNotIn("gemini_arbitrate", advisory_prompt)
             self.assertIn("GEMINI.md", advisory_prompt)
+            self.assertIn("GOAL:", advisory_prompt)
+            self.assertIn("pane-only answer is not completion", advisory_prompt)
 
             self.assertIn("ROLE: followup", followup_prompt)
-            self.assertIn("ROLE_OWNER: Claude", followup_prompt)
+            self.assertIn("OWNER: Claude", followup_prompt)
             self.assertNotIn("codex_followup", followup_prompt)
             self.assertIn("CLAUDE.md", followup_prompt)
+            self.assertIn("GOAL:", followup_prompt)
 
     def test_gemini_request_dispatch_allows_advisory_without_session_arbitration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1446,6 +1490,80 @@ class RollingSignalTransitionTest(unittest.TestCase):
 
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CLAUDE_ACTIVE)
 
+    def test_higher_seq_handoff_is_deferred_while_claude_round_is_active(self) -> None:
+        """An updated handoff should not hot-swap into an already active Claude round."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            core = watcher_core.WatcherCore({
+                "watch_dir": str(watch_dir),
+                "base_dir": str(base_dir),
+                "repo_root": str(root),
+                "dry_run": True,
+            })
+
+            core._transition_turn(
+                watcher_core.WatcherTurnState.CLAUDE_ACTIVE,
+                "test_setup",
+                active_control_seq=17,
+            )
+
+            handoff = base_dir / "claude_handoff.md"
+            handoff.write_text("STATUS: implement\nCONTROL_SEQ: 18\n", encoding="utf-8")
+            core._last_claude_handoff_sig = ""
+
+            with mock.patch.object(core, "_notify_claude") as notify:
+                core._check_pipeline_signal_updates()
+
+            notify.assert_not_called()
+            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CLAUDE_ACTIVE)
+
+    def test_deferred_handoff_flushes_after_active_claude_round_exits(self) -> None:
+        """A deferred handoff should dispatch once the active Claude round exits."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            core = watcher_core.WatcherCore({
+                "watch_dir": str(watch_dir),
+                "base_dir": str(base_dir),
+                "repo_root": str(root),
+                "dry_run": True,
+            })
+
+            core._transition_turn(
+                watcher_core.WatcherTurnState.CLAUDE_ACTIVE,
+                "test_setup",
+                active_control_seq=17,
+            )
+
+            handoff = base_dir / "claude_handoff.md"
+            handoff.write_text("STATUS: implement\nCONTROL_SEQ: 18\n", encoding="utf-8")
+            core._last_claude_handoff_sig = ""
+
+            with mock.patch.object(core, "_notify_claude") as notify:
+                core._check_pipeline_signal_updates()
+                notify.assert_not_called()
+
+                core._transition_turn(
+                    watcher_core.WatcherTurnState.IDLE,
+                    "test_round_exit",
+                    active_control_seq=17,
+                )
+                core._check_pipeline_signal_updates()
+
+            notify.assert_called_once()
+            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CLAUDE_ACTIVE)
+
 
 class ClaudeIdleTimeoutTest(unittest.TestCase):
     def test_claude_idle_timeout_transitions_to_idle(self) -> None:
@@ -1607,6 +1725,277 @@ class TransitionTurnTest(unittest.TestCase):
                 "claude_idle_timeout",
             )
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IDLE)
+
+
+class VerifyCompletionContractTest(unittest.TestCase):
+    def test_control_slot_change_without_verify_note_keeps_verify_running(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            verify_dir = root / "verify"
+            base_dir = root / ".pipeline"
+            work_day = watch_dir / "4" / "10"
+            work_day.mkdir(parents=True, exist_ok=True)
+            verify_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            work_note = work_day / "2026-04-10-slice.md"
+            _write_work_note(work_note, ["docs/ACCEPTANCE_CRITERIA.md"])
+            job = watcher_core.JobState.from_artifact("job-verify-contract", str(work_note))
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                }
+            )
+
+            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+                job = core.sm._handle_verify_pending(job)
+
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+
+            handoff = base_dir / "claude_handoff.md"
+            handoff.write_text("STATUS: implement\nCONTROL_SEQ: 19\n", encoding="utf-8")
+
+            with mock.patch("watcher_core._capture_pane_text", return_value="$ "), \
+                 mock.patch("watcher_core._pane_text_has_busy_indicator", return_value=False), \
+                 mock.patch("watcher_core._pane_text_has_input_cursor", return_value=True):
+                job = core.sm._handle_verify_running(job)
+
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+
+            verify_note = root / "verify" / "4" / "10" / "2026-04-10-slice-verification.md"
+            _write_verify_note(verify_note, ["verify/4/10/2026-04-10-slice-verification.md"])
+
+            with mock.patch("watcher_core._capture_pane_text", return_value="$ "), \
+                 mock.patch("watcher_core._pane_text_has_busy_indicator", return_value=False), \
+                 mock.patch("watcher_core._pane_text_has_input_cursor", return_value=True):
+                job = core.sm._handle_verify_running(job)
+
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_DONE)
+            self.assertEqual(job.verify_result, "passed_by_feedback")
+
+    def test_verify_tree_change_without_current_round_receipt_keeps_verify_running(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            verify_dir = root / "verify"
+            base_dir = root / ".pipeline"
+            work_day = watch_dir / "4" / "10"
+            verify_day = verify_dir / "4" / "10"
+            work_day.mkdir(parents=True, exist_ok=True)
+            verify_day.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            work_note = work_day / "2026-04-10-slice.md"
+            _write_work_note(work_note, ["tests/test_web_app.py"])
+            old_verify_note = verify_day / "2026-04-10-old-verification.md"
+            _write_verify_note(old_verify_note, ["verify/4/10/2026-04-10-old-verification.md"])
+            os.utime(old_verify_note, (10.0, 10.0))
+            job = watcher_core.JobState.from_artifact("job-verify-receipt", str(work_note))
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                }
+            )
+
+            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+                job = core.sm._handle_verify_pending(job)
+
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+
+    def test_idle_timeout_with_incomplete_outputs_requeues_verify_pending(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            work_day = watch_dir / "4" / "10"
+            work_day.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            work_note = work_day / "2026-04-10-slice.md"
+            _write_work_note(work_note, ["tests/test_web_app.py"])
+            job = watcher_core.JobState.from_artifact("job-verify-retry", str(work_note))
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                }
+            )
+
+            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+                job = core.sm._handle_verify_pending(job)
+
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+
+            job.last_activity_at = time.time() - 400
+            job.last_dispatch_at = time.time() - 400
+            job.last_pane_snapshot = "$ "
+
+            with mock.patch("watcher_core._capture_pane_text", return_value="$ "), \
+                 mock.patch("watcher_core._pane_text_has_busy_indicator", return_value=False), \
+                 mock.patch("watcher_core._pane_text_has_input_cursor", return_value=True):
+                job = core.sm._handle_verify_running(job)
+
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertGreater(job.last_failed_dispatch_at, 0.0)
+            self.assertEqual(job.last_failed_dispatch_snapshot, "$ ")
+            self.assertGreaterEqual(job.dispatch_fail_count, 1)
+            self.assertEqual(job.verify_receipt_baseline_path, "")
+
+
+class CodexDispatchConfirmationTest(unittest.TestCase):
+    def test_dispatch_codex_returns_false_when_no_working_or_activity_is_confirmed(self) -> None:
+        snapshots = itertools.chain(
+            [
+                "› prompt pasted",
+                "processing view without prompt",
+            ],
+            itertools.repeat("processing view without prompt"),
+        )
+
+        with mock.patch("watcher_core.subprocess.run") as run_mock, \
+             mock.patch("watcher_core._capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_core._pane_has_working_indicator", return_value=False), \
+             mock.patch("watcher_core._pane_text_has_codex_activity", return_value=False), \
+             mock.patch("watcher_core.time.sleep", return_value=None):
+            result = watcher_core._dispatch_codex("%1", "ROLE: verify")
+
+        self.assertFalse(result)
+        self.assertGreaterEqual(run_mock.call_count, 3)
+
+    def test_dispatch_codex_returns_true_when_working_indicator_appears(self) -> None:
+        snapshots = iter([
+            "› prompt pasted",
+            "processing view without prompt",
+        ])
+
+        with mock.patch("watcher_core.subprocess.run"), \
+             mock.patch("watcher_core._capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_core._pane_has_working_indicator", side_effect=[True]), \
+             mock.patch("watcher_core.time.sleep", return_value=None):
+            result = watcher_core._dispatch_codex("%1", "ROLE: verify")
+
+        self.assertTrue(result)
+
+
+class VerifyPendingBackoffTest(unittest.TestCase):
+    def test_failed_dispatch_sets_retry_backoff_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            work_note = watch_dir / "2026-04-10-slice.md"
+            _write_work_note(work_note, ["e2e/tests/web-smoke.spec.mjs"])
+            job = watcher_core.JobState.from_artifact("job-backoff", str(work_note))
+            job.status = watcher_core.JobStatus.VERIFY_PENDING
+            job.artifact_hash = "hash-1"
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                }
+            )
+
+            with mock.patch("watcher_core.tmux_send_keys", return_value=False), \
+                 mock.patch("watcher_core._capture_pane_text", return_value="› pasted prompt placeholder"):
+                job = core.sm._handle_verify_pending(job)
+
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertGreater(job.last_failed_dispatch_at, 0.0)
+            self.assertEqual(job.last_failed_dispatch_snapshot, "› pasted prompt placeholder")
+            self.assertEqual(job.dispatch_fail_count, 1)
+
+    def test_failed_dispatch_backoff_skips_immediate_redispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            work_note = watch_dir / "2026-04-10-slice.md"
+            _write_work_note(work_note, ["e2e/tests/web-smoke.spec.mjs"])
+            job = watcher_core.JobState.from_artifact("job-backoff", str(work_note))
+            job.status = watcher_core.JobStatus.VERIFY_PENDING
+            job.artifact_hash = "hash-1"
+            job.last_failed_dispatch_at = time.time()
+            job.last_failed_dispatch_snapshot = "› pasted prompt placeholder"
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                }
+            )
+
+            with mock.patch.object(core.lease, "acquire", side_effect=AssertionError("lease should not be acquired")), \
+                 mock.patch("watcher_core.tmux_send_keys", side_effect=AssertionError("dispatch should not run")):
+                job = core.sm._handle_verify_pending(job)
+
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+
+    def test_failed_dispatch_same_snapshot_skips_retry_after_backoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            work_note = watch_dir / "2026-04-10-slice.md"
+            _write_work_note(work_note, ["e2e/tests/web-smoke.spec.mjs"])
+            job = watcher_core.JobState.from_artifact("job-backoff", str(work_note))
+            job.status = watcher_core.JobStatus.VERIFY_PENDING
+            job.artifact_hash = "hash-1"
+            job.last_failed_dispatch_at = time.time() - 30
+            job.last_failed_dispatch_snapshot = "› pasted prompt placeholder"
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                }
+            )
+
+            with mock.patch.object(core.lease, "acquire", side_effect=AssertionError("lease should not be acquired")), \
+                 mock.patch("watcher_core.tmux_send_keys", side_effect=AssertionError("dispatch should not run")), \
+                 mock.patch("watcher_core._capture_pane_text", return_value="› pasted prompt placeholder"):
+                job = core.sm._handle_verify_pending(job)
+
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
 
 
 if __name__ == "__main__":

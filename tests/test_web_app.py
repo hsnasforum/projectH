@@ -8232,6 +8232,19 @@ class WebAppServiceTest(unittest.TestCase):
             source_paths = second["session"]["active_context"]["source_paths"]
             self.assertIn("https://store.steampowered.com/sale/summer2026", source_paths)
             self.assertIn("https://www.yna.co.kr/view/AKR20260401000100017", source_paths)
+            # latest-update show-only reload empty-meta branch: history entry keeps zero-count
+            # claim_coverage_summary + empty progress after the natural reload response.
+            reload_history = second["session"]["web_search_history"]
+            self.assertTrue(reload_history)
+            reload_entry = reload_history[0]
+            self.assertEqual(
+                reload_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(reload_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
     def test_handle_chat_single_source_latest_update_reload_exact_fields(self) -> None:
         """handle_chat 두 번 호출: single-source latest_update 검색 →
@@ -8302,6 +8315,19 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(reload_origin["source_roles"], ["보조 출처"])
             source_paths = second["session"]["active_context"]["source_paths"]
             self.assertIn("https://example.com/seoul-weather", source_paths)
+            # latest-update show-only reload empty-meta branch: history entry keeps zero-count
+            # claim_coverage_summary + empty progress after the single-source natural reload.
+            reload_history = second["session"]["web_search_history"]
+            self.assertTrue(reload_history)
+            reload_entry = reload_history[0]
+            self.assertEqual(
+                reload_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(reload_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
     def test_handle_chat_news_only_latest_update_reload_exact_fields(self) -> None:
         """handle_chat 두 번 호출: news-only latest_update 검색 →
@@ -8381,6 +8407,19 @@ class WebAppServiceTest(unittest.TestCase):
             source_paths = second["session"]["active_context"]["source_paths"]
             self.assertIn("https://www.hankyung.com/economy/2025", source_paths)
             self.assertIn("https://www.mk.co.kr/economy/2025", source_paths)
+            # latest-update show-only reload empty-meta branch: history entry keeps zero-count
+            # claim_coverage_summary + empty progress after the news-only natural reload.
+            reload_history = second["session"]["web_search_history"]
+            self.assertTrue(reload_history)
+            reload_entry = reload_history[0]
+            self.assertEqual(
+                reload_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(reload_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
     def test_handle_chat_load_web_search_record_id_single_source_latest_update_exact_fields(self) -> None:
         """load_web_search_record_id를 직접 전달하는 history-card 선택 경로에서
@@ -8585,9 +8624,228 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
             reload_origin = second["response"]["response_origin"]
             self.assertIsNotNone(reload_origin)
+            self.assertEqual(reload_origin["badge"], "WEB")
             self.assertEqual(reload_origin["answer_mode"], "entity_card")
             self.assertEqual(reload_origin["verification_label"], "설명형 단일 출처")
             self.assertEqual(reload_origin["source_roles"], ["백과 기반"])
+            self.assertEqual(reload_origin["provider"], "web")
+            self.assertEqual(reload_origin["label"], "외부 웹 설명 카드")
+
+    def test_handle_chat_load_web_search_record_id_entity_card_follow_up_preserves_claim_coverage_count_summary(self) -> None:
+        """simple entity-card reload 뒤 load_web_search_record_id + user_text
+        follow-up 경로에서도 session.web_search_history[0].claim_coverage_summary
+        count-summary dict 가 drift 없이 유지되는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            session_id = "reload-by-id-entity-followup-count-summary-session"
+
+            # --- 첫 호출: entity-card 검색 ---
+            first = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_history = first["session"]["web_search_history"]
+            self.assertTrue(first_history)
+            record_id = first_history[0]["record_id"]
+            first_summary = first_history[0].get("claim_coverage_summary") or {}
+            # The simple mock entity-card path normally yields at least one weak or missing slot.
+            baseline_counts = {
+                "strong": int(first_summary.get("strong") or 0),
+                "weak": int(first_summary.get("weak") or 0),
+                "missing": int(first_summary.get("missing") or 0),
+            }
+            self.assertGreater(
+                baseline_counts["strong"] + baseline_counts["weak"] + baseline_counts["missing"],
+                0,
+                "baseline entity-card record must emit a non-empty claim_coverage summary",
+            )
+
+            # --- 둘째 호출: show-only reload (load_web_search_record_id only) ---
+            second = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            second_history = second["session"]["web_search_history"]
+            self.assertTrue(second_history)
+            second_entry = next(
+                (item for item in second_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(second_entry)
+            self.assertEqual(
+                second_entry["claim_coverage_summary"],
+                baseline_counts,
+            )
+
+            # --- 셋째 호출: follow-up with user_text + load_web_search_record_id ---
+            third = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 검색 결과 요약해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(third["ok"])
+            self.assertIn("load_web_search_record", third["response"]["actions_taken"])
+            third_history = third["session"]["web_search_history"]
+            self.assertTrue(third_history)
+            third_entry = next(
+                (item for item in third_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(third_entry)
+            self.assertEqual(
+                third_entry["claim_coverage_summary"],
+                baseline_counts,
+            )
+
+    def test_handle_chat_load_web_search_record_id_entity_card_second_follow_up_preserves_claim_coverage_count_summary(self) -> None:
+        """simple entity-card reload 뒤 첫 번째 follow-up 에 이어 두 번째
+        `load_web_search_record_id + user_text` follow-up 까지 진행해도
+        session.web_search_history[0].claim_coverage_summary count dict 가
+        동일한 값으로 유지되는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            session_id = "reload-by-id-entity-second-followup-count-summary-session"
+
+            # --- 첫 호출: entity-card 검색 ---
+            first = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_history = first["session"]["web_search_history"]
+            self.assertTrue(first_history)
+            record_id = first_history[0]["record_id"]
+            first_summary = first_history[0].get("claim_coverage_summary") or {}
+            baseline_counts = {
+                "strong": int(first_summary.get("strong") or 0),
+                "weak": int(first_summary.get("weak") or 0),
+                "missing": int(first_summary.get("missing") or 0),
+            }
+            self.assertGreater(
+                baseline_counts["strong"] + baseline_counts["weak"] + baseline_counts["missing"],
+                0,
+                "baseline entity-card record must emit a non-empty claim_coverage summary",
+            )
+
+            # --- 둘째 호출: show-only reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+
+            # --- 셋째 호출: 첫 번째 follow-up (user_text + load_web_search_record_id) ---
+            third = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 검색 결과 요약해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(third["ok"])
+            self.assertIn("load_web_search_record", third["response"]["actions_taken"])
+            third_history = third["session"]["web_search_history"]
+            self.assertTrue(third_history)
+            third_entry = next(
+                (item for item in third_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(third_entry)
+            self.assertEqual(
+                third_entry["claim_coverage_summary"],
+                baseline_counts,
+            )
+
+            # --- 넷째 호출: 두 번째 follow-up (user_text + load_web_search_record_id) ---
+            fourth = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "장르만 한 줄로 다시 정리해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(fourth["ok"])
+            self.assertIn("load_web_search_record", fourth["response"]["actions_taken"])
+            fourth_history = fourth["session"]["web_search_history"]
+            self.assertTrue(fourth_history)
+            fourth_entry = next(
+                (item for item in fourth_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(fourth_entry)
+            self.assertEqual(
+                fourth_entry["claim_coverage_summary"],
+                baseline_counts,
+            )
 
     def test_handle_chat_entity_card_dual_probe_reload_preserves_active_context_source_paths(self) -> None:
         """entity-card dual-probe record를 reload했을 때
@@ -8708,9 +8966,28 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", reload_source_paths)
             self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", reload_source_paths)
             reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["badge"], "WEB")
             self.assertEqual(reload_origin["answer_mode"], "entity_card")
             self.assertEqual(reload_origin["verification_label"], "설명형 다중 출처 합의")
             self.assertEqual(reload_origin["source_roles"], ["백과 기반"])
+            # actual-search entity-card reload-only strong-plus-missing branch: history entry
+            # keeps `{strong:3, weak:0, missing:2}` with empty progress and `설명형 다중 출처 합의`.
+            reload_history = second["session"]["web_search_history"]
+            self.assertTrue(reload_history)
+            reload_entry = next(
+                (item for item in reload_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(reload_entry)
+            self.assertEqual(
+                reload_entry.get("claim_coverage_summary") or {},
+                {"strong": 3, "weak": 0, "missing": 2},
+            )
+            self.assertEqual(
+                str(reload_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
+            self.assertEqual(reload_entry["verification_label"], "설명형 다중 출처 합의")
 
     def test_handle_chat_actual_entity_search_dual_probe_reload_preserves_active_context_source_paths(self) -> None:
         """실제 entity search → stored record → load_web_search_record_id reload 경로에서
@@ -8801,6 +9078,25 @@ class WebAppServiceTest(unittest.TestCase):
             reload_source_paths = second["session"]["active_context"]["source_paths"]
             self.assertIn("https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200", reload_source_paths)
             self.assertIn("https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300", reload_source_paths)
+            # dual-probe entity-card reload-only mixed count-summary branch: history entry
+            # keeps the actual shipped `{strong:1, weak:4, missing:0}` pattern with empty
+            # progress and `설명형 다중 출처 합의` verification label after show-only reload.
+            reload_history = second["session"]["web_search_history"]
+            self.assertTrue(reload_history)
+            reload_entry = next(
+                (item for item in reload_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(reload_entry)
+            self.assertEqual(
+                reload_entry.get("claim_coverage_summary") or {},
+                {"strong": 1, "weak": 4, "missing": 0},
+            )
+            self.assertEqual(
+                str(reload_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
+            self.assertEqual(reload_entry["verification_label"], "설명형 다중 출처 합의")
 
     def test_handle_chat_actual_entity_search_dual_probe_natural_reload_preserves_source_paths(self) -> None:
         """실제 entity search → 자연어 recent-record recall 경로에서
@@ -8890,6 +9186,21 @@ class WebAppServiceTest(unittest.TestCase):
             reload_source_paths = second["session"]["active_context"]["source_paths"]
             self.assertIn("https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200", reload_source_paths)
             self.assertIn("https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300", reload_source_paths)
+            # dual-probe entity-card reload-only mixed count-summary branch (natural reload):
+            # history entry keeps the actual shipped `{strong:1, weak:4, missing:0}` pattern
+            # with empty progress and `설명형 다중 출처 합의` verification label.
+            reload_history = second["session"]["web_search_history"]
+            self.assertTrue(reload_history)
+            reload_entry = reload_history[0]
+            self.assertEqual(
+                reload_entry.get("claim_coverage_summary") or {},
+                {"strong": 1, "weak": 4, "missing": 0},
+            )
+            self.assertEqual(
+                str(reload_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
+            self.assertEqual(reload_entry["verification_label"], "설명형 다중 출처 합의")
 
     def test_handle_chat_actual_entity_search_natural_reload_preserves_source_paths(self) -> None:
         """실제 entity search → 자연어 recent-record recall 경로에서
@@ -8949,6 +9260,21 @@ class WebAppServiceTest(unittest.TestCase):
             reload_source_paths = second["session"]["active_context"]["source_paths"]
             self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", reload_source_paths)
             self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", reload_source_paths)
+            # actual-search entity-card reload-only strong-plus-missing branch (natural reload):
+            # history entry keeps `{strong:3, weak:0, missing:2}` with empty progress and
+            # `설명형 다중 출처 합의` verification label.
+            reload_history = second["session"]["web_search_history"]
+            self.assertTrue(reload_history)
+            reload_entry = reload_history[0]
+            self.assertEqual(
+                reload_entry.get("claim_coverage_summary") or {},
+                {"strong": 3, "weak": 0, "missing": 2},
+            )
+            self.assertEqual(
+                str(reload_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
+            self.assertEqual(reload_entry["verification_label"], "설명형 다중 출처 합의")
 
     def test_handle_chat_actual_entity_search_natural_reload_exact_fields(self) -> None:
         """실제 entity search → 자연어 recent-record recall 경로에서
@@ -8995,7 +9321,6 @@ class WebAppServiceTest(unittest.TestCase):
                 }
             )
             self.assertTrue(first["ok"])
-            first_origin = first["response"]["response_origin"]
             first_record_path = first["response"]["web_search_record_path"]
 
             # --- 둘째 호출: 자연어 reload ---
@@ -9009,10 +9334,298 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(second["ok"])
             self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
             reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["badge"], "WEB")
             self.assertEqual(reload_origin["answer_mode"], "entity_card")
-            self.assertEqual(reload_origin["verification_label"], first_origin["verification_label"])
-            self.assertEqual(reload_origin["source_roles"], first_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(reload_origin["source_roles"], ["백과 기반"])
             self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
+            # actual-search entity-card reload-only strong-plus-missing branch (natural reload
+            # exact-fields): history entry keeps `{strong:3, weak:0, missing:2}` with empty
+            # progress and `설명형 다중 출처 합의` verification label.
+            reload_history = second["session"]["web_search_history"]
+            self.assertTrue(reload_history)
+            reload_entry = reload_history[0]
+            self.assertEqual(
+                reload_entry.get("claim_coverage_summary") or {},
+                {"strong": 3, "weak": 0, "missing": 2},
+            )
+            self.assertEqual(
+                str(reload_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
+            self.assertEqual(reload_entry["verification_label"], "설명형 다중 출처 합의")
+
+    def test_handle_chat_actual_entity_search_natural_reload_second_follow_up_preserves_claim_coverage_count_summary(self) -> None:
+        """simple entity-card 실제 entity search → 자연어 reload → 첫 follow-up →
+        두 번째 follow-up 까지 각 단계에서 session.web_search_history 의
+        claim_coverage_summary count dict 가 baseline 과 동일하게 유지되는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="붉은사막 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            session_id = "entity-natural-reload-second-followup-count-summary-session"
+
+            # --- 첫 호출: entity search ---
+            first = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_history = first["session"]["web_search_history"]
+            self.assertTrue(first_history)
+            record_id = first_history[0]["record_id"]
+            # Lock the shipped actual-search entity-card strong-plus-missing payload shape
+            # directly instead of deriving a baseline from the first response. Browser-side
+            # `.meta` smoke already encodes the exact `{strong:3, weak:0, missing:2}` dict,
+            # so the service continuity must agree on the same exact shape.
+            self.assertEqual(
+                first_history[0].get("claim_coverage_summary"),
+                {"strong": 3, "weak": 0, "missing": 2},
+            )
+            self.assertEqual(
+                first_history[0]["verification_label"],
+                "설명형 다중 출처 합의",
+            )
+            self.assertEqual(
+                str(first_history[0].get("claim_coverage_progress_summary") or ""),
+                "",
+            )
+
+            def _assert_same_counts(result, stage: str) -> None:
+                self.assertTrue(result["ok"], f"{stage} handle_chat must succeed")
+                self.assertIn(
+                    "load_web_search_record",
+                    result["response"]["actions_taken"],
+                    f"{stage} must route through the load_web_search_record path",
+                )
+                history = result["session"]["web_search_history"]
+                self.assertTrue(history, f"{stage} session.web_search_history must not be empty")
+                entry = next(
+                    (item for item in history if item.get("record_id") == record_id),
+                    None,
+                )
+                self.assertIsNotNone(
+                    entry,
+                    f"{stage} session.web_search_history must still include the original record",
+                )
+                self.assertEqual(
+                    entry["claim_coverage_summary"],
+                    {"strong": 3, "weak": 0, "missing": 2},
+                    f"{stage} claim_coverage_summary must match the shipped strong-plus-missing dict",
+                )
+                self.assertEqual(
+                    entry["verification_label"],
+                    "설명형 다중 출처 합의",
+                    f"{stage} verification_label must stay `설명형 다중 출처 합의`",
+                )
+                self.assertEqual(
+                    str(entry.get("claim_coverage_progress_summary") or ""),
+                    "",
+                    f"{stage} progress summary must stay empty",
+                )
+
+            # --- 둘째 호출: 자연어 reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                }
+            )
+            _assert_same_counts(second, "natural reload")
+
+            # --- 셋째 호출: 첫 follow-up (user_text + load_web_search_record_id) ---
+            third = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 검색 결과 요약해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            _assert_same_counts(third, "first follow-up")
+
+            # --- 넷째 호출: 두 번째 follow-up (user_text + load_web_search_record_id) ---
+            fourth = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "장르만 한 줄로 다시 정리해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            _assert_same_counts(fourth, "second follow-up")
+
+    def test_handle_chat_actual_entity_search_history_card_reload_second_follow_up_preserves_claim_coverage_count_summary(self) -> None:
+        """simple entity-card 실제 entity search → click-reload (`load_web_search_record_id`)
+        → 첫 follow-up → 두 번째 follow-up click-reload chain 에서 baseline actual-search
+        history entry 가 `설명형 다중 출처 합의` verification_label, strong-plus-missing
+        `claim_coverage_summary` (`strong>0`, `weak==0`, `missing>0`), 빈 progress_summary
+        를 baseline equality 로 drift 없이 유지하는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="붉은사막 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            session_id = "entity-click-reload-second-followup-count-summary-session"
+
+            first = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            baseline_history = first["session"]["web_search_history"]
+            self.assertTrue(baseline_history)
+            baseline_entry = baseline_history[0]
+            record_id = baseline_entry["record_id"]
+            self.assertEqual(
+                baseline_entry["verification_label"],
+                "설명형 다중 출처 합의",
+            )
+            # Lock the shipped actual-search entity-card strong-plus-missing payload shape
+            # directly instead of deriving strong/weak/missing from the first response.
+            # Browser `.meta` smoke already encodes the exact `{strong:3, weak:0, missing:2}`
+            # dict, so the click-reload service chain must agree on the same exact shape.
+            self.assertEqual(
+                baseline_entry.get("claim_coverage_summary"),
+                {"strong": 3, "weak": 0, "missing": 2},
+            )
+            self.assertEqual(
+                str(baseline_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
+
+            def _assert_strong_plus_missing_continuity(result, stage: str) -> None:
+                self.assertTrue(result["ok"], f"{stage} handle_chat must succeed")
+                self.assertIn(
+                    "load_web_search_record",
+                    result["response"]["actions_taken"],
+                    f"{stage} must route through the load_web_search_record path",
+                )
+                history = result["session"]["web_search_history"]
+                self.assertTrue(history, f"{stage} session.web_search_history must not be empty")
+                entry = next(
+                    (item for item in history if item.get("record_id") == record_id),
+                    None,
+                )
+                self.assertIsNotNone(
+                    entry,
+                    f"{stage} session.web_search_history must still include the original record",
+                )
+                self.assertEqual(
+                    entry["verification_label"],
+                    "설명형 다중 출처 합의",
+                    f"{stage} verification_label must stay `설명형 다중 출처 합의`",
+                )
+                self.assertEqual(
+                    entry["claim_coverage_summary"],
+                    {"strong": 3, "weak": 0, "missing": 2},
+                    f"{stage} claim_coverage_summary must match the shipped strong-plus-missing dict",
+                )
+                self.assertEqual(
+                    str(entry.get("claim_coverage_progress_summary") or ""),
+                    "",
+                    f"{stage} progress summary must stay empty",
+                )
+
+            second = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            _assert_strong_plus_missing_continuity(second, "show-only reload")
+
+            third = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 검색 결과 요약해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            _assert_strong_plus_missing_continuity(third, "first follow-up")
+            # actual-search click-reload first follow-up response_origin exactness: matches
+            # the browser smoke contract (`WEB`, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반`)
+            # and mirrors the minimal inline pattern used in the click-reload second
+            # follow-up closure at `:17409`.
+            third_origin = third["response"]["response_origin"]
+            self.assertEqual(third_origin["badge"], "WEB")
+            self.assertEqual(third_origin["answer_mode"], "entity_card")
+            self.assertEqual(third_origin["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(third_origin["source_roles"], ["백과 기반"])
+
+            fourth = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "장르만 한 줄로 다시 정리해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            _assert_strong_plus_missing_continuity(fourth, "second follow-up")
 
     def test_handle_chat_dual_probe_entity_search_natural_reload_exact_fields(self) -> None:
         """실제 dual-probe entity search → 자연어 reload 경로에서
@@ -9104,10 +9717,301 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(second["ok"])
             self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
             reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["badge"], "WEB")
             self.assertEqual(reload_origin["answer_mode"], "entity_card")
-            self.assertEqual(reload_origin["verification_label"], first_origin["verification_label"])
-            self.assertEqual(reload_origin["source_roles"], first_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(reload_origin["source_roles"], ["공식 기반", "백과 기반"])
             self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
+            # dual-probe entity-card reload-only mixed count-summary branch (natural reload
+            # exact-fields): history entry keeps the actual shipped `{strong:1, weak:4,
+            # missing:0}` pattern with empty progress and `설명형 다중 출처 합의` label.
+            reload_history = second["session"]["web_search_history"]
+            self.assertTrue(reload_history)
+            reload_entry = reload_history[0]
+            self.assertEqual(
+                reload_entry.get("claim_coverage_summary") or {},
+                {"strong": 1, "weak": 4, "missing": 0},
+            )
+            self.assertEqual(
+                str(reload_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
+            self.assertEqual(reload_entry["verification_label"], "설명형 다중 출처 합의")
+
+    def _build_dual_probe_service_for_mixed_count_summary(self, tmp_path: Path) -> "WebAppService":
+        settings = AppSettings(
+            sessions_dir=str(tmp_path / "sessions"),
+            task_log_path=str(tmp_path / "task_log.jsonl"),
+            notes_dir=str(tmp_path / "notes"),
+            web_search_history_dir=str(tmp_path / "web-search"),
+            model_provider="mock",
+        )
+        service = WebAppService(settings=settings)
+        service._build_tools = lambda: {
+            "read_file": FileReaderTool(),
+            "search_files": FileSearchTool(reader=FileReaderTool()),
+            "search_web": _FakeWebSearchTool(
+                {
+                    "붉은사막에 대해 알려줘": [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                    "붉은사막": [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                    "붉은사막 공식 플랫폼": [
+                        SimpleNamespace(
+                            title="붉은사막 | 플랫폼 - 공식",
+                            url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200",
+                            snippet="붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.",
+                        ),
+                    ],
+                    "붉은사막 서비스 공식": [
+                        SimpleNamespace(
+                            title="붉은사막 | 서비스 - 공식",
+                            url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300",
+                            snippet="붉은사막은 펄어비스가 운영하는 게임이다.",
+                        ),
+                    ],
+                },
+                pages={
+                    "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200": {
+                        "title": "붉은사막 | 플랫폼 - 공식",
+                        "text": "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이며 펄어비스가 개발 중입니다.",
+                        "excerpt": "PC와 콘솔 플랫폼으로 출시 예정",
+                    },
+                    "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300": {
+                        "title": "붉은사막 | 서비스 - 공식",
+                        "text": "붉은사막은 펄어비스가 운영하는 게임이며 배급도 펄어비스가 담당합니다.",
+                        "excerpt": "붉은사막은 펄어비스가 운영하는 게임입니다.",
+                    },
+                },
+            ),
+            "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+        }
+        return service
+
+    def test_handle_chat_dual_probe_entity_card_history_card_reload_second_follow_up_preserves_mixed_count_summary(self) -> None:
+        """dual-probe entity-card → show-only reload → 첫 follow-up → 두 번째 follow-up
+        click-reload chain 에서 baseline dual-probe history entry 가 `설명형 다중 출처 합의`
+        verification_label, mixed `claim_coverage_summary` (`strong>0`, `weak>0`, `missing==0`),
+        빈 progress_summary 를 baseline equality 로 drift 없이 유지하는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            service = self._build_dual_probe_service_for_mixed_count_summary(tmp_path)
+
+            session_id = "dual-probe-click-reload-second-followup-mixed-count-summary-session"
+
+            first = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            baseline_history = first["session"]["web_search_history"]
+            self.assertGreaterEqual(len(baseline_history), 1)
+            baseline_entry = baseline_history[0]
+            record_id = baseline_entry["record_id"]
+            self.assertEqual(
+                baseline_entry["verification_label"],
+                "설명형 다중 출처 합의",
+            )
+            # Lock the shipped dual-probe entity-card mixed-count payload shape directly
+            # instead of deriving strong/weak/missing from the first response. Browser
+            # `.meta` smoke already encodes the exact `{strong:1, weak:4, missing:0}` dict,
+            # so the click-reload service chain must agree on the same exact shape.
+            self.assertEqual(
+                baseline_entry.get("claim_coverage_summary"),
+                {"strong": 1, "weak": 4, "missing": 0},
+            )
+            self.assertEqual(
+                str(baseline_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
+
+            def _assert_mixed_count_summary_continuity(result, stage: str) -> None:
+                self.assertTrue(result["ok"], f"{stage} handle_chat must succeed")
+                self.assertIn(
+                    "load_web_search_record",
+                    result["response"]["actions_taken"],
+                    f"{stage} must route through the load_web_search_record path",
+                )
+                history = result["session"]["web_search_history"]
+                self.assertTrue(history, f"{stage} session.web_search_history must not be empty")
+                entry = next(
+                    (item for item in history if item.get("record_id") == record_id),
+                    None,
+                )
+                self.assertIsNotNone(
+                    entry,
+                    f"{stage} session.web_search_history must still include the original record",
+                )
+                self.assertEqual(
+                    entry["verification_label"],
+                    "설명형 다중 출처 합의",
+                    f"{stage} verification_label must stay `설명형 다중 출처 합의`",
+                )
+                self.assertEqual(
+                    entry["claim_coverage_summary"],
+                    {"strong": 1, "weak": 4, "missing": 0},
+                    f"{stage} claim_coverage_summary must match the shipped mixed-count dict",
+                )
+                self.assertEqual(
+                    str(entry.get("claim_coverage_progress_summary") or ""),
+                    "",
+                    f"{stage} progress summary must stay empty",
+                )
+
+            second = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            _assert_mixed_count_summary_continuity(second, "show-only reload")
+
+            third = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 검색 결과 요약해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            _assert_mixed_count_summary_continuity(third, "first follow-up")
+            # dual-probe click-reload first follow-up response_origin exactness: matches the
+            # browser smoke contract (`WEB`, `설명 카드`, `설명형 다중 출처 합의`,
+            # `공식 기반 · 백과 기반`) and mirrors the minimal inline pattern used in the
+            # actual-search click-reload first follow-up closure at `:9486`.
+            third_origin = third["response"]["response_origin"]
+            self.assertEqual(third_origin["badge"], "WEB")
+            self.assertEqual(third_origin["answer_mode"], "entity_card")
+            self.assertEqual(third_origin["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(third_origin["source_roles"], ["공식 기반", "백과 기반"])
+
+            fourth = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 게임 장르만 한 줄로 다시 정리해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            _assert_mixed_count_summary_continuity(fourth, "second follow-up")
+
+    def test_handle_chat_dual_probe_natural_reload_second_follow_up_preserves_mixed_count_summary(self) -> None:
+        """dual-probe entity-card → 자연어 reload → 첫 follow-up → 두 번째 follow-up
+        natural-reload chain 에서 baseline dual-probe history entry 가 `설명형 다중 출처 합의`
+        verification_label, mixed `claim_coverage_summary` (`strong>0`, `weak>0`, `missing==0`),
+        빈 progress_summary 를 baseline equality 로 drift 없이 유지하는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            service = self._build_dual_probe_service_for_mixed_count_summary(tmp_path)
+
+            session_id = "dual-probe-natural-reload-second-followup-mixed-count-summary-session"
+
+            first = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "붉은사막에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            baseline_history = first["session"]["web_search_history"]
+            self.assertGreaterEqual(len(baseline_history), 1)
+            baseline_entry = baseline_history[0]
+            record_id = baseline_entry["record_id"]
+            self.assertEqual(
+                baseline_entry["verification_label"],
+                "설명형 다중 출처 합의",
+            )
+            # Lock the shipped dual-probe entity-card mixed-count payload shape directly
+            # instead of deriving strong/weak/missing from the first response. Browser
+            # `.meta` smoke already encodes the exact `{strong:1, weak:4, missing:0}` dict,
+            # so the natural-reload service chain must agree on the same exact shape.
+            self.assertEqual(
+                baseline_entry.get("claim_coverage_summary"),
+                {"strong": 1, "weak": 4, "missing": 0},
+            )
+            self.assertEqual(
+                str(baseline_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
+
+            def _assert_mixed_count_summary_continuity(result, stage: str) -> None:
+                self.assertTrue(result["ok"], f"{stage} handle_chat must succeed")
+                self.assertIn(
+                    "load_web_search_record",
+                    result["response"]["actions_taken"],
+                    f"{stage} must route through the load_web_search_record path",
+                )
+                history = result["session"]["web_search_history"]
+                self.assertTrue(history, f"{stage} session.web_search_history must not be empty")
+                entry = next(
+                    (item for item in history if item.get("record_id") == record_id),
+                    None,
+                )
+                self.assertIsNotNone(
+                    entry,
+                    f"{stage} session.web_search_history must still include the original record",
+                )
+                self.assertEqual(
+                    entry["verification_label"],
+                    "설명형 다중 출처 합의",
+                    f"{stage} verification_label must stay `설명형 다중 출처 합의`",
+                )
+                self.assertEqual(
+                    entry["claim_coverage_summary"],
+                    {"strong": 1, "weak": 4, "missing": 0},
+                    f"{stage} claim_coverage_summary must match the shipped mixed-count dict",
+                )
+                self.assertEqual(
+                    str(entry.get("claim_coverage_progress_summary") or ""),
+                    "",
+                    f"{stage} progress summary must stay empty",
+                )
+
+            second = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                }
+            )
+            _assert_mixed_count_summary_continuity(second, "natural reload")
+
+            third = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 검색 결과 요약해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            _assert_mixed_count_summary_continuity(third, "first follow-up")
+
+            fourth = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 게임 장르만 한 줄로 다시 정리해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            _assert_mixed_count_summary_continuity(fourth, "second follow-up")
 
     def test_handle_chat_dual_probe_entity_search_history_card_reload_exact_fields(self) -> None:
         """실제 dual-probe entity search → load_web_search_record_id reload에서
@@ -9199,10 +10103,30 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(second["ok"])
             self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
             reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["badge"], "WEB")
             self.assertEqual(reload_origin["answer_mode"], "entity_card")
-            self.assertEqual(reload_origin["verification_label"], first_origin["verification_label"])
-            self.assertEqual(reload_origin["source_roles"], first_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(reload_origin["source_roles"], ["공식 기반", "백과 기반"])
             self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
+            # dual-probe entity-card reload-only mixed count-summary branch (click reload
+            # exact-fields): history entry keeps the actual shipped `{strong:1, weak:4,
+            # missing:0}` pattern with empty progress and `설명형 다중 출처 합의` label.
+            reload_history = second["session"]["web_search_history"]
+            self.assertTrue(reload_history)
+            reload_entry = next(
+                (item for item in reload_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(reload_entry)
+            self.assertEqual(
+                reload_entry.get("claim_coverage_summary") or {},
+                {"strong": 1, "weak": 4, "missing": 0},
+            )
+            self.assertEqual(
+                str(reload_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
+            self.assertEqual(reload_entry["verification_label"], "설명형 다중 출처 합의")
 
     def test_handle_chat_zero_strong_slot_entity_card_history_badge_serialization(self) -> None:
         """zero-strong-slot entity-card가 저장될 때 history-card header의
@@ -9251,10 +10175,333 @@ class WebAppServiceTest(unittest.TestCase):
             history = payload["session"]["web_search_history"]
             self.assertGreaterEqual(len(history), 1)
             self.assertEqual(history[0]["answer_mode"], "entity_card")
-            self.assertNotEqual(history[0]["verification_label"], "설명형 다중 출처 합의")
-            self.assertTrue(history[0]["verification_label"])
+            self.assertEqual(history[0]["verification_label"], "설명형 단일 출처")
             self.assertIsInstance(history[0]["source_roles"], list)
             self.assertGreaterEqual(len(history[0]["source_roles"]), 1)
+
+    def test_handle_chat_zero_strong_slot_entity_card_history_badge_serialization_includes_missing_only_count_summary(self) -> None:
+        """zero-strong-slot entity-card 가 history-card 에 저장될 때, 실제 런타임이
+        `claim_coverage_summary` 를 missing-only 패턴 (`strong=0`, `weak=0`, `missing>0`) 으로
+        직렬화하고 `claim_coverage_progress_summary` 는 빈 문자열로 남기며,
+        `verification_label` 이 strong-label 로 드리프트하지 않는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="테스트게임 - 나무위키",
+                            url="https://namu.wiki/w/testgame",
+                            snippet="테스트게임은 알 수 없는 개발사의 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="테스트게임 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/testgame",
+                            snippet="테스트게임은 정보가 부족한 게임이다.",
+                        ),
+                    ],
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            payload = service.handle_chat(
+                {
+                    "session_id": "zero-strong-history-missing-only-count-summary-session",
+                    "user_text": "테스트게임에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+
+            self.assertTrue(payload["ok"])
+            history = payload["session"]["web_search_history"]
+            self.assertGreaterEqual(len(history), 1)
+            entry = history[0]
+
+            # downgraded verification label locked to the literal `설명형 단일 출처`
+            self.assertEqual(entry["verification_label"], "설명형 단일 출처")
+
+            # missing-only count-summary locked to the shipped zero-strong dict. Browser
+            # `.meta` smoke already encodes the exact `사실 검증 미확인 5` line, and the
+            # chain tests at `:10229` / `:10367` enforce the same dict across reload/
+            # follow-up stages, so the initial serialization anchor must agree.
+            self.assertEqual(
+                entry.get("claim_coverage_summary"),
+                {"strong": 0, "weak": 0, "missing": 5},
+            )
+
+            # progress summary must stay empty on the zero-strong path
+            self.assertEqual(
+                str(entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
+
+    def test_handle_chat_zero_strong_slot_entity_card_history_card_reload_second_follow_up_preserves_missing_only_count_summary(self) -> None:
+        """zero-strong-slot entity-card → show-only reload → 첫 follow-up → 두 번째 follow-up
+        click-reload chain 에서 baseline zero-strong history entry 가 downgraded
+        verification_label, missing-only `claim_coverage_summary`, 빈 progress_summary
+        를 drift 없이 유지하는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="테스트게임 - 나무위키",
+                            url="https://namu.wiki/w/testgame",
+                            snippet="테스트게임은 알 수 없는 개발사의 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="테스트게임 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/testgame",
+                            snippet="테스트게임은 정보가 부족한 게임이다.",
+                        ),
+                    ],
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            session_id = "zero-strong-click-reload-second-followup-missing-only-count-session"
+
+            first = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "테스트게임에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            baseline_history = first["session"]["web_search_history"]
+            self.assertGreaterEqual(len(baseline_history), 1)
+            baseline_entry = baseline_history[0]
+            record_id = baseline_entry["record_id"]
+            baseline_verification_label = baseline_entry["verification_label"]
+            # Lock the shipped zero-strong entity-card missing-only payload shape directly
+            # instead of deriving per-field counts from the first response. Browser `.meta`
+            # smoke already encodes the exact `사실 검증 미확인 5` line, which corresponds to
+            # the `{strong:0, weak:0, missing:5}` dict, so the service continuity must agree
+            # on the same exact shape.
+            self.assertEqual(
+                baseline_entry.get("claim_coverage_summary"),
+                {"strong": 0, "weak": 0, "missing": 5},
+            )
+            self.assertEqual(
+                str(baseline_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
+
+            def _assert_missing_only_meta_continuity(result, stage: str) -> None:
+                self.assertTrue(result["ok"], f"{stage} handle_chat must succeed")
+                self.assertIn(
+                    "load_web_search_record",
+                    result["response"]["actions_taken"],
+                    f"{stage} must route through the load_web_search_record path",
+                )
+                history = result["session"]["web_search_history"]
+                self.assertTrue(history, f"{stage} session.web_search_history must not be empty")
+                entry = next(
+                    (item for item in history if item.get("record_id") == record_id),
+                    None,
+                )
+                self.assertIsNotNone(
+                    entry,
+                    f"{stage} session.web_search_history must still include the original record",
+                )
+                self.assertEqual(
+                    entry["verification_label"],
+                    baseline_verification_label,
+                    f"{stage} verification_label must not drift",
+                )
+                self.assertEqual(
+                    entry["claim_coverage_summary"],
+                    {"strong": 0, "weak": 0, "missing": 5},
+                    f"{stage} claim_coverage_summary must match the shipped missing-only dict",
+                )
+                self.assertEqual(
+                    str(entry.get("claim_coverage_progress_summary") or ""),
+                    "",
+                    f"{stage} progress summary must stay empty",
+                )
+
+            second = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            _assert_missing_only_meta_continuity(second, "show-only reload")
+
+            third = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 검색 결과 요약해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            _assert_missing_only_meta_continuity(third, "first follow-up")
+
+            fourth = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 게임 장르만 한 줄로 다시 정리해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            _assert_missing_only_meta_continuity(fourth, "second follow-up")
+
+    def test_handle_chat_zero_strong_slot_entity_card_natural_reload_second_follow_up_preserves_missing_only_count_summary(self) -> None:
+        """zero-strong-slot entity-card → 자연어 reload → 첫 follow-up → 두 번째 follow-up
+        natural-reload chain 에서 baseline zero-strong history entry 가 downgraded
+        verification_label, missing-only `claim_coverage_summary`, 빈 progress_summary
+        를 drift 없이 유지하는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="테스트게임 - 나무위키",
+                            url="https://namu.wiki/w/testgame",
+                            snippet="테스트게임은 알 수 없는 개발사의 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="테스트게임 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/testgame",
+                            snippet="테스트게임은 정보가 부족한 게임이다.",
+                        ),
+                    ],
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            session_id = "zero-strong-natural-reload-second-followup-missing-only-count-session"
+
+            first = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "테스트게임에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            baseline_history = first["session"]["web_search_history"]
+            self.assertGreaterEqual(len(baseline_history), 1)
+            baseline_entry = baseline_history[0]
+            record_id = baseline_entry["record_id"]
+            baseline_verification_label = baseline_entry["verification_label"]
+            # Lock the shipped zero-strong entity-card missing-only payload shape directly
+            # instead of deriving per-field counts from the first response. Browser `.meta`
+            # smoke already encodes the exact `사실 검증 미확인 5` line, which corresponds to
+            # the `{strong:0, weak:0, missing:5}` dict, so the service continuity must agree
+            # on the same exact shape.
+            self.assertEqual(
+                baseline_entry.get("claim_coverage_summary"),
+                {"strong": 0, "weak": 0, "missing": 5},
+            )
+            self.assertEqual(
+                str(baseline_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
+
+            def _assert_missing_only_meta_continuity(result, stage: str) -> None:
+                self.assertTrue(result["ok"], f"{stage} handle_chat must succeed")
+                self.assertIn(
+                    "load_web_search_record",
+                    result["response"]["actions_taken"],
+                    f"{stage} must route through the load_web_search_record path",
+                )
+                history = result["session"]["web_search_history"]
+                self.assertTrue(history, f"{stage} session.web_search_history must not be empty")
+                entry = next(
+                    (item for item in history if item.get("record_id") == record_id),
+                    None,
+                )
+                self.assertIsNotNone(
+                    entry,
+                    f"{stage} session.web_search_history must still include the original record",
+                )
+                self.assertEqual(
+                    entry["verification_label"],
+                    baseline_verification_label,
+                    f"{stage} verification_label must not drift",
+                )
+                self.assertEqual(
+                    entry["claim_coverage_summary"],
+                    {"strong": 0, "weak": 0, "missing": 5},
+                    f"{stage} claim_coverage_summary must match the shipped missing-only dict",
+                )
+                self.assertEqual(
+                    str(entry.get("claim_coverage_progress_summary") or ""),
+                    "",
+                    f"{stage} progress summary must stay empty",
+                )
+
+            second = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                }
+            )
+            _assert_missing_only_meta_continuity(second, "natural reload")
+
+            third = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 검색 결과 요약해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            _assert_missing_only_meta_continuity(third, "first follow-up")
+
+            fourth = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 게임 장르만 한 줄로 다시 정리해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            _assert_missing_only_meta_continuity(fourth, "second follow-up")
 
     def test_handle_chat_zero_strong_slot_entity_card_history_card_reload_exact_fields(self) -> None:
         """zero-strong-slot entity-card record를 load_web_search_record_id로
@@ -9303,7 +10550,7 @@ class WebAppServiceTest(unittest.TestCase):
             first_origin = first["response"]["response_origin"]
             first_record_path = first["response"]["web_search_record_path"]
             self.assertEqual(first_origin["answer_mode"], "entity_card")
-            self.assertNotEqual(first_origin["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(first_origin["verification_label"], "설명형 단일 출처")
             record_id = first["session"]["web_search_history"][0]["record_id"]
 
             # --- 둘째 호출: history-card reload ---
@@ -9317,13 +10564,27 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(second["ok"])
             self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
             reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["badge"], "WEB")
             self.assertEqual(reload_origin["answer_mode"], "entity_card")
-            self.assertEqual(reload_origin["verification_label"], first_origin["verification_label"])
-            self.assertEqual(reload_origin["source_roles"], first_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "설명형 단일 출처")
+            self.assertEqual(reload_origin["source_roles"], ["백과 기반"])
             self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
             reload_source_paths = second["session"]["active_context"]["source_paths"]
             self.assertIn("https://namu.wiki/w/testgame", reload_source_paths)
             self.assertIn("https://ko.wikipedia.org/wiki/testgame", reload_source_paths)
+            # reload-stage history summary locked to the shipped zero-strong dict,
+            # matching browser `사실 검증 미확인 5` smoke and the chain tests at
+            # `:10229` / `:10367`. verification_label continuity is preserved by the
+            # `first_origin["verification_label"]` comparison above.
+            reload_entry = second["session"]["web_search_history"][0]
+            self.assertEqual(
+                reload_entry.get("claim_coverage_summary"),
+                {"strong": 0, "weak": 0, "missing": 5},
+            )
+            self.assertEqual(
+                str(reload_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
     def test_handle_chat_zero_strong_slot_entity_card_natural_reload_exact_fields(self) -> None:
         """zero-strong-slot entity-card record를 자연어 reload했을 때
@@ -9372,7 +10633,7 @@ class WebAppServiceTest(unittest.TestCase):
             first_origin = first["response"]["response_origin"]
             first_record_path = first["response"]["web_search_record_path"]
             self.assertEqual(first_origin["answer_mode"], "entity_card")
-            self.assertNotEqual(first_origin["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(first_origin["verification_label"], "설명형 단일 출처")
 
             # --- 둘째 호출: 자연어 reload ---
             second = service.handle_chat(
@@ -9385,13 +10646,27 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(second["ok"])
             self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
             reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["badge"], "WEB")
             self.assertEqual(reload_origin["answer_mode"], "entity_card")
-            self.assertEqual(reload_origin["verification_label"], first_origin["verification_label"])
-            self.assertEqual(reload_origin["source_roles"], first_origin["source_roles"])
+            self.assertEqual(reload_origin["verification_label"], "설명형 단일 출처")
+            self.assertEqual(reload_origin["source_roles"], ["백과 기반"])
             self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
             reload_source_paths = second["session"]["active_context"]["source_paths"]
             self.assertIn("https://namu.wiki/w/testgame", reload_source_paths)
             self.assertIn("https://ko.wikipedia.org/wiki/testgame", reload_source_paths)
+            # reload-stage history summary locked to the shipped zero-strong dict,
+            # matching browser `사실 검증 미확인 5` smoke and the chain tests at
+            # `:10229` / `:10367`. verification_label continuity is preserved by the
+            # `first_origin["verification_label"]` comparison above.
+            reload_entry = second["session"]["web_search_history"][0]
+            self.assertEqual(
+                reload_entry.get("claim_coverage_summary"),
+                {"strong": 0, "weak": 0, "missing": 5},
+            )
+            self.assertEqual(
+                str(reload_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
     def test_handle_chat_entity_card_separates_weak_and_missing_slot_sections(self) -> None:
         """entity-card 응답 본문에서 '단일 출처 확인 정보:'(단일 출처 weak slot)와
@@ -9693,6 +10968,106 @@ class WebAppServiceTest(unittest.TestCase):
             general = by_query["일반 검색"]
             self.assertEqual(general["claim_coverage_progress_summary"], "")
 
+    def test_web_search_store_list_summaries_includes_claim_coverage_summary(self) -> None:
+        """WebSearchStore.save → list_session_record_summaries가
+        claim_coverage status 카운트를 claim_coverage_summary dict로
+        누적해 그대로 직렬화하는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            store = WebSearchStore(base_dir=str(Path(tmp_dir) / "web-search"))
+            session_id = "count-summary-session"
+
+            # entity-card record with mixed status counts
+            store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[{"url": "https://example.com/a", "snippet": "결과 A"}],
+                summary_text="entity card summary",
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "장르", "status": "strong", "status_label": "교차 확인"},
+                    {"slot": "개발사", "status": "strong", "status_label": "교차 확인"},
+                    {"slot": "출시일", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "플랫폼", "status": "missing", "status_label": "미확인"},
+                ],
+                claim_coverage_progress_summary="교차 확인 2건, 단일 출처 1건, 미확인 1건.",
+            )
+
+            # record without any claim_coverage entries
+            store.save(
+                session_id=session_id,
+                query="일반 검색",
+                permission="enabled",
+                results=[{"url": "https://example.com/b", "snippet": "결과 B"}],
+                summary_text="general summary",
+                response_origin=None,
+            )
+
+            summaries = store.list_session_record_summaries(session_id)
+            self.assertEqual(len(summaries), 2)
+
+            by_query = {s["query"]: s for s in summaries}
+
+            entity = by_query["붉은사막"]
+            self.assertEqual(
+                entity["claim_coverage_summary"],
+                {"strong": 2, "weak": 1, "missing": 1},
+            )
+
+            general = by_query["일반 검색"]
+            self.assertEqual(
+                general["claim_coverage_summary"],
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+
+    def test_web_search_history_serializer_includes_claim_coverage_summary(self) -> None:
+        """session.web_search_history 직렬화가 store 로부터 집계된
+        claim_coverage_summary dict 를 그대로 유지하는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            service.web_search_store.save(
+                session_id="serializer-count-summary-session",
+                query="붉은사막",
+                permission="enabled",
+                results=[{"url": "https://example.com/a", "snippet": "s"}],
+                summary_text="entity card summary",
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "장르", "status": "strong", "status_label": "교차 확인"},
+                    {"slot": "출시일", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "플랫폼", "status": "missing", "status_label": "미확인"},
+                ],
+                claim_coverage_progress_summary="교차 확인 1건, 단일 출처 1건, 미확인 1건.",
+            )
+
+            history = service._serialize_web_search_history(
+                "serializer-count-summary-session"
+            )
+            self.assertEqual(len(history), 1)
+            self.assertEqual(
+                history[0]["claim_coverage_summary"],
+                {"strong": 1, "weak": 1, "missing": 1},
+            )
+
     def test_web_search_history_serializer_includes_claim_coverage_progress_summary(self) -> None:
         """session.web_search_history 직렬화가
         claim_coverage_progress_summary를 포함하는지 검증합니다."""
@@ -9818,6 +11193,17 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertNotIn("출시일", first_text, "noisy single-source의 '출시일' claim이 첫 응답에 노출되면 안 됩니다")
             self.assertNotIn("2025", first_text, "noisy single-source의 '2025' claim이 첫 응답에 노출되면 안 됩니다")
 
+            # 첫 응답 단계의 baseline history summary 계약: noisy entity-card의
+            # strong-plus-missing count-summary 분기와 빈 progress, 설명형 다중 출처 합의
+            # verification_label이 최초 응답 시점에서부터 고정되어야 합니다.
+            first_history = first["session"]["web_search_history"][0]
+            self.assertEqual(first_history["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(
+                first_history["claim_coverage_summary"],
+                {"strong": 3, "weak": 0, "missing": 2},
+            )
+            self.assertEqual(first_history["claim_coverage_progress_summary"], "")
+
             # --- 둘째 호출: load_web_search_record_id reload ---
             second = service.handle_chat(
                 {
@@ -9862,6 +11248,17 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
             self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
             self.assertIn("https://blog.example.com/crimson-desert", source_paths)
+
+            # reload 단계의 history summary 계약: noisy entity-card의 strong-plus-missing
+            # count-summary 분기와 빈 progress, 설명형 다중 출처 합의 verification_label이
+            # 직접 reload 시점에 고정되어야 합니다.
+            reload_history = second["session"]["web_search_history"][0]
+            self.assertEqual(reload_history["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(
+                reload_history["claim_coverage_summary"],
+                {"strong": 3, "weak": 0, "missing": 2},
+            )
+            self.assertEqual(reload_history["claim_coverage_progress_summary"], "")
 
 
     def test_handle_chat_entity_card_multi_source_agreement_over_noise_natural_reload(self) -> None:
@@ -9951,6 +11348,16 @@ class WebAppServiceTest(unittest.TestCase):
             first_history = first["session"]["web_search_history"][0]
             self.assertEqual(first_history["source_roles"], ["백과 기반"])
 
+            # 첫 응답 단계의 baseline history summary 계약: noisy entity-card의
+            # strong-plus-missing count-summary 분기와 빈 progress, 설명형 다중 출처 합의
+            # verification_label이 최초 응답 시점에서부터 고정되어야 합니다.
+            self.assertEqual(first_history["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(
+                first_history["claim_coverage_summary"],
+                {"strong": 3, "weak": 0, "missing": 2},
+            )
+            self.assertEqual(first_history["claim_coverage_progress_summary"], "")
+
             # --- 둘째 호출: 자연어 recent-record reload ---
             second = service.handle_chat(
                 {
@@ -9985,6 +11392,17 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
             self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
             self.assertIn("https://blog.example.com/crimson-desert", source_paths)
+
+            # 자연어 reload 단계의 history summary 계약: noisy entity-card의
+            # strong-plus-missing count-summary 분기와 빈 progress, 설명형 다중 출처 합의
+            # verification_label이 자연어 reload 시점에 고정되어야 합니다.
+            reload_history = second["session"]["web_search_history"][0]
+            self.assertEqual(reload_history["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(
+                reload_history["claim_coverage_summary"],
+                {"strong": 3, "weak": 0, "missing": 2},
+            )
+            self.assertEqual(reload_history["claim_coverage_progress_summary"], "")
 
 
     def test_handle_chat_latest_update_noisy_source_excluded_from_body_and_badge(self) -> None:
@@ -10177,6 +11595,23 @@ class WebAppServiceTest(unittest.TestCase):
             # reload: noisy community source 미노출
             self.assertNotIn("보조 커뮤니티", str(reload_origin["source_roles"]))
             self.assertNotIn("brunch", reload_text)
+            # latest-update noisy show-only reload empty-meta branch: history entry keeps
+            # zero-count claim_coverage_summary + empty progress after the noisy reload.
+            reload_history = second["session"]["web_search_history"]
+            self.assertTrue(reload_history)
+            reload_entry = next(
+                (item for item in reload_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(reload_entry)
+            self.assertEqual(
+                reload_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(reload_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
 
     def test_handle_chat_latest_update_single_source_verification_label_retained_after_history_card_reload(self) -> None:
@@ -10269,6 +11704,24 @@ class WebAppServiceTest(unittest.TestCase):
                 reload_origin["verification_label"],
                 first_label,
                 f"reload verification_label이 초기 응답과 동일해야 합니다 (expected: {first_label}, got: {reload_origin['verification_label']})",
+            )
+            # latest-update noisy show-only reload empty-meta branch: history entry keeps
+            # zero-count claim_coverage_summary + empty progress on the single-news + noisy
+            # community reload path.
+            reload_history = second["session"]["web_search_history"]
+            self.assertTrue(reload_history)
+            reload_entry = next(
+                (item for item in reload_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(reload_entry)
+            self.assertEqual(
+                reload_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(reload_entry.get("claim_coverage_progress_summary") or ""),
+                "",
             )
 
 
@@ -10369,6 +11822,24 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(reload_origin["answer_mode"], "latest_update")
             self.assertNotIn("보조 출처", reload_origin["source_roles"])
             self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+            # latest-update noisy show-only reload empty-meta branch: history entry keeps
+            # zero-count claim_coverage_summary + empty progress on the dual-news + noisy
+            # community reload path.
+            reload_history = second["session"]["web_search_history"]
+            self.assertTrue(reload_history)
+            reload_entry = next(
+                (item for item in reload_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(reload_entry)
+            self.assertEqual(
+                reload_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(reload_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
 
     def test_handle_chat_latest_update_edaily_mk_noisy_community_badge_contract(self) -> None:
@@ -15093,48 +16564,13 @@ class WebAppServiceTest(unittest.TestCase):
                 "read_file": FileReaderTool(),
                 "search_files": FileSearchTool(reader=FileReaderTool()),
                 "search_web": _FakeWebSearchTool(
-                    {
-                        "붉은사막에 대해 알려줘": [
-                            SimpleNamespace(
-                                title="붉은사막 - 나무위키",
-                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
-                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
-                            ),
-                        ],
-                        "붉은사막": [
-                            SimpleNamespace(
-                                title="붉은사막 - 나무위키",
-                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
-                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
-                            ),
-                        ],
-                        "붉은사막 공식 플랫폼": [
-                            SimpleNamespace(
-                                title="붉은사막 | 플랫폼 - 공식",
-                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200",
-                                snippet="붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.",
-                            ),
-                        ],
-                        "붉은사막 서비스 공식": [
-                            SimpleNamespace(
-                                title="붉은사막 | 서비스 - 공식",
-                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300",
-                                snippet="붉은사막은 펄어비스가 운영하는 게임이다.",
-                            ),
-                        ],
-                    },
-                    pages={
-                        "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200": {
-                            "title": "붉은사막 | 플랫폼 - 공식",
-                            "text": "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이며 펄어비스가 개발 중입니다.",
-                            "excerpt": "PC와 콘솔 플랫폼으로 출시 예정",
-                        },
-                        "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300": {
-                            "title": "붉은사막 | 서비스 - 공식",
-                            "text": "붉은사막은 펄어비스가 운영하는 게임이며 배급도 펄어비스가 담당합니다.",
-                            "excerpt": "붉은사막은 펄어비스가 운영하는 게임입니다.",
-                        },
-                    },
+                    [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
                 ),
                 "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
             }
@@ -15149,7 +16585,6 @@ class WebAppServiceTest(unittest.TestCase):
                 }
             )
             self.assertTrue(first["ok"])
-            first_origin = first["response"]["response_origin"]
             record_id = first["session"]["web_search_history"][0]["record_id"]
 
             # --- 둘째 호출: history-card reload ---
@@ -15163,12 +16598,12 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(second["ok"])
             reload_origin = second["response"]["response_origin"]
 
-            # stored response_origin exact fields 보존
-            self.assertEqual(reload_origin["answer_mode"], first_origin["answer_mode"])
-            self.assertEqual(reload_origin["verification_label"], first_origin["verification_label"])
-            self.assertEqual(reload_origin["source_roles"], first_origin["source_roles"])
-            self.assertEqual(reload_origin.get("badge"), first_origin.get("badge"))
-            self.assertEqual(reload_origin.get("provider"), first_origin.get("provider"))
+            self.assertEqual(reload_origin["badge"], "WEB")
+            self.assertEqual(reload_origin["answer_mode"], "entity_card")
+            self.assertEqual(reload_origin["verification_label"], "설명형 단일 출처")
+            self.assertEqual(reload_origin["source_roles"], ["백과 기반"])
+            self.assertEqual(reload_origin["provider"], "web")
+            self.assertEqual(reload_origin["label"], "외부 웹 설명 카드")
 
     def test_handle_chat_entity_card_reload_follow_up_preserves_stored_response_origin(self) -> None:
         """entity-card 검색 → load_web_search_record_id + user_text follow-up에서
@@ -15188,48 +16623,13 @@ class WebAppServiceTest(unittest.TestCase):
                 "read_file": FileReaderTool(),
                 "search_files": FileSearchTool(reader=FileReaderTool()),
                 "search_web": _FakeWebSearchTool(
-                    {
-                        "붉은사막에 대해 알려줘": [
-                            SimpleNamespace(
-                                title="붉은사막 - 나무위키",
-                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
-                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
-                            ),
-                        ],
-                        "붉은사막": [
-                            SimpleNamespace(
-                                title="붉은사막 - 나무위키",
-                                url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
-                                snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
-                            ),
-                        ],
-                        "붉은사막 공식 플랫폼": [
-                            SimpleNamespace(
-                                title="붉은사막 | 플랫폼 - 공식",
-                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200",
-                                snippet="붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이다.",
-                            ),
-                        ],
-                        "붉은사막 서비스 공식": [
-                            SimpleNamespace(
-                                title="붉은사막 | 서비스 - 공식",
-                                url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300",
-                                snippet="붉은사막은 펄어비스가 운영하는 게임이다.",
-                            ),
-                        ],
-                    },
-                    pages={
-                        "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=200": {
-                            "title": "붉은사막 | 플랫폼 - 공식",
-                            "text": "붉은사막은 PC와 콘솔 플랫폼으로 출시 예정이며 펄어비스가 개발 중입니다.",
-                            "excerpt": "PC와 콘솔 플랫폼으로 출시 예정",
-                        },
-                        "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=300": {
-                            "title": "붉은사막 | 서비스 - 공식",
-                            "text": "붉은사막은 펄어비스가 운영하는 게임이며 배급도 펄어비스가 담당합니다.",
-                            "excerpt": "붉은사막은 펄어비스가 운영하는 게임입니다.",
-                        },
-                    },
+                    [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
                 ),
                 "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
             }
@@ -15244,7 +16644,6 @@ class WebAppServiceTest(unittest.TestCase):
                 }
             )
             self.assertTrue(first["ok"])
-            first_origin = first["response"]["response_origin"]
             record_id = first["session"]["web_search_history"][0]["record_id"]
 
             # --- 둘째 호출: reload-follow-up (non-show-only) ---
@@ -15259,10 +16658,12 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(second["ok"])
             reload_origin = second["response"]["response_origin"]
 
-            # response_origin이 존재하고 WEB provider 계열을 유지
-            self.assertIsNotNone(reload_origin)
-            # answer_mode가 stored 값이거나 최소한 entity_card가 유지됨
-            self.assertIn(reload_origin.get("answer_mode", ""), ("entity_card", first_origin["answer_mode"]))
+            self.assertEqual(reload_origin["badge"], "WEB")
+            self.assertEqual(reload_origin["answer_mode"], "entity_card")
+            self.assertEqual(reload_origin["verification_label"], "설명형 단일 출처")
+            self.assertEqual(reload_origin["source_roles"], ["백과 기반"])
+            self.assertEqual(reload_origin["provider"], "web")
+            self.assertEqual(reload_origin["label"], "외부 웹 설명 카드")
 
 
     def test_handle_chat_latest_update_reload_follow_up_preserves_stored_response_origin(self) -> None:
@@ -15343,6 +16744,21 @@ class WebAppServiceTest(unittest.TestCase):
             # verification_label과 source_roles도 stored 값 유지
             self.assertEqual(reload_origin["verification_label"], "공식+기사 교차 확인")
             self.assertEqual(reload_origin["source_roles"], ["보조 기사", "공식 기반"])
+            # latest-update non-noisy empty-meta branch: history entry keeps zero-count
+            # claim_coverage_summary + empty progress across the reload-follow-up path.
+            history_entry = next(
+                (item for item in second["session"]["web_search_history"] if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(history_entry)
+            self.assertEqual(
+                history_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(history_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
 
     def test_handle_chat_latest_update_single_source_reload_follow_up_preserves_stored_response_origin(self) -> None:
@@ -15413,6 +16829,21 @@ class WebAppServiceTest(unittest.TestCase):
             # verification_label과 source_roles도 stored 값 유지
             self.assertEqual(reload_origin["verification_label"], "단일 출처 참고")
             self.assertEqual(reload_origin["source_roles"], ["보조 출처"])
+            # latest-update non-noisy empty-meta branch: history entry keeps zero-count
+            # claim_coverage_summary + empty progress across the reload-follow-up path.
+            history_entry = next(
+                (item for item in second["session"]["web_search_history"] if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(history_entry)
+            self.assertEqual(
+                history_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(history_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
     def test_handle_chat_latest_update_news_only_reload_follow_up_preserves_stored_response_origin(self) -> None:
         """news-only latest_update 검색 → load_web_search_record_id + user_text follow-up에서
@@ -15490,6 +16921,21 @@ class WebAppServiceTest(unittest.TestCase):
             # verification_label과 source_roles도 stored 값 유지
             self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
             self.assertEqual(reload_origin["source_roles"], ["보조 기사"])
+            # latest-update non-noisy empty-meta branch: history entry keeps zero-count
+            # claim_coverage_summary + empty progress across the reload-follow-up path.
+            history_entry = next(
+                (item for item in second["session"]["web_search_history"] if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(history_entry)
+            self.assertEqual(
+                history_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(history_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
     def test_handle_chat_entity_card_actual_search_follow_up_preserves_source_paths(self) -> None:
         """entity-card actual-search record → load_web_search_record_id reload → follow-up에서
@@ -15562,6 +17008,286 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(followup_origin["answer_mode"], "entity_card")
             self.assertEqual(followup_origin["verification_label"], "설명형 다중 출처 합의")
             self.assertEqual(followup_origin["source_roles"], ["백과 기반"])
+            # store-seeded actual-search click-reload-follow-up empty-meta branch: record was
+            # seeded via WebSearchStore.save(...) without claim_coverage, so the history entry
+            # must stay at `{strong:0, weak:0, missing:0}` with empty progress throughout the
+            # click-reload → first follow-up chain, even though the response_origin still
+            # carries the stored `설명형 다중 출처 합의` verification label.
+            followup_history = second["session"]["web_search_history"]
+            self.assertTrue(followup_history)
+            followup_entry = next(
+                (item for item in followup_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(followup_entry)
+            self.assertEqual(
+                followup_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(followup_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
+            self.assertEqual(followup_entry["verification_label"], "설명형 다중 출처 합의")
+
+    def test_handle_chat_entity_card_store_seeded_actual_search_reload_second_follow_up_preserves_empty_meta_no_leak(self) -> None:
+        """store-seeded actual-search entity-card → click reload → first follow-up →
+        second follow-up chain 에서 `WebSearchStore.save(...)` 가 `claim_coverage` 파라미터
+        없이 호출된 경로의 `session.web_search_history` 가 두 번째 follow-up 이후에도
+        zero-count `claim_coverage_summary` + 빈 progress 와 stored verification label 을
+        유지하는지 (empty-meta no-leak) 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "store-seeded-actual-search-click-2fu-empty-meta-session"
+
+            store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {"title": "붉은사막 - 나무위키", "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."},
+                    {"title": "붉은사막 - 위키백과", "url": "https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."},
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 다중 출처 합의",
+                    "source_roles": ["백과 기반"],
+                },
+            )
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool([]),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            records = store.list_session_record_summaries(session_id)
+            record_id = records[0]["record_id"]
+
+            # --- 첫 호출: click reload (show-only) ---
+            first = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(first["ok"])
+
+            # --- 둘째 호출: 첫 follow-up (user_text + load_web_search_record_id) ---
+            second = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 검색 결과 요약해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+
+            # --- 셋째 호출: 두 번째 follow-up (user_text + load_web_search_record_id) ---
+            third = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "더 자세히 알려줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(third["ok"])
+
+            # Existing continuity: source-paths and stored response-origin fields
+            source_paths = third["session"]["active_context"]["source_paths"]
+            self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            followup_origin = third["response"]["response_origin"]
+            self.assertEqual(followup_origin["answer_mode"], "entity_card")
+            self.assertEqual(followup_origin["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(followup_origin["source_roles"], ["백과 기반"])
+
+            # store-seeded empty-meta no-leak contract after the second follow-up: the
+            # record was seeded without `claim_coverage`, so `_summarize_claim_coverage`
+            # must still emit `{strong:0, weak:0, missing:0}` and the serialized history
+            # entry must keep empty progress and the stored `설명형 다중 출처 합의` label.
+            followup_history = third["session"]["web_search_history"]
+            self.assertTrue(followup_history)
+            followup_entry = next(
+                (item for item in followup_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(followup_entry)
+            self.assertEqual(
+                followup_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(followup_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
+            self.assertEqual(followup_entry["verification_label"], "설명형 다중 출처 합의")
+
+    def test_handle_chat_entity_card_store_seeded_actual_search_post_reload_natural_reload_follow_up_chain_preserves_empty_meta_no_leak(self) -> None:
+        """store-seeded actual-search entity-card → click reload → 자연어 reload →
+        first follow-up → second follow-up chain 에서 `WebSearchStore.save(...)` 가
+        `claim_coverage` 파라미터 없이 호출된 경로의 `session.web_search_history` 가
+        각 단계마다 zero-count `claim_coverage_summary` + 빈 progress 와 stored
+        verification label 을 유지하는지 (empty-meta no-leak) 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "store-seeded-actual-search-natural-reload-chain-empty-meta-session"
+
+            store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {"title": "붉은사막 - 나무위키", "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."},
+                    {"title": "붉은사막 - 위키백과", "url": "https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."},
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 다중 출처 합의",
+                    "source_roles": ["백과 기반"],
+                },
+            )
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool([]),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            records = store.list_session_record_summaries(session_id)
+            record_id = records[0]["record_id"]
+
+            def _assert_empty_meta_continuity(result, stage: str) -> None:
+                self.assertTrue(result["ok"], f"{stage} handle_chat must succeed")
+                self.assertIn(
+                    "load_web_search_record",
+                    result["response"]["actions_taken"],
+                    f"{stage} must route through the load_web_search_record path",
+                )
+                source_paths = result["session"]["active_context"]["source_paths"]
+                self.assertIn(
+                    "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                    source_paths,
+                    f"{stage} must retain namu.wiki source path",
+                )
+                self.assertIn(
+                    "https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                    source_paths,
+                    f"{stage} must retain ko.wikipedia.org source path",
+                )
+                origin = result["response"]["response_origin"]
+                self.assertIsNotNone(origin, f"{stage} response_origin must not be None")
+                self.assertEqual(
+                    origin.get("answer_mode", ""),
+                    "entity_card",
+                    f"{stage} answer_mode must stay entity_card",
+                )
+                self.assertEqual(
+                    origin.get("verification_label", ""),
+                    "설명형 다중 출처 합의",
+                    f"{stage} verification_label must stay stored label",
+                )
+                self.assertEqual(
+                    origin.get("source_roles", []),
+                    ["백과 기반"],
+                    f"{stage} source_roles must stay stored roles",
+                )
+                history = result["session"]["web_search_history"]
+                self.assertTrue(history, f"{stage} web_search_history must not be empty")
+                entry = next(
+                    (item for item in history if item.get("record_id") == record_id),
+                    None,
+                )
+                self.assertIsNotNone(
+                    entry,
+                    f"{stage} web_search_history must still include the stored record",
+                )
+                self.assertEqual(
+                    entry.get("claim_coverage_summary") or {},
+                    {"strong": 0, "weak": 0, "missing": 0},
+                    f"{stage} claim_coverage_summary must stay zero-count",
+                )
+                self.assertEqual(
+                    str(entry.get("claim_coverage_progress_summary") or ""),
+                    "",
+                    f"{stage} claim_coverage_progress_summary must stay empty",
+                )
+                self.assertEqual(
+                    entry["verification_label"],
+                    "설명형 다중 출처 합의",
+                    f"{stage} history verification_label must stay stored label",
+                )
+
+            # --- 첫 호출: click reload (show-only) ---
+            first = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            _assert_empty_meta_continuity(first, "click reload")
+
+            # --- 둘째 호출: 자연어 reload (no load_web_search_record_id) ---
+            second = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                }
+            )
+            _assert_empty_meta_continuity(second, "natural reload")
+
+            # --- 셋째 호출: 첫 follow-up ---
+            third = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 검색 결과 요약해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            _assert_empty_meta_continuity(third, "first follow-up")
+
+            # --- 넷째 호출: 두 번째 follow-up ---
+            fourth = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "더 자세히 알려줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            _assert_empty_meta_continuity(fourth, "second follow-up")
 
     def test_handle_chat_dual_probe_entity_card_history_card_reload_second_follow_up_preserves_stored_response_origin(self) -> None:
         """dual-probe entity-card → click reload → first follow-up → second follow-up에서
@@ -15715,6 +17441,15 @@ class WebAppServiceTest(unittest.TestCase):
             source_paths = fourth["session"]["active_context"]["source_paths"]
             self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
             self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            # actual-search click-reload second follow-up response_origin exactness: matches
+            # the browser smoke contract (`WEB`, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반`)
+            # and mirrors the minimal inline pattern used in the zero-strong click-reload
+            # second follow-up closure.
+            fourth_origin = fourth["response"]["response_origin"]
+            self.assertEqual(fourth_origin["badge"], "WEB")
+            self.assertEqual(fourth_origin["answer_mode"], "entity_card")
+            self.assertEqual(fourth_origin["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(fourth_origin["source_roles"], ["백과 기반"])
 
     def test_handle_chat_entity_card_dual_probe_follow_up_preserves_source_paths(self) -> None:
         """entity-card dual-probe record → load_web_search_record_id + user_text follow-up에서
@@ -15907,6 +17642,21 @@ class WebAppServiceTest(unittest.TestCase):
             source_paths = fourth["session"]["active_context"]["source_paths"]
             self.assertIn("https://store.steampowered.com/sale/summer2026", source_paths)
             self.assertIn("https://www.yna.co.kr/view/AKR20260401000100017", source_paths)
+            # latest-update non-noisy empty-meta branch: history entry keeps zero-count
+            # claim_coverage_summary + empty progress through the second follow-up.
+            history_entry = next(
+                (item for item in fourth["session"]["web_search_history"] if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(history_entry)
+            self.assertEqual(
+                history_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(history_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
     def test_handle_chat_latest_update_single_source_follow_up_preserves_source_paths(self) -> None:
         """single-source latest_update 검색 → load_web_search_record_id + user_text follow-up에서
@@ -16084,6 +17834,7 @@ class WebAppServiceTest(unittest.TestCase):
             )
             self.assertTrue(first["ok"])
             first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["verification_label"], "설명형 단일 출처")
             record_id = first["session"]["web_search_history"][0]["record_id"]
 
             # --- 둘째 호출: reload-follow-up (non-show-only) ---
@@ -16097,11 +17848,10 @@ class WebAppServiceTest(unittest.TestCase):
             )
             self.assertTrue(second["ok"])
             reload_origin = second["response"]["response_origin"]
-
-            self.assertIsNotNone(reload_origin)
-            self.assertIn(reload_origin.get("answer_mode", ""), ("entity_card", first_origin["answer_mode"]))
-            self.assertEqual(reload_origin["verification_label"], first_origin["verification_label"])
-            self.assertEqual(reload_origin["source_roles"], first_origin["source_roles"])
+            self.assertEqual(reload_origin["badge"], "WEB")
+            self.assertEqual(reload_origin["answer_mode"], "entity_card")
+            self.assertEqual(reload_origin["verification_label"], "설명형 단일 출처")
+            self.assertEqual(reload_origin["source_roles"], ["백과 기반"])
             followup_source_paths = second["session"]["active_context"]["source_paths"]
             self.assertIn("https://namu.wiki/w/testgame", followup_source_paths)
             self.assertIn("https://ko.wikipedia.org/wiki/testgame", followup_source_paths)
@@ -16185,6 +17935,14 @@ class WebAppServiceTest(unittest.TestCase):
             source_paths = fourth["session"]["active_context"]["source_paths"]
             self.assertIn("https://namu.wiki/w/testgame", source_paths)
             self.assertIn("https://ko.wikipedia.org/wiki/testgame", source_paths)
+            # click-reload second follow-up response_origin exactness: matches the browser
+            # `.meta` + literal-label smoke (`사실 검증 미확인 5` + `설명형 단일 출처`) and the
+            # zero-strong service-side literal continuity locked at CONTROL_SEQ 64-66.
+            fourth_origin = fourth["response"]["response_origin"]
+            self.assertEqual(fourth_origin["badge"], "WEB")
+            self.assertEqual(fourth_origin["answer_mode"], "entity_card")
+            self.assertEqual(fourth_origin["verification_label"], "설명형 단일 출처")
+            self.assertEqual(fourth_origin["source_roles"], ["백과 기반"])
 
     def test_handle_chat_zero_strong_slot_entity_card_natural_reload_follow_up_preserves_stored_response_origin(self) -> None:
         """zero-strong-slot entity-card → 자연어 reload → user_text follow-up에서
@@ -16231,6 +17989,7 @@ class WebAppServiceTest(unittest.TestCase):
             )
             self.assertTrue(first["ok"])
             first_origin = first["response"]["response_origin"]
+            self.assertEqual(first_origin["verification_label"], "설명형 단일 출처")
 
             record_id = first["session"]["web_search_history"][0]["record_id"]
 
@@ -16256,14 +18015,144 @@ class WebAppServiceTest(unittest.TestCase):
             )
             self.assertTrue(third["ok"])
             followup_origin = third["response"]["response_origin"]
-
-            self.assertIsNotNone(followup_origin)
-            self.assertIn(followup_origin.get("answer_mode", ""), ("entity_card", first_origin["answer_mode"]))
-            self.assertEqual(followup_origin["verification_label"], first_origin["verification_label"])
-            self.assertEqual(followup_origin["source_roles"], first_origin["source_roles"])
+            self.assertEqual(followup_origin["badge"], "WEB")
+            self.assertEqual(followup_origin["answer_mode"], "entity_card")
+            self.assertEqual(followup_origin["verification_label"], "설명형 단일 출처")
+            self.assertEqual(followup_origin["source_roles"], ["백과 기반"])
             followup_source_paths = third["session"]["active_context"]["source_paths"]
             self.assertIn("https://namu.wiki/w/testgame", followup_source_paths)
             self.assertIn("https://ko.wikipedia.org/wiki/testgame", followup_source_paths)
+
+    def test_handle_chat_zero_strong_slot_entity_card_natural_reload_second_follow_up_preserves_response_origin_and_source_paths(self) -> None:
+        """zero-strong-slot entity-card → 자연어 reload → 첫 follow-up → 두 번째 follow-up
+        까지 진행해도 stored response_origin 필드와 active_context.source_paths 가
+        drift 없이 유지되는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="테스트게임 - 나무위키",
+                            url="https://namu.wiki/w/testgame",
+                            snippet="테스트게임은 알 수 없는 개발사의 게임이다.",
+                        ),
+                        SimpleNamespace(
+                            title="테스트게임 - 위키백과",
+                            url="https://ko.wikipedia.org/wiki/testgame",
+                            snippet="테스트게임은 정보가 부족한 게임이다.",
+                        ),
+                    ],
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            session_id = "zero-strong-natural-reload-second-followup-session"
+
+            # --- 첫 호출: zero-strong-slot entity search ---
+            first = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "테스트게임에 대해 알려줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_origin = first["response"]["response_origin"]
+            self.assertIsNotNone(first_origin)
+            self.assertEqual(first_origin["verification_label"], "설명형 단일 출처")
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            def _assert_origin_and_sources(result, stage: str) -> None:
+                self.assertTrue(result["ok"], f"{stage} handle_chat must succeed")
+                self.assertIn(
+                    "load_web_search_record",
+                    result["response"]["actions_taken"],
+                    f"{stage} must route through the load_web_search_record path",
+                )
+                origin = result["response"]["response_origin"]
+                self.assertIsNotNone(origin, f"{stage} response_origin must not be None")
+                self.assertIn(
+                    origin.get("answer_mode", ""),
+                    ("entity_card", first_origin["answer_mode"]),
+                    f"{stage} answer_mode must stay on the entity-card family",
+                )
+                self.assertEqual(
+                    origin["verification_label"],
+                    first_origin["verification_label"],
+                    f"{stage} verification_label must not drift",
+                )
+                self.assertEqual(
+                    origin["source_roles"],
+                    first_origin["source_roles"],
+                    f"{stage} source_roles must not drift",
+                )
+                source_paths = result["session"]["active_context"]["source_paths"]
+                self.assertIn(
+                    "https://namu.wiki/w/testgame",
+                    source_paths,
+                    f"{stage} must retain namu.wiki source path",
+                )
+                self.assertIn(
+                    "https://ko.wikipedia.org/wiki/testgame",
+                    source_paths,
+                    f"{stage} must retain ko.wikipedia.org source path",
+                )
+
+            # --- 둘째 호출: 자연어 reload ---
+            second = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                }
+            )
+            _assert_origin_and_sources(second, "natural reload")
+
+            # --- 셋째 호출: 첫 follow-up (user_text + load_web_search_record_id) ---
+            third = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 검색 결과 요약해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            _assert_origin_and_sources(third, "first follow-up")
+
+            # --- 넷째 호출: 두 번째 follow-up (user_text + load_web_search_record_id) ---
+            fourth = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 게임 장르만 한 줄로 다시 정리해줘",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            _assert_origin_and_sources(fourth, "second follow-up")
+            # zero-strong natural-reload second follow-up response_origin exactness: matches
+            # the browser smoke contract (`WEB`, `설명 카드`, `설명형 단일 출처`, `백과 기반`).
+            # Added as an inline literal block instead of broadening `_assert_origin_and_sources`
+            # because that helper also covers the already-closed natural reload and first
+            # follow-up stages; keeping the helper unchanged preserves CONTROL_SEQ 64-66 /
+            # CONTROL_SEQ 74-75 coverage for those earlier stages.
+            fourth_origin = fourth["response"]["response_origin"]
+            self.assertEqual(fourth_origin["badge"], "WEB")
+            self.assertEqual(fourth_origin["answer_mode"], "entity_card")
+            self.assertEqual(fourth_origin["verification_label"], "설명형 단일 출처")
+            self.assertEqual(fourth_origin["source_roles"], ["백과 기반"])
 
     def test_handle_chat_dual_probe_natural_reload_follow_up_preserves_source_paths(self) -> None:
         """dual-probe entity-card → 자연어 reload → follow-up에서
@@ -16440,7 +18329,6 @@ class WebAppServiceTest(unittest.TestCase):
                 }
             )
             self.assertTrue(first["ok"])
-            first_origin = first["response"]["response_origin"]
             record_id = first["session"]["web_search_history"][0]["record_id"]
 
             # --- 둘째 호출: 자연어 reload ---
@@ -16463,12 +18351,15 @@ class WebAppServiceTest(unittest.TestCase):
                 }
             )
             self.assertTrue(third["ok"])
+            # dual-probe natural-reload first follow-up response_origin exactness: matches
+            # the browser smoke contract (`WEB`, `설명 카드`, `설명형 다중 출처 합의`,
+            # `공식 기반 · 백과 기반`) and mirrors the minimal inline pattern used in the
+            # actual-search natural-reload first follow-up closure at `:18535`.
             followup_origin = third["response"]["response_origin"]
-
-            self.assertIsNotNone(followup_origin)
-            self.assertIn(followup_origin.get("answer_mode", ""), ("entity_card", first_origin["answer_mode"]))
-            self.assertEqual(followup_origin["verification_label"], first_origin["verification_label"])
-            self.assertEqual(followup_origin["source_roles"], first_origin["source_roles"])
+            self.assertEqual(followup_origin["badge"], "WEB")
+            self.assertEqual(followup_origin["answer_mode"], "entity_card")
+            self.assertEqual(followup_origin["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(followup_origin["source_roles"], ["공식 기반", "백과 기반"])
 
     def test_handle_chat_dual_probe_natural_reload_second_follow_up_preserves_response_origin_and_source_paths(self) -> None:
         """dual-probe entity-card → 자연어 reload → first follow-up → second follow-up에서
@@ -16642,7 +18533,6 @@ class WebAppServiceTest(unittest.TestCase):
                 }
             )
             self.assertTrue(first["ok"])
-            first_origin = first["response"]["response_origin"]
             record_id = first["session"]["web_search_history"][0]["record_id"]
 
             second = service.handle_chat(
@@ -16663,12 +18553,15 @@ class WebAppServiceTest(unittest.TestCase):
                 }
             )
             self.assertTrue(third["ok"])
+            # actual-search natural-reload first follow-up response_origin exactness: matches
+            # the browser smoke contract (`WEB`, `설명 카드`, `설명형 다중 출처 합의`, `백과 기반`)
+            # and mirrors the minimal inline pattern used in the click-reload first follow-up
+            # closure at `:9486`.
             followup_origin = third["response"]["response_origin"]
-
-            self.assertIsNotNone(followup_origin)
-            self.assertIn(followup_origin.get("answer_mode", ""), ("entity_card", first_origin["answer_mode"]))
-            self.assertEqual(followup_origin["verification_label"], first_origin["verification_label"])
-            self.assertEqual(followup_origin["source_roles"], first_origin["source_roles"])
+            self.assertEqual(followup_origin["badge"], "WEB")
+            self.assertEqual(followup_origin["answer_mode"], "entity_card")
+            self.assertEqual(followup_origin["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(followup_origin["source_roles"], ["백과 기반"])
 
     def test_handle_chat_actual_entity_search_natural_reload_second_follow_up_preserves_response_origin_and_source_paths(self) -> None:
         """actual entity-search → 자연어 reload → first follow-up → second follow-up에서
@@ -16773,6 +18666,21 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(origin["source_roles"], ["보조 출처"])
             source_paths = fourth["session"]["active_context"]["source_paths"]
             self.assertIn("https://example.com/seoul-weather", source_paths)
+            # latest-update non-noisy empty-meta branch: history entry keeps zero-count
+            # claim_coverage_summary + empty progress through the second follow-up.
+            history_entry = next(
+                (item for item in fourth["session"]["web_search_history"] if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(history_entry)
+            self.assertEqual(
+                history_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(history_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
     def test_handle_chat_latest_update_news_only_reload_second_follow_up_preserves_response_origin_and_source_paths(self) -> None:
         """latest_update news-only → click reload → first follow-up → second follow-up에서
@@ -16838,6 +18746,21 @@ class WebAppServiceTest(unittest.TestCase):
             source_paths = fourth["session"]["active_context"]["source_paths"]
             self.assertIn("https://www.hankyung.com/economy/2025", source_paths)
             self.assertIn("https://www.mk.co.kr/economy/2025", source_paths)
+            # latest-update non-noisy empty-meta branch: history entry keeps zero-count
+            # claim_coverage_summary + empty progress through the second follow-up.
+            history_entry = next(
+                (item for item in fourth["session"]["web_search_history"] if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(history_entry)
+            self.assertEqual(
+                history_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(history_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
 
     def test_handle_chat_latest_update_mixed_source_natural_reload_follow_up_preserves_response_origin_and_source_paths(self) -> None:
@@ -16890,6 +18813,21 @@ class WebAppServiceTest(unittest.TestCase):
             source_paths = third["session"]["active_context"]["source_paths"]
             self.assertIn("https://store.steampowered.com/sale/summer2026", source_paths)
             self.assertIn("https://www.yna.co.kr/view/AKR20260401000100017", source_paths)
+            # latest-update natural-reload empty-meta branch: history entry keeps zero-count
+            # claim_coverage_summary + empty progress across the natural-reload follow-up path.
+            history_entry = next(
+                (item for item in third["session"]["web_search_history"] if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(history_entry)
+            self.assertEqual(
+                history_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(history_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
     def test_handle_chat_latest_update_mixed_source_natural_reload_second_follow_up_preserves_response_origin_and_source_paths(self) -> None:
         """latest_update mixed-source → 자연어 reload → first follow-up → second follow-up에서
@@ -16944,6 +18882,21 @@ class WebAppServiceTest(unittest.TestCase):
             source_paths = fourth["session"]["active_context"]["source_paths"]
             self.assertIn("https://store.steampowered.com/sale/summer2026", source_paths)
             self.assertIn("https://www.yna.co.kr/view/AKR20260401000100017", source_paths)
+            # latest-update natural-reload empty-meta branch: history entry keeps zero-count
+            # claim_coverage_summary + empty progress through the second natural-reload follow-up.
+            history_entry = next(
+                (item for item in fourth["session"]["web_search_history"] if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(history_entry)
+            self.assertEqual(
+                history_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(history_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
     def test_handle_chat_latest_update_single_source_natural_reload_follow_up_preserves_response_origin_and_source_paths(self) -> None:
         """latest_update single-source → 자연어 reload → first follow-up에서
@@ -16986,6 +18939,21 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(origin["source_roles"], ["보조 출처"])
             source_paths = third["session"]["active_context"]["source_paths"]
             self.assertIn("https://example.com/seoul-weather", source_paths)
+            # latest-update natural-reload empty-meta branch: history entry keeps zero-count
+            # claim_coverage_summary + empty progress across the natural-reload follow-up path.
+            history_entry = next(
+                (item for item in third["session"]["web_search_history"] if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(history_entry)
+            self.assertEqual(
+                history_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(history_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
     def test_handle_chat_latest_update_single_source_natural_reload_second_follow_up_preserves_response_origin_and_source_paths(self) -> None:
         """latest_update single-source → 자연어 reload → first follow-up → second follow-up에서
@@ -17030,6 +18998,21 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(origin["source_roles"], ["보조 출처"])
             source_paths = fourth["session"]["active_context"]["source_paths"]
             self.assertIn("https://example.com/seoul-weather", source_paths)
+            # latest-update natural-reload empty-meta branch: history entry keeps zero-count
+            # claim_coverage_summary + empty progress through the second natural-reload follow-up.
+            history_entry = next(
+                (item for item in fourth["session"]["web_search_history"] if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(history_entry)
+            self.assertEqual(
+                history_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(history_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
     def test_handle_chat_latest_update_news_only_natural_reload_follow_up_preserves_response_origin_and_source_paths(self) -> None:
         """latest_update news-only → 자연어 reload → first follow-up에서
@@ -17079,6 +19062,21 @@ class WebAppServiceTest(unittest.TestCase):
             source_paths = third["session"]["active_context"]["source_paths"]
             self.assertIn("https://www.hankyung.com/economy/2025", source_paths)
             self.assertIn("https://www.mk.co.kr/economy/2025", source_paths)
+            # latest-update natural-reload empty-meta branch: history entry keeps zero-count
+            # claim_coverage_summary + empty progress across the natural-reload follow-up path.
+            history_entry = next(
+                (item for item in third["session"]["web_search_history"] if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(history_entry)
+            self.assertEqual(
+                history_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(history_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
     def test_handle_chat_latest_update_news_only_natural_reload_second_follow_up_preserves_response_origin_and_source_paths(self) -> None:
         """latest_update news-only → 자연어 reload → first follow-up → second follow-up에서
@@ -17130,6 +19128,21 @@ class WebAppServiceTest(unittest.TestCase):
             source_paths = fourth["session"]["active_context"]["source_paths"]
             self.assertIn("https://www.hankyung.com/economy/2025", source_paths)
             self.assertIn("https://www.mk.co.kr/economy/2025", source_paths)
+            # latest-update natural-reload empty-meta branch: history entry keeps zero-count
+            # claim_coverage_summary + empty progress through the second natural-reload follow-up.
+            history_entry = next(
+                (item for item in fourth["session"]["web_search_history"] if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(history_entry)
+            self.assertEqual(
+                history_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(history_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
     def test_handle_chat_latest_update_noisy_source_excluded_after_natural_reload_follow_up(self) -> None:
         """latest_update noisy-community → 자연어 reload → first follow-up에서
@@ -17186,6 +19199,25 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("https://www.hankyung.com/economy/2025", source_paths)
             self.assertIn("https://www.mk.co.kr/economy/2025", source_paths)
             self.assertNotIn("https://brunch.co.kr/economy", source_paths)
+            # latest-update noisy empty-meta branch: history entry serializes a zero-count
+            # claim_coverage_summary with empty progress. The history-card renderer therefore
+            # produces no `.meta` detail node (investigation cards skip the answer-mode label).
+            latest_history = third["session"]["web_search_history"]
+            self.assertTrue(latest_history)
+            latest_entry = next(
+                (item for item in latest_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(latest_entry)
+            self.assertEqual(latest_entry["verification_label"], "기사 교차 확인")
+            self.assertEqual(
+                latest_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(latest_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
     def test_handle_chat_latest_update_noisy_source_excluded_after_natural_reload_second_follow_up(self) -> None:
         """latest_update noisy-community → 자연어 reload → first follow-up → second follow-up에서
@@ -17245,6 +19277,24 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("https://www.hankyung.com/economy/2025", source_paths)
             self.assertIn("https://www.mk.co.kr/economy/2025", source_paths)
             self.assertNotIn("https://brunch.co.kr/economy", source_paths)
+            # latest-update noisy empty-meta branch (second follow-up): zero-count summary
+            # with empty progress. History card must not render any `.meta` detail node.
+            latest_history = fourth["session"]["web_search_history"]
+            self.assertTrue(latest_history)
+            latest_entry = next(
+                (item for item in latest_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(latest_entry)
+            self.assertEqual(latest_entry["verification_label"], "기사 교차 확인")
+            self.assertEqual(
+                latest_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(latest_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
     def test_handle_chat_latest_update_noisy_source_excluded_after_history_card_reload_follow_up(self) -> None:
         """latest_update noisy-community → click reload → first follow-up에서
@@ -17303,6 +19353,24 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("https://www.hankyung.com/economy/2025", source_paths)
             self.assertIn("https://www.mk.co.kr/economy/2025", source_paths)
             self.assertNotIn("https://brunch.co.kr/economy", source_paths)
+            # latest-update noisy empty-meta branch (click-reload shallow follow-up):
+            # zero-count summary with empty progress → history card renders no `.meta` node.
+            latest_history = third["session"]["web_search_history"]
+            self.assertTrue(latest_history)
+            latest_entry = next(
+                (item for item in latest_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(latest_entry)
+            self.assertEqual(latest_entry["verification_label"], "기사 교차 확인")
+            self.assertEqual(
+                latest_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(latest_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
     def test_handle_chat_latest_update_noisy_source_excluded_after_history_card_reload_second_follow_up(self) -> None:
         """latest_update noisy-community → click reload → first follow-up → second follow-up에서
@@ -17362,6 +19430,24 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("https://www.hankyung.com/economy/2025", source_paths)
             self.assertIn("https://www.mk.co.kr/economy/2025", source_paths)
             self.assertNotIn("https://brunch.co.kr/economy", source_paths)
+            # latest-update noisy empty-meta branch (click-reload second follow-up):
+            # zero-count summary with empty progress → history card renders no `.meta` node.
+            latest_history = fourth["session"]["web_search_history"]
+            self.assertTrue(latest_history)
+            latest_entry = next(
+                (item for item in latest_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(latest_entry)
+            self.assertEqual(latest_entry["verification_label"], "기사 교차 확인")
+            self.assertEqual(
+                latest_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(latest_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
 
     def test_handle_chat_entity_card_noisy_single_source_claim_excluded_after_natural_reload_follow_up(self) -> None:
         """entity-card noisy single-source → 자연어 reload → first follow-up에서
@@ -17412,6 +19498,24 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(origin["answer_mode"], "entity_card")
             self.assertEqual(origin["verification_label"], "설명형 다중 출처 합의")
             self.assertEqual(origin["source_roles"], ["백과 기반"])
+            # Shallow noisy follow-up must also expose the strong-plus-missing history-card
+            # count-summary branch, matching the deeper second-follow-up scenarios.
+            noisy_history = third["session"]["web_search_history"]
+            self.assertTrue(noisy_history)
+            noisy_entry = next(
+                (item for item in noisy_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(noisy_entry)
+            self.assertEqual(noisy_entry["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(
+                noisy_entry.get("claim_coverage_summary"),
+                {"strong": 3, "weak": 0, "missing": 2},
+            )
+            self.assertEqual(
+                str(noisy_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
             self.assertNotIn("출시일", third["response"]["text"])
             self.assertNotIn("2025", third["response"]["text"])
             self.assertNotIn("blog.example.com", third["response"]["text"])
@@ -17471,6 +19575,26 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(origin["answer_mode"], "entity_card")
             self.assertEqual(origin["verification_label"], "설명형 다중 출처 합의")
             self.assertEqual(origin["source_roles"], ["백과 기반"])
+            # Count-summary continuity: noisy runtime exposes the strong-plus-missing branch
+            # (`verification_label="설명형 다중 출처 합의"`, `strong>0`, `weak==0`, `missing>0`,
+            # empty progress summary). Lock this branch explicitly alongside the existing
+            # exclusion/provenance assertions so `.meta` drift is caught at source.
+            noisy_history = fourth["session"]["web_search_history"]
+            self.assertTrue(noisy_history)
+            noisy_entry = next(
+                (item for item in noisy_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(noisy_entry)
+            self.assertEqual(noisy_entry["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(
+                noisy_entry.get("claim_coverage_summary"),
+                {"strong": 3, "weak": 0, "missing": 2},
+            )
+            self.assertEqual(
+                str(noisy_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
             self.assertNotIn("출시일", fourth["response"]["text"])
             self.assertNotIn("2025", fourth["response"]["text"])
             self.assertNotIn("blog.example.com", fourth["response"]["text"])
@@ -17529,6 +19653,24 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(origin["answer_mode"], "entity_card")
             self.assertEqual(origin["verification_label"], "설명형 다중 출처 합의")
             self.assertEqual(origin["source_roles"], ["백과 기반"])
+            # Shallow click-reload noisy follow-up must also expose the strong-plus-missing
+            # history-card count-summary branch, matching the deeper second-follow-up scenarios.
+            noisy_history = third["session"]["web_search_history"]
+            self.assertTrue(noisy_history)
+            noisy_entry = next(
+                (item for item in noisy_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(noisy_entry)
+            self.assertEqual(noisy_entry["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(
+                noisy_entry.get("claim_coverage_summary"),
+                {"strong": 3, "weak": 0, "missing": 2},
+            )
+            self.assertEqual(
+                str(noisy_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
             self.assertNotIn("출시일", third["response"]["text"])
             self.assertNotIn("2025", third["response"]["text"])
             self.assertNotIn("blog.example.com", third["response"]["text"])
@@ -17588,6 +19730,25 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(origin["answer_mode"], "entity_card")
             self.assertEqual(origin["verification_label"], "설명형 다중 출처 합의")
             self.assertEqual(origin["source_roles"], ["백과 기반"])
+            # Count-summary continuity: noisy runtime exposes the strong-plus-missing branch
+            # even after click-reload second follow-up. Lock this branch explicitly so `.meta`
+            # drift is caught at source alongside the existing exclusion/provenance assertions.
+            noisy_history = fourth["session"]["web_search_history"]
+            self.assertTrue(noisy_history)
+            noisy_entry = next(
+                (item for item in noisy_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(noisy_entry)
+            self.assertEqual(noisy_entry["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(
+                noisy_entry.get("claim_coverage_summary"),
+                {"strong": 3, "weak": 0, "missing": 2},
+            )
+            self.assertEqual(
+                str(noisy_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
             self.assertNotIn("출시일", fourth["response"]["text"])
             self.assertNotIn("2025", fourth["response"]["text"])
             self.assertNotIn("blog.example.com", fourth["response"]["text"])

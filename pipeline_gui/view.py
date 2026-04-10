@@ -307,7 +307,7 @@ def build_status_panels(app: PipelineGUI, content: Frame) -> None:
 
     file_card = make_card(overview)
     file_card.pack(side=LEFT, fill=BOTH, expand=True, padx=(6, 0))
-    app._artifacts_title_var = StringVar(value="산출물")
+    app._artifacts_title_var = StringVar(value="라운드 기록")
     Label(file_card, textvariable=app._artifacts_title_var, font=f["section"], bg=CARD_BG, fg=SUB_FG).pack(anchor="w")
     app.work_var = StringVar(value="최신 work: —")
     app.verify_var = StringVar(value="최신 verify: —")

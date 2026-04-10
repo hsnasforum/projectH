@@ -1,0 +1,47 @@
+## 변경 파일
+- `.pipeline/claude_handoff.md`
+
+## 사용 skill
+- round-handoff
+
+## 변경 이유
+- latest `/work` `work/4/8/2026-04-08-task-backlog-web-investigation-wording-clarification.md`가 claimed docs-only clarification을 실제 current docs truth에 맞게 반영했는지 확인해야 했습니다.
+- same-day latest `/verify`와 existing `.pipeline/claude_handoff.md`는 직전 `NEXT_STEPS Current Checkpoint Web Investigation` 슬라이스 기준이어서, 최신 `/work`를 기준으로 persistent verification truth와 다음 exact slice를 다시 고정할 필요가 있었습니다.
+
+## 핵심 변경
+- latest `/work` `work/4/8/2026-04-08-task-backlog-web-investigation-wording-clarification.md`는 truthful하다고 확인했습니다.
+- current `docs/TASK_BACKLOG.md:7`, `docs/TASK_BACKLOG.md:23-24`는 `/work` 주장대로 아래 shipped web-investigation truth를 직접 반영하고 있습니다.
+  - permission-gated secondary mode with `enabled` / `disabled` / `ask` per-session states under document-first guardrail
+  - local JSON history with in-session reload and history-card answer-mode / verification-strength / source-role trust badges
+  - entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade
+  - claim-coverage panel with status tags and actionable hints
+- same-family source-of-truth와도 일치했습니다.
+  - `README.md:68-69`
+  - `docs/NEXT_STEPS.md:15`
+  - `docs/PRODUCT_SPEC.md:151-155`
+  - `docs/PRODUCT_SPEC.md:307-312`
+  - `docs/ACCEPTANCE_CRITERIA.md:37`
+- previous `.pipeline/claude_handoff.md`는 이미 닫힌 `TASK_BACKLOG Web Investigation wording clarification`을 계속 지시하고 있어 stale 상태였고, 이번 라운드에서 갱신했습니다.
+- next slice는 같은 wording family의 다음 current-risk reduction으로 `project-brief Web Investigation wording clarification` 한 개로 고정했습니다.
+  - current `docs/project-brief.md:15`, `docs/project-brief.md:79-80`, `docs/project-brief.md:106`은 web investigation을 여전히 generic하게 기술합니다.
+  - `docs/PRODUCT_PROPOSAL.md:26`, `docs/PRODUCT_PROPOSAL.md:59`, `docs/PRODUCT_PROPOSAL.md:135`도 generic하지만, `docs/project-brief.md`가 root-level current-contract / implementation brief라서 same-family tie-break상 먼저 좁히는 편이 맞습니다.
+- `.pipeline/claude_handoff.md`도 위 판단에 맞춰 `project-brief Web Investigation wording clarification` 기준으로 갱신했습니다.
+
+## 검증
+- `git diff -- docs/TASK_BACKLOG.md`
+- `git diff --check -- docs/TASK_BACKLOG.md`
+- `nl -ba docs/TASK_BACKLOG.md | sed -n '1,80p'`
+- `nl -ba README.md | sed -n '60,75p;120,132p'`
+- `nl -ba docs/NEXT_STEPS.md | sed -n '1,40p'`
+- `nl -ba docs/PRODUCT_SPEC.md | sed -n '145,160p;300,316p'`
+- `nl -ba docs/ACCEPTANCE_CRITERIA.md | sed -n '32,58p'`
+- `nl -ba docs/project-brief.md | sed -n '13,18p;68,81p;100,107p'`
+- `nl -ba docs/PRODUCT_PROPOSAL.md | sed -n '20,30p;54,64p;130,138p'`
+- `sed -n '1,220p' .pipeline/claude_handoff.md`
+- `ls -lt .pipeline/*.md`
+- docs-only verification 범위라 Playwright, `python3 -m unittest -v`, `make e2e-test`는 재실행하지 않았습니다.
+
+## 남은 리스크
+- `docs/project-brief.md:15`, `docs/project-brief.md:79-80`, `docs/project-brief.md:106`은 아직 current shipped web-investigation truth를 fully 직접 반영하지 못합니다.
+- `docs/PRODUCT_PROPOSAL.md:26`, `docs/PRODUCT_PROPOSAL.md:59`, `docs/PRODUCT_PROPOSAL.md:135`도 generic wording이 남아 있지만, 이번 handoff에서는 `project-brief` 한 파일만 다음 슬라이스로 고정했습니다.
+- unrelated dirty worktree(`.gitignore`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `PROJECT_CUSTOM_INSTRUCTIONS.md`, `pipeline_gui/*`, `watcher_core.py`, 관련 tests, `windows-launchers/README.md`, `work/README.md`, `verify/README.md`, `report/gemini/README.md`, unrelated `work/` / `verify/` notes)는 이번 검수 범위 밖이라 손대지 않았습니다.

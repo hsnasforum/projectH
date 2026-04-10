@@ -120,6 +120,7 @@ def build_console_presentation(*, selected_agent: str, snapshot: object) -> Cons
     work_mtime = float(_snapshot_get(snapshot, "work_mtime", 0.0) or 0.0)
     verify_name = str(_snapshot_get(snapshot, "verify_name", "—") or "—")
     verify_mtime = float(_snapshot_get(snapshot, "verify_mtime", 0.0) or 0.0)
+    turn_state = _snapshot_get(snapshot, "turn_state", {}) or {}
     log_lines = list(_snapshot_get(snapshot, "log_lines", []) or [])
 
     selected_text = format_focus_output(str(pane_map.get(selected_agent, "") if isinstance(pane_map, dict) else ""))
@@ -149,7 +150,7 @@ def build_console_presentation(*, selected_agent: str, snapshot: object) -> Cons
         focus_title = f"{selected_agent.upper()} • 최근 pane 출력 (마지막 실행)"
 
     artifact_color = "#c0a060" if is_live else "#505868"
-    artifacts_title = "산출물" if is_live else "산출물 (마지막 실행)"
+    artifacts_title = "라운드 기록" if is_live else "라운드 기록 (마지막 실행)"
 
     run_job = str(run.get("job", "") or "") if isinstance(run, dict) else ""
     run_phase = str(run.get("phase", "") or "") if isinstance(run, dict) else ""
@@ -173,12 +174,14 @@ def build_console_presentation(*, selected_agent: str, snapshot: object) -> Cons
         run_context_text = ""
         run_context_fg = "#404058"
 
-    work_text = f"최신 work:   {work_name}"
-    if work_mtime:
-        work_text += f" ({time_ago(work_mtime)})"
-    verify_text = f"최신 verify: {verify_name}"
-    if verify_mtime:
-        verify_text += f" ({time_ago(verify_mtime)})"
+    work_text, verify_text = _build_round_record_lines(
+        is_live=is_live,
+        turn_state=turn_state if isinstance(turn_state, dict) else {},
+        work_name=work_name,
+        work_mtime=work_mtime,
+        verify_name=verify_name,
+        verify_mtime=verify_mtime,
+    )
 
     log_hint_parts = []
     if run_turn:
@@ -207,6 +210,61 @@ def build_console_presentation(*, selected_agent: str, snapshot: object) -> Cons
         log_title=log_title,
         log_text=log_text,
     )
+
+
+def _format_record_line(prefix: str, name: str, mtime: float) -> str:
+    text = f"{prefix}: {name}"
+    if mtime:
+        text += f" ({time_ago(mtime)})"
+    return text
+
+
+def _build_round_record_lines(
+    *,
+    is_live: bool,
+    turn_state: dict[str, object],
+    work_name: str,
+    work_mtime: float,
+    verify_name: str,
+    verify_mtime: float,
+) -> tuple[str, str]:
+    if not is_live:
+        return (
+            _format_record_line("마지막 work", work_name, work_mtime),
+            _format_record_line("마지막 verify", verify_name, verify_mtime),
+        )
+
+    state_value = str(turn_state.get("state") or "")
+    entered_at = float(turn_state.get("entered_at") or 0.0)
+    work_is_current = bool(work_mtime and entered_at and work_mtime >= entered_at)
+    verify_is_current = bool(verify_mtime and entered_at and verify_mtime >= entered_at)
+
+    latest_work_text = _format_record_line("최신 work", work_name, work_mtime)
+    latest_verify_text = _format_record_line("최신 verify", verify_name, verify_mtime)
+
+    if state_value == "CLAUDE_ACTIVE":
+        if work_is_current:
+            work_text = _format_record_line("현재 라운드 work", work_name, work_mtime)
+        elif work_name == "—":
+            work_text = "현재 라운드 work: 아직 기록되지 않음"
+        else:
+            work_text = f"현재 라운드 work: 아직 기록되지 않음 · {latest_work_text}"
+        return work_text, latest_verify_text
+
+    if state_value in {"CODEX_VERIFY", "CODEX_FOLLOWUP"}:
+        if work_name == "—":
+            work_text = "검증 기준 work: 아직 확인되지 않음"
+        else:
+            work_text = _format_record_line("검증 기준 work", work_name, work_mtime)
+        if verify_is_current:
+            verify_text = _format_record_line("현재 라운드 verify", verify_name, verify_mtime)
+        elif verify_name == "—":
+            verify_text = "현재 라운드 verify: 아직 미기록"
+        else:
+            verify_text = f"현재 라운드 verify: 아직 미기록 · {latest_verify_text}"
+        return work_text, verify_text
+
+    return latest_work_text, latest_verify_text
 
 
 def build_agent_card_presentations(

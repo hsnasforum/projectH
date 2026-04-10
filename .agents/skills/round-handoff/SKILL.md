@@ -45,7 +45,8 @@ Use this skill when a round has effectively ended and the next task is a verific
 6. Leave or update a verification note under `verify/<month>/<day>/YYYY-MM-DD-<slug>.md` when the handoff itself is meaningful.
 7. Summarize current shipped truth, what is still absent or unresolved, and whether the work is still foundation-only or user-visible.
 8. Recommend one next slice only. Do not bundle adjacent helpers, later UI openings, or later status widening into the same prompt.
-9. When drafting the next prompt, include:
+9. Before choosing the next slice, scan today's recent `/work` and `/verify` history for repeated docs-only truth-sync loops. If the same day already has 3 or more same-family docs-only rounds in a row, do not recommend yet another smaller docs-only micro-slice. Instead recommend one bounded docs-only bundle that can close the remaining family drift in one round, or escalate through Gemini/operator if no truthful bundle is obvious.
+10. When drafting the next prompt, include:
    - dirty-worktree warning when relevant
    - must-read files
    - exact scope limits

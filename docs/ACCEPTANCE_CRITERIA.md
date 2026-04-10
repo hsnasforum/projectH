@@ -6,6 +6,7 @@
 - Placeholder items below are **not** current shipped acceptance gates unless explicitly marked as current.
 - The current release gate is scoped to the `app.web` browser shell.
 - Internal/operator tooling such as `controller.server`, `pipeline_gui/`, `windows-launchers/`, and `_data/` pipeline helpers is outside the current release gate unless explicitly promoted later.
+- The internal `pipeline_gui` home card may still evolve outside the web release gate; current behavior labels the file box as `라운드 기록` and distinguishes latest `/work` or `/verify` from a missing current-round receipt instead of showing a generic no-output label for both cases.
 
 ## Current Web MVP Contract
 

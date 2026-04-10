@@ -11,6 +11,9 @@ class TestGuideNewestValidControl(unittest.TestCase):
     def test_newest_valid_control_mentioned(self):
         self.assertIn("newest-valid-control", DEFAULT_GUIDE)
 
+    def test_control_seq_mentioned(self):
+        self.assertIn("CONTROL_SEQ", DEFAULT_GUIDE)
+
     def test_inactive_stale_wording(self):
         lower = DEFAULT_GUIDE.lower()
         self.assertTrue(

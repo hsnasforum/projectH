@@ -138,9 +138,12 @@ And if helper-agent or repo-skill files changed, also sync:
 
 - Codex = round verification and handoff lane: reads latest `/work` and `/verify`, reruns the checks needed to review that round, updates `/verify`, then writes `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, or `.pipeline/operator_request.md`.
 - `.pipeline/claude_handoff.md` with `STATUS: implement` means the next slice is already fixed and should be implemented as written.
+- Canonical control slots use `CONTROL_SEQ` for newest-valid-control ordering, with `mtime` only as a fallback when `CONTROL_SEQ` is missing.
+- If that handoff is blocked or not actionable, emit `STATUS: implement_blocked` with `BLOCK_REASON`, `REQUEST: codex_triage`, `HANDOFF`, `HANDOFF_SHA`, and `BLOCK_ID`, then stop.
 - `.pipeline/gemini_request.md` and `.pipeline/gemini_advice.md` are not Claude input slots.
 - `.pipeline/operator_request.md` with `STATUS: needs_operator` means the next slice is intentionally not fixed yet; do not start a new implementation round from that stop request.
 - A `needs_operator` stop request should never be interpreted as "choose your own next slice." It is a stopped state with an explained reason, not an invitation to improvise.
+- Do not ask the operator to choose among options from the Claude lane, and do not write `.pipeline/gemini_request.md` or `.pipeline/operator_request.md` yourself.
 - If Codex relays a short side answer during an active session because Gemini arbitrated a context-exhaustion, session-rollover, or continue-vs-switch question, treat that reply as lane guidance for the current session only. Do not reinterpret it as a new `.pipeline/claude_handoff.md`.
 - Codex may auto-fix the next slice without operator intervention when the latest `/work` and `/verify` already closed one family and one smaller same-family current-risk reduction clearly remains.
 - If Codex instead bundles several remaining docs-only truth-sync lines from one family into one bounded handoff after repeated same-day docs-only rounds, treat that bundled handoff as intentional. Do not re-split it into smaller docs-only micro-slices yourself.
@@ -155,8 +158,11 @@ And if helper-agent or repo-skill files changed, also sync:
 - Expect `.pipeline/claude_handoff.md` to be written in concise English-led execution language; do not rewrite that handoff into Korean before implementing it.
 - Do not self-select a new slice from `.pipeline/claude_handoff.md`.
 - If `.pipeline/claude_handoff.md` says `STATUS: implement`, implement that one slice only.
+- After completing that slice, stop after the bounded file edits and the canonical `/work` closeout. Do not commit, push, publish a branch, or open a PR from the implement lane.
+- If the handoff cannot be executed as written, emit the `implement_blocked` sentinel instead of opening a new choice menu.
 - If `.pipeline/gemini_request.md` or `.pipeline/gemini_advice.md` is the newest pending control file, wait instead of creating a new `/work` round.
 - If `.pipeline/operator_request.md` is the newest pending control file, wait instead of creating a new `/work` round.
+- Stale older control files are not execution input once a newer valid control file exists.
 - `.pipeline/operator_request.md` is not a Claude input slot. Do not answer it on behalf of the operator.
 - `.pipeline/codex_feedback.md` is not a Claude input slot. Prefer `.pipeline/claude_handoff.md` only for actual implementation input.
 - `.pipeline/session_arbitration_draft.md` is not a Claude input slot. If Codex references it, wait for a short lane reply or a new round-start handoff instead of reading the draft as execution input.

@@ -177,15 +177,18 @@ Current source-of-truth docs live in the root `docs/` directory.
   - if an active Claude session asks a live side question such as context exhaustion, session rollover, or continue-vs-switch, use `.pipeline/gemini_request.md` only as Codex↔Gemini coordination and relay the answer back to Claude as a short lane reply instead of rewriting `.pipeline/claude_handoff.md` mid-session
   - write `.pipeline/operator_request.md` when automation must stop for a real operator decision
 - `.pipeline/claude_handoff.md` is the current Claude-only execution slot.
-- `.pipeline/claude_handoff.md` should declare `STATUS: implement` only.
+- `.pipeline/claude_handoff.md` should declare `STATUS: implement` and should include `CONTROL_SEQ`.
+- When `STATUS: implement` is active, Claude may only implement that exact slice or emit a pane-local `STATUS: implement_blocked` sentinel with `BLOCK_REASON`, `REQUEST: codex_triage`, `HANDOFF`, `HANDOFF_SHA`, and `BLOCK_ID`.
+- Claude implement rounds stop after the bounded file edits plus the canonical `/work` closeout. Claude must not commit, push, publish a branch, or open a PR from the implement lane.
+- watcher should auto-route that `implement_blocked` sentinel to Codex triage instead of opening an operator stop directly.
 - `.pipeline/gemini_request.md` is the current Codex -> Gemini arbitration slot.
-- `.pipeline/gemini_request.md` should declare `STATUS: request_open` only while pending.
+- `.pipeline/gemini_request.md` should declare `STATUS: request_open` and should include `CONTROL_SEQ` while pending.
 - `.pipeline/gemini_advice.md` is the current Gemini -> Codex advisory slot.
-- `.pipeline/gemini_advice.md` should declare `STATUS: advice_ready` only while pending.
+- `.pipeline/gemini_advice.md` should declare `STATUS: advice_ready` and should include `CONTROL_SEQ` while pending.
 - `.pipeline/session_arbitration_draft.md` is an optional watcher-generated non-canonical draft slot.
 - `.pipeline/session_arbitration_draft.md` should declare `STATUS: draft_only` only, and must not be treated as a stop/go execution signal.
 - `.pipeline/operator_request.md` is the current operator-only stop slot.
-- `.pipeline/operator_request.md` should declare `STATUS: needs_operator` only, and should record:
+- `.pipeline/operator_request.md` should declare `STATUS: needs_operator`, should include `CONTROL_SEQ`, and should record:
   - why automation is stopping now
   - which latest `/work` and `/verify` pair the stop is based on
   - what the operator must decide before automation can resume
@@ -195,9 +198,10 @@ Current source-of-truth docs live in the root `docs/` directory.
   - it must not directly write `.pipeline/claude_handoff.md` or `.pipeline/operator_request.md`
   - it should prefer file edit/write tools for advisory output instead of shell heredoc or shell redirection
   - watcher prompts for Gemini should prefer explicit `@path` file mentions and exact advisory output paths over loose path prose
+  - pane-only answers do not close the advisory round; the round is complete only after both `report/gemini/...md` and `.pipeline/gemini_advice.md` are written
   - if the advice is answering an active Claude session's side question, Codex should relay that answer as a short lane reply and keep `.pipeline/claude_handoff.md` unchanged until the session boundary or next round handoff
 - `.pipeline/codex_feedback.md` may still exist as optional scratch, but Claude should not rely on it as a direct execution slot.
-- In automation, the newest control file wins:
+- In automation, the newest valid control file wins by `CONTROL_SEQ` first and `mtime` only as a fallback, and stale control files are excluded from dispatch:
   - `.pipeline/claude_handoff.md` → Claude 실행
   - `.pipeline/gemini_request.md` → Gemini 실행
   - `.pipeline/gemini_advice.md` → Codex follow-up
@@ -224,6 +228,7 @@ Current source-of-truth docs live in the root `docs/` directory.
   - choose one exact next slice and write `STATUS: implement` to `.pipeline/claude_handoff.md`, or
   - write `.pipeline/gemini_request.md` when a third-party tie-break is needed, or
   - explicitly stop automation with `.pipeline/operator_request.md`
+- In the canonical flow, Codex should not close a verification round with pane-only reasoning or a control-slot rewrite alone. Codex must leave or update `/verify` before writing the next control slot.
 - When the latest `/work` and `/verify` already closed one family truthfully, prefer automatic next-slice selection over `needs_operator` if one smaller same-family follow-up remains.
 - Default automatic tie-break order is:
   - same-family current-risk reduction
@@ -303,7 +308,7 @@ Current source-of-truth docs live in the root `docs/` directory.
 13. Use `trace-implementer` for small additive grounded-brief trace or memory-foundation implementation slices that must keep current UI stable while moving code, tests, and docs together.
 14. Use `round-handoff` when a Codex round is complete and you need to re-check the latest `/work` note, rerun honest verification, leave or update a `/verify` note, and draft the next operator prompt without overstating progress.
 15. In the single-Codex tmux flow, keep Codex responsible for rerun verification and next-Claude feedback together; do not reintroduce a second canonical Codex lane unless the docs are updated again.
-16. In automation handoff, Claude should implement only `.pipeline/claude_handoff.md` when it says `STATUS: implement`. Gemini와 operator stop files must not be routed to Claude.
+16. In automation handoff, Claude should implement only `.pipeline/claude_handoff.md` when it says `STATUS: implement`. If that slice is blocked, Claude should emit the `STATUS: implement_blocked` sentinel instead of asking the operator to choose. Gemini와 operator stop files must not be routed to Claude.
 17. Prefer extending existing shared helpers, queries, scripts, and prompts over adding near-copy code paths. If temporary duplication is unavoidable, say why and leave a clear cleanup path.
 18. Do not split one coherent task into many ultra-small slices just to keep rounds tiny. Prefer the smallest coherent reviewable slice that closes meaningful progress when the files and verification path naturally belong together.
 

@@ -74,6 +74,9 @@
 - `.pipeline` execution/control 슬롯은 기본적으로 concise English-led instructions를 유지합니다.
 - 파일 경로, 테스트 이름, selector, field name 같은 literal identifier는 기록 언어와 무관하게 원문 그대로 둡니다.
 - `.pipeline` 내용과 `/work` 또는 `/verify`가 충돌하면 `/work`와 `/verify`를 우선합니다.
+- watcher는 active `CLAUDE_ACTIVE` 구현 라운드가 이미 진행 중이면 새 `claude_handoff.md`를 즉시 hot-swap하지 않고, 현재 라운드가 `/work`, `implement_blocked`, 또는 idle timeout으로 닫힌 뒤 다음 판정에서 반영하는 편이 맞습니다.
+- watcher는 control slot 변경만으로 Codex verification round를 닫지 않습니다. 현재 라운드 시작 이후의 `/verify` receipt가 실제로 갱신된 것이 확인될 때만 feedback-only completion을 인정합니다.
+- Codex verification round가 idle timeout에 걸렸는데 current-round `/verify` receipt나 next control output이 아직 incomplete하면, watcher는 그 라운드를 terminal done으로 닫지 않고 `VERIFY_PENDING`으로 되돌려 backoff 후 자동 재시도를 거치게 하는 편이 맞습니다.
 - stale control slot을 수동 정리해야 할 때는 `.pipeline/archive-stale-control-slots.sh`를 쓰고, newest control file은 archive하지 않는 편이 맞습니다.
 
 ## handoff 작성 원칙
@@ -128,7 +131,7 @@
 
 1. Claude가 구현 후 최신 `/work` closeout을 남깁니다.
 2. Codex가 최신 `/work`, 최신 same-day `/verify`를 읽고 실제 검증을 재실행합니다.
-3. Codex가 `/verify` note를 남깁니다.
+3. Codex가 `/verify` note를 남기거나 갱신합니다.
 4. Codex가 구현 가능한 경우 `.pipeline/claude_handoff.md`에 `STATUS: implement`를 씁니다.
 5. Codex가 exact slice를 못 좁히면 `.pipeline/gemini_request.md`에 `STATUS: request_open`을 씁니다.
 6. Gemini가 `report/gemini/...md`와 `.pipeline/gemini_advice.md`에 `STATUS: advice_ready`를 남깁니다.
@@ -144,6 +147,13 @@
 12. startup dispatch는 pane이 실제로 입력을 받을 준비가 됐는지 먼저 확인한 뒤 보내는 편이 맞습니다. 그 뒤에는 짧은 readiness 확인과 watcher retry에 맡기는 쪽이 기본값입니다.
 13. startup 또는 rolling dispatch에서 최신 canonical `/work`가 latest same-day `/verify`보다 새로우면, fresher `claude_handoff.md`가 남아 있어도 Codex verification이 Claude 구현보다 우선입니다.
 14. launcher가 `tmux attach`에서 빠져나와도 자동 진행이 이어져야 하므로, watcher는 launcher shell background보다 tmux session 내부의 별도 hidden watcher window에서 유지하는 편이 더 안전합니다.
+15. active Claude implement round가 이미 진행 중이면, newer `claude_handoff.md`가 생겨도 watcher는 mid-round re-dispatch를 하지 않고 현재 라운드 exit 뒤에만 반영합니다.
+
+## 추가 실행 규칙
+
+- Claude implement round는 bounded file edits와 canonical `/work` closeout에서 끝납니다. implement lane에서 commit, push, branch publish, PR 생성까지 같이 진행하지 않는 편이 맞습니다.
+- Codex verification round는 pane-only reasoning이나 next control slot rewrite만으로 닫히지 않습니다. dispatch 이후 current-round `/verify` receipt가 실제로 갱신된 것이 확인된 뒤에만 `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, `.pipeline/operator_request.md`를 쓰는 편이 맞습니다.
+- Gemini advisory round도 pane-only answer로 닫지 않습니다. `report/gemini/...md` advisory log와 `.pipeline/gemini_advice.md` recommendation slot이 둘 다 있어야 round가 완료된 것으로 봅니다.
 
 ## stale control slot archive helper
 

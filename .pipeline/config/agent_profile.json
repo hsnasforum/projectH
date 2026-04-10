@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "selected_agents": [
+    "Claude",
+    "Codex",
+    "Gemini"
+  ],
+  "role_bindings": {
+    "implement": "Claude",
+    "verify": "Codex",
+    "advisory": "Gemini"
+  },
+  "role_options": {
+    "advisory_enabled": true,
+    "operator_stop_enabled": true,
+    "session_arbitration_enabled": true
+  },
+  "mode_flags": {
+    "single_agent_mode": false,
+    "self_verify_allowed": false,
+    "self_advisory_allowed": false
+  },
+  "metadata": {
+    "saved_at": "2026-04-09T18:21:16.601656+00:00",
+    "saved_by": "launcher",
+    "source_setup_id": "setup-20260410-032059-905058"
+  }
+}

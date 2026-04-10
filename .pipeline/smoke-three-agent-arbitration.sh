@@ -53,6 +53,15 @@ read_status() {
     awk -F':' '/^STATUS:/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print tolower($2); exit}' "$path"
 }
 
+read_header_value() {
+    local path="$1"
+    local key="$2"
+    if [ ! -f "$path" ]; then
+        return 1
+    fi
+    awk -F':' -v key="$key" '$1 == key {sub(/^[[:space:]]+/, "", $2); sub(/[[:space:]]+$/, "", $2); print $2; exit}' "$path"
+}
+
 wait_for_status() {
     local path="$1"
     local expected="$2"
@@ -179,6 +188,7 @@ EOF
 
 cat > "$GEMINI_REQUEST" <<EOF
 STATUS: request_open
+CONTROL_SEQ: 1
 
 This is a controlled workspace-local live arbitration smoke.
 
@@ -192,6 +202,14 @@ Rules:
 - do not widen scope beyond this smoke-only slice
 EOF
 
+REQUEST_SEQ="$(read_header_value "$GEMINI_REQUEST" "CONTROL_SEQ" 2>/dev/null || true)"
+if ! [[ "$REQUEST_SEQ" =~ ^[0-9]+$ ]]; then
+    echo "Seeded gemini_request.md missing valid CONTROL_SEQ: $GEMINI_REQUEST" >&2
+    cat "$GEMINI_REQUEST" >&2 || true
+    exit 1
+fi
+EXPECTED_NEXT_SEQ="$((REQUEST_SEQ + 1))"
+
 if tmux has-session -t "$SESSION" 2>/dev/null; then
     tmux kill-session -t "$SESSION"
 fi
@@ -204,10 +222,10 @@ GEMINI_PANE="$(tmux split-window -P -F '#{pane_id}' -v -t "$CODEX_PANE" -c "$PRO
 wait_for_cli_ready "$CODEX_PANE" 25 || true
 wait_for_cli_ready "$GEMINI_PANE" 25 || true
 
-VERIFY_PROMPT="ROLE: codex_verify\nSTATE: verify_pending\nLATEST_WORK: {latest_work_path}\nLATEST_VERIFY: {latest_verify_path}\nREAD_FIRST:\n- AGENTS.md\n- work/README.md\n- verify/README.md\n- .pipeline/README.md\nOUTPUTS:\n- /verify verification note if needed\n- ${BASE_REL}/claude_handoff.md for STATUS: implement\n- ${BASE_REL}/gemini_request.md when Codex cannot narrow after tie-break\n- ${BASE_REL}/operator_request.md only when Gemini still cannot resolve it\nRULES:\n- latest /work first, then same-day latest /verify if any\n- never route needs_operator to Claude\n- keep one exact next slice or one exact operator decision only"
-CLAUDE_PROMPT="ROLE: claude_implement\nSTATE: implement\nHANDOFF: ${BASE_REL}/claude_handoff.md\nREAD_FIRST:\n- CLAUDE.md\n- ${BASE_REL}/claude_handoff.md"
-GEMINI_PROMPT="ROLE: gemini_arbitrate\nSTATE: codex_needs_tiebreak\nOpen these files now:\n- @GEMINI.md\n- @${BASE_REL}/gemini_request.md\n- @AGENTS.md\n- {latest_work_mention}\n- {latest_verify_mention}\nThis is a controlled smoke only. If the request names an explicit smoke-only implement recommendation, prefer that exact recommendation and write the files now.\nWrite exactly two files using edit/write tools only:\n- advisory log: ${BASE_REL}/report/gemini/2026-04-03-live-arbitration-smoke.md\n- recommendation slot: ${BASE_REL}/gemini_advice.md\nDo not use shell heredoc, shell redirection, cat > file, or printf > file.\nDo not modify any other repo files.\nKeep the recommendation short and exact."
-CODEX_FOLLOWUP_PROMPT="ROLE: codex_followup\nSTATE: gemini_advice_ready\nREQUEST: ${BASE_REL}/gemini_request.md\nADVICE: ${BASE_REL}/gemini_advice.md\nLATEST_WORK: {latest_work_path}\nLATEST_VERIFY: {latest_verify_path}\nREAD_FIRST:\n- AGENTS.md\n- verify/README.md\n- .pipeline/README.md\n- ${BASE_REL}/gemini_request.md\n- ${BASE_REL}/gemini_advice.md"
+VERIFY_PROMPT="ROLE: codex_verify\nSTATE: verify_pending\nNEXT_CONTROL_SEQ: {next_control_seq}\nLATEST_WORK: {latest_work_path}\nLATEST_VERIFY: {latest_verify_path}\nREAD_FIRST:\n- AGENTS.md\n- work/README.md\n- verify/README.md\n- .pipeline/README.md\nOUTPUTS:\n- /verify verification note if needed\n- ${BASE_REL}/claude_handoff.md for STATUS: implement + CONTROL_SEQ: {next_control_seq}\n- ${BASE_REL}/gemini_request.md when Codex cannot narrow after tie-break + CONTROL_SEQ: {next_control_seq}\n- ${BASE_REL}/operator_request.md only when Gemini still cannot resolve it + CONTROL_SEQ: {next_control_seq}\nRULES:\n- latest /work first, then same-day latest /verify if any\n- never route needs_operator to Claude\n- when writing a control slot, put CONTROL_SEQ immediately after STATUS and use exactly {next_control_seq}\n- keep one exact next slice or one exact operator decision only"
+CLAUDE_PROMPT="ROLE: claude_implement\nSTATE: implement\nHANDOFF: {active_handoff_path}\nHANDOFF_SHA: {active_handoff_sha}\nREAD_FIRST:\n- CLAUDE.md\n- {active_handoff_path}\nRULES:\n- implement only the bounded slice from the handoff\n- do not ask the operator to choose among options\n- do not self-select the next slice\n- do not write or update ${BASE_REL}/gemini_request.md or ${BASE_REL}/operator_request.md\n- if the handoff is blocked or not actionable, emit the exact sentinel below and stop\nBLOCKED_SENTINEL:\nSTATUS: implement_blocked\nBLOCK_REASON: <short_reason>\nREQUEST: codex_triage\nHANDOFF: {active_handoff_path}\nHANDOFF_SHA: {active_handoff_sha}\nBLOCK_ID: {active_handoff_sha}:<short_reason>"
+GEMINI_PROMPT="ROLE: gemini_arbitrate\nSTATE: codex_needs_tiebreak\nNEXT_CONTROL_SEQ: {next_control_seq}\nREQUEST_FILE: ${GEMINI_REQUEST}\nThis is a controlled smoke only.\nThe request file already contains the exact smoke recommendation.\nDo not inspect unrelated repo files.\nWrite exactly two files now using edit/write tools only:\n- advisory log: ${REPORT_DIR}/2026-04-03-live-arbitration-smoke.md\n- recommendation slot: ${GEMINI_ADVICE} with STATUS: advice_ready and CONTROL_SEQ: {next_control_seq}\nRecommendation content should choose the smoke-only implement recommendation from ${GEMINI_REQUEST}.\nDo not use shell heredoc, shell redirection, cat > file, or printf > file.\nDo not modify any other repo files.\nWrite CONTROL_SEQ immediately after STATUS using exactly {next_control_seq}.\nKeep both outputs short and exact."
+CODEX_FOLLOWUP_PROMPT="ROLE: codex_followup\nSTATE: gemini_advice_ready\nREQUEST: ${GEMINI_REQUEST}\nADVICE: ${GEMINI_ADVICE}\nThis is a controlled smoke follow-up only.\nDo not inspect unrelated repo files.\nWrite exactly one final control slot now:\n- ${CLAUDE_HANDOFF} for STATUS: implement + CONTROL_SEQ: ${EXPECTED_NEXT_SEQ}\n- or ${OPERATOR_REQUEST} for STATUS: needs_operator + CONTROL_SEQ: ${EXPECTED_NEXT_SEQ}\nPrefer the smoke-only implement recommendation when present.\nDo not use shell heredoc, shell redirection, cat > file, or printf > file.\nWhen writing the final control slot, put CONTROL_SEQ immediately after STATUS and use exactly ${EXPECTED_NEXT_SEQ}."
 
 python3 "$SCRIPT_DIR/watcher_core.py" \
     --watch-dir "$BASE_DIR/work" \
@@ -232,6 +250,14 @@ if ! wait_for_status "$GEMINI_ADVICE" "advice_ready" "$TIMEOUT_SEC"; then
     exit 1
 fi
 
+ADVICE_SEQ="$(read_header_value "$GEMINI_ADVICE" "CONTROL_SEQ" 2>/dev/null || true)"
+if [ "$ADVICE_SEQ" != "$EXPECTED_NEXT_SEQ" ]; then
+    echo "Gemini advice CONTROL_SEQ mismatch: expected $EXPECTED_NEXT_SEQ got ${ADVICE_SEQ:-missing}" >&2
+    echo "watcher log: $WATCHER_LOG" >&2
+    cat "$GEMINI_ADVICE" >&2 || true
+    exit 1
+fi
+
 if ! find "$REPORT_DIR" -maxdepth 1 -type f -name '*.md' | grep -q .; then
     echo "Gemini report log missing under $REPORT_DIR" >&2
     echo "watcher log: $WATCHER_LOG" >&2
@@ -242,6 +268,32 @@ if ! wait_for_final_slot "$TIMEOUT_SEC"; then
     echo "Codex follow-up timed out: expected claude_handoff or operator_request" >&2
     echo "watcher log: $WATCHER_LOG" >&2
     tmux capture-pane -pt "$CODEX_PANE" -S -80 >&2 || true
+    exit 1
+fi
+
+HANDOFF_STATUS="$(read_status "$CLAUDE_HANDOFF" 2>/dev/null || true)"
+OPERATOR_STATUS="$(read_status "$OPERATOR_REQUEST" 2>/dev/null || true)"
+FINAL_SLOT=""
+if [ "$HANDOFF_STATUS" = "implement" ] && [ "$OPERATOR_STATUS" = "needs_operator" ]; then
+    echo "Unexpected dual final slots: both claude_handoff and operator_request are pending" >&2
+    cat "$CLAUDE_HANDOFF" >&2 || true
+    cat "$OPERATOR_REQUEST" >&2 || true
+    exit 1
+elif [ "$HANDOFF_STATUS" = "implement" ]; then
+    FINAL_SLOT="$CLAUDE_HANDOFF"
+elif [ "$OPERATOR_STATUS" = "needs_operator" ]; then
+    FINAL_SLOT="$OPERATOR_REQUEST"
+else
+    echo "Final slot status missing after wait_for_final_slot" >&2
+    echo "watcher log: $WATCHER_LOG" >&2
+    exit 1
+fi
+
+FINAL_SEQ="$(read_header_value "$FINAL_SLOT" "CONTROL_SEQ" 2>/dev/null || true)"
+if [ "$FINAL_SEQ" != "$EXPECTED_NEXT_SEQ" ]; then
+    echo "Final control slot CONTROL_SEQ mismatch: expected $EXPECTED_NEXT_SEQ got ${FINAL_SEQ:-missing}" >&2
+    echo "final slot: $FINAL_SLOT" >&2
+    cat "$FINAL_SLOT" >&2 || true
     exit 1
 fi
 

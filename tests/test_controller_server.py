@@ -45,5 +45,35 @@ class ControllerServerHostTests(unittest.TestCase):
                 )
 
 
+class ControllerServerLaunchGateTests(unittest.TestCase):
+    def test_pipeline_start_propagates_launch_gate_error_from_backend(self) -> None:
+        with mock.patch.object(controller_server, "backend_pipeline_start", return_value="실행 차단: active profile이 없습니다 (.pipeline/config/agent_profile.json)."):
+            result = controller_server.pipeline_start()
+        self.assertEqual(result["ok"], False)
+        self.assertIn("active profile이 없습니다", result["error"])
+        self.assertIn(".pipeline/config/agent_profile.json", result["error"])
+
+    def test_pipeline_start_waits_for_shared_readiness_confirmation(self) -> None:
+        with (
+            mock.patch.object(controller_server, "backend_pipeline_start", return_value="시작 요청됨"),
+            mock.patch.object(controller_server, "backend_confirm_pipeline_start", return_value=(True, "파이프라인 시작 완료 (watcher 확인)")),
+        ):
+            result = controller_server.pipeline_start()
+        self.assertEqual(result, {"ok": True, "message": "파이프라인 시작 완료 (watcher 확인)"})
+
+    def test_pipeline_start_returns_shared_readiness_failure(self) -> None:
+        with (
+            mock.patch.object(controller_server, "backend_pipeline_start", return_value="시작 요청됨"),
+            mock.patch.object(
+                controller_server,
+                "backend_confirm_pipeline_start",
+                return_value=(False, "시작 실패: 15초 안에 tmux 세션 'aip-projectH'가 감지되지 않았습니다"),
+            ),
+        ):
+            result = controller_server.pipeline_start()
+        self.assertEqual(result["ok"], False)
+        self.assertIn("15초 안에 tmux 세션", result["error"])
+
+
 if __name__ == "__main__":
     unittest.main()

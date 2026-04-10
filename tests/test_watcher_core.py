@@ -1,5 +1,6 @@
 import os
 import tempfile
+import time
 import unittest
 import json
 from pathlib import Path
@@ -392,7 +393,7 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
                 "gemini-pane": "✦ Finished\n> ",
             }
             with mock.patch("watcher_core._capture_pane_text", side_effect=lambda target: pane_texts[target]):
-                with mock.patch.object(core, "_get_work_tree_snapshot", side_effect=[{}, {"work.md": "changed"}]):
+                with mock.patch.object(core, "_get_work_tree_snapshot", side_effect=[{}, {}, {"work.md": "changed"}, {"work.md": "changed"}]):
                     core._poll()
                     self.assertTrue((base_dir / "session_arbitration_draft.md").exists())
                     core._poll()
@@ -1444,6 +1445,104 @@ class RollingSignalTransitionTest(unittest.TestCase):
                 core._check_pipeline_signal_updates()
 
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CLAUDE_ACTIVE)
+
+
+class ClaudeIdleTimeoutTest(unittest.TestCase):
+    def test_claude_idle_timeout_transitions_to_idle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            core = watcher_core.WatcherCore({
+                "watch_dir": str(watch_dir),
+                "base_dir": str(base_dir),
+                "repo_root": str(root),
+                "dry_run": True,
+                "claude_active_idle_timeout_sec": 5,
+            })
+
+            core._transition_turn(
+                watcher_core.WatcherTurnState.CLAUDE_ACTIVE,
+                "test_setup",
+            )
+            import hashlib as _hlib
+            idle_fingerprint = _hlib.md5(b"$ ").hexdigest()
+            core._last_active_pane_fingerprint = idle_fingerprint
+            core._last_progress_at = time.time() - 10
+            core._work_baseline_snapshot = {}
+
+            with mock.patch("watcher_core._capture_pane_text", return_value="$ "):
+                with mock.patch("watcher_core._pane_text_is_idle", return_value=True):
+                    core._check_claude_idle_timeout()
+
+            self.assertEqual(
+                core._current_turn_state,
+                watcher_core.WatcherTurnState.IDLE,
+            )
+
+    def test_claude_progress_resets_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            core = watcher_core.WatcherCore({
+                "watch_dir": str(watch_dir),
+                "base_dir": str(base_dir),
+                "repo_root": str(root),
+                "dry_run": True,
+                "claude_active_idle_timeout_sec": 5,
+            })
+
+            core._transition_turn(
+                watcher_core.WatcherTurnState.CLAUDE_ACTIVE,
+                "test_setup",
+            )
+            core._last_progress_at = time.time() - 10
+            core._last_active_pane_fingerprint = "old_fingerprint"
+
+            with mock.patch("watcher_core._capture_pane_text", return_value="running tests..."):
+                with mock.patch("watcher_core._pane_text_is_idle", return_value=False):
+                    core._check_claude_idle_timeout()
+
+            self.assertEqual(
+                core._current_turn_state,
+                watcher_core.WatcherTurnState.CLAUDE_ACTIVE,
+            )
+            self.assertGreater(core._last_progress_at, time.time() - 2)
+
+    def test_idle_release_cooldown_prevents_redispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            handoff = base_dir / "claude_handoff.md"
+            handoff.write_text("STATUS: implement\nCONTROL_SEQ: 17\n", encoding="utf-8")
+
+            core = watcher_core.WatcherCore({
+                "watch_dir": str(watch_dir),
+                "base_dir": str(base_dir),
+                "repo_root": str(root),
+                "dry_run": True,
+                "claude_active_idle_timeout_sec": 5,
+            })
+
+            handoff_sig = core._get_path_sig(handoff)
+            core._last_idle_release_handoff_sig = handoff_sig
+            core._last_idle_release_at = time.time()
+
+            self.assertTrue(core._is_idle_release_cooldown_active())
 
 
 class TransitionTurnTest(unittest.TestCase):

@@ -1622,6 +1622,15 @@ class WatcherCore:
         self._turn_active_control_seq: int = -1
         self._turn_state_path: Path = self.state_dir / "turn_state.json"
 
+        # Claude idle timeout tracking
+        self.claude_active_idle_timeout_sec: float = float(
+            config.get("claude_active_idle_timeout_sec", 300)
+        )
+        self._last_progress_at: float = 0.0
+        self._last_active_pane_fingerprint: str = ""
+        self._last_idle_release_handoff_sig: str = ""
+        self._last_idle_release_at: float = 0.0
+
         self.stabilizer = ArtifactStabilizer(
             settle_sec=config.get("settle_sec", 3.0),
             required_stable=config.get("required_stable", 2),
@@ -1748,6 +1757,9 @@ class WatcherCore:
         self._current_turn_state = new_state
         self._turn_entered_at = now
         self._turn_active_control_seq = active_control_seq
+        if new_state == WatcherTurnState.CLAUDE_ACTIVE:
+            self._last_progress_at = now
+            self._last_active_pane_fingerprint = ""
         log.info(
             "turn_state %s -> %s  reason=%s",
             old_state.value, new_state.value, reason,
@@ -2263,12 +2275,67 @@ class WatcherCore:
         if verify_pending:
             return "codex"
 
-        # 6. handoff active and dispatchable → claude
-        if handoff_active:
+        # 6. handoff active and dispatchable → claude (unless cooldown)
+        if handoff_active and not self._is_idle_release_cooldown_active():
             return "claude"
 
         # 7. fallback
         return "idle"
+
+    # ------------------------------------------------------------------
+    def _check_claude_idle_timeout(self) -> None:
+        """Check if Claude has been idle too long and transition to IDLE if so."""
+        if self._current_turn_state != WatcherTurnState.CLAUDE_ACTIVE:
+            return
+
+        target = self._role_pane_target("implement")
+        if not target:
+            return
+
+        now = time.time()
+        pane_text = _capture_pane_text(target)
+        pane_fingerprint = hashlib.md5(pane_text.encode()).hexdigest() if pane_text else ""
+
+        # Check for progress: pane fingerprint changed
+        if pane_fingerprint and pane_fingerprint != self._last_active_pane_fingerprint:
+            self._last_active_pane_fingerprint = pane_fingerprint
+            self._last_progress_at = now
+            return
+
+        # Check for progress: work snapshot changed
+        current_snapshot = self._get_work_tree_snapshot()
+        if current_snapshot != self._work_baseline_snapshot:
+            self._last_progress_at = now
+            return
+
+        # No progress — check timeout
+        elapsed = now - self._last_progress_at
+        if elapsed < self.claude_active_idle_timeout_sec:
+            return
+
+        # Final guard: pane must look idle too
+        if not _pane_text_is_idle(pane_text):
+            return
+
+        log.warning(
+            "claude idle timeout: %.0fs since last progress, transitioning to IDLE",
+            elapsed,
+        )
+        # Record cooldown to prevent immediate re-dispatch of same handoff
+        self._last_idle_release_handoff_sig = self._get_path_sig(self.claude_handoff_path)
+        self._last_idle_release_at = now
+        self._transition_turn(WatcherTurnState.IDLE, "claude_idle_timeout")
+
+    # ------------------------------------------------------------------
+    def _is_idle_release_cooldown_active(self) -> bool:
+        """True if the same handoff was recently released from idle timeout."""
+        if not self._last_idle_release_handoff_sig:
+            return False
+        current_sig = self._get_path_sig(self.claude_handoff_path)
+        if current_sig != self._last_idle_release_handoff_sig:
+            return False
+        elapsed = time.time() - self._last_idle_release_at
+        return elapsed < self.claude_active_idle_timeout_sec
 
     # ------------------------------------------------------------------
     def _determine_initial_turn(self) -> str:
@@ -2959,6 +3026,9 @@ class WatcherCore:
             if self._check_claude_implement_blocked():
                 return
             self._check_claude_live_session_escalation()
+            self._check_claude_idle_timeout()
+            if self._current_turn_state != WatcherTurnState.CLAUDE_ACTIVE:
+                return  # idle timeout fired
             # work/ 전체 스냅샷이 달라졌는지 확인
             current_snapshot = self._get_work_tree_snapshot()
             if current_snapshot == self._work_baseline_snapshot:

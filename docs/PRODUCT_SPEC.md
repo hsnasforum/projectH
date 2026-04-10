@@ -175,6 +175,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - `pipeline_gui/` desktop launcher and token-maintenance paths
 - `windows-launchers/` wrappers and packaged `.exe` flow
 - `_data/` pipeline/token collector runtime helpers
+- the internal `pipeline_gui` home card labels the file box as `라운드 기록` and distinguishes latest `/work` or `/verify` from a missing current-round receipt instead of collapsing that state into generic no-output wording
 
 ### Open Question
 - How much more should the web shell expose for low-confidence web investigation suggestions without shifting product identity away from document work?

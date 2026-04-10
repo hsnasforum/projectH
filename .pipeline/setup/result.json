@@ -1,0 +1,11 @@
+{
+  "status": "applied",
+  "setup_id": "setup-20260410-032059-905058",
+  "schema_version": 1,
+  "finished_at": "2026-04-09T18:21:14.374056+00:00",
+  "approved_preview_fingerprint": "sha256:3dd83882b6d270746faa4aef68232a57dac68a55a4fe7734295d0c71dace969e",
+  "effective_executor": "Codex",
+  "restart_required": true,
+  "draft_fingerprint": "sha256:a63e9b18ef5222121a7f5e9217a40714507f068ea97425c4b2b88663d332a831",
+  "message": "설정 적용 결과가 도착했습니다."
+}

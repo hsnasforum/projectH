@@ -1,0 +1,65 @@
+{
+  "status": "preview_ready",
+  "setup_id": "setup-20260410-032059-905058",
+  "schema_version": 1,
+  "generated_at": "2026-04-09T18:21:00.394062+00:00",
+  "draft_fingerprint": "sha256:a63e9b18ef5222121a7f5e9217a40714507f068ea97425c4b2b88663d332a831",
+  "preview_fingerprint": "sha256:3dd83882b6d270746faa4aef68232a57dac68a55a4fe7734295d0c71dace969e",
+  "effective_executor": "Codex",
+  "support_level": "supported",
+  "controls": {
+    "preview_allowed": true,
+    "apply_allowed": true,
+    "launch_allowed": true,
+    "banner_required": false,
+    "advisory_enabled": true,
+    "operator_stop_enabled": true,
+    "session_arbitration_enabled": true
+  },
+  "messages": [],
+  "effective_runtime_plan": {
+    "enabled_lanes": [
+      "Claude",
+      "Codex",
+      "Gemini"
+    ],
+    "role_owners": {
+      "implement": "Claude",
+      "verify": "Codex",
+      "advisory": "Gemini"
+    },
+    "prompt_owners": {
+      "implement": "Claude",
+      "verify": "Codex",
+      "advisory": "Gemini"
+    },
+    "controls": {
+      "preview_allowed": true,
+      "apply_allowed": true,
+      "launch_allowed": true,
+      "banner_required": false,
+      "advisory_enabled": true,
+      "operator_stop_enabled": true,
+      "session_arbitration_enabled": true
+    }
+  },
+  "warnings": [],
+  "infos": [
+    "설정 실행자는 Codex로 자동 선택됩니다.",
+    "적용 전까지 runtime은 active config만 사용합니다."
+  ],
+  "planned_changes": {
+    "write": [
+      ".pipeline/config/agent_profile.json"
+    ],
+    "restart_targets": [
+      "watcher",
+      "launcher"
+    ]
+  },
+  "diff_summary": [
+    "에이전트 Claude, Codex, Gemini / 구현 Claude / 검증 Codex / 자문 Gemini",
+    "옵션 자문=켜짐 · operator 중지=켜짐 · 세션 중재=켜짐"
+  ],
+  "restart_required": true
+}

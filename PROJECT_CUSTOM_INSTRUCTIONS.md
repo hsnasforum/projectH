@@ -92,7 +92,7 @@
 - 권장 흐름은 아래와 같습니다.
   - Claude가 구현 후 `/work`를 남깁니다.
   - Codex가 최신 `/work`, 최신 `/verify`를 읽고 실제 검증을 재실행합니다.
-  - Codex가 `/verify`를 남깁니다.
+  - Codex가 `/verify`를 남기거나 갱신합니다.
   - Codex가 다음 Claude 실행용 지시사항을 `.pipeline/claude_handoff.md`에 씁니다.
   - exact slice를 못 좁히면 Codex가 `.pipeline/gemini_request.md`를 씁니다.
   - Gemini가 `.pipeline/gemini_advice.md`와 `report/gemini/...md`를 남깁니다.
@@ -103,21 +103,28 @@
 - `.pipeline/gemini_request.md`는 `STATUS: request_open`만 담는 arbitration 요청 슬롯입니다.
 - `.pipeline/gemini_advice.md`는 `STATUS: advice_ready`만 담는 advisory 슬롯입니다.
 - `.pipeline/operator_request.md`는 `STATUS: needs_operator`만 담는 stop 슬롯입니다.
+- 위 canonical control slot은 pending일 때 `CONTROL_SEQ`도 함께 써서 newest-valid-control 판정을 `CONTROL_SEQ` 우선, `mtime` 보조로 맞춥니다.
 - `.pipeline/session_arbitration_draft.md`는 `STATUS: draft_only`만 담는 draft 슬롯이며, stop/go 실행 신호가 아닙니다.
 - `STATUS: implement`이면 Codex가 이미 다음 단일 슬라이스를 확정한 상태이고, Claude는 그 한 슬라이스만 구현합니다.
+- Claude 구현 라운드는 bounded 파일 수정과 canonical `/work` closeout에서 끝납니다. implement lane에서 commit, push, branch publish, PR 생성까지 진행하지 않습니다.
+- 그 handoff가 막혔으면 Claude는 operator 선택지를 새로 열지 말고, pane 출력에만 `STATUS: implement_blocked` + `BLOCK_REASON` + `REQUEST: codex_triage` + `HANDOFF` + `HANDOFF_SHA` + `BLOCK_ID`를 남긴 뒤 멈춥니다.
 - `STATUS: needs_operator`이면 Codex가 아직 truthful하게 다음 단일 슬라이스를 확정하지 못한 상태이며, Claude는 새 구현을 시작하지 않고 대기합니다.
 - `STATUS: needs_operator`는 한 줄짜리 bare stop signal로 끝내지 않습니다. 최소한 아래를 같이 남깁니다.
   - 왜 지금 자동 진행을 멈추는지
   - 어떤 최신 `/work`와 `/verify`를 근거로 멈췄는지
   - operator가 무엇을 정하면 다시 구현 가능한 상태로 돌아갈 수 있는지
 - 자동화 기준으로는 최신 control 파일과 `STATUS`가 stop/go 제어 신호입니다. 멈추고 싶으면 본문 설명을 조금 바꾸는 대신 stop 슬롯을 최신으로 갱신해야 합니다.
+- watcher는 "존재하는 아무 control 파일"이 아니라 `CONTROL_SEQ` 우선 / `mtime` 보조 기준의 최신 valid control만 active로 보고, 더 오래된 stale control file은 dispatch 판단에서 제외합니다.
 - `.pipeline/gpt_prompt.md`는 필요하면 scratch나 legacy 호환용으로 남길 수 있지만, canonical 흐름의 필수 단계는 아닙니다.
 - rolling 슬롯 파일은 매 라운드 덮어써도 되지만, 영속 truth는 항상 `/work`와 `/verify`에 남겨야 합니다.
 - 기본 모드에서 Codex는 "이번 Claude 작업 검수자 + 방향 가드"입니다. 매 라운드 전체 프로젝트 감사처럼 동작하지 않습니다.
 - Codex는 검수 후 다음 단일 슬라이스를 정하거나 `needs_operator`로 멈춰야 합니다. "슬라이스가 안 보이면 Claude가 알아서 고르라"는 식으로 넘기지 않습니다.
 - Claude는 `.pipeline/operator_request.md`를 구현 입력으로 읽지 않습니다. watcher도 이 stop 슬롯을 Claude에게 전달하지 않습니다.
 - Claude는 `.pipeline/gemini_request.md`와 `.pipeline/gemini_advice.md`도 구현 입력으로 읽지 않습니다.
+- Claude는 implement lane에서 operator에게 선택지를 직접 묻지 않습니다. 막히면 watcher가 Codex triage로 자동 전이하는 `implement_blocked` sentinel만 남깁니다.
 - Gemini는 advisory only입니다. 최종 execution slot이나 operator stop slot은 여전히 Codex가 씁니다.
+- Gemini advisory round는 pane-only 답변으로 닫히지 않습니다. `report/gemini/...md`와 `.pipeline/gemini_advice.md`를 둘 다 남겨야 advisory round가 완료된 것으로 봅니다.
+- Codex verification round도 pane-only reasoning이나 control-slot rewrite만으로 닫지 않습니다. `/verify`를 먼저 남기거나 갱신한 뒤 다음 control slot을 씁니다.
 - 따라서 active Claude session의 side-question arbitration은 `Claude -> Codex -> Gemini -> Codex -> Claude short reply`로 닫고, `.pipeline/claude_handoff.md`는 session boundary 또는 next round handoff에서만 갱신합니다.
 - watcher가 이런 side-question을 감지해도 canonical `.pipeline/gemini_request.md`를 자동 생성하지 않습니다. 대신 Codex/Gemini가 idle이고 Claude가 idle이거나 짧게 settle된 상태일 때 `.pipeline/session_arbitration_draft.md`까지만 자동 생성할 수 있고, Codex가 직접 승격 여부를 판단합니다.
 - watcher는 파일 감지와 pane 전달까지만 보장합니다. pane이 바쁘거나 interrupted 상태인 경우 자동 전송 후 실제 처리 실패는 watcher 밖의 세션 상태 문제로 봅니다.

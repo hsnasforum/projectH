@@ -24,6 +24,7 @@ Codex가 tie-break가 필요하다고 판단할 때만 호출됩니다.
 ## 시작 시 첫 에이전트 결정 (newest-valid-control 기준)
 
 파이프라인이 시작/재시작될 때 watcher는 **가장 최신의 유효한 control 슬롯**을 기준으로 첫 agent를 결정합니다.
+우선순위는 `CONTROL_SEQ`가 먼저이고, `CONTROL_SEQ`가 없을 때만 mtime을 보조로 씁니다.
 오래된 control 파일은 더 새로운 유효한 슬롯이 존재하면 비활성(inactive/stale) 상태로 무시됩니다.
 
 1. 최신 유효 슬롯이 operator_request (STATUS: needs_operator)이면 -> operator 대기
@@ -49,6 +50,8 @@ implement handoff가 있어도 최신 /work가 아직 검증되지 않았다면 
 역할:
 - 지정된 정확한 슬라이스 구현
 - 구현 closeout을 /work/...에 기록
+- implement lane은 bounded 파일 수정 + /work closeout에서 멈춤
+- implement lane에서 commit, push, branch publish, PR 생성은 하지 않음
 
 implement_blocked:
 - 핸드오프를 실행할 수 없으면 Claude는 STATUS: implement_blocked를 emit합니다
@@ -74,6 +77,10 @@ implement_blocked:
 - 애매하면 Gemini 자문 요청
 - 자동 진행 불가능하면 operator stop 선언
 
+검증 라운드 종료 조건:
+- pane 안 reasoning만 남기거나 control slot만 먼저 갱신하는 것으로는 round가 닫히지 않음
+- Codex는 /verify를 먼저 남기거나 갱신한 뒤에만 다음 control slot을 쓰는 편이 canonical임
+
 결정 출력 (셋 중 하나):
 - .pipeline/claude_handoff.md
 - .pipeline/gemini_request.md
@@ -92,6 +99,10 @@ implement_blocked:
 - .pipeline/gemini_advice.md
 - report/gemini/...md
 
+advisory round 종료 조건:
+- pane-only 답변만으로는 advisory round가 닫히지 않음
+- Gemini는 report/gemini/...md와 .pipeline/gemini_advice.md를 둘 다 남겨야 canonical closeout으로 봄
+
 쓰면 안 되는 파일:
 - .pipeline/claude_handoff.md
 - .pipeline/operator_request.md
@@ -104,7 +115,7 @@ Codex -> gemini_request.md -> Gemini -> gemini_advice.md -> watcher -> Codex fol
 
 ## control file 우선순위 (newest-valid-control)
 
-watcher는 가장 최신의 유효한 control 슬롯만 실행 입력으로 사용합니다.
+watcher는 `CONTROL_SEQ` 우선 / mtime 보조 기준의 가장 최신 유효 control 슬롯만 실행 입력으로 사용합니다.
 오래된 control 파일은 비활성(inactive/stale) 상태로, 더 새로운 유효 슬롯이 존재하면 무시됩니다.
 
 - .pipeline/claude_handoff.md -> Claude 실행

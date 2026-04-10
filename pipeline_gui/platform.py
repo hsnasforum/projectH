@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import threading
 from pathlib import Path, PurePosixPath
+from uuid import uuid4
 
 IS_WINDOWS = sys.platform == "win32"
 WSL_DISTRO = os.environ.get("WSL_DISTRO", "Ubuntu")
@@ -349,3 +352,67 @@ def _run(cmd: list[str], timeout: float = 5.0) -> tuple[int, str]:
         return r.returncode, output
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return -1, ""
+
+
+def path_exists(path: Path | str) -> bool:
+    target = Path(path)
+    if IS_WINDOWS and not _windows_native_path(target):
+        code, _ = _run(["test", "-e", _wsl_path_str(target)], timeout=FILE_QUERY_TIMEOUT)
+        return code == 0
+    try:
+        return target.exists()
+    except OSError:
+        return False
+
+
+def read_json_path(path: Path | str) -> dict[str, object] | None:
+    target = Path(path)
+    if not path_exists(target):
+        return None
+    if IS_WINDOWS and not _windows_native_path(target):
+        code, content = _run(["cat", _wsl_path_str(target)], timeout=FILE_QUERY_TIMEOUT)
+        if code != 0 or not content.strip():
+            return None
+        text = content
+    else:
+        try:
+            text = target.read_text(encoding="utf-8")
+        except OSError:
+            return None
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def atomic_write_json_path(path: Path | str, data: dict[str, object]) -> None:
+    target = Path(path)
+    encoded = json.dumps(data, ensure_ascii=False, indent=2)
+    if IS_WINDOWS and not _windows_native_path(target):
+        wsl_path = _wsl_path_str(target)
+        parent = PurePosixPath(wsl_path).parent.as_posix()
+        temp_path = f"{wsl_path}.{uuid4().hex[:8]}.tmp"
+        shell_cmd = (
+            f"mkdir -p {shlex.quote(parent)} && "
+            f"cat > {shlex.quote(temp_path)} && "
+            f"mv {shlex.quote(temp_path)} {shlex.quote(wsl_path)}"
+        )
+        subprocess.run(
+            ["wsl.exe", "-d", WSL_DISTRO, "--", "bash", "-lc", shell_cmd],
+            input=encoded,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+            **_hidden_subprocess_kwargs(),
+        )
+        return
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = target.with_name(f"{target.name}.{uuid4().hex[:8]}.tmp")
+    try:
+        temp_path.write_text(encoded, encoding="utf-8")
+        temp_path.replace(target)
+    except BaseException:
+        temp_path.unlink(missing_ok=True)
+        raise

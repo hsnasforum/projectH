@@ -111,6 +111,7 @@ pyinstaller --clean -y --onefile --noconsole --name pipeline-gui `
 `_data` 번들을 `;.`로 잘못 넣어도 `token_collector.py`가 bundle root로 들어가 버려 `Setup`은 살아 보여도 `TOKENS > FULL HISTORY / REBUILD DB`가 실패할 수 있습니다. token runtime은 반드시 `_data;_data`로 넣어야 합니다.
 Windows 수동 빌드는 `--clean -y`를 포함한 명령으로 매번 새로 만드는 편이 안전합니다. 이전 캐시가 남아 있으면 수정한 runtime 경로 로직이 exe에 반영되지 않은 것처럼 보일 수 있습니다.
 최신 exe는 WSL이 `_MEIPASS` 임시 폴더를 직접 실행하지 않도록, 필요한 GUI/runtime 파일을 target project 아래 `.pipeline/gui-runtime/_data/`로 staging한 뒤 그 안정 경로를 사용합니다.
+또한 최신 entrypoint는 frozen exe 실행 시 현재 작업 디렉터리(cwd)의 소스 트리가 bundled module import를 가로채지 않도록 `sys.path`를 먼저 정리하고, launch cwd도 exe 폴더로 정규화합니다. 따라서 Desktop 더블클릭과 repo root PowerShell `& .\pipeline-gui.exe` 실행이 같은 bundled snapshot과 같은 startup cwd를 읽어야 정상입니다.
 
 Windows에서 exe를 배포용으로 만들 때는, 환경 혼선을 줄이려면 이 PowerShell 방법을 우선 권장합니다. 현재 기준 기본 권장 경로도 이 방법입니다.
 
@@ -120,7 +121,7 @@ WSL 파일시스템을 Windows Python이 직접 읽으면 bytecode 캐시가 꼬
 
 ```powershell
 cd \\wsl.localhost\Ubuntu\home\xpdlqj\code\projectH
-.\scripts\build-gui-exe.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-gui-exe.ps1
 ```
 
 스크립트가 자동으로:
@@ -128,8 +129,15 @@ cd \\wsl.localhost\Ubuntu\home\xpdlqj\code\projectH
 2. `__pycache__` 제거
 3. 복사된 소스에 최신 코드가 포함됐는지 검증
 4. PyInstaller 빌드
-5. 결과물을 `dist/pipeline-gui.exe`와 `windows-launchers/dist/pipeline-gui.exe`로 복사
-6. exe 내부에 코드 변경이 반영됐는지 검증
+5. 결과물을 `dist/pipeline-gui.exe`, `windows-launchers/dist/pipeline-gui.exe`, `%USERPROFILE%\Desktop\pipeline-gui.exe`로 모두 덮어쓰기 복사
+6. 세 exe의 hash가 일치하는지 검증
+
+참고:
+- 관리자 PowerShell이어도 `ExecutionPolicy`가 막고 있으면 직접 `.\scripts\build-gui-exe.ps1` 실행은 실패할 수 있습니다.
+- 위처럼 `-ExecutionPolicy Bypass -File ...`로 실행하면 현재 호출에만 우회가 적용됩니다.
+- 이 스크립트는 UNC 경로에서 바로 PyInstaller를 돌리지 않고, 먼저 Windows 로컬 `%TEMP%`에 소스를 복사한 뒤 그 로컬 경로에서 빌드합니다.
+- build가 끝나면 Desktop의 `pipeline-gui.exe`도 자동으로 최신 빌드로 덮어씁니다.
+- 최신 exe는 launch cwd에 있는 live source tree를 import하지 않도록 entrypoint에서 bundled path를 우선 고정합니다.
 
 ### 방법 D: WSL 안에서 빌드 (Linux 바이너리)
 

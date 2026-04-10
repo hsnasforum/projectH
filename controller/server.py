@@ -23,15 +23,17 @@ from config.runtime_hosts import (
     running_in_wsl,
     windows_fallback_host,
 )
+from pipeline_gui.backend import (
+    confirm_pipeline_start as backend_confirm_pipeline_start,
+    pipeline_start as backend_pipeline_start,
+    pipeline_stop as backend_pipeline_stop,
+)
+from pipeline_gui.project import _session_name_for
 
 PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parent.parent))
 PIPELINE_DIR = PROJECT_ROOT / ".pipeline"
 CONTROLLER_PORT = int(os.environ.get("CONTROLLER_PORT", "8780"))
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
-
-# Session name: pipeline-gui.py / start-pipeline.sh / watcher_core.py와 동일 규칙
-_SESSION_PREFIX = "aip"
-
 
 def _running_in_wsl() -> bool:
     return running_in_wsl()
@@ -51,15 +53,7 @@ def _controller_windows_fallback_host() -> str | None:
 
 CONTROLLER_HOST = _controller_bind_host()
 
-
-def _session_name_for_project(project: Path) -> str:
-    """aip-<safe-dirname> — 전체 파이프라인과 동일한 deterministic session name."""
-    name = project.resolve().name or "default"
-    safe = re.sub(r"[^A-Za-z0-9_-]", "", name)
-    return f"{_SESSION_PREFIX}-{safe}" if safe else f"{_SESSION_PREFIX}-default"
-
-
-SESSION_NAME = _session_name_for_project(PROJECT_ROOT)
+SESSION_NAME = _session_name_for(PROJECT_ROOT)
 WATCHER_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")
 
 
@@ -353,31 +347,35 @@ def get_full_state() -> dict:
 # ── 파이프라인 제어 ────────────────────────────────────────────
 
 def pipeline_start() -> dict:
-    script = PROJECT_ROOT / "start-pipeline.sh"
-    if not script.exists():
-        return {"ok": False, "error": "start-pipeline.sh not found"}
-    # 백그라운드로 실행 (tmux attach 제외 — 마지막 줄 스킵)
-    subprocess.Popen(
-        ["bash", "-c", f"sed '$d' '{script}' | bash -s '{PROJECT_ROOT}' --mode experimental"],
-        cwd=str(PROJECT_ROOT),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+    start_requested_at = time.time()
+    start_result = backend_pipeline_start(PROJECT_ROOT, SESSION_NAME)
+    if start_result != "시작 요청됨":
+        return {"ok": False, "error": start_result}
+    ok, message = backend_confirm_pipeline_start(
+        PROJECT_ROOT,
+        SESSION_NAME,
+        start_requested_at=start_requested_at,
+        action_label="시작",
     )
-    return {"ok": True}
+    if ok:
+        return {"ok": True, "message": message}
+    return {"ok": False, "error": message}
 
 
 def pipeline_stop() -> dict:
-    script = PROJECT_ROOT / "stop-pipeline.sh"
-    if not script.exists():
-        return {"ok": False, "error": "stop-pipeline.sh not found"}
-    subprocess.run(["bash", str(script), str(PROJECT_ROOT)],
-                   capture_output=True, timeout=15)
-    return {"ok": True}
+    try:
+        stop_result = backend_pipeline_stop(PROJECT_ROOT, SESSION_NAME)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    if stop_result == "중지 완료":
+        return {"ok": True}
+    return {"ok": False, "error": stop_result}
 
 
 def pipeline_restart() -> dict:
-    pipeline_stop()
-    import time
+    stopped = pipeline_stop()
+    if not stopped.get("ok"):
+        return stopped
     time.sleep(2)
     return pipeline_start()
 

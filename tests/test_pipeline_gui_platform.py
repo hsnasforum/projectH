@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -80,6 +81,38 @@ class PipelineGuiPlatformTest(unittest.TestCase):
             "/home/test/project/.pipeline/gui-runtime/_data/token_collector.py",
         )
 
+    def test_ensure_staged_runtime_root_refreshes_when_source_asset_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            source_root = Path(td) / "bundle" / "_data"
+            source_root.mkdir(parents=True, exist_ok=True)
+            for rel in platform_module._RUNTIME_STAGE_REQUIRED:
+                target = source_root / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(f"v1:{rel}", encoding="utf-8")
+            dest_root = Path(td) / "wsl-share" / "gui-runtime" / "_data"
+
+            def _fake_resolve(name: str) -> Path:
+                return source_root / name
+
+            with (
+                mock.patch.object(platform_module, "resolve_packaged_file", side_effect=_fake_resolve),
+                mock.patch.object(platform_module, "_wsl_to_windows_unc", return_value=dest_root),
+            ):
+                platform_module._STAGED_RUNTIME_KEYS.clear()
+                platform_module.ensure_staged_runtime_root(Path("/home/test/project"))
+                self.assertEqual(
+                    (dest_root / "watcher_core.py").read_text(encoding="utf-8"),
+                    "v1:watcher_core.py",
+                )
+
+                (source_root / "watcher_core.py").write_text("v2:watcher_core.py", encoding="utf-8")
+                platform_module.ensure_staged_runtime_root(Path("/home/test/project"))
+
+                self.assertEqual(
+                    (dest_root / "watcher_core.py").read_text(encoding="utf-8"),
+                    "v2:watcher_core.py",
+                )
+
     def test_wsl_wrap_passes_args_directly_without_nested_bash_quoting(self) -> None:
         with mock.patch.object(platform_module, "IS_WINDOWS", True):
             wrapped = platform_module._wsl_wrap(["bash", "-lc", "echo 'hello' && true"])
@@ -87,6 +120,42 @@ class PipelineGuiPlatformTest(unittest.TestCase):
             wrapped,
             ["wsl.exe", "-d", platform_module.WSL_DISTRO, "--", "bash", "-lc", "echo 'hello' && true"],
         )
+
+    def test_path_exists_uses_wsl_test_for_posix_project_paths_on_windows(self) -> None:
+        target = Path("/home/test/project/.pipeline/config/agent_profile.json")
+        with (
+            mock.patch.object(platform_module, "IS_WINDOWS", True),
+            mock.patch.object(platform_module, "_run", return_value=(0, "")) as run_mock,
+        ):
+            self.assertTrue(platform_module.path_exists(target))
+        run_mock.assert_called_once_with(["test", "-e", "/home/test/project/.pipeline/config/agent_profile.json"], timeout=platform_module.FILE_QUERY_TIMEOUT)
+
+    def test_read_json_path_reads_wsl_json_via_run_on_windows(self) -> None:
+        target = Path("/home/test/project/.pipeline/config/agent_profile.json")
+        payload = {"schema_version": 1, "selected_agents": ["Claude"]}
+        with (
+            mock.patch.object(platform_module, "IS_WINDOWS", True),
+            mock.patch.object(platform_module, "_run", side_effect=[(0, ""), (0, json.dumps(payload, ensure_ascii=False))]),
+        ):
+            data = platform_module.read_json_path(target)
+        self.assertEqual(data, payload)
+
+    def test_atomic_write_json_path_writes_to_wsl_path_via_stdin(self) -> None:
+        target = Path("/home/test/project/.pipeline/config/agent_profile.json")
+        payload = {"schema_version": 1, "selected_agents": ["Claude"]}
+        completed = mock.Mock()
+        completed.returncode = 0
+        with (
+            mock.patch.object(platform_module, "IS_WINDOWS", True),
+            mock.patch.object(platform_module, "_hidden_subprocess_kwargs", return_value={}),
+            mock.patch("pipeline_gui.platform.subprocess.run", return_value=completed) as run_mock,
+        ):
+            platform_module.atomic_write_json_path(target, payload)
+        args, kwargs = run_mock.call_args
+        command = args[0]
+        self.assertEqual(command[:5], ["wsl.exe", "-d", platform_module.WSL_DISTRO, "--", "bash"])
+        self.assertEqual(kwargs["input"], json.dumps(payload, ensure_ascii=False, indent=2))
+        self.assertTrue(kwargs["check"])
 
 
 if __name__ == "__main__":

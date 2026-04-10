@@ -50,6 +50,7 @@ build/
 .pipeline/*.pid
 .pipeline/gui-runtime/
 .pipeline/live-arb-smoke-*/
+.pipeline/archive/
 .pipeline/usage/
 .pipeline/usage-bench/
 .pipeline/claude_handoff.md

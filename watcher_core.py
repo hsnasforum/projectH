@@ -113,6 +113,15 @@ TERMINAL_STATES: set[JobStatus] = {JobStatus.VERIFY_DONE}
 # VERIFY_DONE는 2단계에서 terminal. 3단계에서 trust 분기가 붙으면 제거됨
 
 
+class WatcherTurnState(str, Enum):
+    IDLE             = "IDLE"
+    CLAUDE_ACTIVE    = "CLAUDE_ACTIVE"
+    CODEX_VERIFY     = "CODEX_VERIFY"
+    CODEX_FOLLOWUP   = "CODEX_FOLLOWUP"
+    GEMINI_ADVISORY  = "GEMINI_ADVISORY"
+    OPERATOR_WAIT    = "OPERATOR_WAIT"
+
+
 # ---------------------------------------------------------------------------
 # JobState 스키마
 # ---------------------------------------------------------------------------
@@ -130,7 +139,13 @@ class JobState:
     retry_budget:         int   = 3
     last_dispatch_at:     float = 0.0
     last_dispatch_slot:   str   = ""
+    last_failed_dispatch_at: float = 0.0
+    last_failed_dispatch_snapshot: str = ""
+    dispatch_fail_count:  int   = 0
     feedback_baseline_sig:str   = ""    # dispatch 직전 control-slot 시그니처
+    verify_feedback_baseline_sig:str = ""  # dispatch 직전 same-day /verify 스냅샷 시그니처
+    verify_receipt_baseline_path:str = ""  # dispatch 직전 latest same-day /verify note path
+    verify_receipt_baseline_mtime:float = 0.0  # dispatch 직전 latest same-day /verify note mtime
     # 2단계 추가 필드
     verify_manifest_path: str   = ""    # 수집된 manifest 파일 경로
     verify_completed_at:  float = 0.0   # VERIFY_DONE 전이 시각
@@ -256,6 +271,15 @@ def build_md_tree_snapshot(root: Path) -> dict[str, str]:
             rel = str(md)
         snapshot[rel] = sig
     return snapshot
+
+
+def compute_md_tree_sig(root: Path) -> str:
+    """root 하위 .md 트리 시그니처. 비어 있으면 빈 문자열."""
+    snapshot = build_md_tree_snapshot(root)
+    if not snapshot:
+        return ""
+    parts = [f"{path}={sig}" for path, sig in sorted(snapshot.items())]
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -1084,7 +1108,7 @@ def tmux_send_keys(
         if not _wait_for_dispatch_window(pane_target, pane_type):
             return False
         if pane_type == "codex":
-            _dispatch_codex(pane_target, command)
+            return _dispatch_codex(pane_target, command)
         elif pane_type == "gemini":
             _dispatch_gemini(pane_target, command)
         else:
@@ -1096,7 +1120,7 @@ def tmux_send_keys(
         return False
 
 
-def _dispatch_codex(pane_target: str, command: str) -> None:
+def _dispatch_codex(pane_target: str, command: str) -> bool:
     """Dispatch to Codex pane.
 
     Codex interactive session is kept alive (started by start-pipeline.sh).
@@ -1117,15 +1141,19 @@ def _dispatch_codex(pane_target: str, command: str) -> None:
             while time.time() < deadline:
                 if _pane_has_working_indicator(pane_target):
                     log.info("codex working indicator detected")
-                    return
+                    return True
+                current_snapshot = _capture_pane_text(pane_target)
+                if current_snapshot != snapshot and _pane_text_has_codex_activity(current_snapshot):
+                    log.info("codex response activity detected after consume: attempt %d", attempt + 1)
+                    return True
                 time.sleep(0.5)
-            log.info("codex working indicator not yet visible after dispatch")
-            break
+            log.info("codex dispatch not confirmed after consume: no working indicator or response activity")
+            continue
         if snapshot != pasted_snapshot and _pane_text_has_codex_activity(snapshot):
             log.info("codex response activity detected: attempt %d", attempt + 1)
-            return
-    else:
-        log.info("codex prompt still visible after retries")
+            return True
+    log.info("codex prompt still visible or unconfirmed after retries")
+    return False
 
 
 def _dispatch_claude(pane_target: str, command: str) -> None:
@@ -1182,6 +1210,9 @@ class StateMachine:
         verify_pane_type:       str,
         verify_prompt_template: str,
         verify_context_builder: Optional[Callable[[JobState], dict[str, str]]],
+        feedback_sig_builder:   Optional[Callable[[JobState], tuple[str, str]]],
+        verify_receipt_builder: Optional[Callable[[JobState], tuple[str, float]]],
+        verify_retry_backoff_sec: float,
         completion_paths:       list[Path],
         error_log:              Path,
         dry_run:                bool = False,
@@ -1195,6 +1226,9 @@ class StateMachine:
         self.verify_pane_type       = verify_pane_type
         self.verify_prompt_template = verify_prompt_template
         self.verify_context_builder = verify_context_builder
+        self.feedback_sig_builder   = feedback_sig_builder
+        self.verify_receipt_builder = verify_receipt_builder
+        self.verify_retry_backoff_sec = verify_retry_backoff_sec
         self.completion_paths       = completion_paths
         self.error_log              = error_log
         self.dry_run                = dry_run
@@ -1234,6 +1268,22 @@ class StateMachine:
     def _handle_verify_pending(self, job: JobState) -> JobState:
         slot = "slot_verify"
 
+        if job.last_failed_dispatch_at:
+            backoff_deadline = job.last_failed_dispatch_at + self.verify_retry_backoff_sec
+            if time.time() < backoff_deadline:
+                self.dedupe.mark_suppressed(
+                    job.job_id, job.round, job.artifact_hash, slot, "dispatch_backoff"
+                )
+                return job
+
+            if job.last_failed_dispatch_snapshot:
+                current_pane = _capture_pane_text(self.verify_pane_target)
+                if current_pane == job.last_failed_dispatch_snapshot:
+                    self.dedupe.mark_suppressed(
+                        job.job_id, job.round, job.artifact_hash, slot, "dispatch_backoff_same_snapshot"
+                    )
+                    return job
+
         if self.dedupe.is_duplicate(job.job_id, job.round, job.artifact_hash, slot):
             self.dedupe.mark_suppressed(
                 job.job_id, job.round, job.artifact_hash, slot, "dedupe")
@@ -1269,12 +1319,34 @@ class StateMachine:
             )
             job.last_dispatch_at   = time.time()
             job.last_dispatch_slot = slot
-            job.feedback_baseline_sig = compute_multi_file_sig(self.completion_paths)
+            job.last_failed_dispatch_at = 0.0
+            job.last_failed_dispatch_snapshot = ""
+            job.dispatch_fail_count = 0
+            if self.feedback_sig_builder is not None:
+                (
+                    job.feedback_baseline_sig,
+                    job.verify_feedback_baseline_sig,
+                ) = self.feedback_sig_builder(job)
+            else:
+                job.feedback_baseline_sig = compute_multi_file_sig(self.completion_paths)
+                job.verify_feedback_baseline_sig = ""
+            if self.verify_receipt_builder is not None:
+                (
+                    job.verify_receipt_baseline_path,
+                    job.verify_receipt_baseline_mtime,
+                ) = self.verify_receipt_builder(job)
+            else:
+                job.verify_receipt_baseline_path = ""
+                job.verify_receipt_baseline_mtime = 0.0
             job.transition(JobStatus.VERIFY_RUNNING, f"dispatched to {slot}")
             job.save(self.state_dir)
             if self.dry_run:
                 self.lease.release(slot)
         else:
+            job.last_failed_dispatch_at = time.time()
+            job.dispatch_fail_count += 1
+            job.last_failed_dispatch_snapshot = _capture_pane_text(self.verify_pane_target)
+            job.save(self.state_dir)
             self.lease.release(slot)
         return job
 
@@ -1293,20 +1365,56 @@ class StateMachine:
         manifest = self.collector.poll(job)
         if manifest is None:
             # manifest 없음 — feedback 변경 또는 타임아웃 체크
-            # Codex는 manifest 없이 rolling handoff/operator 슬롯만 갱신할 수 있음
-            fb_sig = compute_multi_file_sig(self.completion_paths)
+            # Codex는 manifest 없이 /verify + rolling control slot을 함께 갱신할 수 있음
+            if self.feedback_sig_builder is not None:
+                fb_sig, verify_sig = self.feedback_sig_builder(job)
+            else:
+                fb_sig = compute_multi_file_sig(self.completion_paths)
+                verify_sig = ""
+            if self.verify_receipt_builder is not None:
+                verify_receipt_path, verify_receipt_mtime = self.verify_receipt_builder(job)
+            else:
+                verify_receipt_path, verify_receipt_mtime = "", 0.0
 
-            if fb_sig and fb_sig != job.feedback_baseline_sig:
-                # handoff/operator 슬롯 내용이 달라졌으면 Codex 완료로 간주
-                log.info("pipeline signal changed after dispatch: job=%s, treating as verify done",
-                         job.job_id)
+            control_changed = bool(fb_sig and fb_sig != job.feedback_baseline_sig)
+            verify_changed = bool(verify_sig and verify_sig != job.verify_feedback_baseline_sig)
+            verify_receipt_present = bool(
+                verify_receipt_path
+                and verify_receipt_mtime > 0.0
+                # Some filesystems round mtime to whole seconds, so allow a small skew.
+                and verify_receipt_mtime >= (job.last_dispatch_at - 1.0)
+                and (
+                    verify_receipt_path != job.verify_receipt_baseline_path
+                    or verify_receipt_mtime > job.verify_receipt_baseline_mtime
+                )
+            )
+            outputs_complete = control_changed and verify_changed and verify_receipt_present
+
+            if outputs_complete:
+                # current-round /verify receipt와 next control이 둘 다 달라졌으면 Codex 완료로 간주
+                log.info(
+                    "current-round verify receipt + control changed after dispatch: job=%s, treating as verify done",
+                    job.job_id,
+                )
                 job.verify_result = "passed_by_feedback"
                 job.verify_completed_at = time.time()
                 self.lease.release("slot_verify")
                 job.transition(JobStatus.VERIFY_DONE,
-                               "pipeline signal changed after dispatch")
+                               "current-round verify receipt + control changed after dispatch")
                 job.save(self.state_dir)
                 return job
+            if control_changed and verify_changed and not verify_receipt_present:
+                log.info(
+                    "control + /verify tree changed but current-round /verify receipt is still missing: job=%s receipt=%s baseline=%s",
+                    job.job_id,
+                    verify_receipt_path or "none",
+                    job.verify_receipt_baseline_path or "none",
+                )
+            if control_changed and not verify_changed:
+                log.info(
+                    "control slot changed but /verify not updated yet: job=%s",
+                    job.job_id,
+                )
 
             # Check if Codex finished: pane must show an input prompt AND
             # have no active working/waiting indicators anywhere in visible text.
@@ -1315,17 +1423,13 @@ class StateMachine:
             has_prompt = _pane_text_has_input_cursor(current_pane)
             codex_idle = has_prompt and not still_busy
             elapsed_since_dispatch = time.time() - job.last_dispatch_at
-            # Only check after at least 15 seconds (avoid false positive during startup)
-            if codex_idle and elapsed_since_dispatch > 15:
-                log.info("codex task completed (idle confirmed): job=%s elapsed=%.0fs",
-                         job.job_id, elapsed_since_dispatch)
-                job.verify_result = "completed"
-                job.verify_completed_at = time.time()
-                self.lease.release("slot_verify")
-                job.transition(JobStatus.VERIFY_DONE,
-                               f"codex idle confirmed after {elapsed_since_dispatch:.0f}s")
-                job.save(self.state_dir)
-                return job
+            # Idle alone is not enough; Codex must leave /verify + next control (or manifest).
+            if codex_idle and elapsed_since_dispatch > 15 and not (control_changed and verify_changed):
+                log.info(
+                    "codex idle observed but required outputs are incomplete: job=%s elapsed=%.0fs",
+                    job.job_id,
+                    elapsed_since_dispatch,
+                )
 
             # Activity-based timeout: only timeout if pane output hasn't changed.
             elapsed = time.time() - job.last_dispatch_at
@@ -1340,6 +1444,22 @@ class StateMachine:
                 # Pane unchanged — check idle timeout (5 min idle = timeout)
                 idle_sec = time.time() - last_activity
                 if idle_sec > 300:
+                    if not outputs_complete:
+                        log.warning(
+                            "verify idle timeout with incomplete outputs: job=%s idle=%.0fs total=%.0fs → retry pending",
+                            job.job_id, idle_sec, elapsed,
+                        )
+                        job.last_failed_dispatch_at = time.time()
+                        job.dispatch_fail_count += 1
+                        job.last_failed_dispatch_snapshot = current_pane
+                        job.last_dispatch_slot = ""
+                        self.lease.release("slot_verify")
+                        job.transition(
+                            JobStatus.VERIFY_PENDING,
+                            f"idle timeout with incomplete outputs after {idle_sec:.0f}s idle, {elapsed:.0f}s total",
+                        )
+                        job.save(self.state_dir)
+                        return job
                     log.warning("verify idle timeout: job=%s idle=%.0fs total=%.0fs",
                                 job.job_id, idle_sec, elapsed)
                     job.verify_result = "timeout"
@@ -1472,24 +1592,19 @@ class WatcherCore:
             or config.get("claude_prompt")
             or
             "ROLE: implement\n"
-            "ROLE_OWNER: {runtime_implement_owner}\n"
-            "STATE: implement_ready\n"
+            "OWNER: {runtime_implement_owner}\n"
             "HANDOFF: {active_handoff_path}\n"
             "HANDOFF_SHA: {active_handoff_sha}\n"
-            "RUNTIME_ENABLED_LANES: {runtime_enabled_lanes}\n"
+            "GOAL:\n"
+            "- implement only the exact slice in the handoff\n"
+            "- if finished, leave one `/work` closeout and stop\n"
             "READ_FIRST:\n"
             "- {runtime_implement_read_first_doc}\n"
             "- work/README.md\n"
-            "- .pipeline/README.md\n"
             "- {active_handoff_path}\n"
             "RULES:\n"
-            "- role ownership is runtime metadata only; keep this implement contract lane-neutral\n"
-            "- implement only the bounded slice from the handoff\n"
-            "- if the slice is completed, leave a `/work` closeout note; `.pipeline` does not replace `/work`\n"
-            "- do not use `report/` as the primary implementation closeout for a normal implement round\n"
-            "- do not ask the operator to choose among options\n"
-            "- do not self-select the next slice\n"
-            "- do not write or update .pipeline/gemini_request.md or .pipeline/operator_request.md\n"
+            "- do not commit, push, publish a branch/PR, or choose the next slice\n"
+            "- do not write .pipeline/gemini_request.md or .pipeline/operator_request.md yourself\n"
             "- if the handoff is blocked or not actionable, emit the exact sentinel below and stop\n"
             "BLOCKED_SENTINEL:\n"
             "STATUS: implement_blocked\n"
@@ -1504,85 +1619,80 @@ class WatcherCore:
             or config.get("gemini_prompt")
             or
             "ROLE: advisory\n"
-            "ROLE_OWNER: {runtime_advisory_owner}\n"
-            "STATE: advisory_request_open\n"
+            "OWNER: {runtime_advisory_owner}\n"
+            "REQUEST: {gemini_request_mention}\n"
+            "WORK: {latest_work_mention}\n"
+            "VERIFY: {latest_verify_mention}\n"
             "NEXT_CONTROL_SEQ: {next_control_seq}\n"
-            "RUNTIME_ENABLED_LANES: {runtime_enabled_lanes}\n"
-            "Open these files now:\n"
+            "GOAL:\n"
+            "- leave one advisory log and one `.pipeline/gemini_advice.md`\n"
+            "READ_FIRST:\n"
             "- {runtime_advisory_read_first_doc}\n"
-            "- .pipeline/README.md\n"
             "- {gemini_request_mention}\n"
             "- {latest_work_mention}\n"
             "- {latest_verify_mention}\n"
-            "Write exactly two files using edit/write tools only:\n"
+            "OUTPUTS:\n"
             "- advisory log: {gemini_report_path}\n"
-            "- recommendation slot: {gemini_advice_path} with STATUS: advice_ready and CONTROL_SEQ: {next_control_seq}\n"
-            "Keep this advisory contract role-neutral even if the owner lane is not the default advisory lane.\n"
-            "Do not use shell heredoc, shell redirection, cat > file, or printf > file.\n"
-            "Do not modify any other repo files.\n"
-            "Write CONTROL_SEQ immediately after STATUS using exactly {next_control_seq}.\n"
-            "Keep the recommendation short and exact."
+            "- recommendation slot: {gemini_advice_path} (STATUS: advice_ready, CONTROL_SEQ: {next_control_seq})\n"
+            "RULES:\n"
+            "- pane-only answer is not completion\n"
+            "- use edit/write tools only; no shell heredoc or shell redirection\n"
+            "- do not modify other repo files\n"
+            "- keep the recommendation short and exact"
         )
         self.followup_prompt = _normalize_prompt_text(
             config.get("followup_prompt")
             or config.get("codex_followup_prompt")
             or
             "ROLE: followup\n"
-            "ROLE_OWNER: {runtime_verify_owner}\n"
-            "STATE: advisory_advice_ready\n"
+            "OWNER: {runtime_verify_owner}\n"
             "NEXT_CONTROL_SEQ: {next_control_seq}\n"
             "REQUEST: .pipeline/gemini_request.md\n"
             "ADVICE: .pipeline/gemini_advice.md\n"
-            "LATEST_WORK: {latest_work_path}\n"
-            "LATEST_VERIFY: {latest_verify_path}\n"
-            "RUNTIME_ENABLED_LANES: {runtime_enabled_lanes}\n"
+            "WORK: {latest_work_path}\n"
+            "VERIFY: {latest_verify_path}\n"
+            "GOAL:\n"
+            "- convert the advisory into exactly one next control outcome\n"
             "READ_FIRST:\n"
             "- {runtime_verify_read_first_doc}\n"
             "- verify/README.md\n"
-            "- .pipeline/README.md\n"
             "- .pipeline/gemini_request.md\n"
             "- .pipeline/gemini_advice.md\n"
             "OUTPUTS:\n"
-            "- .pipeline/claude_handoff.md for STATUS: implement + CONTROL_SEQ: {next_control_seq}\n"
-            "- .pipeline/operator_request.md for STATUS: needs_operator + CONTROL_SEQ: {next_control_seq}\n"
+            "- .pipeline/claude_handoff.md (STATUS: implement, CONTROL_SEQ: {next_control_seq})\n"
+            "- .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: {next_control_seq})\n"
             "RULES:\n"
-            "- role ownership is runtime metadata only; keep this followup contract lane-neutral\n"
-            "- when writing a control slot, put CONTROL_SEQ immediately after STATUS and use exactly {next_control_seq}"
+            "- write exactly one next control outcome"
         )
         self.verify_triage_prompt = _normalize_prompt_text(
             config.get("verify_triage_prompt")
             or config.get("codex_blocked_triage_prompt")
             or
             "ROLE: verify_triage\n"
-            "ROLE_OWNER: {runtime_verify_owner}\n"
-            "STATE: implement_blocked\n"
+            "OWNER: {runtime_verify_owner}\n"
             "HANDOFF: {active_handoff_path}\n"
             "HANDOFF_SHA: {active_handoff_sha}\n"
             "BLOCK_SOURCE: {blocked_source}\n"
             "BLOCK_REASON: {blocked_reason}\n"
             "BLOCK_ID: {blocked_fingerprint}\n"
             "NEXT_CONTROL_SEQ: {next_control_seq}\n"
-            "RUNTIME_ENABLED_LANES: {runtime_enabled_lanes}\n"
-            "ACTIVE_CONTROL: {active_control_status} {active_control_path}\n"
-            "ACTIVE_CONTROL_SEQ: {active_control_seq}\n"
-            "LATEST_WORK: {latest_work_path}\n"
-            "LATEST_VERIFY: {latest_verify_path}\n"
+            "WORK: {latest_work_path}\n"
+            "VERIFY: {latest_verify_path}\n"
+            "GOAL:\n"
+            "- recover from implement_blocked with exactly one next control outcome\n"
             "BLOCK_EXCERPT:\n"
             "{blocked_excerpt}\n"
             "READ_FIRST:\n"
             "- {runtime_verify_read_first_doc}\n"
             "- verify/README.md\n"
-            "- .pipeline/README.md\n"
             "- {active_handoff_path}\n"
             "- {latest_work_path}\n"
             "- {latest_verify_path}\n"
             "OUTPUTS:\n"
-            "- .pipeline/claude_handoff.md for STATUS: implement + CONTROL_SEQ: {next_control_seq}\n"
-            "- .pipeline/gemini_request.md for STATUS: request_open + CONTROL_SEQ: {next_control_seq}\n"
-            "- .pipeline/operator_request.md for STATUS: needs_operator + CONTROL_SEQ: {next_control_seq}\n"
+            "- .pipeline/claude_handoff.md (STATUS: implement, CONTROL_SEQ: {next_control_seq})\n"
+            "- .pipeline/gemini_request.md (STATUS: request_open, CONTROL_SEQ: {next_control_seq})\n"
+            "- .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: {next_control_seq})\n"
             "RULES:\n"
-            "- treat this as blocked implement recovery under the verify role, not as a fresh docs/code verification round\n"
-            "- when writing a control slot, put CONTROL_SEQ immediately after STATUS and use exactly {next_control_seq}\n"
             "- write exactly one next control outcome\n"
             "- do not leave Claude waiting on an operator-choice menu\n"
             "- only use STATUS: needs_operator if the next exact slice still cannot be narrowed truthfully"
@@ -1594,7 +1704,6 @@ class WatcherCore:
         self._last_gemini_advice_sig: str = self._get_path_sig(self.gemini_advice_path)
         self._last_operator_request_sig: str = self._get_path_sig(self.operator_request_path)
         self._last_session_arbitration_draft_sig: str = self._get_path_sig(self.session_arbitration_draft_path)
-        self._pending_claude_handoff_sig: str = ""
         self._last_session_arbitration_fingerprint: str = ""
         self._session_arbitration_snapshot_fingerprints: dict[str, str] = {}
         self._session_arbitration_snapshot_changed_at: dict[str, float] = {}
@@ -1608,8 +1717,20 @@ class WatcherCore:
         # Claude 차례일 때: 시작 시점 work/ 스냅샷
         # 이후 스냅샷이 달라질 때만 새 작업으로 인정
         self._work_baseline_snapshot: dict[str, str] = {}
-        # Claude 차례 대기 중 플래그
-        self._waiting_for_claude: bool = False
+        # Turn state (single source of truth for dispatch)
+        self._current_turn_state: WatcherTurnState = WatcherTurnState.IDLE
+        self._turn_entered_at: float = 0.0
+        self._turn_active_control_seq: int = -1
+        self._turn_state_path: Path = self.state_dir / "turn_state.json"
+
+        # Claude idle timeout tracking
+        self.claude_active_idle_timeout_sec: float = float(
+            config.get("claude_active_idle_timeout_sec", 300)
+        )
+        self._last_progress_at: float = 0.0
+        self._last_active_pane_fingerprint: str = ""
+        self._last_idle_release_handoff_sig: str = ""
+        self._last_idle_release_at: float = 0.0
 
         self.stabilizer = ArtifactStabilizer(
             settle_sec=config.get("settle_sec", 3.0),
@@ -1639,32 +1760,33 @@ class WatcherCore:
             verify_prompt_template=config.get(
                 "verify_prompt_template",
                 "ROLE: verify\n"
-                "ROLE_OWNER: {runtime_verify_owner}\n"
-                "STATE: verify_pending\n"
+                "OWNER: {runtime_verify_owner}\n"
+                "WORK: {latest_work_path}\n"
+                "VERIFY: {latest_verify_path}\n"
                 "NEXT_CONTROL_SEQ: {next_control_seq}\n"
-                "LATEST_WORK: {latest_work_path}\n"
-                "LATEST_VERIFY: {latest_verify_path}\n"
-                "RUNTIME_ENABLED_LANES: {runtime_enabled_lanes}\n"
+                "GOAL:\n"
+                "- verify the latest `/work` truthfully\n"
+                "- leave or update `/verify` before any next control slot\n"
+                "- then write exactly one next control outcome\n"
+                "SCOPE_HINT:\n"
+                "{verify_scope_hint}\n"
                 "READ_FIRST:\n"
                 "- {runtime_verify_read_first_doc}\n"
                 "- work/README.md\n"
                 "- verify/README.md\n"
-                "- .pipeline/README.md\n"
-                "SCOPE_HINT:\n"
-                "{verify_scope_hint}\n"
                 "OUTPUTS:\n"
-                "- /verify verification note if needed\n"
-                "- .pipeline/claude_handoff.md for STATUS: implement + CONTROL_SEQ: {next_control_seq}\n"
-                "- .pipeline/gemini_request.md when Codex cannot narrow after tie-break + CONTROL_SEQ: {next_control_seq}\n"
-                "- .pipeline/operator_request.md only when Gemini still cannot resolve it + CONTROL_SEQ: {next_control_seq}\n"
+                "- /verify note first\n"
+                "- .pipeline/claude_handoff.md (STATUS: implement, CONTROL_SEQ: {next_control_seq})\n"
+                "- .pipeline/gemini_request.md (STATUS: request_open, CONTROL_SEQ: {next_control_seq})\n"
+                "- .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: {next_control_seq})\n"
                 "RULES:\n"
-                "- role ownership is runtime metadata only; keep this verify contract lane-neutral\n"
-                "- latest /work first, then same-day latest /verify if any\n"
-                "- never route needs_operator to Claude\n"
-                "- when writing a control slot, put CONTROL_SEQ immediately after STATUS and use exactly {next_control_seq}\n"
-                "- keep one exact next slice or one exact operator decision only",
+                "- keep one exact next slice or one exact operator decision only\n"
+                "- if same-day same-family docs-only truth-sync already repeated 3+ times, do not choose another narrower docs-only micro-slice; choose one bounded docs bundle or escalate",
             ),
             verify_context_builder=self._build_verify_prompt_context,
+            feedback_sig_builder=self._build_verify_feedback_sigs,
+            verify_receipt_builder=self._build_verify_receipt_state,
+            verify_retry_backoff_sec=float(config.get("verify_retry_backoff_sec", 20.0)),
             completion_paths=self.completion_paths,
             error_log=self.events_dir / "errors.jsonl",
             dry_run=self.dry_run,
@@ -1720,6 +1842,56 @@ class WatcherCore:
             self._advisory_enabled()
             and bool(self.runtime_controls.get("session_arbitration_enabled"))
         )
+
+    # ------------------------------------------------------------------
+    def _transition_turn(
+        self,
+        new_state: WatcherTurnState,
+        reason: str,
+        *,
+        active_control_file: str = "",
+        active_control_seq: int = -1,
+        verify_job_id: str = "",
+    ) -> None:
+        """Transition to a new turn state and write turn_state.json atomically."""
+        old_state = self._current_turn_state
+        now = time.time()
+        self._current_turn_state = new_state
+        self._turn_entered_at = now
+        self._turn_active_control_seq = active_control_seq
+        if new_state == WatcherTurnState.CLAUDE_ACTIVE:
+            self._last_progress_at = now
+            self._last_active_pane_fingerprint = ""
+        log.info(
+            "turn_state %s -> %s  reason=%s",
+            old_state.value, new_state.value, reason,
+        )
+        self._log_raw(
+            "turn_transition",
+            "",
+            "turn_state",
+            {
+                "from": old_state.value,
+                "to": new_state.value,
+                "reason": reason,
+                "active_control_file": active_control_file,
+                "active_control_seq": active_control_seq,
+            },
+        )
+        # Write turn_state.json atomically
+        data: dict[str, object] = {
+            "state": new_state.value,
+            "entered_at": now,
+            "reason": reason,
+            "active_control_file": active_control_file,
+            "active_control_seq": active_control_seq,
+        }
+        if verify_job_id:
+            data["verify_job_id"] = verify_job_id
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        tmp_path = self._turn_state_path.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        tmp_path.replace(self._turn_state_path)
 
     # ------------------------------------------------------------------
     def _get_path_mtime(self, path: Path) -> float:
@@ -1886,6 +2058,34 @@ class WatcherCore:
                 return latest_same_day
 
         return self._find_latest_md(self.verify_dir)
+
+    # ------------------------------------------------------------------
+    def _get_same_day_verify_dir(self, work_path: Optional[Path]) -> Path:
+        if work_path is None:
+            return self.verify_dir
+        try:
+            rel = work_path.relative_to(self.watch_dir)
+        except ValueError:
+            return self.verify_dir
+        if len(rel.parts) >= 2:
+            return self.verify_dir / rel.parts[0] / rel.parts[1]
+        return self.verify_dir
+
+    # ------------------------------------------------------------------
+    def _build_verify_feedback_sigs(self, job: JobState) -> tuple[str, str]:
+        work_path = Path(job.artifact_path)
+        control_sig = compute_multi_file_sig(self.completion_paths)
+        verify_dir = self._get_same_day_verify_dir(work_path)
+        verify_sig = compute_md_tree_sig(verify_dir)
+        return control_sig, verify_sig
+
+    # ------------------------------------------------------------------
+    def _build_verify_receipt_state(self, job: JobState) -> tuple[str, float]:
+        work_path = Path(job.artifact_path)
+        latest_verify = self._get_latest_same_day_verify_path(work_path)
+        if latest_verify is None:
+            return "", 0.0
+        return self._repo_relative(latest_verify), self._get_path_mtime(latest_verify)
 
     # ------------------------------------------------------------------
     def _infer_gemini_report_hint(self, work_path: Optional[Path]) -> str:
@@ -2141,35 +2341,131 @@ class WatcherCore:
         return work_mtime > verify_mtime
 
     # ------------------------------------------------------------------
-    def _determine_initial_turn(self) -> str:
-        """
-        시작 시 턴 판단 — operator stop / Gemini arbitration / Claude handoff / work 최신성 비교:
-          - operator_request가 최신 pending stop → operator 대기
-          - gemini_request가 최신 pending request → Gemini 차례
-          - gemini_advice가 최신 pending advice → Codex follow-up 차례
-          - latest /work가 latest same-day /verify보다 새로우면 → Codex 차례
-          - 그 외에 implement handoff가 있으면 → Claude 차례
-          - 셋 다 없음 → Claude 차례 (초기 상태)
-        """
-        operator_mtime = self._get_pending_operator_mtime()
-        gemini_request_mtime = self._get_pending_gemini_request_mtime()
-        gemini_advice_mtime = self._get_pending_gemini_advice_mtime()
-        handoff_path, handoff_mtime = self._get_latest_implement_handoff()
-        work_mtime = self._get_latest_work_mtime()
+    def _find_latest_md_broad(self, root: Path) -> Optional[Path]:
+        """Find latest canonical round note without metadata-only filtering."""
+        latest_path: Optional[Path] = None
+        latest_mtime = 0.0
+        if not root.exists():
+            return None
+        for md in root.rglob("*.md"):
+            if not self._is_canonical_round_note(root, md):
+                continue
+            try:
+                mt = md.stat().st_mtime
+            except OSError:
+                continue
+            if mt >= latest_mtime:
+                latest_path = md
+                latest_mtime = mt
+        return latest_path
 
-        if operator_mtime == 0.0 and gemini_request_mtime == 0.0 and gemini_advice_mtime == 0.0 and handoff_mtime == 0.0 and work_mtime == 0.0:
-            return "claude"
-        if operator_mtime > 0.0 and operator_mtime >= gemini_request_mtime and operator_mtime >= gemini_advice_mtime and operator_mtime >= handoff_mtime and operator_mtime >= work_mtime:
+    # ------------------------------------------------------------------
+    def _latest_work_needs_verify_broad(self) -> bool:
+        """Like _latest_work_needs_verify but includes metadata-only notes.
+
+        For verify-needed judgment, all canonical round notes count.
+        Metadata-only filtering is only for dispatch prompt content.
+        """
+        latest_work = self._find_latest_md_broad(self.watch_dir)
+        if latest_work is None:
+            return False
+        latest_verify = self._get_latest_same_day_verify_path(latest_work)
+        work_mtime = self._get_path_mtime(latest_work)
+        verify_mtime = self._get_path_mtime(latest_verify) if latest_verify else 0.0
+        return work_mtime > verify_mtime
+
+    # ------------------------------------------------------------------
+    def _resolve_turn(self) -> str:
+        """Resolve which agent should act next.
+
+        Returns one of: "operator", "gemini", "codex_followup", "codex", "claude", "idle".
+        This is a pure query — it does not trigger transitions or side effects.
+        Used by both initial turn and rolling turn decisions.
+        """
+        # 1. operator_request active → operator
+        if self._is_active_control(self.operator_request_path, "needs_operator"):
             return "operator"
-        if gemini_request_mtime > 0.0 and gemini_request_mtime >= gemini_advice_mtime and gemini_request_mtime >= handoff_mtime and gemini_request_mtime >= work_mtime:
+
+        # 2. gemini_request active → gemini
+        if self._is_active_control(self.gemini_request_path, "request_open"):
             return "gemini"
-        if gemini_advice_mtime > 0.0 and gemini_advice_mtime >= gemini_request_mtime and gemini_advice_mtime >= handoff_mtime and gemini_advice_mtime >= work_mtime:
+
+        # 3. gemini_advice active → codex_followup
+        if self._is_active_control(self.gemini_advice_path, "advice_ready"):
             return "codex_followup"
-        if self._latest_work_needs_verify():
+
+        # 4. handoff active + implement, but verify_pending or verify_active → codex first
+        handoff_active = self._is_active_control(self.claude_handoff_path, "implement")
+        verify_pending = self._latest_work_needs_verify_broad()
+        verify_active = self._claude_handoff_verify_active()
+        if handoff_active and (verify_pending or verify_active):
             return "codex"
-        if handoff_path and handoff_mtime > 0.0 and handoff_mtime >= operator_mtime:
+
+        # 5. work needs verify (no handoff) → codex
+        if verify_pending:
+            return "codex"
+
+        # 6. handoff active and dispatchable → claude (unless cooldown)
+        if handoff_active and not self._is_idle_release_cooldown_active():
             return "claude"
-        return "codex"
+
+        # 7. fallback
+        return "idle"
+
+    # ------------------------------------------------------------------
+    def _check_claude_idle_timeout(self) -> None:
+        """Check if Claude has been idle too long and transition to IDLE if so."""
+        if self._current_turn_state != WatcherTurnState.CLAUDE_ACTIVE:
+            return
+
+        target = self._role_pane_target("implement")
+        if not target:
+            return
+
+        now = time.time()
+        pane_text = _capture_pane_text(target)
+        pane_fingerprint = hashlib.md5(pane_text.encode()).hexdigest() if pane_text else ""
+
+        # Check for progress: pane fingerprint changed
+        if pane_fingerprint and pane_fingerprint != self._last_active_pane_fingerprint:
+            self._last_active_pane_fingerprint = pane_fingerprint
+            self._last_progress_at = now
+            return
+
+        # Check for progress: work snapshot changed
+        current_snapshot = self._get_work_tree_snapshot()
+        if current_snapshot != self._work_baseline_snapshot:
+            self._last_progress_at = now
+            return
+
+        # No progress — check timeout
+        elapsed = now - self._last_progress_at
+        if elapsed < self.claude_active_idle_timeout_sec:
+            return
+
+        # Final guard: pane must look idle too
+        if not _pane_text_is_idle(pane_text):
+            return
+
+        log.warning(
+            "claude idle timeout: %.0fs since last progress, transitioning to IDLE",
+            elapsed,
+        )
+        # Record cooldown to prevent immediate re-dispatch of same handoff
+        self._last_idle_release_handoff_sig = self._get_path_sig(self.claude_handoff_path)
+        self._last_idle_release_at = now
+        self._transition_turn(WatcherTurnState.IDLE, "claude_idle_timeout")
+
+    # ------------------------------------------------------------------
+    def _is_idle_release_cooldown_active(self) -> bool:
+        """True if the same handoff was recently released from idle timeout."""
+        if not self._last_idle_release_handoff_sig:
+            return False
+        current_sig = self._get_path_sig(self.claude_handoff_path)
+        if current_sig != self._last_idle_release_handoff_sig:
+            return False
+        elapsed = time.time() - self._last_idle_release_at
+        return elapsed < self.claude_active_idle_timeout_sec
 
     # ------------------------------------------------------------------
     def _notify_claude(self, reason: str, handoff_path: Optional[Path] = None) -> None:
@@ -2292,28 +2588,29 @@ class WatcherCore:
 
     # ------------------------------------------------------------------
     def _flush_pending_claude_handoff(self) -> None:
-        pending_sig = self._pending_claude_handoff_sig
-        if not pending_sig:
+        """If verify lease just released and handoff is waiting, transition to Claude."""
+        if self._current_turn_state not in (WatcherTurnState.CODEX_VERIFY, WatcherTurnState.IDLE):
             return
+        if self._claude_handoff_verify_active():
+            return  # verify still running
 
-        current_sig = self._get_path_sig(self.claude_handoff_path)
-        if not current_sig or current_sig != pending_sig:
-            self._pending_claude_handoff_sig = ""
-            return
-
-        status = self._read_status_from_path(self.claude_handoff_path) or "missing"
-        handoff_mtime = self._get_path_mtime(self.claude_handoff_path)
-        dispatch_state = self._claude_handoff_dispatch_state(handoff_mtime)
-        if status != "implement":
-            self._pending_claude_handoff_sig = ""
-            return
-        if not dispatch_state["dispatchable"]:
-            return
-
-        log.info("pending claude handoff ready: STATUS=implement → Claude 차례")
-        self._clear_claude_blocked_state("claude_handoff_pending_release")
-        self._notify_claude("claude_handoff_pending_release", self.claude_handoff_path)
-        self._pending_claude_handoff_sig = ""
+        # Re-resolve: maybe Claude can go now
+        turn = self._resolve_turn()
+        if turn == "claude":
+            handoff_path, _ = self._get_latest_implement_handoff()
+            active_control = self._get_active_control_signal()
+            seq = active_control.control_seq if active_control else -1
+            if seq < self._turn_active_control_seq:
+                return  # stale
+            self._transition_turn(
+                WatcherTurnState.CLAUDE_ACTIVE,
+                "verify_lease_released",
+                active_control_file="claude_handoff.md",
+                active_control_seq=seq,
+            )
+            self._work_baseline_snapshot = self._get_work_tree_snapshot()
+            self._clear_claude_blocked_state("claude_handoff_pending_release")
+            self._notify_claude("verify_lease_released", handoff_path)
 
     # ------------------------------------------------------------------
     def _check_pipeline_signal_updates(self) -> None:
@@ -2324,9 +2621,19 @@ class WatcherCore:
         if operator_sig and operator_sig != self._last_operator_request_sig:
             self._last_operator_request_sig = operator_sig
             status = self._read_status_from_path(self.operator_request_path) or "missing"
-            if active_control is not None and active_control.path == self.operator_request_path:
+            if (
+                active_control is not None
+                and active_control.path == self.operator_request_path
+                and active_control.control_seq >= self._turn_active_control_seq
+            ):
                 log.info("operator request updated: STATUS=needs_operator → Claude notify 차단")
                 self._clear_claude_blocked_state("operator_request_pending")
+                self._transition_turn(
+                    WatcherTurnState.OPERATOR_WAIT,
+                    "operator_request_updated",
+                    active_control_file="operator_request.md",
+                    active_control_seq=active_control.control_seq,
+                )
                 self._log_raw(
                     "operator_request_pending",
                     str(self.operator_request_path),
@@ -2349,9 +2656,16 @@ class WatcherCore:
             self._last_gemini_request_sig = gemini_request_sig
             request_mtime = self._get_pending_gemini_request_mtime()
             status = self._read_status_from_path(self.gemini_request_path) or "missing"
-            if request_mtime > 0.0 and self._get_pending_operator_mtime() == 0.0:
+            gemini_req_control_seq = active_control.control_seq if active_control and active_control.path == self.gemini_request_path else -1
+            if request_mtime > 0.0 and self._get_pending_operator_mtime() == 0.0 and gemini_req_control_seq >= self._turn_active_control_seq:
                 log.info("gemini request updated: STATUS=request_open → Gemini 차례")
                 self._clear_claude_blocked_state("gemini_request_pending")
+                self._transition_turn(
+                    WatcherTurnState.GEMINI_ADVISORY,
+                    "gemini_request_updated",
+                    active_control_file="gemini_request.md",
+                    active_control_seq=gemini_req_control_seq,
+                )
                 self._notify_gemini("gemini_request_updated")
             else:
                 self._log_raw(
@@ -2369,9 +2683,16 @@ class WatcherCore:
             self._last_gemini_advice_sig = gemini_advice_sig
             advice_mtime = self._get_pending_gemini_advice_mtime()
             status = self._read_status_from_path(self.gemini_advice_path) or "missing"
-            if advice_mtime > 0.0 and self._get_pending_operator_mtime() == 0.0:
+            gemini_adv_control_seq = active_control.control_seq if active_control and active_control.path == self.gemini_advice_path else -1
+            if advice_mtime > 0.0 and self._get_pending_operator_mtime() == 0.0 and gemini_adv_control_seq >= self._turn_active_control_seq:
                 log.info("gemini advice updated: STATUS=advice_ready → Codex follow-up")
                 self._clear_claude_blocked_state("gemini_advice_pending")
+                self._transition_turn(
+                    WatcherTurnState.CODEX_FOLLOWUP,
+                    "gemini_advice_updated",
+                    active_control_file="gemini_advice.md",
+                    active_control_seq=gemini_adv_control_seq,
+                )
                 self._notify_codex_followup("gemini_advice_updated")
             else:
                 self._log_raw(
@@ -2390,16 +2711,41 @@ class WatcherCore:
             status = self._read_status_from_path(self.claude_handoff_path) or "missing"
             handoff_mtime = self._get_path_mtime(self.claude_handoff_path)
             dispatch_state = self._claude_handoff_dispatch_state(handoff_mtime)
+            handoff_seq = active_control.control_seq if active_control and active_control.path == self.claude_handoff_path else -1
             if (
                 active_control is not None
                 and active_control.path == self.claude_handoff_path
                 and status == "implement"
+                and self._current_turn_state == WatcherTurnState.CLAUDE_ACTIVE
+            ):
+                log.info("claude handoff updated during active Claude round: defer hot-swap until round exit")
+                self._log_raw(
+                    "claude_handoff_deferred",
+                    str(self.claude_handoff_path),
+                    "turn_signal",
+                    {
+                        "status": status,
+                        "active_control_seq": handoff_seq,
+                        "current_turn_state": self._current_turn_state.value,
+                    },
+                )
+            elif (
+                active_control is not None
+                and active_control.path == self.claude_handoff_path
+                and status == "implement"
                 and dispatch_state["dispatchable"]
+                and handoff_seq >= self._turn_active_control_seq
             ):
                 log.info("claude handoff updated: STATUS=implement → Claude 차례")
                 self._clear_claude_blocked_state("claude_handoff_updated")
+                self._transition_turn(
+                    WatcherTurnState.CLAUDE_ACTIVE,
+                    "claude_handoff_updated",
+                    active_control_file="claude_handoff.md",
+                    active_control_seq=handoff_seq,
+                )
+                self._work_baseline_snapshot = self._get_work_tree_snapshot()
                 self._notify_claude("claude_handoff_updated", self.claude_handoff_path)
-                self._pending_claude_handoff_sig = ""
             else:
                 if (
                     active_control is not None
@@ -2408,7 +2754,6 @@ class WatcherCore:
                     and dispatch_state["verify_active"]
                 ):
                     self._clear_claude_blocked_state("claude_handoff_pending_release")
-                    self._pending_claude_handoff_sig = handoff_sig
                 log.info("claude handoff updated: STATUS=%s → Claude notify 건너뜀", status)
                 self._log_raw(
                     "claude_notify_skipped",
@@ -2621,7 +2966,7 @@ class WatcherCore:
 
     # ------------------------------------------------------------------
     def _check_claude_live_session_escalation(self) -> None:
-        if not self._waiting_for_claude:
+        if self._current_turn_state != WatcherTurnState.CLAUDE_ACTIVE:
             return
         if not self._session_arbitration_enabled():
             self._clear_session_arbitration_draft("session_arbitration_disabled")
@@ -2738,19 +3083,24 @@ class WatcherCore:
         # --- 시작 시 1회: 턴 판단 ---
         if not self._initial_turn_checked:
             self._initial_turn_checked = True
-            turn = self._determine_initial_turn()
+            turn = self._resolve_turn()
             log.info("initial turn: %s", turn)
             self._log_raw("initial_turn", "", "startup", {"turn": turn})
             if turn == "claude":
-                # Claude 차례 → 시작 시점 work/ 전체 스냅샷을 기준선으로 저장
                 self._work_baseline_snapshot = self._get_work_tree_snapshot()
-                self._waiting_for_claude = True
+                self._transition_turn(
+                    WatcherTurnState.CLAUDE_ACTIVE,
+                    "startup_turn_claude",
+                    active_control_file="claude_handoff.md",
+                    active_control_seq=self._read_control_seq_from_path(self.claude_handoff_path),
+                )
                 handoff_path, _ = self._get_latest_implement_handoff()
                 self._notify_claude("startup_turn_claude", handoff_path)
-                log.info("waiting_for_claude: baseline_files=%d",
+                log.info("CLAUDE_ACTIVE: baseline_files=%d",
                          len(self._work_baseline_snapshot))
                 return
             if turn == "operator":
+                self._transition_turn(WatcherTurnState.OPERATOR_WAIT, "startup_turn_operator")
                 log.info("startup turn blocked by pending operator_request")
                 self._log_raw(
                     "operator_request_pending",
@@ -2760,11 +3110,19 @@ class WatcherCore:
                 )
                 return
             if turn == "gemini":
+                self._transition_turn(WatcherTurnState.GEMINI_ADVISORY, "startup_turn_gemini")
                 self._notify_gemini("startup_turn_gemini")
                 return
             if turn == "codex_followup":
+                self._transition_turn(WatcherTurnState.CODEX_FOLLOWUP, "startup_turn_codex_followup")
                 self._notify_codex_followup("startup_turn_codex_followup")
                 return
+            if turn == "codex":
+                self._transition_turn(WatcherTurnState.CODEX_VERIFY, "startup_turn_codex")
+                # Codex verify는 work/ 감시 루프에서 자연스럽게 디스패치됨
+                return
+            # idle
+            self._transition_turn(WatcherTurnState.IDLE, "startup_turn_idle")
 
         # --- rolling handoff / operator 슬롯 감시 (Codex → Claude / operator 방향) ---
         self._check_pipeline_signal_updates()
@@ -2780,16 +3138,19 @@ class WatcherCore:
             return
 
         # --- Claude 차례 대기 중이면 work/ 감시 건너뜀 ---
-        if self._waiting_for_claude:
+        if self._current_turn_state == WatcherTurnState.CLAUDE_ACTIVE:
             if self._check_claude_implement_blocked():
                 return
             self._check_claude_live_session_escalation()
+            self._check_claude_idle_timeout()
+            if self._current_turn_state != WatcherTurnState.CLAUDE_ACTIVE:
+                return  # idle timeout fired
             # work/ 전체 스냅샷이 달라졌는지 확인
             current_snapshot = self._get_work_tree_snapshot()
             if current_snapshot == self._work_baseline_snapshot:
                 return  # Claude가 아직 작업 안 함 → Codex dispatch 하지 않음
             # Claude가 새 파일을 썼거나 기존 파일 내용을 바꿨으므로 대기 해제
-            self._waiting_for_claude = False
+            self._transition_turn(WatcherTurnState.IDLE, "claude_activity_detected")
             self._work_baseline_snapshot = {}
             self._clear_session_arbitration_draft("claude_activity_resumed")
             self._clear_claude_blocked_state("claude_activity_resumed")

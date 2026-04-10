@@ -32,6 +32,13 @@ launcher는 target repo에 `.pipeline/`, `work/`, `verify/`가 없으면 자동 
 5. **설정** 버튼으로 설정 화면으로 들어가고, 필요하면 현재 실행 전제도 다시 확인합니다.
 6. **시작** 버튼으로 pipeline을 시작합니다.
 
+PowerShell safe-copy 빌드(`scripts/build-gui-exe.ps1`)를 쓰면 build 완료 후
+- `dist/pipeline-gui.exe`
+- `windows-launchers/dist/pipeline-gui.exe`
+- `%USERPROFILE%\Desktop\pipeline-gui.exe`
+
+세 위치가 모두 같은 최신 빌드로 자동 덮어쓰기됩니다.
+
 마지막 성공 경로는 `~/.pipeline-gui-last-project`에 저장되어 다음 실행 시 자동 복원됩니다.
 최근 5개 경로를 기억하며 quick-select 버튼으로 전환할 수 있습니다.
 
@@ -39,7 +46,7 @@ launcher는 target repo에 `.pipeline/`, `work/`, `verify/`가 없으면 자동 
 - `운영`: 실행/상태/로그를 보는 운영 화면
 - `가이드`: read-only canonical guide를 보는 화면 (`.md 내보내기` 가능)
 - `설정`: agent 선택, 역할 바인딩, draft/preview/apply를 다루는 setup 화면
-  - 우측 pane에는 현재 `setup_id`, 현재 `preview fingerprint`, 지원 수준, 유효성 요약, 적용 준비 상태가 따로 표시됩니다.
+  - 우측 pane에는 현재 `setup_id`, 현재 `preview fingerprint`, `초안 지원 수준`, `실행 프로필`, 유효성 요약, 적용 준비 상태가 따로 표시됩니다.
   - `초안 저장 -> 미리보기 생성 -> 적용`은 `.pipeline/config/agent_profile.draft.json`과 `.pipeline/setup/{request,preview,apply,result}.json`을 통해 round-trip 됩니다.
   - launcher 기본값은 local setup executor adapter이며, `미리보기 대기 중` / `적용 진행 중` 상태가 실제로 보이도록 preview/result materialization은 UI에서 비동기로 처리됩니다.
   - local executor는 `preview.<setup_id>.staged.json`, `result.<setup_id>.staged.json` 같은 setup-id별 임시 파일을 먼저 쓴 뒤 current setup과 맞을 때만 canonical `preview.json` / `result.json`으로 승격합니다. 오래된 non-current staged 파일은 자동 정리되며, current request/apply가 진행 중인 setup id는 cleanup에서 보호됩니다.
@@ -47,13 +54,16 @@ launcher는 target repo에 `.pipeline/`, `work/`, `verify/`가 없으면 자동 
   - setup 화면의 `staged 정리` 버튼은 같은 보호 규칙으로 오래된 non-current `*.staged.json`만 수동 정리합니다. current `PreviewWaiting` / `ApplyPending` setup id는 이 수동 clean에서도 건드리지 않습니다.
   - setup 우측 pane의 `정리 기록`에는 초기 정리 / 자동 정리 / 수동 정리 결과가 최근 순으로 누적됩니다. 수동 정리에서 삭제 대상이 없을 때도 마지막 시도를 바로 확인할 수 있게 no-op 결과를 남깁니다.
   - `result.restart_required=true`인 적용 결과가 도착하면 setup 화면에서 재시작 확인 후 바로 watcher/launcher 재시작을 요청할 수 있습니다.
+  - recent apply 결과가 남아 있어도 active profile이 실제로 없으면 setup 상태는 `적용 완료` 대신 `복구 필요`로 내려가고, 현재 미리보기 재적용 또는 새 preview 생성으로 복구를 유도합니다.
+  - 메인 `시스템` 카드의 `설정:` 줄도 hard-blocker 통과 여부만 보여 주지 않고, runtime active profile이 없거나 launch가 차단된 경우 `설정: ... / 실행 차단: ...`처럼 같은 resolver 메시지를 함께 보여 줍니다.
 
 최근 launcher는 agent 카드의 `사용량:` 줄에 pane 텍스트 추정값뿐 아니라
 로컬 CLI usage 로그(Claude/Codex/Gemini)가 있으면 해당 summary를 우선 표시합니다.
 Windows exe에서도 이 정보는 WSL 내부 홈 디렉터리 로그를 기준으로 읽습니다.
 agent 상태는 live pane tail을 우선 보며, 오래된 `Working ...` scrollback이나 stale watcher hint보다 현재 prompt-ready 상태를 더 강하게 반영합니다. Codex/Gemini가 실제로 작업 중일 때는 note에 `verify 37s`, `advice 22s`처럼 현재 phase가 함께 표시될 수 있습니다.
 `시스템` 카드의 `폴링:` 줄은 상태 스냅샷 신선도를 보여 줍니다. `최신 0초`는 live pane 기준 최신 poll, `지연 4초`는 UI가 이전 스냅샷을 잠깐 들고 있는 상태, `마지막 실행`은 session/watcher가 내려간 뒤 마지막 스냅샷입니다.
-`시스템` 카드의 `활성 제어:` 줄은 현재 newest-valid-control 기준으로 어떤 control 슬롯이 실행 입력인지 보여 줍니다. `비활성:` 줄은 더 새로운 유효 슬롯이 있어 무시되는 오래된 stale control 파일을 표시합니다.
+`시스템` 카드의 control summary는 이제 실제로 두 구역으로 나뉩니다. 강조된 `ACTIVE CONTROL` 박스는 현재 newest-valid-control 기준의 실행 입력 1개를 보여 주고, 아래의 dim `INACTIVE / STALE` 박스는 더 새로운 유효 슬롯이 있어 무시되는 오래된 stale control 파일만 따로 보여 줍니다.
+Start / Restart가 15초 안에 tmux session을 못 찾으면 generic timeout만 띄우지 않고, 가능할 때는 `.pipeline/logs/experimental/pipeline-launcher-start.log`의 마지막 failure hint도 toast에 함께 붙여 원인을 더 빨리 드러냅니다. 반대로 Windows/WSL tmux probe가 순간적으로 미끄러져도 fresh watcher start가 확인되면 false-negative timeout 대신 정상 시작으로 처리합니다.
 
 `토큰` 패널은 추가로 아래 read/write maintenance action을 제공합니다.
 - `전체 히스토리`: 기존 `usage.db`를 유지한 채 전체 히스토리를 누적 보강합니다. dedup로 중복을 막습니다.
@@ -73,9 +83,11 @@ agent 상태는 live pane tail을 우선 보며, 오래된 `Working ...` scrollb
 자동 collector 기본값은 `--since-days 7`이며, 현재 실측 기준 `14일` 이상은 첫 스캔 체감이 커서 기본값에서 제외했습니다.
 
 exe 빌드 방법은 `scripts/PACKAGING.md`를 참고하세요.
+repo 안에는 `dist/pipeline-gui.exe`와 `windows-launchers/dist/pipeline-gui.exe` 두 위치가 있을 수 있고, safe-copy PowerShell 빌드에서는 Desktop의 `pipeline-gui.exe`까지 포함해 세 위치를 같은 산출물로 동기화합니다. GUI/Controller 표시가 서로 다르면 오래된 Desktop 복사본이나 예전 exe를 실행 중이지 않은지도 함께 확인해 주세요.
+최신 exe는 frozen launch 시 현재 작업 디렉터리(cwd)의 live source tree가 bundled `pipeline_gui`/`storage` import를 가로채지 않도록 entrypoint에서 `sys.path`를 먼저 정리하고, startup cwd도 exe 폴더로 정규화합니다. 따라서 Desktop 더블클릭과 PowerShell `& "$HOME\Desktop\pipeline-gui.exe"` 실행은 같은 bundled snapshot과 같은 startup cwd를 읽는 것이 정상입니다.
 PowerShell에서 `pip install pyinstaller`를 했는데 `bash scripts/build-gui-exe.sh`가 못 찾는 경우에는,
 Windows Python과 bash/WSL Python 환경이 분리된 상황일 가능성이 큽니다. 이때는 `scripts/PACKAGING.md`의 PowerShell 수동 빌드 방법을 사용하시거나, bash/WSL 안에서는 `venv`를 만든 뒤 그 안에 PyInstaller를 설치해 주셔야 합니다. Ubuntu/WSL에서는 시스템 Python에 바로 `python3 -m pip install ...`가 `externally-managed-environment`로 막힐 수 있습니다.
-수동 PowerShell 빌드 시에는 `start/stop/watcher`만이 아니라 `--add-data "_data;_data"`와 `pipeline_gui/token_usage_shared.py`, `pipeline_gui/token_dashboard_shared.py`도 반드시 포함해야 `토큰` 패널의 `전체 히스토리 / DB 재구성`과 usage 조회가 동작합니다. `--add-data "_data;."`로 넣으면 `token_collector.py`가 bundle root로 들어가서 여전히 missing 경고가 뜰 수 있습니다. 캐시 혼선을 줄이려면 `pyinstaller --clean -y ...`로 빌드하는 편이 안전합니다. 최신 exe는 필요한 GUI/runtime 파일을 target project 아래 `.pipeline/gui-runtime/_data/`로 staging한 뒤 WSL에서 그 안정 경로를 사용합니다.
+수동 PowerShell 빌드 시에는 `start/stop/watcher`만이 아니라 `--add-data "_data;_data"`와 `pipeline_gui/token_usage_shared.py`, `pipeline_gui/token_dashboard_shared.py`도 반드시 포함해야 `토큰` 패널의 `전체 히스토리 / DB 재구성`과 usage 조회가 동작합니다. `--add-data "_data;."`로 넣으면 `token_collector.py`가 bundle root로 들어가서 여전히 missing 경고가 뜰 수 있습니다. 캐시 혼선을 줄이려면 `pyinstaller --clean -y ...`로 빌드하는 편이 안전합니다. 최신 exe는 필요한 GUI/runtime 파일을 target project 아래 `.pipeline/gui-runtime/_data/`로 staging한 뒤 WSL에서 그 안정 경로를 사용하며, bundled runtime asset이 바뀌면 다음 launch에서 staged copy도 다시 갱신합니다.
 
 ## 파일
 

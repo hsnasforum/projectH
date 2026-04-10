@@ -1,0 +1,8 @@
+{
+  "status": "apply_requested",
+  "setup_id": "setup-20260410-032059-905058",
+  "schema_version": 1,
+  "approved_at": "2026-04-09T18:21:14.103857+00:00",
+  "approved_preview_fingerprint": "sha256:3dd83882b6d270746faa4aef68232a57dac68a55a4fe7734295d0c71dace969e",
+  "executor": "Codex"
+}

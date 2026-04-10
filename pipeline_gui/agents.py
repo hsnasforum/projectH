@@ -368,6 +368,12 @@ def watcher_runtime_hints(project: Path) -> dict[str, tuple[str, str]]:
             lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-300:]
         except OSError:
             return {}
+    return watcher_runtime_hints_from_lines(lines)
+
+
+def watcher_runtime_hints_from_lines(lines: list[str]) -> dict[str, tuple[str, str]]:
+    if not lines:
+        return {}
     claude_started_at: float | None = None
     claude_done = False
     codex_started_at: float | None = None

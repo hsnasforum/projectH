@@ -132,6 +132,13 @@ done
 echo ""
 echo "Build complete."
 echo "Output: $PROJECT_ROOT/dist/pipeline-gui"
+
+if [ -f "$PROJECT_ROOT/dist/pipeline-gui.exe" ]; then
+    mkdir -p "$PROJECT_ROOT/windows-launchers/dist"
+    cp -f "$PROJECT_ROOT/dist/pipeline-gui.exe" "$PROJECT_ROOT/windows-launchers/dist/pipeline-gui.exe"
+    echo "Mirrored Windows exe: $PROJECT_ROOT/windows-launchers/dist/pipeline-gui.exe"
+fi
+
 echo ""
 echo "번들된 자산:"
 for spec in "${ASSET_SPECS[@]}"; do

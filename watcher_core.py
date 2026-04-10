@@ -1617,9 +1617,6 @@ class WatcherCore:
         # Claude 차례일 때: 시작 시점 work/ 스냅샷
         # 이후 스냅샷이 달라질 때만 새 작업으로 인정
         self._work_baseline_snapshot: dict[str, str] = {}
-        # Claude 차례 대기 중 플래그
-        self._waiting_for_claude: bool = False
-
         # Turn state (single source of truth for dispatch)
         self._current_turn_state: WatcherTurnState = WatcherTurnState.IDLE
         self._turn_entered_at: float = 0.0
@@ -2203,6 +2200,78 @@ class WatcherCore:
         return work_mtime > verify_mtime
 
     # ------------------------------------------------------------------
+    def _find_latest_md_broad(self, root: Path) -> Optional[Path]:
+        """Find latest canonical round note without metadata-only filtering."""
+        latest_path: Optional[Path] = None
+        latest_mtime = 0.0
+        if not root.exists():
+            return None
+        for md in root.rglob("*.md"):
+            if not self._is_canonical_round_note(root, md):
+                continue
+            try:
+                mt = md.stat().st_mtime
+            except OSError:
+                continue
+            if mt >= latest_mtime:
+                latest_path = md
+                latest_mtime = mt
+        return latest_path
+
+    # ------------------------------------------------------------------
+    def _latest_work_needs_verify_broad(self) -> bool:
+        """Like _latest_work_needs_verify but includes metadata-only notes.
+
+        For verify-needed judgment, all canonical round notes count.
+        Metadata-only filtering is only for dispatch prompt content.
+        """
+        latest_work = self._find_latest_md_broad(self.watch_dir)
+        if latest_work is None:
+            return False
+        latest_verify = self._get_latest_same_day_verify_path(latest_work)
+        work_mtime = self._get_path_mtime(latest_work)
+        verify_mtime = self._get_path_mtime(latest_verify) if latest_verify else 0.0
+        return work_mtime > verify_mtime
+
+    # ------------------------------------------------------------------
+    def _resolve_turn(self) -> str:
+        """Resolve which agent should act next.
+
+        Returns one of: "operator", "gemini", "codex_followup", "codex", "claude", "idle".
+        This is a pure query — it does not trigger transitions or side effects.
+        Used by both initial turn and rolling turn decisions.
+        """
+        # 1. operator_request active → operator
+        if self._is_active_control(self.operator_request_path, "needs_operator"):
+            return "operator"
+
+        # 2. gemini_request active → gemini
+        if self._is_active_control(self.gemini_request_path, "request_open"):
+            return "gemini"
+
+        # 3. gemini_advice active → codex_followup
+        if self._is_active_control(self.gemini_advice_path, "advice_ready"):
+            return "codex_followup"
+
+        # 4. handoff active + implement, but verify_pending or verify_active → codex first
+        handoff_active = self._is_active_control(self.claude_handoff_path, "implement")
+        verify_pending = self._latest_work_needs_verify_broad()
+        verify_active = self._claude_handoff_verify_active()
+        if handoff_active and (verify_pending or verify_active):
+            return "codex"
+
+        # 5. work needs verify (no handoff) → codex
+        if verify_pending:
+            return "codex"
+
+        # 6. handoff active and dispatchable → claude
+        if handoff_active:
+            return "claude"
+
+        # 7. fallback
+        return "idle"
+
+    # ------------------------------------------------------------------
     def _determine_initial_turn(self) -> str:
         """
         시작 시 턴 판단 — operator stop / Gemini arbitration / Claude handoff / work 최신성 비교:
@@ -2683,7 +2752,7 @@ class WatcherCore:
 
     # ------------------------------------------------------------------
     def _check_claude_live_session_escalation(self) -> None:
-        if not self._waiting_for_claude:
+        if self._current_turn_state != WatcherTurnState.CLAUDE_ACTIVE:
             return
         if not self._session_arbitration_enabled():
             self._clear_session_arbitration_draft("session_arbitration_disabled")
@@ -2800,19 +2869,24 @@ class WatcherCore:
         # --- 시작 시 1회: 턴 판단 ---
         if not self._initial_turn_checked:
             self._initial_turn_checked = True
-            turn = self._determine_initial_turn()
+            turn = self._resolve_turn()
             log.info("initial turn: %s", turn)
             self._log_raw("initial_turn", "", "startup", {"turn": turn})
             if turn == "claude":
-                # Claude 차례 → 시작 시점 work/ 전체 스냅샷을 기준선으로 저장
                 self._work_baseline_snapshot = self._get_work_tree_snapshot()
-                self._waiting_for_claude = True
+                self._transition_turn(
+                    WatcherTurnState.CLAUDE_ACTIVE,
+                    "startup_turn_claude",
+                    active_control_file="claude_handoff.md",
+                    active_control_seq=self._read_control_seq_from_path(self.claude_handoff_path),
+                )
                 handoff_path, _ = self._get_latest_implement_handoff()
                 self._notify_claude("startup_turn_claude", handoff_path)
-                log.info("waiting_for_claude: baseline_files=%d",
+                log.info("CLAUDE_ACTIVE: baseline_files=%d",
                          len(self._work_baseline_snapshot))
                 return
             if turn == "operator":
+                self._transition_turn(WatcherTurnState.OPERATOR_WAIT, "startup_turn_operator")
                 log.info("startup turn blocked by pending operator_request")
                 self._log_raw(
                     "operator_request_pending",
@@ -2822,11 +2896,19 @@ class WatcherCore:
                 )
                 return
             if turn == "gemini":
+                self._transition_turn(WatcherTurnState.GEMINI_ADVISORY, "startup_turn_gemini")
                 self._notify_gemini("startup_turn_gemini")
                 return
             if turn == "codex_followup":
+                self._transition_turn(WatcherTurnState.CODEX_FOLLOWUP, "startup_turn_codex_followup")
                 self._notify_codex_followup("startup_turn_codex_followup")
                 return
+            if turn == "codex":
+                self._transition_turn(WatcherTurnState.CODEX_VERIFY, "startup_turn_codex")
+                # Codex verify는 work/ 감시 루프에서 자연스럽게 디스패치됨
+                return
+            # idle
+            self._transition_turn(WatcherTurnState.IDLE, "startup_turn_idle")
 
         # --- rolling handoff / operator 슬롯 감시 (Codex → Claude / operator 방향) ---
         self._check_pipeline_signal_updates()
@@ -2842,7 +2924,7 @@ class WatcherCore:
             return
 
         # --- Claude 차례 대기 중이면 work/ 감시 건너뜀 ---
-        if self._waiting_for_claude:
+        if self._current_turn_state == WatcherTurnState.CLAUDE_ACTIVE:
             if self._check_claude_implement_blocked():
                 return
             self._check_claude_live_session_escalation()
@@ -2851,7 +2933,7 @@ class WatcherCore:
             if current_snapshot == self._work_baseline_snapshot:
                 return  # Claude가 아직 작업 안 함 → Codex dispatch 하지 않음
             # Claude가 새 파일을 썼거나 기존 파일 내용을 바꿨으므로 대기 해제
-            self._waiting_for_claude = False
+            self._transition_turn(WatcherTurnState.IDLE, "claude_activity_detected")
             self._work_baseline_snapshot = {}
             self._clear_session_arbitration_draft("claude_activity_resumed")
             self._clear_claude_blocked_state("claude_activity_resumed")

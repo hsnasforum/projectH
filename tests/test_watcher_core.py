@@ -146,12 +146,16 @@ class WorkNoteFilteringTest(unittest.TestCase):
                 }
             )
             core._initial_turn_checked = True
-            core._waiting_for_claude = False
+            core._transition_turn(watcher_core.WatcherTurnState.IDLE, "test_setup")
 
             with mock.patch.object(core.sm, "step", wraps=core.sm.step) as advance:
                 core._poll()
 
-            self.assertFalse(any((base_dir / "state").glob("*.json")))
+            job_jsons = [
+                p for p in (base_dir / "state").glob("*.json")
+                if p.name != "turn_state.json"
+            ]
+            self.assertFalse(any(job_jsons))
             self.assertEqual(advance.call_count, 0)
 
 
@@ -236,7 +240,7 @@ Should I continue here or handoff and continue in a fresh session?
                 }
             )
             core._initial_turn_checked = True
-            core._waiting_for_claude = True
+            core._transition_turn(watcher_core.WatcherTurnState.CLAUDE_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
             pane_texts = {
@@ -283,7 +287,7 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
                 }
             )
             core._initial_turn_checked = True
-            core._waiting_for_claude = True
+            core._transition_turn(watcher_core.WatcherTurnState.CLAUDE_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
             busy_snapshots = {
@@ -325,7 +329,7 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
                 }
             )
             core._initial_turn_checked = True
-            core._waiting_for_claude = True
+            core._transition_turn(watcher_core.WatcherTurnState.CLAUDE_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
             pane_texts = {
@@ -374,7 +378,7 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
                 }
             )
             core._initial_turn_checked = True
-            core._waiting_for_claude = True
+            core._transition_turn(watcher_core.WatcherTurnState.CLAUDE_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
             pane_texts = {
@@ -395,7 +399,7 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
 
             draft_path = base_dir / "session_arbitration_draft.md"
             self.assertFalse(draft_path.exists())
-            self.assertFalse(core._waiting_for_claude)
+            self.assertNotEqual(core._current_turn_state, watcher_core.WatcherTurnState.CLAUDE_ACTIVE)
 
     def test_same_fingerprint_is_suppressed_during_cooldown_after_clear(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -458,7 +462,7 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
                 }
             )
             core._initial_turn_checked = True
-            core._waiting_for_claude = True
+            core._transition_turn(watcher_core.WatcherTurnState.CLAUDE_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
             pane_texts = {
@@ -531,7 +535,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                 }
             )
             core._initial_turn_checked = True
-            core._waiting_for_claude = True
+            core._transition_turn(watcher_core.WatcherTurnState.CLAUDE_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
             handoff_sha = watcher_core.compute_file_sha256(handoff_path)
@@ -586,7 +590,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                 }
             )
             core._initial_turn_checked = True
-            core._waiting_for_claude = True
+            core._transition_turn(watcher_core.WatcherTurnState.CLAUDE_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
             handoff_sha = watcher_core.compute_file_sha256(handoff_path)
@@ -635,7 +639,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                 }
             )
             core._initial_turn_checked = True
-            core._waiting_for_claude = True
+            core._transition_turn(watcher_core.WatcherTurnState.CLAUDE_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
             pane_texts = {
@@ -680,7 +684,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                 }
             )
             core._initial_turn_checked = True
-            core._waiting_for_claude = True
+            core._transition_turn(watcher_core.WatcherTurnState.CLAUDE_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
             pane_texts = {
@@ -1183,7 +1187,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
                 }
             )
             core._initial_turn_checked = True
-            core._waiting_for_claude = True
+            core._transition_turn(watcher_core.WatcherTurnState.CLAUDE_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
             pane_texts = {
@@ -1275,6 +1279,103 @@ class TurnStateEnumTest(unittest.TestCase):
         expected = {"IDLE", "CLAUDE_ACTIVE", "CODEX_VERIFY", "CODEX_FOLLOWUP",
                     "GEMINI_ADVISORY", "OPERATOR_WAIT"}
         self.assertEqual(set(e.value for e in WatcherTurnState), expected)
+
+
+class TurnResolutionTest(unittest.TestCase):
+    def test_codex_verify_before_claude_when_work_exists(self) -> None:
+        """When work needs verify and handoff is active, Codex goes first."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            handoff = base_dir / "claude_handoff.md"
+            handoff.write_text("STATUS: implement\nCONTROL_SEQ: 17\n", encoding="utf-8")
+
+            work_note = watch_dir / "4" / "10" / "2026-04-10-some-work.md"
+            _write_work_note(work_note, ["controller/server.py"])
+
+            core = watcher_core.WatcherCore({
+                "watch_dir": str(watch_dir),
+                "base_dir": str(base_dir),
+                "repo_root": str(root),
+                "dry_run": True,
+            })
+
+            turn = core._resolve_turn()
+            self.assertEqual(turn, "codex")
+
+    def test_claude_active_when_no_pending_verify(self) -> None:
+        """When no work needs verify and handoff is active, Claude goes."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            handoff = base_dir / "claude_handoff.md"
+            handoff.write_text("STATUS: implement\nCONTROL_SEQ: 17\n", encoding="utf-8")
+
+            core = watcher_core.WatcherCore({
+                "watch_dir": str(watch_dir),
+                "base_dir": str(base_dir),
+                "repo_root": str(root),
+                "dry_run": True,
+            })
+
+            turn = core._resolve_turn()
+            self.assertEqual(turn, "claude")
+
+    def test_idle_fallback_when_nothing_pending(self) -> None:
+        """When no control signals and no work, state is IDLE."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            core = watcher_core.WatcherCore({
+                "watch_dir": str(watch_dir),
+                "base_dir": str(base_dir),
+                "repo_root": str(root),
+                "dry_run": True,
+            })
+
+            turn = core._resolve_turn()
+            self.assertEqual(turn, "idle")
+
+    def test_codex_verify_before_claude_even_for_metadata_only_note(self) -> None:
+        """Metadata-only work note still triggers Codex verify before Claude."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            handoff = base_dir / "claude_handoff.md"
+            handoff.write_text("STATUS: implement\nCONTROL_SEQ: 17\n", encoding="utf-8")
+
+            meta_note = watch_dir / "4" / "10" / "2026-04-10-meta-only.md"
+            _write_work_note(meta_note, ["work/4/10/2026-04-10-meta-only.md"])
+
+            core = watcher_core.WatcherCore({
+                "watch_dir": str(watch_dir),
+                "base_dir": str(base_dir),
+                "repo_root": str(root),
+                "dry_run": True,
+            })
+
+            turn = core._resolve_turn()
+            self.assertEqual(turn, "codex")
 
 
 class TransitionTurnTest(unittest.TestCase):

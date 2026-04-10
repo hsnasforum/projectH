@@ -837,18 +837,19 @@ class ClaudeHandoffDispatchTest(unittest.TestCase):
             )
 
             handoff_path = base_dir / "claude_handoff.md"
-            handoff_path.write_text("STATUS: implement\n")
+            handoff_path.write_text("STATUS: implement\nCONTROL_SEQ: 10\n")
             core.lease.acquire("slot_verify", "job-1", 1, "codex-pane", ttl=900)
 
             with mock.patch.object(core, "_notify_claude") as notify:
                 core._check_pipeline_signal_updates()
                 notify.assert_not_called()
-                self.assertEqual(core._pending_claude_handoff_sig, core._get_path_sig(handoff_path))
+                # Handoff detected but verify active, so stays at current state
+                self.assertNotEqual(core._current_turn_state, watcher_core.WatcherTurnState.CLAUDE_ACTIVE)
 
                 core.lease.release("slot_verify")
                 core._check_pipeline_signal_updates()
-                notify.assert_called_once_with("claude_handoff_pending_release", handoff_path)
-                self.assertEqual(core._pending_claude_handoff_sig, "")
+                notify.assert_called_once()
+                self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CLAUDE_ACTIVE)
 
 
 class RuntimePlanConsumptionTest(unittest.TestCase):
@@ -1376,6 +1377,73 @@ class TurnResolutionTest(unittest.TestCase):
 
             turn = core._resolve_turn()
             self.assertEqual(turn, "codex")
+
+
+class RollingSignalTransitionTest(unittest.TestCase):
+    def test_stale_control_seq_does_not_trigger_transition(self) -> None:
+        """A signal with lower control_seq than current should not cause transition."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            core = watcher_core.WatcherCore({
+                "watch_dir": str(watch_dir),
+                "base_dir": str(base_dir),
+                "repo_root": str(root),
+                "dry_run": True,
+            })
+
+            # Set current state with seq 17
+            core._transition_turn(
+                watcher_core.WatcherTurnState.CODEX_VERIFY,
+                "test_setup",
+                active_control_seq=17,
+            )
+
+            # A handoff with lower seq should not override
+            handoff = base_dir / "claude_handoff.md"
+            handoff.write_text("STATUS: implement\nCONTROL_SEQ: 15\n", encoding="utf-8")
+            # Reset sig tracking so change is detected
+            core._last_claude_handoff_sig = ""
+            core._check_pipeline_signal_updates()
+
+            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CODEX_VERIFY)
+
+    def test_higher_seq_handoff_transitions_to_claude(self) -> None:
+        """A handoff with higher seq should trigger Claude transition."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            core = watcher_core.WatcherCore({
+                "watch_dir": str(watch_dir),
+                "base_dir": str(base_dir),
+                "repo_root": str(root),
+                "dry_run": True,
+            })
+
+            core._transition_turn(
+                watcher_core.WatcherTurnState.IDLE,
+                "test_setup",
+                active_control_seq=15,
+            )
+
+            handoff = base_dir / "claude_handoff.md"
+            handoff.write_text("STATUS: implement\nCONTROL_SEQ: 18\n", encoding="utf-8")
+            core._last_claude_handoff_sig = ""
+
+            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+                core._check_pipeline_signal_updates()
+
+            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CLAUDE_ACTIVE)
 
 
 class TransitionTurnTest(unittest.TestCase):

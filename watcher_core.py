@@ -1603,7 +1603,6 @@ class WatcherCore:
         self._last_gemini_advice_sig: str = self._get_path_sig(self.gemini_advice_path)
         self._last_operator_request_sig: str = self._get_path_sig(self.operator_request_path)
         self._last_session_arbitration_draft_sig: str = self._get_path_sig(self.session_arbitration_draft_path)
-        self._pending_claude_handoff_sig: str = ""
         self._last_session_arbitration_fingerprint: str = ""
         self._session_arbitration_snapshot_fingerprints: dict[str, str] = {}
         self._session_arbitration_snapshot_changed_at: dict[str, float] = {}
@@ -2423,28 +2422,29 @@ class WatcherCore:
 
     # ------------------------------------------------------------------
     def _flush_pending_claude_handoff(self) -> None:
-        pending_sig = self._pending_claude_handoff_sig
-        if not pending_sig:
+        """If verify lease just released and handoff is waiting, transition to Claude."""
+        if self._current_turn_state not in (WatcherTurnState.CODEX_VERIFY, WatcherTurnState.IDLE):
             return
+        if self._claude_handoff_verify_active():
+            return  # verify still running
 
-        current_sig = self._get_path_sig(self.claude_handoff_path)
-        if not current_sig or current_sig != pending_sig:
-            self._pending_claude_handoff_sig = ""
-            return
-
-        status = self._read_status_from_path(self.claude_handoff_path) or "missing"
-        handoff_mtime = self._get_path_mtime(self.claude_handoff_path)
-        dispatch_state = self._claude_handoff_dispatch_state(handoff_mtime)
-        if status != "implement":
-            self._pending_claude_handoff_sig = ""
-            return
-        if not dispatch_state["dispatchable"]:
-            return
-
-        log.info("pending claude handoff ready: STATUS=implement → Claude 차례")
-        self._clear_claude_blocked_state("claude_handoff_pending_release")
-        self._notify_claude("claude_handoff_pending_release", self.claude_handoff_path)
-        self._pending_claude_handoff_sig = ""
+        # Re-resolve: maybe Claude can go now
+        turn = self._resolve_turn()
+        if turn == "claude":
+            handoff_path, _ = self._get_latest_implement_handoff()
+            active_control = self._get_active_control_signal()
+            seq = active_control.control_seq if active_control else -1
+            if seq < self._turn_active_control_seq:
+                return  # stale
+            self._transition_turn(
+                WatcherTurnState.CLAUDE_ACTIVE,
+                "verify_lease_released",
+                active_control_file="claude_handoff.md",
+                active_control_seq=seq,
+            )
+            self._work_baseline_snapshot = self._get_work_tree_snapshot()
+            self._clear_claude_blocked_state("claude_handoff_pending_release")
+            self._notify_claude("verify_lease_released", handoff_path)
 
     # ------------------------------------------------------------------
     def _check_pipeline_signal_updates(self) -> None:
@@ -2455,9 +2455,19 @@ class WatcherCore:
         if operator_sig and operator_sig != self._last_operator_request_sig:
             self._last_operator_request_sig = operator_sig
             status = self._read_status_from_path(self.operator_request_path) or "missing"
-            if active_control is not None and active_control.path == self.operator_request_path:
+            if (
+                active_control is not None
+                and active_control.path == self.operator_request_path
+                and active_control.control_seq >= self._turn_active_control_seq
+            ):
                 log.info("operator request updated: STATUS=needs_operator → Claude notify 차단")
                 self._clear_claude_blocked_state("operator_request_pending")
+                self._transition_turn(
+                    WatcherTurnState.OPERATOR_WAIT,
+                    "operator_request_updated",
+                    active_control_file="operator_request.md",
+                    active_control_seq=active_control.control_seq,
+                )
                 self._log_raw(
                     "operator_request_pending",
                     str(self.operator_request_path),
@@ -2480,9 +2490,16 @@ class WatcherCore:
             self._last_gemini_request_sig = gemini_request_sig
             request_mtime = self._get_pending_gemini_request_mtime()
             status = self._read_status_from_path(self.gemini_request_path) or "missing"
-            if request_mtime > 0.0 and self._get_pending_operator_mtime() == 0.0:
+            gemini_req_control_seq = active_control.control_seq if active_control and active_control.path == self.gemini_request_path else -1
+            if request_mtime > 0.0 and self._get_pending_operator_mtime() == 0.0 and gemini_req_control_seq >= self._turn_active_control_seq:
                 log.info("gemini request updated: STATUS=request_open → Gemini 차례")
                 self._clear_claude_blocked_state("gemini_request_pending")
+                self._transition_turn(
+                    WatcherTurnState.GEMINI_ADVISORY,
+                    "gemini_request_updated",
+                    active_control_file="gemini_request.md",
+                    active_control_seq=gemini_req_control_seq,
+                )
                 self._notify_gemini("gemini_request_updated")
             else:
                 self._log_raw(
@@ -2500,9 +2517,16 @@ class WatcherCore:
             self._last_gemini_advice_sig = gemini_advice_sig
             advice_mtime = self._get_pending_gemini_advice_mtime()
             status = self._read_status_from_path(self.gemini_advice_path) or "missing"
-            if advice_mtime > 0.0 and self._get_pending_operator_mtime() == 0.0:
+            gemini_adv_control_seq = active_control.control_seq if active_control and active_control.path == self.gemini_advice_path else -1
+            if advice_mtime > 0.0 and self._get_pending_operator_mtime() == 0.0 and gemini_adv_control_seq >= self._turn_active_control_seq:
                 log.info("gemini advice updated: STATUS=advice_ready → Codex follow-up")
                 self._clear_claude_blocked_state("gemini_advice_pending")
+                self._transition_turn(
+                    WatcherTurnState.CODEX_FOLLOWUP,
+                    "gemini_advice_updated",
+                    active_control_file="gemini_advice.md",
+                    active_control_seq=gemini_adv_control_seq,
+                )
                 self._notify_codex_followup("gemini_advice_updated")
             else:
                 self._log_raw(
@@ -2521,16 +2545,24 @@ class WatcherCore:
             status = self._read_status_from_path(self.claude_handoff_path) or "missing"
             handoff_mtime = self._get_path_mtime(self.claude_handoff_path)
             dispatch_state = self._claude_handoff_dispatch_state(handoff_mtime)
+            handoff_seq = active_control.control_seq if active_control and active_control.path == self.claude_handoff_path else -1
             if (
                 active_control is not None
                 and active_control.path == self.claude_handoff_path
                 and status == "implement"
                 and dispatch_state["dispatchable"]
+                and handoff_seq >= self._turn_active_control_seq
             ):
                 log.info("claude handoff updated: STATUS=implement → Claude 차례")
                 self._clear_claude_blocked_state("claude_handoff_updated")
+                self._transition_turn(
+                    WatcherTurnState.CLAUDE_ACTIVE,
+                    "claude_handoff_updated",
+                    active_control_file="claude_handoff.md",
+                    active_control_seq=handoff_seq,
+                )
+                self._work_baseline_snapshot = self._get_work_tree_snapshot()
                 self._notify_claude("claude_handoff_updated", self.claude_handoff_path)
-                self._pending_claude_handoff_sig = ""
             else:
                 if (
                     active_control is not None
@@ -2539,7 +2571,6 @@ class WatcherCore:
                     and dispatch_state["verify_active"]
                 ):
                     self._clear_claude_blocked_state("claude_handoff_pending_release")
-                    self._pending_claude_handoff_sig = handoff_sig
                 log.info("claude handoff updated: STATUS=%s → Claude notify 건너뜀", status)
                 self._log_raw(
                     "claude_notify_skipped",

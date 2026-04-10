@@ -113,6 +113,15 @@ TERMINAL_STATES: set[JobStatus] = {JobStatus.VERIFY_DONE}
 # VERIFY_DONE는 2단계에서 terminal. 3단계에서 trust 분기가 붙으면 제거됨
 
 
+class WatcherTurnState(str, Enum):
+    IDLE             = "IDLE"
+    CLAUDE_ACTIVE    = "CLAUDE_ACTIVE"
+    CODEX_VERIFY     = "CODEX_VERIFY"
+    CODEX_FOLLOWUP   = "CODEX_FOLLOWUP"
+    GEMINI_ADVISORY  = "GEMINI_ADVISORY"
+    OPERATOR_WAIT    = "OPERATOR_WAIT"
+
+
 # ---------------------------------------------------------------------------
 # JobState 스키마
 # ---------------------------------------------------------------------------
@@ -1611,6 +1620,12 @@ class WatcherCore:
         # Claude 차례 대기 중 플래그
         self._waiting_for_claude: bool = False
 
+        # Turn state (single source of truth for dispatch)
+        self._current_turn_state: WatcherTurnState = WatcherTurnState.IDLE
+        self._turn_entered_at: float = 0.0
+        self._turn_active_control_seq: int = -1
+        self._turn_state_path: Path = self.state_dir / "turn_state.json"
+
         self.stabilizer = ArtifactStabilizer(
             settle_sec=config.get("settle_sec", 3.0),
             required_stable=config.get("required_stable", 2),
@@ -1720,6 +1735,53 @@ class WatcherCore:
             self._advisory_enabled()
             and bool(self.runtime_controls.get("session_arbitration_enabled"))
         )
+
+    # ------------------------------------------------------------------
+    def _transition_turn(
+        self,
+        new_state: WatcherTurnState,
+        reason: str,
+        *,
+        active_control_file: str = "",
+        active_control_seq: int = -1,
+        verify_job_id: str = "",
+    ) -> None:
+        """Transition to a new turn state and write turn_state.json atomically."""
+        old_state = self._current_turn_state
+        now = time.time()
+        self._current_turn_state = new_state
+        self._turn_entered_at = now
+        self._turn_active_control_seq = active_control_seq
+        log.info(
+            "turn_state %s -> %s  reason=%s",
+            old_state.value, new_state.value, reason,
+        )
+        self._log_raw(
+            "turn_transition",
+            "",
+            "turn_state",
+            {
+                "from": old_state.value,
+                "to": new_state.value,
+                "reason": reason,
+                "active_control_file": active_control_file,
+                "active_control_seq": active_control_seq,
+            },
+        )
+        # Write turn_state.json atomically
+        data: dict[str, object] = {
+            "state": new_state.value,
+            "entered_at": now,
+            "reason": reason,
+            "active_control_file": active_control_file,
+            "active_control_seq": active_control_seq,
+        }
+        if verify_job_id:
+            data["verify_job_id"] = verify_job_id
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        tmp_path = self._turn_state_path.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        tmp_path.replace(self._turn_state_path)
 
     # ------------------------------------------------------------------
     def _get_path_mtime(self, path: Path) -> float:

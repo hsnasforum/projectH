@@ -9,7 +9,17 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from pipeline_gui.backend import parse_control_slots, format_control_summary
+import pipeline_gui.backend
+from pipeline_gui.backend import (
+    confirm_pipeline_start,
+    current_verify_activity,
+    format_control_summary,
+    parse_control_slots,
+    pipeline_start,
+    pipeline_start_failure_hint,
+    watcher_log_snapshot,
+    watcher_start_observed,
+)
 
 
 class TestParseControlSlots(unittest.TestCase):
@@ -203,6 +213,97 @@ class TestParseControlSlotsWindowsBranch(unittest.TestCase):
             self.assertAlmostEqual(result["active"]["mtime"], 1712700000.8, places=1)
 
 
+class TestPipelineStartLaunchGate(unittest.TestCase):
+    def test_pipeline_start_blocks_when_active_profile_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            with mock.patch("pipeline_gui.backend.resolve_project_runtime_file") as resolve_file, \
+                 mock.patch("pipeline_gui.backend.subprocess.Popen") as popen:
+                message = pipeline_start(project)
+            self.assertIn("실행 차단:", message)
+            self.assertIn("active profile이 없습니다", message)
+            self.assertIn(".pipeline/config/agent_profile.json", message)
+            resolve_file.assert_not_called()
+            popen.assert_not_called()
+
+    def test_pipeline_start_blocks_when_active_profile_launch_is_disallowed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            active_path = project / ".pipeline" / "config" / "agent_profile.json"
+            active_path.parent.mkdir(parents=True, exist_ok=True)
+            active_path.write_text(
+                (
+                    '{"schema_version":1,"selected_agents":["Codex"],'
+                    '"role_bindings":{"implement":"Codex","verify":"Codex","advisory":""},'
+                    '"role_options":{"advisory_enabled":false,"operator_stop_enabled":true,"session_arbitration_enabled":false},'
+                    '"mode_flags":{"single_agent_mode":true,"self_verify_allowed":false,"self_advisory_allowed":false}}'
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch("pipeline_gui.backend.resolve_project_runtime_file") as resolve_file, \
+                 mock.patch("pipeline_gui.backend.subprocess.Popen") as popen:
+                message = pipeline_start(project)
+            self.assertIn("실행 차단:", message)
+            self.assertIn("implement and verify cannot share", message)
+            resolve_file.assert_not_called()
+            popen.assert_not_called()
+
+    def test_pipeline_start_allows_experimental_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            active_path = project / ".pipeline" / "config" / "agent_profile.json"
+            active_path.parent.mkdir(parents=True, exist_ok=True)
+            active_path.write_text(
+                (
+                    '{"schema_version":1,"selected_agents":["Codex"],'
+                    '"role_bindings":{"implement":"Codex","verify":"Codex","advisory":""},'
+                    '"role_options":{"advisory_enabled":false,"operator_stop_enabled":true,"session_arbitration_enabled":false},'
+                    '"mode_flags":{"single_agent_mode":true,"self_verify_allowed":true,"self_advisory_allowed":false}}'
+                ),
+                encoding="utf-8",
+            )
+            log_dir = project / ".pipeline" / "logs" / "experimental"
+            script = project / "start-pipeline.sh"
+            script.write_text("#!/bin/bash\n", encoding="utf-8")
+            with mock.patch("pipeline_gui.backend.resolve_project_runtime_file", return_value=script), \
+                 mock.patch("pipeline_gui.backend.IS_WINDOWS", False), \
+                 mock.patch("pipeline_gui.backend.subprocess.Popen") as popen:
+                message = pipeline_start(project)
+            self.assertEqual(message, "시작 요청됨")
+            self.assertTrue(log_dir.exists())
+            popen.assert_called_once()
+
+    def test_pipeline_start_windows_branch_refreshes_start_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            active_path = project / ".pipeline" / "config" / "agent_profile.json"
+            active_path.parent.mkdir(parents=True, exist_ok=True)
+            active_path.write_text(
+                (
+                    '{"schema_version":1,"selected_agents":["Codex"],'
+                    '"role_bindings":{"implement":"Codex","verify":"Codex","advisory":""},'
+                    '"role_options":{"advisory_enabled":false,"operator_stop_enabled":true,"session_arbitration_enabled":false},'
+                    '"mode_flags":{"single_agent_mode":true,"self_verify_allowed":true,"self_advisory_allowed":false}}'
+                ),
+                encoding="utf-8",
+            )
+            script = project / ".pipeline" / "gui-runtime" / "_data" / "start-pipeline.sh"
+            script.parent.mkdir(parents=True, exist_ok=True)
+            script.write_text("#!/bin/bash\n", encoding="utf-8")
+            log_path = project / ".pipeline" / "logs" / "experimental" / "pipeline-launcher-start.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text("stale\n", encoding="utf-8")
+            with mock.patch("pipeline_gui.backend.resolve_project_runtime_file", return_value=script), \
+                 mock.patch("pipeline_gui.backend.IS_WINDOWS", True), \
+                 mock.patch("pipeline_gui.backend._windows_to_wsl_mount", return_value="/home/test/project/.pipeline/gui-runtime/_data/start-pipeline.sh"), \
+                 mock.patch("pipeline_gui.backend._wsl_path_str", side_effect=lambda path: str(path)), \
+                 mock.patch("pipeline_gui.backend.subprocess.Popen") as popen:
+                message = pipeline_start(project, "aip-projectH")
+            self.assertEqual(message, "시작 요청됨")
+            self.assertEqual(log_path.read_text(encoding="utf-8"), "")
+            popen.assert_called_once()
+
+
 class TestFormatControlSummary(unittest.TestCase):
     """GUI text rendering from parsed control-slot summary."""
 
@@ -253,6 +354,207 @@ class TestFormatControlSummary(unittest.TestCase):
         }
         _, stale_text = format_control_summary(parsed)
         self.assertEqual(stale_text, "")
+
+    def test_verify_activity_overrides_active_slot_display(self):
+        parsed = {
+            "active": {"file": "claude_handoff.md", "status": "implement", "label": "Claude 실행", "mtime": 1.0, "control_seq": 8},
+            "stale": [],
+        }
+        verify_activity = {
+            "status": "VERIFY_RUNNING",
+            "label": "Codex 검증 실행 중",
+            "artifact_name": "2026-04-09-docs-response-origin-summary-richness-family-closure.md",
+        }
+        active_text, stale_text = format_control_summary(parsed, verify_activity=verify_activity)
+        self.assertIn("Codex 검증 실행 중", active_text)
+        self.assertIn("family-closure.md", active_text)
+        self.assertIn("claude_handoff.md", active_text)
+        self.assertIn("seq 8", active_text)
+        self.assertEqual(stale_text, "")
+
+
+class TestCurrentVerifyActivity(unittest.TestCase):
+    def test_current_verify_activity_picks_latest_running_job(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            state_dir = project / ".pipeline" / "state"
+            state_dir.mkdir(parents=True)
+            older = state_dir / "older.json"
+            newer = state_dir / "newer.json"
+            older.write_text(
+                '{"job_id":"job-old","status":"VERIFY_RUNNING","artifact_path":"/tmp/old.md","last_dispatch_at":10,"last_activity_at":11}',
+                encoding="utf-8",
+            )
+            newer.write_text(
+                '{"job_id":"job-new","status":"VERIFY_RUNNING","artifact_path":"/tmp/new.md","last_dispatch_at":20,"last_activity_at":21}',
+                encoding="utf-8",
+            )
+
+            activity = current_verify_activity(project)
+
+        self.assertIsNotNone(activity)
+        self.assertEqual(activity["job_id"], "job-new")
+        self.assertEqual(activity["status"], "VERIFY_RUNNING")
+        self.assertEqual(activity["artifact_name"], "new.md")
+
+
+class TestPipelineStartDiagnostics(unittest.TestCase):
+    def test_watcher_log_snapshot_reads_log_once_and_reuses_lines(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            raw_lines = [
+                "2026-04-10T15:31:00 [INFO] watcher_core: WatcherCore v2.1 started",
+                "2026-04-10T15:31:01 [INFO] watcher_core: initial turn: claude",
+                "2026-04-10T15:31:02 [INFO] watcher_core: notify_claude: seq=17",
+                "2026-04-10T15:31:03 [INFO] watcher_core: suppressed duplicate line",
+                "2026-04-10T15:31:04 [INFO] watcher_core: waiting_for_claude: baseline_files=980",
+            ]
+            with mock.patch("pipeline_gui.backend._read_log_lines", return_value=raw_lines) as read_lines:
+                snapshot = watcher_log_snapshot(project, display_lines=2, summary_lines=3, hint_lines=4)
+
+            read_lines.assert_called_once()
+            self.assertEqual(
+                snapshot["display_lines"],
+                [
+                    "2026-04-10T15:31:02 [INFO] watcher_core: notify_claude: seq=17",
+                    "2026-04-10T15:31:04 [INFO] watcher_core: waiting_for_claude: baseline_files=980",
+                ],
+            )
+            self.assertEqual(snapshot["summary_lines"], raw_lines[-3:])
+            self.assertEqual(snapshot["hint_lines"], raw_lines[-4:])
+
+    def test_pipeline_start_failure_hint_prefers_meaningful_error_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            log_dir = project / ".pipeline" / "logs" / "experimental"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            (log_dir / "pipeline-launcher-start.log").write_text(
+                (
+                    "\x1b[0;36m============================================\x1b[0m\n"
+                    "  AI Pipeline Launcher  [mode: experimental]\n"
+                    "  프로젝트: /tmp/project\n"
+                    "Launch blocked: active profile이 없습니다 (.pipeline/config/agent_profile.json). 설정 탭에서 미리보기 생성 후 적용을 완료해 주세요.\n"
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                pipeline_start_failure_hint(project),
+                "Launch blocked: active profile이 없습니다 (.pipeline/config/agent_profile.json). 설정 탭에서 미리보기 생성 후 적용을 완료해 주세요.",
+            )
+
+    def test_watcher_start_observed_requires_recent_log_and_start_markers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            log_dir = project / ".pipeline" / "logs" / "experimental"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / "watcher.log"
+            log_path.write_text(
+                (
+                    "2026-04-09T20:52:57 [INFO] watcher_core: WatcherCore v2.1 started\n"
+                    "2026-04-09T20:53:05 [INFO] watcher_core: initial turn: claude\n"
+                ),
+                encoding="utf-8",
+            )
+            now = time.time()
+            os.utime(log_path, (now, now))
+            self.assertTrue(watcher_start_observed(project, not_before=now - 1.0))
+            self.assertFalse(watcher_start_observed(project, not_before=now + 5.0))
+
+    def test_confirm_pipeline_start_accepts_fresh_watcher_marker_without_tmux(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            progress_updates: list[str] = []
+            with (
+                mock.patch("pipeline_gui.backend.tmux_alive", return_value=False),
+                mock.patch("pipeline_gui.backend.watcher_alive", return_value=(False, None)),
+                mock.patch("pipeline_gui.backend.watcher_start_observed", return_value=True),
+                mock.patch("pipeline_gui.backend.time.sleep", return_value=None),
+            ):
+                ok, message = confirm_pipeline_start(
+                    project,
+                    "aip-projectH",
+                    start_requested_at=time.time(),
+                    progress_callback=progress_updates.append,
+                )
+            self.assertTrue(ok)
+            self.assertIn("watcher 확인", message)
+            self.assertEqual(progress_updates, [])
+
+    def test_confirm_pipeline_start_returns_timeout_with_failure_hint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            progress_updates: list[str] = []
+            with (
+                mock.patch("pipeline_gui.backend.tmux_alive", return_value=False),
+                mock.patch("pipeline_gui.backend.watcher_alive", return_value=(False, None)),
+                mock.patch("pipeline_gui.backend.watcher_start_observed", return_value=False),
+                mock.patch("pipeline_gui.backend.pipeline_start_failure_hint", return_value="Launch blocked: Active profile is missing."),
+                mock.patch("pipeline_gui.backend.time.sleep", return_value=None),
+            ):
+                ok, message = confirm_pipeline_start(
+                    project,
+                    "aip-projectH",
+                    start_requested_at=time.time(),
+                    progress_callback=progress_updates.append,
+                )
+            self.assertFalse(ok)
+            self.assertIn("15초 안에 tmux 세션 'aip-projectH'가 감지되지 않았습니다", message)
+            self.assertIn("Launch blocked: Active profile is missing.", message)
+            self.assertTrue(any("tmux 세션 대기 중" in update for update in progress_updates))
+
+
+class TestTurnStateRead(unittest.TestCase):
+    def test_read_turn_state_returns_data(self) -> None:
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_dir = root / ".pipeline" / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            turn_state = state_dir / "turn_state.json"
+            turn_state.write_text(json.dumps({
+                "state": "CODEX_VERIFY",
+                "entered_at": 1744300000.0,
+                "reason": "work_needs_verify",
+                "active_control_file": "claude_handoff.md",
+                "active_control_seq": 17,
+            }))
+
+            from pipeline_gui.backend import read_turn_state
+            result = read_turn_state(root)
+            self.assertIsNotNone(result)
+            self.assertEqual(result["state"], "CODEX_VERIFY")
+
+    def test_read_turn_state_returns_none_when_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from pipeline_gui.backend import read_turn_state
+            result = read_turn_state(root)
+            self.assertIsNone(result)
+
+    def test_format_control_summary_uses_turn_state(self) -> None:
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_dir = root / ".pipeline" / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (state_dir / "turn_state.json").write_text(json.dumps({
+                "state": "CODEX_VERIFY",
+                "entered_at": 1744300000.0,
+                "reason": "work_needs_verify",
+                "active_control_file": "claude_handoff.md",
+                "active_control_seq": 17,
+            }))
+
+            from pipeline_gui.backend import read_turn_state
+            turn = read_turn_state(root)
+            parsed: dict[str, object] = {"active": None, "stale": []}
+            active_text, _ = format_control_summary(parsed, turn_state=turn)
+            self.assertIn("Codex 검증 중", active_text)
+
+    def test_format_control_summary_falls_back_without_turn_state(self) -> None:
+        parsed: dict[str, object] = {"active": None, "stale": []}
+        active_text, _ = format_control_summary(parsed, turn_state=None)
+        self.assertIn("없음", active_text)
 
 
 if __name__ == "__main__":

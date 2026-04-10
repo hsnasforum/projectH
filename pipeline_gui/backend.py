@@ -152,12 +152,31 @@ def latest_md(directory: Path) -> tuple[str, float]:
 
 
 def watcher_log_tail(project: Path, lines: int = 5) -> list[str]:
+    return watcher_log_snapshot(project, display_lines=lines)["display_lines"]
+
+
+def watcher_log_snapshot(
+    project: Path,
+    *,
+    display_lines: int = 14,
+    summary_lines: int = 50,
+    hint_lines: int = 300,
+) -> dict[str, list[str]]:
     log_path = project / ".pipeline" / "logs" / "experimental" / "watcher.log"
-    all_lines = _read_log_lines(log_path, tail_count=max(lines * 8, 40))
+    tail_count = max(display_lines * 8, 40, summary_lines, hint_lines)
+    all_lines = _read_log_lines(log_path, tail_count=tail_count)
     if not all_lines:
-        return ["(로그 없음)"]
+        return {
+            "display_lines": ["(로그 없음)"],
+            "summary_lines": [],
+            "hint_lines": [],
+        }
     filtered = [l for l in all_lines if "suppressed" not in l and "A/B ratio" not in l]
-    return filtered[-lines:] if filtered else ["(이벤트 없음)"]
+    return {
+        "display_lines": filtered[-display_lines:] if filtered else ["(이벤트 없음)"],
+        "summary_lines": all_lines[-summary_lines:],
+        "hint_lines": all_lines[-hint_lines:],
+    }
 
 
 def pipeline_start_log_tail(project: Path, lines: int = 5) -> list[str]:
@@ -511,6 +530,22 @@ def current_verify_activity(project: Path) -> dict[str, object] | None:
     return best_entry
 
 
+def read_turn_state(project: Path) -> dict[str, object] | None:
+    """Read .pipeline/state/turn_state.json if present."""
+    path = project / ".pipeline" / "state" / "turn_state.json"
+    return _read_json_file(path)
+
+
+_TURN_STATE_LABELS: dict[str, str] = {
+    "IDLE": "대기",
+    "CLAUDE_ACTIVE": "Claude 실행 중",
+    "CODEX_VERIFY": "Codex 검증 중",
+    "CODEX_FOLLOWUP": "Codex 후속 판단 중",
+    "GEMINI_ADVISORY": "Gemini 자문 중",
+    "OPERATOR_WAIT": "운영자 결정 대기",
+}
+
+
 def _slot_provenance(entry: dict[str, object]) -> str:
     """Return 'seq N' or 'mtime fallback' for a parsed control-slot entry."""
     seq = entry.get("control_seq")
@@ -523,8 +558,40 @@ def format_control_summary(
     parsed: dict[str, object],
     *,
     verify_activity: dict[str, object] | None = None,
+    turn_state: dict[str, object] | None = None,
 ) -> tuple[str, str]:
-    """Return (active_text, stale_text) for display in the system card."""
+    """Return (active_text, stale_text) for display in the system card.
+
+    If turn_state is provided, use it exclusively for active display.
+    Do not mix turn_state with legacy slot parsing.
+    """
+    if turn_state is not None:
+        state_value = str(turn_state.get("state") or "IDLE")
+        label = _TURN_STATE_LABELS.get(state_value, state_value)
+        control_file = str(turn_state.get("active_control_file") or "")
+        seq = turn_state.get("active_control_seq")
+        parts = [f"활성 제어: {label}"]
+        if control_file:
+            prov_part = f"({control_file}"
+            if seq is not None and int(seq) >= 0:
+                prov_part += f", seq {seq}"
+            prov_part += ")"
+            parts.append(prov_part)
+        active_text = " ".join(parts)
+
+        stale_list = parsed.get("stale") or []
+        if not stale_list:
+            stale_text = ""
+        else:
+            stale_parts = []
+            for s in stale_list:
+                prov = _slot_provenance(s)  # type: ignore[arg-type]
+                stale_parts.append(f"{s['file']} ({prov})")  # type: ignore[index]
+            stale_text = f"비활성: {', '.join(stale_parts)}"
+
+        return active_text, stale_text
+
+    # Legacy fallback
     active = parsed.get("active")
     if verify_activity is not None:
         artifact_name = str(verify_activity.get("artifact_name") or "latest /work")

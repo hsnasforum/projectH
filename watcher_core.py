@@ -2338,37 +2338,6 @@ class WatcherCore:
         return elapsed < self.claude_active_idle_timeout_sec
 
     # ------------------------------------------------------------------
-    def _determine_initial_turn(self) -> str:
-        """
-        시작 시 턴 판단 — operator stop / Gemini arbitration / Claude handoff / work 최신성 비교:
-          - operator_request가 최신 pending stop → operator 대기
-          - gemini_request가 최신 pending request → Gemini 차례
-          - gemini_advice가 최신 pending advice → Codex follow-up 차례
-          - latest /work가 latest same-day /verify보다 새로우면 → Codex 차례
-          - 그 외에 implement handoff가 있으면 → Claude 차례
-          - 셋 다 없음 → Claude 차례 (초기 상태)
-        """
-        operator_mtime = self._get_pending_operator_mtime()
-        gemini_request_mtime = self._get_pending_gemini_request_mtime()
-        gemini_advice_mtime = self._get_pending_gemini_advice_mtime()
-        handoff_path, handoff_mtime = self._get_latest_implement_handoff()
-        work_mtime = self._get_latest_work_mtime()
-
-        if operator_mtime == 0.0 and gemini_request_mtime == 0.0 and gemini_advice_mtime == 0.0 and handoff_mtime == 0.0 and work_mtime == 0.0:
-            return "claude"
-        if operator_mtime > 0.0 and operator_mtime >= gemini_request_mtime and operator_mtime >= gemini_advice_mtime and operator_mtime >= handoff_mtime and operator_mtime >= work_mtime:
-            return "operator"
-        if gemini_request_mtime > 0.0 and gemini_request_mtime >= gemini_advice_mtime and gemini_request_mtime >= handoff_mtime and gemini_request_mtime >= work_mtime:
-            return "gemini"
-        if gemini_advice_mtime > 0.0 and gemini_advice_mtime >= gemini_request_mtime and gemini_advice_mtime >= handoff_mtime and gemini_advice_mtime >= work_mtime:
-            return "codex_followup"
-        if self._latest_work_needs_verify():
-            return "codex"
-        if handoff_path and handoff_mtime > 0.0 and handoff_mtime >= operator_mtime:
-            return "claude"
-        return "codex"
-
-    # ------------------------------------------------------------------
     def _notify_claude(self, reason: str, handoff_path: Optional[Path] = None) -> None:
         """Claude pane에 다음 작업 프롬프트 전송."""
         target = self._role_pane_target("implement")

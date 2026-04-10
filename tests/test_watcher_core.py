@@ -738,7 +738,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             self.assertIsNotNone(active)
             self.assertEqual(active.path, handoff_path)
             self.assertEqual(core._get_pending_operator_mtime(), 0.0)
-            self.assertEqual(core._determine_initial_turn(), "claude")
+            self.assertEqual(core._resolve_turn(), "claude")
 
     def test_higher_control_seq_beats_newer_mtime(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -768,7 +768,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             self.assertIsNotNone(active)
             self.assertEqual(active.path, request_path)
             self.assertEqual(active.control_seq, 8)
-            self.assertEqual(core._determine_initial_turn(), "gemini")
+            self.assertEqual(core._resolve_turn(), "gemini")
 
     def test_stale_gemini_slots_do_not_block_newer_handoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -802,7 +802,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             self.assertEqual(active.path, handoff_path)
             self.assertEqual(core._get_pending_gemini_request_mtime(), 0.0)
             self.assertEqual(core._get_pending_gemini_advice_mtime(), 0.0)
-            self.assertEqual(core._determine_initial_turn(), "claude")
+            self.assertEqual(core._resolve_turn(), "claude")
 
 
 class ClaudeHandoffDispatchTest(unittest.TestCase):

@@ -1067,6 +1067,10 @@
         } else if (String(message.corrected_outcome?.outcome || "").trim().toLowerCase() === "corrected") {
           metaLines.push("교정본 기록됨");
         }
+        const reviewOutcomeLabel = formatReviewOutcomeLabel(message.candidate_review_record?.review_action);
+        if (reviewOutcomeLabel) {
+          metaLines.push(reviewOutcomeLabel);
+        }
         if (message.saved_note_path) {
           metaLines.push(`저장 경로 ${compactDisplayPath(message.saved_note_path)}`);
         } else if (message.web_search_record_path) {
@@ -1301,6 +1305,14 @@
       const normalized = String(value || "").trim().toLowerCase();
       if (normalized === "explicit_reuse_confirmation") return "재사용 확인";
       return normalized || "미확인";
+    }
+
+    function formatReviewOutcomeLabel(reviewAction) {
+      const normalized = String(reviewAction || "").trim().toLowerCase();
+      if (normalized === "accept") return "검토 수락됨";
+      if (normalized === "reject") return "검토 거절됨";
+      if (normalized === "defer") return "검토 보류됨";
+      return "";
     }
 
     function formatAggregateCandidateFamilyLabel(value) {
@@ -1661,6 +1673,35 @@
       }
     }
 
+    function findSessionReviewedSource(messages, excludeMessage) {
+      if (!Array.isArray(messages)) return null;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const msg = messages[i];
+        if (msg && msg !== excludeMessage && msg.session_local_candidate) {
+          return msg.candidate_review_record ? msg : null;
+        }
+      }
+      return null;
+    }
+
+    function supplementQuickMetaReviewOutcome(responseMessage, correctionTargetMessage, sessionMessages) {
+      if (responseMessage?.candidate_review_record) return;
+      let source = null;
+      if (correctionTargetMessage) {
+        source = (correctionTargetMessage !== responseMessage && correctionTargetMessage.candidate_review_record)
+          ? correctionTargetMessage
+          : null;
+      } else {
+        source = findSessionReviewedSource(sessionMessages, responseMessage);
+      }
+      if (!source) return;
+      const label = formatReviewOutcomeLabel(source.candidate_review_record.review_action);
+      if (label && !responseQuickMetaText.textContent.includes(label)) {
+        responseQuickMetaText.textContent += (responseQuickMetaText.textContent ? " · " : "") + label;
+        showElement(responseQuickMeta, true);
+      }
+    }
+
     function renderResponseSummary(response, runtime) {
       const responseStatus = response?.status || "";
       const parts = [];
@@ -1689,6 +1730,10 @@
         parts.push("내용 거절 기록됨");
       } else if (String(response?.corrected_outcome?.outcome || "").trim().toLowerCase() === "corrected") {
         parts.push("교정본 기록됨");
+      }
+      const reviewOutcomeLabel = formatReviewOutcomeLabel(response?.candidate_review_record?.review_action);
+      if (reviewOutcomeLabel) {
+        parts.push(reviewOutcomeLabel);
       }
       showElement(responseQuickMeta, parts.length > 0 || Boolean(response?.saved_note_path) || Boolean(response?.web_search_record_path));
       responseQuickMetaText.textContent = parts.join(" · ");
@@ -1945,7 +1990,13 @@
       renderNotice("현재 수정 방향을 나중에도 다시 써도 된다는 확인을 기록했습니다. 저장 승인과는 별도입니다.");
     }
 
-    async function submitCandidateReviewAccept(item) {
+    const REVIEW_ACTION_NOTICES = {
+      accept: "검토 후보를 수락했습니다. 아직 적용되지는 않았습니다.",
+      reject: "검토 후보를 거절했습니다.",
+      defer: "검토 후보를 보류했습니다.",
+    };
+
+    async function submitCandidateReview(item, reviewAction) {
       if (state.isBusy || !item || typeof item !== "object") return;
       const sourceMessageId = String(item.source_message_id || "").trim();
       const candidateId = String(item.candidate_id || "").trim();
@@ -1963,14 +2014,14 @@
           message_id: sourceMessageId,
           candidate_id: candidateId,
           candidate_updated_at: candidateUpdatedAt,
-          review_action: "accept",
+          review_action: reviewAction,
         }),
       });
       if (data.session) {
         rerenderAfterMutation(data.session);
         renderApproval((data.session.pending_approvals || []).slice(-1)[0] || null);
       }
-      renderNotice("검토 후보를 수락했습니다. 아직 적용되지는 않았습니다.");
+      renderNotice(REVIEW_ACTION_NOTICES[reviewAction] || "검토 결과를 기록했습니다.");
     }
 
     async function submitContentVerdict() {
@@ -2470,7 +2521,7 @@
         return;
       }
 
-      reviewQueueStatus.textContent = "현재 후보는 검토 수락만 기록할 수 있습니다. 아직 적용, 편집, 거절은 열지 않았습니다.";
+      reviewQueueStatus.textContent = "후보를 수락, 거절, 또는 보류할 수 있습니다. 아직 적용이나 편집은 열지 않았습니다.";
       reviewItems.forEach((item) => {
         const card = document.createElement("article");
         card.className = "history-item";
@@ -2539,9 +2590,30 @@
           acceptButton.textContent = "검토 수락";
           acceptButton.setAttribute("data-testid", "review-queue-accept");
           acceptButton.addEventListener("click", () => {
-            submitCandidateReviewAccept(item);
+            submitCandidateReview(item, "accept");
           });
           actions.appendChild(acceptButton);
+
+          const rejectButton = document.createElement("button");
+          rejectButton.type = "button";
+          rejectButton.className = "secondary";
+          rejectButton.textContent = "거절";
+          rejectButton.setAttribute("data-testid", "review-queue-reject");
+          rejectButton.addEventListener("click", () => {
+            submitCandidateReview(item, "reject");
+          });
+          actions.appendChild(rejectButton);
+
+          const deferButton = document.createElement("button");
+          deferButton.type = "button";
+          deferButton.className = "secondary";
+          deferButton.textContent = "보류";
+          deferButton.setAttribute("data-testid", "review-queue-defer");
+          deferButton.addEventListener("click", () => {
+            submitCandidateReview(item, "defer");
+          });
+          actions.appendChild(deferButton);
+
           card.appendChild(actions);
         }
 
@@ -3156,6 +3228,7 @@
         renderResponseSearchPreview(latestAssistantMessage.search_results || [], latestAssistantMessage.text || "");
         renderResponseOrigin(latestAssistantMessage.response_origin || null);
         renderResponseSummary(latestAssistantMessage, null);
+        supplementQuickMetaReviewOutcome(latestAssistantMessage, correctionTargetMessage, state.currentSessionMessages);
         renderResponseFeedback(latestAssistantMessage, latestAssistantContext.userText);
         renderContentVerdictControl(correctionTargetMessage);
         renderCorrectionEditor(correctionTargetMessage);
@@ -3201,6 +3274,7 @@
       renderResponseSummary(data.response || null, data.runtime_status || null);
       const latestAssistantContext = findLatestAssistantContext(data.session?.messages || []);
       const correctionTargetMessage = resolveCorrectionTargetMessage(data.session?.messages || [], latestAssistantContext.assistant);
+      supplementQuickMetaReviewOutcome(data.response, correctionTargetMessage, data.session?.messages);
       renderResponseFeedback(latestAssistantContext.assistant, latestAssistantContext.userText);
       renderContentVerdictControl(correctionTargetMessage);
       renderCorrectionEditor(correctionTargetMessage);

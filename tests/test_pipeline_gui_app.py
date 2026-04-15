@@ -1454,5 +1454,25 @@ class PipelineGuiAppTest(unittest.TestCase):
             after_idle=True,
         )
 
+    def test_schedule_refresh_setup_mode_state_refreshes_detail_in_home_mode(self) -> None:
+        gui = _make_setup_gui(Path("/tmp/projectH"))
+        gui._mode = "home"
+        gui.root = _FakeRoot()
+        gui._build_setup_fast_snapshot = mock.Mock(return_value={"fast": True})
+        gui._apply_setup_fast_snapshot = mock.Mock()
+        gui._setup_run_automatic_cleanup = mock.Mock()
+        gui._refresh_setup_mode_state = mock.Mock()
+        gui._schedule_setup_detail_refresh = mock.Mock()
+        gui._invalidate_setup_refresh_generation = PipelineGUI._invalidate_setup_refresh_generation.__get__(gui, PipelineGUI)
+        gui._cancel_setup_refresh_callbacks = PipelineGUI._cancel_setup_refresh_callbacks.__get__(gui, PipelineGUI)
+
+        PipelineGUI._schedule_refresh_setup_mode_state(gui, run_cleanup=True)
+        gui.root.run_all()
+
+        gui._setup_run_automatic_cleanup.assert_called_once_with()
+        gui._refresh_setup_mode_state.assert_called_once_with()
+        gui._apply_setup_fast_snapshot.assert_not_called()
+        gui._schedule_setup_detail_refresh.assert_not_called()
+
 if __name__ == "__main__":
     unittest.main()

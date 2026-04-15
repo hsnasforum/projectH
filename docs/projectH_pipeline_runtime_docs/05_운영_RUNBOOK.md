@@ -1,0 +1,301 @@
+# projectH Pipeline Runtime 운영 RUNBOOK
+버전: v1.0  
+작성일: 2026-04-10  
+문서 성격: 운영 절차 / 장애 대응
+
+## 1. 목적
+
+본 문서는 목표 runtime 구조(supervisor + backend adapter + run-scoped state)를 기준으로 운영 절차를 정의합니다.  
+현행 구조에서도 일부 절차는 바로 적용 가능하지만, 본 문서는 **목표 구조 기준** 운영 절차입니다.
+
+## 2. 운영 원칙
+
+1. 현재 상태는 supervisor만 신뢰합니다.
+2. pane 화면, artifact 파일, watcher.log는 보조 증거입니다.
+3. round close는 receipt 없이는 인정하지 않습니다.
+4. 장애 시 “억지 재시도”보다 “현재 run 상태 보존 후 복구”를 우선합니다.
+5. next-slice ambiguity는 Gemini arbitration을 먼저 사용하고, `needs_operator`는 real operator-only decision에만 남깁니다.
+
+## 3. 일상 운영 절차
+
+## 3.1 시작 전 점검
+- 최근 run이 `STOPPED` 또는 명시적 `BROKEN` 종료인지 확인
+- `current_run.json` 확인
+- 디스크 여유 공간 확인
+- 최근 3개 run의 degraded reason 확인
+- backend health 사전 체크
+
+## 3.2 시작
+1. launcher에서 start 요청
+2. status가 `STARTING`인지 확인
+3. 모든 필수 lane이 `READY` 또는 정책상 허용 가능한 상태인지 확인
+4. current_run_id를 기록
+
+추가 규칙:
+
+- 같은 `project_root + session`에 supervisor가 중복으로 살아 있으면 `start`/`restart`는 먼저 이를 reconcile해야 합니다.
+- 정상 상태에서는 live supervisor가 정확히 1개여야 하며, `.pipeline/supervisor.pid`와 `current_run.json`이 그 run을 함께 가리켜야 합니다.
+
+## 3.3 운영 중 확인
+주기적으로 아래를 확인합니다.
+
+- runtime_state
+- last_heartbeat_at
+- lane별 상태
+- `waiting_next_control` note 유무
+- active round 체류 시간
+- degraded reason
+- recent events
+- 마지막 receipt 시각
+
+## 3.4 정상 종료
+1. stop 요청
+2. `STOPPING` 진입 확인
+3. active round 처리 정책 확인
+4. `STOPPED` 및 final receipt flush 확인
+5. run 종료 보고 작성
+
+## 3.5 채택 전 synthetic soak
+runtime 채택 게이트 전에는 real repo truth를 건드리지 않는 synthetic soak를 먼저 사용합니다.
+
+권장 순서는 아래와 같습니다.
+
+1. short synthetic smoke 1회
+2. `fault-check` 1회
+3. synthetic 6h mini soak 1회
+4. synthetic 24h soak 1회
+
+- short smoke:
+  `python3 scripts/pipeline_runtime_gate.py --mode experimental synthetic-soak --duration-sec 30 --sample-interval-sec 1 --min-receipts 1 --report report/pipeline_runtime/verification/<date>-synthetic-soak-short.md`
+- fault check:
+  `python3 scripts/pipeline_runtime_gate.py --project-root <project-root> --mode experimental fault-check --report report/pipeline_runtime/verification/<date>-fault-check.md`
+- 6h mini soak:
+  `python3 scripts/pipeline_runtime_gate.py --mode experimental synthetic-soak --duration-sec 21600 --sample-interval-sec 10 --min-receipts 10 --report report/pipeline_runtime/verification/<date>-6h-synthetic-soak.md`
+- 24h soak:
+  `python3 scripts/pipeline_runtime_gate.py --mode experimental synthetic-soak --duration-sec 86400 --sample-interval-sec 10 --min-receipts 20 --report report/pipeline_runtime/verification/<date>-24h-synthetic-soak.md`
+
+이 경로의 기준:
+- temp workspace에서 supervisor + watcher + wrapper + receipt/control 전이를 실제로 밟습니다.
+- `fault-check`도 동일하게 synthetic workspace에서 실행하며, 실 repo truth를 직접 오염시키지 않습니다.
+- report에는 `receipt_count`, `duplicate_dispatch_count`, `control_mismatch_samples`, `control_mismatch_max_streak`, `orphan_session`를 함께 남깁니다.
+- `control_mismatch_samples`는 transition 시점에 1회 관측될 수 있으므로, 채택 판단은 persistent mismatch(`control_mismatch_max_streak > 1`) 기준으로 봅니다.
+
+## 4. 알림 및 모니터링
+
+## 4.1 필수 상태 알림
+다음은 알림 대상입니다.
+
+- runtime_state = `DEGRADED`
+- lane_state = `BROKEN`
+- heartbeat gap 초과
+- receipt 쓰기 실패
+- manifest mismatch
+- stale lease cleanup 반복 실패
+- supervisor restart 발생
+- duplicate dispatch 감지
+
+## 4.2 권장 지표
+| 지표 | 의미 |
+|---|---|
+| runtime_uptime_sec | 현재 run 가동 시간 |
+| lane_ready_ratio | lane 준비 상태 비율 |
+| active_round_age_sec | 현재 round 체류 시간 |
+| receipt_lag_sec | verify 완료 후 receipt까지 지연 |
+| degraded_count | run 내 degraded 횟수 |
+| recovery_success_ratio | 자동복구 성공률 |
+
+## 5. 장애 분류
+
+### P1
+- duplicate dispatch
+- false CLOSED
+- receipt 누락으로 잘못된 close
+- supervisor/state 손상으로 운영 중단
+- manual intervention 필요
+
+### P2
+- lane 자동복구 실패
+- 장시간 degraded
+- backend attach 불가
+- restart 실패 반복
+
+### P3
+- 상태 표시는 되나 detail 부족
+- 일부 로그 손실
+- 경미한 operator UX 문제
+
+## 6. 장애 대응 절차
+
+## 6.1 runtime_state = DEGRADED
+1. degraded reason 확인
+2. 최근 50개 events 확인
+3. 어떤 lane 또는 어떤 state resource가 원인인지 식별
+4. 자동복구 대기 정책 시간 확인
+5. 자동복구 실패 시 controlled restart 실행
+
+## 6.2 lane BROKEN
+1. lane name과 pid 확인
+2. active round와 해당 lane의 연관 확인
+3. `restart_lane` 또는 전체 restart 정책 적용
+4. recovery 결과 확인
+5. 동일 lane 반복 장애면 run 종료 후 분석
+
+예외:
+
+- lane note가 `auth_login_required`면 blind restart보다 인증 복구를 먼저 해야 합니다.
+- 이 경우 pane tail의 `401`, `Invalid authentication credentials`, `Please run /login`를 확인하고, 해당 vendor CLI 로그인 복구 후에만 restart 또는 attach를 진행합니다.
+- auth/login failure는 operator가 해결하기 전까지 `READY`로 다시 해석하면 안 됩니다.
+
+## 6.3 receipt write 실패
+1. verify result와 manifest 존재 확인
+2. hash mismatch 여부 확인
+3. receipt 재시도 정책 범위 내에서만 재시도
+4. 실패 지속 시 `DEGRADED`
+5. 운영자는 artifact만 보고 close 판단하지 않음
+
+## 6.4 stale lease
+1. lease owner와 last heartbeat 확인
+2. TTL 경과 여부 확인
+3. cleanup 이벤트 발생 확인
+4. cleanup 실패 시 supervisor restart 고려
+
+## 6.5 corrupt state
+1. quarantine 이벤트 확인
+2. 손상된 파일 백업 경로 확인
+3. 복구 가능한 마지막 snapshot/receipt 확인
+4. 필요 시 해당 job만 failed 처리하고 전체 runtime 유지
+
+## 6.6 backend session loss
+1. backend health 확인
+2. attach 가능 여부 확인
+3. lane 재생성 또는 전체 backend 재기동
+4. current_run continuity 확인
+
+## 6.7 controller typed command palette
+controller browser UI에서는 아래처럼 bounded runtime command만 입력할 수 있습니다.
+
+- `start`
+- `stop`
+- `restart`
+- `attach [Claude|Codex|Gemini]`
+- `tail <Claude|Codex|Gemini> [lines]`
+- `view <all|Claude|Codex|Gemini>`
+- `text <on|off> [lines]`
+- `status`
+- `help`
+
+주의:
+
+- 이 입력창은 arbitrary shell exec가 아닙니다.
+- 모든 실행은 기존 controller runtime API 경로로만 매핑됩니다.
+- 상태 authority는 계속 `status.json`과 `events.jsonl`이며, command palette는 operator UX layer일 뿐입니다.
+- `Office View` 같은 시각화 토글은 허용되지만, 이는 같은 runtime status/tail을 다른 형태로 그려주는 read-model일 뿐 별도 상태 판정 경로가 아닙니다.
+- 현재 browser Office View는 projectH 전용 `runtime war-room` 장면으로 유지합니다. Claude / Codex / Gemini는 동등한 3석으로 보이고 watcher는 장면 안 `ops core` 오브젝트로만 표현되며, 이 연출은 모두 기존 runtime payload를 읽는 시각화일 뿐입니다.
+- sprite sheet를 테스트하려면 operator가 PNG를 `controller/assets/fren-office-sheet.png`에 둔 뒤 `python3 scripts/build_office_sprites.py`를 실행해 `controller/assets/generated/office-sprite-manifest.json`과 normalized frame PNG를 만들고, 그 다음 controller를 새로고침하면 됩니다. generated 자산이 없으면 raw sheet fallback 또는 CSS fallback avatar를 유지합니다.
+- 설명용 흰 배경 시트를 그대로 넣었을 때는 controller browser가 frame crop과 가장자리 white trim을 시도해 자연스러운 sprite animation으로 보여줄 수 있습니다. 다만 완전한 transparency 품질이 필요하면 투명 배경 PNG를 우선합니다.
+- 프레임별 sprite 크기가 들쭉날쭉해 보이면 Office View는 browser에서 viewport normalization과 ping-pong/crossfade를 적용합니다. 그래도 어색하면 sprite sheet의 frame 간 safe margin과 기준선 자체를 더 맞춘 자산이 필요합니다.
+
+## 6.8 duplicate/no-op implement handoff
+다음 조건이 동시에 보이면 duplicate/no-op implement handoff로 판단합니다.
+
+- active control은 여전히 `.pipeline/claude_handoff.md`
+- Claude lane은 `READY`
+- note가 `waiting_next_control`
+- recent events에 `control_duplicate_ignored`가 보임
+
+이 상태의 의미:
+
+- canonical control file은 남아 있지만 runtime은 해당 handoff를 재실행하지 않습니다.
+- watcher가 same-handoff SHA의 no-op completion을 감지해 Codex triage로 되돌린 상태입니다.
+- operator는 pane 텍스트나 stale `WORKING` 표시만 보고 강제 restart하지 말고, Codex follow-up/control 변경을 먼저 확인합니다.
+
+## 6.9 stale operator stop
+다음 조건이 동시에 보이면 stale operator stop으로 판단합니다.
+
+- compat control slot의 active는 여전히 `operator_request.md`
+- recent events에 `control_operator_stale_ignored`가 보임
+- runtime `status.control`은 `none`
+
+이 상태의 의미:
+
+- canonical stop 문서는 디버그 surface로 남아 있지만, runtime은 그 본문이 가리킨 blocker `/work`들이 이미 `VERIFY_DONE`으로 닫혔다고 판단한 상태입니다.
+- operator는 stale stop 파일만 보고 automation을 계속 막지 말고, 최신 `/verify` 또는 다음 control 생성 여부를 먼저 확인해야 합니다.
+- stale stop suppression은 operator 문서를 삭제하거나 rewrite하는 동작이 아니라 supervisor read-model 정규화입니다.
+- watcher는 이 상태에서 startup/rolling turn을 `CODEX_FOLLOWUP`으로 다시 열고, Codex에게 다음 canonical control outcome을 다시 쓰도록 1회 control-recovery prompt를 보낼 수 있습니다.
+- 이때 browser/TUI 표면에서는 `control=none`이더라도 Codex lane이 `WORKING` / `followup`으로 보일 수 있습니다.
+
+## 6.10 duplicate supervisor
+다음 조건이 보이면 duplicate supervisor로 판단합니다.
+
+- 같은 `project_root + session`으로 `pipeline_runtime.cli daemon`이 2개 이상 떠 있음
+- `.pipeline/supervisor.pid`가 가리키는 pid와 `current_run.json` writer가 서로 다르게 흔들림
+- launcher/controller가 방금 시작한 run이 아니라 더 오래된 run 상태를 다시 surface함
+
+대응:
+
+1. `python3 -m pipeline_runtime.cli stop <project-root> --session <session>` 실행
+2. live daemon이 모두 내려갔는지 확인
+3. `python3 -m pipeline_runtime.cli start <project-root> --mode experimental --session <session> --no-attach`로 새 run 1개만 다시 시작
+4. `supervisor.pid`, `current_run.json`, live process 목록이 같은 run 하나로 맞는지 확인
+
+메모:
+
+- 최신 CLI는 같은 `project_root + session` daemon을 reconcile하도록 되어 있으므로, 정상이라면 restart 후 duplicate writer가 남지 않아야 합니다.
+- 이 증상은 launcher readiness 계산 문제가 아니라 single-writer lifecycle 문제가 먼저 깨진 경우입니다.
+
+## 7. 운영자가 보면 안 되는 신호
+
+아래는 “보조 신호”이지 current truth가 아닙니다.
+
+- pane에 프롬프트 기호가 보인다는 사실
+- 최신 `verify/*.md` 파일이 갱신된 사실
+- watcher.log에 “working” 비슷한 문구가 보이는 사실
+- pid 파일이 남아 있다는 사실
+
+이 신호들은 디버깅에는 유용하지만, 상태 판정 기준으로 쓰면 안 됩니다.
+
+## 8. 복구 전략
+
+## 8.1 자동복구 우선
+- lane 단위 재시작
+- stale lease cleanup
+- status refresh
+- receipt 재검증
+
+## 8.2 수동개입 조건
+아래 경우에만 수동개입을 허용합니다.
+
+- P1 장애
+- 같은 lane 3회 연속 auto-recovery 실패
+- current_run continuity 상실
+- state corruption 확산
+
+## 8.3 롤백 조건
+- 새 supervisor build가 false READY를 만들 때
+- receipt gating이 오히려 close를 막는 결함이 있을 때
+- backend adapter health가 반복 오판할 때
+
+## 9. 보고서 템플릿
+
+### 장애 보고 최소 항목
+- 발생 시각
+- run_id
+- runtime_state
+- 영향 범위
+- degraded reason 또는 broken lane
+- 자동복구 결과
+- 수동개입 여부
+- 재현 가능성
+- 후속 조치
+
+## 10. 운영 종료 후 체크
+- 마지막 receipt flush 완료
+- orphan process 없음
+- current_run 종료 상태 기록
+- open incident 없음
+- 다음 run에 넘길 known issue 정리
+
+## 11. 결론
+
+운영 문서의 핵심은 “무엇을 보느냐”보다 “무엇을 믿느냐”입니다.  
+이 구조에서는 pane 화면이나 최신 파일보다 supervisor status와 receipt를 우선해야 운영이 안정됩니다.

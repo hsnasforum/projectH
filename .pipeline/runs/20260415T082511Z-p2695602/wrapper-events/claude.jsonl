@@ -1,0 +1,8 @@
+{"ts": "2026-04-15T08:25:11.629515Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2696309}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:25:13.683189Z", "lane": "Claude", "event_type": "READY", "source": "wrapper", "payload": {"pid": 2696309, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:25:16.848140Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2696309}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:25:21.943302Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2696309}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:25:27.127649Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2696309}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:25:32.230218Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2696309}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:25:37.363420Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2696309}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:25:42.451021Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2696309}, "derived_from": "process_alive"}

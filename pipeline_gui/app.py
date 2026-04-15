@@ -30,9 +30,9 @@ from .project import (
     _session_name_for,
 )
 from .backend import (
-    tmux_alive, watcher_alive,
-    pipeline_start, pipeline_stop, tmux_attach, token_collector_alive,
+    pipeline_start, pipeline_stop, token_collector_alive,
     confirm_pipeline_start,
+    runtime_attach, runtime_state,
     backfill_token_history, rebuild_token_db,
 )
 from .home_controller import HomeController
@@ -290,21 +290,8 @@ class PipelineGUI:
         except Exception:
             pass
 
-    # ── 데이터 수집 (tmux 호출 통합) ──
-
     _prev_focus_text: str = ""
     _prev_log_text: str = ""
-
-    def _collect_all_agent_data(
-        self,
-        hints: dict[str, tuple[str, str]] | None = None,
-    ) -> tuple[list[tuple[str, str, str, str]], dict[str, str]]:
-        controller = self._ensure_home_controller()
-        agents, pane_map = controller.collect_all_agent_data(
-            selected_agent=getattr(self, "selected_agent", "Claude"),
-            hints=hints,
-        )
-        return agents, pane_map
 
     def _update_text_if_changed(self, widget: Text, new_text: str) -> None:
         """Text 위젯의 내용이 바뀌었을 때만 갱신합니다."""
@@ -420,15 +407,6 @@ class PipelineGUI:
             snapshot = dict(self._last_snapshot)
             snapshot["token_dashboard"] = dashboard
         self._apply_snapshot(snapshot)
-
-    def _get_cached_latest_md(
-        self,
-        directory: Path,
-        *,
-        refresh_interval: float = 5.0,
-    ) -> tuple[str, float]:
-        controller = self._ensure_home_controller()
-        return controller.get_cached_latest_md(directory, refresh_interval=refresh_interval)
 
     def _select_agent(self, agent: str) -> None:
         self.selected_agent = agent
@@ -816,7 +794,8 @@ class PipelineGUI:
     def _apply_snapshot(self, snapshot: dict[str, object]) -> None:
         self._last_snapshot = snapshot
         self._last_poll_at = float(snapshot.get("polled_at") or time.time())
-        session_ok = bool(snapshot["session_ok"])
+        runtime_state_value = str(snapshot.get("runtime_state") or "STOPPED")
+        session_ok = runtime_state_value != "STOPPED"
         w_alive = bool(snapshot["watcher_alive"])
         w_pid = snapshot["watcher_pid"]
         agents = snapshot["agents"]
@@ -824,11 +803,26 @@ class PipelineGUI:
         token_dashboard = snapshot.get("token_dashboard")
 
         # Pipeline status
-        if session_ok:
+        if runtime_state_value == "RUNNING":
             self._set_var_if_changed(self.pipeline_var, "파이프라인: ● 실행 중")
             self._set_var_if_changed(self.status_var, "실행 중")
             self._configure_widget_if_changed(self.status_label, fg="#4ade80", bg="#0a2a18")
             self._configure_widget_if_changed(self.pipeline_state_label, fg="#4ade80")
+        elif runtime_state_value == "STARTING":
+            self._set_var_if_changed(self.pipeline_var, "파이프라인: ◐ 기동 중")
+            self._set_var_if_changed(self.status_var, "기동 중")
+            self._configure_widget_if_changed(self.status_label, fg="#fbbf24", bg="#2b2110")
+            self._configure_widget_if_changed(self.pipeline_state_label, fg="#fbbf24")
+        elif runtime_state_value == "DEGRADED":
+            self._set_var_if_changed(self.pipeline_var, "파이프라인: ▲ 부분 장애")
+            self._set_var_if_changed(self.status_var, "부분 장애")
+            self._configure_widget_if_changed(self.status_label, fg="#fb923c", bg="#2a160f")
+            self._configure_widget_if_changed(self.pipeline_state_label, fg="#fb923c")
+        elif runtime_state_value == "BROKEN":
+            self._set_var_if_changed(self.pipeline_var, "파이프라인: ✗ 장애")
+            self._set_var_if_changed(self.status_var, "장애")
+            self._configure_widget_if_changed(self.status_label, fg="#f87171", bg="#2a1015")
+            self._configure_widget_if_changed(self.pipeline_state_label, fg="#f87171")
         else:
             self._set_var_if_changed(self.pipeline_var, "파이프라인: ■ 중지됨")
             self._set_var_if_changed(self.status_var, "중지됨")
@@ -966,7 +960,8 @@ class PipelineGUI:
             return
         is_live = False
         if self._last_snapshot is not None:
-            is_live = bool(self._last_snapshot.get("session_ok")) and bool(self._last_snapshot.get("watcher_alive"))
+            runtime_state_value = str(self._last_snapshot.get("runtime_state") or "STOPPED")
+            is_live = runtime_state_value in {"STARTING", "RUNNING", "DEGRADED"}
         text, color = self._poll_status_text(is_live=is_live, now=now)
         self._set_var_if_changed(self.poll_var, text)
         self._configure_widget_if_changed(self.poll_state_label, fg=color)
@@ -1637,14 +1632,19 @@ class PipelineGUI:
                 if run_cleanup:
                     self._setup_run_automatic_cleanup()
                 self._invalidate_setup_refresh_generation()
-                self._apply_setup_fast_snapshot(self._build_setup_fast_snapshot())
                 if getattr(self, "_mode", "home") == "setup":
+                    self._apply_setup_fast_snapshot(self._build_setup_fast_snapshot())
                     self._schedule_setup_detail_refresh(
                         self._setup_refresh_generation,
                         delay_ms=0,
                         after_idle=True,
                     )
                 else:
+                    # Home mode still needs the full detail fold after async setup roundtrips.
+                    # A fast snapshot alone can regress PreviewReady/Applied back to
+                    # PreviewWaiting/ApplyPending because request/apply files are intentionally
+                    # retained as historical context until cleanup.
+                    self._refresh_setup_mode_state()
                     self._setup_snapshot_refresh_last_at = 0.0
 
             if hasattr(self, "root"):
@@ -2271,9 +2271,9 @@ class PipelineGUI:
         self._apply_setup_state_presentation(resolved)
         session_ok = False
         if self._last_snapshot is not None:
-            session_ok = bool(self._last_snapshot.get("session_ok"))
+            session_ok = str(self._last_snapshot.get("runtime_state") or "STOPPED") != "STOPPED"
         elif hasattr(self, "_session_name"):
-            session_ok = tmux_alive(self._session_name)
+            session_ok = runtime_state(self.project) != "STOPPED"
         can_launch = launch.launch_allowed
         if hasattr(self, "btn_start"):
             self.btn_start.configure(state=NORMAL if (not session_ok and can_launch) else DISABLED)
@@ -2585,19 +2585,19 @@ class PipelineGUI:
     def _do_stop(self) -> None:
         try:
             pipeline_stop(self.project, self._session_name)
-            for sec in range(5):
+            for sec in range(10):
                 time.sleep(1)
-                session_alive = tmux_alive(self._session_name)
+                current_runtime_state = runtime_state(self.project)
                 collector_alive, _collector_pid = token_collector_alive(self.project)
-                if not session_alive and not collector_alive:
+                if current_runtime_state == "STOPPED" and not collector_alive:
                     self.root.after(0, lambda: self._unlock_buttons("■ 중지 완료"))
                     self.root.after(0, lambda: self._clear_msg_later())
                     return
                 self.root.after(0, lambda s=sec: self.msg_var.set(
-                    f"■ 중지 중... ({s+1}초)"))
+                    f"■ 중지 중... runtime {runtime_state(self.project)} ({s+1}초)"))
             remaining = []
-            if tmux_alive(self._session_name):
-                remaining.append("tmux 세션")
+            if runtime_state(self.project) != "STOPPED":
+                remaining.append(f"runtime {runtime_state(self.project)}")
             collector_alive, _collector_pid = token_collector_alive(self.project)
             if collector_alive:
                 remaining.append("token collector")
@@ -2633,16 +2633,15 @@ class PipelineGUI:
             # ── Stop 단계 ──
             self.root.after(0, lambda: self.msg_var.set("↻ 파이프라인 중지 중..."))
             pipeline_stop(self.project, self._session_name)
-            # stop 확인 (최대 5초)
-            for sec in range(5):
+            for sec in range(10):
                 time.sleep(1)
-                if not tmux_alive(self._session_name):
+                if runtime_state(self.project) == "STOPPED":
                     break
                 self.root.after(0, lambda s=sec: self.msg_var.set(
-                    f"↻ 중지 중... ({s+2}초)"))
-            if tmux_alive(self._session_name):
+                    f"↻ 중지 중... runtime {runtime_state(self.project)} ({s+2}초)"))
+            if runtime_state(self.project) != "STOPPED":
                 self.root.after(0, lambda: self._unlock_buttons(
-                    "↻ 재시작 실패: 기존 세션을 중지하지 못했습니다", is_error=True))
+                    "↻ 재시작 실패: 기존 runtime을 중지하지 못했습니다", is_error=True))
                 self.root.after(0, lambda: self._clear_msg_later(10000))
                 return
             self.root.after(0, lambda: self.msg_var.set("↻ 중지 완료 — 다시 시작하는 중..."))
@@ -2672,14 +2671,14 @@ class PipelineGUI:
         self.root.after(0, lambda: self._clear_msg_later(10000))
 
     def _on_attach(self) -> None:
-        if tmux_alive(self._session_name):
-            tmux_attach(self._session_name)
+        if runtime_state(self.project) != "STOPPED":
+            runtime_attach(self.project, self._session_name)
             self._set_toast_style("success")
-            self.msg_var.set("tmux attach 실행됨")
+            self.msg_var.set("runtime attach 실행됨")
             self._clear_msg_later()
         else:
             self._set_toast_style("error")
-            self.msg_var.set("tmux 세션이 없습니다. 먼저 Start하세요.")
+            self.msg_var.set("실행 중인 runtime이 없습니다. 먼저 Start하세요.")
             self._clear_msg_later()
 
     def _token_action_initial_payload(self) -> dict[str, object]:

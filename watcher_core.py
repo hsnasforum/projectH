@@ -25,6 +25,7 @@ watcher_core.py  –  Pipeline Watcher v2.0
 from __future__ import annotations
 
 import atexit
+import datetime as dt
 import hashlib
 import json
 import logging
@@ -88,6 +89,7 @@ ROUND_NOTE_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-.+\.md$")
 ROUND_NOTE_SECTION_RE = re.compile(r"^##\s+(.+?)\s*$")
 ROUND_NOTE_PATH_RE = re.compile(r"(?<!@)(?:\./)?([A-Za-z0-9_.\-/]+?\.[A-Za-z0-9]+)")
 ROUND_NOTE_METADATA_ONLY_PREFIXES = ("work/", "verify/", "report/", ".pipeline/", "pipeline/")
+WORK_PATH_RE = re.compile(r"(work/\d+/\d+/[^\s`]+\.md)")
 
 
 # ---------------------------------------------------------------------------
@@ -467,6 +469,10 @@ class DedupeGuard:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         log.info("suppressed: job=%s slot=%s reason=%s", job_id, target_slot, reason)
 
+    def forget(self, job_id: str, round_: int, artifact_hash: str, target_slot: str) -> None:
+        key = self._make_key(job_id, round_, artifact_hash, target_slot)
+        self._seen.discard(key)
+
 
 # ---------------------------------------------------------------------------
 # ManifestCollector  (2단계 핵심)
@@ -630,6 +636,17 @@ def _line_looks_like_input_prompt(line: str) -> bool:
     )
 
 
+def _pane_text_has_gemini_ready_prompt(text: str) -> bool:
+    recent_lines = [line.strip().lower() for line in text.splitlines() if line.strip()]
+    if not recent_lines:
+        return False
+    window = recent_lines[-12:]
+    has_type_your_message = any(line == "type your message" for line in window)
+    has_workspace_hint = any(line == "workspace" or line.startswith("workspace ") for line in window)
+    has_gemini_banner = any("gemini cli" in line for line in window)
+    return has_type_your_message and (has_workspace_hint or has_gemini_banner)
+
+
 def _pane_text_has_busy_indicator(text: str) -> bool:
     """Check if pane text contains any sign that the agent is still working."""
     # Case-insensitive search across entire visible pane text.
@@ -660,7 +677,7 @@ def _pane_text_has_input_cursor(text: str) -> bool:
     for line in reversed(lines[-12:]):
         if _line_looks_like_input_prompt(line):
             return True
-    return False
+    return _pane_text_has_gemini_ready_prompt(text)
 
 
 def _pane_has_input_cursor(pane_target: str) -> bool:
@@ -737,9 +754,13 @@ _LIVE_SESSION_ESCALATION_FALLBACK_KEYWORDS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-_IMPLEMENT_BLOCKED_STATUS_RE = re.compile(r"^\s*STATUS:\s*implement_blocked\s*$", re.IGNORECASE)
-_IMPLEMENT_BLOCKED_FIELD_RE = re.compile(r"^\s*([A-Z_]+):\s*(.+?)\s*$")
-_IMPLEMENT_BLOCKED_WRAP_KEYS = {"HANDOFF", "HANDOFF_SHA", "BLOCK_ID"}
+_IMPLEMENT_BLOCKED_STATUS_RE = re.compile(r"^\s*STATUS:\s*(.*?)\s*$", re.IGNORECASE)
+_IMPLEMENT_BLOCKED_FIELD_RE = re.compile(r"^\s*([A-Z_]+):\s*(.*?)\s*$")
+_IMPLEMENT_BLOCKED_WRAP_KEYS = {"BLOCK_REASON", "HANDOFF", "HANDOFF_SHA", "BLOCK_ID"}
+_IMPLEMENT_BLOCKED_TEMPLATE_MARKERS = (
+    "blocked_sentinel:",
+    "emit the exact sentinel below",
+)
 _IMPLEMENT_ALREADY_DONE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\balready completed\b", re.IGNORECASE),
     re.compile(r"\balready addressed\b", re.IGNORECASE),
@@ -772,6 +793,41 @@ def _normalize_escalation_line(line: str) -> str:
     normalized = re.sub(r"\d+", "#", normalized)
     normalized = re.sub(r"\s+", " ", normalized)
     return normalized
+
+
+def _match_implement_blocked_status(
+    recent_lines: list[str],
+    idx: int,
+) -> tuple[bool, int, list[str]]:
+    line = recent_lines[idx]
+    match = _IMPLEMENT_BLOCKED_STATUS_RE.match(line)
+    if not match:
+        return False, idx, []
+    value = match.group(1).strip().lower()
+    if value == "implement_blocked":
+        return True, idx + 1, [f"STATUS: {value}"]
+    if value:
+        return False, idx, []
+    if idx + 1 >= len(recent_lines):
+        return False, idx, []
+    next_line = recent_lines[idx + 1].strip().lower()
+    if next_line != "implement_blocked":
+        return False, idx, []
+    return True, idx + 2, ["STATUS: implement_blocked"]
+
+
+def _can_append_implement_blocked_wrap(key: str, stripped: str) -> bool:
+    if not stripped or _line_looks_like_input_prompt(stripped):
+        return False
+    if key == "BLOCK_REASON":
+        return True
+    if key == "HANDOFF":
+        return True
+    if key == "HANDOFF_SHA":
+        return bool(re.fullmatch(r"[0-9a-fA-F]+", stripped))
+    if key == "BLOCK_ID":
+        return bool(re.fullmatch(r"[0-9A-Za-z._:/-]+", stripped))
+    return False
 
 
 def _fallback_escalation_reasons(lines: list[str]) -> list[str]:
@@ -856,26 +912,40 @@ def _extract_claude_implement_blocked_signal(
     recent_lines = recent_lines[-80:]
 
     for idx in range(len(recent_lines) - 1, -1, -1):
-        if not _IMPLEMENT_BLOCKED_STATUS_RE.match(recent_lines[idx]):
+        matched, field_start_idx, block_lines = _match_implement_blocked_status(recent_lines, idx)
+        if not matched:
             continue
 
-        block_lines = [recent_lines[idx].strip()]
+        template_context = "\n".join(line.strip().lower() for line in recent_lines[max(0, idx - 3):idx])
+        if any(marker in template_context for marker in _IMPLEMENT_BLOCKED_TEMPLATE_MARKERS):
+            continue
+
         fields: dict[str, str] = {}
         current_key = ""
-        for line in recent_lines[idx + 1: idx + 12]:
+        for line in recent_lines[field_start_idx: field_start_idx + 24]:
             stripped = line.strip()
-            block_lines.append(stripped)
+            if _line_looks_like_input_prompt(stripped):
+                break
             match = _IMPLEMENT_BLOCKED_FIELD_RE.match(line)
             if match:
                 current_key = match.group(1).upper()
                 fields[current_key] = match.group(2).strip()
+                block_lines.append(f"{current_key}: {fields[current_key]}".rstrip())
                 continue
             if (
                 current_key in _IMPLEMENT_BLOCKED_WRAP_KEYS
-                and stripped
-                and not _line_looks_like_input_prompt(stripped)
+                and _can_append_implement_blocked_wrap(current_key, stripped)
             ):
-                fields[current_key] = fields.get(current_key, "") + stripped
+                prefix = fields.get(current_key, "")
+                separator = " " if current_key == "BLOCK_REASON" and prefix else ""
+                fields[current_key] = prefix + separator + stripped
+                if block_lines:
+                    block_lines[-1] = f"{current_key}: {fields[current_key]}".rstrip()
+                continue
+            if current_key == "BLOCK_ID":
+                break
+            if stripped:
+                block_lines.append(stripped)
 
         request = fields.get("REQUEST", "").lower()
         if request and request not in {"verify_triage", "codex_triage"}:
@@ -891,6 +961,8 @@ def _extract_claude_implement_blocked_signal(
             return None
 
         block_reason = fields.get("BLOCK_REASON", "implement_blocked").strip().lower() or "implement_blocked"
+        if block_reason.startswith("<"):
+            continue
         fingerprint_source = "|".join(
             [
                 "sentinel",
@@ -902,6 +974,8 @@ def _extract_claude_implement_blocked_signal(
         fingerprint = fields.get("BLOCK_ID", "").strip() or hashlib.sha1(
             fingerprint_source.encode("utf-8")
         ).hexdigest()
+        if fingerprint.startswith("<") or "<short_reason" in fingerprint.lower():
+            continue
         return {
             "source": "sentinel",
             "reason": block_reason,
@@ -1213,6 +1287,8 @@ class StateMachine:
         feedback_sig_builder:   Optional[Callable[[JobState], tuple[str, str]]],
         verify_receipt_builder: Optional[Callable[[JobState], tuple[str, float]]],
         verify_retry_backoff_sec: float,
+        runtime_started_at:     float,
+        restart_recovery_grace_sec: float,
         completion_paths:       list[Path],
         error_log:              Path,
         dry_run:                bool = False,
@@ -1229,9 +1305,37 @@ class StateMachine:
         self.feedback_sig_builder   = feedback_sig_builder
         self.verify_receipt_builder = verify_receipt_builder
         self.verify_retry_backoff_sec = verify_retry_backoff_sec
+        self.runtime_started_at     = runtime_started_at
+        self.restart_recovery_grace_sec = restart_recovery_grace_sec
         self.completion_paths       = completion_paths
         self.error_log              = error_log
         self.dry_run                = dry_run
+
+    # ------------------------------------------------------------------
+    def _write_feedback_manifest(self, job: JobState, verify_receipt_path: str) -> Optional[Path]:
+        manifest_path = self.collector.manifest_path(job.job_id, job.round)
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "schema_version": 1,
+            "job_id": job.job_id,
+            "round": job.round,
+            "role": "slot_verify",
+            "artifact_hash": job.artifact_hash,
+            "required_checks": 0,
+            "passed_checks": 0,
+            "blockers": [],
+            "recommended_next_action": "finalize",
+            "feedback_path": verify_receipt_path,
+            "created_at": dt.datetime.fromtimestamp(time.time(), dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        tmp_path = manifest_path.with_suffix(f"{manifest_path.suffix}.tmp")
+        try:
+            tmp_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
+            tmp_path.replace(manifest_path)
+        except OSError as exc:
+            log.warning("feedback manifest write failed: job=%s path=%s err=%s", job.job_id, manifest_path, exc)
+            return None
+        return manifest_path
 
     # ------------------------------------------------------------------
     def step(self, job: JobState) -> JobState:
@@ -1396,8 +1500,14 @@ class StateMachine:
                     "current-round verify receipt + control changed after dispatch: job=%s, treating as verify done",
                     job.job_id,
                 )
+                manifest_path = self._write_feedback_manifest(job, verify_receipt_path)
+                if manifest_path is None:
+                    return job
                 job.verify_result = "passed_by_feedback"
+                job.verify_manifest_path = str(manifest_path)
                 job.verify_completed_at = time.time()
+                job.validation_score = 1.0
+                job.blocker_count = 0
                 self.lease.release("slot_verify")
                 job.transition(JobStatus.VERIFY_DONE,
                                "current-round verify receipt + control changed after dispatch")
@@ -1423,6 +1533,10 @@ class StateMachine:
             has_prompt = _pane_text_has_input_cursor(current_pane)
             codex_idle = has_prompt and not still_busy
             elapsed_since_dispatch = time.time() - job.last_dispatch_at
+            stale_dispatch_before_runtime = (
+                job.last_dispatch_at > 0.0
+                and job.last_dispatch_at < self.runtime_started_at
+            )
             # Idle alone is not enough; Codex must leave /verify + next control (or manifest).
             if codex_idle and elapsed_since_dispatch > 15 and not (control_changed and verify_changed):
                 log.info(
@@ -1430,6 +1544,28 @@ class StateMachine:
                     job.job_id,
                     elapsed_since_dispatch,
                 )
+            if (
+                stale_dispatch_before_runtime
+                and codex_idle
+                and elapsed_since_dispatch >= self.restart_recovery_grace_sec
+                and not outputs_complete
+            ):
+                log.info(
+                    "startup recovery: stale verify dispatch before watcher start and pane is idle: job=%s elapsed=%.0fs",
+                    job.job_id,
+                    elapsed_since_dispatch,
+                )
+                self.dedupe.forget(job.job_id, job.round, job.artifact_hash, "slot_verify")
+                job.last_failed_dispatch_at = 0.0
+                job.last_failed_dispatch_snapshot = ""
+                job.last_dispatch_slot = ""
+                self.lease.release("slot_verify")
+                job.transition(
+                    JobStatus.VERIFY_PENDING,
+                    f"startup recovery after stale dispatch ({elapsed_since_dispatch:.0f}s old, pane idle)",
+                )
+                job.save(self.state_dir)
+                return job
 
             # Activity-based timeout: only timeout if pane output hasn't changed.
             elapsed = time.time() - job.last_dispatch_at
@@ -1449,6 +1585,7 @@ class StateMachine:
                             "verify idle timeout with incomplete outputs: job=%s idle=%.0fs total=%.0fs → retry pending",
                             job.job_id, idle_sec, elapsed,
                         )
+                        self.dedupe.forget(job.job_id, job.round, job.artifact_hash, "slot_verify")
                         job.last_failed_dispatch_at = time.time()
                         job.dispatch_fail_count += 1
                         job.last_failed_dispatch_snapshot = current_pane
@@ -1538,6 +1675,7 @@ class WatcherCore:
     def __init__(self, config: dict) -> None:
         base = Path(config.get("base_dir", ".pipeline"))
 
+        self.base_dir      = base
         self.watch_dir     = Path(config["watch_dir"])
         self.artifact_root = self.watch_dir.parent
         self.repo_root     = Path(config.get("repo_root", str(self.artifact_root))).resolve()
@@ -1662,7 +1800,39 @@ class WatcherCore:
             "- .pipeline/claude_handoff.md (STATUS: implement, CONTROL_SEQ: {next_control_seq})\n"
             "- .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: {next_control_seq})\n"
             "RULES:\n"
-            "- write exactly one next control outcome"
+            "- write exactly one next control outcome\n"
+            "- after Gemini advice, write .pipeline/operator_request.md only if the advice itself recommends a real operator decision or still leaves no truthful exact slice"
+        )
+        self.control_recovery_prompt = _normalize_prompt_text(
+            config.get("control_recovery_prompt")
+            or
+            "ROLE: control_recovery\n"
+            "OWNER: {runtime_verify_owner}\n"
+            "STALE_CONTROL: {stale_control_path}\n"
+            "STALE_CONTROL_SEQ: {stale_control_seq}\n"
+            "REASON: {stale_control_reason}\n"
+            "RESOLVED_BLOCKERS:\n"
+            "{stale_control_resolved_work_paths}\n"
+            "WORK: {latest_work_path}\n"
+            "VERIFY: {latest_verify_path}\n"
+            "GOAL:\n"
+            "- the active operator stop was suppressed because its referenced blocker work notes are already VERIFY_DONE\n"
+            "- write exactly one next control outcome so runtime does not stay idle on stale control alone\n"
+            "READ_FIRST:\n"
+            "- {runtime_verify_read_first_doc}\n"
+            "- verify/README.md\n"
+            "- {stale_control_path}\n"
+            "- {latest_work_path}\n"
+            "- {latest_verify_path}\n"
+            "OUTPUTS:\n"
+            "- .pipeline/claude_handoff.md (STATUS: implement, CONTROL_SEQ: {next_control_seq})\n"
+            "- .pipeline/gemini_request.md (STATUS: request_open, CONTROL_SEQ: {next_control_seq})\n"
+            "- .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: {next_control_seq})\n"
+            "RULES:\n"
+            "- write exactly one next control outcome\n"
+            "- if the only blocker is next-slice ambiguity, overlapping candidates, or low-confidence prioritization, write .pipeline/gemini_request.md before .pipeline/operator_request.md\n"
+            "- do not leave runtime idle on a stale operator stop alone\n"
+            "- only use STATUS: needs_operator without Gemini for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, or when Gemini is unavailable/already inconclusive"
         )
         self.verify_triage_prompt = _normalize_prompt_text(
             config.get("verify_triage_prompt")
@@ -1695,7 +1865,8 @@ class WatcherCore:
             "RULES:\n"
             "- write exactly one next control outcome\n"
             "- do not leave Claude waiting on an operator-choice menu\n"
-            "- only use STATUS: needs_operator if the next exact slice still cannot be narrowed truthfully"
+            "- if the only blocker is next-slice ambiguity, overlapping candidates, or low-confidence prioritization, write .pipeline/gemini_request.md before .pipeline/operator_request.md\n"
+            "- only use STATUS: needs_operator without Gemini for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, or when Gemini is unavailable/already inconclusive"
         )
 
         # rolling 슬롯 시그니처 추적 (mtime_ns + size + hash)
@@ -1720,8 +1891,23 @@ class WatcherCore:
         # Turn state (single source of truth for dispatch)
         self._current_turn_state: WatcherTurnState = WatcherTurnState.IDLE
         self._turn_entered_at: float = 0.0
+        self._turn_active_control_file: str = ""
         self._turn_active_control_seq: int = -1
         self._turn_state_path: Path = self.state_dir / "turn_state.json"
+        self._runtime_export_enabled: bool = os.environ.get("PIPELINE_RUNTIME_DISABLE_EXPORTER", "").strip().lower() not in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        self.run_id: str = self._make_run_id()
+        self.run_dir: Path = self.base_dir / "runs" / self.run_id
+        self.run_status_path: Path = self.run_dir / "status.json"
+        self.run_events_path: Path = self.run_dir / "events.jsonl"
+        self.current_run_path: Path = self.base_dir / "current_run.json"
+        self._runtime_event_seq: int = 0
+        if self._runtime_export_enabled:
+            self.run_dir.mkdir(parents=True, exist_ok=True)
 
         # Claude idle timeout tracking
         self.claude_active_idle_timeout_sec: float = float(
@@ -1781,16 +1967,30 @@ class WatcherCore:
                 "- .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: {next_control_seq})\n"
                 "RULES:\n"
                 "- keep one exact next slice or one exact operator decision only\n"
+                "- if the only blocker is next-slice ambiguity, overlapping candidates, or low-confidence prioritization, open .pipeline/gemini_request.md before .pipeline/operator_request.md\n"
+                "- use .pipeline/operator_request.md without Gemini only for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, or when Gemini is unavailable/already inconclusive\n"
                 "- if same-day same-family docs-only truth-sync already repeated 3+ times, do not choose another narrower docs-only micro-slice; choose one bounded docs bundle or escalate",
             ),
             verify_context_builder=self._build_verify_prompt_context,
             feedback_sig_builder=self._build_verify_feedback_sigs,
             verify_receipt_builder=self._build_verify_receipt_state,
             verify_retry_backoff_sec=float(config.get("verify_retry_backoff_sec", 20.0)),
+            runtime_started_at=self.started_at,
+            restart_recovery_grace_sec=float(config.get("restart_recovery_grace_sec", 15.0)),
             completion_paths=self.completion_paths,
             error_log=self.events_dir / "errors.jsonl",
             dry_run=self.dry_run,
         )
+        if self._runtime_export_enabled:
+            self._write_current_run_pointer()
+            self._append_runtime_event(
+                "runtime_started",
+                {
+                    "runtime_state": "RUNNING",
+                    "turn_state": self._current_turn_state.value,
+                },
+            )
+            self._write_runtime_status()
 
     # ------------------------------------------------------------------
     def _lane_config(self, lane_name: str | None) -> Optional[dict[str, object]]:
@@ -1844,6 +2044,139 @@ class WatcherCore:
         )
 
     # ------------------------------------------------------------------
+    def _make_run_id(self) -> str:
+        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        return f"{stamp}-p{os.getpid()}"
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _iso_utc(ts: float) -> str:
+        return dt.datetime.fromtimestamp(ts, dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+    # ------------------------------------------------------------------
+    def _write_current_run_pointer(self) -> None:
+        if not self._runtime_export_enabled:
+            return
+        data = {
+            "run_id": self.run_id,
+            "status_path": self._repo_relative(self.run_status_path),
+            "events_path": self._repo_relative(self.run_events_path),
+            "updated_at": self._iso_utc(time.time()),
+        }
+        tmp_path = self.current_run_path.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        tmp_path.replace(self.current_run_path)
+
+    # ------------------------------------------------------------------
+    def _append_runtime_event(self, event_type: str, payload: dict[str, object]) -> None:
+        if not self._runtime_export_enabled:
+            return
+        self._runtime_event_seq += 1
+        entry = {
+            "seq": self._runtime_event_seq,
+            "ts": self._iso_utc(time.time()),
+            "run_id": self.run_id,
+            "event_type": event_type,
+            "source": "watcher-exporter",
+            "payload": payload,
+        }
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        with self.run_events_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    # ------------------------------------------------------------------
+    def _active_lane_name_for_turn(self, turn_state: Optional[WatcherTurnState] = None) -> str:
+        state = turn_state or self._current_turn_state
+        if state == WatcherTurnState.CLAUDE_ACTIVE:
+            return self._role_owner("implement") or ""
+        if state in (WatcherTurnState.CODEX_VERIFY, WatcherTurnState.CODEX_FOLLOWUP):
+            return self._role_owner("verify") or ""
+        if state == WatcherTurnState.GEMINI_ADVISORY:
+            return self._role_owner("advisory") or ""
+        return ""
+
+    # ------------------------------------------------------------------
+    def _build_lane_statuses(self, heartbeat_iso: str) -> list[dict[str, object]]:
+        lane_statuses: list[dict[str, object]] = []
+        active_lane = self._active_lane_name_for_turn()
+        seen_names: set[str] = set()
+        lane_configs = self.runtime_lane_configs or [
+            {"name": "Claude", "enabled": True},
+            {"name": "Codex", "enabled": True},
+            {"name": "Gemini", "enabled": True},
+        ]
+        for lane in lane_configs:
+            name = str(lane.get("name") or "").strip()
+            if not name:
+                continue
+            seen_names.add(name)
+            enabled = bool(lane.get("enabled", True))
+            state = "OFF"
+            if enabled:
+                state = "WORKING" if name == active_lane else "READY"
+            lane_statuses.append(
+                {
+                    "name": name,
+                    "state": state,
+                    "attachable": enabled,
+                    "last_heartbeat_at": heartbeat_iso if enabled else "",
+                }
+            )
+        for fallback_name in ("Claude", "Codex", "Gemini"):
+            if fallback_name in seen_names:
+                continue
+            lane_statuses.append(
+                {
+                    "name": fallback_name,
+                    "state": "WORKING" if fallback_name == active_lane else "READY",
+                    "attachable": True,
+                    "last_heartbeat_at": heartbeat_iso,
+                }
+            )
+        return lane_statuses
+
+    # ------------------------------------------------------------------
+    def _write_runtime_status(self) -> None:
+        if not self._runtime_export_enabled:
+            return
+        now = time.time()
+        now_iso = self._iso_utc(now)
+        active_control = self._get_active_control_signal()
+        control_file = ""
+        control_seq = self._turn_active_control_seq
+        control_status = "none"
+        control_updated_at = ""
+        if active_control is not None:
+            control_file = f".pipeline/{active_control.path.name}"
+            control_seq = active_control.control_seq
+            control_status = active_control.status
+            control_updated_at = self._iso_utc(active_control.mtime)
+        elif self._turn_active_control_file:
+            control_file = f".pipeline/{self._turn_active_control_file}"
+        data = {
+            "schema_version": 1,
+            "run_id": self.run_id,
+            "state": "RUNNING",
+            "runtime_state": "RUNNING",
+            "turn_state": self._current_turn_state.value,
+            "degraded_reason": "",
+            "control": {
+                "active_control_file": control_file,
+                "active_control_seq": control_seq,
+                "active_control_status": control_status,
+                "active_control_updated_at": control_updated_at,
+            },
+            "lanes": self._build_lane_statuses(now_iso),
+            "last_receipt_id": "",
+            "last_heartbeat_at": now_iso,
+            "updated_at": now_iso,
+        }
+        tmp_path = self.run_status_path.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        tmp_path.replace(self.run_status_path)
+        self._write_current_run_pointer()
+
+    # ------------------------------------------------------------------
     def _transition_turn(
         self,
         new_state: WatcherTurnState,
@@ -1858,6 +2191,7 @@ class WatcherCore:
         now = time.time()
         self._current_turn_state = new_state
         self._turn_entered_at = now
+        self._turn_active_control_file = active_control_file
         self._turn_active_control_seq = active_control_seq
         if new_state == WatcherTurnState.CLAUDE_ACTIVE:
             self._last_progress_at = now
@@ -1892,6 +2226,16 @@ class WatcherCore:
         tmp_path = self._turn_state_path.with_suffix(".json.tmp")
         tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
         tmp_path.replace(self._turn_state_path)
+        self._append_runtime_event(
+            "control_changed",
+            {
+                "turn_state": new_state.value,
+                "reason": reason,
+                "active_control_file": active_control_file,
+                "active_control_seq": active_control_seq,
+            },
+        )
+        self._write_runtime_status()
 
     # ------------------------------------------------------------------
     def _get_path_mtime(self, path: Path) -> float:
@@ -1978,6 +2322,67 @@ class WatcherCore:
             return str(path.relative_to(self.repo_root))
         except ValueError:
             return str(path)
+
+    # ------------------------------------------------------------------
+    def _normalize_artifact_path(self, value: str | Path | None) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        path = Path(text)
+        if path.is_absolute():
+            try:
+                path = path.resolve().relative_to(self.repo_root)
+            except ValueError:
+                return ""
+            text = str(path)
+        return text.replace("\\", "/")
+
+    # ------------------------------------------------------------------
+    def _verified_work_paths(self) -> set[str]:
+        verified: set[str] = set()
+        if not self.state_dir.exists():
+            return verified
+        for path in self.state_dir.glob("*.json"):
+            if path.name == "turn_state.json":
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if str(data.get("status") or "") != JobStatus.VERIFY_DONE.value:
+                continue
+            normalized = self._normalize_artifact_path(data.get("artifact_path"))
+            if normalized:
+                verified.add(normalized)
+        return verified
+
+    # ------------------------------------------------------------------
+    def _stale_operator_control_marker(self) -> Optional[dict[str, object]]:
+        if not self._is_active_control(self.operator_request_path, "needs_operator"):
+            return None
+        try:
+            control_text = self.operator_request_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        referenced_work_paths = sorted(
+            {
+                self._normalize_artifact_path(match.group(1))
+                for match in WORK_PATH_RE.finditer(control_text)
+                if self._normalize_artifact_path(match.group(1))
+            }
+        )
+        if not referenced_work_paths:
+            return None
+        verified_work_paths = self._verified_work_paths()
+        unresolved = [path for path in referenced_work_paths if path not in verified_work_paths]
+        if unresolved:
+            return None
+        return {
+            "control_file": "operator_request.md",
+            "control_seq": self._read_control_seq_from_path(self.operator_request_path),
+            "reason": "verified_blockers_resolved",
+            "resolved_work_paths": referenced_work_paths,
+        }
 
     # ------------------------------------------------------------------
     def _path_mention(self, path: Optional[Path]) -> str:
@@ -2262,6 +2667,8 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _get_pending_operator_mtime(self) -> float:
         """operator_request가 실제 pending stop이면 mtime을 반환한다."""
+        if self._stale_operator_control_marker() is not None:
+            return 0.0
         if self._is_active_control(self.operator_request_path, "needs_operator"):
             return self._get_path_mtime(self.operator_request_path)
         return 0.0
@@ -2289,7 +2696,7 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _operator_blocks_handoff(self, handoff_mtime: float) -> bool:
         del handoff_mtime
-        return self._is_active_control(self.operator_request_path, "needs_operator")
+        return self._get_pending_operator_mtime() > 0.0
 
     # ------------------------------------------------------------------
     def _get_work_tree_snapshot(self) -> dict[str, str]:
@@ -2382,8 +2789,10 @@ class WatcherCore:
         This is a pure query — it does not trigger transitions or side effects.
         Used by both initial turn and rolling turn decisions.
         """
+        stale_operator = self._stale_operator_control_marker()
+
         # 1. operator_request active → operator
-        if self._is_active_control(self.operator_request_path, "needs_operator"):
+        if self._is_active_control(self.operator_request_path, "needs_operator") and stale_operator is None:
             return "operator"
 
         # 2. gemini_request active → gemini
@@ -2408,6 +2817,10 @@ class WatcherCore:
         # 6. handoff active and dispatchable → claude (unless cooldown)
         if handoff_active and not self._is_idle_release_cooldown_active():
             return "claude"
+
+        # 6.5. stale operator stop cleared → codex follow-up
+        if stale_operator is not None:
+            return "codex_followup"
 
         # 7. fallback
         return "idle"
@@ -2537,11 +2950,42 @@ class WatcherCore:
         tmux_send_keys(target, prompt, self.dry_run, pane_type=pane_type)
 
     # ------------------------------------------------------------------
+    def _format_control_recovery_prompt(self, marker: dict[str, object]) -> str:
+        resolved_paths = list(marker.get("resolved_work_paths") or [])
+        context = {
+            **self._build_runtime_prompt_context(),
+            "stale_control_path": ".pipeline/operator_request.md",
+            "stale_control_seq": str(marker.get("control_seq") or "none"),
+            "stale_control_reason": str(marker.get("reason") or "verified_blockers_resolved"),
+            "stale_control_resolved_work_paths": "\n".join(f"- {path}" for path in resolved_paths) or "- (없음)",
+        }
+        return _normalize_prompt_text(self.control_recovery_prompt.format(**context))
+
+    # ------------------------------------------------------------------
+    def _notify_codex_control_recovery(self, reason: str, marker: dict[str, object]) -> None:
+        """stale operator stop 해소 뒤 Codex가 다음 control을 재결정하도록 호출."""
+        target = self._role_pane_target("verify")
+        pane_type = self._role_pane_type("verify")
+        if not target:
+            log.warning("notify_codex_control_recovery skipped: no verify owner target")
+            return
+        log.info("notify_codex_control_recovery: reason=%s target=%s owner=%s", reason, target, self._role_owner("verify"))
+        self._log_raw(
+            "codex_control_recovery_notify",
+            str(self.operator_request_path),
+            "turn_signal",
+            {"reason": reason, **marker},
+        )
+        prompt = self._format_control_recovery_prompt(marker)
+        tmux_send_keys(target, prompt, self.dry_run, pane_type=pane_type)
+
+    # ------------------------------------------------------------------
     def _notify_codex_blocked_triage(self, signal: dict[str, object], reason: str) -> bool:
         target = self._role_pane_target("verify")
         pane_type = self._role_pane_type("verify")
         if not target:
             return False
+        handoff_sha = self._get_path_sha256(self.claude_handoff_path)
         codex_snapshot = _capture_pane_text(target)
         if not _pane_text_is_idle(codex_snapshot):
             self._log_raw(
@@ -2562,6 +3006,7 @@ class WatcherCore:
                 "blocked_reason": signal.get("reason", "implement_blocked"),
                 "blocked_source": signal.get("source", "sentinel"),
                 "blocked_fingerprint": signal.get("fingerprint", ""),
+                "handoff_sha": handoff_sha,
             },
         )
         ok = tmux_send_keys(target, prompt, self.dry_run, pane_type=pane_type)
@@ -2589,7 +3034,11 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _flush_pending_claude_handoff(self) -> None:
         """If verify lease just released and handoff is waiting, transition to Claude."""
-        if self._current_turn_state not in (WatcherTurnState.CODEX_VERIFY, WatcherTurnState.IDLE):
+        if self._current_turn_state not in (
+            WatcherTurnState.CODEX_VERIFY,
+            WatcherTurnState.CODEX_FOLLOWUP,
+            WatcherTurnState.IDLE,
+        ):
             return
         if self._claude_handoff_verify_active():
             return  # verify still running
@@ -2621,11 +3070,28 @@ class WatcherCore:
         if operator_sig and operator_sig != self._last_operator_request_sig:
             self._last_operator_request_sig = operator_sig
             status = self._read_status_from_path(self.operator_request_path) or "missing"
+            stale_operator = self._stale_operator_control_marker()
             if (
                 active_control is not None
                 and active_control.path == self.operator_request_path
                 and active_control.control_seq >= self._turn_active_control_seq
             ):
+                if stale_operator is not None:
+                    log.info("operator request updated but stale: Codex follow-up resumes")
+                    self._clear_claude_blocked_state("operator_request_stale_ignored")
+                    self._transition_turn(
+                        WatcherTurnState.CODEX_FOLLOWUP,
+                        "operator_request_stale_ignored",
+                        active_control_seq=active_control.control_seq,
+                    )
+                    self._log_raw(
+                        "operator_request_stale_ignored",
+                        str(self.operator_request_path),
+                        "turn_signal",
+                        {"status": status, **stale_operator},
+                    )
+                    self._notify_codex_control_recovery("operator_request_stale_ignored", stale_operator)
+                    return
                 log.info("operator request updated: STATUS=needs_operator → Claude notify 차단")
                 self._clear_claude_blocked_state("operator_request_pending")
                 self._transition_turn(
@@ -2922,6 +3388,7 @@ class WatcherCore:
                 "blocked_source": signal.get("source", "sentinel"),
                 "blocked_reason": signal.get("reason", "implement_blocked"),
                 "blocked_fingerprint": fingerprint,
+                "handoff_sha": handoff_sha,
             },
         )
         self._notify_codex_blocked_triage(signal, "claude_implement_blocked")
@@ -3115,7 +3582,17 @@ class WatcherCore:
                 return
             if turn == "codex_followup":
                 self._transition_turn(WatcherTurnState.CODEX_FOLLOWUP, "startup_turn_codex_followup")
-                self._notify_codex_followup("startup_turn_codex_followup")
+                stale_operator = self._stale_operator_control_marker()
+                if stale_operator is not None:
+                    self._log_raw(
+                        "operator_request_stale_ignored",
+                        str(self.operator_request_path),
+                        "startup",
+                        stale_operator,
+                    )
+                    self._notify_codex_control_recovery("startup_turn_stale_operator", stale_operator)
+                else:
+                    self._notify_codex_followup("startup_turn_codex_followup")
                 return
             if turn == "codex":
                 self._transition_turn(WatcherTurnState.CODEX_VERIFY, "startup_turn_codex")

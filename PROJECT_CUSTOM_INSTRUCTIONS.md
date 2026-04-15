@@ -94,10 +94,10 @@
   - Codex가 최신 `/work`, 최신 `/verify`를 읽고 실제 검증을 재실행합니다.
   - Codex가 `/verify`를 남기거나 갱신합니다.
   - Codex가 다음 Claude 실행용 지시사항을 `.pipeline/claude_handoff.md`에 씁니다.
-  - exact slice를 못 좁히면 Codex가 `.pipeline/gemini_request.md`를 씁니다.
+  - exact slice를 못 좁히는 이유가 next-slice ambiguity, overlapping candidates, low-confidence tie-break라면 Codex가 `.pipeline/gemini_request.md`를 먼저 씁니다.
   - Gemini가 `.pipeline/gemini_advice.md`와 `report/gemini/...md`를 남깁니다.
   - Codex가 Gemini advice를 읽고 최종 `.pipeline/claude_handoff.md` 또는 `.pipeline/operator_request.md`를 씁니다.
-  - operator 결론이 필요하면 `.pipeline/operator_request.md`를 씁니다.
+  - real operator-only decision, approval/truth-sync blocker, immediate safety stop, 또는 Gemini advice 이후에도 exact slice가 안 좁혀질 때만 `.pipeline/operator_request.md`를 씁니다.
 - 다만 Claude가 이미 active session 안에서 context exhaustion, session rollover, continue-vs-switch 같은 live side question을 던진 경우에는 Codex가 Gemini advice를 짧은 lane reply로만 relay하고, `.pipeline/claude_handoff.md`는 그 세션이 끝날 때까지 다시 쓰지 않는 편이 맞습니다.
 - `.pipeline/claude_handoff.md`는 `STATUS: implement`만 담는 실행 슬롯입니다.
 - `.pipeline/gemini_request.md`는 `STATUS: request_open`만 담는 arbitration 요청 슬롯입니다.
@@ -108,7 +108,7 @@
 - `STATUS: implement`이면 Codex가 이미 다음 단일 슬라이스를 확정한 상태이고, Claude는 그 한 슬라이스만 구현합니다.
 - Claude 구현 라운드는 bounded 파일 수정과 canonical `/work` closeout에서 끝납니다. implement lane에서 commit, push, branch publish, PR 생성까지 진행하지 않습니다.
 - 그 handoff가 막혔으면 Claude는 operator 선택지를 새로 열지 말고, pane 출력에만 `STATUS: implement_blocked` + `BLOCK_REASON` + `REQUEST: codex_triage` + `HANDOFF` + `HANDOFF_SHA` + `BLOCK_ID`를 남긴 뒤 멈춥니다.
-- `STATUS: needs_operator`이면 Codex가 아직 truthful하게 다음 단일 슬라이스를 확정하지 못한 상태이며, Claude는 새 구현을 시작하지 않고 대기합니다.
+- `STATUS: needs_operator`이면 Codex가 real operator-only decision 또는 blocker 때문에 아직 truthful하게 다음 단일 슬라이스를 확정하지 못한 상태이며, Claude는 새 구현을 시작하지 않고 대기합니다.
 - `STATUS: needs_operator`는 한 줄짜리 bare stop signal로 끝내지 않습니다. 최소한 아래를 같이 남깁니다.
   - 왜 지금 자동 진행을 멈추는지
   - 어떤 최신 `/work`와 `/verify`를 근거로 멈췄는지
@@ -160,7 +160,7 @@
   - 그 다음 새로운 quality axis
   - 마지막으로 internal cleanup
 - 다만 같은 날 same-family docs-only truth-sync가 이미 3회 이상 반복됐다면, Codex는 더 작은 docs-only micro-slice를 자동 생성하지 말고 남은 drift를 한 번에 닫는 bounded bundle이나 Gemini/operator escalation으로 전환하는 편이 맞습니다.
-- `STATUS: needs_operator`는 위 순서로도 한 후보를 truthful하게 못 고를 때나, approval-record / truth-sync 문제가 새 구현보다 먼저일 때만 사용합니다.
+- `STATUS: needs_operator`는 Gemini arbitration이 이미 끝났는데도 한 후보를 truthful하게 못 고르거나, approval-record / truth-sync 문제, real operator-only decision, immediate safety stop이 새 구현보다 먼저일 때만 사용합니다.
 - 따라서 stop/go 실행 신호는 `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, `.pipeline/gemini_advice.md`, `.pipeline/operator_request.md`에서만 읽습니다. `.pipeline/codex_feedback.md`는 optional scratch로만 남길 수 있습니다.
 - 다만 `STATUS: needs_operator`로 멈출 때도, operator가 다음 결정을 내릴 수 있도록 최소한의 stop reason과 next decision context를 남겨야 합니다.
 

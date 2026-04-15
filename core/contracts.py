@@ -249,10 +249,14 @@ ALLOWED_CANDIDATE_CONFIRMATION_LABELS: dict[str, frozenset[str]] = {
 
 class CandidateReviewAction(StrEnum):
     ACCEPT = "accept"
+    REJECT = "reject"
+    DEFER = "defer"
 
 
 CANDIDATE_REVIEW_ACTION_TO_STATUS: dict[str, str] = {
     CandidateReviewAction.ACCEPT: "accepted",
+    CandidateReviewAction.REJECT: "rejected",
+    CandidateReviewAction.DEFER: "deferred",
 }
 
 

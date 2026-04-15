@@ -8,6 +8,7 @@ from typing import Any
 
 from app.localization import localize_text, localize_session
 from core.contracts import (
+    CANDIDATE_REVIEW_ACTION_TO_STATUS,
     AnswerMode,
     ArtifactKind,
     CandidateConfirmationScope,
@@ -834,14 +835,15 @@ class SerializerMixin:
         review_action = str(candidate_review_record.get("review_action") or "").strip()
         review_status = str(candidate_review_record.get("review_status") or "").strip()
         recorded_at = str(candidate_review_record.get("recorded_at") or "").strip()
+        expected_status = CANDIDATE_REVIEW_ACTION_TO_STATUS.get(review_action)
         if (
             not candidate_id
             or not candidate_updated_at
             or not artifact_id
             or source_message_id is None
             or review_scope != "source_message_candidate_review"
-            or review_action != CandidateReviewAction.ACCEPT
-            or review_status != "accepted"
+            or expected_status is None
+            or review_status != expected_status
             or not recorded_at
         ):
             return None

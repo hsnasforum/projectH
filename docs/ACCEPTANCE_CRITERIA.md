@@ -6,6 +6,7 @@
 - Placeholder items below are **not** current shipped acceptance gates unless explicitly marked as current.
 - The current release gate is scoped to the `app.web` browser shell.
 - Internal/operator tooling such as `controller.server`, `pipeline_gui/`, `windows-launchers/`, and `_data/` pipeline helpers is outside the current release gate unless explicitly promoted later.
+- The internal pipeline runtime currently uses a supervisor-owned run-scoped status/events/receipt surface; `controller.server`, `pipeline_gui`, and `pipeline-launcher.py` read that surface as thin clients while `tmux` remains attach/debug substrate only, and operator tooling may consume both `degraded_reason` and `degraded_reasons` from the runtime status payload.
 - The internal `pipeline_gui` home card may still evolve outside the web release gate; current behavior labels the file box as `라운드 기록` and distinguishes latest `/work` or `/verify` from a missing current-round receipt instead of showing a generic no-output label for both cases.
 
 ## Current Web MVP Contract
@@ -30,7 +31,7 @@
   - response origin badge with separate answer-mode badge for web investigation, source-role trust labels, and verification strength tags in origin detail
   - applied-preferences badge (`선호 N건 반영`) when `applied_preferences` is non-empty, with tooltip showing preference descriptions
   - summary source-type label (`문서 요약` for local document summary, `선택 결과 요약` for selected search results) in both the quick-meta bar and transcript message meta; single-source responses show basename-based `출처 <filename>` in both surfaces, multi-source responses show count-based `출처 N개` instead of raw filenames; general chat responses carry no source-type label
-  - claim coverage or verification state where applicable, with status tag (`[교차 확인]`, `[단일 출처]`, `[미확인]`) leading each slot line, actionable hints for weak or unresolved slots, source role with trust level labels, a color-coded fact-strength summary bar above the response text when claim coverage data exists, and a dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved)
+  - claim coverage or verification state where applicable, with status tag (`[교차 확인]`, `[단일 출처]`, `[미확인]`) leading each slot line, actionable hints for weak or unresolved slots, source role with trust level labels, a color-coded fact-strength summary bar above the response text when claim coverage data exists, and a dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved); when a stored entity record carries legacy `claim_coverage` slot labels (`개발사`, `장르`, `플랫폼`, `출시일`), history-record reload surfaces the response with canonical core-slot names (`개발`, `장르/성격`, `이용 형태`, `상태`), keeps targeted reinvestigation suggestions instead of silently falling back to the generic web-search follow-up prompts, keeps reload-follow-up progress truthful (`unchanged` / `재조사했지만 ... 아직 단일 출처 상태입니다`) instead of a false `미확인 -> 단일 출처` improvement, and also upgrades stored `claim_coverage_progress_summary` text containing legacy slot names (`재조사했지만 플랫폼은 ...`) to the canonical wording (`재조사했지만 이용 형태는 ...`) on both the reload response `active_context` and the `session.web_search_history` history-card metadata. Both the `load_web_search_record_id` reload path and the natural-language show-only reload path expose `claim_coverage` and `claim_coverage_progress_summary` at the top level of the response payload and on the appended session message with the same values as `active_context`, so transcript history and history-card metadata see one consistent reload contract. Reload-follow-up answers that reuse the internal web-search `active_context` (`load_web_search_record_id + user_text` follow-ups and natural-language reload followed by a plain follow-up) also propagate the same top-level `claim_coverage` and `claim_coverage_progress_summary`, keeping the claim-coverage panel and fact-strength bar visible across reload-follow-up chains; latest-update / no-claim-coverage contexts keep these top-level fields empty so their existing empty-meta contract is unchanged. Persisted history JSON is not rewritten; the compatibility layer runs at read/use time only.
 - Long summaries can keep `summary_chunks` visible while still reducing chunk notes into one final Korean summary.
 - Narrative or fiction-like text should be summarized by prioritizing characters, key events, conflict changes, and ending state over isolated memorable lines. Summary prompts enforce a strict source-anchored rule: only events, facts, and conclusions explicitly present in the source text are included; adding fabricated events, substituting specific terms with different words, or stating relationship outcomes beyond what the text shows is prohibited.
 - The current short-summary, per-chunk chunk-note, and final reduce prompts, plus the internal `summary_chunks` selection heuristic, may split truthfully by existing source boundary only: local file or uploaded-document summaries keep the narrative-friendly document-flow guidance, while selected local search-result summaries keep search-synthesis guidance. Within the search-result path, all three prompts further split by result count: multi-result summaries focus on shared facts, differences, actions, and conclusion, while single-result summaries use non-comparative wording focused on main facts, actions, and grounded conclusion without cross-result comparison.
@@ -55,7 +56,7 @@
 - Serialized grounded-brief source messages can now also expose one optional source-message-anchored read-only `candidate_recurrence_key` draft derived only from the explicit original-vs-corrected pair when the same current source message still exposes a matching current `session_local_candidate`.
 - Serialized grounded-brief source messages can now also expose one optional source-message-anchored read-only `durable_candidate` projection when the same current source message still exposes both a matching `session_local_candidate` and `candidate_confirmation_record`.
 - Current session payloads can now also expose one optional top-level read-only `recurrence_aggregate_candidates` projection derived only from current same-session serialized source-message `candidate_recurrence_key` records when at least two distinct grounded-brief anchors share the same exact recurrence identity.
-- Current session payloads and the existing shell can now also expose one local `review_queue_items` / `검토 후보` surface fed only by current `durable_candidate` items with `promotion_eligibility = eligible_for_review`, plus one `accept`-only reviewed-but-not-applied action that records source-message `candidate_review_record`.
+- Current session payloads and the existing shell can now also expose one local `review_queue_items` / `검토 후보` surface fed only by current `durable_candidate` items with `promotion_eligibility = eligible_for_review`, with `accept`/`reject`/`defer` review actions that each record source-message `candidate_review_record` with the corresponding status, remove the item from the pending queue, and persistently show the review outcome label (`검토 수락됨`/`검토 거절됨`/`검토 보류됨`) on the source-message transcript meta and quick meta; a later correction clears the review outcome with the stale record.
 
 ### In Progress
 - (No web-investigation items currently in progress; see `docs/TASK_BACKLOG.md` Current Phase In Progress for future quality-improvement direction.)
@@ -361,8 +362,8 @@ These are placeholders for the next phase design target and its immediate follow
 - Current shipped first slice:
   - only current `durable_candidate` items with `promotion_eligibility = eligible_for_review` may enter the local read-only review queue
   - queue items are read-only inspection projections, not new canonical durable records
-  - one `accept` action is available in the current slice
-  - that action records reviewed-but-not-applied state only
+  - `accept`, `reject`, and `defer` actions are available in the current slice
+  - all three actions record reviewed-but-not-applied state only
 - Only `durable_candidate` items with trace-complete support and no final review outcome should enter a later action-capable local review queue.
 - `session_local` items should not become future user-level memory without first becoming `durable_candidate`.
 - First review-action trace contract should stay source-message-anchored:
@@ -375,23 +376,22 @@ These are placeholders for the next phase design target and its immediate follow
   - `artifact_id`
   - `source_message_id`
   - `review_scope = source_message_candidate_review`
-  - `review_action = accept`
-  - `review_status = accepted`
+  - `review_action` ∈ { `accept`, `reject`, `defer` }
+  - `review_status` ∈ { `accepted`, `rejected`, `deferred` }
   - `recorded_at`
   - optional `reviewed_statement` only when a later `edit` action lands
-- Minimum review actions should still be defined as:
-  - `accept`
+- Current shipped review actions:
+  - `accept`, `reject`, `defer`
+- Later review actions still include:
   - `edit`
-  - `reject`
-  - `defer`
 - Current pending queue rule should stay narrow even after actions exist:
   - `review_queue_items` should continue to include only current `durable_candidate` items with `promotion_eligibility = eligible_for_review`
   - a queue item should appear only when no matching current `candidate_review_record` exists on the same `artifact_id`, `source_message_id`, `candidate_id`, and `candidate_updated_at`
-  - after one matching `accept` record is present for that candidate version, the item should leave the pending queue
-  - accepted / edited / rejected / deferred items should not automatically open a second queue section, dashboard, or user-level memory surface in the same slice
+  - after one matching review record (`accept`, `reject`, or `defer`) is present for that candidate version, the item should leave the pending queue
+  - reviewed items should not automatically open a second queue section, dashboard, or user-level memory surface in the same slice
   - aggregate-level reviewed-memory transition initiation must stay outside this queue:
     - `review_queue_items` must not host `future_reviewed_memory_apply`
-    - source-message `accept` must not be reinterpreted as reviewed-memory apply trigger
+    - source-message review outcome (`accept`/`reject`/`defer`) must not be reinterpreted as reviewed-memory apply trigger
     - `candidate_review_record` must not become canonical transition identity, `operator_reason_or_note`, or `emitted_at` basis
 - Action meaning should stay distinct:
   - `accept` reviews the current `durable_candidate` as reusable, but does not apply user-level memory
@@ -409,10 +409,10 @@ These are placeholders for the next phase design target and its immediate follow
 - Approval-backed save should not be the sole reason a candidate becomes reviewed memory or receives a broader suggested scope.
 - This review surface is now a current acceptance gate for the narrow first slice.
 - Current shipped action-capable slice:
-  - `accept` only
-  - record one source-message `candidate_review_record` with `review_action = accept` and `review_status = accepted`
-  - remove the matching item from pending `review_queue_items`
-  - do not add edit / reject / defer controls, reviewed-memory application, or user-level memory in the same slice
+  - `accept`, `reject`, `defer` are all implemented
+  - record one source-message `candidate_review_record` with the corresponding `review_action` and `review_status`
+  - remove the matching item from pending `review_queue_items` after any of the three actions
+  - do not add edit controls, reviewed-memory application, or user-level memory in the same slice
 
 ### Acceptance Placeholder For Memory
 - The current implementation should keep the first source-message-anchored `session_local_memory_signal` projection stable before any review queue or durable-candidate surface is attempted.
@@ -1086,7 +1086,7 @@ These are placeholders for the next phase design target and its immediate follow
   - a review action can target only a current source-message `durable_candidate`, not `session_local_candidate` alone
   - a matching `candidate_review_record` requires the same `artifact_id`, `source_message_id`, `candidate_id`, and `candidate_updated_at`
   - approval-backed save support alone still cannot create review eligibility or review outcome
-  - `accept` records reviewed-but-not-applied state and removes the matching item from pending `review_queue_items`
+  - `accept`, `reject`, or `defer` each record a reviewed-but-not-applied state and remove the matching item from pending `review_queue_items`
   - `session_local_candidate`, `candidate_confirmation_record`, and `durable_candidate` shapes remain unchanged after review recording
   - no user-level memory entry is created
 - A later response should be able to reflect a relevant `session_local` signal within the same session or a `durable_candidate` across later artifacts without requiring the same correction again.
@@ -1348,7 +1348,7 @@ These are placeholders for the next phase design target and its immediate follow
 ### Current Gates
 - Unit/service regression uses `python3 -m unittest -v`.
 - Playwright webServer launch clears inherited provider/model overrides, forces `LOCAL_AI_MODEL_PROVIDER=mock`, and does not reuse an already running smoke-port server, so operator shell state must not change the automated smoke baseline.
-- Playwright smoke covers 82 core browser scenarios:
+- Playwright smoke covers 125 core browser scenarios (document-level browser coverage inventory count, not the raw `test(...)` count in `e2e/tests/web-smoke.spec.mjs`):
   - file summary with panels, source filename assertion in both quick-meta and transcript meta, and `문서 요약` source-type label assertion in both quick-meta and transcript meta
   - browser file picker with source filename and `문서 요약` source-type label assertion in both quick-meta and transcript meta
   - browser folder picker with `선택 결과 요약` source-type label and multi-source count-based metadata (`출처 2개`) assertion in both quick-meta and transcript meta, plus response detail preview panel alongside summary body with both cards' ordered labels, full-path tooltips, match badges (`파일명 일치` / `내용 일치`), and snippet text content, and transcript preview panel with item count, both cards' ordered labels, full-path tooltips, match badges (`파일명 일치` / `내용 일치`), and snippet text content
@@ -1359,7 +1359,8 @@ These are placeholders for the next phase design target and its immediate follow
   - `내용 거절` content-verdict path with same-card reject-note update, approval preserved, and later explicit save supersession
   - corrected-save first bridge path
   - corrected-save saved snapshot remains while late reject and later re-correct move the latest state separately
-  - candidate-linked explicit confirmation path stays outside approval UI, remains distinct from save support on the same source message, records `candidate_confirmation_record`, surfaces one local read-only `검토 후보`, and clears both the source-message projection and the queue item from current state after a later correction
+  - candidate-linked explicit confirmation path stays outside approval UI, remains distinct from save support on the same source message, records `candidate_confirmation_record`, surfaces one local read-only `검토 후보`, retains review-outcome quick-meta on plain follow-up responses, and drops review-outcome quick-meta after a later correction creates a newer unreviewed context
+  - review-queue `reject`/`defer` review action은 `accept`와 동일한 quick-meta(`검토 거절됨`/`검토 보류됨`), transcript-meta, follow-up retention, stale-clear 경로를 따르고, payload에 `review_action`/`review_status`가 올바르게 기록됨
   - same-session recurrence aggregate path renders one separate local read-only `검토 메모 적용 후보` section, shows `검토 메모 적용 시작` enabled with a mandatory reason textarea when `capability_outcome = unblocked_all_required` (disabled while blocked or while the textarea is empty), keeps that action distinct from `검토 수락`, emits one `reviewed_memory_transition_record` with `record_stage = emitted_record_only_not_applied` on enabled submit, then shows `검토 메모 적용 실행` after emission and moves that same record to `applied_pending_result` with `applied_at` set on apply-boundary click, then shows `결과 확정` after the apply boundary and moves `record_stage` to `applied_with_result` with one `apply_result` object (`result_version = first_reviewed_memory_apply_result_v1`, `applied_effect_kind = reviewed_memory_correction_pattern`, `result_stage = effect_active`, `result_at`) on confirm click, confirming the memory effect on future responses is now active (`result_stage = effect_active`) with active effects stored on the session as `reviewed_memory_active_effects` and future responses including a `[검토 메모 활성]` prefix; stop-apply: after the effect is active the card shows `적용 중단`; clicking it changes `record_stage` to `stopped`, sets `apply_result.result_stage` to `effect_stopped`, and removes the effect from `reviewed_memory_active_effects`; reversal: after stop the card shows `적용 되돌리기`; clicking it changes `record_stage` to `reversed`, sets `apply_result.result_stage` to `effect_reversed`, and adds `reversed_at`; conflict-visibility: after reversal the card shows `충돌 확인`; clicking it creates a separate `reviewed_memory_conflict_visibility_record` with `transition_action = future_reviewed_memory_conflict_visibility`, `record_stage = conflict_visibility_checked`, `source_apply_transition_ref`, evaluated `conflict_entries`, and `conflict_entry_count`
   - streaming progress + cancel
   - general chat negative source-type label contract (no `문서 요약` / `선택 결과 요약` in quick-meta or transcript meta)
@@ -1418,6 +1419,47 @@ These are placeholders for the next phase design target and its immediate follow
   - latest-update news-only browser 자연어 reload 후 두 번째 follow-up → 기사 source path(`hankyung.com`, `mk.co.kr`) context box 유지 + `WEB` badge, `최신 확인`, `기사 교차 확인`, `보조 기사` response-origin exact-field drift 없음
   - latest-update noisy community source browser 자연어 reload 후 follow-up → `보조 커뮤니티`, `brunch` 미노출 + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` 유지
   - latest-update noisy community source browser 자연어 reload 후 두 번째 follow-up → `보조 커뮤니티`, `brunch` 미노출 + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` 유지
+  - history-card latest-update noisy community source `방금 검색한 결과 다시 보여줘` 자연어 reload-only (후속 follow-up 없음) → `WEB` badge, `최신 확인` answer-mode badge, `보조 커뮤니티`, `brunch` 미노출, `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` 유지, zero-count `.meta` no-leak
+  - history-card entity-card noisy single-source initial-render (click reload / 자연어 reload / follow-up 전) → 가시 `다시 불러오기` 버튼, history-card `.meta` = `사실 검증 교차 확인 3 · 미확인 2`, `.meta`에 `설명 카드` / `최신 확인` / `일반 검색` answer-mode label leak 없음, history-card에 `출시일` / `2025` / `blog.example.com` noisy single-source 잔재 미노출
+  - history-card entity-card actual-search initial-render (click reload / 자연어 reload / follow-up 전) → 가시 `다시 불러오기` 버튼, history-card `.meta` = `사실 검증 교차 확인 3 · 미확인 2`, `.meta`에 `설명 카드` / `최신 확인` / `일반 검색` answer-mode label leak 없음
+  - history-card entity-card dual-probe initial-render (click reload / 자연어 reload / follow-up 전) → 가시 `다시 불러오기` 버튼, history-card `.meta` = `사실 검증 교차 확인 1 · 단일 출처 4` mixed count-summary, `.meta`에 `설명 카드` / `최신 확인` / `일반 검색` answer-mode label leak 없음
+  - history-card latest-update noisy community source initial-render (click reload / 자연어 reload / follow-up 전) → 가시 `다시 불러오기` 버튼, history-card `.meta` count = 0, 우발적 `.meta` 생성 통한 `사실 검증` text leak 없음, history-card에 `보조 커뮤니티` / `brunch` noisy 잔재 미노출
+  - history-card latest-update mixed-source initial-render (click reload / 자연어 reload / follow-up 전) → 가시 `다시 불러오기` 버튼, history-card `.meta` count = 0, 우발적 `.meta` 생성 통한 `사실 검증` text leak 없음
+  - history-card latest-update single-source initial-render (click reload / 자연어 reload / follow-up 전) → 가시 `다시 불러오기` 버튼, history-card `.meta` count = 0, 우발적 `.meta` 생성 통한 `사실 검증` text leak 없음
+  - history-card latest-update news-only initial-render (click reload / 자연어 reload / follow-up 전) → 가시 `다시 불러오기` 버튼, history-card `.meta` count = 0, 우발적 `.meta` 생성 통한 `사실 검증` text leak 없음
+  - history-card entity-card store-seeded actual-search initial-render (click reload / 자연어 reload / follow-up 전) → 가시 `다시 불러오기` 버튼, history-card `.meta` count = 0, 우발적 `.meta` 생성 통한 `사실 검증` text leak 없음
+  - history-card entity-card store-seeded actual-search 자연어 reload-only → 가시 `다시 불러오기` 버튼, history-card `.meta` count = 0, `사실 검증` text leak 없음, `WEB` badge / `설명 카드` / `설명형 다중 출처 합의` / `백과 기반` / `namu.wiki` / `ko.wikipedia.org` visible continuity 유지
+  - history-card entity-card store-seeded actual-search `다시 불러오기` click reload-only → 가시 `다시 불러오기` 버튼, history-card `.meta` count = 0, `사실 검증` text leak 없음, `WEB` / `설명 카드` / `설명형 다중 출처 합의` / `백과 기반` / `namu.wiki` / `ko.wikipedia.org` visible continuity 유지
+  - history-card entity-card store-seeded actual-search `다시 불러오기` 후 follow-up → history-card `.meta` count = 0, `사실 검증` text leak 없음, `WEB` / `설명 카드` / `설명형 다중 출처 합의` / `백과 기반` / `namu.wiki` / `ko.wikipedia.org` visible continuity drift 없음
+  - history-card entity-card store-seeded actual-search `다시 불러오기` 후 두 번째 follow-up → history-card `.meta` count = 0, `사실 검증` text leak 없음, `WEB` / `설명 카드` / `설명형 다중 출처 합의` / `백과 기반` / `namu.wiki` / `ko.wikipedia.org` visible continuity drift 없음
+  - history-card entity-card store-seeded actual-search 자연어 reload 체인(자연어 reload → follow-up → 두 번째 follow-up) → history-card `.meta` count = 0, `사실 검증` text leak 없음, `WEB` / `설명 카드` / `설명형 다중 출처 합의` / `백과 기반` / `namu.wiki` / `ko.wikipedia.org` visible continuity drift 없음
+  - history-card entity-card zero-strong-slot `다시 불러오기` 후 → history-card `.meta` = `사실 검증 미확인 5` missing-only count-summary, `설명 카드` / `최신 확인` / `일반 검색` answer-mode label leak 없음, `WEB` / `설명 카드` / `설명형 단일 출처` / `백과 기반` / `namu.wiki` / `ko.wikipedia.org` visible continuity 유지
+  - history-card entity-card zero-strong-slot `다시 불러오기` 후 두 번째 follow-up → history-card `.meta` = `사실 검증 미확인 5` missing-only count-summary drift 없음, `WEB` / `설명 카드` / `설명형 단일 출처` / `백과 기반` / `namu.wiki` / `ko.wikipedia.org` visible continuity drift 없음
+  - history-card entity-card zero-strong-slot 자연어 reload 후 두 번째 follow-up → history-card `.meta` = `사실 검증 미확인 5` missing-only count-summary drift 없음, `WEB` / `설명 카드` / `설명형 단일 출처` / `백과 기반` / `namu.wiki` / `ko.wikipedia.org` visible continuity drift 없음
+  - history-card entity-card dual-probe `다시 불러오기` reload → history-card `.meta` = `사실 검증 교차 확인 1 · 단일 출처 4` mixed count-summary, `.meta`에 `설명 카드` / `최신 확인` / `일반 검색` answer-mode label leak 없음, `WEB` / `설명 카드` / `설명형 다중 출처 합의` / `공식 기반` · `백과 기반` / `pearlabyss.com/200` / `pearlabyss.com/300` visible continuity 유지
+  - history-card entity-card dual-probe `다시 불러오기` 후 두 번째 follow-up → history-card `.meta` = `사실 검증 교차 확인 1 · 단일 출처 4` mixed count-summary drift 없음, leading/trailing separator artifact 없음, `WEB` / `설명 카드` / `설명형 다중 출처 합의` / `공식 기반` · `백과 기반` visible continuity drift 없음
+  - entity-card dual-probe 자연어 reload → history-card `.meta` = `사실 검증 교차 확인 1 · 단일 출처 4` mixed count-summary, `.meta`에 `설명 카드` / `최신 확인` / `일반 검색` answer-mode label leak 없음, `WEB` / `설명 카드` / `설명형 다중 출처 합의` / `공식 기반` · `백과 기반` visible continuity 유지
+  - entity-card dual-probe 자연어 reload 후 두 번째 follow-up → history-card `.meta` = `사실 검증 교차 확인 1 · 단일 출처 4` mixed count-summary drift 없음, leading/trailing separator artifact 없음, `WEB` / `설명 카드` / `설명형 다중 출처 합의` / `공식 기반` · `백과 기반` visible continuity drift 없음
+  - history-card entity-card actual-search `다시 불러오기` click reload → history-card `.meta` = `사실 검증 교차 확인 3 · 미확인 2` strong-plus-missing count-summary, `.meta`에 `설명 카드` / `최신 확인` / `일반 검색` answer-mode label leak 없음
+  - history-card entity-card actual-search `다시 불러오기` 후 follow-up → history-card `.meta` = `사실 검증 교차 확인 3 · 미확인 2` strong-plus-missing count-summary drift 없음, count-summary line에 leading/trailing separator artifact 없음
+  - history-card entity-card actual-search `다시 불러오기` 후 두 번째 follow-up → history-card `.meta` = `사실 검증 교차 확인 3 · 미확인 2` strong-plus-missing count-summary drift 없음, leading/trailing separator artifact 없음
+  - entity-card actual-search 자연어 reload → history-card `.meta` = `사실 검증 교차 확인 3 · 미확인 2` strong-plus-missing count-summary, `.meta`에 `설명 카드` / `최신 확인` / `일반 검색` answer-mode label leak 없음
+  - entity-card actual-search 자연어 reload 후 follow-up → history-card `.meta` = `사실 검증 교차 확인 3 · 미확인 2` strong-plus-missing count-summary drift 없음, leading/trailing separator artifact 없음
+  - entity-card actual-search 자연어 reload 후 두 번째 follow-up → history-card `.meta` = `사실 검증 교차 확인 3 · 미확인 2` strong-plus-missing count-summary drift 없음, leading/trailing separator artifact 없음
+  - history-card entity-card noisy single-source `다시 불러오기` click reload → history-card `.meta` = `사실 검증 교차 확인 3 · 미확인 2` strong-plus-missing count-summary, `.meta`에 `설명 카드` / `최신 확인` / `일반 검색` answer-mode label leak 없음
+  - history-card entity-card noisy single-source `다시 불러오기` 후 follow-up → history-card `.meta` = `사실 검증 교차 확인 3 · 미확인 2` strong-plus-missing count-summary drift 없음, leading/trailing separator artifact 없음
+  - history-card entity-card noisy single-source `다시 불러오기` 후 두 번째 follow-up → history-card `.meta` = `사실 검증 교차 확인 3 · 미확인 2` strong-plus-missing count-summary drift 없음, leading/trailing separator artifact 없음
+  - entity-card noisy single-source 자연어 reload → history-card `.meta` = `사실 검증 교차 확인 3 · 미확인 2` strong-plus-missing count-summary, `.meta`에 `설명 카드` / `최신 확인` / `일반 검색` answer-mode label leak 없음
+  - entity-card noisy single-source 자연어 reload 후 follow-up → history-card `.meta` = `사실 검증 교차 확인 3 · 미확인 2` strong-plus-missing count-summary drift 없음, leading/trailing separator artifact 없음
+  - entity-card noisy single-source 자연어 reload 후 두 번째 follow-up → history-card `.meta` = `사실 검증 교차 확인 3 · 미확인 2` strong-plus-missing count-summary drift 없음, leading/trailing separator artifact 없음
+  - history-card entity-card 단일 출처 `다시 불러오기` click reload (stored `{weak:1, missing:1}` + `단일 출처 상태 1건, 미확인 1건.` progress) → history-card `.meta` = `사실 검증 단일 출처 1 · 미확인 1 · 단일 출처 상태 1건, 미확인 1건.`, count-summary가 progress-summary 앞, `.meta`에 `설명 카드` / `최신 확인` / `일반 검색` answer-mode label leak 없음, composed line에 leading/trailing separator artifact 없음
+  - history-card entity-card 단일 출처 `다시 불러오기` 후 follow-up (stored `{weak:1}` + `단일 출처 상태 1건.` progress) → history-card `.meta` = `사실 검증 단일 출처 1 · 단일 출처 상태 1건.`, count-summary가 progress-summary 앞, `.meta`에 answer-mode label leak 없음, composed line에 leading/trailing separator artifact 없음
+  - history-card entity-card 단일 출처 `다시 불러오기` 후 두 번째 follow-up (stored `{weak:1}` + `단일 출처 상태 1건.` progress) → history-card `.meta` = `사실 검증 단일 출처 1 · 단일 출처 상태 1건.` drift 없음, count-summary가 progress-summary 앞, `.meta`에 answer-mode label leak 없음, composed line에 leading/trailing separator artifact 없음
+  - history-card entity-card 단일 출처 자연어 reload 후 두 번째 follow-up (stored `{weak:1}` + `단일 출처 상태 1건.` progress) → history-card `.meta` = `사실 검증 단일 출처 1 · 단일 출처 상태 1건.` drift 없음, count-summary가 progress-summary 앞, `.meta`에 answer-mode label leak 없음, composed line에 leading/trailing separator artifact 없음
+  - `web-search history card header badges` investigation mixed count+progress composition (multi-category count-summary + non-empty progress) → history-card `.meta` = `사실 검증 교차 확인 2 · 단일 출처 1 · 혼합 지표: 교차 확인과 단일 출처가 함께 관찰되었습니다.`, count-summary가 progress-summary 앞, `.meta`에 `설명 카드` / `최신 확인` / `일반 검색` answer-mode label leak 없음, composed line에 leading/trailing separator artifact 없음
+  - `web-search history card header badges` general label+count+progress composition (general answer-mode + multi-category count-summary + non-empty progress) → history-card `.meta` = `일반 검색 · 사실 검증 교차 확인 2 · 단일 출처 1 · 일반 지표: 커뮤니티 단서와 교차 확인이 함께 관찰되었습니다.`, `label → count → progress` 순서 고정, `.meta`에 `혼합 지표:` / `설명 카드` / `최신 확인` investigation answer-mode leak 없음, composed line에 leading/trailing separator artifact 없음
+  - `web-search history card header badges` general label+count-only composition (general answer-mode + single-category count-summary + empty progress) → history-card `.meta` = `일반 검색 · 사실 검증 교차 확인 2`, label 뒤에 count-only segment만, `.meta`에 `일반 진행:` / `혼합 지표:` / `일반 지표:` / `설명 카드` / `최신 확인` absent segment leak 없음, composed line에 leading/trailing separator artifact 없음
+  - `web-search history card header badges` general label+progress-only composition (general answer-mode + empty count-summary + non-empty progress) → history-card `.meta` = `일반 검색 · 일반 진행: 커뮤니티 단서가 단일 출처 상태로 남아 있습니다.`, label 뒤에 progress-only segment만, `.meta`에 `사실 검증` / `혼합 지표:` / `일반 지표:` / `설명 카드` / `최신 확인` absent segment leak 없음, composed line에 leading/trailing separator artifact 없음
   - history-card latest-update noisy community source `다시 불러오기` 후 follow-up → `보조 커뮤니티`, `brunch` 미노출 + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` 유지
   - history-card latest-update noisy community source `다시 불러오기` 후 두 번째 follow-up → `보조 커뮤니티`, `brunch` 미노출 + `기사 교차 확인`, `보조 기사`, `hankyung.com`, `mk.co.kr` 유지
   - entity-card noisy single-source claim(`출시일`/`2025`/`blog.example.com`) browser 자연어 reload 후 follow-up → 미노출 + `설명형 다중 출처 합의`, `백과 기반`, `namu.wiki`/`ko.wikipedia.org`/`blog.example.com` provenance 유지
@@ -1428,6 +1470,8 @@ These are placeholders for the next phase design target and its immediate follow
   - browser folder picker scanned PDF + readable file mixed search → count-only partial-failure notice(`스캔본 또는 이미지형 PDF`, `건너뛰었습니다`) + readable file preview exact fields(`1. notes.txt`, `내용 일치`, `budget` snippet) + selected path/copy(`mixed-search-folder/notes.txt`) + hidden body + transcript preview + transcript body hidden
   - browser file picker readable text-layer PDF → OCR guidance 미노출, visible summary body with extracted text(`local-first approval-based document assistant`), context box + quick meta + transcript meta `readable-text-layer.pdf`, quick meta + transcript meta `문서 요약` label
   - browser folder picker mixed scanned-PDF search-plus-summary → partial-failure notice + readable file preview exact fields(`1. notes.txt`, `mixed-search-folder/notes.txt` tooltip, `내용 일치`, `budget` snippet) + transcript preview exact fields 유지
+  - history-card entity-card `다시 불러오기` click reload → 브라우저 composer(`#user-text` + `submit-request`)를 거친 plain follow-up(`이 결과 한 문장으로 요약해줘`) `/api/chat/stream` POST payload가 `load_web_search_record_id`를 전혀 포함하지 않고, follow-up 이후에도 `#claim-coverage-box` visible, `#claim-coverage-text`에 저장된 entity-card `장르` / `[단일 출처]` 슬롯, history-card `.meta` 정확히 `사실 검증 단일 출처 1 · 단일 출처 상태 1건.` 유지
+  - history-card latest-update `다시 불러오기` click reload → 브라우저 composer(`#user-text` + `submit-request`)를 거친 plain follow-up(`이 결과 한 문장으로 요약해줘`) `/api/chat/stream` POST payload가 `load_web_search_record_id`를 전혀 포함하지 않고, follow-up 이후에도 `#claim-coverage-box` hidden, history-card `.meta` count `0` 유지
 
 ### In Progress
 - Improve regression fixtures for weak-slot reinvestigation and source consensus.

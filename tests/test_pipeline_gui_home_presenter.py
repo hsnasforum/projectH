@@ -13,10 +13,13 @@ from pipeline_gui.home_presenter import (
 
 def _base_snapshot() -> dict[str, object]:
     return {
+        "runtime_state": "STOPPED",
+        "degraded_reason": "",
         "session_ok": False,
         "watcher_alive": False,
         "watcher_pid": None,
         "agents": [],
+        "lane_details": {},
         "pane_map": {},
         "token_usage": {},
         "token_dashboard": None,
@@ -123,10 +126,19 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
         snapshot = _base_snapshot()
         snapshot.update(
             {
+                "runtime_state": "RUNNING",
                 "session_ok": True,
                 "watcher_alive": True,
                 "agents": [("Claude", "WORKING", "1m 2s", ""), ("Codex", "READY", "", "")],
-                "pane_map": {"Claude": ""},
+                "lane_details": {
+                    "Claude": {
+                        "state": "WORKING",
+                        "note": "1m 2s",
+                        "attachable": True,
+                        "pid": 321,
+                        "last_heartbeat_at": "2026-04-10T12:00:00Z",
+                    }
+                },
                 "run_summary": {"turn": "Claude", "phase": "VERIFY_DONE", "job": "2026-04-10-history-card-header-b-3a1a225d"},
                 "work_name": "work.md",
                 "work_mtime": 10.0,
@@ -140,9 +152,13 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
         with mock.patch("pipeline_gui.home_presenter.time_ago", side_effect=["방금 전", "방금 전"]):
             presentation = build_console_presentation(selected_agent="Claude", snapshot=snapshot)
 
-        self.assertEqual(presentation.focus_title, "CLAUDE • 최근 pane 출력")
-        self.assertIn("현재 턴: Claude", presentation.focus_text)
-        self.assertIn("Claude: 작업 중 (1m 2s)", presentation.focus_text)
+        self.assertEqual(presentation.focus_title, "CLAUDE • Runtime 상태")
+        self.assertIn("runtime: RUNNING", presentation.focus_text)
+        self.assertIn("lane_state: WORKING", presentation.focus_text)
+        self.assertIn("note: 1m 2s", presentation.focus_text)
+        self.assertIn("attachable: true", presentation.focus_text)
+        self.assertIn("pid: 321", presentation.focus_text)
+        self.assertIn("active_turn: Claude", presentation.focus_text)
         self.assertEqual(presentation.artifacts_title, "라운드 기록")
         self.assertEqual(presentation.artifact_color, "#c0a060")
         self.assertIn("턴: Claude", presentation.run_context_text)
@@ -151,7 +167,7 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
         self.assertEqual(presentation.run_context_fg, "#5b9cf6")
         self.assertEqual(presentation.work_text, "최신 work: work.md (방금 전)")
         self.assertEqual(presentation.verify_text, "최신 verify: verify.md (방금 전)")
-        self.assertEqual(presentation.log_title, "워처 로그 • Claude → VERIFY_DONE")
+        self.assertEqual(presentation.log_title, "Runtime 이벤트 • Claude → VERIFY_DONE")
         self.assertIn("short", presentation.log_text)
         self.assertTrue(presentation.log_text.endswith("…"))
 
@@ -159,6 +175,7 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
         snapshot = _base_snapshot()
         snapshot.update(
             {
+                "runtime_state": "RUNNING",
                 "session_ok": True,
                 "watcher_alive": True,
                 "work_name": "work.md",
@@ -183,6 +200,7 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
         snapshot = _base_snapshot()
         snapshot.update(
             {
+                "runtime_state": "RUNNING",
                 "session_ok": True,
                 "watcher_alive": True,
                 "work_name": "work.md",

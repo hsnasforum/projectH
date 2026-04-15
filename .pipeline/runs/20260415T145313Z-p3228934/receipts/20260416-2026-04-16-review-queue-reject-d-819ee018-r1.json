@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "receipt_id": "20260416-2026-04-16-review-queue-reject-d-819ee018-r1",
+  "run_id": "20260415T145313Z-p3228934",
+  "job_id": "20260416-2026-04-16-review-queue-reject-d-819ee018",
+  "round": 1,
+  "target_lane": "codex",
+  "artifact_path": "/home/xpdlqj/code/projectH/verify/4/16/2026-04-16-controller-office-reset-base-verification.md",
+  "artifact_hash": "sha256:40046abf63c60fe88d5d782c6d608f123845a0494d00bb7ca2a62f61f2f1c1a2",
+  "verify_manifest_path": "/home/xpdlqj/code/projectH/.pipeline/manifests/20260416-2026-04-16-review-queue-reject-d-819ee018/round-1.verify.json",
+  "verify_result": "passed_by_feedback",
+  "control_seq": 159,
+  "closed_at": "2026-04-15T15:32:37.775949Z",
+  "emitted_by": "supervisor"
+}

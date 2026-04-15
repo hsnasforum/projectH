@@ -1,0 +1,178 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-04-15T13:00:40.622870+00:00",
+  "source": "/home/xpdlqj/code/projectH/controller/assets/fren-office-sheet.png",
+  "frame_box": {
+    "width": 220,
+    "height": 190
+  },
+  "states": {
+    "ready": {
+      "interval_ms": 180,
+      "sequence": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        3,
+        2,
+        1
+      ],
+      "frames": [
+        {
+          "src": "/controller-assets/generated/ready-00.png",
+          "width": 220,
+          "height": 184
+        },
+        {
+          "src": "/controller-assets/generated/ready-01.png",
+          "width": 220,
+          "height": 184
+        },
+        {
+          "src": "/controller-assets/generated/ready-02.png",
+          "width": 220,
+          "height": 184
+        },
+        {
+          "src": "/controller-assets/generated/ready-03.png",
+          "width": 220,
+          "height": 184
+        }
+      ]
+    },
+    "working": {
+      "interval_ms": 120,
+      "sequence": [
+        0,
+        1,
+        2,
+        3,
+        2,
+        1
+      ],
+      "frames": [
+        {
+          "src": "/controller-assets/generated/working-00.png",
+          "width": 220,
+          "height": 151
+        },
+        {
+          "src": "/controller-assets/generated/working-01.png",
+          "width": 220,
+          "height": 151
+        },
+        {
+          "src": "/controller-assets/generated/working-02.png",
+          "width": 220,
+          "height": 151
+        },
+        {
+          "src": "/controller-assets/generated/working-03.png",
+          "width": 220,
+          "height": 151
+        }
+      ]
+    },
+    "booting": {
+      "interval_ms": 145,
+      "sequence": [
+        0,
+        1,
+        2,
+        3,
+        2,
+        1
+      ],
+      "frames": [
+        {
+          "src": "/controller-assets/generated/booting-00.png",
+          "width": 178,
+          "height": 190
+        },
+        {
+          "src": "/controller-assets/generated/booting-01.png",
+          "width": 178,
+          "height": 190
+        },
+        {
+          "src": "/controller-assets/generated/booting-02.png",
+          "width": 178,
+          "height": 190
+        },
+        {
+          "src": "/controller-assets/generated/booting-03.png",
+          "width": 178,
+          "height": 190
+        }
+      ]
+    },
+    "broken": {
+      "interval_ms": 220,
+      "sequence": [
+        0,
+        1,
+        2,
+        3,
+        2,
+        1
+      ],
+      "frames": [
+        {
+          "src": "/controller-assets/generated/broken-00.png",
+          "width": 189,
+          "height": 190
+        },
+        {
+          "src": "/controller-assets/generated/broken-01.png",
+          "width": 189,
+          "height": 190
+        },
+        {
+          "src": "/controller-assets/generated/broken-02.png",
+          "width": 189,
+          "height": 190
+        },
+        {
+          "src": "/controller-assets/generated/broken-03.png",
+          "width": 189,
+          "height": 190
+        }
+      ]
+    },
+    "dead": {
+      "interval_ms": 520,
+      "sequence": [
+        0,
+        1,
+        2,
+        3,
+        2,
+        1
+      ],
+      "frames": [
+        {
+          "src": "/controller-assets/generated/dead-00.png",
+          "width": 172,
+          "height": 190
+        },
+        {
+          "src": "/controller-assets/generated/dead-01.png",
+          "width": 172,
+          "height": 190
+        },
+        {
+          "src": "/controller-assets/generated/dead-02.png",
+          "width": 172,
+          "height": 190
+        },
+        {
+          "src": "/controller-assets/generated/dead-03.png",
+          "width": 172,
+          "height": 190
+        }
+      ]
+    }
+  }
+}

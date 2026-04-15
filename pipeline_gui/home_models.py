@@ -33,10 +33,13 @@ class RuntimeLaunchSnapshot:
 
 @dataclass
 class HomeSnapshot:
+    runtime_state: str
+    degraded_reason: str
     session_ok: bool
     watcher_alive: bool
     watcher_pid: int | None
     agents: list[tuple[str, str, str, str]]
+    lane_details: dict[str, dict[str, object]]
     pane_map: dict[str, str]
     token_usage: dict[str, dict[str, object]]
     token_dashboard: object | None

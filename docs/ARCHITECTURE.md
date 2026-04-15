@@ -1220,13 +1220,13 @@ The next phase should standardize one `grounded brief` artifact.
     - current `durable_candidate`
     - `promotion_eligibility = eligible_for_review`
     - no matching current `candidate_review_record` on the same `artifact_id`, `source_message_id`, `candidate_id`, and `candidate_updated_at`
-  - after one matching `accept` record is written for that current candidate version, the item should leave the pending queue
-  - first action-capable slices should not add accepted / rejected / deferred tabs or a second page
+  - after one matching review record (`accept`, `reject`, or `defer`) is written for that current candidate version, the item should leave the pending queue
+  - the current action-capable slice should not add accepted / rejected / deferred tabs or a second page
 - remaining review vocabulary stays later:
-  - `edit`, `reject`, and `defer` are still deferred in UI and persistence
+  - `edit` is still deferred in UI and persistence
 - the default reviewer assumption is the same local user on the same machine
 - review outcomes should be append-only audit events rather than silent replacement of candidate history
-- current code now has one `accept` review action API but still has no `edit` / `reject` / `defer` API, no payload-visible reviewed-memory store, no payload-visible proof-record or proof-boundary surface, and no user-level memory application
+- current code now has `accept`, `reject`, and `defer` review action APIs but still has no `edit` API, no payload-visible reviewed-memory store, no payload-visible proof-record or proof-boundary surface, and no user-level memory application
 
 ### Scope / Conflict / Rollback Boundary
 

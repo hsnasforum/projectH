@@ -14,9 +14,11 @@ from pipeline_gui.backend import (
     confirm_pipeline_start,
     current_verify_activity,
     format_control_summary,
+    normalize_runtime_status,
     parse_control_slots,
     pipeline_start,
     pipeline_start_failure_hint,
+    read_runtime_status,
     watcher_log_snapshot,
     watcher_start_observed,
 )
@@ -460,14 +462,19 @@ class TestPipelineStartDiagnostics(unittest.TestCase):
             self.assertTrue(watcher_start_observed(project, not_before=now - 1.0))
             self.assertFalse(watcher_start_observed(project, not_before=now + 5.0))
 
-    def test_confirm_pipeline_start_accepts_fresh_watcher_marker_without_tmux(self):
+    def test_confirm_pipeline_start_accepts_runtime_ready_status(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             progress_updates: list[str] = []
             with (
-                mock.patch("pipeline_gui.backend.tmux_alive", return_value=False),
-                mock.patch("pipeline_gui.backend.watcher_alive", return_value=(False, None)),
-                mock.patch("pipeline_gui.backend.watcher_start_observed", return_value=True),
+                mock.patch(
+                    "pipeline_gui.backend.read_runtime_status",
+                    return_value={
+                        "runtime_state": "RUNNING",
+                        "watcher": {"alive": False, "pid": None},
+                        "lanes": [{"name": "Claude", "state": "READY", "attachable": True}],
+                    },
+                ),
                 mock.patch("pipeline_gui.backend.time.sleep", return_value=None),
             ):
                 ok, message = confirm_pipeline_start(
@@ -477,17 +484,39 @@ class TestPipelineStartDiagnostics(unittest.TestCase):
                     progress_callback=progress_updates.append,
                 )
             self.assertTrue(ok)
-            self.assertIn("watcher 확인", message)
+            self.assertIn("파이프라인 시작 완료", message)
             self.assertEqual(progress_updates, [])
+
+    def test_confirm_pipeline_start_does_not_treat_watcher_alive_as_ready_shortcut(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            with (
+                mock.patch(
+                    "pipeline_gui.backend.read_runtime_status",
+                    return_value={
+                        "runtime_state": "STARTING",
+                        "watcher": {"alive": True, "pid": 11},
+                        "lanes": [{"name": "Claude", "state": "READY", "attachable": True}],
+                    },
+                ),
+                mock.patch("pipeline_gui.backend.pipeline_start_failure_hint", return_value=""),
+                mock.patch("pipeline_gui.backend.time.sleep", return_value=None),
+            ):
+                ok, message = confirm_pipeline_start(
+                    project,
+                    "aip-projectH",
+                    start_requested_at=time.time(),
+                    timeout_seconds=2,
+                )
+            self.assertFalse(ok)
+            self.assertIn("runtime READY 조건", message)
 
     def test_confirm_pipeline_start_returns_timeout_with_failure_hint(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             progress_updates: list[str] = []
             with (
-                mock.patch("pipeline_gui.backend.tmux_alive", return_value=False),
-                mock.patch("pipeline_gui.backend.watcher_alive", return_value=(False, None)),
-                mock.patch("pipeline_gui.backend.watcher_start_observed", return_value=False),
+                mock.patch("pipeline_gui.backend.read_runtime_status", return_value=None),
                 mock.patch("pipeline_gui.backend.pipeline_start_failure_hint", return_value="Launch blocked: Active profile is missing."),
                 mock.patch("pipeline_gui.backend.time.sleep", return_value=None),
             ):
@@ -498,9 +527,9 @@ class TestPipelineStartDiagnostics(unittest.TestCase):
                     progress_callback=progress_updates.append,
                 )
             self.assertFalse(ok)
-            self.assertIn("15초 안에 tmux 세션 'aip-projectH'가 감지되지 않았습니다", message)
+            self.assertIn("15초 안에 runtime READY 조건을 만족하지 못했습니다", message)
             self.assertIn("Launch blocked: Active profile is missing.", message)
-            self.assertTrue(any("tmux 세션 대기 중" in update for update in progress_updates))
+            self.assertTrue(any("runtime STARTING 대기 중" in update for update in progress_updates))
 
 
 class TestTurnStateRead(unittest.TestCase):
@@ -555,6 +584,58 @@ class TestTurnStateRead(unittest.TestCase):
         parsed: dict[str, object] = {"active": None, "stale": []}
         active_text, _ = format_control_summary(parsed, turn_state=None)
         self.assertIn("없음", active_text)
+
+
+class TestRuntimeStatusRead(unittest.TestCase):
+    def test_read_runtime_status_from_current_run_pointer(self) -> None:
+        import json
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pipeline_dir = root / ".pipeline"
+            run_dir = pipeline_dir / "runs" / "20260411T010203Z-p123"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "20260411T010203Z-p123",
+                        "status_path": ".pipeline/runs/20260411T010203Z-p123/status.json",
+                        "events_path": ".pipeline/runs/20260411T010203Z-p123/events.jsonl",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "status.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "run_id": "20260411T010203Z-p123",
+                        "runtime_state": "RUNNING",
+                        "control": {
+                            "active_control_file": ".pipeline/claude_handoff.md",
+                            "active_control_seq": 17,
+                            "active_control_status": "implement",
+                            "active_control_updated_at": "2026-04-11T01:02:03Z",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = read_runtime_status(root)
+            self.assertIsNotNone(result)
+            self.assertEqual(result["run_id"], "20260411T010203Z-p123")
+            self.assertEqual(result["runtime_state"], "RUNNING")
+
+    def test_read_runtime_status_returns_none_without_current_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertIsNone(read_runtime_status(root))
+
+    def test_normalize_runtime_status_drops_non_mapping_payload(self) -> None:
+        self.assertEqual(normalize_runtime_status("broken-payload"), {})
+        self.assertEqual(normalize_runtime_status(None), {})
+        self.assertEqual(normalize_runtime_status({"runtime_state": "RUNNING"}), {"runtime_state": "RUNNING"})
 
 
 if __name__ == "__main__":

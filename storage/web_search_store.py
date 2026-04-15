@@ -8,6 +8,52 @@ from typing import Any
 from uuid import uuid4
 
 
+# Legacy stored entity records may carry older `claim_coverage` slot labels
+# that predate the current core-slot naming. Both the claim-coverage item
+# canonicalizer in ``core/agent_loop.py`` and the progress-summary text
+# canonicalizer below share this single mapping source.
+LEGACY_ENTITY_SLOT_ALIASES: dict[str, str] = {
+    "개발사": "개발",
+    "장르": "장르/성격",
+    "플랫폼": "이용 형태",
+    "출시일": "상태",
+}
+
+
+def _build_legacy_progress_summary_patterns() -> list[tuple[re.Pattern[str], str]]:
+    patterns: list[tuple[re.Pattern[str], str]] = []
+    for legacy, canonical in LEGACY_ENTITY_SLOT_ALIASES.items():
+        # ``장르`` is a prefix of the canonical ``장르/성격``. Guard with a
+        # negative lookahead so re-running the canonicalizer on already
+        # canonical text is a no-op instead of producing ``장르/성격/성격``.
+        if canonical.startswith(legacy):
+            suffix = canonical[len(legacy):]
+            patterns.append(
+                (re.compile(re.escape(legacy) + r"(?!" + re.escape(suffix) + r")"), canonical)
+            )
+        else:
+            patterns.append((re.compile(re.escape(legacy)), canonical))
+    return patterns
+
+
+_LEGACY_PROGRESS_SUMMARY_PATTERNS = _build_legacy_progress_summary_patterns()
+
+
+def canonicalize_legacy_claim_coverage_progress_summary(text: str | None) -> str:
+    """Rewrite legacy entity slot labels inside a stored
+    ``claim_coverage_progress_summary`` string to their current core-slot
+    wording. Non-slot text is preserved. Idempotent on already canonical
+    input; an empty / ``None`` input yields an empty string."""
+
+    normalized = str(text or "").strip()
+    if not normalized:
+        return ""
+    result = normalized
+    for pattern, canonical in _LEGACY_PROGRESS_SUMMARY_PATTERNS:
+        result = pattern.sub(canonical, result)
+    return result
+
+
 class WebSearchStore:
     def __init__(self, base_dir: str = "data/web-search") -> None:
         self.base_dir = Path(base_dir)
@@ -314,7 +360,9 @@ class WebSearchStore:
                         if str(item).strip()
                     ],
                     "claim_coverage_summary": self._summarize_claim_coverage(record.get("claim_coverage")),
-                    "claim_coverage_progress_summary": str(record.get("claim_coverage_progress_summary") or "").strip(),
+                    "claim_coverage_progress_summary": canonicalize_legacy_claim_coverage_progress_summary(
+                        record.get("claim_coverage_progress_summary")
+                    ),
                     "pages_preview": self._build_pages_preview(record),
                 }
             )

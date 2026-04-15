@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "receipt_id": "20260415-2026-04-15-reviewed-memory-contr-0bbe71c7-r1",
+  "run_id": "20260415T085955Z-p2732359",
+  "job_id": "20260415-2026-04-15-reviewed-memory-contr-0bbe71c7",
+  "round": 1,
+  "target_lane": "codex",
+  "artifact_path": "/home/xpdlqj/code/projectH/verify/4/15/2026-04-15-reviewed-memory-contract-ref-retention-through-lifecycle-parity-bundle-verification.md",
+  "artifact_hash": "sha256:f7b5aa10a650470518907b0135d972fff607d763783c8c88a71389117c4f40d9",
+  "verify_manifest_path": "/home/xpdlqj/code/projectH/.pipeline/manifests/20260415-2026-04-15-reviewed-memory-contr-0bbe71c7/round-1.verify.json",
+  "verify_result": "passed_by_feedback",
+  "control_seq": 138,
+  "closed_at": "2026-04-15T09:13:42.922514Z",
+  "emitted_by": "supervisor"
+}

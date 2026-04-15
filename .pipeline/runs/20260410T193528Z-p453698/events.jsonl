@@ -1,0 +1,54 @@
+{"seq": 1, "ts": "2026-04-10T19:35:28.280668Z", "run_id": "20260410T193528Z-p453698", "event_type": "runtime_started", "source": "supervisor", "payload": {"runtime_state": "STARTING"}}
+{"seq": 2, "ts": "2026-04-10T19:35:28.543363Z", "run_id": "20260410T193528Z-p453698", "event_type": "control_changed", "source": "supervisor", "payload": {"active_control_file": ".pipeline/claude_handoff.md", "active_control_seq": 121, "active_control_status": "implement", "active_control_updated_at": "2026-04-10T19:30:29.495226Z"}}
+{"seq": 3, "ts": "2026-04-10T19:35:28.543601Z", "run_id": "20260410T193528Z-p453698", "event_type": "degraded_entered", "source": "supervisor", "payload": {"reason": "receipt_manifest:20260411-2026-04-11-history-record-plain--6fce9b98:missing_manifest_path"}}
+{"seq": 4, "ts": "2026-04-10T19:35:28.543835Z", "run_id": "20260410T193528Z-p453698", "event_type": "lane_booting", "source": "supervisor", "payload": {"lane": "Claude", "state": "BOOTING"}}
+{"seq": 5, "ts": "2026-04-10T19:35:28.543920Z", "run_id": "20260410T193528Z-p453698", "event_type": "lane_booting", "source": "supervisor", "payload": {"lane": "Codex", "state": "BOOTING"}}
+{"seq": 6, "ts": "2026-04-10T19:35:28.543999Z", "run_id": "20260410T193528Z-p453698", "event_type": "lane_booting", "source": "supervisor", "payload": {"lane": "Gemini", "state": "BOOTING"}}
+{"seq": 7, "ts": "2026-04-10T19:35:29.573743Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 8, "ts": "2026-04-10T19:35:29.577613Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 9, "ts": "2026-04-10T19:35:29.586042Z", "run_id": "20260410T193528Z-p453698", "event_type": "lane_broken", "source": "supervisor", "payload": {"lane": "Claude", "state": "BROKEN"}}
+{"seq": 10, "ts": "2026-04-10T19:35:29.586142Z", "run_id": "20260410T193528Z-p453698", "event_type": "lane_broken", "source": "supervisor", "payload": {"lane": "Codex", "state": "BROKEN"}}
+{"seq": 11, "ts": "2026-04-10T19:35:29.586204Z", "run_id": "20260410T193528Z-p453698", "event_type": "lane_spawned", "source": "supervisor", "payload": {"lane": "Gemini", "state": "OFF"}}
+{"seq": 12, "ts": "2026-04-10T19:35:30.615878Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 13, "ts": "2026-04-10T19:35:30.619948Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 14, "ts": "2026-04-10T19:35:31.661860Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 15, "ts": "2026-04-10T19:35:31.665699Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 16, "ts": "2026-04-10T19:35:32.703369Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 17, "ts": "2026-04-10T19:35:32.707574Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 18, "ts": "2026-04-10T19:35:33.746382Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 19, "ts": "2026-04-10T19:35:33.750414Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 20, "ts": "2026-04-10T19:35:34.790168Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 21, "ts": "2026-04-10T19:35:34.793926Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 22, "ts": "2026-04-10T19:35:35.831258Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 23, "ts": "2026-04-10T19:35:35.834885Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 24, "ts": "2026-04-10T19:35:36.872668Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 25, "ts": "2026-04-10T19:35:36.877065Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 26, "ts": "2026-04-10T19:35:37.914922Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 27, "ts": "2026-04-10T19:35:37.919442Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 28, "ts": "2026-04-10T19:35:38.959024Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 29, "ts": "2026-04-10T19:35:38.964226Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 30, "ts": "2026-04-10T19:35:40.009387Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 31, "ts": "2026-04-10T19:35:40.013440Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 32, "ts": "2026-04-10T19:35:41.054334Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 33, "ts": "2026-04-10T19:35:41.058403Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 34, "ts": "2026-04-10T19:35:42.102433Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 35, "ts": "2026-04-10T19:35:42.107176Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 36, "ts": "2026-04-10T19:35:43.149822Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 37, "ts": "2026-04-10T19:35:43.154074Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 38, "ts": "2026-04-10T19:35:44.192096Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 39, "ts": "2026-04-10T19:35:44.195688Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 40, "ts": "2026-04-10T19:35:45.233130Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 41, "ts": "2026-04-10T19:35:45.236870Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 42, "ts": "2026-04-10T19:35:46.275862Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 43, "ts": "2026-04-10T19:35:46.279841Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 44, "ts": "2026-04-10T19:35:47.318429Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 45, "ts": "2026-04-10T19:35:47.322068Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 46, "ts": "2026-04-10T19:35:48.359668Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 47, "ts": "2026-04-10T19:35:48.363697Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 48, "ts": "2026-04-10T19:35:49.402679Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 49, "ts": "2026-04-10T19:35:49.406170Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 50, "ts": "2026-04-10T19:35:49.446169Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 51, "ts": "2026-04-10T19:35:49.450250Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 52, "ts": "2026-04-10T19:35:52.506238Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 53, "ts": "2026-04-10T19:35:52.509798Z", "run_id": "20260410T193528Z-p453698", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 54, "ts": "2026-04-10T19:35:52.519834Z", "run_id": "20260410T193528Z-p453698", "event_type": "runtime_stopped", "source": "supervisor", "payload": {"runtime_state": "STOPPED"}}

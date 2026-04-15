@@ -1,0 +1,25 @@
+# Pipeline Runtime fault check
+
+## 요약
+- source_project=/home/xpdlqj/code/projectH
+- project=/tmp/projecth-pipeline-runtime-synthetic-9446p405
+- session=aip-projecth-pipeline-runtime-synthetic-9446p405
+- mode=experimental
+- workspace_retained=False
+- workspace_cleanup=background_delete_requested(pid=2636013)
+
+## 체크 결과
+- `PASS` runtime start
+  - started
+- `PASS` status surface ready
+  - runtime_state=RUNNING
+- `PASS` session loss degraded
+  - runtime_state=DEGRADED, reason=claude_recovery_failed, reasons=["claude_recovery_failed", "codex_recovery_failed", "gemini_recovery_failed", "session_missing"]
+- `PASS` runtime stop after session loss
+  - stopped
+- `PASS` runtime restart
+  - started
+- `PASS` recoverable lane pid observed
+  - lane=Claude, pid=2635792
+- `PASS` lane recovery
+  - {"seq": 7, "ts": "2026-04-15T07:12:28.686830Z", "run_id": "20260415T071227Z-p2635113", "event_type": "recovery_completed", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1, "result": "restarted"}}

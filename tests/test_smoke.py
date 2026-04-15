@@ -1869,6 +1869,636 @@ class SmokeTest(unittest.TestCase):
             self.assertEqual(response.response_origin["answer_mode"], "latest_update")
             self.assertEqual(response.response_origin["verification_label"], "단일 출처 참고")
 
+    def test_load_web_search_record_legacy_claim_coverage_slots_keep_reinvestigation_suggestions(self) -> None:
+        """Stored entity records that carry legacy claim_coverage slot labels
+        (`개발사`, `장르`, `플랫폼`, `출시일`) must still surface targeted
+        reinvestigation suggestions on reload instead of silently falling back
+        to the generic web-search follow-up prompts."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "legacy-slot-reload-session"
+
+            store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "붉은사막 - 나무위키",
+                        "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                        "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                    }
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "badge": "WEB",
+                    "label": "외부 웹 설명",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "개발사", "status": "weak"},
+                    {"slot": "장르", "status": "weak"},
+                    {"slot": "플랫폼", "status": "missing"},
+                    {"slot": "출시일", "status": "missing"},
+                ],
+            )
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": _FakeWebSearchTool([]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+                web_search_store=store,
+            )
+
+            response = loop.handle(
+                UserRequest(
+                    user_text="방금 검색한 결과 다시 보여줘",
+                    session_id=session_id,
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+
+            self.assertEqual(response.actions_taken, ["load_web_search_record"])
+            self.assertEqual(response.response_origin["answer_mode"], "entity_card")
+            # MISSING slots come before WEAK slots, preserving stored order
+            # within each priority bucket.
+            self.assertEqual(
+                response.follow_up_suggestions[:4],
+                [
+                    "붉은사막 공식 플랫폼 검색해봐",
+                    "붉은사막 출시 상태 검색해봐",
+                    "붉은사막 개발사 검색해봐",
+                    "붉은사막 검색 결과 핵심 3줄만 다시 정리해 주세요.",
+                ],
+            )
+
+    def test_load_web_search_record_legacy_claim_coverage_slots_reload_surface_and_follow_up_progress_canonicalized(self) -> None:
+        """Stored entity records that carry legacy `claim_coverage` slot labels
+        (`개발사`, `장르`, `플랫폼`, `출시일`) must surface canonical core-slot
+        names on natural reload, and a reload-follow-up reinvestigation that
+        still yields the same semantic status must report truthful
+        `unchanged` progress (not a false `미확인 -> 단일 출처` improvement)."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "legacy-slot-reload-progress-session"
+
+            store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "붉은사막 - 나무위키",
+                        "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                        "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                    }
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "badge": "WEB",
+                    "label": "외부 웹 설명",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "개발사", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "장르", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "플랫폼", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "출시일", "status": "missing", "status_label": "미확인"},
+                ],
+            )
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": _FakeWebSearchTool([]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+                web_search_store=store,
+            )
+
+            # --- Natural reload → reloaded claim_coverage must use canonical slots. ---
+            reload_response = loop.handle(
+                UserRequest(
+                    user_text="방금 검색한 결과 다시 보여줘",
+                    session_id=session_id,
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+            self.assertEqual(reload_response.actions_taken, ["load_web_search_record"])
+            reload_slots = {
+                str(item.get("slot") or "").strip()
+                for item in reload_response.claim_coverage
+            }
+            self.assertEqual(
+                reload_slots,
+                {"개발", "장르/성격", "이용 형태", "상태"},
+            )
+            # Legacy labels must not leak through.
+            for legacy in ("개발사", "장르", "플랫폼", "출시일"):
+                self.assertNotIn(legacy, reload_slots)
+
+            # --- Reload-follow-up reinvestigation progress must stay truthful. ---
+            # Previous comes from the stored legacy record (as cached in
+            # active_context before the reload canonicalization landed).
+            legacy_previous = [
+                {"slot": "플랫폼", "status": "weak"},
+                {"slot": "개발사", "status": "weak"},
+                {"slot": "장르", "status": "weak"},
+                {"slot": "출시일", "status": "missing"},
+            ]
+            # A fresh live reinvestigation for `이용 형태` returns the same
+            # single-source status — nothing improved.
+            current_claim_coverage = [
+                {"slot": "이용 형태", "status": "weak"},
+                {"slot": "개발", "status": "weak"},
+                {"slot": "장르/성격", "status": "weak"},
+                {"slot": "상태", "status": "missing"},
+            ]
+            annotated = loop._annotate_claim_coverage_progress(
+                previous_claim_coverage=legacy_previous,
+                current_claim_coverage=current_claim_coverage,
+                query="붉은사막 공식 플랫폼 검색해봐",
+            )
+            by_slot = {
+                str(item.get("slot") or ""): item
+                for item in annotated
+                if isinstance(item, dict)
+            }
+            self.assertEqual(by_slot["이용 형태"]["progress_state"], "unchanged")
+            self.assertEqual(by_slot["이용 형태"]["progress_label"], "유지")
+            self.assertEqual(by_slot["이용 형태"]["previous_status"], "weak")
+            self.assertTrue(by_slot["이용 형태"]["is_focus_slot"])
+
+            summary = loop._build_claim_coverage_progress_summary(
+                previous_claim_coverage=legacy_previous,
+                current_claim_coverage=current_claim_coverage,
+                query="붉은사막 공식 플랫폼 검색해봐",
+            )
+            self.assertIsNotNone(summary)
+            self.assertIn("재조사했지만", summary)
+            self.assertIn("이용 형태", summary)
+            self.assertIn("아직", summary)
+            self.assertIn("단일 출처 상태", summary)
+            # No false improvement wording.
+            self.assertNotIn("보강", summary)
+            self.assertNotIn("미확인에서", summary)
+
+    def test_load_web_search_record_legacy_progress_summary_text_canonicalized_on_reload(self) -> None:
+        """Stored entity records whose ``claim_coverage_progress_summary``
+        text still uses legacy slot labels (`개발사`, `장르`, `플랫폼`,
+        `출시일`) must surface canonical core-slot wording on natural
+        reload, without rewriting the persisted history JSON on disk."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "legacy-progress-summary-reload-session"
+
+            legacy_progress_summary = "재조사했지만 플랫폼은 아직 단일 출처 상태입니다."
+            save_result = store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "붉은사막 - 나무위키",
+                        "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                        "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                    }
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "badge": "WEB",
+                    "label": "외부 웹 설명",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "플랫폼", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "개발사", "status": "weak", "status_label": "단일 출처"},
+                ],
+                claim_coverage_progress_summary=legacy_progress_summary,
+            )
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": _FakeWebSearchTool([]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+                web_search_store=store,
+            )
+
+            response = loop.handle(
+                UserRequest(
+                    user_text="방금 검색한 결과 다시 보여줘",
+                    session_id=session_id,
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+            self.assertEqual(response.actions_taken, ["load_web_search_record"])
+            # The reloaded public surface (active_context) must carry canonical
+            # wording; the show-only reload path exposes the progress summary
+            # through active_context rather than the top-level response field.
+            self.assertIsNotNone(response.active_context)
+            canonical_progress = response.active_context.get(
+                "claim_coverage_progress_summary", ""
+            )
+            self.assertIn("이용 형태", canonical_progress)
+            self.assertNotIn("플랫폼", canonical_progress)
+            self.assertIn("재조사했지만", canonical_progress)
+            self.assertIn("아직", canonical_progress)
+            self.assertIn("단일 출처 상태", canonical_progress)
+
+            # The persisted JSON on disk must remain untouched — the
+            # compatibility layer is read/use-time only.
+            persisted_path = Path(save_result["record_path"])
+            persisted_record = json.loads(persisted_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                persisted_record["claim_coverage_progress_summary"],
+                legacy_progress_summary,
+            )
+
+    def test_natural_language_reload_exposes_top_level_claim_coverage_progress_summary(self) -> None:
+        """Natural-language show-only reload of a stored entity record must
+        expose ``claim_coverage_progress_summary`` both through the public
+        ``active_context`` and at the top level of the ``AgentResponse``,
+        matching the ``load_web_search_record_id`` reload contract shape."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "natural-reload-top-level-progress-session"
+
+            stored_progress_summary = "재조사했지만 이용 형태는 아직 단일 출처 상태입니다."
+            store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "붉은사막 - 나무위키",
+                        "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                        "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                    }
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "badge": "WEB",
+                    "label": "외부 웹 설명",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "이용 형태", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "개발", "status": "weak", "status_label": "단일 출처"},
+                ],
+                claim_coverage_progress_summary=stored_progress_summary,
+            )
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": _FakeWebSearchTool([]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+                web_search_store=store,
+            )
+
+            response = loop.handle(
+                UserRequest(
+                    user_text="방금 검색한 결과 다시 보여줘",
+                    session_id=session_id,
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+
+            self.assertEqual(response.actions_taken, ["load_web_search_record"])
+            # Top-level parity: both claim_coverage and claim_coverage_progress_summary
+            # must be populated on the response, not only through active_context.
+            reload_slots = {
+                str(item.get("slot") or "").strip() for item in response.claim_coverage
+            }
+            self.assertIn("이용 형태", reload_slots)
+            self.assertEqual(
+                response.claim_coverage_progress_summary,
+                stored_progress_summary,
+            )
+            active_context_progress = (response.active_context or {}).get(
+                "claim_coverage_progress_summary", ""
+            )
+            self.assertEqual(active_context_progress, stored_progress_summary)
+
+    def test_reload_follow_up_propagates_top_level_claim_coverage_from_active_context(self) -> None:
+        """After a stored entity record is reloaded via
+        ``load_web_search_record_id``, a subsequent follow-up question must
+        expose the same ``claim_coverage`` and ``claim_coverage_progress_summary``
+        at the top level of the ``AgentResponse`` so the browser can keep
+        rendering the claim-coverage panel and fact-strength bar. A
+        latest-update record that never stored claim coverage must keep those
+        fields empty on its follow-up."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "reload-follow-up-claim-coverage-parity-session"
+
+            stored_progress_summary = "재조사했지만 이용 형태는 아직 단일 출처 상태입니다."
+            entity_save = store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "붉은사막 - 나무위키",
+                        "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                        "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                    }
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "badge": "WEB",
+                    "label": "외부 웹 설명",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "이용 형태", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "개발", "status": "weak", "status_label": "단일 출처"},
+                ],
+                claim_coverage_progress_summary=stored_progress_summary,
+            )
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": _FakeWebSearchTool([]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+                web_search_store=store,
+            )
+
+            # --- First: reload the stored record via record id + follow-up text.
+            reload_response = loop.handle(
+                UserRequest(
+                    user_text="이 결과 더 설명해줘",
+                    session_id=session_id,
+                    metadata={
+                        "web_search_permission": "enabled",
+                        "load_web_search_record_id": entity_save["record_id"],
+                    },
+                )
+            )
+            self.assertIn("load_web_search_record", reload_response.actions_taken)
+            reload_slots = {
+                str(item.get("slot") or "").strip()
+                for item in reload_response.claim_coverage
+            }
+            self.assertIn("이용 형태", reload_slots)
+            self.assertEqual(
+                reload_response.claim_coverage_progress_summary,
+                stored_progress_summary,
+            )
+
+            # --- Second: latest-update record with no stored claim_coverage
+            # must keep reload-follow-up claim-coverage surfaces empty.
+            latest_session_id = "latest-update-follow-up-empty-session"
+            latest_save = store.save(
+                session_id=latest_session_id,
+                query="서울 날씨",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "서울 날씨",
+                        "url": "https://example.com/seoul-weather",
+                        "snippet": "서울은 맑고 낮 최고 17도입니다.",
+                    }
+                ],
+                summary_text="웹 최신 확인: 서울 날씨",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "badge": "WEB",
+                    "answer_mode": "latest_update",
+                    "verification_label": "단일 출처 참고",
+                    "source_roles": ["보조 출처"],
+                },
+                claim_coverage=[],
+                claim_coverage_progress_summary="",
+            )
+
+            latest_loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "latest-sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "latest_task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": _FakeWebSearchTool([]),
+                },
+                notes_dir=str(tmp_path / "latest-notes"),
+                web_search_store=store,
+            )
+
+            latest_reload = latest_loop.handle(
+                UserRequest(
+                    user_text="이 결과 한 번 더 설명해줘",
+                    session_id=latest_session_id,
+                    metadata={
+                        "web_search_permission": "enabled",
+                        "load_web_search_record_id": latest_save["record_id"],
+                    },
+                )
+            )
+            self.assertIn("load_web_search_record", latest_reload.actions_taken)
+            self.assertEqual(latest_reload.claim_coverage, [])
+            self.assertIsNone(latest_reload.claim_coverage_progress_summary)
+
+            latest_follow_up = latest_loop.handle(
+                UserRequest(
+                    user_text="내일 날씨는?",
+                    session_id=latest_session_id,
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+            self.assertEqual(latest_follow_up.claim_coverage, [])
+            self.assertIsNone(latest_follow_up.claim_coverage_progress_summary)
+
+    def test_plain_follow_up_without_load_record_id_keeps_top_level_claim_coverage_from_active_context(self) -> None:
+        """A plain follow-up in the same session after a natural-language
+        reload must keep top-level ``claim_coverage`` and
+        ``claim_coverage_progress_summary`` populated from the internal
+        web-search ``active_context``, even though the follow-up request
+        does NOT carry ``load_web_search_record_id``. Latest-update /
+        no-claim-coverage records keep these surfaces empty."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+
+            # --- Entity-card path: non-empty claim_coverage must propagate.
+            entity_session_id = "plain-follow-up-entity-card-session"
+            stored_progress_summary = "재조사했지만 이용 형태는 아직 단일 출처 상태입니다."
+            store.save(
+                session_id=entity_session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "붉은사막 - 나무위키",
+                        "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                        "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                    }
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "badge": "WEB",
+                    "label": "외부 웹 설명",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "이용 형태", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "개발", "status": "weak", "status_label": "단일 출처"},
+                ],
+                claim_coverage_progress_summary=stored_progress_summary,
+            )
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": _FakeWebSearchTool([]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+                web_search_store=store,
+            )
+
+            loop.handle(
+                UserRequest(
+                    user_text="방금 검색한 결과 다시 보여줘",
+                    session_id=entity_session_id,
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+
+            entity_follow_up = loop.handle(
+                UserRequest(
+                    user_text="이 결과 한 문장으로 요약해줘",
+                    session_id=entity_session_id,
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+            entity_follow_up_slots = {
+                str(item.get("slot") or "").strip()
+                for item in entity_follow_up.claim_coverage
+            }
+            self.assertIn("이용 형태", entity_follow_up_slots)
+            self.assertEqual(
+                entity_follow_up.claim_coverage_progress_summary,
+                stored_progress_summary,
+            )
+
+            # --- Latest-update path: empty claim_coverage must stay empty.
+            latest_session_id = "plain-follow-up-latest-update-session"
+            store.save(
+                session_id=latest_session_id,
+                query="서울 날씨",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "서울 날씨",
+                        "url": "https://example.com/seoul-weather",
+                        "snippet": "서울은 맑고 낮 최고 17도입니다.",
+                    }
+                ],
+                summary_text="웹 최신 확인: 서울 날씨",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "badge": "WEB",
+                    "answer_mode": "latest_update",
+                    "verification_label": "단일 출처 참고",
+                    "source_roles": ["보조 출처"],
+                },
+                claim_coverage=[],
+                claim_coverage_progress_summary="",
+            )
+
+            latest_loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "latest-sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "latest_task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": _FakeWebSearchTool([]),
+                },
+                notes_dir=str(tmp_path / "latest-notes"),
+                web_search_store=store,
+            )
+
+            latest_loop.handle(
+                UserRequest(
+                    user_text="방금 검색한 결과 다시 보여줘",
+                    session_id=latest_session_id,
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+
+            latest_follow_up = latest_loop.handle(
+                UserRequest(
+                    user_text="이 결과 한 문장으로 요약해줘",
+                    session_id=latest_session_id,
+                    metadata={"web_search_permission": "enabled"},
+                )
+            )
+            self.assertEqual(latest_follow_up.claim_coverage, [])
+            self.assertIsNone(latest_follow_up.claim_coverage_progress_summary)
+
     def test_entity_reinvestigation_query_reports_claim_progress(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

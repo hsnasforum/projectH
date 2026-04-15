@@ -164,7 +164,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("review-queue-box", html)
             self.assertIn("review-queue-list", html)
             self.assertIn("검토 후보", html)
-            self.assertIn("현재 후보는 검토 수락만 기록할 수 있습니다. 아직 적용, 편집, 거절은 열지 않았습니다.", html)
+            self.assertIn("후보를 수락, 거절, 또는 보류할 수 있습니다. 아직 적용이나 편집은 열지 않았습니다.", html)
             self.assertIn("aggregate-trigger-box", html)
             self.assertIn("aggregate-trigger-list", html)
             self.assertIn("검토 메모 적용 후보", html)
@@ -3298,6 +3298,1292 @@ class WebAppServiceTest(unittest.TestCase):
             ][-1]
             self.assertNotIn("candidate_recurrence_key", saved_only_source_message)
 
+    def test_recurrence_aggregate_precondition_blocked_stays_fixed_when_capability_unblocked(self) -> None:
+        """Lock the separation between blocked-only precondition/unblock and capability/apply surfaces.
+
+        Invariants:
+        - reviewed_memory_precondition_status.overall_status is always blocked_all_required
+        - reviewed_memory_unblock_contract.unblock_status is always blocked_all_required
+        - reviewed_memory_capability_status.capability_outcome can become unblocked_all_required
+          when the shipped capability basis is fully present
+        - support-only signals (review acceptance, approval-backed save, historical adjuncts,
+          task-log replay) do not satisfy the capability basis on their own
+        - the 5 ordered preconditions remain exactly fixed
+        """
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "source-a.md"
+            second_source_path = tmp_path / "source-b.md"
+            first_source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+            second_source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            first = service.handle_chat(
+                {
+                    "session_id": "precondition-parity-session",
+                    "source_path": str(first_source_path),
+                    "provider": "mock",
+                }
+            )
+            service.submit_correction(
+                {
+                    "session_id": "precondition-parity-session",
+                    "message_id": first["response"]["source_message_id"],
+                    "corrected_text": corrected_text,
+                }
+            )
+
+            second = service.handle_chat(
+                {
+                    "session_id": "precondition-parity-session",
+                    "source_path": str(second_source_path),
+                    "provider": "mock",
+                }
+            )
+            result = service.submit_correction(
+                {
+                    "session_id": "precondition-parity-session",
+                    "message_id": second["response"]["source_message_id"],
+                    "corrected_text": corrected_text,
+                }
+            )
+
+            self.assertIn("recurrence_aggregate_candidates", result["session"])
+            aggregate = result["session"]["recurrence_aggregate_candidates"][0]
+
+            expected_preconditions = [
+                "reviewed_memory_boundary_defined",
+                "rollback_ready_reviewed_memory_effect",
+                "disable_ready_reviewed_memory_effect",
+                "conflict_visible_reviewed_memory_scope",
+                "operator_auditable_reviewed_memory_transition",
+            ]
+
+            # --- blocked-only precondition surface must stay blocked ---
+            precondition_status = aggregate["reviewed_memory_precondition_status"]
+            self.assertEqual(precondition_status["overall_status"], "blocked_all_required")
+            self.assertTrue(precondition_status["all_required"])
+            self.assertEqual(precondition_status["preconditions"], expected_preconditions)
+
+            unblock_contract = aggregate["reviewed_memory_unblock_contract"]
+            self.assertEqual(unblock_contract["unblock_status"], "blocked_all_required")
+            self.assertEqual(unblock_contract["required_preconditions"], expected_preconditions)
+
+            # --- capability outcome with shipped basis present: unblocked ---
+            capability_status = aggregate["reviewed_memory_capability_status"]
+            self.assertEqual(capability_status["capability_outcome"], "unblocked_all_required")
+            self.assertEqual(capability_status["required_preconditions"], expected_preconditions)
+
+            # --- the key separation: precondition/unblock stay blocked
+            #     even when capability is unblocked ---
+            self.assertEqual(precondition_status["overall_status"], "blocked_all_required")
+            self.assertEqual(unblock_contract["unblock_status"], "blocked_all_required")
+            self.assertEqual(capability_status["capability_outcome"], "unblocked_all_required")
+
+            # --- removing capability basis must revert capability to blocked
+            #     while precondition/unblock stay unchanged ---
+            aggregate_without_basis = dict(aggregate)
+            aggregate_without_basis.pop("reviewed_memory_capability_basis", None)
+            status_without_basis = service._build_recurrence_aggregate_reviewed_memory_capability_status(
+                aggregate_without_basis
+            )
+            self.assertIsNotNone(status_without_basis)
+            self.assertEqual(status_without_basis["capability_outcome"], "blocked_all_required")
+            precondition_still_blocked = service._build_recurrence_aggregate_reviewed_memory_precondition_status(
+                aggregate_without_basis
+            )
+            self.assertIsNotNone(precondition_still_blocked)
+            self.assertEqual(precondition_still_blocked["overall_status"], "blocked_all_required")
+            unblock_still_blocked = service._build_recurrence_aggregate_reviewed_memory_unblock_contract(
+                aggregate_without_basis
+            )
+            self.assertIsNotNone(unblock_still_blocked)
+            self.assertEqual(unblock_still_blocked["unblock_status"], "blocked_all_required")
+
+            # --- support-only signals must not produce capability basis ---
+            aggregate_with_support = dict(aggregate)
+            aggregate_with_support.pop("reviewed_memory_capability_basis", None)
+            aggregate_with_support["review_queue_items"] = [
+                {
+                    "artifact_id": "artifact-a",
+                    "source_message_id": "msg-a",
+                    "candidate_id": "candidate-a",
+                    "candidate_updated_at": "2026-03-28T00:05:00+00:00",
+                }
+            ]
+            aggregate_with_support["candidate_review_record"] = {
+                "artifact_id": "artifact-a",
+                "source_message_id": "msg-a",
+                "candidate_id": "candidate-a",
+                "candidate_updated_at": "2026-03-28T00:05:00+00:00",
+                "review_action": "accept",
+                "review_status": "accepted",
+                "recorded_at": "2026-03-28T00:06:00+00:00",
+            }
+            aggregate_with_support["approval_backed_save_support"] = {
+                "saved_note_path": str(tmp_path / "notes" / "support-only.md")
+            }
+            aggregate_with_support["historical_adjunct"] = {
+                "artifact_id": "artifact-a",
+                "saved_note_path": str(tmp_path / "notes" / "support-only.md"),
+            }
+            aggregate_with_support["task_log_replay"] = {
+                "canonical_transition_id": "transition-local-fake",
+                "operator_reason_or_note": "replay note",
+                "emitted_at": "2026-03-28T00:07:00+00:00",
+            }
+
+            support_only_basis = service._build_recurrence_aggregate_reviewed_memory_capability_basis(
+                aggregate_with_support
+            )
+            self.assertIsNone(support_only_basis, "support-only signals must not produce capability basis")
+
+            support_only_status = service._build_recurrence_aggregate_reviewed_memory_capability_status(
+                aggregate_with_support
+            )
+            self.assertIsNotNone(support_only_status)
+            self.assertEqual(support_only_status["capability_outcome"], "blocked_all_required")
+
+            # --- precondition and unblock must still be blocked even with support signals ---
+            support_precondition = service._build_recurrence_aggregate_reviewed_memory_precondition_status(
+                aggregate_with_support
+            )
+            self.assertIsNotNone(support_precondition)
+            self.assertEqual(support_precondition["overall_status"], "blocked_all_required")
+
+            support_unblock = service._build_recurrence_aggregate_reviewed_memory_unblock_contract(
+                aggregate_with_support
+            )
+            self.assertIsNotNone(support_unblock)
+            self.assertEqual(support_unblock["unblock_status"], "blocked_all_required")
+
+    def test_recurrence_aggregate_boundary_draft_stays_draft_not_applied_through_lifecycle(self) -> None:
+        """Lock that reviewed_memory_boundary_draft stays a basis ref with boundary_stage
+        draft_not_applied even when the shipped apply lifecycle progresses through
+        emit → apply → confirm → stop → reverse → conflict visibility.
+
+        The boundary draft must remain unchanged throughout:
+        - boundary_stage stays draft_not_applied
+        - reviewed_scope stays same_session_exact_recurrence_aggregate_only
+        - supporting refs stay unchanged
+        - lifecycle records (emitted/apply/result/stopped/reversed/conflict) are
+          separate surfaces and do not overwrite boundary draft
+        """
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "bd-source-a.md"
+            second_source_path = tmp_path / "bd-source-b.md"
+            shared_body = "# Boundary Draft Lifecycle\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "boundary-draft-lifecycle-session"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            # Step 1: first file → correct → confirm → review(accept)
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_artifact_id = first["response"]["artifact_id"]
+            first_source_message_id = first["response"]["source_message_id"]
+            first_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": first_source_message_id, "corrected_text": corrected_text}
+            )
+            first_source_message = [
+                m for m in first_corrected["session"]["messages"]
+                if m.get("artifact_id") == first_artifact_id and m.get("original_response_snapshot")
+            ][-1]
+            candidate = first_source_message["session_local_candidate"]
+            service.submit_candidate_confirmation(
+                {
+                    "session_id": session_id,
+                    "message_id": first_source_message_id,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                }
+            )
+            service.submit_candidate_review(
+                {
+                    "session_id": session_id,
+                    "message_id": first_source_message_id,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                    "review_action": "accept",
+                }
+            )
+
+            # Step 2: second file → correct → aggregate emerges unblocked
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_source_message_id = second["response"]["source_message_id"]
+            payload = service.submit_correction(
+                {"session_id": session_id, "message_id": second_source_message_id, "corrected_text": corrected_text}
+            )
+            aggregate = payload["session"]["recurrence_aggregate_candidates"][0]
+            self.assertEqual(
+                aggregate["reviewed_memory_capability_status"]["capability_outcome"],
+                "unblocked_all_required",
+            )
+            aggregate_fingerprint = aggregate["aggregate_key"]["normalized_delta_fingerprint"]
+
+            # Snapshot the initial boundary draft — this must remain unchanged
+            initial_boundary_draft = dict(aggregate["reviewed_memory_boundary_draft"])
+            self.assertEqual(initial_boundary_draft["boundary_stage"], "draft_not_applied")
+            self.assertEqual(
+                initial_boundary_draft["reviewed_scope"],
+                "same_session_exact_recurrence_aggregate_only",
+            )
+            self.assertEqual(
+                initial_boundary_draft["boundary_version"],
+                "fixed_narrow_reviewed_scope_v1",
+            )
+
+            # Snapshot optional supporting_review_refs if present
+            initial_bd_review_refs = initial_boundary_draft.get("supporting_review_refs")
+
+            def assert_boundary_draft_unchanged(label: str, session_data: dict) -> None:
+                agg = session_data["recurrence_aggregate_candidates"][0]
+                bd = agg.get("reviewed_memory_boundary_draft")
+                self.assertIsNotNone(bd, f"boundary_draft missing after {label}")
+                self.assertEqual(
+                    bd["boundary_stage"], "draft_not_applied",
+                    f"boundary_stage changed after {label}",
+                )
+                self.assertEqual(
+                    bd["reviewed_scope"],
+                    "same_session_exact_recurrence_aggregate_only",
+                    f"reviewed_scope changed after {label}",
+                )
+                self.assertEqual(
+                    bd["boundary_version"],
+                    "fixed_narrow_reviewed_scope_v1",
+                    f"boundary_version changed after {label}",
+                )
+                self.assertEqual(
+                    bd["aggregate_identity_ref"],
+                    initial_boundary_draft["aggregate_identity_ref"],
+                    f"aggregate_identity_ref changed after {label}",
+                )
+                self.assertEqual(
+                    bd["supporting_source_message_refs"],
+                    initial_boundary_draft["supporting_source_message_refs"],
+                    f"supporting_source_message_refs changed after {label}",
+                )
+                self.assertEqual(
+                    bd["supporting_candidate_refs"],
+                    initial_boundary_draft["supporting_candidate_refs"],
+                    f"supporting_candidate_refs changed after {label}",
+                )
+                if initial_bd_review_refs is not None:
+                    self.assertEqual(
+                        bd.get("supporting_review_refs"),
+                        initial_bd_review_refs,
+                        f"supporting_review_refs changed after {label}",
+                    )
+
+            # Step 3: emit
+            emitted = service.emit_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "operator_reason_or_note": "boundary draft lifecycle test",
+                }
+            )
+            canonical_transition_id = emitted["canonical_transition_id"]
+            assert_boundary_draft_unchanged("emit", emitted["session"])
+
+            # Step 4: apply
+            apply_result = service.apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            assert_boundary_draft_unchanged("apply", apply_result["session"])
+
+            # Step 5: confirm result
+            confirm_result = service.confirm_aggregate_transition_result(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            assert_boundary_draft_unchanged("confirm_result", confirm_result["session"])
+
+            # Step 6: stop-apply
+            stop_result = service.stop_apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            assert_boundary_draft_unchanged("stop_apply", stop_result["session"])
+
+            # Step 7: reverse
+            reverse_result = service.reverse_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertEqual(reverse_result["transition_record"]["record_stage"], "reversed")
+            assert_boundary_draft_unchanged("reverse", reverse_result["session"])
+
+            # Step 8: conflict visibility
+            cv_result = service.check_aggregate_conflict_visibility(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertTrue(cv_result["ok"])
+            assert_boundary_draft_unchanged("conflict_visibility", cv_result["session"])
+
+            # Final: verify boundary draft is NOT the rollback target, disable target,
+            # or conflict object — those are separate surfaces
+            final_session = cv_result["session"]
+            final_aggregate = final_session["recurrence_aggregate_candidates"][0]
+            final_bd = final_aggregate["reviewed_memory_boundary_draft"]
+            self.assertNotIn("rollback_target_kind", final_bd)
+            self.assertNotIn("disable_target_kind", final_bd)
+            self.assertNotIn("conflict_visibility_stage", final_bd)
+            self.assertNotIn("record_stage", final_bd)
+            self.assertNotIn("transition_action", final_bd)
+
+    def test_recurrence_aggregate_contract_refs_retained_through_lifecycle(self) -> None:
+        """Lock that reviewed_memory_rollback_contract, reviewed_memory_disable_contract,
+        reviewed_memory_conflict_contract, and reviewed_memory_transition_audit_contract
+        stay as contract-only basis refs even when the shipped apply lifecycle progresses
+        through emit → apply → confirm → stop → reverse → conflict visibility.
+
+        Specifically:
+        - rollback_stage stays contract_only_not_applied
+        - disable_stage stays contract_only_not_applied
+        - conflict_visibility_stage stays contract_only_not_resolved
+        - audit_stage stays contract_only_not_emitted
+        - aggregate_identity_ref and supporting refs stay unchanged
+        - post_transition_invariants stays aggregate_identity_and_contract_refs_retained
+        - emitted/apply/result/stopped/reversed/conflict records are separate surfaces
+        """
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "cref-source-a.md"
+            second_source_path = tmp_path / "cref-source-b.md"
+            shared_body = "# Contract Ref Lifecycle\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "contract-ref-lifecycle-session"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            # Step 1: first file → correct → confirm → review(accept)
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_artifact_id = first["response"]["artifact_id"]
+            first_source_message_id = first["response"]["source_message_id"]
+            first_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": first_source_message_id, "corrected_text": corrected_text}
+            )
+            first_source_message = [
+                m for m in first_corrected["session"]["messages"]
+                if m.get("artifact_id") == first_artifact_id and m.get("original_response_snapshot")
+            ][-1]
+            candidate = first_source_message["session_local_candidate"]
+            service.submit_candidate_confirmation(
+                {
+                    "session_id": session_id,
+                    "message_id": first_source_message_id,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                }
+            )
+            service.submit_candidate_review(
+                {
+                    "session_id": session_id,
+                    "message_id": first_source_message_id,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                    "review_action": "accept",
+                }
+            )
+
+            # Step 2: second file → correct → aggregate emerges unblocked
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_source_message_id = second["response"]["source_message_id"]
+            payload = service.submit_correction(
+                {"session_id": session_id, "message_id": second_source_message_id, "corrected_text": corrected_text}
+            )
+            aggregate = payload["session"]["recurrence_aggregate_candidates"][0]
+            self.assertEqual(
+                aggregate["reviewed_memory_capability_status"]["capability_outcome"],
+                "unblocked_all_required",
+            )
+            aggregate_fingerprint = aggregate["aggregate_key"]["normalized_delta_fingerprint"]
+
+            # Snapshot the initial contract refs — these must remain unchanged
+            initial_rollback = dict(aggregate["reviewed_memory_rollback_contract"])
+            initial_disable = dict(aggregate["reviewed_memory_disable_contract"])
+            initial_conflict = dict(aggregate["reviewed_memory_conflict_contract"])
+            initial_audit = dict(aggregate["reviewed_memory_transition_audit_contract"])
+
+            # Verify initial contract-only stages
+            self.assertEqual(initial_rollback["rollback_stage"], "contract_only_not_applied")
+            self.assertEqual(initial_disable["disable_stage"], "contract_only_not_applied")
+            self.assertEqual(initial_conflict["conflict_visibility_stage"], "contract_only_not_resolved")
+            self.assertEqual(initial_audit["audit_stage"], "contract_only_not_emitted")
+            self.assertEqual(
+                initial_audit["post_transition_invariants"],
+                "aggregate_identity_and_contract_refs_retained",
+            )
+
+            # Snapshot exact supporting refs from each contract
+            initial_identity = dict(initial_rollback["aggregate_identity_ref"])
+            initial_source_refs = list(initial_rollback["supporting_source_message_refs"])
+            initial_candidate_refs = list(initial_rollback["supporting_candidate_refs"])
+            initial_review_refs = initial_rollback.get("supporting_review_refs")
+
+            def assert_contract_refs_unchanged(label: str, session_data: dict) -> None:
+                agg = session_data["recurrence_aggregate_candidates"][0]
+
+                for contract_key, stage_key, stage_value, contract_label in [
+                    ("reviewed_memory_rollback_contract", "rollback_stage", "contract_only_not_applied", "rollback"),
+                    ("reviewed_memory_disable_contract", "disable_stage", "contract_only_not_applied", "disable"),
+                    ("reviewed_memory_conflict_contract", "conflict_visibility_stage", "contract_only_not_resolved", "conflict"),
+                    ("reviewed_memory_transition_audit_contract", "audit_stage", "contract_only_not_emitted", "audit"),
+                ]:
+                    contract = agg.get(contract_key)
+                    self.assertIsNotNone(contract, f"{contract_label}_contract missing after {label}")
+                    self.assertEqual(
+                        contract[stage_key], stage_value,
+                        f"{contract_label} {stage_key} changed after {label}",
+                    )
+                    self.assertEqual(
+                        contract["aggregate_identity_ref"], initial_identity,
+                        f"{contract_label} aggregate_identity_ref changed after {label}",
+                    )
+                    self.assertEqual(
+                        contract["supporting_source_message_refs"], initial_source_refs,
+                        f"{contract_label} supporting_source_message_refs changed after {label}",
+                    )
+                    self.assertEqual(
+                        contract["supporting_candidate_refs"], initial_candidate_refs,
+                        f"{contract_label} supporting_candidate_refs changed after {label}",
+                    )
+                    if initial_review_refs is not None:
+                        self.assertEqual(
+                            contract.get("supporting_review_refs"), initial_review_refs,
+                            f"{contract_label} supporting_review_refs changed after {label}",
+                        )
+
+                # transition audit extra invariants
+                ac = agg["reviewed_memory_transition_audit_contract"]
+                self.assertEqual(
+                    ac["post_transition_invariants"],
+                    "aggregate_identity_and_contract_refs_retained",
+                    f"post_transition_invariants changed after {label}",
+                )
+
+            # Step 3: emit
+            emitted = service.emit_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "operator_reason_or_note": "contract ref lifecycle test",
+                }
+            )
+            canonical_transition_id = emitted["canonical_transition_id"]
+            assert_contract_refs_unchanged("emit", emitted["session"])
+
+            # Step 4: apply
+            apply_result = service.apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            assert_contract_refs_unchanged("apply", apply_result["session"])
+
+            # Step 5: confirm result
+            confirm_result = service.confirm_aggregate_transition_result(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            assert_contract_refs_unchanged("confirm_result", confirm_result["session"])
+
+            # Step 6: stop-apply
+            stop_result = service.stop_apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            assert_contract_refs_unchanged("stop_apply", stop_result["session"])
+
+            # Step 7: reverse
+            reverse_result = service.reverse_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertEqual(reverse_result["transition_record"]["record_stage"], "reversed")
+            assert_contract_refs_unchanged("reverse", reverse_result["session"])
+
+            # Step 8: conflict visibility
+            cv_result = service.check_aggregate_conflict_visibility(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertTrue(cv_result["ok"])
+            assert_contract_refs_unchanged("conflict_visibility", cv_result["session"])
+
+            # Final: verify lifecycle records did NOT leak into contract surfaces
+            final_aggregate = cv_result["session"]["recurrence_aggregate_candidates"][0]
+            final_rc = final_aggregate["reviewed_memory_rollback_contract"]
+            final_dc = final_aggregate["reviewed_memory_disable_contract"]
+            final_cc = final_aggregate["reviewed_memory_conflict_contract"]
+            final_ac = final_aggregate["reviewed_memory_transition_audit_contract"]
+
+            # Contract refs must not contain lifecycle record fields
+            for contract, name in [
+                (final_rc, "rollback_contract"),
+                (final_dc, "disable_contract"),
+                (final_cc, "conflict_contract"),
+                (final_ac, "transition_audit_contract"),
+            ]:
+                self.assertNotIn("record_stage", contract, f"{name} leaked record_stage")
+                self.assertNotIn("transition_action", contract, f"{name} leaked transition_action")
+                self.assertNotIn("applied_at", contract, f"{name} leaked applied_at")
+                self.assertNotIn("reversed_at", contract, f"{name} leaked reversed_at")
+                self.assertNotIn("stopped_at", contract, f"{name} leaked stopped_at")
+
+    def test_recurrence_aggregate_source_family_refs_retained_through_lifecycle(self) -> None:
+        """Lock that internal source-family backers (boundary_source_ref,
+        rollback_source_ref, disable_source_ref, conflict_source_ref,
+        transition_audit_source_ref, applied_effect_target, reversible_effect_handle)
+        remain exact same-aggregate refs throughout the shipped apply lifecycle:
+        emit → apply → confirm → stop → reverse → conflict visibility.
+        """
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "sf-source-a.md"
+            second_source_path = tmp_path / "sf-source-b.md"
+            shared_body = "# Source Family Lifecycle\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "source-family-lifecycle-session"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            # Step 1: first file → correct → confirm → review(accept)
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_artifact_id = first["response"]["artifact_id"]
+            first_source_message_id = first["response"]["source_message_id"]
+            first_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": first_source_message_id, "corrected_text": corrected_text}
+            )
+            first_source_message = [
+                m for m in first_corrected["session"]["messages"]
+                if m.get("artifact_id") == first_artifact_id and m.get("original_response_snapshot")
+            ][-1]
+            candidate = first_source_message["session_local_candidate"]
+            service.submit_candidate_confirmation(
+                {
+                    "session_id": session_id,
+                    "message_id": first_source_message_id,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                }
+            )
+            service.submit_candidate_review(
+                {
+                    "session_id": session_id,
+                    "message_id": first_source_message_id,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                    "review_action": "accept",
+                }
+            )
+
+            # Step 2: second file → correct → aggregate emerges unblocked
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_source_message_id = second["response"]["source_message_id"]
+            payload = service.submit_correction(
+                {"session_id": session_id, "message_id": second_source_message_id, "corrected_text": corrected_text}
+            )
+            aggregate = payload["session"]["recurrence_aggregate_candidates"][0]
+            self.assertEqual(
+                aggregate["reviewed_memory_capability_status"]["capability_outcome"],
+                "unblocked_all_required",
+            )
+            aggregate_fingerprint = aggregate["aggregate_key"]["normalized_delta_fingerprint"]
+
+            def resolve_source_family(label: str, session_messages: list) -> dict:
+                """Rebuild enriched aggregate from messages and resolve all source-family refs."""
+                preliminary = service._build_recurrence_aggregate_candidates(session_messages)
+                self.assertTrue(len(preliminary) >= 1, f"no aggregate after {label}")
+                proof_entries = (
+                    service._build_reviewed_memory_local_effect_presence_proof_record_store_entries(
+                        preliminary
+                    )
+                )
+                enriched_list = service._build_recurrence_aggregate_candidates(
+                    session_messages,
+                    proof_record_store_entries=proof_entries or None,
+                )
+                self.assertTrue(len(enriched_list) >= 1, f"no enriched aggregate after {label}")
+                agg = enriched_list[0]
+                sc = service._build_recurrence_aggregate_reviewed_memory_source_context(agg)
+                self.assertIsNotNone(sc, f"source_context is None after {label}")
+                return {
+                    "boundary_source_ref": service._resolve_recurrence_aggregate_reviewed_memory_boundary_source_ref(agg, sc),
+                    "applied_effect_target": service._build_recurrence_aggregate_reviewed_memory_applied_effect_target(agg, sc),
+                    "reversible_effect_handle": service._build_recurrence_aggregate_reviewed_memory_reversible_effect_handle(agg, sc),
+                    "rollback_source_ref": service._resolve_recurrence_aggregate_reviewed_memory_rollback_source_ref(agg, sc),
+                    "disable_source_ref": service._resolve_recurrence_aggregate_reviewed_memory_disable_source_ref(agg, sc),
+                    "conflict_source_ref": service._resolve_recurrence_aggregate_reviewed_memory_conflict_source_ref(agg, sc),
+                    "transition_audit_source_ref": service._resolve_recurrence_aggregate_reviewed_memory_transition_audit_source_ref(agg, sc),
+                }
+
+            # Snapshot initial source-family refs
+            initial_messages = payload["session"]["messages"]
+            initial_refs = resolve_source_family("initial", initial_messages)
+
+            # Verify all 7 refs resolved (not None)
+            for ref_key, ref_val in initial_refs.items():
+                self.assertIsNotNone(ref_val, f"{ref_key} is None at initial state")
+
+            # Verify key invariant fields on initial refs
+            self.assertEqual(
+                initial_refs["boundary_source_ref"]["ref_kind"],
+                "aggregate_reviewed_memory_trigger_affordance",
+            )
+            self.assertEqual(
+                initial_refs["boundary_source_ref"]["trigger_state"],
+                "visible_disabled",
+            )
+            self.assertEqual(
+                initial_refs["reversible_effect_handle"]["effect_stage"],
+                "handle_defined_not_applied",
+            )
+            self.assertEqual(
+                initial_refs["applied_effect_target"]["target_stage"],
+                "effect_present_local_only",
+            )
+
+            def assert_source_family_unchanged(label: str, session_messages: list) -> None:
+                current_refs = resolve_source_family(label, session_messages)
+                for ref_key in initial_refs:
+                    self.assertIsNotNone(
+                        current_refs[ref_key],
+                        f"{ref_key} became None after {label}",
+                    )
+                    self.assertEqual(
+                        current_refs[ref_key], initial_refs[ref_key],
+                        f"{ref_key} changed after {label}",
+                    )
+
+            # Step 3: emit
+            emitted = service.emit_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "operator_reason_or_note": "source family lifecycle test",
+                }
+            )
+            canonical_transition_id = emitted["canonical_transition_id"]
+            assert_source_family_unchanged("emit", emitted["session"]["messages"])
+
+            # Step 4: apply
+            apply_result = service.apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            assert_source_family_unchanged("apply", apply_result["session"]["messages"])
+
+            # Step 5: confirm result
+            confirm_result = service.confirm_aggregate_transition_result(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            assert_source_family_unchanged("confirm_result", confirm_result["session"]["messages"])
+
+            # Step 6: stop-apply
+            stop_result = service.stop_apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            assert_source_family_unchanged("stop_apply", stop_result["session"]["messages"])
+
+            # Step 7: reverse
+            reverse_result = service.reverse_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertEqual(reverse_result["transition_record"]["record_stage"], "reversed")
+            assert_source_family_unchanged("reverse", reverse_result["session"]["messages"])
+
+            # Step 8: conflict visibility
+            cv_result = service.check_aggregate_conflict_visibility(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertTrue(cv_result["ok"])
+            assert_source_family_unchanged("conflict_visibility", cv_result["session"]["messages"])
+
+    def test_recurrence_aggregate_local_effect_chain_retained_through_lifecycle(self) -> None:
+        """Lock that the hidden local-effect chain (proof_record, proof_boundary,
+        fact_source_instance, fact_source, event, event_producer, event_source, record)
+        remains exact same-aggregate backers throughout the shipped apply lifecycle:
+        emit → apply → confirm → stop → reverse → conflict visibility.
+
+        Each chain member must retain its aggregate_identity_ref,
+        supporting_source_message_refs, supporting_candidate_refs,
+        optional supporting_review_refs, boundary_source_ref,
+        applied_effect_id, present_locally_at, and fixed stage/capability fields.
+        """
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "lec-source-a.md"
+            second_source_path = tmp_path / "lec-source-b.md"
+            shared_body = "# Local Effect Chain Lifecycle\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "local-effect-chain-lifecycle-session"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            # Step 1: first file → correct → confirm → review(accept)
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_artifact_id = first["response"]["artifact_id"]
+            first_source_message_id = first["response"]["source_message_id"]
+            first_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": first_source_message_id, "corrected_text": corrected_text}
+            )
+            first_source_message = [
+                m for m in first_corrected["session"]["messages"]
+                if m.get("artifact_id") == first_artifact_id and m.get("original_response_snapshot")
+            ][-1]
+            candidate = first_source_message["session_local_candidate"]
+            service.submit_candidate_confirmation(
+                {
+                    "session_id": session_id,
+                    "message_id": first_source_message_id,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                }
+            )
+            service.submit_candidate_review(
+                {
+                    "session_id": session_id,
+                    "message_id": first_source_message_id,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                    "review_action": "accept",
+                }
+            )
+
+            # Step 2: second file → correct → aggregate emerges unblocked
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_source_message_id = second["response"]["source_message_id"]
+            payload = service.submit_correction(
+                {"session_id": session_id, "message_id": second_source_message_id, "corrected_text": corrected_text}
+            )
+            aggregate = payload["session"]["recurrence_aggregate_candidates"][0]
+            self.assertEqual(
+                aggregate["reviewed_memory_capability_status"]["capability_outcome"],
+                "unblocked_all_required",
+            )
+            aggregate_fingerprint = aggregate["aggregate_key"]["normalized_delta_fingerprint"]
+
+            def resolve_local_effect_chain(label: str, session_messages: list) -> dict:
+                """Rebuild enriched aggregate and resolve the 8 local-effect chain builders."""
+                preliminary = service._build_recurrence_aggregate_candidates(session_messages)
+                self.assertTrue(len(preliminary) >= 1, f"no aggregate after {label}")
+                proof_entries = (
+                    service._build_reviewed_memory_local_effect_presence_proof_record_store_entries(
+                        preliminary
+                    )
+                )
+                enriched_list = service._build_recurrence_aggregate_candidates(
+                    session_messages,
+                    proof_record_store_entries=proof_entries or None,
+                )
+                self.assertTrue(len(enriched_list) >= 1, f"no enriched aggregate after {label}")
+                agg = enriched_list[0]
+                sc = service._build_recurrence_aggregate_reviewed_memory_source_context(agg)
+                self.assertIsNotNone(sc, f"source_context is None after {label}")
+                return {
+                    "proof_record": service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_proof_record(agg, sc),
+                    "proof_boundary": service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_proof_boundary(agg, sc),
+                    "fact_source_instance": service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_fact_source_instance(agg, sc),
+                    "fact_source": service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_fact_source(agg, sc),
+                    "event": service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event(agg, sc),
+                    "event_producer": service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_producer(agg, sc),
+                    "event_source": service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_source(agg, sc),
+                    "record": service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_record(agg, sc),
+                }
+
+            # Snapshot initial local-effect chain
+            initial_messages = payload["session"]["messages"]
+            initial_chain = resolve_local_effect_chain("initial", initial_messages)
+
+            # Verify all 8 chain members resolved (not None)
+            for chain_key, chain_val in initial_chain.items():
+                self.assertIsNotNone(chain_val, f"{chain_key} is None at initial state")
+
+            # Verify shared identity fields are consistent across chain
+            initial_boundary_source_ref = initial_chain["proof_record"]["boundary_source_ref"]
+            initial_applied_effect_id = initial_chain["proof_record"]["applied_effect_id"]
+            initial_present_locally_at = initial_chain["proof_record"]["present_locally_at"]
+            initial_aggregate_identity_ref = initial_chain["proof_record"]["aggregate_identity_ref"]
+            initial_source_msg_refs = initial_chain["proof_record"]["supporting_source_message_refs"]
+            initial_candidate_refs = initial_chain["proof_record"]["supporting_candidate_refs"]
+
+            for chain_key, chain_val in initial_chain.items():
+                self.assertEqual(
+                    chain_val["aggregate_identity_ref"], initial_aggregate_identity_ref,
+                    f"{chain_key} has inconsistent aggregate_identity_ref at initial state",
+                )
+                self.assertEqual(
+                    chain_val["supporting_source_message_refs"], initial_source_msg_refs,
+                    f"{chain_key} has inconsistent supporting_source_message_refs at initial state",
+                )
+                self.assertEqual(
+                    chain_val["supporting_candidate_refs"], initial_candidate_refs,
+                    f"{chain_key} has inconsistent supporting_candidate_refs at initial state",
+                )
+                self.assertEqual(
+                    chain_val["boundary_source_ref"], initial_boundary_source_ref,
+                    f"{chain_key} has inconsistent boundary_source_ref at initial state",
+                )
+                self.assertEqual(
+                    chain_val["applied_effect_id"], initial_applied_effect_id,
+                    f"{chain_key} has inconsistent applied_effect_id at initial state",
+                )
+                self.assertEqual(
+                    chain_val["present_locally_at"], initial_present_locally_at,
+                    f"{chain_key} has inconsistent present_locally_at at initial state",
+                )
+
+            def assert_local_effect_chain_unchanged(label: str, session_messages: list) -> None:
+                current_chain = resolve_local_effect_chain(label, session_messages)
+                for chain_key in initial_chain:
+                    self.assertIsNotNone(
+                        current_chain[chain_key],
+                        f"{chain_key} became None after {label}",
+                    )
+                    self.assertEqual(
+                        current_chain[chain_key], initial_chain[chain_key],
+                        f"{chain_key} changed after {label}",
+                    )
+
+            # Step 3: emit
+            emitted = service.emit_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "operator_reason_or_note": "local effect chain lifecycle test",
+                }
+            )
+            canonical_transition_id = emitted["canonical_transition_id"]
+            assert_local_effect_chain_unchanged("emit", emitted["session"]["messages"])
+
+            # Step 4: apply
+            apply_result = service.apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            assert_local_effect_chain_unchanged("apply", apply_result["session"]["messages"])
+
+            # Step 5: confirm result
+            confirm_result = service.confirm_aggregate_transition_result(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            assert_local_effect_chain_unchanged("confirm_result", confirm_result["session"]["messages"])
+
+            # Step 6: stop-apply
+            stop_result = service.stop_apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            assert_local_effect_chain_unchanged("stop_apply", stop_result["session"]["messages"])
+
+            # Step 7: reverse
+            reverse_result = service.reverse_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertEqual(reverse_result["transition_record"]["record_stage"], "reversed")
+            assert_local_effect_chain_unchanged("reverse", reverse_result["session"]["messages"])
+
+            # Step 8: conflict visibility
+            cv_result = service.check_aggregate_conflict_visibility(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertTrue(cv_result["ok"])
+            assert_local_effect_chain_unchanged("conflict_visibility", cv_result["session"]["messages"])
+
+    def test_recurrence_aggregate_visible_transition_result_active_effect_lifecycle(self) -> None:
+        """Lock the visible transition/result/active-effect surfaces through
+        the shipped lifecycle: emit → apply → confirm → stop → reverse → conflict.
+
+        Verifies:
+        - record_stage progression: emitted → applied_pending → applied_with_result → stopped → reversed → conflict_checked
+        - apply_result.result_stage progression: effect_active → effect_stopped → effect_reversed
+        - aggregate_identity_ref, supporting refs, canonical_transition_id, transition_action, operator_reason_or_note stay stable
+        - reviewed_memory_active_effects membership after confirm and removal after stop
+        - [검토 메모 활성] prefix in future chat after confirm, absence after stop
+        """
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "vt-source-a.md"
+            second_source_path = tmp_path / "vt-source-b.md"
+            third_source_path = tmp_path / "vt-source-c.md"
+            shared_body = "# Visible Transition Lifecycle\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+            third_source_path.write_text("# Post-confirm chat test\n\ntest", encoding="utf-8")
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "visible-transition-lifecycle-session"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+            operator_reason = "visible transition lifecycle test reason"
+
+            # Step 1: first file → correct → confirm → review(accept)
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_artifact_id = first["response"]["artifact_id"]
+            first_source_message_id = first["response"]["source_message_id"]
+            first_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": first_source_message_id, "corrected_text": corrected_text}
+            )
+            first_source_message = [
+                m for m in first_corrected["session"]["messages"]
+                if m.get("artifact_id") == first_artifact_id and m.get("original_response_snapshot")
+            ][-1]
+            candidate = first_source_message["session_local_candidate"]
+            service.submit_candidate_confirmation(
+                {
+                    "session_id": session_id,
+                    "message_id": first_source_message_id,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                }
+            )
+            service.submit_candidate_review(
+                {
+                    "session_id": session_id,
+                    "message_id": first_source_message_id,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                    "review_action": "accept",
+                }
+            )
+
+            # Step 2: second file → correct → aggregate emerges unblocked
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_source_message_id = second["response"]["source_message_id"]
+            payload = service.submit_correction(
+                {"session_id": session_id, "message_id": second_source_message_id, "corrected_text": corrected_text}
+            )
+            aggregate = payload["session"]["recurrence_aggregate_candidates"][0]
+            self.assertEqual(
+                aggregate["reviewed_memory_capability_status"]["capability_outcome"],
+                "unblocked_all_required",
+            )
+            aggregate_fingerprint = aggregate["aggregate_key"]["normalized_delta_fingerprint"]
+            initial_identity = dict(aggregate["aggregate_key"])
+            initial_source_refs = list(aggregate["supporting_source_message_refs"])
+            initial_candidate_refs = list(aggregate["supporting_candidate_refs"])
+            initial_review_refs = aggregate.get("supporting_review_refs")
+
+            # Pre-lifecycle: no transition record on aggregate
+            self.assertNotIn("reviewed_memory_transition_record", aggregate)
+
+            # Step 3: emit
+            emitted = service.emit_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "operator_reason_or_note": operator_reason,
+                }
+            )
+            canonical_transition_id = emitted["canonical_transition_id"]
+            emit_record = emitted["transition_record"]
+
+            # Verify emit record identity
+            self.assertEqual(emit_record["record_stage"], "emitted_record_only_not_applied")
+            self.assertEqual(emit_record["transition_action"], "future_reviewed_memory_apply")
+            self.assertEqual(emit_record["operator_reason_or_note"], operator_reason)
+            self.assertEqual(emit_record["canonical_transition_id"], canonical_transition_id)
+            self.assertEqual(emit_record["aggregate_identity_ref"], initial_identity)
+            self.assertEqual(emit_record["supporting_source_message_refs"], initial_source_refs)
+            self.assertEqual(emit_record["supporting_candidate_refs"], initial_candidate_refs)
+            if initial_review_refs is not None:
+                self.assertEqual(emit_record.get("supporting_review_refs"), initial_review_refs)
+            self.assertNotIn("apply_result", emit_record)
+
+            # Verify transition record appears on aggregate
+            emit_agg = emitted["session"]["recurrence_aggregate_candidates"][0]
+            agg_record = emit_agg.get("reviewed_memory_transition_record")
+            self.assertIsNotNone(agg_record)
+            self.assertEqual(agg_record["record_stage"], "emitted_record_only_not_applied")
+            self.assertEqual(agg_record["canonical_transition_id"], canonical_transition_id)
+
+            # No active effects yet
+            self.assertFalse(emitted["session"].get("reviewed_memory_active_effects") or [])
+
+            # Step 4: apply
+            apply_result = service.apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            apply_record = apply_result["transition_record"]
+            self.assertEqual(apply_record["record_stage"], "applied_pending_result")
+            self.assertEqual(apply_record["canonical_transition_id"], canonical_transition_id)
+            self.assertEqual(apply_record["transition_action"], "future_reviewed_memory_apply")
+            self.assertEqual(apply_record["operator_reason_or_note"], operator_reason)
+            self.assertEqual(apply_record["aggregate_identity_ref"], initial_identity)
+            self.assertEqual(apply_record["supporting_source_message_refs"], initial_source_refs)
+            self.assertEqual(apply_record["supporting_candidate_refs"], initial_candidate_refs)
+            self.assertIn("applied_at", apply_record)
+            self.assertNotIn("apply_result", apply_record)
+
+            # No active effects yet
+            self.assertFalse(apply_result["session"].get("reviewed_memory_active_effects") or [])
+
+            # Step 5: confirm result
+            confirm_result = service.confirm_aggregate_transition_result(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            confirm_record = confirm_result["transition_record"]
+            self.assertEqual(confirm_record["record_stage"], "applied_with_result")
+            self.assertEqual(confirm_record["canonical_transition_id"], canonical_transition_id)
+            self.assertEqual(confirm_record["transition_action"], "future_reviewed_memory_apply")
+            self.assertEqual(confirm_record["operator_reason_or_note"], operator_reason)
+            self.assertEqual(confirm_record["aggregate_identity_ref"], initial_identity)
+            self.assertEqual(confirm_record["supporting_source_message_refs"], initial_source_refs)
+            self.assertEqual(confirm_record["supporting_candidate_refs"], initial_candidate_refs)
+
+            # apply_result present with effect_active
+            ar = confirm_record["apply_result"]
+            self.assertEqual(ar["result_stage"], "effect_active")
+            self.assertEqual(ar["applied_effect_kind"], "reviewed_memory_correction_pattern")
+            self.assertEqual(ar["applied_scope"], "same_session_exact_recurrence_aggregate_only")
+            self.assertEqual(ar["aggregate_identity_ref"], initial_identity)
+            self.assertEqual(ar["transition_ref"], canonical_transition_id)
+
+            # active effects populated
+            active_effects = confirm_result["session"].get("reviewed_memory_active_effects") or []
+            self.assertEqual(len(active_effects), 1)
+            active_effect = active_effects[0]
+            self.assertEqual(active_effect["effect_kind"], "reviewed_memory_correction_pattern")
+            self.assertEqual(active_effect["aggregate_fingerprint"], aggregate_fingerprint)
+            self.assertEqual(active_effect["aggregate_identity_ref"], initial_identity)
+            self.assertEqual(active_effect["transition_ref"], canonical_transition_id)
+            self.assertEqual(active_effect["operator_reason_or_note"], operator_reason)
+
+            # [검토 메모 활성] prefix on new chat after confirm
+            post_confirm_chat = service.handle_chat(
+                {"session_id": session_id, "source_path": str(third_source_path), "provider": "mock"}
+            )
+            post_confirm_text = post_confirm_chat["response"].get("text") or ""
+            self.assertIn("[검토 메모 활성]", post_confirm_text)
+            self.assertIn(operator_reason, post_confirm_text)
+
+            # Step 6: stop-apply
+            stop_result = service.stop_apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            stop_record = stop_result["transition_record"]
+            self.assertEqual(stop_record["record_stage"], "stopped")
+            self.assertEqual(stop_record["canonical_transition_id"], canonical_transition_id)
+            self.assertEqual(stop_record["transition_action"], "future_reviewed_memory_apply")
+            self.assertEqual(stop_record["operator_reason_or_note"], operator_reason)
+            self.assertEqual(stop_record["aggregate_identity_ref"], initial_identity)
+            self.assertEqual(stop_record["supporting_source_message_refs"], initial_source_refs)
+            self.assertEqual(stop_record["supporting_candidate_refs"], initial_candidate_refs)
+            self.assertIn("stopped_at", stop_record)
+
+            # apply_result updated to effect_stopped
+            self.assertEqual(stop_record["apply_result"]["result_stage"], "effect_stopped")
+
+            # active effects removed
+            self.assertFalse(stop_result["session"].get("reviewed_memory_active_effects") or [])
+
+            # [검토 메모 활성] prefix absent after stop
+            post_stop_chat = service.handle_chat(
+                {"session_id": session_id, "source_path": str(third_source_path), "provider": "mock"}
+            )
+            post_stop_text = post_stop_chat["response"].get("text") or ""
+            self.assertNotIn("[검토 메모 활성]", post_stop_text)
+
+            # Step 7: reverse
+            reverse_result = service.reverse_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            reverse_record = reverse_result["transition_record"]
+            self.assertEqual(reverse_record["record_stage"], "reversed")
+            self.assertEqual(reverse_record["canonical_transition_id"], canonical_transition_id)
+            self.assertEqual(reverse_record["transition_action"], "future_reviewed_memory_apply")
+            self.assertEqual(reverse_record["operator_reason_or_note"], operator_reason)
+            self.assertEqual(reverse_record["aggregate_identity_ref"], initial_identity)
+            self.assertEqual(reverse_record["supporting_source_message_refs"], initial_source_refs)
+            self.assertEqual(reverse_record["supporting_candidate_refs"], initial_candidate_refs)
+            self.assertIn("reversed_at", reverse_record)
+
+            # apply_result updated to effect_reversed
+            self.assertEqual(reverse_record["apply_result"]["result_stage"], "effect_reversed")
+
+            # [검토 메모 활성] prefix still absent after reverse
+            post_reverse_chat = service.handle_chat(
+                {"session_id": session_id, "source_path": str(third_source_path), "provider": "mock"}
+            )
+            post_reverse_text = post_reverse_chat["response"].get("text") or ""
+            self.assertNotIn("[검토 메모 활성]", post_reverse_text)
+
+            # Step 8: conflict visibility
+            cv_result = service.check_aggregate_conflict_visibility(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertTrue(cv_result["ok"])
+
+            # Conflict visibility record in return
+            cv_record = cv_result.get("conflict_visibility_record")
+            if cv_record is not None:
+                self.assertEqual(cv_record["record_stage"], "conflict_visibility_checked")
+                self.assertEqual(cv_record["aggregate_identity_ref"], initial_identity)
+
+            # Aggregate still has transition record with reversed stage
+            cv_agg = cv_result["session"]["recurrence_aggregate_candidates"][0]
+            final_agg_record = cv_agg.get("reviewed_memory_transition_record")
+            if final_agg_record is not None:
+                self.assertEqual(final_agg_record["canonical_transition_id"], canonical_transition_id)
+
     def test_submit_candidate_confirmation_requires_current_session_local_candidate(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -3753,6 +5039,132 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("\"review_action\": \"accept\"", log_text)
             self.assertIn("\"review_status\": \"accepted\"", log_text)
             self.assertIn(candidate["candidate_id"], log_text)
+
+    def test_submit_candidate_review_reject_records_and_removes_queue_item(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            note_path = tmp_path / "notes" / "candidate-review-reject.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            initial = service.handle_chat(
+                {"session_id": "review-reject", "source_path": str(source_path), "provider": "mock"}
+            )
+            artifact_id = initial["response"]["artifact_id"]
+            source_message_id = initial["response"]["source_message_id"]
+
+            corrected = service.submit_correction(
+                {"session_id": "review-reject", "message_id": source_message_id, "corrected_text": "수정본 거절 테스트"}
+            )
+            candidate = [
+                m for m in corrected["session"]["messages"]
+                if m.get("artifact_id") == artifact_id and m.get("original_response_snapshot")
+            ][-1]["session_local_candidate"]
+
+            service.handle_chat(
+                {"session_id": "review-reject", "corrected_save_message_id": source_message_id, "note_path": str(note_path)}
+            )
+            approval_id = service.get_session_payload("review-reject")["session"]["pending_approvals"][-1]["approval_id"]
+            service.handle_chat({"session_id": "review-reject", "approved_approval_id": approval_id})
+
+            service.submit_candidate_confirmation(
+                {"session_id": "review-reject", "message_id": source_message_id, "candidate_id": candidate["candidate_id"], "candidate_updated_at": candidate["updated_at"]}
+            )
+            self.assertEqual(len(service.get_session_payload("review-reject")["session"]["review_queue_items"]), 1)
+
+            payload = service.submit_candidate_review(
+                {"session_id": "review-reject", "message_id": source_message_id, "candidate_id": candidate["candidate_id"], "candidate_updated_at": candidate["updated_at"], "review_action": "reject"}
+            )
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["candidate_review_record"]["review_action"], "reject")
+            self.assertEqual(payload["candidate_review_record"]["review_status"], "rejected")
+            self.assertEqual(payload["session"]["review_queue_items"], [])
+
+            log_text = (tmp_path / "task_log.jsonl").read_text(encoding="utf-8")
+            self.assertIn("\"review_action\": \"reject\"", log_text)
+            self.assertIn("\"review_status\": \"rejected\"", log_text)
+
+    def test_submit_candidate_review_defer_records_and_removes_queue_item(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            note_path = tmp_path / "notes" / "candidate-review-defer.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            initial = service.handle_chat(
+                {"session_id": "review-defer", "source_path": str(source_path), "provider": "mock"}
+            )
+            artifact_id = initial["response"]["artifact_id"]
+            source_message_id = initial["response"]["source_message_id"]
+
+            corrected = service.submit_correction(
+                {"session_id": "review-defer", "message_id": source_message_id, "corrected_text": "수정본 보류 테스트"}
+            )
+            candidate = [
+                m for m in corrected["session"]["messages"]
+                if m.get("artifact_id") == artifact_id and m.get("original_response_snapshot")
+            ][-1]["session_local_candidate"]
+
+            service.handle_chat(
+                {"session_id": "review-defer", "corrected_save_message_id": source_message_id, "note_path": str(note_path)}
+            )
+            approval_id = service.get_session_payload("review-defer")["session"]["pending_approvals"][-1]["approval_id"]
+            service.handle_chat({"session_id": "review-defer", "approved_approval_id": approval_id})
+
+            service.submit_candidate_confirmation(
+                {"session_id": "review-defer", "message_id": source_message_id, "candidate_id": candidate["candidate_id"], "candidate_updated_at": candidate["updated_at"]}
+            )
+            self.assertEqual(len(service.get_session_payload("review-defer")["session"]["review_queue_items"]), 1)
+
+            payload = service.submit_candidate_review(
+                {"session_id": "review-defer", "message_id": source_message_id, "candidate_id": candidate["candidate_id"], "candidate_updated_at": candidate["updated_at"], "review_action": "defer"}
+            )
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["candidate_review_record"]["review_action"], "defer")
+            self.assertEqual(payload["candidate_review_record"]["review_status"], "deferred")
+            self.assertEqual(payload["session"]["review_queue_items"], [])
+
+            log_text = (tmp_path / "task_log.jsonl").read_text(encoding="utf-8")
+            self.assertIn("\"review_action\": \"defer\"", log_text)
+            self.assertIn("\"review_status\": \"deferred\"", log_text)
+
+    def test_submit_candidate_review_rejects_invalid_action(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            service.handle_chat({"session_id": "review-invalid", "source_path": str(source_path), "provider": "mock"})
+
+            with self.assertRaises(WebApiError) as ctx:
+                service.submit_candidate_review(
+                    {"session_id": "review-invalid", "message_id": "msg-1", "candidate_id": "c-1", "candidate_updated_at": "2026-01-01", "review_action": "bogus"}
+                )
+            self.assertEqual(ctx.exception.status_code, 400)
+            self.assertIn("지원하지 않는 review action", ctx.exception.message)
 
     def test_durable_candidate_requires_exact_current_candidate_confirmation_join(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -8212,6 +9624,25 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(first["ok"])
             first_record_path = first["response"]["web_search_record_path"]
             self.assertTrue(first_record_path)
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            stored_record = service.web_search_store.get_session_record(
+                "reload-mixed-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["answer_mode"], "latest_update")
+            self.assertEqual(
+                stored_origin["verification_label"], "공식+기사 교차 확인"
+            )
+            self.assertEqual(
+                stored_origin["source_roles"], ["보조 기사", "공식 기반"]
+            )
 
             # --- 둘째 호출: 같은 세션에서 reload ---
             second = service.handle_chat(
@@ -8226,6 +9657,11 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
             reload_origin = second["response"]["response_origin"]
             self.assertIsNotNone(reload_origin)
+            self.assertEqual(reload_origin["provider"], "web")
+            self.assertEqual(reload_origin["badge"], "WEB")
+            self.assertEqual(reload_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(reload_origin["kind"], "assistant")
+            self.assertIsNone(reload_origin["model"])
             self.assertEqual(reload_origin["answer_mode"], "latest_update")
             self.assertEqual(reload_origin["verification_label"], "공식+기사 교차 확인")
             self.assertEqual(reload_origin["source_roles"], ["보조 기사", "공식 기반"])
@@ -8296,6 +9732,23 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(first["ok"])
             first_record_path = first["response"]["web_search_record_path"]
             self.assertTrue(first_record_path)
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            stored_record = service.web_search_store.get_session_record(
+                "reload-single-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["answer_mode"], "latest_update")
+            self.assertEqual(
+                stored_origin["verification_label"], "단일 출처 참고"
+            )
+            self.assertEqual(stored_origin["source_roles"], ["보조 출처"])
 
             # --- 둘째 호출: 같은 세션에서 reload ---
             second = service.handle_chat(
@@ -8310,6 +9763,11 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
             reload_origin = second["response"]["response_origin"]
             self.assertIsNotNone(reload_origin)
+            self.assertEqual(reload_origin["provider"], "web")
+            self.assertEqual(reload_origin["badge"], "WEB")
+            self.assertEqual(reload_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(reload_origin["kind"], "assistant")
+            self.assertIsNone(reload_origin["model"])
             self.assertEqual(reload_origin["answer_mode"], "latest_update")
             self.assertEqual(reload_origin["verification_label"], "단일 출처 참고")
             self.assertEqual(reload_origin["source_roles"], ["보조 출처"])
@@ -8387,6 +9845,23 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(first["ok"])
             first_record_path = first["response"]["web_search_record_path"]
             self.assertTrue(first_record_path)
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            stored_record = service.web_search_store.get_session_record(
+                "reload-news-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["answer_mode"], "latest_update")
+            self.assertEqual(
+                stored_origin["verification_label"], "기사 교차 확인"
+            )
+            self.assertEqual(stored_origin["source_roles"], ["보조 기사"])
 
             # --- 둘째 호출: 같은 세션에서 reload ---
             second = service.handle_chat(
@@ -8401,6 +9876,11 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
             reload_origin = second["response"]["response_origin"]
             self.assertIsNotNone(reload_origin)
+            self.assertEqual(reload_origin["provider"], "web")
+            self.assertEqual(reload_origin["badge"], "WEB")
+            self.assertEqual(reload_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(reload_origin["kind"], "assistant")
+            self.assertIsNone(reload_origin["model"])
             self.assertEqual(reload_origin["answer_mode"], "latest_update")
             self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
             self.assertEqual(reload_origin["source_roles"], ["보조 기사"])
@@ -8472,6 +9952,22 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(first_record_path)
             record_id = first["session"]["web_search_history"][0]["record_id"]
 
+            stored_record = service.web_search_store.get_session_record(
+                "reload-by-id-single-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["answer_mode"], "latest_update")
+            self.assertEqual(
+                stored_origin["verification_label"], "단일 출처 참고"
+            )
+            self.assertEqual(stored_origin["source_roles"], ["보조 출처"])
+
             # --- 둘째 호출: load_web_search_record_id만 전달 ---
             second = service.handle_chat(
                 {
@@ -8485,6 +9981,11 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
             reload_origin = second["response"]["response_origin"]
             self.assertIsNotNone(reload_origin)
+            self.assertEqual(reload_origin["provider"], "web")
+            self.assertEqual(reload_origin["badge"], "WEB")
+            self.assertEqual(reload_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(reload_origin["kind"], "assistant")
+            self.assertIsNone(reload_origin["model"])
             self.assertEqual(reload_origin["answer_mode"], "latest_update")
             self.assertEqual(reload_origin["verification_label"], "단일 출처 참고")
             self.assertEqual(reload_origin["source_roles"], ["보조 출처"])
@@ -8550,6 +10051,24 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(first_record_path)
             record_id = first["session"]["web_search_history"][0]["record_id"]
 
+            stored_record = service.web_search_store.get_session_record(
+                "reload-by-id-mixed-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["answer_mode"], "latest_update")
+            self.assertEqual(
+                stored_origin["verification_label"], "공식+기사 교차 확인"
+            )
+            self.assertEqual(
+                stored_origin["source_roles"], ["보조 기사", "공식 기반"]
+            )
+
             # --- 둘째 호출: load_web_search_record_id만 전달 ---
             second = service.handle_chat(
                 {
@@ -8563,9 +10082,111 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
             reload_origin = second["response"]["response_origin"]
             self.assertIsNotNone(reload_origin)
+            self.assertEqual(reload_origin["provider"], "web")
+            self.assertEqual(reload_origin["badge"], "WEB")
+            self.assertEqual(reload_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(reload_origin["kind"], "assistant")
+            self.assertIsNone(reload_origin["model"])
             self.assertEqual(reload_origin["answer_mode"], "latest_update")
             self.assertEqual(reload_origin["verification_label"], "공식+기사 교차 확인")
             self.assertEqual(reload_origin["source_roles"], ["보조 기사", "공식 기반"])
+
+    def test_handle_chat_load_web_search_record_id_news_only_latest_update_exact_fields(self) -> None:
+        """load_web_search_record_id를 직접 전달하는 history-card 선택 경로에서
+        news-only latest_update record의 response_origin exact field가
+        유지되는지 검증합니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(
+                            title="기준금리 속보 - 한국경제",
+                            url="https://www.hankyung.com/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다고 밝혔다.",
+                        ),
+                        SimpleNamespace(
+                            title="기준금리 뉴스 - 매일경제",
+                            url="https://www.mk.co.kr/economy/2025",
+                            snippet="한국은행이 기준금리를 동결했다.",
+                        ),
+                    ],
+                    pages={
+                        "https://www.hankyung.com/economy/2025": {
+                            "title": "기준금리 속보 - 한국경제",
+                            "text": "한국은행이 기준금리를 동결했다고 밝혔다.",
+                        },
+                        "https://www.mk.co.kr/economy/2025": {
+                            "title": "기준금리 뉴스 - 매일경제",
+                            "text": "한국은행이 기준금리를 동결했다.",
+                        },
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # --- 첫 호출: news-only latest_update 검색 ---
+            first = service.handle_chat(
+                {
+                    "session_id": "reload-by-id-news-session",
+                    "user_text": "기준금리 속보 검색해봐",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(first["ok"])
+            first_record_path = first["response"]["web_search_record_path"]
+            self.assertTrue(first_record_path)
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            stored_record = service.web_search_store.get_session_record(
+                "reload-by-id-news-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["answer_mode"], "latest_update")
+            self.assertEqual(
+                stored_origin["verification_label"], "기사 교차 확인"
+            )
+            self.assertEqual(stored_origin["source_roles"], ["보조 기사"])
+
+            # --- 둘째 호출: load_web_search_record_id만 전달 ---
+            second = service.handle_chat(
+                {
+                    "session_id": "reload-by-id-news-session",
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+            self.assertEqual(second["response"]["web_search_record_path"], first_record_path)
+            reload_origin = second["response"]["response_origin"]
+            self.assertIsNotNone(reload_origin)
+            self.assertEqual(reload_origin["provider"], "web")
+            self.assertEqual(reload_origin["badge"], "WEB")
+            self.assertEqual(reload_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(reload_origin["kind"], "assistant")
+            self.assertIsNone(reload_origin["model"])
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+            self.assertEqual(reload_origin["source_roles"], ["보조 기사"])
 
     def test_handle_chat_load_web_search_record_id_entity_card_exact_fields(self) -> None:
         """load_web_search_record_id를 직접 전달하는 history-card 선택 경로에서
@@ -8611,6 +10232,22 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(first_record_path)
             record_id = first["session"]["web_search_history"][0]["record_id"]
 
+            stored_record = service.web_search_store.get_session_record(
+                "reload-by-id-entity-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 설명 카드")
+            self.assertEqual(stored_origin["answer_mode"], "entity_card")
+            self.assertEqual(
+                stored_origin["verification_label"], "설명형 단일 출처"
+            )
+            self.assertEqual(stored_origin["source_roles"], ["백과 기반"])
+
             # --- 둘째 호출: load_web_search_record_id만 전달 ---
             second = service.handle_chat(
                 {
@@ -8630,6 +10267,8 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(reload_origin["source_roles"], ["백과 기반"])
             self.assertEqual(reload_origin["provider"], "web")
             self.assertEqual(reload_origin["label"], "외부 웹 설명 카드")
+            self.assertEqual(reload_origin["kind"], "assistant")
+            self.assertIsNone(reload_origin["model"])
 
     def test_handle_chat_load_web_search_record_id_entity_card_follow_up_preserves_claim_coverage_count_summary(self) -> None:
         """simple entity-card reload 뒤 load_web_search_record_id + user_text
@@ -8845,6 +10484,1166 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(
                 fourth_entry["claim_coverage_summary"],
                 baseline_counts,
+            )
+
+    def test_handle_chat_load_web_search_record_id_legacy_claim_coverage_slots_keep_reinvestigation_suggestions(self) -> None:
+        """Stored entity records that carry legacy claim_coverage slot labels
+        (`개발사`, `장르`, `플랫폼`, `출시일`) must still surface targeted
+        reinvestigation suggestions through the `load_web_search_record_id`
+        path instead of silently falling back to the generic web-search
+        follow-up prompts."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "legacy-slot-load-record-id-session"
+
+            store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "붉은사막 - 나무위키",
+                        "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                        "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                    }
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "개발사", "status": "weak"},
+                    {"slot": "장르", "status": "weak"},
+                    {"slot": "플랫폼", "status": "missing"},
+                    {"slot": "출시일", "status": "missing"},
+                ],
+            )
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool([]),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            records = store.list_session_record_summaries(session_id)
+            record_id = records[0]["record_id"]
+
+            result = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+
+            self.assertTrue(result["ok"])
+            follow_ups = result["response"]["follow_up_suggestions"]
+            self.assertEqual(
+                follow_ups[:3],
+                [
+                    "붉은사막 공식 플랫폼 검색해봐",
+                    "붉은사막 출시 상태 검색해봐",
+                    "붉은사막 개발사 검색해봐",
+                ],
+            )
+            self.assertNotIn("붉은사막 장르 검색해봐", follow_ups)
+
+    def test_handle_chat_load_web_search_record_id_legacy_claim_coverage_slots_surface_canonical_slots_and_truthful_progress(self) -> None:
+        """`load_web_search_record_id` reload of a stored entity record that
+        carries legacy `claim_coverage` slot labels must surface canonical
+        core-slot names on the public response, and the shared progress
+        helpers must report `unchanged` (not a false improvement) when a
+        live reinvestigation still yields the same semantic status."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "legacy-slot-load-record-id-progress-session"
+
+            store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "붉은사막 - 나무위키",
+                        "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                        "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                    }
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "개발사", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "장르", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "플랫폼", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "출시일", "status": "missing", "status_label": "미확인"},
+                ],
+            )
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool([]),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            records = store.list_session_record_summaries(session_id)
+            record_id = records[0]["record_id"]
+
+            result = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(result["ok"])
+
+            last_message = result["session"]["messages"][-1]
+            reload_slots = {
+                str(item.get("slot") or "").strip()
+                for item in last_message.get("claim_coverage", [])
+                if isinstance(item, dict)
+            }
+            self.assertEqual(
+                reload_slots,
+                {"개발", "장르/성격", "이용 형태", "상태"},
+            )
+            for legacy in ("개발사", "장르", "플랫폼", "출시일"):
+                self.assertNotIn(legacy, reload_slots)
+
+            # The shared progress helpers must report truthful unchanged
+            # progress when reload-follow-up comparison receives a legacy
+            # previous list and a canonical current list.
+            from core.agent_loop import AgentLoop
+
+            # The shared progress helpers do not touch instance state, so we
+            # build a bare AgentLoop without re-instantiating all the app-level
+            # dependencies that WebAppService owns.
+            helper_loop = AgentLoop.__new__(AgentLoop)
+            legacy_previous = [
+                {"slot": "플랫폼", "status": "weak"},
+                {"slot": "개발사", "status": "weak"},
+                {"slot": "장르", "status": "weak"},
+                {"slot": "출시일", "status": "missing"},
+            ]
+            current_claim_coverage = [
+                {"slot": "이용 형태", "status": "weak"},
+                {"slot": "개발", "status": "weak"},
+                {"slot": "장르/성격", "status": "weak"},
+                {"slot": "상태", "status": "missing"},
+            ]
+            summary = helper_loop._build_claim_coverage_progress_summary(
+                previous_claim_coverage=legacy_previous,
+                current_claim_coverage=current_claim_coverage,
+                query="붉은사막 공식 플랫폼 검색해봐",
+            )
+            self.assertIsNotNone(summary)
+            self.assertIn("재조사했지만", summary)
+            self.assertIn("이용 형태", summary)
+            self.assertIn("아직", summary)
+            self.assertIn("단일 출처 상태", summary)
+            self.assertNotIn("보강", summary)
+            self.assertNotIn("미확인에서", summary)
+
+    def test_handle_chat_load_web_search_record_id_legacy_progress_summary_text_canonicalized(self) -> None:
+        """`load_web_search_record_id` reload of a stored entity record whose
+        ``claim_coverage_progress_summary`` still uses legacy slot labels must
+        surface canonical core-slot wording on both the public response
+        payload (via ``active_context``) and the ``session.web_search_history``
+        history-card metadata, without rewriting the persisted history JSON."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "legacy-progress-summary-load-record-id-session"
+
+            legacy_progress_summary = "재조사했지만 플랫폼은 아직 단일 출처 상태입니다."
+            save_result = store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "붉은사막 - 나무위키",
+                        "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                        "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                    }
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "플랫폼", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "개발사", "status": "weak", "status_label": "단일 출처"},
+                ],
+                claim_coverage_progress_summary=legacy_progress_summary,
+            )
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool([]),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            records = store.list_session_record_summaries(session_id)
+            record_id = records[0]["record_id"]
+
+            result = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(result["ok"])
+
+            active_context = result["session"].get("active_context") or {}
+            response_progress = active_context.get("claim_coverage_progress_summary", "")
+            self.assertIn("이용 형태", response_progress)
+            self.assertNotIn("플랫폼", response_progress)
+            self.assertIn("재조사했지만", response_progress)
+            self.assertIn("단일 출처 상태", response_progress)
+
+            history_entries = result["session"].get("web_search_history") or []
+            history_entry = next(
+                (item for item in history_entries if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(history_entry)
+            history_progress = history_entry.get("claim_coverage_progress_summary", "")
+            self.assertIn("이용 형태", history_progress)
+            self.assertNotIn("플랫폼", history_progress)
+            self.assertIn("재조사했지만", history_progress)
+            self.assertIn("단일 출처 상태", history_progress)
+
+            # Persisted history JSON must remain untouched.
+            persisted_record = json.loads(
+                Path(save_result["record_path"]).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                persisted_record["claim_coverage_progress_summary"],
+                legacy_progress_summary,
+            )
+
+    def test_handle_chat_natural_language_reload_top_level_claim_coverage_progress_summary_parity(self) -> None:
+        """WebAppService natural-language reload (``user_text`` containing
+        ``방금 검색한 결과 다시 보여줘``) must return the canonical
+        ``claim_coverage_progress_summary`` both at the top-level
+        ``response`` payload and inside ``active_context``, matching the
+        ``load_web_search_record_id`` reload contract shape."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "natural-reload-webapp-top-level-progress-session"
+
+            stored_progress_summary = "재조사했지만 이용 형태는 아직 단일 출처 상태입니다."
+            store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "붉은사막 - 나무위키",
+                        "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                        "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                    }
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "이용 형태", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "개발", "status": "weak", "status_label": "단일 출처"},
+                ],
+                claim_coverage_progress_summary=stored_progress_summary,
+            )
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool([]),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            result = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(result["ok"])
+
+            # Top-level response payload parity.
+            response_payload = result["response"]
+            self.assertEqual(
+                response_payload["actions_taken"], ["load_web_search_record"]
+            )
+            self.assertEqual(
+                response_payload.get("claim_coverage_progress_summary"),
+                stored_progress_summary,
+            )
+            response_slots = {
+                str(item.get("slot") or "").strip()
+                for item in response_payload.get("claim_coverage", [])
+                if isinstance(item, dict)
+            }
+            self.assertIn("이용 형태", response_slots)
+
+            # active_context parity (unchanged surface).
+            active_context = result["session"].get("active_context") or {}
+            self.assertEqual(
+                active_context.get("claim_coverage_progress_summary"),
+                stored_progress_summary,
+            )
+
+    def test_handle_chat_natural_language_reload_session_message_preserves_top_level_progress_summary(self) -> None:
+        """After a natural-language reload, the appended session message must
+        also carry the canonical ``claim_coverage_progress_summary`` text so
+        transcript history, history-card metadata, and downstream serializers
+        all see the same top-level reload contract."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "natural-reload-session-message-progress-session"
+
+            stored_progress_summary = "재조사했지만 이용 형태는 아직 단일 출처 상태입니다."
+            store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "붉은사막 - 나무위키",
+                        "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                        "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                    }
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "이용 형태", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "개발", "status": "weak", "status_label": "단일 출처"},
+                ],
+                claim_coverage_progress_summary=stored_progress_summary,
+            )
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool([]),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            result = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(result["ok"])
+
+            messages = result["session"].get("messages") or []
+            assistant_messages = [
+                message
+                for message in messages
+                if isinstance(message, dict) and message.get("role") == "assistant"
+            ]
+            self.assertTrue(assistant_messages)
+            last_assistant = assistant_messages[-1]
+            self.assertEqual(
+                last_assistant.get("claim_coverage_progress_summary"),
+                stored_progress_summary,
+            )
+            message_slots = {
+                str(item.get("slot") or "").strip()
+                for item in last_assistant.get("claim_coverage", [])
+                if isinstance(item, dict)
+            }
+            self.assertIn("이용 형태", message_slots)
+
+    def test_handle_chat_reload_follow_up_propagates_top_level_claim_coverage_and_progress_summary(self) -> None:
+        """After `load_web_search_record_id` reload, a follow-up question
+        (``load_web_search_record_id + user_text``) must keep top-level
+        ``claim_coverage`` and ``claim_coverage_progress_summary`` in the
+        response payload and on the appended assistant session message,
+        matching the browser's claim-coverage panel / fact-strength bar
+        contract."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "reload-follow-up-webapp-claim-coverage-session"
+
+            stored_progress_summary = "재조사했지만 이용 형태는 아직 단일 출처 상태입니다."
+            save_result = store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "붉은사막 - 나무위키",
+                        "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                        "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                    }
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "이용 형태", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "개발", "status": "weak", "status_label": "단일 출처"},
+                ],
+                claim_coverage_progress_summary=stored_progress_summary,
+            )
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool([]),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            record_id = save_result["record_id"]
+
+            # `load_web_search_record_id + user_text` follow-up goes through
+            # `_respond_with_active_context()` (not the show-only branch),
+            # so top-level claim-coverage propagation must come from the
+            # internal web-search active_context.
+            follow_up = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 결과 더 설명해줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+            self.assertTrue(follow_up["ok"])
+
+            payload = follow_up["response"]
+            response_slots = {
+                str(item.get("slot") or "").strip()
+                for item in payload.get("claim_coverage", [])
+                if isinstance(item, dict)
+            }
+            self.assertIn("이용 형태", response_slots)
+            self.assertEqual(
+                payload.get("claim_coverage_progress_summary"),
+                stored_progress_summary,
+            )
+
+            messages = follow_up["session"].get("messages") or []
+            assistant_messages = [
+                message
+                for message in messages
+                if isinstance(message, dict) and message.get("role") == "assistant"
+            ]
+            self.assertTrue(assistant_messages)
+            last_assistant = assistant_messages[-1]
+            message_slots = {
+                str(item.get("slot") or "").strip()
+                for item in last_assistant.get("claim_coverage", [])
+                if isinstance(item, dict)
+            }
+            self.assertIn("이용 형태", message_slots)
+            self.assertEqual(
+                last_assistant.get("claim_coverage_progress_summary"),
+                stored_progress_summary,
+            )
+
+    def test_handle_chat_natural_language_reload_then_follow_up_keeps_top_level_claim_coverage(self) -> None:
+        """A natural-language reload followed by a plain follow-up question
+        in the same session must keep the reload-follow-up answer's
+        top-level ``claim_coverage`` / ``claim_coverage_progress_summary``
+        and persist them on the appended assistant session message."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "natural-reload-then-follow-up-claim-coverage-session"
+
+            stored_progress_summary = "재조사했지만 이용 형태는 아직 단일 출처 상태입니다."
+            store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "붉은사막 - 나무위키",
+                        "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                        "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                    }
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "이용 형태", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "개발", "status": "weak", "status_label": "단일 출처"},
+                ],
+                claim_coverage_progress_summary=stored_progress_summary,
+            )
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool([]),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # Step 1: natural-language reload establishes the web-search
+            # active_context with canonical claim_coverage.
+            reload_result = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(reload_result["ok"])
+
+            records = store.list_session_record_summaries(session_id)
+            reload_record_id = next(
+                (record.get("record_id") for record in records if record.get("record_id")),
+                None,
+            )
+            self.assertIsNotNone(reload_record_id)
+
+            # Step 2: a reload-follow-up question uses the same stored record
+            # so the response goes through ``_respond_with_active_context()``.
+            follow_up = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 결과 더 설명해줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                    "load_web_search_record_id": reload_record_id,
+                }
+            )
+            self.assertTrue(follow_up["ok"])
+
+            payload = follow_up["response"]
+            response_slots = {
+                str(item.get("slot") or "").strip()
+                for item in payload.get("claim_coverage", [])
+                if isinstance(item, dict)
+            }
+            self.assertIn("이용 형태", response_slots)
+            self.assertEqual(
+                payload.get("claim_coverage_progress_summary"),
+                stored_progress_summary,
+            )
+
+            messages = follow_up["session"].get("messages") or []
+            assistant_messages = [
+                message
+                for message in messages
+                if isinstance(message, dict) and message.get("role") == "assistant"
+            ]
+            self.assertTrue(assistant_messages)
+            last_assistant = assistant_messages[-1]
+            message_slots = {
+                str(item.get("slot") or "").strip()
+                for item in last_assistant.get("claim_coverage", [])
+                if isinstance(item, dict)
+            }
+            self.assertIn("이용 형태", message_slots)
+            self.assertEqual(
+                last_assistant.get("claim_coverage_progress_summary"),
+                stored_progress_summary,
+            )
+
+    def test_handle_chat_latest_update_reload_follow_up_keeps_claim_coverage_surfaces_empty(self) -> None:
+        """Latest-update / no-claim-coverage records must keep top-level
+        ``claim_coverage`` empty and ``claim_coverage_progress_summary``
+        unset on reload-follow-up answers, so the current empty-meta
+        contract is not widened."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "latest-update-reload-follow-up-empty-session"
+
+            save_result = store.save(
+                session_id=session_id,
+                query="서울 날씨",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "서울 날씨",
+                        "url": "https://example.com/seoul-weather",
+                        "snippet": "서울은 맑고 낮 최고 17도입니다.",
+                    }
+                ],
+                summary_text="웹 최신 확인: 서울 날씨",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "latest_update",
+                    "verification_label": "단일 출처 참고",
+                    "source_roles": ["보조 출처"],
+                },
+                claim_coverage=[],
+                claim_coverage_progress_summary="",
+            )
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool([]),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            follow_up = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 결과 더 설명해줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                    "load_web_search_record_id": save_result["record_id"],
+                }
+            )
+            self.assertTrue(follow_up["ok"])
+
+            payload = follow_up["response"]
+            self.assertEqual(payload.get("claim_coverage", []), [])
+            # Serializer emits empty string for empty progress summary; both
+            # ``""`` and missing key mean the claim-coverage progress surface
+            # stays empty on latest-update reload-follow-ups.
+            self.assertFalse(payload.get("claim_coverage_progress_summary") or "")
+
+            messages = follow_up["session"].get("messages") or []
+            assistant_messages = [
+                message
+                for message in messages
+                if isinstance(message, dict) and message.get("role") == "assistant"
+            ]
+            self.assertTrue(assistant_messages)
+            last_assistant = assistant_messages[-1]
+            # Message serializer may include the keys with empty values; the
+            # user-visible contract is that both surfaces stay empty so the
+            # browser does not render the claim-coverage panel / bar.
+            self.assertEqual(last_assistant.get("claim_coverage", []), [])
+            self.assertFalse(last_assistant.get("claim_coverage_progress_summary") or "")
+
+    def test_handle_chat_natural_language_reload_plain_follow_up_keeps_top_level_claim_coverage(self) -> None:
+        """After a natural-language reload seeds a web-search
+        ``active_context``, a subsequent plain follow-up that does NOT pass
+        ``load_web_search_record_id`` must still keep top-level
+        ``claim_coverage`` and ``claim_coverage_progress_summary`` on the
+        response payload and on the appended assistant session message for
+        entity-card records."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "plain-follow-up-entity-card-claim-coverage-session"
+
+            stored_progress_summary = "재조사했지만 이용 형태는 아직 단일 출처 상태입니다."
+            store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "붉은사막 - 나무위키",
+                        "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                        "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                    }
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "이용 형태", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "개발", "status": "weak", "status_label": "단일 출처"},
+                ],
+                claim_coverage_progress_summary=stored_progress_summary,
+            )
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool([]),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # Step 1: natural-language reload establishes the web-search
+            # active_context with canonical claim_coverage and progress summary.
+            reload_result = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(reload_result["ok"])
+
+            # Step 2: a plain follow-up question with NO
+            # ``load_web_search_record_id`` on the payload. This is the exact
+            # path the browser uses when the user keeps chatting after a
+            # reload, and it must still surface claim-coverage on the top
+            # level without passing the record id again.
+            follow_up = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 결과 한 문장으로 요약해줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(follow_up["ok"])
+
+            payload = follow_up["response"]
+            response_slots = {
+                str(item.get("slot") or "").strip()
+                for item in payload.get("claim_coverage", [])
+                if isinstance(item, dict)
+            }
+            self.assertIn(
+                "이용 형태",
+                response_slots,
+                f"plain follow-up lost entity claim_coverage slot: {payload!r}",
+            )
+            self.assertEqual(
+                payload.get("claim_coverage_progress_summary"),
+                stored_progress_summary,
+            )
+
+            messages = follow_up["session"].get("messages") or []
+            assistant_messages = [
+                message
+                for message in messages
+                if isinstance(message, dict) and message.get("role") == "assistant"
+            ]
+            self.assertTrue(assistant_messages)
+            last_assistant = assistant_messages[-1]
+            message_slots = {
+                str(item.get("slot") or "").strip()
+                for item in last_assistant.get("claim_coverage", [])
+                if isinstance(item, dict)
+            }
+            self.assertIn("이용 형태", message_slots)
+            self.assertEqual(
+                last_assistant.get("claim_coverage_progress_summary"),
+                stored_progress_summary,
+            )
+
+    def test_handle_chat_latest_update_natural_language_reload_plain_follow_up_keeps_claim_coverage_surfaces_empty(self) -> None:
+        """Latest-update / no-claim-coverage records reloaded via natural
+        language must keep top-level ``claim_coverage`` empty and
+        ``claim_coverage_progress_summary`` unset on a subsequent plain
+        follow-up that does NOT pass ``load_web_search_record_id``."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "plain-follow-up-latest-update-empty-session"
+
+            store.save(
+                session_id=session_id,
+                query="서울 날씨",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "서울 날씨",
+                        "url": "https://example.com/seoul-weather",
+                        "snippet": "서울은 맑고 낮 최고 17도입니다.",
+                    }
+                ],
+                summary_text="웹 최신 확인: 서울 날씨",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "latest_update",
+                    "verification_label": "단일 출처 참고",
+                    "source_roles": ["보조 출처"],
+                },
+                claim_coverage=[],
+                claim_coverage_progress_summary="",
+            )
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool([]),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # Step 1: natural-language reload.
+            reload_result = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "방금 검색한 결과 다시 보여줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(reload_result["ok"])
+
+            # Step 2: plain follow-up with NO ``load_web_search_record_id``.
+            follow_up = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 결과 한 문장으로 요약해줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(follow_up["ok"])
+
+            payload = follow_up["response"]
+            self.assertEqual(payload.get("claim_coverage", []), [])
+            self.assertFalse(payload.get("claim_coverage_progress_summary") or "")
+
+            messages = follow_up["session"].get("messages") or []
+            assistant_messages = [
+                message
+                for message in messages
+                if isinstance(message, dict) and message.get("role") == "assistant"
+            ]
+            self.assertTrue(assistant_messages)
+            last_assistant = assistant_messages[-1]
+            self.assertEqual(last_assistant.get("claim_coverage", []), [])
+            self.assertFalse(
+                last_assistant.get("claim_coverage_progress_summary") or ""
+            )
+
+    def test_handle_chat_click_reload_plain_follow_up_keeps_top_level_claim_coverage(self) -> None:
+        """After a browser click reload (`load_web_search_record_id` only,
+        no `user_text`) seeds a web-search ``active_context``, a subsequent
+        plain follow-up that does NOT pass ``load_web_search_record_id``
+        must still keep top-level ``claim_coverage`` and
+        ``claim_coverage_progress_summary`` on both the response payload
+        and the appended assistant session message for entity-card
+        records."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "click-reload-plain-follow-up-entity-card-session"
+
+            stored_progress_summary = "재조사했지만 이용 형태는 아직 단일 출처 상태입니다."
+            save_result = store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "붉은사막 - 나무위키",
+                        "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                        "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                    }
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "이용 형태", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "개발", "status": "weak", "status_label": "단일 출처"},
+                ],
+                claim_coverage_progress_summary=stored_progress_summary,
+            )
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool([]),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # Step 1: click reload — the browser sends only
+            # ``load_web_search_record_id`` with no ``user_text``. The
+            # chat handler auto-injects ``"최근 웹 검색 기록을 다시 불러와 주세요."``
+            # as the user_text, which matches the show-only reload branch.
+            click_reload = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "provider": "mock",
+                    "load_web_search_record_id": save_result["record_id"],
+                }
+            )
+            self.assertTrue(click_reload["ok"])
+            self.assertEqual(
+                click_reload["response"]["actions_taken"],
+                ["load_web_search_record"],
+            )
+
+            # Step 2: plain follow-up with NO ``load_web_search_record_id``.
+            # This is the exact button-reload follow-up path the browser uses
+            # after a click reload: the user keeps chatting without sending
+            # the record id again.
+            follow_up = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 결과 한 문장으로 요약해줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(follow_up["ok"])
+
+            payload = follow_up["response"]
+            response_slots = {
+                str(item.get("slot") or "").strip()
+                for item in payload.get("claim_coverage", [])
+                if isinstance(item, dict)
+            }
+            self.assertIn(
+                "이용 형태",
+                response_slots,
+                f"click-reload plain follow-up lost entity claim_coverage: {payload!r}",
+            )
+            self.assertEqual(
+                payload.get("claim_coverage_progress_summary"),
+                stored_progress_summary,
+            )
+
+            messages = follow_up["session"].get("messages") or []
+            assistant_messages = [
+                message
+                for message in messages
+                if isinstance(message, dict) and message.get("role") == "assistant"
+            ]
+            self.assertTrue(assistant_messages)
+            last_assistant = assistant_messages[-1]
+            message_slots = {
+                str(item.get("slot") or "").strip()
+                for item in last_assistant.get("claim_coverage", [])
+                if isinstance(item, dict)
+            }
+            self.assertIn("이용 형태", message_slots)
+            self.assertEqual(
+                last_assistant.get("claim_coverage_progress_summary"),
+                stored_progress_summary,
+            )
+
+    def test_handle_chat_latest_update_click_reload_plain_follow_up_keeps_claim_coverage_surfaces_empty(self) -> None:
+        """Latest-update / no-claim-coverage records reloaded via the
+        browser click-reload path (``load_web_search_record_id`` only, no
+        ``user_text``) must keep top-level ``claim_coverage`` empty and
+        ``claim_coverage_progress_summary`` unset on a subsequent plain
+        follow-up that does NOT pass ``load_web_search_record_id``."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "click-reload-plain-follow-up-latest-update-empty-session"
+
+            save_result = store.save(
+                session_id=session_id,
+                query="서울 날씨",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "서울 날씨",
+                        "url": "https://example.com/seoul-weather",
+                        "snippet": "서울은 맑고 낮 최고 17도입니다.",
+                    }
+                ],
+                summary_text="웹 최신 확인: 서울 날씨",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "latest_update",
+                    "verification_label": "단일 출처 참고",
+                    "source_roles": ["보조 출처"],
+                },
+                claim_coverage=[],
+                claim_coverage_progress_summary="",
+            )
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool([]),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # Step 1: click reload of a latest-update record.
+            click_reload = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "provider": "mock",
+                    "load_web_search_record_id": save_result["record_id"],
+                }
+            )
+            self.assertTrue(click_reload["ok"])
+            self.assertEqual(
+                click_reload["response"]["actions_taken"],
+                ["load_web_search_record"],
+            )
+
+            # Step 2: plain follow-up without ``load_web_search_record_id``.
+            follow_up = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "user_text": "이 결과 한 문장으로 요약해줘",
+                    "provider": "mock",
+                    "web_search_permission": "enabled",
+                }
+            )
+            self.assertTrue(follow_up["ok"])
+
+            payload = follow_up["response"]
+            self.assertEqual(payload.get("claim_coverage", []), [])
+            self.assertFalse(payload.get("claim_coverage_progress_summary") or "")
+
+            messages = follow_up["session"].get("messages") or []
+            assistant_messages = [
+                message
+                for message in messages
+                if isinstance(message, dict) and message.get("role") == "assistant"
+            ]
+            self.assertTrue(assistant_messages)
+            last_assistant = assistant_messages[-1]
+            self.assertEqual(last_assistant.get("claim_coverage", []), [])
+            self.assertFalse(
+                last_assistant.get("claim_coverage_progress_summary") or ""
             )
 
     def test_handle_chat_entity_card_dual_probe_reload_preserves_active_context_source_paths(self) -> None:
@@ -10847,6 +13646,78 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertGreaterEqual(len(weak_items), 1)
             self.assertGreaterEqual(len(missing_items), 1)
 
+    def test_web_search_store_list_summaries_canonicalizes_legacy_progress_summary_text(self) -> None:
+        """WebSearchStore.list_session_record_summaries must canonicalize
+        legacy slot labels inside ``claim_coverage_progress_summary`` text
+        (`플랫폼` → `이용 형태`, etc.) at read time, while leaving the persisted
+        history JSON file untouched."""
+        with TemporaryDirectory() as tmp_dir:
+            store = WebSearchStore(base_dir=str(Path(tmp_dir) / "web-search"))
+            session_id = "legacy-progress-summary-store-session"
+
+            legacy_progress_summary = (
+                "재조사 결과 개발사는 미확인에서 단일 출처로 보강되었습니다. "
+                "아직 플랫폼 단일 출처, 출시일 미확인, 장르 단일 출처 상태의 슬롯이 남아 있습니다."
+            )
+            save_result = store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[{"url": "https://example.com/a", "snippet": "결과 A"}],
+                summary_text="entity card summary",
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "개발사", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "플랫폼", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "장르", "status": "weak", "status_label": "단일 출처"},
+                    {"slot": "출시일", "status": "missing", "status_label": "미확인"},
+                ],
+                claim_coverage_progress_summary=legacy_progress_summary,
+            )
+
+            summaries = store.list_session_record_summaries(session_id)
+            self.assertEqual(len(summaries), 1)
+            canonical_progress = summaries[0]["claim_coverage_progress_summary"]
+            self.assertIn("이용 형태", canonical_progress)
+            self.assertIn("장르/성격", canonical_progress)
+            self.assertIn("상태 미확인", canonical_progress)
+            self.assertIn("개발", canonical_progress)
+            self.assertNotIn("플랫폼", canonical_progress)
+            self.assertNotIn("출시일", canonical_progress)
+            self.assertNotIn("개발사", canonical_progress)
+            # ``장르`` must not appear without the canonical ``/성격`` suffix.
+            import re as _re
+
+            self.assertIsNone(
+                _re.search(r"장르(?!/성격)", canonical_progress),
+                f"legacy bare 장르 leaked: {canonical_progress!r}",
+            )
+
+            # Idempotent: running the canonicalizer again on already canonical
+            # text must be a no-op.
+            from storage.web_search_store import (
+                canonicalize_legacy_claim_coverage_progress_summary,
+            )
+
+            self.assertEqual(
+                canonicalize_legacy_claim_coverage_progress_summary(canonical_progress),
+                canonical_progress,
+            )
+
+            # Persisted history JSON must keep the original legacy wording.
+            persisted_record = json.loads(
+                Path(save_result["record_path"]).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                persisted_record["claim_coverage_progress_summary"],
+                legacy_progress_summary,
+            )
+
     def test_web_search_store_badge_data_contract_serializes_exact_fields(self) -> None:
         """WebSearchStore.save → list_session_record_summaries가 answer_mode,
         verification_label, source_roles를 exact하게 직렬화하는지 검증합니다."""
@@ -11475,9 +14346,17 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(first["ok"])
             first_origin = first["response"]["response_origin"]
             first_text = first["response"]["text"]
+            record_id = first["session"]["web_search_history"][0]["record_id"]
 
-            # latest_update 모드 확인
+            # 첫 응답: latest-update surface exact-field 계약
+            self.assertEqual(first_origin["provider"], "web")
+            self.assertEqual(first_origin["badge"], "WEB")
+            self.assertEqual(first_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(first_origin["kind"], "assistant")
+            self.assertIsNone(first_origin["model"])
             self.assertEqual(first_origin["answer_mode"], "latest_update")
+            self.assertEqual(first_origin["verification_label"], "기사 교차 확인")
+            self.assertEqual(first_origin["source_roles"], ["보조 기사"])
 
             # 첫 응답: noisy community source 미노출
             self.assertNotIn("보조 커뮤니티", str(first_origin["source_roles"]))
@@ -11486,6 +14365,32 @@ class WebAppServiceTest(unittest.TestCase):
             # 첫 응답: history badge에도 noisy role 미포함
             first_history = first["session"]["web_search_history"][0]
             self.assertNotIn("보조 커뮤니티", str(first_history.get("source_roles", [])))
+            self.assertEqual(first_history["verification_label"], "기사 교차 확인")
+            self.assertEqual(
+                first_history.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(first_history.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
+
+            # 첫 응답: persisted stored response_origin exact-field 계약
+            stored_record = service.web_search_store.get_session_record(
+                "latest-update-noisy-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["answer_mode"], "latest_update")
+            self.assertEqual(
+                stored_origin["verification_label"], "기사 교차 확인"
+            )
+            self.assertEqual(stored_origin["source_roles"], ["보조 기사"])
 
             # --- 둘째 호출: 자연어 reload ---
             second = service.handle_chat(
@@ -11589,12 +14494,35 @@ class WebAppServiceTest(unittest.TestCase):
             reload_origin = second["response"]["response_origin"]
             reload_text = second["response"]["text"]
 
-            # reload: latest_update 모드 유지
+            # reload: latest_update 모드 및 전체 response-origin literal 유지
+            self.assertEqual(reload_origin["provider"], "web")
+            self.assertEqual(reload_origin["badge"], "WEB")
+            self.assertEqual(reload_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(reload_origin["kind"], "assistant")
+            self.assertIsNone(reload_origin["model"])
             self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+            self.assertEqual(reload_origin["source_roles"], ["보조 기사"])
 
             # reload: noisy community source 미노출
             self.assertNotIn("보조 커뮤니티", str(reload_origin["source_roles"]))
             self.assertNotIn("brunch", reload_text)
+
+            stored_record = service.web_search_store.get_session_record(
+                "latest-update-noisy-reload-by-id-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["answer_mode"], "latest_update")
+            self.assertEqual(
+                stored_origin["verification_label"], "기사 교차 확인"
+            )
+            self.assertEqual(stored_origin["source_roles"], ["보조 기사"])
             # latest-update noisy show-only reload empty-meta branch: history entry keeps
             # zero-count claim_coverage_summary + empty progress after the noisy reload.
             reload_history = second["session"]["web_search_history"]
@@ -16587,6 +19515,22 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(first["ok"])
             record_id = first["session"]["web_search_history"][0]["record_id"]
 
+            stored_record = service.web_search_store.get_session_record(
+                "entity-origin-reload-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 설명 카드")
+            self.assertEqual(stored_origin["answer_mode"], "entity_card")
+            self.assertEqual(
+                stored_origin["verification_label"], "설명형 단일 출처"
+            )
+            self.assertEqual(stored_origin["source_roles"], ["백과 기반"])
+
             # --- 둘째 호출: history-card reload ---
             second = service.handle_chat(
                 {
@@ -16604,6 +19548,8 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(reload_origin["source_roles"], ["백과 기반"])
             self.assertEqual(reload_origin["provider"], "web")
             self.assertEqual(reload_origin["label"], "외부 웹 설명 카드")
+            self.assertEqual(reload_origin["kind"], "assistant")
+            self.assertIsNone(reload_origin["model"])
 
     def test_handle_chat_entity_card_reload_follow_up_preserves_stored_response_origin(self) -> None:
         """entity-card 검색 → load_web_search_record_id + user_text follow-up에서
@@ -16646,6 +19592,22 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(first["ok"])
             record_id = first["session"]["web_search_history"][0]["record_id"]
 
+            stored_record = service.web_search_store.get_session_record(
+                "entity-followup-origin-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 설명 카드")
+            self.assertEqual(stored_origin["answer_mode"], "entity_card")
+            self.assertEqual(
+                stored_origin["verification_label"], "설명형 단일 출처"
+            )
+            self.assertEqual(stored_origin["source_roles"], ["백과 기반"])
+
             # --- 둘째 호출: reload-follow-up (non-show-only) ---
             second = service.handle_chat(
                 {
@@ -16664,6 +19626,8 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(reload_origin["source_roles"], ["백과 기반"])
             self.assertEqual(reload_origin["provider"], "web")
             self.assertEqual(reload_origin["label"], "외부 웹 설명 카드")
+            self.assertEqual(reload_origin["kind"], "assistant")
+            self.assertIsNone(reload_origin["model"])
 
 
     def test_handle_chat_latest_update_reload_follow_up_preserves_stored_response_origin(self) -> None:
@@ -16725,6 +19689,24 @@ class WebAppServiceTest(unittest.TestCase):
             first_origin = first["response"]["response_origin"]
             record_id = first["session"]["web_search_history"][0]["record_id"]
 
+            stored_record = service.web_search_store.get_session_record(
+                "latest-followup-origin-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["answer_mode"], "latest_update")
+            self.assertEqual(
+                stored_origin["verification_label"], "공식+기사 교차 확인"
+            )
+            self.assertEqual(
+                stored_origin["source_roles"], ["보조 기사", "공식 기반"]
+            )
+
             # --- 둘째 호출: reload-follow-up (non-show-only) ---
             second = service.handle_chat(
                 {
@@ -16737,11 +19719,13 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(second["ok"])
             reload_origin = second["response"]["response_origin"]
 
-            # response_origin이 존재하고 WEB provider 계열을 유지
             self.assertIsNotNone(reload_origin)
-            # answer_mode가 stored latest_update 값 유지
-            self.assertIn(reload_origin.get("answer_mode", ""), ("latest_update", first_origin["answer_mode"]))
-            # verification_label과 source_roles도 stored 값 유지
+            self.assertEqual(reload_origin["provider"], "web")
+            self.assertEqual(reload_origin["badge"], "WEB")
+            self.assertEqual(reload_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(reload_origin["kind"], "assistant")
+            self.assertIsNone(reload_origin["model"])
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
             self.assertEqual(reload_origin["verification_label"], "공식+기사 교차 확인")
             self.assertEqual(reload_origin["source_roles"], ["보조 기사", "공식 기반"])
             # latest-update non-noisy empty-meta branch: history entry keeps zero-count
@@ -16810,6 +19794,22 @@ class WebAppServiceTest(unittest.TestCase):
             first_origin = first["response"]["response_origin"]
             record_id = first["session"]["web_search_history"][0]["record_id"]
 
+            stored_record = service.web_search_store.get_session_record(
+                "latest-single-followup-origin-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["answer_mode"], "latest_update")
+            self.assertEqual(
+                stored_origin["verification_label"], "단일 출처 참고"
+            )
+            self.assertEqual(stored_origin["source_roles"], ["보조 출처"])
+
             # --- 둘째 호출: reload-follow-up (non-show-only) ---
             second = service.handle_chat(
                 {
@@ -16822,11 +19822,13 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(second["ok"])
             reload_origin = second["response"]["response_origin"]
 
-            # response_origin이 존재하고 WEB provider 계열을 유지
             self.assertIsNotNone(reload_origin)
-            # answer_mode가 stored latest_update 값 유지
-            self.assertIn(reload_origin.get("answer_mode", ""), ("latest_update", first_origin["answer_mode"]))
-            # verification_label과 source_roles도 stored 값 유지
+            self.assertEqual(reload_origin["provider"], "web")
+            self.assertEqual(reload_origin["badge"], "WEB")
+            self.assertEqual(reload_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(reload_origin["kind"], "assistant")
+            self.assertIsNone(reload_origin["model"])
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
             self.assertEqual(reload_origin["verification_label"], "단일 출처 참고")
             self.assertEqual(reload_origin["source_roles"], ["보조 출처"])
             # latest-update non-noisy empty-meta branch: history entry keeps zero-count
@@ -16902,6 +19904,22 @@ class WebAppServiceTest(unittest.TestCase):
             first_origin = first["response"]["response_origin"]
             record_id = first["session"]["web_search_history"][0]["record_id"]
 
+            stored_record = service.web_search_store.get_session_record(
+                "latest-news-followup-origin-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["answer_mode"], "latest_update")
+            self.assertEqual(
+                stored_origin["verification_label"], "기사 교차 확인"
+            )
+            self.assertEqual(stored_origin["source_roles"], ["보조 기사"])
+
             # --- 둘째 호출: reload-follow-up (non-show-only) ---
             second = service.handle_chat(
                 {
@@ -16914,11 +19932,13 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(second["ok"])
             reload_origin = second["response"]["response_origin"]
 
-            # response_origin이 존재하고 WEB provider 계열을 유지
             self.assertIsNotNone(reload_origin)
-            # answer_mode가 stored latest_update 값 유지
-            self.assertIn(reload_origin.get("answer_mode", ""), ("latest_update", first_origin["answer_mode"]))
-            # verification_label과 source_roles도 stored 값 유지
+            self.assertEqual(reload_origin["provider"], "web")
+            self.assertEqual(reload_origin["badge"], "WEB")
+            self.assertEqual(reload_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(reload_origin["kind"], "assistant")
+            self.assertIsNone(reload_origin["model"])
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
             self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
             self.assertEqual(reload_origin["source_roles"], ["보조 기사"])
             # latest-update non-noisy empty-meta branch: history entry keeps zero-count
@@ -17588,6 +20608,11 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("https://store.steampowered.com/sale/summer2026", source_paths)
             self.assertIn("https://www.yna.co.kr/view/AKR20260401000100017", source_paths)
             followup_origin = second["response"]["response_origin"]
+            self.assertEqual(followup_origin["provider"], "web")
+            self.assertEqual(followup_origin["badge"], "WEB")
+            self.assertEqual(followup_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(followup_origin["kind"], "assistant")
+            self.assertIsNone(followup_origin["model"])
             self.assertEqual(followup_origin["answer_mode"], "latest_update")
             self.assertEqual(followup_origin["verification_label"], "공식+기사 교차 확인")
             self.assertEqual(followup_origin["source_roles"], ["보조 기사", "공식 기반"])
@@ -17634,8 +20659,29 @@ class WebAppServiceTest(unittest.TestCase):
 
             fourth = service.handle_chat({"session_id": "latest-mixed-2fu-session", "user_text": "더 자세히 알려줘", "provider": "mock", "load_web_search_record_id": record_id})
             self.assertTrue(fourth["ok"])
+            stored_record = service.web_search_store.get_session_record(
+                "latest-mixed-2fu-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["answer_mode"], "latest_update")
+            self.assertEqual(
+                stored_origin["verification_label"], "공식+기사 교차 확인"
+            )
+            self.assertEqual(
+                stored_origin["source_roles"], ["보조 기사", "공식 기반"]
+            )
             origin = fourth["response"]["response_origin"]
+            self.assertEqual(origin["provider"], "web")
             self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(origin["kind"], "assistant")
+            self.assertIsNone(origin["model"])
             self.assertEqual(origin["answer_mode"], "latest_update")
             self.assertEqual(origin["verification_label"], "공식+기사 교차 확인")
             self.assertEqual(origin["source_roles"], ["보조 기사", "공식 기반"])
@@ -17718,6 +20764,15 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(second["ok"])
             source_paths = second["session"]["active_context"]["source_paths"]
             self.assertIn("https://example.com/seoul-weather", source_paths)
+            followup_origin = second["response"]["response_origin"]
+            self.assertEqual(followup_origin["provider"], "web")
+            self.assertEqual(followup_origin["badge"], "WEB")
+            self.assertEqual(followup_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(followup_origin["kind"], "assistant")
+            self.assertIsNone(followup_origin["model"])
+            self.assertEqual(followup_origin["answer_mode"], "latest_update")
+            self.assertEqual(followup_origin["verification_label"], "단일 출처 참고")
+            self.assertEqual(followup_origin["source_roles"], ["보조 출처"])
 
     def test_handle_chat_latest_update_news_only_follow_up_preserves_source_paths(self) -> None:
         """news-only latest_update 검색 → load_web_search_record_id + user_text follow-up에서
@@ -17788,6 +20843,15 @@ class WebAppServiceTest(unittest.TestCase):
             source_paths = second["session"]["active_context"]["source_paths"]
             self.assertIn("https://www.hankyung.com/economy/2025", source_paths)
             self.assertIn("https://www.mk.co.kr/economy/2025", source_paths)
+            followup_origin = second["response"]["response_origin"]
+            self.assertEqual(followup_origin["provider"], "web")
+            self.assertEqual(followup_origin["badge"], "WEB")
+            self.assertEqual(followup_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(followup_origin["kind"], "assistant")
+            self.assertIsNone(followup_origin["model"])
+            self.assertEqual(followup_origin["answer_mode"], "latest_update")
+            self.assertEqual(followup_origin["verification_label"], "기사 교차 확인")
+            self.assertEqual(followup_origin["source_roles"], ["보조 기사"])
 
     def test_handle_chat_zero_strong_slot_entity_card_history_card_reload_follow_up_preserves_stored_response_origin(self) -> None:
         """zero-strong-slot entity-card → load_web_search_record_id + user_text follow-up에서
@@ -18659,8 +21723,27 @@ class WebAppServiceTest(unittest.TestCase):
 
             fourth = service.handle_chat({"session_id": "latest-single-2fu-session", "user_text": "더 자세히 알려줘", "provider": "mock", "load_web_search_record_id": record_id})
             self.assertTrue(fourth["ok"])
+            stored_record = service.web_search_store.get_session_record(
+                "latest-single-2fu-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["answer_mode"], "latest_update")
+            self.assertEqual(
+                stored_origin["verification_label"], "단일 출처 참고"
+            )
+            self.assertEqual(stored_origin["source_roles"], ["보조 출처"])
             origin = fourth["response"]["response_origin"]
+            self.assertEqual(origin["provider"], "web")
             self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(origin["kind"], "assistant")
+            self.assertIsNone(origin["model"])
             self.assertEqual(origin["answer_mode"], "latest_update")
             self.assertEqual(origin["verification_label"], "단일 출처 참고")
             self.assertEqual(origin["source_roles"], ["보조 출처"])
@@ -18738,8 +21821,27 @@ class WebAppServiceTest(unittest.TestCase):
 
             fourth = service.handle_chat({"session_id": "latest-news-2fu-session", "user_text": "더 자세히 알려줘", "provider": "mock", "load_web_search_record_id": record_id})
             self.assertTrue(fourth["ok"])
+            stored_record = service.web_search_store.get_session_record(
+                "latest-news-2fu-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["answer_mode"], "latest_update")
+            self.assertEqual(
+                stored_origin["verification_label"], "기사 교차 확인"
+            )
+            self.assertEqual(stored_origin["source_roles"], ["보조 기사"])
             origin = fourth["response"]["response_origin"]
+            self.assertEqual(origin["provider"], "web")
             self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(origin["kind"], "assistant")
+            self.assertIsNone(origin["model"])
             self.assertEqual(origin["answer_mode"], "latest_update")
             self.assertEqual(origin["verification_label"], "기사 교차 확인")
             self.assertEqual(origin["source_roles"], ["보조 기사"])
@@ -18806,7 +21908,11 @@ class WebAppServiceTest(unittest.TestCase):
             third = service.handle_chat({"session_id": "latest-mixed-nat-fu-session", "user_text": "이 검색 결과 요약해줘", "provider": "mock", "load_web_search_record_id": record_id})
             self.assertTrue(third["ok"])
             origin = third["response"]["response_origin"]
+            self.assertEqual(origin["provider"], "web")
             self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(origin["kind"], "assistant")
+            self.assertIsNone(origin["model"])
             self.assertEqual(origin["answer_mode"], "latest_update")
             self.assertEqual(origin["verification_label"], "공식+기사 교차 확인")
             self.assertEqual(origin["source_roles"], ["보조 기사", "공식 기반"])
@@ -18875,7 +21981,11 @@ class WebAppServiceTest(unittest.TestCase):
             fourth = service.handle_chat({"session_id": "latest-mixed-nat-2fu-session", "user_text": "더 자세히 알려줘", "provider": "mock", "load_web_search_record_id": record_id})
             self.assertTrue(fourth["ok"])
             origin = fourth["response"]["response_origin"]
+            self.assertEqual(origin["provider"], "web")
             self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(origin["kind"], "assistant")
+            self.assertIsNone(origin["model"])
             self.assertEqual(origin["answer_mode"], "latest_update")
             self.assertEqual(origin["verification_label"], "공식+기사 교차 확인")
             self.assertEqual(origin["source_roles"], ["보조 기사", "공식 기반"])
@@ -18933,7 +22043,11 @@ class WebAppServiceTest(unittest.TestCase):
             third = service.handle_chat({"session_id": "latest-single-nat-fu-session", "user_text": "이 검색 결과 요약해줘", "provider": "mock", "load_web_search_record_id": record_id})
             self.assertTrue(third["ok"])
             origin = third["response"]["response_origin"]
+            self.assertEqual(origin["provider"], "web")
             self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(origin["kind"], "assistant")
+            self.assertIsNone(origin["model"])
             self.assertEqual(origin["answer_mode"], "latest_update")
             self.assertEqual(origin["verification_label"], "단일 출처 참고")
             self.assertEqual(origin["source_roles"], ["보조 출처"])
@@ -18992,7 +22106,11 @@ class WebAppServiceTest(unittest.TestCase):
             fourth = service.handle_chat({"session_id": "latest-single-nat-2fu-session", "user_text": "더 자세히 알려줘", "provider": "mock", "load_web_search_record_id": record_id})
             self.assertTrue(fourth["ok"])
             origin = fourth["response"]["response_origin"]
+            self.assertEqual(origin["provider"], "web")
             self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(origin["kind"], "assistant")
+            self.assertIsNone(origin["model"])
             self.assertEqual(origin["answer_mode"], "latest_update")
             self.assertEqual(origin["verification_label"], "단일 출처 참고")
             self.assertEqual(origin["source_roles"], ["보조 출처"])
@@ -19055,7 +22173,11 @@ class WebAppServiceTest(unittest.TestCase):
             third = service.handle_chat({"session_id": "latest-news-nat-fu-session", "user_text": "이 검색 결과 요약해줘", "provider": "mock", "load_web_search_record_id": record_id})
             self.assertTrue(third["ok"])
             origin = third["response"]["response_origin"]
+            self.assertEqual(origin["provider"], "web")
             self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(origin["kind"], "assistant")
+            self.assertIsNone(origin["model"])
             self.assertEqual(origin["answer_mode"], "latest_update")
             self.assertEqual(origin["verification_label"], "기사 교차 확인")
             self.assertEqual(origin["source_roles"], ["보조 기사"])
@@ -19121,7 +22243,11 @@ class WebAppServiceTest(unittest.TestCase):
             fourth = service.handle_chat({"session_id": "latest-news-nat-2fu-session", "user_text": "더 자세히 알려줘", "provider": "mock", "load_web_search_record_id": record_id})
             self.assertTrue(fourth["ok"])
             origin = fourth["response"]["response_origin"]
+            self.assertEqual(origin["provider"], "web")
             self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(origin["kind"], "assistant")
+            self.assertIsNone(origin["model"])
             self.assertEqual(origin["answer_mode"], "latest_update")
             self.assertEqual(origin["verification_label"], "기사 교차 확인")
             self.assertEqual(origin["source_roles"], ["보조 기사"])
@@ -19141,6 +22267,101 @@ class WebAppServiceTest(unittest.TestCase):
             )
             self.assertEqual(
                 str(history_entry.get("claim_coverage_progress_summary") or ""),
+                "",
+            )
+
+    def test_handle_chat_latest_update_noisy_source_excluded_after_natural_reload(self) -> None:
+        """latest_update noisy-community → 자연어 reload("방금 검색한 결과 다시 보여줘")에서
+        noisy community source가 텍스트·source_roles·source_paths에 미노출되고,
+        surface/stored 모두 기사 교차 확인 exact-field latest-update contract가 유지됩니다."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+
+            noisy_snippet = "기준금리 속보 - 로그인 회원가입 구독 광고 전체메뉴 이용약관 개인정보 facebook twitter"
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool(
+                    [
+                        SimpleNamespace(title="기준금리 속보 - 한국경제", url="https://www.hankyung.com/economy/2025", snippet="한국은행이 기준금리를 동결했다고 밝혔다."),
+                        SimpleNamespace(title="기준금리 뉴스 - 매일경제", url="https://www.mk.co.kr/economy/2025", snippet="한국은행이 기준금리를 동결했다."),
+                        SimpleNamespace(title="기준금리 커뮤니티", url="https://brunch.co.kr/economy", snippet=noisy_snippet),
+                    ],
+                    pages={
+                        "https://www.hankyung.com/economy/2025": {"title": "기준금리 속보 - 한국경제", "text": "한국은행이 기준금리를 동결했다고 밝혔다."},
+                        "https://www.mk.co.kr/economy/2025": {"title": "기준금리 뉴스 - 매일경제", "text": "한국은행이 기준금리를 동결했다."},
+                        "https://brunch.co.kr/economy": {"title": "기준금리 커뮤니티", "text": noisy_snippet},
+                    },
+                ),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            first = service.handle_chat({"session_id": "latest-noisy-nat-reload-session", "user_text": "기준금리 속보 검색해봐", "provider": "mock", "web_search_permission": "enabled"})
+            self.assertTrue(first["ok"])
+            record_id = first["session"]["web_search_history"][0]["record_id"]
+
+            # 자연어 reload ("방금 검색한 결과 다시 보여줘")
+            second = service.handle_chat({"session_id": "latest-noisy-nat-reload-session", "user_text": "방금 검색한 결과 다시 보여줘", "provider": "mock"})
+            self.assertTrue(second["ok"])
+            self.assertEqual(second["response"]["actions_taken"], ["load_web_search_record"])
+
+            reload_origin = second["response"]["response_origin"]
+            self.assertEqual(reload_origin["provider"], "web")
+            self.assertEqual(reload_origin["badge"], "WEB")
+            self.assertEqual(reload_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(reload_origin["kind"], "assistant")
+            self.assertIsNone(reload_origin["model"])
+            self.assertEqual(reload_origin["answer_mode"], "latest_update")
+            self.assertEqual(reload_origin["verification_label"], "기사 교차 확인")
+            self.assertEqual(reload_origin["source_roles"], ["보조 기사"])
+            self.assertNotIn("보조 커뮤니티", str(reload_origin["source_roles"]))
+            self.assertNotIn("brunch", second["response"]["text"])
+
+            source_paths = second["session"]["active_context"]["source_paths"]
+            self.assertIn("https://www.hankyung.com/economy/2025", source_paths)
+            self.assertIn("https://www.mk.co.kr/economy/2025", source_paths)
+            self.assertNotIn("https://brunch.co.kr/economy", source_paths)
+
+            stored_record = service.web_search_store.get_session_record(
+                "latest-noisy-nat-reload-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["answer_mode"], "latest_update")
+            self.assertEqual(
+                stored_origin["verification_label"], "기사 교차 확인"
+            )
+            self.assertEqual(stored_origin["source_roles"], ["보조 기사"])
+
+            # latest-update noisy natural-reload empty-meta branch: history entry keeps
+            # zero-count claim_coverage_summary + empty progress after the reload.
+            reload_history = second["session"]["web_search_history"]
+            self.assertTrue(reload_history)
+            reload_entry = next(
+                (item for item in reload_history if item.get("record_id") == record_id),
+                None,
+            )
+            self.assertIsNotNone(reload_entry)
+            self.assertEqual(
+                reload_entry.get("claim_coverage_summary") or {},
+                {"strong": 0, "weak": 0, "missing": 0},
+            )
+            self.assertEqual(
+                str(reload_entry.get("claim_coverage_progress_summary") or ""),
                 "",
             )
 
@@ -19188,8 +22409,27 @@ class WebAppServiceTest(unittest.TestCase):
 
             third = service.handle_chat({"session_id": "latest-noisy-nat-fu-session", "user_text": "이 검색 결과 요약해줘", "provider": "mock", "load_web_search_record_id": record_id})
             self.assertTrue(third["ok"])
+            stored_record = service.web_search_store.get_session_record(
+                "latest-noisy-nat-fu-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["answer_mode"], "latest_update")
+            self.assertEqual(
+                stored_origin["verification_label"], "기사 교차 확인"
+            )
+            self.assertEqual(stored_origin["source_roles"], ["보조 기사"])
             origin = third["response"]["response_origin"]
+            self.assertEqual(origin["provider"], "web")
             self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(origin["kind"], "assistant")
+            self.assertIsNone(origin["model"])
             self.assertEqual(origin["answer_mode"], "latest_update")
             self.assertEqual(origin["verification_label"], "기사 교차 확인")
             self.assertEqual(origin["source_roles"], ["보조 기사"])
@@ -19266,8 +22506,27 @@ class WebAppServiceTest(unittest.TestCase):
 
             fourth = service.handle_chat({"session_id": "latest-noisy-nat-2fu-session", "user_text": "더 자세히 알려줘", "provider": "mock", "load_web_search_record_id": record_id})
             self.assertTrue(fourth["ok"])
+            stored_record = service.web_search_store.get_session_record(
+                "latest-noisy-nat-2fu-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["answer_mode"], "latest_update")
+            self.assertEqual(
+                stored_origin["verification_label"], "기사 교차 확인"
+            )
+            self.assertEqual(stored_origin["source_roles"], ["보조 기사"])
             origin = fourth["response"]["response_origin"]
+            self.assertEqual(origin["provider"], "web")
             self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(origin["kind"], "assistant")
+            self.assertIsNone(origin["model"])
             self.assertEqual(origin["answer_mode"], "latest_update")
             self.assertEqual(origin["verification_label"], "기사 교차 확인")
             self.assertEqual(origin["source_roles"], ["보조 기사"])
@@ -19342,8 +22601,27 @@ class WebAppServiceTest(unittest.TestCase):
             # first follow-up
             third = service.handle_chat({"session_id": "latest-noisy-click-fu-session", "user_text": "이 검색 결과 요약해줘", "provider": "mock", "load_web_search_record_id": record_id})
             self.assertTrue(third["ok"])
+            stored_record = service.web_search_store.get_session_record(
+                "latest-noisy-click-fu-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["answer_mode"], "latest_update")
+            self.assertEqual(
+                stored_origin["verification_label"], "기사 교차 확인"
+            )
+            self.assertEqual(stored_origin["source_roles"], ["보조 기사"])
             origin = third["response"]["response_origin"]
+            self.assertEqual(origin["provider"], "web")
             self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(origin["kind"], "assistant")
+            self.assertIsNone(origin["model"])
             self.assertEqual(origin["answer_mode"], "latest_update")
             self.assertEqual(origin["verification_label"], "기사 교차 확인")
             self.assertEqual(origin["source_roles"], ["보조 기사"])
@@ -19419,8 +22697,27 @@ class WebAppServiceTest(unittest.TestCase):
 
             fourth = service.handle_chat({"session_id": "latest-noisy-click-2fu-session", "user_text": "더 자세히 알려줘", "provider": "mock", "load_web_search_record_id": record_id})
             self.assertTrue(fourth["ok"])
+            stored_record = service.web_search_store.get_session_record(
+                "latest-noisy-click-2fu-session", record_id
+            )
+            self.assertIsNotNone(stored_record)
+            stored_origin = stored_record["response_origin"]
+            self.assertEqual(stored_origin["provider"], "web")
+            self.assertEqual(stored_origin["badge"], "WEB")
+            self.assertEqual(stored_origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(stored_origin["kind"], "assistant")
+            self.assertIsNone(stored_origin["model"])
+            self.assertEqual(stored_origin["answer_mode"], "latest_update")
+            self.assertEqual(
+                stored_origin["verification_label"], "기사 교차 확인"
+            )
+            self.assertEqual(stored_origin["source_roles"], ["보조 기사"])
             origin = fourth["response"]["response_origin"]
+            self.assertEqual(origin["provider"], "web")
             self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["label"], "외부 웹 최신 확인")
+            self.assertEqual(origin["kind"], "assistant")
+            self.assertIsNone(origin["model"])
             self.assertEqual(origin["answer_mode"], "latest_update")
             self.assertEqual(origin["verification_label"], "기사 교차 확인")
             self.assertEqual(origin["source_roles"], ["보조 기사"])

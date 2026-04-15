@@ -1,4 +1,4 @@
-"""tmux/watcher lifecycle, pipeline start/stop, file helpers."""
+"""Runtime-facing backend helpers; legacy tmux/log observers are compat-only wrappers."""
 from __future__ import annotations
 
 import json
@@ -10,6 +10,10 @@ import time
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
+from pipeline_runtime.schema import read_jsonl_tail
+from pipeline_runtime.tmux_adapter import TmuxAdapter
+
+from . import legacy_backend_debug
 from .platform import (
     IS_WINDOWS, WSL_DISTRO,
     CREATE_NO_WINDOW, FILE_QUERY_TIMEOUT,
@@ -30,31 +34,18 @@ _VERIFY_ACTIVITY_LABELS = {
 
 
 def _read_log_lines(path: Path, *, tail_count: int) -> list[str]:
-    if IS_WINDOWS:
-        code, content = _run(["tail", "-n", str(tail_count), _wsl_path_str(path)], timeout=FILE_QUERY_TIMEOUT)
-        if code != 0:
-            return []
-        return content.splitlines()
-    if not path.exists():
-        return []
-    try:
-        from collections import deque
-        with open(path, encoding="utf-8", errors="replace") as f:
-            return [line.rstrip("\n") for line in deque(f, maxlen=tail_count)]
-    except OSError:
-        return []
+    return legacy_backend_debug.read_log_lines(
+        path,
+        tail_count=tail_count,
+        is_windows=IS_WINDOWS,
+        run=_run,
+        wsl_path_str=_wsl_path_str,
+        file_query_timeout=FILE_QUERY_TIMEOUT,
+    )
 
 
 def _clean_log_lines(lines: list[str]) -> list[str]:
-    cleaned: list[str] = []
-    for line in lines:
-        stripped = _ANSI_RE.sub("", line).strip()
-        if not stripped:
-            continue
-        if set(stripped) == {"="}:
-            continue
-        cleaned.append(stripped)
-    return cleaned
+    return legacy_backend_debug.clean_log_lines(lines)
 
 
 def _read_json_file(path: Path) -> dict[str, object] | None:
@@ -77,76 +68,34 @@ def _read_json_file(path: Path) -> dict[str, object] | None:
     return data if isinstance(data, dict) else None
 
 
+def normalize_runtime_status(value: object | None) -> dict[str, object]:
+    """Coerce runtime status payloads to a dict for UI callers."""
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
 def tmux_alive(session: str = "") -> bool:
-    code, _ = _run(["tmux", "has-session", "-t", session or "ai-pipeline"])
-    return code == 0
+    return legacy_backend_debug.tmux_alive(session, run=_run)
 
 
 def watcher_alive(project: Path) -> tuple[bool, int | None]:
-    pid_path = project / ".pipeline" / "experimental.pid"
-    if IS_WINDOWS:
-        code, content = _run(["cat", _wsl_path_str(pid_path)])
-        if code != 0 or not content.strip():
-            return False, None
-        try:
-            pid = int(content.strip())
-        except ValueError:
-            return False, None
-        check_code, _ = _run(["kill", "-0", str(pid)])
-        return check_code == 0, pid
-    else:
-        if not pid_path.exists():
-            return False, None
-        try:
-            pid = int(pid_path.read_text().strip())
-            os.kill(pid, 0)
-            return True, pid
-        except (ValueError, OSError):
-            return False, None
+    return legacy_backend_debug.watcher_alive(
+        project,
+        is_windows=IS_WINDOWS,
+        run=_run,
+        wsl_path_str=_wsl_path_str,
+    )
 
 
 def latest_md(directory: Path) -> tuple[str, float]:
-    if IS_WINDOWS:
-        code, output = _run([
-            "find", _wsl_path_str(directory), "-name", "*.md", "-type", "f",
-            "-printf", "%T@\\t%P\\n",
-        ], timeout=FILE_QUERY_TIMEOUT)
-        if code != 0 or not output.strip():
-            return "—", 0.0
-        best_mtime = 0.0
-        best_rel = ""
-        for line in output.strip().splitlines():
-            parts = line.split("\t", 1)
-            if len(parts) != 2:
-                continue
-            try:
-                mt = float(parts[0])
-            except ValueError:
-                continue
-            if mt > best_mtime:
-                best_mtime = mt
-                best_rel = parts[1]
-        return (best_rel or "—"), best_mtime
-    else:
-        best_path: Path | None = None
-        best_mtime: float = 0.0
-        if not directory.exists():
-            return "—", 0.0
-        for md in directory.rglob("*.md"):
-            try:
-                mt = md.stat().st_mtime
-                if mt > best_mtime:
-                    best_mtime = mt
-                    best_path = md
-            except OSError:
-                continue
-        if best_path is None:
-            return "—", 0.0
-        try:
-            rel = str(best_path.relative_to(directory))
-        except ValueError:
-            rel = best_path.name
-        return rel, best_mtime
+    return legacy_backend_debug.latest_md(
+        directory,
+        is_windows=IS_WINDOWS,
+        run=_run,
+        wsl_path_str=_wsl_path_str,
+        file_query_timeout=FILE_QUERY_TIMEOUT,
+    )
 
 
 
@@ -162,21 +111,13 @@ def watcher_log_snapshot(
     summary_lines: int = 50,
     hint_lines: int = 300,
 ) -> dict[str, list[str]]:
-    log_path = project / ".pipeline" / "logs" / "experimental" / "watcher.log"
-    tail_count = max(display_lines * 8, 40, summary_lines, hint_lines)
-    all_lines = _read_log_lines(log_path, tail_count=tail_count)
-    if not all_lines:
-        return {
-            "display_lines": ["(로그 없음)"],
-            "summary_lines": [],
-            "hint_lines": [],
-        }
-    filtered = [l for l in all_lines if "suppressed" not in l and "A/B ratio" not in l]
-    return {
-        "display_lines": filtered[-display_lines:] if filtered else ["(이벤트 없음)"],
-        "summary_lines": all_lines[-summary_lines:],
-        "hint_lines": all_lines[-hint_lines:],
-    }
+    return legacy_backend_debug.watcher_log_snapshot(
+        project,
+        display_lines=display_lines,
+        summary_lines=summary_lines,
+        hint_lines=hint_lines,
+        read_log_lines=_read_log_lines,
+    )
 
 
 def pipeline_start_log_tail(project: Path, lines: int = 5) -> list[str]:
@@ -214,37 +155,15 @@ def pipeline_start_failure_hint(project: Path) -> str:
 
 
 def watcher_start_observed(project: Path, *, not_before: float) -> bool:
-    log_path = project / ".pipeline" / "logs" / "experimental" / "watcher.log"
-    if IS_WINDOWS:
-        code, stat_text = _run(["stat", "-c", "%Y", _wsl_path_str(log_path)], timeout=FILE_QUERY_TIMEOUT)
-        if code != 0 or not stat_text.strip():
-            return False
-        try:
-            log_mtime = float(stat_text.strip())
-        except ValueError:
-            return False
-    else:
-        if not log_path.exists():
-            return False
-        try:
-            log_mtime = log_path.stat().st_mtime
-        except OSError:
-            return False
-    if log_mtime < not_before:
-        return False
-
-    lines = watcher_log_tail(project, lines=12)
-    if not lines or lines[0].startswith("("):
-        return False
-    markers = (
-        "WatcherCore v2.1 started",
-        "initial turn:",
-        "notify_claude:",
-        "notify_gemini:",
-        "notify_codex_followup:",
-        "waiting_for_claude:",
+    return legacy_backend_debug.watcher_start_observed(
+        project,
+        not_before=not_before,
+        is_windows=IS_WINDOWS,
+        run=_run,
+        wsl_path_str=_wsl_path_str,
+        file_query_timeout=FILE_QUERY_TIMEOUT,
+        watcher_log_tail=lambda runtime_project, lines: watcher_log_tail(runtime_project, lines=lines),
     )
-    return any(any(marker in line for marker in markers) for line in lines)
 
 
 def confirm_pipeline_start(
@@ -260,36 +179,28 @@ def confirm_pipeline_start(
     sleeper = sleep_fn or time.sleep
     for sec in range(timeout_seconds):
         sleeper(1)
-        session_alive = tmux_alive(session)
-        watcher_ok, _watcher_pid = watcher_alive(project)
-        watcher_seen = watcher_start_observed(project, not_before=start_requested_at - 1.0)
-        if session_alive:
-            if watcher_ok:
-                return True, f"파이프라인 {action_label} 완료"
-            if watcher_seen:
-                return True, f"파이프라인 {action_label} 완료 (watcher 확인)"
-            if sec >= 10:
-                hint = pipeline_start_failure_hint(project)
-                suffix = f" — {hint}" if hint else ""
-                return (
-                    False,
-                    f"{action_label} 불완전: tmux 세션은 있으나 watcher가 감지되지 않았습니다 "
-                    f"— .pipeline/logs/experimental/ 오류를 확인해 주세요{suffix}",
-                )
-            if progress_callback is not None:
-                progress_callback(f"{action_label} 중... tmux 확인, watcher 대기 중 ({sec + 1}초)")
-            continue
-        if watcher_ok or watcher_seen:
-            return True, f"파이프라인 {action_label} 완료 (watcher 확인)"
-        if sec >= 5 and progress_callback is not None:
-            progress_callback(f"{action_label} 중... tmux 세션 대기 중 ({sec + 1}초)")
+        runtime_status = normalize_runtime_status(read_runtime_status(project))
+        runtime_state = str(runtime_status.get("runtime_state") or "")
+        lanes = list(runtime_status.get("lanes") or [])
+        ready_lanes = [
+            lane
+            for lane in lanes
+            if bool(lane.get("attachable")) and str(lane.get("state") or "") in {"READY", "WORKING"}
+        ]
+        if runtime_state in {"RUNNING", "DEGRADED"} and ready_lanes:
+            return True, f"파이프라인 {action_label} 완료"
+        if runtime_state == "BROKEN":
+            detail = str(runtime_status.get("degraded_reason") or "runtime broken")
+            return False, f"{action_label} 실패: supervisor가 BROKEN 상태로 전이했습니다 — {detail}"
+        if progress_callback is not None:
+            progress_callback(f"{action_label} 중... runtime {runtime_state or 'STARTING'} 대기 중 ({sec + 1}초)")
 
     hint = pipeline_start_failure_hint(project)
     suffix = f" — {hint}" if hint else ""
     return (
         False,
-        f"{action_label} 실패: 15초 안에 tmux 세션 '{session}'가 감지되지 않았습니다 "
-        f"— launcher script가 오류로 종료됐을 수 있습니다{suffix}",
+        f"{action_label} 실패: 15초 안에 runtime READY 조건을 만족하지 못했습니다 "
+        f"— supervisor/status를 확인해 주세요{suffix}",
     )
 
 
@@ -354,20 +265,6 @@ def pipeline_stop(project: Path, session: str = "") -> str:
         detail = (stderr.strip() or stdout.strip() or f"exit={result.returncode}").splitlines()[-1]
         raise RuntimeError(f"stop-pipeline.sh failed: {detail}")
     return "중지 완료"
-
-
-def tmux_attach(session: str) -> None:
-    if IS_WINDOWS:
-        subprocess.Popen(
-            ["cmd", "/c", "start", "wsl.exe", "-d", WSL_DISTRO, "--",
-             "bash", "-lc", f"tmux attach -t {session}"],
-            creationflags=CREATE_NO_WINDOW,
-        )
-    else:
-        subprocess.Popen(
-            ["bash", "-c", f"tmux attach -t {session}"],
-            start_new_session=True,
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -534,6 +431,103 @@ def read_turn_state(project: Path) -> dict[str, object] | None:
     """Read .pipeline/state/turn_state.json if present."""
     path = project / ".pipeline" / "state" / "turn_state.json"
     return _read_json_file(path)
+
+
+def read_current_run(project: Path) -> dict[str, object] | None:
+    """Read .pipeline/current_run.json if present."""
+    path = project / ".pipeline" / "current_run.json"
+    return _read_json_file(path)
+
+
+def read_runtime_status(project: Path) -> dict[str, object] | None:
+    """Read the current run-scoped runtime status if present."""
+    current_run = read_current_run(project)
+    if not current_run:
+        return None
+    status_path_value = str(current_run.get("status_path") or "").strip()
+    if status_path_value:
+        status_path = project / status_path_value
+        data = _read_json_file(status_path)
+        if data is not None:
+            return data
+    run_id = str(current_run.get("run_id") or "").strip()
+    if not run_id:
+        return None
+    status_path = project / ".pipeline" / "runs" / run_id / "status.json"
+    return _read_json_file(status_path)
+
+
+def read_runtime_event_tail(project: Path, *, max_lines: int = 14) -> list[dict[str, object]]:
+    current_run = read_current_run(project)
+    if not current_run:
+        return []
+    events_path_value = str(current_run.get("events_path") or "").strip()
+    if events_path_value:
+        events_path = project / events_path_value
+    else:
+        run_id = str(current_run.get("run_id") or "").strip()
+        if not run_id:
+            return []
+        events_path = project / ".pipeline" / "runs" / run_id / "events.jsonl"
+    return [dict(item) for item in read_jsonl_tail(events_path, max_lines=max_lines)]
+
+
+def runtime_state(project: Path) -> str:
+    status = normalize_runtime_status(read_runtime_status(project))
+    if not status:
+        return "STOPPED"
+    return str(status.get("runtime_state") or "STOPPED")
+
+
+def runtime_active(project: Path) -> bool:
+    return runtime_state(project) not in {"STOPPED", "BROKEN"}
+
+
+def runtime_attach(project: Path, session: str = "", lane: str | None = None) -> int:
+    sess = session or _session_name_for(project)
+    cmd = [
+        "python3",
+        "-m",
+        "pipeline_runtime.cli",
+        "attach",
+        "--project-root",
+        str(project),
+        "--session",
+        sess,
+    ]
+    if lane:
+        cmd.extend(["--lane", lane])
+    if IS_WINDOWS:
+        wsl_project = _wsl_path_str(project)
+        process = subprocess.Popen(
+            ["wsl.exe", "-d", WSL_DISTRO, "--cd", wsl_project, "--", *cmd],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=CREATE_NO_WINDOW,
+        )
+        return int(process.pid)
+    process = subprocess.Popen(
+        cmd,
+        cwd=str(project),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return int(process.pid)
+
+
+def runtime_attach_blocking(project: Path, session: str = "", lane: str | None = None) -> int:
+    adapter = TmuxAdapter(project, session or _session_name_for(project))
+    return adapter.attach_blocking(lane)
+
+
+def runtime_capture_tail(project: Path, session: str = "", lane: str | None = None, *, lines: int = 120) -> str:
+    if not lane:
+        return ""
+    adapter = TmuxAdapter(project, session or _session_name_for(project))
+    return adapter.capture_tail(lane, lines=lines)
 
 
 _TURN_STATE_LABELS: dict[str, str] = {

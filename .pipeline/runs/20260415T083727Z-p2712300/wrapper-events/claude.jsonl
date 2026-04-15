@@ -1,0 +1,60 @@
+{"ts": "2026-04-15T08:37:28.341505Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:37:30.887255Z", "lane": "Claude", "event_type": "READY", "source": "wrapper", "payload": {"pid": 2713058, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:37:33.412740Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:37:38.432312Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:37:43.468350Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:37:45.613647Z", "lane": "Claude", "event_type": "TASK_ACCEPTED", "source": "wrapper", "payload": {"pid": 2713058, "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22", "control_seq": 136, "attempt": 1}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:37:48.495066Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:37:53.508097Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:37:58.565449Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:38:03.577675Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:38:08.579402Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:38:13.602751Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:38:13.603008Z", "lane": "Claude", "event_type": "TASK_DONE", "source": "wrapper", "payload": {"pid": 2713058, "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22", "control_seq": 136}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:13.603122Z", "lane": "Claude", "event_type": "READY", "source": "wrapper", "payload": {"pid": 2713058, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:13.703348Z", "lane": "Claude", "event_type": "TASK_ACCEPTED", "source": "wrapper", "payload": {"pid": 2713058, "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22", "control_seq": 136, "attempt": 1}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:18.631337Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:38:23.656520Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:38:25.430765Z", "lane": "Claude", "event_type": "TASK_DONE", "source": "wrapper", "payload": {"pid": 2713058, "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22", "control_seq": 136}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:25.430932Z", "lane": "Claude", "event_type": "READY", "source": "wrapper", "payload": {"pid": 2713058, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:25.472859Z", "lane": "Claude", "event_type": "TASK_ACCEPTED", "source": "wrapper", "payload": {"pid": 2713058, "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22", "control_seq": 136, "attempt": 1}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:26.984188Z", "lane": "Claude", "event_type": "TASK_DONE", "source": "wrapper", "payload": {"pid": 2713058, "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22", "control_seq": 136}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:26.984451Z", "lane": "Claude", "event_type": "READY", "source": "wrapper", "payload": {"pid": 2713058, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:28.704024Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:38:32.730173Z", "lane": "Claude", "event_type": "TASK_ACCEPTED", "source": "wrapper", "payload": {"pid": 2713058, "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22", "control_seq": 136, "attempt": 1}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:33.749846Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:38:33.750094Z", "lane": "Claude", "event_type": "TASK_DONE", "source": "wrapper", "payload": {"pid": 2713058, "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22", "control_seq": 136}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:33.750202Z", "lane": "Claude", "event_type": "READY", "source": "wrapper", "payload": {"pid": 2713058, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:36.352773Z", "lane": "Claude", "event_type": "TASK_ACCEPTED", "source": "wrapper", "payload": {"pid": 2713058, "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22", "control_seq": 136, "attempt": 1}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:37.883451Z", "lane": "Claude", "event_type": "TASK_DONE", "source": "wrapper", "payload": {"pid": 2713058, "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22", "control_seq": 136}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:37.883608Z", "lane": "Claude", "event_type": "READY", "source": "wrapper", "payload": {"pid": 2713058, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:38.774946Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:38:40.265372Z", "lane": "Claude", "event_type": "TASK_ACCEPTED", "source": "wrapper", "payload": {"pid": 2713058, "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22", "control_seq": 136, "attempt": 1}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:43.831491Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:38:46.744905Z", "lane": "Claude", "event_type": "TASK_DONE", "source": "wrapper", "payload": {"pid": 2713058, "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22", "control_seq": 136}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:46.745084Z", "lane": "Claude", "event_type": "READY", "source": "wrapper", "payload": {"pid": 2713058, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:48.858066Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:38:53.877981Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:38:52.734729Z", "lane": "Claude", "event_type": "TASK_ACCEPTED", "source": "wrapper", "payload": {"pid": 2713058, "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22", "control_seq": 136, "attempt": 1}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:54.240371Z", "lane": "Claude", "event_type": "TASK_DONE", "source": "wrapper", "payload": {"pid": 2713058, "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22", "control_seq": 136}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:54.240553Z", "lane": "Claude", "event_type": "READY", "source": "wrapper", "payload": {"pid": 2713058, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:55.763485Z", "lane": "Claude", "event_type": "TASK_ACCEPTED", "source": "wrapper", "payload": {"pid": 2713058, "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22", "control_seq": 136, "attempt": 1}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:57.401217Z", "lane": "Claude", "event_type": "TASK_DONE", "source": "wrapper", "payload": {"pid": 2713058, "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22", "control_seq": 136}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:57.401441Z", "lane": "Claude", "event_type": "READY", "source": "wrapper", "payload": {"pid": 2713058, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:38:58.899045Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:39:00.371418Z", "lane": "Claude", "event_type": "TASK_ACCEPTED", "source": "wrapper", "payload": {"pid": 2713058, "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22", "control_seq": 136, "attempt": 1}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:39:03.940247Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:39:09.034615Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:39:14.044791Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:39:19.088979Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:39:24.160014Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:39:29.222535Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:39:29.629040Z", "lane": "Claude", "event_type": "TASK_DONE", "source": "wrapper", "payload": {"pid": 2713058, "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22", "control_seq": 136}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:39:29.629330Z", "lane": "Claude", "event_type": "READY", "source": "wrapper", "payload": {"pid": 2713058, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:39:33.008711Z", "lane": "Claude", "event_type": "TASK_ACCEPTED", "source": "wrapper", "payload": {"pid": 2713058, "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22", "control_seq": 136, "attempt": 1}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:39:34.241396Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:39:34.556144Z", "lane": "Claude", "event_type": "TASK_DONE", "source": "wrapper", "payload": {"pid": 2713058, "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22", "control_seq": 136}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:39:34.556408Z", "lane": "Claude", "event_type": "READY", "source": "wrapper", "payload": {"pid": 2713058, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T08:39:39.258177Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:39:44.317519Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T08:39:49.333144Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2713058}, "derived_from": "process_alive"}

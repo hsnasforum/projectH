@@ -1,0 +1,16 @@
+{"seq": 1, "ts": "2026-04-15T10:28:00.277181Z", "run_id": "20260415T102800Z-p2877776", "event_type": "runtime_started", "source": "supervisor", "payload": {"runtime_state": "STARTING"}}
+{"seq": 2, "ts": "2026-04-15T10:28:00.763292Z", "run_id": "20260415T102800Z-p2877776", "event_type": "control_changed", "source": "supervisor", "payload": {"active_control_file": ".pipeline/operator_request.md", "active_control_seq": 142, "active_control_status": "needs_operator", "active_control_updated_at": "2026-04-15T09:55:24.190807Z"}}
+{"seq": 3, "ts": "2026-04-15T10:28:00.763547Z", "run_id": "20260415T102800Z-p2877776", "event_type": "lane_booting", "source": "supervisor", "payload": {"lane": "Claude", "state": "BOOTING"}}
+{"seq": 4, "ts": "2026-04-15T10:28:00.763743Z", "run_id": "20260415T102800Z-p2877776", "event_type": "lane_booting", "source": "supervisor", "payload": {"lane": "Codex", "state": "BOOTING"}}
+{"seq": 5, "ts": "2026-04-15T10:28:00.763881Z", "run_id": "20260415T102800Z-p2877776", "event_type": "lane_booting", "source": "supervisor", "payload": {"lane": "Gemini", "state": "BOOTING"}}
+{"seq": 6, "ts": "2026-04-15T10:28:05.081329Z", "run_id": "20260415T102800Z-p2877776", "event_type": "lane_ready", "source": "supervisor", "payload": {"lane": "Claude", "state": "READY"}}
+{"seq": 7, "ts": "2026-04-15T10:28:06.158581Z", "run_id": "20260415T102800Z-p2877776", "event_type": "lane_ready", "source": "supervisor", "payload": {"lane": "Codex", "state": "READY"}}
+{"seq": 8, "ts": "2026-04-15T10:28:09.406208Z", "run_id": "20260415T102800Z-p2877776", "event_type": "lane_ready", "source": "supervisor", "payload": {"lane": "Gemini", "state": "READY"}}
+{"seq": 9, "ts": "2026-04-15T10:44:15.523069Z", "run_id": "20260415T102800Z-p2877776", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Claude", "attempt": 1}}
+{"seq": 10, "ts": "2026-04-15T10:44:15.528426Z", "run_id": "20260415T102800Z-p2877776", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Codex", "attempt": 1}}
+{"seq": 11, "ts": "2026-04-15T10:44:15.535580Z", "run_id": "20260415T102800Z-p2877776", "event_type": "recovery_started", "source": "supervisor", "payload": {"lane": "Gemini", "attempt": 1}}
+{"seq": 12, "ts": "2026-04-15T10:44:15.548294Z", "run_id": "20260415T102800Z-p2877776", "event_type": "degraded_entered", "source": "supervisor", "payload": {"reason": "claude_recovery_failed"}}
+{"seq": 13, "ts": "2026-04-15T10:44:15.548493Z", "run_id": "20260415T102800Z-p2877776", "event_type": "lane_broken", "source": "supervisor", "payload": {"lane": "Claude", "state": "BROKEN"}}
+{"seq": 14, "ts": "2026-04-15T10:44:15.548639Z", "run_id": "20260415T102800Z-p2877776", "event_type": "lane_broken", "source": "supervisor", "payload": {"lane": "Codex", "state": "BROKEN"}}
+{"seq": 15, "ts": "2026-04-15T10:44:15.548752Z", "run_id": "20260415T102800Z-p2877776", "event_type": "lane_broken", "source": "supervisor", "payload": {"lane": "Gemini", "state": "BROKEN"}}
+{"seq": 16, "ts": "2026-04-15T10:44:15.548861Z", "run_id": "20260415T102800Z-p2877776", "event_type": "runtime_stopped", "source": "supervisor", "payload": {"runtime_state": "STOPPED"}}

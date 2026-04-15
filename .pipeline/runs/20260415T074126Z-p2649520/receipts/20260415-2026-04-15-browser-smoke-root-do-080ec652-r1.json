@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "receipt_id": "20260415-2026-04-15-browser-smoke-root-do-080ec652-r1",
+  "run_id": "20260415T074126Z-p2649520",
+  "job_id": "20260415-2026-04-15-browser-smoke-root-do-080ec652",
+  "round": 1,
+  "target_lane": "codex",
+  "artifact_path": "/home/xpdlqj/code/projectH/verify/4/15/2026-04-15-browser-smoke-root-doc-pair-markdown-container-edge-case-bundle-verification.md",
+  "artifact_hash": "sha256:234d4cf7fa64d233a632f56fd9b77aecf6f1e76cd7ca2838c63aa122ea78f4c4",
+  "verify_manifest_path": "/home/xpdlqj/code/projectH/.pipeline/manifests/20260415-2026-04-15-browser-smoke-root-do-080ec652/round-1.verify.json",
+  "verify_result": "passed_by_feedback",
+  "control_seq": 132,
+  "closed_at": "2026-04-15T07:57:36.122392Z",
+  "emitted_by": "supervisor"
+}

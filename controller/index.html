@@ -46,11 +46,11 @@
   }
   .center { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
   .right-panel {
-    width: 220px; background: #141414; border-left: 1px solid #333; padding: 12px;
+    width: 280px; background: #141414; border-left: 1px solid #333; padding: 12px;
     overflow-y: auto; overflow-x: hidden; flex-shrink: 0; min-width: 220px;
   }
   .main.focus-mode .sidebar { width: 140px; }
-  .main.focus-mode .right-panel { display: none; }
+  .main.focus-mode .right-panel { display: block; }
 
   /* ── Sidebar ── */
   .sidebar h3 { font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
@@ -75,6 +75,7 @@
   .agent-status.working { background: #064e3b; color: #34d399; }
   .agent-status.ready { background: #1e3a5f; color: #60a5fa; }
   .agent-status.booting, .agent-status.unknown { background: #4a3414; color: #fbbf24; }
+  .agent-status.broken { background: #7f1d1d; color: #fca5a5; }
   .agent-status.dead, .agent-status.off { background: #7f1d1d; color: #fca5a5; }
   .agent-note {
     color: #999; font-size: 10px; min-width: 0; max-width: 56px;
@@ -84,6 +85,7 @@
   .dot.working { background: #34d399; }
   .dot.idle, .dot.ready { background: #60a5fa; }
   .dot.booting { background: #f59e0b; }
+  .dot.broken { background: #ef4444; }
   .dot.off { background: #555; }
   .dot.dead { background: #ef4444; }
   .dot.unknown { background: #a78bfa; }
@@ -124,6 +126,7 @@
   .pane-header .badge.working { background: #064e3b; color: #34d399; }
   .pane-header .badge.idle, .pane-header .badge.ready { background: #1e3a5f; color: #60a5fa; }
   .pane-header .badge.booting, .pane-header .badge.unknown { background: #4a3414; color: #fbbf24; }
+  .pane-header .badge.broken { background: #7f1d1d; color: #fca5a5; }
   .pane-header .badge.off { background: #333; color: #888; }
   .pane-header .badge.dead { background: #7f1d1d; color: #fca5a5; }
   .pane-header .meta { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -133,12 +136,12 @@
   }
   .pane-body {
   flex: 1;
-  padding: 15px 25px;
+  padding: 12px 14px;
   overflow-y: auto;
   overflow-x: hidden;
   font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
   font-size: 13px;
-  line-height: 1.6;
+  line-height: 1.5;
   color: #ccc;
 
   /* ── 이 설정들이 그릇을 넓혀줍니다 ── */
@@ -148,8 +151,9 @@
   box-sizing: border-box;
 
   white-space: pre-wrap;     /* 줄바꿈 유지 */
-  word-break: break-all;     /* 박스 끝까지 글자 채우기 */
+  word-break: normal;
   overflow-wrap: anywhere;   /* 박스 이탈 방지 */
+  tab-size: 2;
   text-align: left;
   }
   .pane-area::-webkit-scrollbar,
@@ -166,6 +170,662 @@
   .pane-area::-webkit-scrollbar-track,
   .pane-body::-webkit-scrollbar-track {
     background: #111;
+  }
+  .center.office-mode .pane-area { display: none; }
+  .office-area {
+    display: none;
+    flex: 1;
+    overflow: auto;
+    padding: 18px;
+    background:
+      radial-gradient(circle at 16% 10%, rgba(59, 130, 246, 0.16), transparent 24%),
+      radial-gradient(circle at 52% 4%, rgba(34, 197, 94, 0.10), transparent 22%),
+      radial-gradient(circle at 84% 12%, rgba(125, 211, 252, 0.12), transparent 24%),
+      linear-gradient(180deg, #0d1118 0%, #090c12 46%, #06080c 100%);
+  }
+  .center.office-mode .office-area { display: block; }
+  .office-stage {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .office-card {
+    background:
+      linear-gradient(180deg, rgba(17, 21, 31, 0.97), rgba(9, 11, 17, 0.98)),
+      linear-gradient(135deg, rgba(96, 165, 250, 0.05), transparent 70%);
+    border: 1px solid #2b3140;
+    border-radius: 18px;
+    padding: 12px 14px;
+    box-shadow: 0 14px 30px rgba(0,0,0,0.28);
+    min-width: 0;
+  }
+  .office-card .label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: #7c8596;
+    margin-bottom: 6px;
+  }
+  .office-card .value {
+    font-size: 16px;
+    font-weight: 700;
+    color: #f3f4f6;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .office-card .subvalue {
+    margin-top: 6px;
+    color: #9aa3b5;
+    font-size: 11px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .office-card .value.running { color: #34d399; }
+  .office-card .value.alive { color: #60a5fa; }
+  .office-card .value.degraded,
+  .office-card .value.broken { color: #fca5a5; }
+  .office-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1.55fr) 260px;
+    gap: 16px;
+    align-items: stretch;
+    min-height: 640px;
+  }
+  .office-floor {
+    position: relative;
+    min-height: 640px;
+    border: 1px solid #232938;
+    border-radius: 28px;
+    padding: 24px;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at 50% 0%, rgba(148, 163, 184, 0.10), transparent 45%),
+      linear-gradient(180deg, rgba(22, 28, 39, 0.98), rgba(8, 10, 15, 0.99));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03), 0 22px 48px rgba(0,0,0,0.36);
+  }
+  .office-floor.degraded {
+    background:
+      radial-gradient(circle at 50% 0%, rgba(248, 113, 113, 0.12), transparent 42%),
+      linear-gradient(180deg, rgba(28, 20, 23, 0.98), rgba(10, 9, 12, 0.99));
+  }
+  .office-floor::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
+    background-size: 36px 36px, 36px 36px;
+    opacity: 0.26;
+    pointer-events: none;
+  }
+  .office-floor::after {
+    content: "";
+    position: absolute;
+    left: 22px;
+    right: 22px;
+    bottom: 0;
+    height: 180px;
+    border-radius: 24px 24px 0 0;
+    background:
+      linear-gradient(180deg, rgba(67, 74, 92, 0.10), rgba(17, 21, 28, 0.18)),
+      linear-gradient(180deg, rgba(34, 38, 47, 0.22), rgba(13, 16, 21, 0.82));
+    pointer-events: none;
+  }
+  .office-floor-glow {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(circle at 15% 56%, rgba(59, 130, 246, 0.14), transparent 20%),
+      radial-gradient(circle at 50% 48%, rgba(16, 185, 129, 0.12), transparent 18%),
+      radial-gradient(circle at 84% 56%, rgba(129, 140, 248, 0.12), transparent 20%);
+    opacity: 0.9;
+  }
+  .office-floor.degraded .office-floor-glow {
+    background:
+      radial-gradient(circle at 50% 18%, rgba(248, 113, 113, 0.18), transparent 22%),
+      radial-gradient(circle at 50% 68%, rgba(239, 68, 68, 0.10), transparent 26%);
+  }
+  .office-window-band {
+    position: absolute;
+    left: 28px;
+    right: 28px;
+    top: 22px;
+    height: 118px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    opacity: 0.95;
+    pointer-events: none;
+  }
+  .office-window {
+    position: relative;
+    border-radius: 18px 18px 10px 10px;
+    border: 1px solid rgba(92, 101, 122, 0.4);
+    background:
+      linear-gradient(180deg, rgba(9, 17, 29, 0.96), rgba(15, 25, 45, 0.72)),
+      linear-gradient(90deg, rgba(255,255,255,0.03), transparent 25%, rgba(255,255,255,0.04) 55%, transparent 85%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+    overflow: hidden;
+  }
+  .office-window::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.07), transparent 42%),
+      repeating-linear-gradient(90deg, transparent 0 62px, rgba(255,255,255,0.08) 62px 64px);
+    opacity: 0.45;
+  }
+  .office-window::after {
+    content: "";
+    position: absolute;
+    inset: auto 14px 12px 14px;
+    height: 30px;
+    border-radius: 999px;
+    background: radial-gradient(circle, rgba(148, 197, 255, 0.22), transparent 70%);
+    filter: blur(10px);
+  }
+  .office-floor-header {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+    color: #d6d9df;
+  }
+  .office-floor-title {
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+  .office-floor-hint {
+    font-size: 11px;
+    color: #99a2b5;
+    line-height: 1.5;
+  }
+  .office-grid {
+    position: relative;
+    z-index: 1;
+    min-height: 560px;
+    margin-top: 18px;
+  }
+  .office-desks {
+    position: relative;
+    min-height: 560px;
+    padding: 110px 12px 18px;
+  }
+  .office-desk {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 360px;
+    border: none;
+    border-radius: 22px;
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
+    overflow: visible;
+  }
+  .office-desk-scene {
+    position: absolute;
+    width: min(31%, 320px);
+    min-width: 260px;
+    max-width: 360px;
+    transition: transform 220ms ease, filter 220ms ease;
+  }
+  .office-desk-scene.claude {
+    left: 2%;
+    bottom: 18px;
+  }
+  .office-desk-scene.codex {
+    left: 34%;
+    bottom: 54px;
+  }
+  .office-desk-scene.gemini {
+    right: 2%;
+    bottom: 12px;
+  }
+  .office-desk-scene.active {
+    transform: translateY(-6px) scale(1.01);
+  }
+  .office-desk-scene.implement .office-desk-header { color: #dbeafe; }
+  .office-desk-scene.verify .office-desk-header { color: #dcfce7; }
+  .office-desk-scene.advisory .office-desk-header { color: #e0e7ff; }
+  .office-desk-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+    padding: 0 8px 10px;
+  }
+  .office-agent-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .office-agent-label .name {
+    font-size: 14px;
+    font-weight: 700;
+    color: #f3f4f6;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .office-agent-label .role {
+    display: none;
+  }
+  .office-state-pill {
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .office-state-pill.ready { background: #1e3a5f; color: #93c5fd; }
+  .office-state-pill.working { background: #064e3b; color: #6ee7b7; }
+  .office-state-pill.booting,
+  .office-state-pill.unknown { background: #4a3414; color: #fbbf24; }
+  .office-state-pill.broken,
+  .office-state-pill.dead,
+  .office-state-pill.off { background: #7f1d1d; color: #fca5a5; }
+  .office-bubble {
+    min-height: 48px;
+    padding: 9px 11px;
+    border-radius: 14px;
+    border: 1px solid #394253;
+    background: rgba(13, 16, 24, 0.94);
+    color: #d3d8e2;
+    font-size: 10px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: normal;
+    overflow-wrap: anywhere;
+    margin: 0 6px 14px;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.22);
+  }
+  .office-bubble.idle {
+    display: flex;
+    align-items: center;
+    color: #98a2b3;
+    border-color: #2f3744;
+    background: rgba(11, 14, 21, 0.92);
+  }
+  .office-avatar-zone {
+    position: relative;
+    flex: 1;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    min-height: 206px;
+  }
+  .office-monitor {
+    position: absolute;
+    left: 18px;
+    bottom: 54px;
+    width: 102px;
+    height: 70px;
+    border-radius: 10px;
+    border: 2px solid #2a3140;
+    background: #0b1220;
+    box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.35);
+  }
+  .office-monitor::before {
+    content: "";
+    position: absolute;
+    inset: 7px;
+    border-radius: 6px;
+    background:
+      linear-gradient(180deg, rgba(96,165,250,0.22), rgba(16,24,40,0.7)),
+      repeating-linear-gradient(180deg, rgba(255,255,255,0.08) 0 2px, transparent 2px 7px);
+    opacity: 0.65;
+  }
+  .office-monitor::after {
+    content: "";
+    position: absolute;
+    left: 32px;
+    right: 32px;
+    bottom: -13px;
+    height: 14px;
+    border-radius: 0 0 10px 10px;
+    background: #2a3140;
+  }
+  .office-desk.working .office-monitor::before {
+    animation: monitor-flicker 1.4s steps(3) infinite;
+  }
+  .office-desk-scene.auth-required .office-monitor {
+    border-color: #dc2626;
+    box-shadow: 0 0 0 3px rgba(127, 29, 29, 0.34);
+  }
+  .office-agent {
+    position: relative;
+    width: 92px;
+    height: 132px;
+    transform-origin: center bottom;
+    animation: office-idle 3.4s ease-in-out infinite;
+  }
+  .office-agent.ready { animation: office-idle 3.4s ease-in-out infinite; }
+  .office-agent.working { animation: office-typing 0.9s ease-in-out infinite; }
+  .office-agent.booting { animation: office-boot 0.8s ease-in-out infinite alternate; }
+  .office-agent.broken,
+  .office-agent.dead,
+  .office-agent.off { animation: office-alert 1.8s ease-in-out infinite; }
+  .office-agent-shadow {
+    position: absolute;
+    left: 16px;
+    right: 16px;
+    bottom: -4px;
+    height: 12px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.34);
+    filter: blur(2px);
+  }
+  .office-agent-head {
+    position: absolute;
+    top: 0;
+    left: 24px;
+    width: 34px;
+    height: 34px;
+    border-radius: 11px;
+    background: #f1c7a9;
+    box-shadow: inset 0 -2px 0 rgba(0,0,0,0.14);
+  }
+  .office-agent-head::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 14px 0;
+    border-radius: 11px 11px 8px 8px;
+    background: linear-gradient(180deg, #20242d 0%, #353946 100%);
+  }
+  .office-agent-body {
+    position: absolute;
+    top: 28px;
+    left: 18px;
+    width: 46px;
+    height: 48px;
+    border-radius: 12px 12px 18px 18px;
+    background: linear-gradient(180deg, #60a5fa, #2563eb);
+  }
+  .office-agent.working .office-agent-body { background: linear-gradient(180deg, #34d399, #0f766e); }
+  .office-agent.booting .office-agent-body { background: linear-gradient(180deg, #fbbf24, #b45309); }
+  .office-agent.broken .office-agent-body,
+  .office-agent.dead .office-agent-body,
+  .office-agent.off .office-agent-body { background: linear-gradient(180deg, #ef4444, #991b1b); }
+  .office-agent-arm {
+    position: absolute;
+    top: 38px;
+    width: 13px;
+    height: 42px;
+    border-radius: 999px;
+    background: #f1c7a9;
+  }
+  .office-agent-arm.left { left: 10px; transform: rotate(18deg); }
+  .office-agent-arm.right { right: 10px; transform: rotate(-18deg); }
+  .office-agent.working .office-agent-arm.left { animation: arm-left 0.7s ease-in-out infinite; }
+  .office-agent.working .office-agent-arm.right { animation: arm-right 0.7s ease-in-out infinite; }
+  .office-sprite-stage {
+    position: relative;
+    width: 240px;
+    height: 240px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    transform-origin: center bottom;
+    animation: office-idle 3.4s ease-in-out infinite;
+  }
+  .office-sprite-stage::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: 6px;
+    width: 96px;
+    height: 18px;
+    margin-left: -48px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.28);
+    filter: blur(6px);
+  }
+  .office-sprite-layers {
+    position: relative;
+    width: 240px;
+    height: 220px;
+  }
+  .office-sprite-stage.working { animation: office-typing 0.9s ease-in-out infinite; }
+  .office-sprite-stage.booting { animation: office-boot 0.8s ease-in-out infinite alternate; }
+  .office-sprite-stage.broken,
+  .office-sprite-stage.dead,
+  .office-sprite-stage.off {
+    animation: office-alert 1.8s ease-in-out infinite;
+  }
+  .office-sprite-stage.ready { animation: office-idle 3.4s ease-in-out infinite; }
+  .office-sprite {
+    position: absolute;
+    left: 50%;
+    bottom: 0;
+    transform: translateX(-50%);
+    z-index: 1;
+    display: block;
+    max-width: 240px;
+    max-height: 210px;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    filter: drop-shadow(0 10px 12px rgba(0, 0, 0, 0.35));
+    opacity: 0;
+    transition: opacity 140ms linear;
+    will-change: opacity;
+  }
+  .office-sprite.active { opacity: 1; }
+  .office-sprite.office-state-gif {
+    width: 180px;
+    height: auto;
+    max-width: 180px;
+    max-height: 210px;
+    object-fit: contain;
+  }
+  .office-sprite.broken,
+  .office-sprite.dead,
+  .office-sprite.off {
+    filter: grayscale(1) brightness(0.82) drop-shadow(0 10px 12px rgba(0, 0, 0, 0.35));
+  }
+  .office-agent-leg {
+    position: absolute;
+    bottom: 8px;
+    width: 14px;
+    height: 44px;
+    border-radius: 999px;
+    background: #1f2937;
+  }
+  .office-agent-leg.left { left: 24px; }
+  .office-agent-leg.right { right: 24px; }
+  .office-desk-surface {
+    margin-top: -12px;
+    height: 24px;
+    border-radius: 14px 14px 22px 22px;
+    background:
+      linear-gradient(180deg, #5d687d, #212734),
+      linear-gradient(90deg, rgba(255,255,255,0.06), transparent 28%, rgba(255,255,255,0.04) 72%, transparent);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 18px rgba(0,0,0,0.20);
+  }
+  .office-meta {
+    margin-top: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    color: #9aa3b5;
+    font-size: 9px;
+    line-height: 1.4;
+  }
+  .office-meta-chip {
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: rgba(19, 25, 35, 0.9);
+    border: 1px solid #2f3745;
+  }
+  .office-desk-scene.working .office-desk-surface {
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 1px rgba(52,211,153,0.22), 0 12px 28px rgba(16,185,129,0.16);
+  }
+  .office-desk-scene.ready .office-desk-surface {
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 1px rgba(96,165,250,0.16), 0 10px 20px rgba(59,130,246,0.12);
+  }
+  .office-desk-scene.broken .office-desk-surface,
+  .office-desk-scene.off .office-desk-surface,
+  .office-desk-scene.dead .office-desk-surface {
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 0 0 1px rgba(239,68,68,0.20), 0 12px 24px rgba(127,29,29,0.18);
+  }
+  .office-inspector {
+    position: relative;
+    min-height: 640px;
+    border-radius: 24px;
+    border: 1px solid #232938;
+    background:
+      linear-gradient(180deg, rgba(18, 20, 28, 0.97), rgba(9, 10, 14, 0.98)),
+      linear-gradient(135deg, rgba(59, 130, 246, 0.06), transparent 60%);
+    box-shadow: 0 20px 44px rgba(0,0,0,0.34);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .office-inspector-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: #7c8596;
+    margin-bottom: 2px;
+  }
+  .office-inspector-value {
+    color: #f3f4f6;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .office-inspector-note {
+    color: #9aa3b5;
+    font-size: 11px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .office-inspector-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .office-inspector-panel {
+    border-radius: 16px;
+    border: 1px solid #2b3140;
+    background: rgba(12, 15, 22, 0.88);
+    padding: 12px 13px;
+  }
+  .office-watcher {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .office-watcher-server {
+    width: 18px;
+    height: 28px;
+    border-radius: 6px;
+    background:
+      linear-gradient(180deg, #3b4250, #161b23);
+    border: 1px solid #4b5563;
+    position: relative;
+  }
+  .office-watcher-server::before,
+  .office-watcher-server::after {
+    content: "";
+    position: absolute;
+    left: 3px;
+    right: 3px;
+    height: 3px;
+    border-radius: 999px;
+    background: #34d399;
+    box-shadow: 0 0 6px rgba(52, 211, 153, 0.55);
+  }
+  .office-watcher-server::before { top: 7px; }
+  .office-watcher-server::after { top: 16px; }
+  @keyframes office-idle {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3px); }
+  }
+  @keyframes office-typing {
+    0%, 100% { transform: rotate(0deg) translateY(0); }
+    25% { transform: rotate(-1deg) translateY(-2px); }
+    50% { transform: rotate(1deg) translateY(0); }
+    75% { transform: rotate(-1deg) translateY(-1px); }
+  }
+  @keyframes office-boot {
+    from { transform: translateY(0) scale(0.985); }
+    to { transform: translateY(-4px) scale(1.015); }
+  }
+  @keyframes office-alert {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-2px); }
+    40% { transform: translateX(2px); }
+    60% { transform: translateX(-1px); }
+    80% { transform: translateX(1px); }
+  }
+  @keyframes arm-left {
+    0%, 100% { transform: rotate(22deg); }
+    50% { transform: rotate(5deg); }
+  }
+  @keyframes arm-right {
+    0%, 100% { transform: rotate(-22deg); }
+    50% { transform: rotate(-5deg); }
+  }
+  @keyframes monitor-flicker {
+    0%, 100% { opacity: 0.48; }
+    50% { opacity: 0.92; }
+  }
+  @media (max-width: 980px) {
+    .office-shell {
+      grid-template-columns: 1fr;
+    }
+    .office-floor {
+      padding: 16px;
+    }
+    .office-inspector {
+      min-height: 0;
+    }
+    .office-desks {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      padding: 18px 4px 8px;
+      min-height: 0;
+    }
+    .office-desk-scene {
+      position: relative;
+      width: 100%;
+      max-width: none;
+      min-width: 0;
+      left: auto;
+      right: auto;
+      bottom: auto;
+    }
+    .office-window-band {
+      height: 88px;
+      gap: 8px;
+    }
+  }
+  @media (max-width: 680px) {
+    .office-floor-title {
+      font-size: 18px;
+    }
+    .office-floor-hint {
+      font-size: 10px;
+    }
   }
 
   /* ── Right Panel ── */
@@ -195,6 +855,54 @@
     overflow-wrap: anywhere;
     word-break: break-word;
   }
+  .command-card {
+    background: #1a1a1a; border: 1px solid #333; border-radius: 8px;
+    padding: 10px; margin-bottom: 12px;
+  }
+  .command-input {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #333;
+    border-radius: 6px;
+    background: #101010;
+    color: #ddd;
+    font-size: 12px;
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  }
+  .command-input:focus {
+    outline: none;
+    border-color: #2563eb;
+    box-shadow: 0 0 0 1px #2563eb inset;
+  }
+  .command-actions {
+    display: flex; gap: 6px; margin-top: 8px;
+  }
+  .command-actions .btn {
+    flex: 0 0 auto;
+  }
+  .command-hint {
+    margin-top: 8px;
+    color: #777;
+    font-size: 10px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+  .command-output {
+    margin-top: 8px;
+    max-height: 180px;
+    overflow: auto;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: #101010;
+    border: 1px solid #2a2a2a;
+    color: #cfcfcf;
+    font-size: 11px;
+    line-height: 1.45;
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    white-space: pre-wrap;
+    word-break: normal;
+    overflow-wrap: anywhere;
+  }
 </style>
 </head>
 <body>
@@ -204,10 +912,12 @@
   <span class="title">Pipeline Controller</span>
   <span id="pipeline-status" class="status stopped">Stopped</span>
   <div class="view-tabs" id="view-tabs"></div>
+  <button class="view-tab" id="tail-toggle" onclick="toggleTail()">텍스트 OFF</button>
+  <button class="view-tab" id="office-toggle" onclick="toggleOfficeView()">Office View OFF</button>
   <div class="spacer"></div>
-  <button class="btn" id="btn-start" onclick="apiPost('/api/start')">▶ Start</button>
-  <button class="btn" id="btn-stop" onclick="apiPost('/api/stop')">■ Stop</button>
-  <button class="btn" id="btn-restart" onclick="apiPost('/api/restart')">↻ Restart</button>
+  <button class="btn" id="btn-start" onclick="apiPost('/api/runtime/start')">▶ Start</button>
+  <button class="btn" id="btn-stop" onclick="apiPost('/api/runtime/stop')">■ Stop</button>
+  <button class="btn" id="btn-restart" onclick="apiPost('/api/runtime/restart')">↻ Restart</button>
   <span class="info" id="project-path">—</span>
 </div>
 
@@ -233,10 +943,29 @@
   <!-- Center: 3 Panes -->
   <div class="center">
     <div class="pane-area" id="pane-area"></div>
+    <div class="office-area" id="office-area"></div>
   </div>
 
   <!-- Right Panel -->
   <div class="right-panel">
+    <h3>Runtime 명령</h3>
+    <div class="command-card">
+      <input
+        id="runtime-command-input"
+        class="command-input"
+        type="text"
+        spellcheck="false"
+        placeholder="start | stop | restart | attach Codex | tail Codex 120 | status | help"
+      />
+      <div class="command-actions">
+        <button class="btn" id="btn-run-command" onclick="submitRuntimeCommand()">실행</button>
+      </div>
+      <div class="command-hint">
+        허용: start, stop, restart, attach [lane], tail &lt;lane&gt; [lines], view &lt;lane|all&gt;, text &lt;on|off&gt;, status, help
+      </div>
+      <pre class="command-output" id="runtime-command-output">(명령 대기)</pre>
+    </div>
+
     <h3>Handoff 상태</h3>
     <div id="slots-area"></div>
   </div>
@@ -244,16 +973,137 @@
 
 <script>
 const POLL_MS = 1000;
+const OFFICE_SPRITE_MANIFEST_URL = "/controller-assets/generated/office-sprite-manifest.json";
+const OFFICE_SPRITE_SHEET_URL = "/controller-assets/fren-office-sheet.png";
+const OFFICE_READY_GIF_URL = "/controller-assets/READY.gif";
+const OFFICE_SPRITE_ANIMATIONS = {
+  ready: {
+    intervalMs: 180,
+    sequence: [0, 0, 1, 2, 3, 3, 2, 1],
+    clips: [
+      { x: 650, y: 24, w: 320, h: 300 },
+      { x: 985, y: 24, w: 320, h: 300 },
+      { x: 1300, y: 24, w: 320, h: 300 },
+      { x: 1620, y: 24, w: 320, h: 300 },
+    ],
+  },
+  working: {
+    intervalMs: 120,
+    sequence: [0, 1, 2, 3, 2, 1],
+    clips: [
+      { x: 700, y: 300, w: 440, h: 300 },
+      { x: 1080, y: 300, w: 400, h: 300 },
+      { x: 1425, y: 300, w: 400, h: 300 },
+      { x: 1750, y: 300, w: 380, h: 300 },
+    ],
+  },
+  booting: {
+    intervalMs: 145,
+    sequence: [0, 1, 2, 3, 2, 1],
+    clips: [
+      { x: 790, y: 560, w: 270, h: 290 },
+      { x: 1060, y: 560, w: 270, h: 290 },
+      { x: 1320, y: 540, w: 330, h: 310 },
+      { x: 1660, y: 560, w: 270, h: 290 },
+    ],
+  },
+  broken: {
+    intervalMs: 220,
+    sequence: [0, 1, 2, 3, 2, 1],
+    clips: [
+      { x: 730, y: 810, w: 340, h: 320 },
+      { x: 1040, y: 810, w: 340, h: 320 },
+      { x: 1350, y: 810, w: 340, h: 320 },
+      { x: 1660, y: 810, w: 340, h: 320 },
+    ],
+  },
+  dead: {
+    intervalMs: 520,
+    sequence: [0, 1, 2, 3, 2, 1],
+    clips: [
+      { x: 870, y: 1090, w: 240, h: 270 },
+      { x: 1120, y: 1090, w: 240, h: 270 },
+      { x: 1360, y: 1090, w: 240, h: 270 },
+      { x: 1610, y: 1090, w: 240, h: 270 },
+    ],
+  },
+};
 let selectedView = "";
-const SLOT_NAMES = [
-  { key: "claude_handoff", label: "claude_handoff.md" },
-  { key: "operator_request", label: "operator_request.md" },
-  { key: "gemini_request", label: "gemini_request.md" },
-  { key: "gemini_advice", label: "gemini_advice.md" },
-];
+let showTail = false;
+let showOffice = false;
+let officeSpriteAvailable = false;
+let officeSpritePrepared = false;
+let officeSpritePreparePromise = null;
+let officeSpriteMode = "dynamic";
+const officeSpriteAnimationOverrides = {};
+const officeSpriteFrameCache = {};
+const tailCache = {};
+let tailLineCountOverride = null;
 
 function escapeHtml(s) {
   return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function normalizeTailText(text) {
+  const isStructuredLine = (content) => {
+    return /^(•|[-*] |\d+[.)] |[│└┌├╰╭]|›|> |\$ |❯|✻|□|▪|▸|▹|────────────────)/.test(content)
+      || /^[A-Za-z가-힣 _./()-]{1,18}:\s/.test(content);
+  };
+  const joinWrappedText = (left, right) => {
+    const prev = left.replace(/[ \t]+$/g, "");
+    const next = right.replace(/^[ \t]+/g, "");
+    if (!prev) return next;
+    if (!next) return prev;
+    const last = prev.slice(-1);
+    const first = next[0];
+    const needsSpace =
+      /[A-Za-z0-9)]/.test(last)
+      && /([A-Za-z0-9()]|\[|`)/.test(first)
+      && !/[./_-]$/.test(prev);
+    return needsSpace ? `${prev} ${next}` : `${prev}${next}`;
+  };
+  const lines = String(text || "")
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map(line => line.replace(/[ \t]+$/g, ""));
+
+  while (lines.length && !lines[0].trim()) lines.shift();
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+
+  const compact = [];
+  let blankOpen = false;
+  for (const rawLine of lines) {
+    if (!rawLine.trim()) {
+      if (!blankOpen) compact.push("");
+      blankOpen = true;
+      continue;
+    }
+    blankOpen = false;
+    let normalized = rawLine.replace(/\t/g, "  ");
+    const content = normalized.trimStart();
+    if (/^\s{6,}\S/.test(normalized)) {
+      normalized = "  " + content;
+    }
+
+    if (!compact.length || !compact[compact.length - 1] || isStructuredLine(content)) {
+      compact.push(normalized);
+      continue;
+    }
+
+    const previous = compact[compact.length - 1];
+    const previousContent = previous.trimStart();
+    const previousStructured = isStructuredLine(previousContent);
+    const previousEndsLabel = /:\s*$/.test(previousContent);
+    const currentLooksStandalone = /^(`|\/|~\/|[A-Za-z0-9_.-]+\/|[A-Za-z_][\w./-]*\.(py|md|json|toml|txt)\b)/.test(content);
+
+    if (previousStructured || previousEndsLabel || currentLooksStandalone) {
+      compact.push(normalized);
+      continue;
+    }
+
+    compact[compact.length - 1] = joinWrappedText(previous, content);
+  }
+  return compact.join("\n");
 }
 
 function timeAgo(mtime) {
@@ -264,24 +1114,555 @@ function timeAgo(mtime) {
   return `${Math.floor(diff/3600)}시간 전`;
 }
 
+function timeAgoIso(isoText) {
+  const ts = Date.parse(String(isoText || ""));
+  if (!Number.isFinite(ts)) return "";
+  return timeAgo(Math.floor(ts / 1000));
+}
+
+function truncateMiddle(text, limit = 80) {
+  const value = String(text || "");
+  if (value.length <= limit) return value;
+  const keep = Math.max(8, Math.floor((limit - 1) / 2));
+  return `${value.slice(0, keep)}…${value.slice(-keep)}`;
+}
+
+function tailPreviewText(text) {
+  const normalized = normalizeTailText(text || "");
+  if (!normalized) return "";
+  const lines = normalized.split("\n").filter(Boolean).slice(-10);
+  let preview = lines.join("\n");
+  if (preview.length > 420) {
+    preview = `…${preview.slice(-419)}`;
+  }
+  return preview;
+}
+
+async function ensureOfficeSpriteAvailability() {
+  if (officeSpritePrepared) return officeSpriteAvailable;
+  if (officeSpritePreparePromise) return officeSpritePreparePromise;
+  officeSpritePreparePromise = (async () => {
+    try {
+      const manifest = await loadOfficeSpriteManifest();
+      if (manifest && manifest.states) {
+        officeSpriteMode = "generated";
+        for (const [state, config] of Object.entries(manifest.states)) {
+          officeSpriteFrameCache[state] = Array.isArray(config.frames) ? config.frames : [];
+          officeSpriteAnimationOverrides[state] = {
+            intervalMs: Number(config.interval_ms || config.intervalMs || 180),
+            sequence: Array.isArray(config.sequence) ? config.sequence : [],
+          };
+        }
+      } else {
+        const sheet = await loadOfficeSpriteSheetImage();
+        officeSpriteMode = "dynamic";
+        for (const [state, animation] of Object.entries(OFFICE_SPRITE_ANIMATIONS)) {
+          officeSpriteFrameCache[state] = buildOfficeAnimationFrames(sheet, animation);
+        }
+      }
+      officeSpriteFrameCache.off = officeSpriteFrameCache.dead || [];
+      officeSpriteFrameCache.unknown = officeSpriteFrameCache.ready || [];
+      officeSpriteAvailable = Object.values(officeSpriteFrameCache).some((frames) => (frames || []).length > 0);
+    } catch (error) {
+      officeSpriteAvailable = false;
+    } finally {
+      officeSpritePrepared = true;
+    }
+    return officeSpriteAvailable;
+  })();
+  return officeSpritePreparePromise;
+}
+
+async function loadOfficeSpriteManifest() {
+  if (loadOfficeSpriteManifest._promise) return loadOfficeSpriteManifest._promise;
+  loadOfficeSpriteManifest._promise = (async () => {
+    try {
+      const response = await fetch(`${OFFICE_SPRITE_MANIFEST_URL}?v=office-sprite-manifest-v1`);
+      if (!response.ok) return null;
+      return await response.json();
+    } catch (error) {
+      return null;
+    }
+  })();
+  return loadOfficeSpriteManifest._promise;
+}
+loadOfficeSpriteManifest._promise = null;
+
+function loadOfficeSpriteSheetImage() {
+  if (loadOfficeSpriteSheetImage._promise) return loadOfficeSpriteSheetImage._promise;
+  loadOfficeSpriteSheetImage._promise = new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("sprite image load failed"));
+    image.src = `${OFFICE_SPRITE_SHEET_URL}?v=office-sprite-v4`;
+  });
+  return loadOfficeSpriteSheetImage._promise;
+}
+loadOfficeSpriteSheetImage._promise = null;
+
+function isEdgeWhitespace(data, width, height, x, y) {
+  const idx = (y * width + x) * 4;
+  const alpha = data[idx + 3];
+  if (alpha < 8) return true;
+  const red = data[idx];
+  const green = data[idx + 1];
+  const blue = data[idx + 2];
+  const brightest = Math.max(red, green, blue);
+  const darkest = Math.min(red, green, blue);
+  return brightest >= 245 && darkest >= 235 && brightest - darkest <= 18;
+}
+
+function clearEdgeWhitespace(imageData, width, height) {
+  const { data } = imageData;
+  const visited = new Uint8Array(width * height);
+  const queue = [];
+  const push = (x, y) => {
+    if (x < 0 || x >= width || y < 0 || y >= height) return;
+    const index = y * width + x;
+    if (visited[index]) return;
+    visited[index] = 1;
+    if (!isEdgeWhitespace(data, width, height, x, y)) return;
+    queue.push([x, y]);
+  };
+
+  for (let x = 0; x < width; x += 1) {
+    push(x, 0);
+    push(x, height - 1);
+  }
+  for (let y = 0; y < height; y += 1) {
+    push(0, y);
+    push(width - 1, y);
+  }
+
+  while (queue.length) {
+    const [x, y] = queue.shift();
+    const idx = (y * width + x) * 4;
+    data[idx + 3] = 0;
+    push(x + 1, y);
+    push(x - 1, y);
+    push(x, y + 1);
+    push(x, y - 1);
+  }
+}
+
+function trimSpriteCanvas(canvas) {
+  const ctx = canvas.getContext("2d");
+  const { width, height } = canvas;
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const { data } = imageData;
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const alpha = data[(y * width + x) * 4 + 3];
+      if (alpha < 8) continue;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+
+  if (maxX < minX || maxY < minY) {
+    return { canvas, width, height };
+  }
+
+  const pad = 4;
+  const cropX = Math.max(0, minX - pad);
+  const cropY = Math.max(0, minY - pad);
+  const cropW = Math.min(width - cropX, maxX - minX + 1 + pad * 2);
+  const cropH = Math.min(height - cropY, maxY - minY + 1 + pad * 2);
+  const trimmed = document.createElement("canvas");
+  trimmed.width = cropW;
+  trimmed.height = cropH;
+  const trimmedCtx = trimmed.getContext("2d");
+  trimmedCtx.imageSmoothingEnabled = false;
+  trimmedCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+  return { canvas: trimmed, width: cropW, height: cropH };
+}
+
+function fitSpriteDimensions(width, height) {
+  const maxWidth = 210;
+  const maxHeight = 186;
+  const scale = Math.min(maxWidth / width, maxHeight / height, 1);
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+}
+
+function normalizeSpriteFrame(rawFrame, viewport, renderSize) {
+  const canvas = document.createElement("canvas");
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
+  const drawX = Math.round((viewport.width - rawFrame.sourceWidth) / 2);
+  const drawY = viewport.height - rawFrame.sourceHeight;
+  ctx.clearRect(0, 0, viewport.width, viewport.height);
+  ctx.drawImage(rawFrame.canvas, drawX, drawY, rawFrame.sourceWidth, rawFrame.sourceHeight);
+  return {
+    src: canvas.toDataURL("image/png"),
+    width: renderSize.width,
+    height: renderSize.height,
+  };
+}
+
+function buildOfficeAnimationFrames(sheet, animation) {
+  const rawFrames = animation.clips.map((clip) => extractSpriteFrame(sheet, clip));
+  const viewport = {
+    width: Math.max(...rawFrames.map((frame) => frame.sourceWidth), 1),
+    height: Math.max(...rawFrames.map((frame) => frame.sourceHeight), 1),
+  };
+  const renderSize = fitSpriteDimensions(viewport.width, viewport.height);
+  return rawFrames.map((frame) => normalizeSpriteFrame(frame, viewport, renderSize));
+}
+
+function extractSpriteFrame(sheet, clip) {
+  const pad = 12;
+  const canvas = document.createElement("canvas");
+  canvas.width = clip.w + pad * 2;
+  canvas.height = clip.h + pad * 2;
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(sheet, clip.x, clip.y, clip.w, clip.h, pad, pad, clip.w, clip.h);
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  clearEdgeWhitespace(imageData, canvas.width, canvas.height);
+  ctx.putImageData(imageData, 0, 0);
+  const trimmed = trimSpriteCanvas(canvas);
+  return {
+    canvas: trimmed.canvas,
+    sourceWidth: trimmed.width,
+    sourceHeight: trimmed.height,
+  };
+}
+
+function officeAnimationStateKey(stateClass) {
+  const normalized = String(stateClass || "ready").toLowerCase();
+  if (normalized === "working") return "working";
+  if (normalized === "booting" || normalized === "starting") return "booting";
+  if (normalized === "broken") return "broken";
+  if (normalized === "dead" || normalized === "off") return "dead";
+  return "ready";
+}
+
+function officeLaneSeed(laneName) {
+  return Array.from(String(laneName || ""))
+    .reduce((acc, ch) => ((acc * 33) + ch.charCodeAt(0)) % 9973, 17);
+}
+
+function resolveAnimatedSpriteFrame(laneName, stateClass) {
+  if (!officeSpriteAvailable) return null;
+  const stateKey = officeAnimationStateKey(stateClass);
+  const animation =
+    officeSpriteAnimationOverrides[stateKey]
+    || OFFICE_SPRITE_ANIMATIONS[stateKey]
+    || OFFICE_SPRITE_ANIMATIONS.ready;
+  const frames = officeSpriteFrameCache[stateKey] || officeSpriteFrameCache.ready || [];
+  if (!frames.length) return null;
+  const sequence = Array.isArray(animation.sequence) && animation.sequence.length
+    ? animation.sequence
+    : frames.map((_, index) => index);
+  const seed = officeLaneSeed(laneName);
+  const offset = Math.floor(seed / 11) % sequence.length;
+  const tick = Math.floor((Date.now() + (seed % animation.intervalMs)) / animation.intervalMs);
+  return frames[sequence[(tick + offset) % sequence.length]];
+}
+
+function resolveOfficeStateGif(stateClass) {
+  const normalized = String(stateClass || "").toLowerCase();
+  if (normalized !== "ready") return null;
+  return {
+    src: `${OFFICE_READY_GIF_URL}?v=office-ready-gif-v1`,
+    width: 416,
+    height: 484,
+  };
+}
+
+function applyOfficeSpriteFrame(img, frame) {
+  if (!img || !frame) return;
+  img.src = frame.src;
+  img.dataset.frameSrc = frame.src;
+  img.width = frame.width;
+  img.height = frame.height;
+}
+
+function refreshOfficeSpriteFrames() {
+  document.querySelectorAll(".office-sprite-stage[data-lane]").forEach((stage) => {
+    const laneName = stage.dataset.lane || "";
+    const stateClass = stage.dataset.state || "ready";
+    const frame = resolveAnimatedSpriteFrame(laneName, stateClass);
+    const activeLayerName = stage.dataset.activeLayer || "a";
+    const activeImg = stage.querySelector(`img.office-sprite[data-layer="${activeLayerName}"]`);
+    const inactiveLayerName = activeLayerName === "a" ? "b" : "a";
+    const inactiveImg = stage.querySelector(`img.office-sprite[data-layer="${inactiveLayerName}"]`);
+    if (!frame || !activeImg || !inactiveImg) return;
+    if (activeImg.dataset.frameSrc === frame.src) {
+      applyOfficeSpriteFrame(activeImg, frame);
+      return;
+    }
+    applyOfficeSpriteFrame(inactiveImg, frame);
+    inactiveImg.classList.add("active");
+    activeImg.classList.remove("active");
+    stage.dataset.activeLayer = inactiveLayerName;
+  });
+}
+
+function setCommandOutput(text) {
+  const output = document.getElementById("runtime-command-output");
+  if (output) output.textContent = text;
+}
+
+function tokenizeCommand(input) {
+  const tokens = [];
+  const pattern = /"([^"]*)"|'([^']*)'|`([^`]*)`|(\S+)/g;
+  let match;
+  while ((match = pattern.exec(String(input || "")))) {
+    tokens.push(match[1] ?? match[2] ?? match[3] ?? match[4]);
+  }
+  return tokens;
+}
+
+function normalizeLaneName(value) {
+  const lane = String(value || "").trim().toLowerCase();
+  if (lane === "claude") return "Claude";
+  if (lane === "codex") return "Codex";
+  if (lane === "gemini") return "Gemini";
+  if (lane === "all") return "all";
+  return "";
+}
+
+function clampTailLines(value, fallback = 120) {
+  const parsed = Number.parseInt(String(value || fallback), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(1, Math.min(400, parsed));
+}
+
+async function fetchJson(url, options = {}) {
+  const res = await fetch(url, options);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
+  return data;
+}
+
+function summarizeRuntimeStatus(data) {
+  const lines = [];
+  lines.push(`runtime=${data.runtime_state || "STOPPED"}`);
+  const control = data.control || {};
+  if (control.active_control_status) {
+    const suffix = control.active_control_seq >= 0 ? ` seq=${control.active_control_seq}` : "";
+    lines.push(`control=${control.active_control_status}${suffix}`);
+  }
+  const round = data.active_round || {};
+  if (round.state) {
+    lines.push(`round=${round.state}${round.job_id ? ` job=${round.job_id}` : ""}`);
+  }
+  for (const lane of (data.lanes || [])) {
+    const note = lane.note ? ` note=${lane.note}` : "";
+    lines.push(`${lane.name}: ${lane.state || "OFF"}${note}`);
+  }
+  return lines.join("\n");
+}
+
+async function runRuntimeCommand(rawCommand) {
+  const tokens = tokenizeCommand(rawCommand);
+  if (!tokens.length) {
+    return "입력된 명령이 없습니다.";
+  }
+
+  const command = String(tokens[0] || "").toLowerCase();
+
+  if (command === "help") {
+    return [
+      "지원 명령:",
+      "  start",
+      "  stop",
+      "  restart",
+      "  attach [Claude|Codex|Gemini]",
+      "  tail <Claude|Codex|Gemini> [lines]",
+      "  view <all|Claude|Codex|Gemini>",
+      "  text <on|off> [lines]",
+      "  status",
+      "  help",
+    ].join("\n");
+  }
+
+  if (command === "status") {
+    const data = await fetchJson("/api/runtime/status");
+    return summarizeRuntimeStatus(data);
+  }
+
+  if (command === "start" || command === "stop" || command === "restart") {
+    const data = await fetchJson(`/api/runtime/${command}`, { method: "POST" });
+    setTimeout(poll, 250);
+    setTimeout(poll, 1500);
+    return data.message || `${command} 요청 완료`;
+  }
+
+  if (command === "attach") {
+    const lane = normalizeLaneName(tokens[1] || "");
+    const query = lane && lane !== "all" ? `?lane=${encodeURIComponent(lane)}` : "";
+    const data = await fetchJson(`/api/runtime/attach${query}`, { method: "POST" });
+    setTimeout(poll, 250);
+    return lane && lane !== "all"
+      ? `${lane} attach 요청 완료 (pid=${data.pid ?? "—"})`
+      : `session attach 요청 완료 (pid=${data.pid ?? "—"})`;
+  }
+
+  if (command === "tail") {
+    const lane = normalizeLaneName(tokens[1] || "");
+    if (!lane || lane === "all") {
+      return "tail 명령은 lane 이름이 필요합니다. 예: tail Codex 120";
+    }
+    tailLineCountOverride = clampTailLines(tokens[2], 120);
+    selectedView = lane.toLowerCase();
+    showTail = true;
+    renderTailToggle();
+    await hydrateTail([{ name: lane }]);
+    poll();
+    return `${lane} tail 표시로 전환했습니다. lines=${tailLineCountOverride}`;
+  }
+
+  if (command === "view") {
+    const view = normalizeLaneName(tokens[1] || "all");
+    if (!view) {
+      return "view 명령은 all 또는 lane 이름이 필요합니다.";
+    }
+    setView(view === "all" ? "all" : view.toLowerCase());
+    return view === "all" ? "전체 보기로 전환했습니다." : `${view} 보기로 전환했습니다.`;
+  }
+
+  if (command === "text") {
+    const mode = String(tokens[1] || "").trim().toLowerCase();
+    if (mode === "on") {
+      showTail = true;
+      tailLineCountOverride = tokens[2] ? clampTailLines(tokens[2], 120) : tailLineCountOverride;
+      renderTailToggle();
+      poll();
+      return `텍스트 표시를 켰습니다.${tailLineCountOverride ? ` lines=${tailLineCountOverride}` : ""}`;
+    }
+    if (mode === "off") {
+      showTail = false;
+      tailLineCountOverride = null;
+      renderTailToggle();
+      poll();
+      return "텍스트 표시를 껐습니다.";
+    }
+    return "text 명령은 on 또는 off만 지원합니다.";
+  }
+
+  return "지원하지 않는 명령입니다. help를 입력해 보세요.";
+}
+
+async function submitRuntimeCommand() {
+  const input = document.getElementById("runtime-command-input");
+  if (!input) return;
+  const raw = String(input.value || "").trim();
+  if (!raw) {
+    setCommandOutput("입력된 명령이 없습니다.");
+    return;
+  }
+  setCommandOutput(`> ${raw}\n\n실행 중...`);
+  try {
+    const result = await runRuntimeCommand(raw);
+    setCommandOutput(`> ${raw}\n\n${result}`);
+  } catch (error) {
+    setCommandOutput(`> ${raw}\n\n실패: ${error.message}`);
+  }
+}
+
 function renderAgentList(agents) {
   const el = document.getElementById("agent-list");
   el.innerHTML = agents.map(a => `
     <div class="agent-item">
-      <div class="dot ${a.status}"></div>
+      <div class="dot ${(a.state || "").toLowerCase()}"></div>
       <span class="agent-name">${a.name}</span>
       <div class="agent-meta">
-        <span class="agent-status ${a.status}">${a.status}</span>
+        <span class="agent-status ${(a.state || "").toLowerCase()}">${a.state || "OFF"}</span>
       </div>
     </div>
   `).join("");
 }
 
-function renderPanes(agents) {
-  const area = document.getElementById("pane-area");
-  const visibleAgents = selectedView === "all"
+function visibleAgentsForView(agents) {
+  return selectedView === "all"
     ? agents
     : agents.filter(a => a.name.toLowerCase() === selectedView);
+}
+
+function renderTailToggle() {
+  const btn = document.getElementById("tail-toggle");
+  if (!btn) return;
+  btn.textContent = showTail ? "텍스트 ON" : "텍스트 OFF";
+  btn.classList.toggle("active", showTail);
+}
+
+function renderOfficeToggle() {
+  const btn = document.getElementById("office-toggle");
+  if (!btn) return;
+  btn.textContent = showOffice ? "Office View ON" : "Office View OFF";
+  btn.classList.toggle("active", showOffice);
+}
+
+function toggleTail() {
+  showTail = !showTail;
+  renderTailToggle();
+  poll();
+}
+
+function toggleOfficeView() {
+  showOffice = !showOffice;
+  renderOfficeToggle();
+  document.querySelector(".center")?.classList.toggle("office-mode", showOffice);
+  poll();
+}
+
+function officeDeskClass(agentName) {
+  const key = String(agentName || "").toLowerCase();
+  if (key === "claude") return "claude";
+  if (key === "codex") return "codex";
+  if (key === "gemini") return "gemini";
+  return "claude";
+}
+
+function officeShortNote(agent) {
+  const note = String(agent.note || "").trim();
+  if (!note) return "standby";
+  if (note === "prompt_visible") return "prompt standby";
+  if (note === "waiting_next_control") return "waiting next control";
+  if (note === "followup") return "followup pending";
+  if (note === "auth_login_required") return "auth required";
+  return note.replaceAll("_", " ");
+}
+
+async function hydrateTail(agents) {
+  if (!showTail) return agents;
+  const visibleAgents = visibleAgentsForView(agents);
+  const lineCount = tailLineCountOverride || (selectedView === "all" ? 40 : 120);
+  await Promise.all(visibleAgents.map(async (agent) => {
+    try {
+      const url = `/api/runtime/capture-tail?lane=${encodeURIComponent(agent.name)}&lines=${lineCount}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (res.ok && data.ok !== false) {
+        tailCache[agent.name] = String(data.text || "");
+      }
+    } catch (e) {
+      // keep the last cached tail on transient failures
+    }
+  }));
+  return agents.map(a => ({ ...a, tail_text: tailCache[a.name] || "" }));
+}
+
+function renderPanes(agents) {
+  const area = document.getElementById("pane-area");
+  const visibleAgents = visibleAgentsForView(agents);
   area.classList.toggle("focused", selectedView !== "all");
 
   // 첫 렌더링이면 생성, 이후는 내용만 업데이트
@@ -289,11 +1670,11 @@ function renderPanes(agents) {
     area.innerHTML = visibleAgents.map((a, i) => `
       <div class="pane" id="pane-${i}">
         <div class="pane-header">
-          <div class="dot ${a.status}"></div>
+          <div class="dot ${(a.state || "").toLowerCase()}"></div>
           <span class="name">${a.name}</span>
           <div class="meta">
-            ${a.status_note ? `<span class="note">${escapeHtml(a.status_note)}</span>` : ``}
-            <span class="badge ${a.status}">${a.status}</span>
+            ${a.note ? `<span class="note">${escapeHtml(a.note)}</span>` : ``}
+            <span class="badge ${(a.state || "").toLowerCase()}">${a.state || "OFF"}</span>
           </div>
         </div>
         <div class="pane-body" id="pane-body-${i}"></div>
@@ -305,22 +1686,177 @@ function renderPanes(agents) {
     const header = document.querySelector(`#pane-${i} .pane-header`);
     if (header) {
       header.innerHTML = `
-        <div class="dot ${a.status}"></div>
+        <div class="dot ${(a.state || "").toLowerCase()}"></div>
         <span class="name">${a.name}</span>
         <div class="meta">
-          ${a.status_note ? `<span class="note">${escapeHtml(a.status_note)}</span>` : ``}
-          <span class="badge ${a.status}">${a.status}</span>
+          ${a.note ? `<span class="note">${escapeHtml(a.note)}</span>` : ``}
+          <span class="badge ${(a.state || "").toLowerCase()}">${a.state || "OFF"}</span>
         </div>
       `;
     }
-    // 본문 업데이트 — 스크롤이 바닥이면 follow
     const body = document.getElementById(`pane-body-${i}`);
     if (body) {
       const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 50;
-      body.textContent = (a.pane_text || "(출력 없음)").trim();
+      if (showTail) {
+        const text = normalizeTailText(a.tail_text || "");
+        body.textContent = text || "(최근 output 없음)";
+      } else {
+        const lines = [];
+        if (a.pid) lines.push(`pid: ${a.pid}`);
+        if (a.last_event_at) lines.push(`last_event_at: ${a.last_event_at}`);
+        if (a.attachable === false) lines.push("attachable: false");
+        body.textContent = lines.length ? lines.join("\n") : "(runtime status only)";
+      }
       if (atBottom) body.scrollTop = body.scrollHeight;
     }
   });
+}
+
+function renderOffice(agents, runtime) {
+  const area = document.getElementById("office-area");
+  if (!area) return;
+  const visibleAgents = visibleAgentsForView(agents);
+  const control = runtime.control || {};
+  const round = runtime.active_round || {};
+  const watcher = runtime.watcher || {};
+  const artifacts = runtime.artifacts || {};
+  const latestWork = artifacts.latest_work || {};
+  const latestVerify = artifacts.latest_verify || {};
+  const degradedReasons = Array.isArray(runtime.degraded_reasons) ? runtime.degraded_reasons.filter(Boolean) : [];
+  const runtimeDegraded = Boolean(degradedReasons.length || runtime.degraded_reason || String(runtime.runtime_state || "").toUpperCase() === "DEGRADED");
+  const runtimeStateClass = String(runtime.runtime_state || "stopped").toLowerCase();
+  const activeControlStatus = String(control.active_control_status || "none");
+  const desks = visibleAgents.map((agent) => {
+    const stateClass = String(agent.state || "off").toLowerCase();
+    const deskClass = officeDeskClass(agent.name);
+    const note = officeShortNote(agent);
+    const transcript = showTail ? tailPreviewText(agent.tail_text || "") : "";
+    const bubbleText = transcript || (showTail ? "(최근 output 없음)" : note);
+    const bubbleClass = transcript ? "" : "idle";
+    const meta = [
+      agent.pid ? `pid ${agent.pid}` : "",
+      agent.last_event_at ? `event ${timeAgoIso(agent.last_event_at) || agent.last_event_at}` : "",
+    ].filter(Boolean);
+    const stateGif = resolveOfficeStateGif(stateClass);
+    const spriteFrame = resolveAnimatedSpriteFrame(agent.name, stateClass);
+    const spriteMarkup = stateGif
+      ? `<div class="office-sprite-stage ${stateClass}" data-state="${escapeHtml(stateClass)}">
+          <div class="office-sprite-layers">
+            <img
+              class="office-sprite ${stateClass} active office-state-gif"
+              alt="${escapeHtml(agent.name)} ready gif"
+              src="${stateGif.src}"
+              data-frame-src="${stateGif.src}"
+              width="${stateGif.width}"
+              height="${stateGif.height}"
+            >
+          </div>
+        </div>`
+      : officeSpriteAvailable
+      ? `<div class="office-sprite-stage ${stateClass}" data-lane="${escapeHtml(agent.name)}" data-state="${escapeHtml(stateClass)}" data-active-layer="a">
+          <div class="office-sprite-layers">
+            <img
+              class="office-sprite ${stateClass} active"
+              data-layer="a"
+              alt="${escapeHtml(agent.name)} sprite"
+              src="${spriteFrame ? spriteFrame.src : ""}"
+              data-frame-src="${spriteFrame ? spriteFrame.src : ""}"
+              width="${spriteFrame ? spriteFrame.width : 120}"
+              height="${spriteFrame ? spriteFrame.height : 160}"
+            >
+            <img
+              class="office-sprite ${stateClass}"
+              data-layer="b"
+              alt=""
+              src=""
+              data-frame-src=""
+              width="${spriteFrame ? spriteFrame.width : 120}"
+              height="${spriteFrame ? spriteFrame.height : 160}"
+            >
+          </div>
+        </div>`
+      : `<div class="office-agent ${stateClass}">
+            <div class="office-agent-shadow"></div>
+            <div class="office-agent-head"></div>
+            <div class="office-agent-body"></div>
+            <div class="office-agent-arm left"></div>
+            <div class="office-agent-arm right"></div>
+            <div class="office-agent-leg left"></div>
+            <div class="office-agent-leg right"></div>
+          </div>`;
+    return `
+      <div class="office-desk office-desk-scene ${deskClass} ${stateClass}">
+        <div class="office-desk-header">
+          <div class="office-agent-label">
+            <div class="dot ${stateClass}"></div>
+            <span class="name">${escapeHtml(agent.name)}</span>
+          </div>
+          <span class="office-state-pill ${stateClass}">${escapeHtml(agent.state || "OFF")}</span>
+        </div>
+        <div class="office-bubble ${bubbleClass}">${escapeHtml(bubbleText)}</div>
+        <div class="office-avatar-zone">
+          <div class="office-monitor"></div>
+          ${spriteMarkup}
+        </div>
+        <div class="office-desk-surface"></div>
+        <div class="office-meta">
+          ${meta.map((item) => `<span class="office-meta-chip">${escapeHtml(item)}</span>`).join("")}
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  area.innerHTML = `
+    <div class="office-stage">
+      <div class="office-shell">
+        <div class="office-floor ${runtimeDegraded ? "degraded" : ""}">
+          <div class="office-floor-glow"></div>
+          <div class="office-window-band">
+            <div class="office-window"></div>
+            <div class="office-window"></div>
+            <div class="office-window"></div>
+          </div>
+          <div class="office-floor-header">
+            <div>
+              <div class="office-floor-title">Runtime Room</div>
+              <div class="office-floor-hint">${escapeHtml(runtime.runtime_state || "STOPPED")} · ${escapeHtml(round.state || "IDLE")}${round.job_id ? ` · ${escapeHtml(truncateMiddle(round.job_id, 84))}` : ""}</div>
+            </div>
+            <div class="office-floor-hint">${escapeHtml(activeControlStatus)}${control.active_control_seq >= 0 ? ` · seq ${control.active_control_seq}` : ""}</div>
+          </div>
+          <div class="office-grid">
+            <div class="office-desks">
+              ${desks || `<div class="office-card"><div class="value">표시할 agent가 없습니다.</div></div>`}
+            </div>
+          </div>
+        </div>
+        <div class="office-inspector">
+          <div>
+            <div class="office-inspector-value">${escapeHtml(runtime.project_root || "—")}</div>
+            <div class="office-inspector-note">${escapeHtml(runtime.runtime_state || "STOPPED")} · control seq ${control.active_control_seq >= 0 ? escapeHtml(String(control.active_control_seq)) : "—"}</div>
+          </div>
+          <div class="office-inspector-stack">
+            <div class="office-inspector-panel">
+              <div class="office-inspector-value">${escapeHtml(round.state || "IDLE")}</div>
+              <div class="office-inspector-note">${round.job_id ? escapeHtml(truncateMiddle(round.job_id, 78)) : "active round 없음"}</div>
+            </div>
+            <div class="office-inspector-panel">
+              <div class="office-inspector-value">${escapeHtml(activeControlStatus)}</div>
+              <div class="office-inspector-note">${escapeHtml(truncateMiddle(control.active_control_file || "(없음)", 90))}</div>
+            </div>
+            <div class="office-inspector-panel">
+              <div class="office-inspector-value">${watcher.alive ? "Alive" : "Dead"}</div>
+              <div class="office-inspector-note">pid ${escapeHtml(String(watcher.pid || "—"))}</div>
+            </div>
+            <div class="office-inspector-panel">
+              <div class="office-inspector-note">work ${escapeHtml(truncateMiddle(latestWork.path || "—", 72))}</div>
+              <div class="office-inspector-note">verify ${escapeHtml(truncateMiddle(latestVerify.path || "—", 72))}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  refreshOfficeSpriteFrames();
 }
 
 function renderViewTabs(agents) {
@@ -345,39 +1881,65 @@ function setView(view) {
 
 function renderSlots(slots) {
   const area = document.getElementById("slots-area");
-  area.innerHTML = SLOT_NAMES.map(({ key, label }) => {
-    const s = slots[key] || {};
-    const statusClass = s.status === "implement" ? "implement"
-                      : s.status === "needs_operator" ? "needs_operator"
-                      : "none";
-    const statusText = s.exists ? (s.status || "(STATUS 없음)") : "(파일 없음)";
-    const preview = s.preview ? escapeHtml(s.preview.slice(0, 200)) : "";
-    return `
+  const control = slots.control || {};
+  const activeRound = slots.active_round || {};
+  const lastReceipt = slots.last_receipt || {};
+  const artifacts = slots.artifacts || {};
+  const latestWork = artifacts.latest_work || {};
+  const latestVerify = artifacts.latest_verify || {};
+  const degradedReasons = Array.isArray(slots.degraded_reasons) ? slots.degraded_reasons.filter(Boolean) : [];
+  const degradedReason = degradedReasons.length ? degradedReasons.join("\n") : (slots.degraded_reason || "");
+  area.innerHTML = `
+    <div class="slot-card">
+      <div class="slot-name">active control</div>
+      <div class="slot-status ${control.active_control_status === "implement" ? "implement" : control.active_control_status === "needs_operator" ? "needs_operator" : "none"}">${control.active_control_status || "none"}</div>
+      <div class="slot-preview">${escapeHtml(control.active_control_file || "(없음)")}</div>
+      ${control.active_control_seq !== undefined && control.active_control_seq >= 0 ? `<div class="slot-mtime">seq ${control.active_control_seq}</div>` : ""}
+    </div>
+    <div class="slot-card">
+      <div class="slot-name">active round</div>
+      <div class="slot-status none">${escapeHtml(activeRound.state || "IDLE")}</div>
+      ${activeRound.job_id ? `<div class="slot-preview">${escapeHtml(activeRound.job_id)}</div>` : ""}
+      ${activeRound.round ? `<div class="slot-mtime">round ${activeRound.round}</div>` : ""}
+    </div>
+    <div class="slot-card">
+      <div class="slot-name">last receipt</div>
+      <div class="slot-status none">${escapeHtml(lastReceipt.verify_result || "(없음)")}</div>
+      ${lastReceipt.receipt_id ? `<div class="slot-preview">${escapeHtml(lastReceipt.receipt_id)}</div>` : ""}
+      ${lastReceipt.closed_at ? `<div class="slot-mtime">${escapeHtml(lastReceipt.closed_at)}</div>` : ""}
+    </div>
+    <div class="slot-card">
+      <div class="slot-name">artifacts</div>
+      <div class="slot-preview">work: ${escapeHtml(latestWork.path || "—")}</div>
+      <div class="slot-preview">verify: ${escapeHtml(latestVerify.path || "—")}</div>
+    </div>
+    ${degradedReason ? `
       <div class="slot-card">
-        <div class="slot-name">${label}</div>
-        <div class="slot-status ${statusClass}">${statusText}</div>
-        ${preview ? `<div class="slot-preview">${preview}</div>` : ""}
-        ${s.mtime ? `<div class="slot-mtime">${timeAgo(s.mtime)}</div>` : ""}
+        <div class="slot-name">degraded</div>
+        <div class="slot-status needs_operator">${escapeHtml(degradedReason)}</div>
       </div>
-    `;
-  }).join("");
+    ` : ""}
+  `;
 }
 
 async function poll() {
   try {
-    const res = await fetch("/api/state");
+    await ensureOfficeSpriteAvailability();
+    const res = await fetch("/api/runtime/status");
     const data = await res.json();
 
     // Toolbar
-    document.getElementById("project-path").textContent = data.project_root;
-    document.getElementById("sidebar-project").textContent = data.project_root;
+    document.getElementById("project-path").textContent = data.project_root || "—";
+    document.getElementById("sidebar-project").textContent = data.project_root || "—";
     const statusEl = document.getElementById("pipeline-status");
-    if (data.session_alive) {
+    if ((data.runtime_state || "STOPPED") !== "STOPPED") {
       statusEl.textContent = "Running";
       statusEl.className = "status running";
     } else {
       statusEl.textContent = "Stopped";
       statusEl.className = "status stopped";
+      for (const key of Object.keys(tailCache)) delete tailCache[key];
+      tailLineCountOverride = null;
     }
 
     // Watcher
@@ -389,16 +1951,20 @@ async function poll() {
 
     // Agents
     if (!selectedView) {
-      const working = (data.agents || []).find(a => a.status === "working");
+      const working = (data.lanes || []).find(a => (a.state || "").toLowerCase() === "working");
       selectedView = working ? working.name.toLowerCase() : "all";
       document.querySelector(".main").classList.toggle("focus-mode", selectedView !== "all");
     }
-    renderAgentList(data.agents || []);
-    renderViewTabs(data.agents || []);
-    renderPanes(data.agents || []);
+    document.querySelector(".center")?.classList.toggle("office-mode", showOffice);
+    renderTailToggle();
+    renderOfficeToggle();
+    const enrichedLanes = await hydrateTail(data.lanes || []);
+    renderAgentList(enrichedLanes || []);
+    renderViewTabs(enrichedLanes || []);
+    renderPanes(enrichedLanes || []);
+    renderOffice(enrichedLanes || [], data || {});
 
-    // Slots
-    renderSlots(data.slots || {});
+    renderSlots(data || {});
 
   } catch (e) {
     document.getElementById("pipeline-status").textContent = "API Error";
@@ -423,6 +1989,21 @@ async function apiPost(path) {
 
 // 1초마다 폴링
 setInterval(poll, POLL_MS);
+setInterval(() => {
+  if (!showOffice || !officeSpriteAvailable) return;
+  refreshOfficeSpriteFrames();
+}, 220);
+renderTailToggle();
+renderOfficeToggle();
+const runtimeCommandInput = document.getElementById("runtime-command-input");
+if (runtimeCommandInput) {
+  runtimeCommandInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      submitRuntimeCommand();
+    }
+  });
+}
 poll();
 </script>
 </body>

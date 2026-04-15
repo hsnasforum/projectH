@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "receipt_id": "20260415-2026-04-15-review-queue-review-o-7f4130a4-r1",
+  "run_id": "20260415T104416Z-p2891444",
+  "job_id": "20260415-2026-04-15-review-queue-review-o-7f4130a4",
+  "round": 1,
+  "target_lane": "codex",
+  "artifact_path": "/home/xpdlqj/code/projectH/verify/4/15/2026-04-15-reviewed-memory-visible-transition-result-active-effect-lifecycle-parity-bundle-verification.md",
+  "artifact_hash": "sha256:18d9632b39fa1df2390075678d0992c062efdffec6e8a700fc40d00542c9e314",
+  "verify_manifest_path": "/home/xpdlqj/code/projectH/.pipeline/manifests/20260415-2026-04-15-review-queue-review-o-7f4130a4/round-1.verify.json",
+  "verify_result": "passed_by_feedback",
+  "control_seq": 151,
+  "closed_at": "2026-04-15T12:12:20.919339Z",
+  "emitted_by": "supervisor"
+}

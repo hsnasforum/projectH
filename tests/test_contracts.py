@@ -221,6 +221,8 @@ class ContractDerivedSetsTest(unittest.TestCase):
 
     def test_candidate_review_action_to_status(self) -> None:
         self.assertEqual(CANDIDATE_REVIEW_ACTION_TO_STATUS["accept"], "accepted")
+        self.assertEqual(CANDIDATE_REVIEW_ACTION_TO_STATUS["reject"], "rejected")
+        self.assertEqual(CANDIDATE_REVIEW_ACTION_TO_STATUS["defer"], "deferred")
 
     def test_trusted_source_roles(self) -> None:
         self.assertEqual(TRUSTED_SOURCE_ROLES, frozenset({"백과 기반", "공식 기반", "데이터 기반", "설명형 출처"}))

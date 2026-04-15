@@ -138,10 +138,11 @@ And if helper-agent or repo-skill files changed, also sync:
 
 - Codex = round verification and handoff lane: reads latest `/work` and `/verify`, reruns the checks needed to review that round, updates `/verify`, then writes `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, or `.pipeline/operator_request.md`.
 - `.pipeline/claude_handoff.md` with `STATUS: implement` means the next slice is already fixed and should be implemented as written.
+- If Codex cannot truthfully fix one next slice because the candidates are tied, overlapping, or otherwise low-confidence, expect `.pipeline/gemini_request.md` before `.pipeline/operator_request.md`.
 - Canonical control slots use `CONTROL_SEQ` for newest-valid-control ordering, with `mtime` only as a fallback when `CONTROL_SEQ` is missing.
 - If that handoff is blocked or not actionable, emit `STATUS: implement_blocked` with `BLOCK_REASON`, `REQUEST: codex_triage`, `HANDOFF`, `HANDOFF_SHA`, and `BLOCK_ID`, then stop.
 - `.pipeline/gemini_request.md` and `.pipeline/gemini_advice.md` are not Claude input slots.
-- `.pipeline/operator_request.md` with `STATUS: needs_operator` means the next slice is intentionally not fixed yet; do not start a new implementation round from that stop request.
+- `.pipeline/operator_request.md` with `STATUS: needs_operator` means a real operator-only decision or blocker remains and the next slice is intentionally not fixed yet; do not start a new implementation round from that stop request.
 - A `needs_operator` stop request should never be interpreted as "choose your own next slice." It is a stopped state with an explained reason, not an invitation to improvise.
 - Do not ask the operator to choose among options from the Claude lane, and do not write `.pipeline/gemini_request.md` or `.pipeline/operator_request.md` yourself.
 - If Codex relays a short side answer during an active session because Gemini arbitrated a context-exhaustion, session-rollover, or continue-vs-switch question, treat that reply as lane guidance for the current session only. Do not reinterpret it as a new `.pipeline/claude_handoff.md`.

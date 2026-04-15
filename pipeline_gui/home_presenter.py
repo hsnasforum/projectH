@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .agents import STATUS_COLORS, _parse_elapsed, format_elapsed, format_focus_output
+from .agents import STATUS_COLORS, _parse_elapsed, format_elapsed
 from .backend import format_control_summary, time_ago
 from .tokens import format_token_usage_note
 
@@ -110,10 +110,10 @@ def build_control_presentation(
 
 
 def build_console_presentation(*, selected_agent: str, snapshot: object) -> ConsolePresentation:
-    session_ok = bool(_snapshot_get(snapshot, "session_ok", False))
-    watcher_alive = bool(_snapshot_get(snapshot, "watcher_alive", False))
-    is_live = session_ok and watcher_alive
-    pane_map = _snapshot_get(snapshot, "pane_map", {}) or {}
+    runtime_state = str(_snapshot_get(snapshot, "runtime_state", "STOPPED") or "STOPPED")
+    degraded_reason = str(_snapshot_get(snapshot, "degraded_reason", "") or "")
+    is_live = runtime_state in {"STARTING", "RUNNING", "DEGRADED"}
+    lane_details = _snapshot_get(snapshot, "lane_details", {}) or {}
     run = _snapshot_get(snapshot, "run_summary", {}) or {}
     agents = list(_snapshot_get(snapshot, "agents", []) or [])
     work_name = str(_snapshot_get(snapshot, "work_name", "—") or "—")
@@ -123,38 +123,60 @@ def build_console_presentation(*, selected_agent: str, snapshot: object) -> Cons
     turn_state = _snapshot_get(snapshot, "turn_state", {}) or {}
     log_lines = list(_snapshot_get(snapshot, "log_lines", []) or [])
 
-    selected_text = format_focus_output(str(pane_map.get(selected_agent, "") if isinstance(pane_map, dict) else ""))
-    if selected_text in ("(출력 없음)", "(표시할 출력 없음)") and is_live:
-        fallback_parts: list[str] = []
-        run_turn = str(run.get("turn", "") or "") if isinstance(run, dict) else ""
-        run_phase = str(run.get("phase", "") or "") if isinstance(run, dict) else ""
-        run_job = str(run.get("job", "") or "") if isinstance(run, dict) else ""
-        if run_turn:
-            fallback_parts.append(f"현재 턴: {run_turn}")
-        if run_phase:
-            fallback_parts.append(f"단계: {run_phase}")
-        if run_job:
-            fallback_parts.append(f"작업: {run_job}")
-        for label, status, note, _quota in agents:
-            if label == selected_agent and status == "WORKING" and note:
-                fallback_parts.append(f"{label}: 작업 중 ({note})")
-            elif label == selected_agent and status != "OFF":
-                fallback_parts.append(f"{label}: {_AGENT_STATUS_LABELS.get(status, status)}")
-        if fallback_parts:
-            selected_text = "\n".join(fallback_parts)
-
-    if is_live:
-        title_suffix = "최근 pane 출력" if selected_text not in ("(출력 없음)", "(표시할 출력 없음)") else "실행 문맥"
-        focus_title = f"{selected_agent.upper()} • {title_suffix}"
+    focus_lines: list[str] = [f"runtime: {runtime_state}"]
+    selected_lane = dict(lane_details.get(selected_agent) or {}) if isinstance(lane_details, dict) else {}
+    selected_state = str(selected_lane.get("state") or "")
+    if selected_state:
+        focus_lines.append(f"lane_state: {selected_state}")
     else:
-        focus_title = f"{selected_agent.upper()} • 최근 pane 출력 (마지막 실행)"
+        for label, status, note, _quota in agents:
+            if label != selected_agent:
+                continue
+            focus_lines.append(f"lane_state: {status}")
+            if note:
+                focus_lines.append(f"note: {note}")
+            break
+    note = str(selected_lane.get("note") or "")
+    if note:
+        focus_lines.append(f"note: {note}")
+    if "attachable" in selected_lane:
+        focus_lines.append(f"attachable: {'true' if bool(selected_lane.get('attachable')) else 'false'}")
+    pid_value = selected_lane.get("pid")
+    if pid_value not in (None, ""):
+        focus_lines.append(f"pid: {pid_value}")
+    last_heartbeat_at = str(selected_lane.get("last_heartbeat_at") or "")
+    if last_heartbeat_at:
+        focus_lines.append(f"last_heartbeat_at: {last_heartbeat_at}")
+    last_event_at = str(selected_lane.get("last_event_at") or "")
+    if last_event_at and last_event_at != last_heartbeat_at:
+        focus_lines.append(f"last_event_at: {last_event_at}")
+    last_wrapper_event = str(selected_lane.get("last_wrapper_event") or "")
+    if last_wrapper_event:
+        focus_lines.append(f"last_wrapper_event: {last_wrapper_event}")
+    if degraded_reason and runtime_state in {"DEGRADED", "BROKEN"}:
+        focus_lines.append(f"degraded_reason: {degraded_reason}")
+
+    run_turn = str(run.get("turn", "") or "") if isinstance(run, dict) else ""
+    run_phase = str(run.get("phase", "") or "") if isinstance(run, dict) else ""
+    run_job = str(run.get("job", "") or "") if isinstance(run, dict) else ""
+    if run_turn:
+        focus_lines.append(f"active_turn: {run_turn}")
+    if run_phase:
+        focus_lines.append(f"active_phase: {run_phase}")
+    if run_job:
+        focus_lines.append(f"job_id: {run_job}")
+    selected_text = "\n".join(focus_lines) if focus_lines else "(runtime 정보 없음)"
+
+    if runtime_state == "BROKEN":
+        focus_title = f"{selected_agent.upper()} • Runtime 장애 상태"
+    elif is_live:
+        focus_title = f"{selected_agent.upper()} • Runtime 상태"
+    else:
+        focus_title = f"{selected_agent.upper()} • 최근 Runtime 상태"
 
     artifact_color = "#c0a060" if is_live else "#505868"
     artifacts_title = "라운드 기록" if is_live else "라운드 기록 (마지막 실행)"
 
-    run_job = str(run.get("job", "") or "") if isinstance(run, dict) else ""
-    run_phase = str(run.get("phase", "") or "") if isinstance(run, dict) else ""
-    run_turn = str(run.get("turn", "") or "") if isinstance(run, dict) else ""
     if is_live and (run_job or run_phase or run_turn):
         parts = []
         if run_turn:
@@ -190,9 +212,9 @@ def build_console_presentation(*, selected_agent: str, snapshot: object) -> Cons
         log_hint_parts.append(run_phase)
     log_hint = f" • {' → '.join(log_hint_parts)}" if log_hint_parts else ""
     if is_live:
-        log_title = f"워처 로그{log_hint}"
+        log_title = f"Runtime 이벤트{log_hint}"
     else:
-        log_title = f"워처 로그 (마지막 실행){log_hint}"
+        log_title = f"Runtime 이벤트 (마지막 실행){log_hint}"
     log_text = "\n".join(
         (line.strip()[:140] + "…" if len(line.strip()) > 143 else line.strip())
         for line in log_lines

@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "backend_type": "tmux",
+  "run_id": "20260415T085315Z-p2721886",
+  "current_run_id": "20260415T085315Z-p2721886",
+  "runtime_state": "STOPPING",
+  "degraded_reason": "claude_recovery_failed",
+  "degraded_reasons": [
+    "claude_recovery_failed",
+    "codex_recovery_failed",
+    "gemini_recovery_failed"
+  ],
+  "control": {
+    "active_control_file": ".pipeline/claude_handoff.md",
+    "active_control_seq": 136,
+    "active_control_status": "implement",
+    "active_control_updated_at": "2026-04-15T08:36:45.988903Z"
+  },
+  "lanes": [
+    {
+      "name": "Claude",
+      "state": "BROKEN",
+      "pid": null,
+      "attachable": false,
+      "last_event_at": "2026-04-15T08:59:14.515589Z",
+      "last_heartbeat_at": "2026-04-15T08:59:14.515589Z",
+      "note": "prompt_visible"
+    },
+    {
+      "name": "Codex",
+      "state": "BROKEN",
+      "pid": null,
+      "attachable": false,
+      "last_event_at": "2026-04-15T08:59:14.760758Z",
+      "last_heartbeat_at": "2026-04-15T08:59:14.760758Z",
+      "note": "prompt_visible"
+    },
+    {
+      "name": "Gemini",
+      "state": "BROKEN",
+      "pid": null,
+      "attachable": false,
+      "last_event_at": "2026-04-15T08:59:15.506170Z",
+      "last_heartbeat_at": "2026-04-15T08:59:15.506170Z",
+      "note": "prompt_visible"
+    }
+  ],
+  "active_round": {
+    "job_id": "20260415-2026-04-15-reviewed-memory-bound-2cea9f50",
+    "round": 1,
+    "state": "VERIFYING",
+    "artifact_path": "/home/xpdlqj/code/projectH/work/4/15/2026-04-15-reviewed-memory-boundary-draft-apply-separation-parity-bundle.md",
+    "status": "VERIFY_RUNNING"
+  },
+  "last_receipt": {
+    "schema_version": 1,
+    "receipt_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22-r1",
+    "run_id": "20260415T085315Z-p2721886",
+    "job_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22",
+    "round": 1,
+    "target_lane": "codex",
+    "artifact_path": "/home/xpdlqj/code/projectH/verify/4/15/2026-04-15-reviewed-memory-precondition-status-blocked-only-parity-bundle-verification.md",
+    "artifact_hash": "sha256:f8d110970bcbebe6c1ed080b9248b4a543b5c58a82827a6af040d6d007ae4d04",
+    "verify_manifest_path": "/home/xpdlqj/code/projectH/.pipeline/manifests/20260415-2026-04-15-reviewed-memory-preco-32809b22/round-1.verify.json",
+    "verify_result": "passed_by_feedback",
+    "control_seq": 136,
+    "closed_at": "2026-04-15T08:36:47.192702Z",
+    "emitted_by": "supervisor"
+  },
+  "last_receipt_id": "20260415-2026-04-15-reviewed-memory-preco-32809b22-r1",
+  "watcher": {
+    "alive": false,
+    "pid": null
+  },
+  "artifacts": {
+    "latest_work": {
+      "path": "4/15/2026-04-15-reviewed-memory-boundary-draft-apply-separation-parity-bundle.md",
+      "mtime": 1776243411.717251
+    },
+    "latest_verify": {
+      "path": "4/15/2026-04-15-reviewed-memory-precondition-status-blocked-only-parity-bundle-verification.md",
+      "mtime": 1776242205.988903
+    }
+  },
+  "compat": {
+    "control_slots": {
+      "active": {
+        "file": "claude_handoff.md",
+        "status": "implement",
+        "label": "Claude 실행",
+        "mtime": 1776242205.988903,
+        "control_seq": 136
+      },
+      "stale": [
+        {
+          "file": "gemini_advice.md",
+          "status": "advice_ready",
+          "label": "Codex follow-up",
+          "mtime": 1776240863.8649564,
+          "control_seq": 134
+        },
+        {
+          "file": "gemini_request.md",
+          "status": "request_open",
+          "label": "Gemini 실행",
+          "mtime": 1776240155.196709,
+          "control_seq": 133
+        },
+        {
+          "file": "operator_request.md",
+          "status": "needs_operator",
+          "label": "operator 대기",
+          "mtime": 1775887891.1282415,
+          "control_seq": 130
+        }
+      ]
+    },
+    "turn_state": {
+      "state": "IDLE",
+      "entered_at": 1776243413.0047429,
+      "reason": "claude_activity_detected",
+      "active_control_file": "",
+      "active_control_seq": -1
+    }
+  },
+  "last_heartbeat_at": "2026-04-15T08:59:17.765649Z",
+  "updated_at": "2026-04-15T08:59:17.765665Z"
+}

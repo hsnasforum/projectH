@@ -1,0 +1,21 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/xpdlqj/code/projectH/pipeline_runtime/cli.py", line 561, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/home/xpdlqj/code/projectH/pipeline_runtime/cli.py", line 551, in main
+    return supervisor.run()
+           ^^^^^^^^^^^^^^^^
+  File "/home/xpdlqj/code/projectH/pipeline_runtime/supervisor.py", line 1195, in run
+    status = self._write_status()
+             ^^^^^^^^^^^^^^^^^^^^
+  File "/home/xpdlqj/code/projectH/pipeline_runtime/supervisor.py", line 702, in _write_status
+    self._write_current_run_pointer()
+  File "/home/xpdlqj/code/projectH/pipeline_runtime/supervisor.py", line 149, in _write_current_run_pointer
+    atomic_write_json(
+  File "/home/xpdlqj/code/projectH/pipeline_runtime/schema.py", line 47, in atomic_write_json
+    tmp_path.replace(path)
+  File "/usr/lib/python3.12/pathlib.py", line 1378, in replace
+    os.replace(self, target)
+FileNotFoundError: [Errno 2] No such file or directory: '/home/xpdlqj/code/projectH/.pipeline/current_run.json.tmp' -> '/home/xpdlqj/code/projectH/.pipeline/current_run.json'

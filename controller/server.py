@@ -1,21 +1,15 @@
-"""Pipeline Controller API — 최소 vertical slice.
-
-tmux 백엔드를 그대로 유지하면서 상태 조회 + 제어 엔드포인트를 제공합니다.
-"""
+"""Pipeline Controller API backed by runtime supervisor status."""
 
 from __future__ import annotations
 
 import json
-import subprocess
+import mimetypes
 import os
-import signal
 import time
-import datetime as dt
-import re
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from config.runtime_hosts import (
     browser_host_for_bind,
@@ -25,15 +19,19 @@ from config.runtime_hosts import (
 )
 from pipeline_gui.backend import (
     confirm_pipeline_start as backend_confirm_pipeline_start,
+    normalize_runtime_status,
     pipeline_start as backend_pipeline_start,
     pipeline_stop as backend_pipeline_stop,
+    read_runtime_status,
+    runtime_capture_tail as backend_runtime_capture_tail,
+    runtime_attach as backend_runtime_attach,
 )
 from pipeline_gui.project import _session_name_for
 
 PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parent.parent))
-PIPELINE_DIR = PROJECT_ROOT / ".pipeline"
+CONTROLLER_DIR = Path(__file__).parent
 CONTROLLER_PORT = int(os.environ.get("CONTROLLER_PORT", "8780"))
-ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
 
 def _running_in_wsl() -> bool:
     return running_in_wsl()
@@ -52,299 +50,132 @@ def _controller_windows_fallback_host() -> str | None:
 
 
 CONTROLLER_HOST = _controller_bind_host()
-
 SESSION_NAME = _session_name_for(PROJECT_ROOT)
-WATCHER_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")
 
 
-# ── tmux 헬퍼 ─────────────────────────────────────────────────
-
-def _run(cmd: list[str], timeout: float = 5.0) -> str:
+def _resolve_controller_asset(rel_path: str) -> tuple[Path | None, str | None]:
+    asset_root = (CONTROLLER_DIR / "assets").resolve()
+    requested = str(rel_path or "").strip().lstrip("/")
+    if not requested:
+        return None, None
+    candidate = (asset_root / requested).resolve()
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return r.stdout.strip()
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
-        return ""
+        candidate.relative_to(asset_root)
+    except ValueError:
+        return None, None
+    if not candidate.is_file():
+        return None, None
+    content_type = mimetypes.guess_type(str(candidate))[0] or "application/octet-stream"
+    return candidate, content_type
 
 
-def tmux_session_exists() -> bool:
-    return bool(_run(["tmux", "has-session", "-t", SESSION_NAME]) == "" and
-                subprocess.run(["tmux", "has-session", "-t", SESSION_NAME],
-                               capture_output=True).returncode == 0)
-
-
-def tmux_list_panes() -> list[dict]:
-    raw = _run([
-        "tmux", "list-panes", "-t", SESSION_NAME, "-F",
-        "#{pane_id}\t#{pane_index}\t#{pane_current_command}\t#{pane_pid}\t#{pane_dead}",
-    ])
-    panes = []
-    for line in raw.splitlines():
-        parts = line.split("\t")
-        if len(parts) >= 5:
-            panes.append({
-                "pane_id": parts[0],
-                "index": int(parts[1]),
-                "command": parts[2],
-                "pid": int(parts[3]) if parts[3].isdigit() else 0,
-                "dead": parts[4] == "1",
-            })
-    return panes
-
-
-def tmux_capture_pane(pane_id: str, lines: int = 240) -> str:
-    """Capture pane text and rejoin wrapped lines for wide display."""
-    raw = _run(["tmux", "capture-pane", "-p", "-J", "-t", pane_id, "-S", f"-{lines}"])
-    if not raw:
-        return raw
-    # -J handles soft-wraps, but narrow panes still produce short hard-wrapped lines.
-    # Rejoin lines that were split mid-sentence: if a line doesn't end with a
-    # "natural break" character and the next line doesn't start with a bullet/prompt,
-    # merge them into one continuous line.
-    result_lines: list[str] = []
-    for line in raw.split("\n"):
-        stripped = line.rstrip()
-        if not result_lines:
-            result_lines.append(stripped)
-            continue
-        prev = result_lines[-1]
-        # Natural break: empty line, ends with punctuation, or next line starts with
-        # a structural marker (bullet, prompt, heading, box drawing, etc.)
-        is_natural_break = (
-            not prev
-            or prev.endswith((".", "!", "?", ":", ")", "]", "}", "─", "│", "┘", "┐", "┤", "┴"))
-            or stripped.startswith(("•", "─", "│", "┌", "└", "├", "›", ">", "$", "#", "-", "*", "✓", "✗"))
-            or stripped.startswith(("  •", "  -", "  *", "  ✓"))
-            or not stripped  # empty next line
-        )
-        if is_natural_break:
-            result_lines.append(stripped)
-        else:
-            # Merge: continuation of previous line
-            result_lines[-1] = prev + " " + stripped.lstrip()
-    return "\n".join(result_lines)
-
-
-def watcher_alive() -> dict:
-    pid_path = PIPELINE_DIR / "experimental.pid"
-    if not pid_path.exists():
-        return {"alive": False, "pid": None}
-    try:
-        pid = int(pid_path.read_text().strip())
-        os.kill(pid, 0)
-        return {"alive": True, "pid": pid}
-    except (ValueError, OSError):
-        return {"alive": False, "pid": None}
-
-
-def format_elapsed(seconds: float) -> str:
-    total = max(0, int(seconds))
-    mins, secs = divmod(total, 60)
-    hours, mins = divmod(mins, 60)
-    if hours > 0:
-        return f"{hours}h {mins}m"
-    if mins > 0:
-        return f"{mins}m {secs}s"
-    return f"{secs}s"
-
-
-# ── 파이프라인 상태 슬롯 ───────────────────────────────────────
-
-def read_slot(name: str) -> dict:
-    path = PIPELINE_DIR / name
-    if not path.exists():
-        return {"exists": False, "status": None, "preview": None, "mtime": None}
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-        status = None
-        for line in text.splitlines():
-            stripped = line.strip()
-            if stripped.startswith("STATUS:"):
-                status = stripped.split(":", 1)[1].strip()
-                break
-        mtime = path.stat().st_mtime
-        preview = text[:500]
-        return {"exists": True, "status": status, "preview": preview, "mtime": mtime}
-    except OSError:
-        return {"exists": False, "status": None, "preview": None, "mtime": None}
-
-
-# ── Agent 상태 추론 ────────────────────────────────────────────
-
-AGENT_ROLES = [
-    {"name": "Claude", "role": "implementer", "pane_index": 0},
-    {"name": "Codex", "role": "verifier", "pane_index": 1},
-    {"name": "Gemini", "role": "arbiter", "pane_index": 2},
-]
-
-
-def detect_agent_status(pane_text: str) -> str:
-    if not pane_text.strip():
-        return "off"
-    lines = [l.strip() for l in pane_text.strip().splitlines() if l.strip()]
-    if not lines:
-        return "off"
-    lower = pane_text.lower()
-    if (
-        "working (" in lower
-        or "background terminal" in lower
-        or "waiting for background" in lower
-        or "waited for background" in lower
-        or "cascading" in lower
-        or "lollygagging" in lower
-        or "hashing" in lower
-        or "leavering" in lower
-        or "without interrupting claude's current work" in lower
-        or "flumoxing" in lower
-        or "philosophising" in lower
-        or "sautéed" in lower
-    ):
-        return "working"
-    last = lines[-1]
-    if "openai codex" in lower or "› " in pane_text:
-        return "ready"
-    if "claude code" in lower or "bypass permissions" in lower or "❯" in pane_text:
-        return "ready"
-    if "gemini cli" in lower or "type your message" in lower or "workspace" in lower:
-        return "ready"
-    if last.rstrip().endswith("$"):
-        return "off"
-    return "booting"
-
-
-def extract_working_note(lines: list[str]) -> str:
-    for line in reversed(lines[-80:]):
-        match = re.search(r"Working \(([^)]*)", line, re.IGNORECASE)
-        if match:
-            note = match.group(1).split("•", 1)[0].strip(" )…")
-            if note:
-                return note
-        match = re.search(r"Cascading(?:…|\.{3})\s*\(([^)]*)", line, re.IGNORECASE)
-        if match:
-            return match.group(1).strip(" )…")
-        match = re.search(r"Lollygagging(?:…|\.{3})\s*\(([^)]*)", line, re.IGNORECASE)
-        if match:
-            return match.group(1).strip(" )…")
-        lowered = line.lower()
-        if "background terminal" in lowered or "waiting for background" in lowered:
-            return "bg-task"
-    return ""
-
-
-def watcher_runtime_hints() -> dict[str, tuple[str, str]]:
-    log_path = PIPELINE_DIR / "logs" / "experimental" / "watcher.log"
-    if not log_path.exists():
-        return {}
-    try:
-        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-300:]
-    except OSError:
-        return {}
-
-    claude_started_at = None
-    claude_done = False
-    codex_started_at = None
-    codex_done = False
-    gemini_started_at = None
-    gemini_done = False
-
-    for line in lines:
-        ts_match = WATCHER_TS_RE.match(line)
-        if not ts_match:
-            continue
-        try:
-            timestamp = dt.datetime.fromisoformat(ts_match.group(1)).timestamp()
-        except ValueError:
-            continue
-
-        if "notify_claude" in line or ("send-keys" in line and "pane_type=claude" in line) or "waiting_for_claude" in line:
-            claude_started_at = timestamp
-            claude_done = False
-        elif "claude activity detected" in line or ("new job:" in line and claude_started_at is not None):
-            claude_done = True
-
-        if "lease acquired: slot=slot_verify" in line or "dispatching codex prompt" in line or "VERIFY_PENDING → VERIFY_RUNNING" in line:
-            codex_started_at = timestamp
-            codex_done = False
-        elif "codex task completed" in line or "lease released: slot=slot_verify" in line or "VERIFY_RUNNING → VERIFY_DONE" in line:
-            codex_done = True
-
-        if "notify_gemini" in line or "gemini response activity" in line:
-            gemini_started_at = timestamp
-            gemini_done = False
-        elif "gemini advice updated" in line:
-            gemini_done = True
-
-    hints = {}
-    now = time.time()
-    if claude_started_at is not None and not claude_done:
-        hints["Claude"] = ("working", format_elapsed(now - claude_started_at))
-    elif claude_done:
-        hints["Claude"] = ("ready", "")
-    if codex_started_at is not None and not codex_done:
-        hints["Codex"] = ("working", format_elapsed(now - codex_started_at))
-    elif codex_done:
-        hints["Codex"] = ("ready", "")
-    if gemini_started_at is not None and not gemini_done:
-        hints["Gemini"] = ("working", format_elapsed(now - gemini_started_at))
-    elif gemini_done:
-        hints["Gemini"] = ("ready", "")
-    return hints
-
-
-def get_full_state() -> dict:
-    session_alive = tmux_session_exists()
-    panes = tmux_list_panes() if session_alive else []
-    hints = watcher_runtime_hints()
-
-    agents = []
-    for agent_def in AGENT_ROLES:
-        pane = next((p for p in panes if p["index"] == agent_def["pane_index"]), None)
-        pane_text = ""
-        status = "off"
-        status_note = ""
-        if pane and not pane["dead"]:
-            pane_text = tmux_capture_pane(pane["pane_id"])
-            status = detect_agent_status(pane_text)
-            lines = [ANSI_RE.sub("", l).strip() for l in pane_text.splitlines() if l.strip()]
-            if status == "working":
-                status_note = extract_working_note(lines)
-        elif pane and pane["dead"]:
-            status = "dead"
-
-        hint = hints.get(agent_def["name"])
-        if hint:
-            hint_status, hint_note = hint
-            if hint_status == "working":
-                status = "working"
-                if not status_note:
-                    status_note = hint_note
-            elif hint_status == "ready" and status == "booting":
-                status = "ready"
-
-        agents.append({
-            "name": agent_def["name"],
-            "role": agent_def["role"],
-            "status": status,
-            "status_note": status_note,
-            "pane_id": pane["pane_id"] if pane else None,
-            "pane_text": pane_text[-20000:] if pane_text else "",  # 최근 20000자
-        })
-
+def _runtime_status_or_placeholder() -> dict:
+    status = normalize_runtime_status(read_runtime_status(PROJECT_ROOT))
+    if status:
+        return {**status, "project_root": str(PROJECT_ROOT)}
     return {
+        "schema_version": 1,
+        "backend_type": "tmux",
         "project_root": str(PROJECT_ROOT),
-        "session_alive": session_alive,
-        "watcher": watcher_alive(),
-        "agents": agents,
-        "slots": {
-            "claude_handoff": read_slot("claude_handoff.md"),
-            "operator_request": read_slot("operator_request.md"),
-            "gemini_request": read_slot("gemini_request.md"),
-            "gemini_advice": read_slot("gemini_advice.md"),
+        "run_id": "",
+        "current_run_id": "",
+        "runtime_state": "STOPPED",
+        "degraded_reason": "",
+        "degraded_reasons": [],
+        "control": {
+            "active_control_file": "",
+            "active_control_seq": -1,
+            "active_control_status": "none",
+            "active_control_updated_at": "",
         },
+        "lanes": [],
+        "active_round": None,
+        "last_receipt": None,
+        "last_receipt_id": "",
+        "watcher": {"alive": False, "pid": None},
+        "artifacts": {
+            "latest_work": {"path": "—", "mtime": 0.0},
+            "latest_verify": {"path": "—", "mtime": 0.0},
+        },
+        "compat": {
+            "control_slots": {"active": None, "stale": []},
+            "turn_state": None,
+        },
+        "last_heartbeat_at": "",
+        "updated_at": "",
     }
 
 
-# ── 파이프라인 제어 ────────────────────────────────────────────
+def _compat_agents(runtime_status: dict) -> list[dict]:
+    agents = []
+    for lane in list(runtime_status.get("lanes") or []):
+        state = str(lane.get("state") or "OFF").lower()
+        agents.append(
+            {
+                "name": str(lane.get("name") or ""),
+                "role": "",
+                "status": state,
+                "status_note": str(lane.get("note") or ""),
+                "pane_id": None,
+                "pane_text": "",
+            }
+        )
+    return agents
+
+
+def _compat_slots(runtime_status: dict) -> dict:
+    compat = dict(runtime_status.get("compat") or {})
+    control_slots = dict(compat.get("control_slots") or {})
+    slot_map = {
+        "claude_handoff": {"exists": False, "status": None, "preview": None, "mtime": None},
+        "operator_request": {"exists": False, "status": None, "preview": None, "mtime": None},
+        "gemini_request": {"exists": False, "status": None, "preview": None, "mtime": None},
+        "gemini_advice": {"exists": False, "status": None, "preview": None, "mtime": None},
+    }
+    entries = []
+    active = control_slots.get("active")
+    if isinstance(active, dict):
+        entries.append(active)
+    entries.extend(list(control_slots.get("stale") or []))
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        file_name = str(entry.get("file") or "")
+        key = file_name.replace(".md", "")
+        if key not in slot_map:
+            continue
+        slot_map[key] = {
+            "exists": True,
+            "status": entry.get("status"),
+            "preview": entry.get("label"),
+            "mtime": entry.get("mtime"),
+        }
+    return slot_map
+
+
+def get_full_state() -> dict:
+    runtime_status = _runtime_status_or_placeholder()
+    watcher = dict(runtime_status.get("watcher") or {})
+    compat = dict(runtime_status.get("compat") or {})
+    return {
+        "project_root": str(PROJECT_ROOT),
+        "session_alive": str(runtime_status.get("runtime_state") or "STOPPED") not in {"STOPPED", "BROKEN"},
+        "watcher": watcher or {"alive": False, "pid": None},
+        "runtime_status": runtime_status,
+        "agents": _compat_agents(runtime_status),
+        "slots": _compat_slots(runtime_status),
+    }
+
+
+def get_runtime_status() -> tuple[dict, HTTPStatus]:
+    status = normalize_runtime_status(read_runtime_status(PROJECT_ROOT))
+    if not status:
+        return {
+            "ok": False,
+            "error": "runtime status not available",
+        }, HTTPStatus.SERVICE_UNAVAILABLE
+    return {**status, "project_root": str(PROJECT_ROOT)}, HTTPStatus.OK
+
 
 def pipeline_start() -> dict:
     start_requested_at = time.time()
@@ -376,19 +207,58 @@ def pipeline_restart() -> dict:
     stopped = pipeline_stop()
     if not stopped.get("ok"):
         return stopped
-    time.sleep(2)
+    time.sleep(1)
     return pipeline_start()
 
 
-# ── HTTP 핸들러 ────────────────────────────────────────────────
+def pipeline_attach(lane: str | None = None) -> dict:
+    try:
+        pid = backend_runtime_attach(PROJECT_ROOT, SESSION_NAME, lane=lane)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "pid": pid}
+
+
+def runtime_capture_tail(lane: str | None = None, *, lines: int = 120) -> tuple[dict, HTTPStatus]:
+    lane_name = str(lane or "").strip()
+    if not lane_name:
+        return {"ok": False, "error": "lane is required"}, HTTPStatus.BAD_REQUEST
+    text = backend_runtime_capture_tail(PROJECT_ROOT, SESSION_NAME, lane_name, lines=lines)
+    return {
+        "ok": True,
+        "lane": lane_name,
+        "lines": int(lines),
+        "text": text,
+    }, HTTPStatus.OK
+
 
 class ControllerHandler(BaseHTTPRequestHandler):
-
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
 
+        if parsed.path.startswith("/controller-assets/"):
+            rel_path = parsed.path[len("/controller-assets/") :]
+            self._serve_controller_asset(rel_path)
+            return
+
         if parsed.path == "/api/state":
             self._json(get_full_state())
+            return
+
+        if parsed.path == "/api/runtime/status":
+            data, status = get_runtime_status()
+            self._json(data, status)
+            return
+
+        if parsed.path == "/api/runtime/capture-tail":
+            lane = (parse_qs(parsed.query or "").get("lane") or [None])[0]
+            raw_lines = (parse_qs(parsed.query or "").get("lines") or ["120"])[0]
+            try:
+                lines = max(1, min(400, int(raw_lines)))
+            except ValueError:
+                lines = 120
+            data, status = runtime_capture_tail(lane=lane, lines=lines)
+            self._json(data, status)
             return
 
         if parsed.path == "/api/health":
@@ -403,15 +273,20 @@ class ControllerHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        query = parse_qs(parsed.query or "")
+        lane = (query.get("lane") or [None])[0]
 
-        if parsed.path == "/api/start":
+        if parsed.path in {"/api/start", "/api/runtime/start"}:
             self._json(pipeline_start())
             return
-        if parsed.path == "/api/stop":
+        if parsed.path in {"/api/stop", "/api/runtime/stop"}:
             self._json(pipeline_stop())
             return
-        if parsed.path == "/api/restart":
+        if parsed.path in {"/api/restart", "/api/runtime/restart"}:
             self._json(pipeline_restart())
+            return
+        if parsed.path == "/api/runtime/attach":
+            self._json(pipeline_attach(lane=lane))
             return
 
         self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
@@ -426,7 +301,7 @@ class ControllerHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_html(self) -> None:
-        html_path = Path(__file__).parent / "index.html"
+        html_path = CONTROLLER_DIR / "index.html"
         if not html_path.exists():
             self._json({"error": "index.html not found"}, HTTPStatus.NOT_FOUND)
             return
@@ -437,8 +312,21 @@ class ControllerHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _serve_controller_asset(self, rel_path: str) -> None:
+        asset_path, content_type = _resolve_controller_asset(rel_path)
+        if asset_path is None or content_type is None:
+            self._json({"error": "asset not found"}, HTTPStatus.NOT_FOUND)
+            return
+        body = asset_path.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(body)
+
     def log_message(self, fmt, *args) -> None:
-        pass  # 조용히
+        pass
 
 
 def main() -> None:
@@ -447,6 +335,7 @@ def main() -> None:
     print(f"Pipeline Controller: http://{browser_host}:{CONTROLLER_PORT}/controller")
     print(f"  Project: {PROJECT_ROOT}")
     print(f"  API: http://{browser_host}:{CONTROLLER_PORT}/api/state")
+    print(f"  Runtime API: http://{browser_host}:{CONTROLLER_PORT}/api/runtime/status")
     if CONTROLLER_HOST != browser_host:
         print(f"  Bind: {CONTROLLER_HOST}:{CONTROLLER_PORT} (WSL -> Windows 브라우저 접근용)")
     if fallback_host and fallback_host != browser_host:

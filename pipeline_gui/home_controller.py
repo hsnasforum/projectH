@@ -5,28 +5,12 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from .agents import (
-    AGENT_INDEX_NAMES,
-    ANSI_RE,
-    _extract_run_summary,
-    detect_agent_status,
-    extract_quota_note,
-    merge_agent_status_hint,
-    rejoin_wrapped_pane_lines,
-    watcher_runtime_hints,
-    watcher_runtime_hints_from_lines,
-)
 from .backend import (
-    current_verify_activity,
-    latest_md,
-    parse_control_slots,
-    read_turn_state,
-    tmux_alive,
-    watcher_alive,
-    watcher_log_snapshot,
+    normalize_runtime_status,
+    read_runtime_event_tail,
+    read_runtime_status,
 )
 from .home_models import HomeSnapshot
-from .platform import TMUX_QUERY_TIMEOUT, _run
 from .token_queries import load_token_dashboard
 from .tokens import collect_token_usage
 
@@ -35,8 +19,6 @@ class HomeController:
     def __init__(self, project: Path, session_name: str) -> None:
         self.project = project
         self.session_name = session_name
-        self._pane_capture_cache: dict[str, dict[str, object]] = {}
-        self._pane_capture_ttl_sec: float = 3.0
         self._token_usage_cache: dict[str, dict[str, object]] = {}
         self._token_usage_project_key: str = str(project)
         self._token_usage_last_refresh: float = 0.0
@@ -47,7 +29,6 @@ class HomeController:
         self._token_dashboard_last_refresh: float = 0.0
         self._token_dashboard_refresh_in_flight = False
         self._token_dashboard_lock = threading.Lock()
-        self._latest_md_cache: dict[str, tuple[str, float, float]] = {}
 
     def set_project(self, project: Path) -> None:
         if self.project == project:
@@ -61,7 +42,6 @@ class HomeController:
         self._token_dashboard_cache = None
         self._token_dashboard_last_refresh = 0.0
         self._token_dashboard_refresh_in_flight = False
-        self._latest_md_cache = {}
 
     def set_session_name(self, session_name: str) -> None:
         self.session_name = session_name
@@ -69,102 +49,6 @@ class HomeController:
     def token_dashboard_loading(self) -> bool:
         with self._token_dashboard_lock:
             return self._token_dashboard_refresh_in_flight and self._token_dashboard_cache is None
-
-    def collect_all_agent_data(
-        self,
-        *,
-        selected_agent: str,
-        hints: dict[str, tuple[str, str]] | None = None,
-    ) -> tuple[list[tuple[str, str, str, str]], dict[str, str]]:
-        code, output = _run(
-            ["tmux", "list-panes", "-t", f"{self.session_name}:0", "-F", "#{pane_index}|#{pane_id}|#{pane_dead}"],
-            timeout=TMUX_QUERY_TIMEOUT,
-        )
-        if code != 0 or not output:
-            return ([(name, "OFF", "", "") for name in AGENT_INDEX_NAMES.values()], {})
-
-        hints = hints if hints is not None else watcher_runtime_hints(self.project)
-        now = time.time()
-        agents: list[tuple[str, str, str, str]] = []
-        pane_map: dict[str, str] = {}
-        seen_labels: set[str] = set()
-
-        for raw in output.splitlines():
-            try:
-                idx_s, pane_id, dead = raw.split("|", 2)
-                idx = int(idx_s)
-            except ValueError:
-                continue
-            label = AGENT_INDEX_NAMES.get(idx, f"Pane {idx}")
-            seen_labels.add(label)
-            if dead == "1":
-                agents.append((label, "DEAD", "", ""))
-                pane_map[label] = ""
-                self._pane_capture_cache.pop(label, None)
-                continue
-
-            cached_entry = self._pane_capture_cache.get(label)
-            hint_status = (hints.get(label) or ("", ""))[0]
-            should_refresh = (
-                cached_entry is None
-                or str(cached_entry.get("pane_id") or "") != pane_id
-                or label == selected_agent
-                or hint_status == "WORKING"
-                or (now - float(cached_entry.get("captured_at") or 0.0)) >= self._pane_capture_ttl_sec
-            )
-
-            if should_refresh:
-                cap_code, captured = _run(
-                    ["tmux", "capture-pane", "-J", "-p", "-t", pane_id, "-S", "-180"],
-                    timeout=TMUX_QUERY_TIMEOUT,
-                )
-                if cap_code != 0 or not captured:
-                    if cached_entry is not None:
-                        agents.append(
-                            (
-                                label,
-                                str(cached_entry.get("status") or "BOOTING"),
-                                str(cached_entry.get("note") or ""),
-                                str(cached_entry.get("quota") or ""),
-                            )
-                        )
-                        pane_map[label] = str(cached_entry.get("text") or "")
-                    else:
-                        agents.append((label, "BOOTING", "", ""))
-                        pane_map[label] = ""
-                    continue
-
-                cleaned = ANSI_RE.sub("", captured)
-                status, note = detect_agent_status(label, cleaned)
-                quota = extract_quota_note(cleaned)
-                status, note = merge_agent_status_hint(label, status, note, hints.get(label))
-                pane_text = rejoin_wrapped_pane_lines(cleaned)
-                self._pane_capture_cache[label] = {
-                    "pane_id": pane_id,
-                    "captured_at": now,
-                    "text": pane_text,
-                    "status": status,
-                    "note": note,
-                    "quota": quota,
-                }
-                agents.append((label, status, note, quota))
-                pane_map[label] = pane_text
-                continue
-
-            agents.append(
-                (
-                    label,
-                    str(cached_entry.get("status") or "BOOTING"),
-                    str(cached_entry.get("note") or ""),
-                    str(cached_entry.get("quota") or ""),
-                )
-            )
-            pane_map[label] = str(cached_entry.get("text") or "")
-
-        stale_labels = [label for label in self._pane_capture_cache.keys() if label not in seen_labels]
-        for label in stale_labels:
-            self._pane_capture_cache.pop(label, None)
-        return agents, pane_map
 
     def get_cached_token_usage(
         self,
@@ -281,23 +165,6 @@ class HomeController:
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def get_cached_latest_md(
-        self,
-        directory: Path,
-        *,
-        refresh_interval: float = 5.0,
-    ) -> tuple[str, float]:
-        cache_key = str(directory)
-        now = time.time()
-        cached = self._latest_md_cache.get(cache_key)
-        if cached is not None:
-            cached_name, cached_mtime, cached_at = cached
-            if (now - cached_at) < refresh_interval:
-                return cached_name, cached_mtime
-        latest_name, latest_mtime = latest_md(directory)
-        self._latest_md_cache[cache_key] = (latest_name, latest_mtime, now)
-        return latest_name, latest_mtime
-
     def build_snapshot(
         self,
         *,
@@ -306,20 +173,74 @@ class HomeController:
         on_token_dashboard_refresh: Callable[[str, object | None], None] | None = None,
     ) -> HomeSnapshot:
         polled_at = time.time()
-        session_ok = tmux_alive(self.session_name)
-        watcher_ok, watcher_pid = watcher_alive(self.project)
-        log_snapshot = watcher_log_snapshot(self.project, display_lines=14, summary_lines=50, hint_lines=300)
-        watcher_hints = watcher_runtime_hints_from_lines(log_snapshot["hint_lines"])
-        agents, pane_map = self.collect_all_agent_data(selected_agent=selected_agent, hints=watcher_hints)
+        runtime_status = normalize_runtime_status(read_runtime_status(self.project))
+        runtime_state = str(runtime_status.get("runtime_state") or "STOPPED")
+        session_ok = runtime_state != "STOPPED"
+        degraded_reason = str(runtime_status.get("degraded_reason") or "")
+        watcher = dict(runtime_status.get("watcher") or {})
+        watcher_ok = bool(watcher.get("alive"))
+        watcher_pid = watcher.get("pid")
+        lanes = list(runtime_status.get("lanes") or [])
+        agents = []
+        lane_details: dict[str, dict[str, object]] = {}
+        for lane in lanes:
+            label = str(lane.get("name") or "")
+            if not label:
+                continue
+            state = str(lane.get("state") or "OFF")
+            note = str(lane.get("note") or "")
+            agents.append((label, state, note, ""))
+            lane_details[label] = {
+                "state": state,
+                "note": note,
+                "attachable": bool(lane.get("attachable")),
+                "pid": lane.get("pid"),
+                "last_event_at": str(lane.get("last_event_at") or ""),
+                "last_heartbeat_at": str(lane.get("last_heartbeat_at") or ""),
+                "last_wrapper_event": str(lane.get("last_wrapper_event") or ""),
+            }
+        pane_map: dict[str, str] = {}
         token_usage = self.get_cached_token_usage(on_refresh=on_token_usage_refresh)
         token_dashboard = self.get_cached_token_dashboard(on_refresh=on_token_dashboard_refresh)
-        work_name, work_mtime = self.get_cached_latest_md(self.project / "work")
-        verify_name, verify_mtime = self.get_cached_latest_md(self.project / "verify")
+        artifacts = dict(runtime_status.get("artifacts") or {})
+        latest_work = dict(artifacts.get("latest_work") or {})
+        latest_verify = dict(artifacts.get("latest_verify") or {})
+        work_name = str(latest_work.get("path") or "—")
+        work_mtime = float(latest_work.get("mtime") or 0.0)
+        verify_name = str(latest_verify.get("path") or "—")
+        verify_mtime = float(latest_verify.get("mtime") or 0.0)
+        compat = dict(runtime_status.get("compat") or {})
+        log_lines: list[str] = []
+        for data in read_runtime_event_tail(self.project, max_lines=14):
+            event_type = str(data.get("event_type") or "")
+            payload = dict(data.get("payload") or {})
+            lane_name = str(payload.get("lane") or payload.get("job_id") or payload.get("receipt_id") or "")
+            suffix = f" {lane_name}" if lane_name else ""
+            log_lines.append(f"{event_type}{suffix}".strip())
+        active_round = dict(runtime_status.get("active_round") or {})
+        verify_activity = None
+        round_state = str(active_round.get("state") or "")
+        if round_state in {"VERIFY_PENDING", "VERIFYING", "RECEIPT_PENDING"}:
+            verify_activity = {
+                "job_id": str(active_round.get("job_id") or ""),
+                "status": "VERIFY_RUNNING" if round_state != "VERIFY_PENDING" else "VERIFY_PENDING",
+                "label": "Codex 검증 실행 중" if round_state != "VERIFY_PENDING" else "Codex 검증 준비 중",
+                "artifact_name": verify_name,
+                "artifact_path": verify_name,
+            }
+        run_summary = {
+            "job": str(active_round.get("job_id") or ""),
+            "phase": round_state,
+            "turn": str((compat.get("turn_state") or {}).get("state") or ""),
+        }
         return HomeSnapshot(
+            runtime_state=runtime_state,
+            degraded_reason=degraded_reason,
             session_ok=session_ok,
             watcher_alive=watcher_ok,
             watcher_pid=watcher_pid,
             agents=agents,
+            lane_details=lane_details,
             pane_map=pane_map,
             token_usage=token_usage,
             token_dashboard=token_dashboard,
@@ -327,10 +248,10 @@ class HomeController:
             work_mtime=work_mtime,
             verify_name=verify_name,
             verify_mtime=verify_mtime,
-            log_lines=log_snapshot["display_lines"],
-            run_summary=_extract_run_summary(log_snapshot["summary_lines"]),
-            control_slots=parse_control_slots(self.project),
-            verify_activity=current_verify_activity(self.project),
-            turn_state=read_turn_state(self.project),
+            log_lines=log_lines,
+            run_summary=run_summary,
+            control_slots=dict(compat.get("control_slots") or {"active": None, "stale": []}),
+            verify_activity=verify_activity,
+            turn_state=dict(compat.get("turn_state") or {}) or None,
             polled_at=polled_at,
         )

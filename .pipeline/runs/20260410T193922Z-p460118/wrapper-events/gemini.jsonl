@@ -1,0 +1,4 @@
+{"ts": "2026-04-10T19:39:22.975953Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 460817}, "derived_from": "process_alive"}
+{"ts": "2026-04-10T19:39:28.189857Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 460817}, "derived_from": "process_alive"}
+{"ts": "2026-04-10T19:39:28.309112Z", "lane": "Gemini", "event_type": "READY", "source": "wrapper", "payload": {"pid": 460817, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-10T19:39:33.230669Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 460817}, "derived_from": "process_alive"}

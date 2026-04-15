@@ -37,35 +37,63 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
     def test_pipeline_start_passes_project_aware_session(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-start-") as tmp:
             project = Path(tmp).resolve()
-            script = project / "start-pipeline.sh"
-            script.write_text("#!/bin/bash\n", encoding="utf-8")
             expected_session = _session_name_for(project)
 
             with mock.patch.object(
                 pipeline_launcher,
                 "resolve_project_active_profile",
                 return_value={"controls": {"launch_allowed": True}},
-            ), mock.patch.object(pipeline_launcher.subprocess, "Popen") as popen:
+            ), mock.patch.object(
+                pipeline_launcher,
+                "_spawn_runtime_cli",
+            ) as spawn_cli:
                 message = pipeline_launcher.pipeline_start(project)
 
             self.assertEqual(message, "시작 요청됨")
-            command = popen.call_args.args[0]
-            self.assertIn("--session", command)
-            self.assertEqual(command[command.index("--session") + 1], expected_session)
+            spawn_cli.assert_called_once_with(
+                project,
+                ["start", str(project), "--mode", "experimental", "--session", expected_session, "--no-attach"],
+                action="start",
+            )
+
+    def test_pipeline_start_returns_already_running_when_runtime_active(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-start-active-") as tmp:
+            project = Path(tmp).resolve()
+
+            with mock.patch.object(
+                pipeline_launcher,
+                "resolve_project_active_profile",
+                return_value={"controls": {"launch_allowed": True}},
+            ), mock.patch.object(
+                pipeline_launcher,
+                "read_runtime_status",
+                return_value={"runtime_state": "RUNNING"},
+            ), mock.patch.object(
+                pipeline_launcher,
+                "_spawn_runtime_cli",
+            ) as spawn_cli:
+                message = pipeline_launcher.pipeline_start(project)
+
+            self.assertEqual(message, "이미 실행 중입니다. Restart를 사용하세요.")
+            spawn_cli.assert_not_called()
 
     def test_pipeline_stop_passes_project_aware_session(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-stop-") as tmp:
             project = Path(tmp).resolve()
-            script = project / "stop-pipeline.sh"
-            script.write_text("#!/bin/bash\n", encoding="utf-8")
             expected_session = _session_name_for(project)
 
-            with mock.patch.object(pipeline_launcher.subprocess, "run") as run:
+            with mock.patch.object(
+                pipeline_launcher,
+                "_run_runtime_cli",
+                return_value=mock.Mock(returncode=0, stdout="", stderr=""),
+            ) as run_cli:
                 message = pipeline_launcher.pipeline_stop(project)
 
             self.assertEqual(message, "중지 완료")
-            command = run.call_args.args[0]
-            self.assertEqual(command[-2:], ["--session", expected_session])
+            run_cli.assert_called_once_with(
+                project,
+                ["stop", str(project), "--session", expected_session],
+            )
 
     def test_pipeline_restart_reuses_same_resolved_session(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-restart-") as tmp:
@@ -87,41 +115,176 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
             stop.assert_called_once_with(project, expected_session)
             start.assert_called_once_with(project, expected_session)
 
-    def test_tmux_views_and_attach_use_same_session(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="projH-tmux-") as tmp:
+    def test_runtime_views_and_attach_use_same_session(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-runtime-") as tmp:
             project = Path(tmp).resolve()
             session = _session_name_for(project)
 
             with mock.patch.object(
                 pipeline_launcher,
-                "_run",
-                side_effect=[
-                    (0, "0|%1|0"),
-                    (0, "first line\nsecond line\n"),
-                    (0, ""),
-                ],
-            ) as run, mock.patch.object(
-                pipeline_launcher,
-                "resolve_project_runtime_adapter",
+                "read_runtime_status",
                 return_value={
-                    "lane_configs": [
-                        {"name": "Claude", "pane_index": 0, "enabled": True, "roles": ["implement"]},
-                        {"name": "Codex", "pane_index": 1, "enabled": True, "roles": ["verify"]},
-                        {"name": "Gemini", "pane_index": 2, "enabled": True, "roles": ["advisory"]},
+                    "lanes": [
+                        {"name": "Claude", "state": "READY", "pid": 111, "last_event_at": "2026-04-11T00:00:00Z"},
+                        {"name": "Codex", "state": "WORKING", "pid": 222, "last_event_at": "2026-04-11T00:01:00Z"},
                     ]
                 },
-            ), mock.patch.object(pipeline_launcher.os, "system") as system:
-                pane_lines = pipeline_launcher.capture_agent_pane(session, 0, lines=10)
+            ), mock.patch.object(
+                pipeline_launcher,
+                "read_runtime_event_tail",
+                return_value=[
+                    {"event_type": "lane_ready", "payload": {"lane": "Claude", "state": "READY"}},
+                    {"event_type": "lane_working", "payload": {"lane": "Codex", "state": "WORKING"}},
+                ],
+            ), mock.patch.object(
+                pipeline_launcher.subprocess,
+                "run",
+                return_value=mock.Mock(returncode=0),
+            ) as run_attach:
                 snapshots = pipeline_launcher.pane_snapshots(project, session)
-                pipeline_launcher.tmux_attach(session)
+                details = pipeline_launcher.focused_lane_details(project, 0)
+                pipeline_launcher.runtime_attach(project, session)
 
-            self.assertEqual(pane_lines, ["first line", "second line"])
-            self.assertEqual(snapshots, [])
-            first_tmux_target = run.call_args_list[0].args[0]
-            last_tmux_target = run.call_args_list[-1].args[0]
-            self.assertEqual(first_tmux_target[3], f"{session}:0")
-            self.assertEqual(last_tmux_target[3], f"{session}:0")
-            system.assert_called_once_with(f"tmux attach -t {session}")
+            self.assertEqual(
+                [(snap.label, snap.status) for snap in snapshots],
+                [("Claude", "READY"), ("Codex", "WORKING")],
+            )
+            self.assertIn("name=Claude", details)
+            self.assertIn("state=READY", details)
+            self.assertIn("lane_ready READY", details)
+            run_attach.assert_called_once()
+
+    def test_duplicate_handoff_ready_note_is_rendered_truthfully(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-duplicate-") as tmp:
+            project = Path(tmp).resolve()
+            session = _session_name_for(project)
+
+            with mock.patch.object(
+                pipeline_launcher,
+                "read_runtime_status",
+                return_value={
+                    "lanes": [
+                        {
+                            "name": "Claude",
+                            "state": "READY",
+                            "pid": 111,
+                            "note": "waiting_next_control",
+                            "last_event_at": "2026-04-15T13:24:13Z",
+                        }
+                    ]
+                },
+            ), mock.patch.object(
+                pipeline_launcher,
+                "read_runtime_event_tail",
+                return_value=[
+                    {
+                        "event_type": "control_duplicate_ignored",
+                        "payload": {
+                            "control_file": ".pipeline/claude_handoff.md",
+                            "control_seq": 154,
+                            "reason": "handoff_already_completed",
+                        },
+                    }
+                ],
+            ):
+                snapshots = pipeline_launcher.pane_snapshots(project, session)
+                details = pipeline_launcher.focused_lane_details(project, 0)
+
+            self.assertEqual([(snap.label, snap.status, snap.status_note) for snap in snapshots], [("Claude", "READY", "waiting_next_control")])
+            self.assertIn("note=waiting_next_control", details)
+            self.assertTrue(any("control_duplicate_ignored" in line for line in details))
+
+    def test_build_snapshot_surfaces_operator_wait_control_clearly(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-operator-wait-") as tmp:
+            project = Path(tmp).resolve()
+            session = _session_name_for(project)
+
+            with mock.patch.object(
+                pipeline_launcher,
+                "_runtime_view",
+                return_value={
+                    "runtime_state": "RUNNING",
+                    "watcher_alive": True,
+                    "watcher_pid": 1010,
+                    "work_name": "—",
+                    "work_mtime": 0.0,
+                    "verify_name": "—",
+                    "verify_mtime": 0.0,
+                    "control_file": ".pipeline/operator_request.md",
+                    "control_seq": 155,
+                    "control_status": "needs_operator",
+                    "active_round": {"state": "CLOSED", "job_id": "job-123"},
+                    "lanes": [{"name": "Claude", "state": "READY", "attachable": True}],
+                    "event_lines": ["control_changed needs_operator seq=155 operator_request.md"],
+                    "events": [],
+                },
+            ):
+                lines = pipeline_launcher.build_snapshot(project, session)
+
+            self.assertTrue(any("Control: operator_request.md · needs_operator · seq 155" in line for line in lines))
+            self.assertTrue(any("control_changed needs_operator seq=155 operator_request.md" in line for line in lines))
+
+    def test_runtime_view_tolerates_non_mapping_status_payload(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-status-shape-") as tmp:
+            project = Path(tmp).resolve()
+
+            with mock.patch.object(
+                pipeline_launcher,
+                "read_runtime_status",
+                return_value="runtime-status-corrupted",
+            ), mock.patch.object(
+                pipeline_launcher,
+                "read_runtime_event_tail",
+                return_value=[],
+            ):
+                runtime_view = pipeline_launcher._runtime_view(project)
+
+            self.assertEqual(runtime_view["runtime_state"], "STOPPED")
+            self.assertEqual(runtime_view["lanes"], [])
+
+    def test_runtime_view_keeps_status_mapping_when_control_changed_event_exists(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-control-event-") as tmp:
+            project = Path(tmp).resolve()
+
+            with mock.patch.object(
+                pipeline_launcher,
+                "read_runtime_status",
+                return_value={
+                    "runtime_state": "RUNNING",
+                    "lanes": [],
+                    "watcher": {"alive": True, "pid": 1234},
+                    "control": {
+                        "active_control_file": ".pipeline/operator_request.md",
+                        "active_control_seq": 155,
+                        "active_control_status": "needs_operator",
+                    },
+                },
+            ), mock.patch.object(
+                pipeline_launcher,
+                "read_runtime_event_tail",
+                return_value=[
+                    {
+                        "event_type": "control_changed",
+                        "payload": {
+                            "active_control_file": ".pipeline/operator_request.md",
+                            "active_control_seq": 155,
+                            "active_control_status": "needs_operator",
+                        },
+                    }
+                ],
+            ):
+                runtime_view = pipeline_launcher._runtime_view(project)
+
+            self.assertEqual(runtime_view["runtime_state"], "RUNNING")
+            self.assertEqual(runtime_view["control_status"], "needs_operator")
+            self.assertTrue(any("control_changed needs_operator" in line for line in runtime_view["event_lines"]))
+
+    def test_launcher_source_keeps_runtime_wording_for_attach_and_start_pending(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "pipeline-launcher.py").read_text(encoding="utf-8")
+        self.assertNotIn("def tmux_attach", source)
+        self.assertNotIn("tmux/watcher 기동", source)
+        self.assertNotIn("tmux 세션이 없습니다", source)
+        self.assertNotIn("tmux에서 돌아왔습니다", source)
 
     def test_pane_snapshots_mark_disabled_lane_off_from_runtime_adapter(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-disabled-") as tmp:
@@ -130,16 +293,12 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
 
             with mock.patch.object(
                 pipeline_launcher,
-                "_run",
-                return_value=(0, "0|%1|0\n1|%2|0\n2|%3|0\n"),
-            ), mock.patch.object(
-                pipeline_launcher,
-                "resolve_project_runtime_adapter",
+                "read_runtime_status",
                 return_value={
-                    "lane_configs": [
-                        {"name": "Claude", "pane_index": 0, "enabled": False, "roles": []},
-                        {"name": "Codex", "pane_index": 1, "enabled": True, "roles": ["implement", "verify"]},
-                        {"name": "Gemini", "pane_index": 2, "enabled": False, "roles": []},
+                    "lanes": [
+                        {"name": "Claude", "state": "OFF", "attachable": False},
+                        {"name": "Codex", "state": "BOOTING", "attachable": True},
+                        {"name": "Gemini", "state": "OFF", "attachable": False},
                     ]
                 },
             ):

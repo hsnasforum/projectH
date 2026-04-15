@@ -1,0 +1,4 @@
+{"ts": "2026-04-10T19:39:22.935196Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 460803}, "derived_from": "process_alive"}
+{"ts": "2026-04-10T19:39:24.666261Z", "lane": "Claude", "event_type": "READY", "source": "wrapper", "payload": {"pid": 460803, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-10T19:39:28.043122Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 460803}, "derived_from": "process_alive"}
+{"ts": "2026-04-10T19:39:33.049014Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 460803}, "derived_from": "process_alive"}

@@ -47,6 +47,10 @@ from model_adapter.base import (
 )
 from storage.session_store import SessionStore
 from storage.task_log import TaskLogger
+from storage.web_search_store import (
+    LEGACY_ENTITY_SLOT_ALIASES,
+    canonicalize_legacy_claim_coverage_progress_summary,
+)
 from tools.file_reader import OcrRequiredError
 from tools.file_search import FileSearchResult
 
@@ -2445,6 +2449,43 @@ class AgentLoop:
             },
         )
 
+    # Legacy stored entity records (see tests/test_web_app.py fixtures) may
+    # carry older `claim_coverage` slot labels that predate the current
+    # core-slot naming. The reload compatibility layer rewrites them to the
+    # current core slot in memory only; persisted record files stay as-is.
+    # The single source-of-truth mapping lives in ``storage.web_search_store``
+    # so the claim-coverage item canonicalizer and the progress-summary text
+    # canonicalizer cannot drift apart.
+    _LEGACY_ENTITY_SLOT_ALIASES = LEGACY_ENTITY_SLOT_ALIASES
+
+    @classmethod
+    def _canonical_legacy_entity_slot(cls, slot: str) -> str:
+        normalized = str(slot or "").strip()
+        return cls._LEGACY_ENTITY_SLOT_ALIASES.get(normalized, normalized)
+
+    @classmethod
+    def _canonicalize_legacy_claim_coverage_slots(
+        cls,
+        claim_coverage: list[dict[str, Any]] | None,
+    ) -> list[dict[str, Any]]:
+        """Return a copy of ``claim_coverage`` with legacy slot labels rewritten
+        to their current core-slot names while preserving the rest of each
+        item's metadata. Non-dict items are dropped. Idempotent on already
+        canonical input."""
+        canonical: list[dict[str, Any]] = []
+        for item in claim_coverage or []:
+            if not isinstance(item, dict):
+                continue
+            updated = dict(item)
+            original_slot = str(updated.get("slot") or "").strip()
+            canonical_slot = cls._LEGACY_ENTITY_SLOT_ALIASES.get(
+                original_slot, original_slot
+            )
+            if canonical_slot != original_slot:
+                updated["slot"] = canonical_slot
+            canonical.append(updated)
+        return canonical
+
     def _build_entity_reinvestigation_suggestions(
         self,
         *,
@@ -2463,7 +2504,9 @@ class AgentLoop:
         for index, item in enumerate(claim_coverage or []):
             if not isinstance(item, dict):
                 continue
-            slot = str(item.get("slot") or "").strip()
+            slot = self._canonical_legacy_entity_slot(
+                str(item.get("slot") or "").strip()
+            )
             status = str(item.get("status") or "").strip()
             prompt = slot_prompt_map.get(slot)
             if not prompt or status not in status_priority:
@@ -4169,14 +4212,17 @@ class AgentLoop:
         current_claim_coverage: list[dict[str, Any]] | None,
         query: str,
     ) -> list[dict[str, Any]]:
-        items = [dict(item) for item in current_claim_coverage or [] if isinstance(item, dict)]
+        items = self._canonicalize_legacy_claim_coverage_slots(current_claim_coverage)
         if not items:
             return []
 
+        canonical_previous = self._canonicalize_legacy_claim_coverage_slots(
+            previous_claim_coverage
+        )
         previous_map = {
             str(item.get("slot") or "").strip(): str(item.get("status") or "").strip()
-            for item in previous_claim_coverage or []
-            if isinstance(item, dict) and str(item.get("slot") or "").strip()
+            for item in canonical_previous
+            if str(item.get("slot") or "").strip()
         }
         focus_slot = self._entity_slot_from_probe_text(query)
 
@@ -4252,15 +4298,21 @@ class AgentLoop:
         current_claim_coverage: list[dict[str, Any]] | None,
         query: str,
     ) -> str | None:
+        canonical_previous = self._canonicalize_legacy_claim_coverage_slots(
+            previous_claim_coverage
+        )
+        canonical_current = self._canonicalize_legacy_claim_coverage_slots(
+            current_claim_coverage
+        )
         previous_map = {
             str(item.get("slot") or "").strip(): str(item.get("status") or "").strip()
-            for item in previous_claim_coverage or []
-            if isinstance(item, dict) and str(item.get("slot") or "").strip()
+            for item in canonical_previous
+            if str(item.get("slot") or "").strip()
         }
         current_map = {
             str(item.get("slot") or "").strip(): str(item.get("status") or "").strip()
-            for item in current_claim_coverage or []
-            if isinstance(item, dict) and str(item.get("slot") or "").strip()
+            for item in canonical_current
+            if str(item.get("slot") or "").strip()
         }
         if not previous_map or not current_map:
             return None
@@ -6284,10 +6336,12 @@ class AgentLoop:
                 intent_kind=stored_intent_kind,
                 answer_mode=stored_answer_mode or None,
             )
-        stored_claim_coverage = [
-            dict(item) for item in record.get("claim_coverage", []) if isinstance(item, dict)
-        ]
-        stored_progress_summary = str(record.get("claim_coverage_progress_summary") or "").strip()
+        stored_claim_coverage = self._canonicalize_legacy_claim_coverage_slots(
+            [dict(item) for item in record.get("claim_coverage", []) if isinstance(item, dict)]
+        )
+        stored_progress_summary = canonicalize_legacy_claim_coverage_progress_summary(
+            record.get("claim_coverage_progress_summary")
+        )
         claim_coverage: list[dict[str, Any]] = []
         claim_coverage_progress_summary: str | None = None
         entity_sources: list[dict[str, Any]] | None = None
@@ -6391,6 +6445,7 @@ class AgentLoop:
                     ranked_sources=ranked_sources,
                 ),
                 claim_coverage=claim_coverage,
+                claim_coverage_progress_summary=claim_coverage_progress_summary,
                 response_origin=reload_origin,
                 web_search_record_path=record_path or None,
             )
@@ -6794,6 +6849,28 @@ class AgentLoop:
         actions_taken = ["answer_with_active_context"]
         if retry_feedback_label in {"unclear", "incorrect"}:
             actions_taken.insert(0, "feedback_retry")
+        # Web-search follow-ups reuse the internal ``active_context`` for
+        # retrieval but the browser renders the claim-coverage panel and
+        # fact-strength bar from top-level response / message fields only.
+        # Propagate them from the web-search active context when present so
+        # reload-follow-up chains keep the same user-visible claim-coverage
+        # surface the initial investigation produced. Latest-update or
+        # no-claim-coverage contexts leave these fields empty on purpose so
+        # their current empty-meta contract is not widened.
+        follow_up_claim_coverage: list[dict[str, Any]] = []
+        follow_up_progress_summary: str | None = None
+        if active_context.get("kind") == "web_search":
+            context_claim_coverage = [
+                dict(item)
+                for item in active_context.get("claim_coverage") or []
+                if isinstance(item, dict)
+            ]
+            if context_claim_coverage:
+                follow_up_claim_coverage = context_claim_coverage
+                progress_text = str(
+                    active_context.get("claim_coverage_progress_summary") or ""
+                ).strip()
+                follow_up_progress_summary = progress_text or None
         return AgentResponse(
             text=answer,
             status=ResponseStatus.ANSWER,
@@ -6802,6 +6879,8 @@ class AgentLoop:
             active_context=self._public_active_context(active_context),
             follow_up_suggestions=[str(prompt) for prompt in active_context.get("suggested_prompts", [])],
             evidence=selected_evidence,
+            claim_coverage=follow_up_claim_coverage,
+            claim_coverage_progress_summary=follow_up_progress_summary,
             web_search_record_path=str(active_context.get("record_path") or "") or None,
             applied_preferences=_ctx_prefs,
         )

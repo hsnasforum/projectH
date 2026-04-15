@@ -11,31 +11,37 @@ pipeline-launcher.py — 내부용 pipeline desktop launcher (curses TUI)
   S — pipeline start
   T — pipeline stop
   R — pipeline restart (stop → start)
-  A — tmux attach (curses 일시 해제)
+  A — runtime attach (curses 일시 해제)
   Q — launcher 종료
 """
 
 from __future__ import annotations
 
 import curses
-import datetime as dt
 import os
-import re
 import subprocess
 import sys
-import textwrap
 import time
 import traceback
 from pathlib import Path
 from typing import NamedTuple
 
-from pipeline_gui.formatting import time_ago, format_elapsed
+from pipeline_gui.backend import (
+    confirm_pipeline_start as backend_confirm_pipeline_start,
+    normalize_runtime_status,
+    read_runtime_event_tail,
+    read_runtime_status,
+)
+from pipeline_gui.formatting import time_ago
+from pipeline_gui.platform import IS_WINDOWS, WSL_DISTRO, _hidden_subprocess_kwargs, _wsl_path_str
 from pipeline_gui.project import _session_name_for
 from pipeline_gui.setup_profile import (
     join_resolver_messages,
     resolve_project_active_profile,
     resolve_project_runtime_adapter,
 )
+
+_START_READY_TIMEOUT_SEC = 15.0
 
 
 # ── 프로젝트 경로 결정 ────────────────────────────────────────
@@ -70,8 +76,8 @@ def launcher_error_log(project: Path) -> Path:
     return project / ".pipeline" / "logs" / "experimental" / "pipeline-launcher-error.log"
 
 
-def launcher_start_log(project: Path) -> Path:
-    return project / ".pipeline" / "logs" / "experimental" / "pipeline-launcher-start.log"
+def launcher_action_log(project: Path, action: str) -> Path:
+    return project / ".pipeline" / "logs" / "experimental" / f"pipeline-launcher-{action}.log"
 
 
 def safe_addstr(
@@ -109,342 +115,80 @@ def _fit_text(text: str, width: int) -> str:
     return text[: width - 1] + "…"
 
 
-DECORATIVE_ONLY_RE = re.compile(r"^[\s─━│┌┐└┘╭╮╯╰▁▂▃▄▅▆▇█▉▊▋▌▍▎▏▀▝▘▜▛▙▟▞▚▖▗▐•·]+$")
-
-
-def _normalize_pane_line(text: str) -> str:
-    text = ANSI_RE.sub("", text).expandtabs(2).rstrip()
-    text = "".join(c for c in text if ord(c) >= 32 or c == "\t")
-    return text
-
-
-def _is_decorative_pane_line(text: str) -> bool:
-    stripped = text.strip()
-    if not stripped:
-        return False
-    if DECORATIVE_ONLY_RE.match(stripped):
-        return True
-    weird = sum(1 for c in stripped if ord(c) > 127 and not ("가" <= c <= "힣"))
-    has_word = bool(re.search(r"[A-Za-z0-9가-힣]", stripped))
-    return weird / max(1, len(stripped)) > 0.7 and not has_word
-
-
-def _is_activity_line(text: str) -> bool:
-    lower = text.lower().strip()
-    return (
-        lower.startswith("● ")
-        or lower.startswith("• ")
-        or lower.startswith("✶ ")
-        or lower.startswith("* ")
-        or lower.startswith("bash(")
-        or lower.startswith("read ")
-        or lower.startswith("reading ")
-        or lower.startswith("searched ")
-        or "working (" in lower
-        or "waiting for background" in lower
-        or "lollygagging" in lower
-        or "cascading" in lower
-        or "hashing" in lower
-        or "leavering" in lower
-    )
-
-
-def _looks_like_new_entry(text: str) -> bool:
-    stripped = text.strip()
-    if not stripped:
-        return False
-    return stripped.startswith(
-        (
-            "●",
-            "•",
-            "✶",
-            "✽",
-            "* ",
-            "## ",
-            "@@",
-            "Bash(",
-            "Read ",
-            "Reading ",
-            "Searched ",
-            "Search ",
-            "Ran ",
-            "Explored",
-            "Updated Plan",
-            "Context compacted",
-            "ROLE:",
-            "STATE:",
-            "HANDOFF:",
-            "READ_FIRST:",
-            "목표:",
-            "변경:",
-            "검증:",
-            "커밋:",
-            "closeout:",
-            "리스크:",
-            "완료",
-            "workspace",
-            "model:",
-            "directory:",
-            "❯",
-            "> ",
-            "⎿",
-        )
-    )
-
-
-def _merge_piece(prev: str, current: str) -> str:
-    prev = prev.rstrip()
-    current = current.lstrip()
-    if not prev:
-        return current
-    if not current:
-        return prev
-
-    prev_stripped = prev.lstrip()
-    curr_stripped = current.lstrip()
-
-    if (
-        prev_stripped[:1] in {"+", "-"}
-        and curr_stripped[:1] == prev_stripped[:1]
-        and len(curr_stripped) > 1
-        and not curr_stripped[1:2].isspace()
-    ):
-        return prev + curr_stripped[1:]
-
-    prev_last = prev[-1]
-    curr_first = curr_stripped[0]
-    prev_tail = prev_stripped.split()[-1] if prev_stripped.split() else prev_stripped
-
-    if ("가" <= prev_last <= "힣") and ("가" <= curr_first <= "힣"):
-        return prev + curr_stripped
-
-    if (
-        " " not in curr_stripped
-        and (
-            re.search(r"[./_-]", curr_stripped)
-            or re.search(r"[./_-]", prev_tail)
-        )
-        and not curr_first.isupper()
-    ):
-        return prev + curr_stripped
-
-    if prev_last in "/-_([{#@:+=" or curr_first in ".,:;!?)]}/-_%":
-        return prev + curr_stripped
-
-    return prev + " " + curr_stripped
-
-
-def _reflow_focused_lines(lines: list[str]) -> list[str]:
-    cleaned: list[str] = []
-    prev_blank = False
-    for raw_line in lines:
-        line = raw_line.replace("\t", "  ").rstrip()
-        stripped = line.strip()
-        if _is_decorative_pane_line(stripped):
-            continue
-        if not stripped:
-            if not prev_blank:
-                cleaned.append("")
-                prev_blank = True
-            continue
-        prev_blank = False
-        cleaned.append(line)
-
-    # box 내부 텍스트 정리: │로 시작/끝나는 줄에서 │ 제거
-    unboxed: list[str] = []
-    for line in cleaned:
-        s = line.strip()
-        if s.startswith("│"):
-            s = s.lstrip("│").strip()
-        if s.endswith("│"):
-            s = s[:-1].strip()
-        if s:
-            unboxed.append(s)
-        elif not unboxed or unboxed[-1] != "":
-            unboxed.append("")
-
-    # 보수적 merge: 기본은 줄을 합치지 않음.
-    # 유일한 예외: 이전 줄이 열린 괄호/경로로 끝날 때만 합침.
-    rebuilt: list[str] = []
-    for line in unboxed:
-        if not line:
-            if not rebuilt or rebuilt[-1] != "":
-                rebuilt.append("")
-            continue
-        if rebuilt and rebuilt[-1] and rebuilt[-1].endswith(("/", "(", "[", "{")):
-            rebuilt[-1] = rebuilt[-1] + line
-        else:
-            rebuilt.append(line)
-
-    return rebuilt
-
-
-# ── 상태 조회 ──────────────────────────────────────────────────
-
-def _run(cmd: list[str], timeout: float = 5.0) -> tuple[int, str]:
-    """명령 실행 후 (returncode, stdout) 반환."""
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return r.returncode, r.stdout.strip()
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return -1, ""
-
-
-def tmux_alive(session: str) -> bool:
-    code, _ = _run(["tmux", "has-session", "-t", session])
-    return code == 0
-
-
-def watcher_alive(project: Path) -> tuple[bool, int | None]:
-    pid_path = project / ".pipeline" / "experimental.pid"
-    if not pid_path.exists():
-        return False, None
-    try:
-        pid = int(pid_path.read_text().strip())
-        os.kill(pid, 0)
-        return True, pid
-    except (ValueError, OSError):
-        return False, None
-
-
-def latest_md(directory: Path) -> tuple[str, float]:
-    """디렉터리 내 최신 .md 파일명과 mtime 반환."""
-    best_path: Path | None = None
-    best_mtime: float = 0.0
-    if not directory.exists():
-        return "—", 0.0
-    for md in directory.rglob("*.md"):
-        try:
-            mt = md.stat().st_mtime
-            if mt > best_mtime:
-                best_mtime = mt
-                best_path = md
-        except OSError:
-            continue
-    if best_path is None:
-        return "—", 0.0
-    try:
-        rel = str(best_path.relative_to(directory))
-    except ValueError:
-        rel = best_path.name
-    return rel, best_mtime
-
-
-def watcher_log_tail(project: Path, lines: int = 3) -> list[str]:
-    log_path = project / ".pipeline" / "logs" / "experimental" / "watcher.log"
-    if not log_path.exists():
-        return start_log_tail(project, lines=lines)
-    try:
-        all_lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        # suppressed/A/B ratio 제외
-        filtered = [
-            l for l in all_lines
-            if "suppressed" not in l and "A/B ratio" not in l
-        ]
-        return filtered[-lines:] if filtered else start_log_tail(project, lines=lines)
-    except OSError:
-        return ["(읽기 실패)"]
-
-
-ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
-WATCHER_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")
-
-
-def start_log_tail(project: Path, lines: int = 3) -> list[str]:
-    log_path = launcher_start_log(project)
-    if not log_path.exists():
-        return ["(이벤트 없음)"]
-    try:
-        all_lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        cleaned = [ANSI_RE.sub("", line).strip() for line in all_lines]
-        cleaned = [line for line in cleaned if line]
-        return cleaned[-lines:] if cleaned else ["(이벤트 없음)"]
-    except OSError:
-        return ["(읽기 실패)"]
-
-
-
-
-def watcher_runtime_hints(project: Path) -> dict[str, tuple[str, str]]:
-    log_path = project / ".pipeline" / "logs" / "experimental" / "watcher.log"
-    if not log_path.exists():
-        return {}
-
-    try:
-        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-300:]
-    except OSError:
-        return {}
-
-    claude_started_at: float | None = None
-    claude_done = False
-    codex_started_at: float | None = None
-    codex_done = False
-    gemini_started_at: float | None = None
-    gemini_done = False
-
-    for line in lines:
-        ts_match = WATCHER_TS_RE.match(line)
-        if not ts_match:
-            continue
-        try:
-            timestamp = dt.datetime.fromisoformat(ts_match.group(1)).timestamp()
-        except ValueError:
-            continue
-
-        if (
-            "notify_claude" in line
-            or "send-keys" in line and "pane_type=claude" in line
-            or "waiting_for_claude" in line
-        ):
-            claude_started_at = timestamp
-            claude_done = False
-        elif (
-            "claude activity detected by snapshot diff" in line
-            or ("new job:" in line and claude_started_at is not None)
-        ):
-            claude_done = True
-
-        if (
-            "lease acquired: slot=slot_verify" in line
-            or "dispatching codex prompt" in line
-            or "VERIFY_PENDING → VERIFY_RUNNING" in line
-        ):
-            codex_started_at = timestamp
-            codex_done = False
-        elif (
-            "codex task completed" in line
-            or "lease released: slot=slot_verify" in line
-            or "VERIFY_RUNNING → VERIFY_DONE" in line
-        ):
-            codex_done = True
-
-        if (
-            "notify_gemini" in line
-            or "gemini response activity detected" in line
-        ):
-            gemini_started_at = timestamp
-            gemini_done = False
-        elif "gemini advice updated" in line:
-            gemini_done = True
-
-    hints: dict[str, tuple[str, str]] = {}
-    now = time.time()
-    if claude_started_at is not None and not claude_done:
-        hints["Claude"] = ("WORKING", format_elapsed(now - claude_started_at))
-    elif claude_done:
-        hints["Claude"] = ("READY", "")
-    if codex_started_at is not None and not codex_done:
-        hints["Codex"] = ("WORKING", format_elapsed(now - codex_started_at))
-    elif codex_done:
-        hints["Codex"] = ("READY", "")
-    if gemini_started_at is not None and not gemini_done:
-        hints["Gemini"] = ("WORKING", format_elapsed(now - gemini_started_at))
-    elif gemini_done:
-        hints["Gemini"] = ("READY", "")
-    return hints
+def _control_summary(control_file: str, control_seq: int, control_status: str) -> str:
+    label = Path(control_file).name if control_file else "(없음)"
+    detail_parts: list[str] = []
+    if control_status and control_status != "none":
+        detail_parts.append(control_status)
+    if control_seq >= 0:
+        detail_parts.append(f"seq {control_seq}")
+    if not detail_parts:
+        return label
+    return f"{label} · {' · '.join(detail_parts)}"
 
 
 # ── 파이프라인 제어 ────────────────────────────────────────────
+
+def _runtime_cli_base(project: Path) -> list[str]:
+    if IS_WINDOWS:
+        return [
+            "wsl.exe",
+            "-d",
+            WSL_DISTRO,
+            "--cd",
+            _wsl_path_str(project),
+            "--",
+            "python3",
+            "-m",
+            "pipeline_runtime.cli",
+        ]
+    return ["python3", "-m", "pipeline_runtime.cli"]
+
+
+def _runtime_already_active(project: Path) -> bool:
+    runtime_status = normalize_runtime_status(read_runtime_status(project))
+    runtime_state = str(runtime_status.get("runtime_state") or "STOPPED")
+    return runtime_state not in {"STOPPED", "BROKEN"}
+
+
+def _spawn_runtime_cli(project: Path, args: list[str], *, action: str) -> None:
+    log_path = launcher_action_log(project, action)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = _runtime_cli_base(project) + args
+    with log_path.open("w", encoding="utf-8") as logf:
+        if IS_WINDOWS:
+            subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=logf,
+                stderr=subprocess.STDOUT,
+                **_hidden_subprocess_kwargs(),
+            )
+            return
+        subprocess.Popen(
+            cmd,
+            cwd=str(project),
+            stdin=subprocess.DEVNULL,
+            stdout=logf,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+
+def _run_runtime_cli(project: Path, args: list[str], *, timeout: float = 40.0) -> subprocess.CompletedProcess[str]:
+    cmd = _runtime_cli_base(project) + args
+    kwargs: dict[str, object] = {
+        "capture_output": True,
+        "timeout": timeout,
+    }
+    if IS_WINDOWS:
+        kwargs["encoding"] = "utf-8"
+        kwargs["errors"] = "replace"
+        kwargs.update(_hidden_subprocess_kwargs())
+    else:
+        kwargs["text"] = True
+        kwargs["cwd"] = str(project)
+    return subprocess.run(cmd, **kwargs)
 
 def pipeline_start(project: Path, session: str = "") -> str:
     resolved_session = session or resolved_session_name(project)
@@ -453,44 +197,22 @@ def pipeline_start(project: Path, session: str = "") -> str:
     if not bool(controls.get("launch_allowed")):
         detail = join_resolver_messages(resolved) or "Active profile launch is blocked."
         return f"실행 차단: {detail}"
-    script = project / "start-pipeline.sh"
-    if not script.exists():
-        return "start-pipeline.sh 없음"
-    log_path = launcher_start_log(project)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text("", encoding="utf-8")
-    # launcher에서는 start-pipeline.sh의 tmux attach를 건너뛰고 백그라운드로 기동합니다.
-    with log_path.open("w", encoding="utf-8") as logf:
-        subprocess.Popen(
-            [
-                "bash",
-                "-l",
-                str(script),
-                str(project),
-                "--mode",
-                "experimental",
-                "--no-attach",
-                "--session",
-                resolved_session,
-            ],
-            cwd=str(project),
-            stdout=logf,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+    if _runtime_already_active(project):
+        return "이미 실행 중입니다. Restart를 사용하세요."
+    _spawn_runtime_cli(
+        project,
+        ["start", str(project), "--mode", "experimental", "--session", resolved_session, "--no-attach"],
+        action="start",
+    )
     return "시작 요청됨"
 
 
 def pipeline_stop(project: Path, session: str = "") -> str:
     resolved_session = session or resolved_session_name(project)
-    script = project / "stop-pipeline.sh"
-    if not script.exists():
-        return "stop-pipeline.sh 없음"
-    subprocess.run(
-        ["bash", str(script), str(project), "--session", resolved_session],
-        capture_output=True, timeout=15,
-    )
+    result = _run_runtime_cli(project, ["stop", str(project), "--session", resolved_session])
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip() or f"exit={result.returncode}"
+        return f"중지 실패: {detail.splitlines()[-1]}"
     return "중지 완료"
 
 
@@ -507,22 +229,24 @@ def pipeline_restart(project: Path, session: str = "") -> str:
     return "재시작 요청됨"
 
 
-def tmux_attach(session: str) -> None:
-    """curses를 일시 해제하고 tmux attach 실행."""
-    subprocess.run(["tmux", "attach", "-t", session])
+def runtime_attach(project: Path, session: str) -> None:
+    """curses를 일시 해제하고 runtime CLI 경유 attach 실행."""
+    resolved_session = session or resolved_session_name(project)
+    subprocess.run(
+        _runtime_cli_base(project) + ["attach", "--project-root", str(project), "--session", resolved_session],
+        cwd=None if IS_WINDOWS else str(project),
+        check=False,
+    )
 
 
-def wait_for_pipeline_ready(project: Path, session: str, timeout_sec: float = 12.0) -> tuple[bool, str]:
-    started_at = time.time()
-    while time.time() - started_at < timeout_sec:
-        session_ok = tmux_alive(session)
-        watcher_ok, _ = watcher_alive(project)
-        if session_ok and watcher_ok:
-            return True, "기동 완료"
-        time.sleep(1.0)
-    tail = start_log_tail(project, lines=1)
-    reason = tail[-1] if tail else "(원인 미상)"
-    return False, f"START failed: {reason}"
+def wait_for_pipeline_ready(project: Path, session: str, timeout_sec: float = _START_READY_TIMEOUT_SEC) -> tuple[bool, str]:
+    return backend_confirm_pipeline_start(
+        project,
+        session,
+        start_requested_at=time.time(),
+        action_label="기동",
+        timeout_seconds=int(timeout_sec),
+    )
 
 
 class AgentSnapshot(NamedTuple):
@@ -530,64 +254,6 @@ class AgentSnapshot(NamedTuple):
     status: str
     status_note: str
     detail: str
-
-
-def extract_working_note(lines: list[str]) -> str:
-    for line in reversed(lines[-80:]):
-        match = re.search(r"Working \(([^)]*)", line, re.IGNORECASE)
-        if match:
-            note = match.group(1).split("•", 1)[0].strip(" )…")
-            if note:
-                return note
-        match = re.search(r"Cascading(?:…|\.{3})\s*\(([^)]*)", line, re.IGNORECASE)
-        if match:
-            note = match.group(1).strip(" )…")
-            if note:
-                return note
-        match = re.search(r"Lollygagging(?:…|\.{3})\s*\(([^)]*)", line, re.IGNORECASE)
-        if match:
-            note = match.group(1).strip(" )…")
-            if note:
-                return note
-        lowered = line.lower()
-        if "background terminal" in lowered or "waiting for background" in lowered:
-            return "bg-task"
-    return ""
-
-
-def detect_agent_status(label: str, lines: list[str]) -> tuple[str, str, str]:
-    recent_lines = lines[-80:]
-    text = "\n".join(recent_lines)
-    lower = text.lower()
-
-    if not lines:
-        return "DEAD", "", "(출력 없음)"
-
-    if (
-        "working (" in lower
-        or "background terminal" in lower
-        or "waiting for background" in lower
-        or "waited for background" in lower
-        or "cascading" in lower
-        or "lollygagging" in lower
-        or "hashing" in lower
-        or "leavering" in lower
-        or "without interrupting claude's current work" in lower
-    ):
-        note = extract_working_note(lines)
-        return "WORKING", note, " / ".join(lines[-2:]) if len(lines) >= 2 else lines[-1]
-    # Gemini-specific working: "Thinking..." spinner in recent output only
-    if label == "Gemini":
-        recent_lower = "\n".join(recent_lines[-15:]).lower()
-        if "esc to cancel" in recent_lower:
-            return "WORKING", "", " / ".join(recent_lines[-2:]) if len(recent_lines) >= 2 else recent_lines[-1]
-    if label == "Codex" and ("› " in text or "openai codex" in lower):
-        return "READY", "", " / ".join(lines[-2:]) if len(lines) >= 2 else lines[-1]
-    if label == "Claude" and ("❯" in text or "claude code" in lower or "bypass permissions" in lower):
-        return "READY", "", " / ".join(lines[-2:]) if len(lines) >= 2 else lines[-1]
-    if label == "Gemini" and ("type your message" in lower or "gemini cli" in lower or "workspace" in lower):
-        return "READY", "", " / ".join(lines[-2:]) if len(lines) >= 2 else lines[-1]
-    return "BOOTING", "", " / ".join(lines[-2:]) if len(lines) >= 2 else lines[-1]
 
 
 def runtime_lane_name_map(project: Path) -> dict[int, str]:
@@ -602,133 +268,165 @@ def runtime_lane_name_map(project: Path) -> dict[int, str]:
     return lane_names
 
 
-def pane_snapshots(project: Path, session: str) -> list[AgentSnapshot]:
-    runtime_adapter = resolve_project_runtime_adapter(project)
-    lane_configs = list(runtime_adapter.get("lane_configs") or [])
-    lane_by_index = {
-        int(cfg.get("pane_index", idx)): cfg
-        for idx, cfg in enumerate(lane_configs)
-        if isinstance(cfg, dict)
+def _runtime_view(project: Path) -> dict[str, object]:
+    status = normalize_runtime_status(read_runtime_status(project))
+    artifacts = dict(status.get("artifacts") or {})
+    lanes = list(status.get("lanes") or [])
+    watcher = dict(status.get("watcher") or {})
+    control = dict(status.get("control") or {})
+    active_round = dict(status.get("active_round") or {})
+    raw_events: list[dict[str, object]] = []
+    event_lines: list[str] = []
+    for event in read_runtime_event_tail(project, max_lines=12):
+        raw_events.append(event)
+        event_type = str(event.get("event_type") or "")
+        payload = dict(event.get("payload") or {})
+        subject = ""
+        if event_type == "control_changed":
+            control_status_text = str(payload.get("active_control_status") or "")
+            seq = payload.get("active_control_seq")
+            file_label = Path(str(payload.get("active_control_file") or "")).name
+            detail_parts = [
+                part
+                for part in [control_status_text, f"seq={seq}" if seq is not None else "", file_label]
+                if part
+            ]
+            subject = " ".join(detail_parts)
+        elif event_type == "control_duplicate_ignored":
+            reason = str(payload.get("reason") or "duplicate_control")
+            seq = payload.get("control_seq")
+            subject = f"{reason} seq={seq}" if seq is not None else reason
+        elif event_type == "control_operator_stale_ignored":
+            reason = str(payload.get("reason") or "stale_operator_control")
+            seq = payload.get("control_seq")
+            subject = f"{reason} seq={seq}" if seq is not None else reason
+        elif event_type == "runtime_started":
+            subject = str(payload.get("runtime_state") or "")
+        else:
+            subject = str(payload.get("lane") or payload.get("job_id") or payload.get("receipt_id") or "")
+        event_lines.append(f"{event_type} {subject}".strip())
+    return {
+        "runtime_state": str(status.get("runtime_state") or "STOPPED"),
+        "degraded_reason": str(status.get("degraded_reason") or ""),
+        "degraded_reasons": [str(item) for item in list(status.get("degraded_reasons") or []) if str(item)],
+        "watcher_alive": bool(watcher.get("alive")),
+        "watcher_pid": watcher.get("pid"),
+        "work_name": str((artifacts.get("latest_work") or {}).get("path") or "—"),
+        "work_mtime": float((artifacts.get("latest_work") or {}).get("mtime") or 0.0),
+        "verify_name": str((artifacts.get("latest_verify") or {}).get("path") or "—"),
+        "verify_mtime": float((artifacts.get("latest_verify") or {}).get("mtime") or 0.0),
+        "control_file": str(control.get("active_control_file") or ""),
+        "control_seq": int(control.get("active_control_seq") or -1),
+        "control_status": str(control.get("active_control_status") or "none"),
+        "active_round": active_round,
+        "last_receipt_id": str(status.get("last_receipt_id") or ""),
+        "lanes": lanes,
+        "event_lines": event_lines,
+        "events": raw_events,
     }
-    code, output = _run(
-        [
-            "tmux",
-            "list-panes",
-            "-t",
-            f"{session}:0",
-            "-F",
-            "#{pane_index}|#{pane_id}|#{pane_dead}",
-        ],
-        timeout=2.0,
-    )
-    if code != 0 or not output:
-        return []
-    runtime_hints = watcher_runtime_hints(project)
+
+
+def pane_snapshots(project: Path, _session: str) -> list[AgentSnapshot]:
     summaries: list[AgentSnapshot] = []
-    for raw in output.splitlines():
-        try:
-            pane_index_s, pane_id, pane_dead = raw.split("|", 2)
-            pane_index = int(pane_index_s)
-        except ValueError:
-            continue
-
-        lane_config = lane_by_index.get(pane_index, {})
-        label = str(lane_config.get("name") or f"Pane {pane_index}")
-        roles = [str(role) for role in list(lane_config.get("roles") or []) if str(role).strip()]
-        role_note = f"roles={','.join(roles)}" if roles else ""
-        if lane_config and not bool(lane_config.get("enabled")):
-            summaries.append(AgentSnapshot(label, "OFF", role_note, "(disabled by active profile)"))
-            continue
-        if pane_dead == "1":
-            summaries.append(AgentSnapshot(label, "DEAD", "", "(pane dead)"))
-            continue
-
-        capture_code, captured = _run(
-            ["tmux", "capture-pane", "-J", "-pt", pane_id, "-S", "-60"],
-            timeout=2.0,
-        )
-        if capture_code != 0 or not captured:
-            summaries.append(AgentSnapshot(label, "BOOTING", "", "(출력 대기 중)"))
-            continue
-
-        lines = [_normalize_pane_line(line).strip() for line in captured.splitlines()]
-        lines = [line for line in lines if line]
-        if not lines:
-            summaries.append(AgentSnapshot(label, "BOOTING", "", "(출력 대기 중)"))
-            continue
-        status, status_note, snippet = detect_agent_status(label, lines)
-        hint = runtime_hints.get(label)
-        if hint:
-            hint_status, hint_note = hint
-            if hint_status == "WORKING":
-                # watcher가 작업 중임을 감지했다면 pane READY보다 WORKING을 우선합니다.
-                status = "WORKING"
-                if not status_note:
-                    status_note = hint_note
-            elif hint_status == "READY" and status == "BOOTING":
-                # pane 출력이 아직 얕을 때만 watcher의 READY 힌트로 보정합니다.
-                status = "READY"
-                status_note = ""
-
-        if len(snippet) > 110:
-            snippet = snippet[:107] + "..."
-        detail = snippet
-        if role_note:
-            detail = f"{role_note} · {snippet}" if snippet else role_note
-        summaries.append(AgentSnapshot(label, status, status_note, detail))
+    for lane in list((_runtime_view(project).get("lanes") or [])):
+        name = str(lane.get("name") or "")
+        state = str(lane.get("state") or "OFF")
+        status_note = str(lane.get("note") or "")
+        detail_parts = []
+        if lane.get("pid"):
+            detail_parts.append(f"pid={lane['pid']}")
+        last_event_at = str(lane.get("last_event_at") or "")
+        if last_event_at:
+            detail_parts.append(f"event={last_event_at}")
+        summaries.append(AgentSnapshot(name, state, status_note, " · ".join(detail_parts)))
     return summaries
 
 
-def capture_agent_pane(session: str, agent_index: int, lines: int = 200) -> list[str]:
-    """지정 agent pane의 최근 출력을 가져옵니다."""
-    code, output = _run(
-        ["tmux", "list-panes", "-t", f"{session}:0", "-F", "#{pane_index}|#{pane_id}|#{pane_dead}"],
-        timeout=2.0,
+def focused_lane_details(project: Path, agent_index: int) -> list[str]:
+    runtime_view = _runtime_view(project)
+    lane_name = runtime_lane_name_map(project).get(agent_index, "")
+    implement_owner = str(resolve_project_runtime_adapter(project).get("role_owners", {}).get("implement") or "Claude")
+    lane = next(
+        (dict(item) for item in list(runtime_view.get("lanes") or []) if str(item.get("name") or "") == lane_name),
+        {},
     )
-    if code != 0 or not output:
-        return ["(tmux 세션 없음)"]
-    for raw in output.splitlines():
-        try:
-            idx_s, pane_id, dead = raw.split("|", 2)
-            if int(idx_s) == agent_index:
-                if dead == "1":
-                    return ["(pane dead)"]
-                cap_code, captured = _run(
-                    ["tmux", "capture-pane", "-J", "-pt", pane_id, "-S", f"-{lines}"],
-                    timeout=3.0,
-                )
-                if cap_code != 0 or not captured:
-                    return ["(출력 없음)"]
-                result = []
-                for l in captured.splitlines():
-                    cl = _normalize_pane_line(l)
-                    if cl.strip():
-                        result.append(cl)
-                return result
-        except ValueError:
-            continue
-    return ["(pane 없음)"]
+    if not lane:
+        return ["(lane status 없음)"]
+
+    lines = [
+        f"name={lane_name}",
+        f"state={lane.get('state') or 'UNKNOWN'}",
+        f"attachable={bool(lane.get('attachable'))}",
+    ]
+    if lane.get("pid"):
+        lines.append(f"pid={lane['pid']}")
+    if lane.get("note"):
+        lines.append(f"note={lane['note']}")
+    if lane.get("last_heartbeat_at"):
+        lines.append(f"heartbeat={lane['last_heartbeat_at']}")
+    if lane.get("last_event_at"):
+        lines.append(f"event={lane['last_event_at']}")
+
+    lane_events: list[str] = []
+    for event in list(runtime_view.get("events") or []):
+        payload = dict(event.get("payload") or {})
+        event_type = str(event.get("event_type") or "")
+        if str(payload.get("lane") or "") != lane_name:
+            if not (lane_name == implement_owner and event_type == "control_duplicate_ignored"):
+                continue
+        subject = str(payload.get("state") or payload.get("result") or payload.get("reason") or "").strip()
+        if event_type == "control_duplicate_ignored":
+            subject = str(payload.get("reason") or "duplicate_control").strip()
+        lane_events.append(f"{event_type} {subject}".strip())
+
+    if lane_events:
+        lines.append("")
+        lines.append("recent runtime events:")
+        lines.extend(lane_events[-6:])
+    return lines
 
 
 def build_snapshot(project: Path, session: str) -> list[str]:
-    session_ok = tmux_alive(session)
-    watcher_ok, watcher_pid = watcher_alive(project)
-    work_name, work_mtime = latest_md(project / "work")
-    verify_name, verify_mtime = latest_md(project / "verify")
-    log_lines = watcher_log_tail(project, lines=3)
+    runtime_view = _runtime_view(project)
+    runtime_status = str(runtime_view.get("runtime_state") or "STOPPED")
+    watcher_ok = bool(runtime_view.get("watcher_alive"))
+    watcher_pid = runtime_view.get("watcher_pid")
+    work_name = str(runtime_view.get("work_name") or "—")
+    work_mtime = float(runtime_view.get("work_mtime") or 0.0)
+    verify_name = str(runtime_view.get("verify_name") or "—")
+    verify_mtime = float(runtime_view.get("verify_mtime") or 0.0)
+    log_lines = list(runtime_view.get("event_lines") or [])
+    active_round = dict(runtime_view.get("active_round") or {})
+    control_file = str(runtime_view.get("control_file") or "")
+    control_seq = int(runtime_view.get("control_seq") or -1)
+    control_status = str(runtime_view.get("control_status") or "none")
+    degraded_reason = str(runtime_view.get("degraded_reason") or "")
+    degraded_reasons = [str(item) for item in list(runtime_view.get("degraded_reasons") or []) if str(item)]
 
     lines = [
         "Pipeline Launcher",
         "=" * 72,
         f"Project : {project}",
-        f"Pipeline: {'RUNNING' if session_ok else 'STOPPED'}",
-        f"Watcher : {'ALIVE pid=' + str(watcher_pid) if watcher_ok and watcher_pid else 'DEAD'}",
+        f"Runtime : {runtime_status}",
+        f"Runtime helper : {'ALIVE pid=' + str(watcher_pid) if watcher_ok and watcher_pid else 'DEAD'}",
         "",
         f"Latest work  : {work_name} ({time_ago(work_mtime)})" if work_mtime else f"Latest work  : {work_name}",
         f"Latest verify: {verify_name} ({time_ago(verify_mtime)})" if verify_mtime else f"Latest verify: {verify_name}",
         "",
-        "Recent log:",
+        f"Control: {_control_summary(control_file, control_seq, control_status)}",
+        f"Round  : {active_round.get('state') or 'IDLE'}" + (
+            f" / {active_round.get('job_id')}" if active_round.get("job_id") else ""
+        ),
     ]
+    if degraded_reasons:
+        lines.extend(["", "Degraded:"])
+        lines.extend([f"  - {reason}" for reason in degraded_reasons])
+    elif degraded_reason:
+        lines.extend(["", f"Degraded: {degraded_reason}"])
+    lines.extend([
+        "",
+        "Recent events:",
+    ])
     if log_lines:
         lines.extend([f"  {line}" for line in log_lines])
     else:
@@ -752,8 +450,8 @@ def build_snapshot(project: Path, session: str) -> list[str]:
         "  s = start",
         "  t = stop",
         "  r = restart",
-        "  a = tmux attach",
-        "  f = follow (8s live view)",
+        "  a = runtime attach",
+        "  f = follow (8s live status)",
         "  q = quit",
         "  Enter = refresh",
     ])
@@ -820,11 +518,11 @@ def run_line_mode(project: Path) -> None:
             message = f"RESTART: {status if ok else status}"
             continue
         if cmd == "a":
-            if tmux_alive(session):
-                tmux_attach(session)
-                message = "ATTACH: tmux에서 돌아왔습니다."
+            if str(_runtime_view(project).get("runtime_state") or "STOPPED") != "STOPPED":
+                runtime_attach(project, session)
+                message = "ATTACH: runtime attach에서 돌아왔습니다."
             else:
-                message = "ATTACH: tmux 세션이 없습니다. 먼저 start 하세요."
+                message = "ATTACH: runtime이 중지 상태입니다. 먼저 start 하세요."
             continue
         if cmd == "f":
             show_follow_view(project, "Live status", seconds=8)
@@ -864,6 +562,7 @@ def draw(
     WHITE = curses.color_pair(5)
 
     row = 0
+    runtime_view = _runtime_view(project)
 
     # 헤더
     title = " Pipeline Launcher "
@@ -886,15 +585,22 @@ def draw(
     row += 1
 
     # 상태
-    session_ok = tmux_alive(session)
-    w_alive, w_pid = watcher_alive(project)
+    runtime_status = str(runtime_view.get("runtime_state") or "STOPPED")
+    w_alive = bool(runtime_view.get("watcher_alive"))
+    w_pid = runtime_view.get("watcher_pid")
 
     safe_addstr(stdscr, row, 0, "│ ", CYAN)
-    safe_addstr(stdscr, row, 2, "Pipeline: ", WHITE)
-    if session_ok:
+    safe_addstr(stdscr, row, 2, "Runtime: ", WHITE)
+    if runtime_status == "RUNNING":
         pipeline_text = "[RUNNING]".ljust(12)
         pipeline_attr = GREEN | curses.A_BOLD
-    elif pending_state:
+    elif runtime_status == "DEGRADED":
+        pipeline_text = "[DEGRADED]".ljust(12)
+        pipeline_attr = YELLOW | curses.A_BOLD
+    elif runtime_status == "BROKEN":
+        pipeline_text = "[BROKEN]".ljust(12)
+        pipeline_attr = RED | curses.A_BOLD
+    elif runtime_status == "STARTING" or pending_state:
         pipeline_text = "[STARTING]".ljust(12)
         pipeline_attr = YELLOW | curses.A_BOLD
     else:
@@ -926,7 +632,7 @@ def draw(
     if focused_agent is not None:
         keys = (
             f"[0/Esc] 전체  [1]{lane_names.get(0, '?')} [2]{lane_names.get(1, '?')} [3]{lane_names.get(2, '?')}  "
-            f"── 포커스: {lane_names.get(focused_agent, '?')}"
+            f"── 포커스: {lane_names.get(focused_agent, '?')} status"
         )
     else:
         keys = (
@@ -942,8 +648,13 @@ def draw(
     row += 1
 
     # 최신 파일
-    work_name, work_mtime = latest_md(project / "work")
-    verify_name, verify_mtime = latest_md(project / "verify")
+    work_name = str(runtime_view.get("work_name") or "—")
+    work_mtime = float(runtime_view.get("work_mtime") or 0.0)
+    verify_name = str(runtime_view.get("verify_name") or "—")
+    verify_mtime = float(runtime_view.get("verify_mtime") or 0.0)
+    control_file = str(runtime_view.get("control_file") or "")
+    control_seq = int(runtime_view.get("control_seq") or -1)
+    control_status = str(runtime_view.get("control_status") or "none")
 
     safe_addstr(stdscr, row, 0, "│ ", CYAN)
     safe_addstr(stdscr, row, 2, "Latest work:   ", WHITE)
@@ -959,6 +670,14 @@ def draw(
     safe_addstr(stdscr, row, w - 1, "│", CYAN)
     row += 1
 
+    safe_addstr(stdscr, row, 0, "│ ", CYAN)
+    safe_addstr(stdscr, row, 2, "Control:       ", WHITE)
+    control_display = _control_summary(control_file, control_seq, control_status)
+    control_attr = YELLOW if control_status == "needs_operator" else WHITE
+    safe_addstr(stdscr, row, 17, control_display[:max(0, w - 20)], control_attr)
+    safe_addstr(stdscr, row, w - 1, "│", CYAN)
+    row += 1
+
     # 구분선
     safe_addstr(stdscr, row, 0, f"├{border}┤", CYAN)
     row += 1
@@ -969,7 +688,7 @@ def draw(
     safe_addstr(stdscr, row, w - 1, "│", CYAN)
     row += 1
 
-    log_lines = watcher_log_tail(project, lines=3)
+    log_lines = list(runtime_view.get("event_lines") or [])[:3]
     for log_line in log_lines:
         if row >= h - 3:
             break
@@ -1032,11 +751,11 @@ def draw(
             safe_addstr(stdscr, row, w - 1, "│", CYAN)
             row += 1
 
-    # ── Focused agent read-only viewer ──
+    # ── Focused agent runtime detail viewer ──
     if focused_agent is not None and row < h - 4:
         safe_addstr(stdscr, row, 0, f"├{border}┤", CYAN)
         row += 1
-        viewer_title = f"  {lane_names.get(focused_agent, '?')} pane output (read-only)"
+        viewer_title = f"  {lane_names.get(focused_agent, '?')} runtime detail (read-only)"
         safe_addstr(stdscr, row, 0, "│ ", CYAN)
         safe_addstr(stdscr, row, 2, viewer_title, WHITE | curses.A_BOLD)
         safe_addstr(stdscr, row, w - 1, "│", CYAN)
@@ -1049,21 +768,8 @@ def draw(
             content_width = 10
 
         available_rows = h - row - 3  # 메시지 + 하단 테두리용 여유
-        pane_lines = capture_agent_pane(session, focused_agent, lines=available_rows * 3)
-
-        cleaned = _reflow_focused_lines(pane_lines)
-
-        # 최근 활동 시작 지점 근처를 우선 보여주기
-        anchor = None
-        for i in range(len(cleaned) - 1, -1, -1):
-            if _is_activity_line(cleaned[i]):
-                anchor = max(0, i - 4)
-                break
-        if anchor is not None:
-            cleaned = cleaned[anchor:]
-
-        # 줄바꿈 없이 단순 표시 — 긴 줄은 content_width에서 잘라냄
-        display = cleaned[-available_rows:] if len(cleaned) > available_rows else cleaned
+        details = focused_lane_details(project, focused_agent)
+        display = details[-available_rows:] if len(details) > available_rows else details
 
         for dline in display:
             if row >= h - 3:
@@ -1114,15 +820,26 @@ def main(stdscr: curses.window) -> None:
         if pending_state and time.time() > pending_state_expire:
             pending_state = ""
 
-        session_ok = tmux_alive(session)
-        watcher_ok, _ = watcher_alive(project)
-        if session_ok or watcher_ok:
+        runtime_view = _runtime_view(project)
+        current_runtime_state = str(runtime_view.get("runtime_state") or "STOPPED")
+        ready_lanes = [
+            lane
+            for lane in list(runtime_view.get("lanes") or [])
+            if bool(lane.get("attachable")) and str(lane.get("state") or "") in {"READY", "WORKING"}
+        ]
+        if current_runtime_state in {"RUNNING", "DEGRADED"} and ready_lanes:
+            if message.startswith("START failed:"):
+                message = ""
             pending_state = ""
             pending_started_at = 0.0
-        elif pending_state and pending_started_at and time.time() - pending_started_at > 12:
-            tail = start_log_tail(project, lines=1)
-            reason = tail[-1] if tail else "(원인 미상)"
+        elif current_runtime_state == "BROKEN":
+            reason = str(runtime_view.get("degraded_reason") or "runtime broken")
             message = f"START failed: {reason}"
+            message_expire = time.time() + 12
+            pending_state = ""
+            pending_started_at = 0.0
+        elif pending_state and pending_started_at and time.time() - pending_started_at > _START_READY_TIMEOUT_SEC:
+            message = "START failed: runtime READY 조건을 만족하지 못했습니다"
             message_expire = time.time() + 12
             pending_state = ""
             pending_started_at = 0.0
@@ -1148,8 +865,8 @@ def main(stdscr: curses.window) -> None:
             message = f"START: {msg}"
             message_expire = time.time() + 5
             if msg == "시작 요청됨":
-                pending_state = "초기화 중... tmux/watcher 기동까지 몇 초 걸릴 수 있습니다."
-                pending_state_expire = time.time() + 15
+                pending_state = "초기화 중... runtime lane readiness를 확인하는 중입니다."
+                pending_state_expire = time.time() + _START_READY_TIMEOUT_SEC
                 pending_started_at = time.time()
             else:
                 pending_state = ""
@@ -1168,26 +885,26 @@ def main(stdscr: curses.window) -> None:
             message = f"RESTART: {msg}"
             message_expire = time.time() + 5
             if msg == "재시작 요청됨":
-                pending_state = "초기화 중... tmux/watcher 기동까지 몇 초 걸릴 수 있습니다."
-                pending_state_expire = time.time() + 15
+                pending_state = "초기화 중... runtime lane readiness를 확인하는 중입니다."
+                pending_state_expire = time.time() + _START_READY_TIMEOUT_SEC
                 pending_started_at = time.time()
             else:
                 pending_state = ""
                 pending_started_at = 0.0
         elif ch == "a":
-            if tmux_alive(session):
-                # curses 일시 해제 → tmux attach → 복귀
+            if str(_runtime_view(project).get("runtime_state") or "STOPPED") != "STOPPED":
+                # curses를 잠시 내리고 runtime attach를 실행한 뒤 복귀합니다.
                 curses.endwin()
-                tmux_attach(session)
+                runtime_attach(project, session)
                 stdscr = curses.initscr()
                 curses.curs_set(0)
                 stdscr.nodelay(True)
                 stdscr.timeout(1000)
                 curses.start_color()
-                message = "ATTACH: tmux에서 돌아왔습니다 (Ctrl+B, D로 detach)"
+                message = "ATTACH: runtime attach에서 돌아왔습니다"
                 message_expire = time.time() + 5
             else:
-                message = "ATTACH: tmux 세션이 없습니다. 먼저 Start하세요."
+                message = "ATTACH: 실행 중인 runtime이 없습니다. 먼저 Start하세요."
                 message_expire = time.time() + 3
         elif ch == "1":
             focused_agent = 0 if focused_agent != 0 else None

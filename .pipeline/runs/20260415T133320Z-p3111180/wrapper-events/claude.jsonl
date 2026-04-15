@@ -1,0 +1,2 @@
+{"ts": "2026-04-15T13:33:21.814088Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 3112331}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T13:33:24.695438Z", "lane": "Claude", "event_type": "READY", "source": "wrapper", "payload": {"pid": 3112331, "reason": "prompt_visible"}, "derived_from": "vendor_output"}

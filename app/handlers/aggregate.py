@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from app.errors import WebApiError
 from core.contracts import (
+    CANDIDATE_REVIEW_ACTION_TO_STATUS,
     CandidateConfirmationScope,
     CandidateReviewAction,
     RecordStage,
@@ -111,9 +112,10 @@ class AggregateHandlerMixin:
         review_action = self._normalize_optional_text(payload.get("review_action"))
 
         if not message_id:
-            raise WebApiError(400, "검토 수락을 기록할 메시지 ID가 필요합니다.")
-        if review_action != CandidateReviewAction.ACCEPT:
-            raise WebApiError(400, "현재 review action은 검토 수락만 지원합니다.")
+            raise WebApiError(400, "검토 결과를 기록할 메시지 ID가 필요합니다.")
+        review_status = CANDIDATE_REVIEW_ACTION_TO_STATUS.get(review_action or "")
+        if not review_status:
+            raise WebApiError(400, "지원하지 않는 review action입니다.")
         if not candidate_id or not candidate_updated_at:
             raise WebApiError(400, "현재 durable candidate 정보가 필요합니다.")
 
@@ -125,7 +127,7 @@ class AggregateHandlerMixin:
             source_message = dict(message)
             break
         if source_message is None:
-            raise WebApiError(404, "검토 수락을 기록할 grounded-brief 원문 응답을 찾지 못했습니다.")
+            raise WebApiError(404, "검토 결과를 기록할 grounded-brief 원문 응답을 찾지 못했습니다.")
 
         session_local_memory_signal = self.session_store.build_session_local_memory_signal(
             session,
@@ -149,7 +151,7 @@ class AggregateHandlerMixin:
             )
         )
         if durable_candidate is None:
-            raise WebApiError(400, "현재 검토 수락을 기록할 durable candidate가 없습니다.")
+            raise WebApiError(400, "현재 검토 결과를 기록할 durable candidate가 없습니다.")
 
         current_candidate_updated_at = ""
         for raw_ref in durable_candidate.get("supporting_confirmation_refs", []):
@@ -165,7 +167,7 @@ class AggregateHandlerMixin:
             or not current_candidate_updated_at
             or current_candidate_updated_at != candidate_updated_at
         ):
-            raise WebApiError(409, "현재 검토 후보가 바뀌어 검토 수락 대상을 다시 불러와야 합니다.")
+            raise WebApiError(409, "현재 검토 후보가 바뀌어 검토 대상을 다시 불러와야 합니다.")
 
         try:
             updated_message = self.session_store.record_candidate_review_for_message(
@@ -177,15 +179,15 @@ class AggregateHandlerMixin:
                     "artifact_id": source_message.get("artifact_id"),
                     "source_message_id": source_message.get("message_id"),
                     "review_scope": "source_message_candidate_review",
-                    "review_action": CandidateReviewAction.ACCEPT,
-                    "review_status": "accepted",
+                    "review_action": review_action,
+                    "review_status": review_status,
                 },
             )
         except ValueError as exc:
             raise WebApiError(400, str(exc)) from exc
 
         if updated_message is None:
-            raise WebApiError(404, "검토 수락을 기록할 grounded-brief 원문 응답을 찾지 못했습니다.")
+            raise WebApiError(404, "검토 결과를 기록할 grounded-brief 원문 응답을 찾지 못했습니다.")
 
         candidate_review_record = self._serialize_candidate_review_record(updated_message.get("candidate_review_record"))
         if candidate_review_record is None:

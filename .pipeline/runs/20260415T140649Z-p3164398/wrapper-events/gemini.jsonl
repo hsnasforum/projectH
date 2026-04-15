@@ -1,0 +1,18 @@
+{"ts": "2026-04-15T14:06:50.517511Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 3165125}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T14:06:55.548078Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 3165125}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T14:06:57.246485Z", "lane": "Gemini", "event_type": "READY", "source": "wrapper", "payload": {"pid": 3165125, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-15T14:07:00.555848Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 3165125}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T14:07:05.630502Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 3165125}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T14:07:10.713712Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 3165125}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T14:07:15.833612Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 3165125}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T14:07:20.988165Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 3165125}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T14:07:26.021240Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 3165125}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T14:07:31.143255Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 3165125}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T14:07:36.275562Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 3165125}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T14:07:41.392072Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 3165125}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T14:07:46.532964Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 3165125}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T14:07:51.670372Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 3165125}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T14:07:56.709906Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 3165125}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T14:08:01.752466Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 3165125}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T14:08:06.811112Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 3165125}, "derived_from": "process_alive"}
+{"ts": "2026-04-15T14:08:11.912864Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 3165125}, "derived_from": "process_alive"}

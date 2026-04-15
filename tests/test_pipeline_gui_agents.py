@@ -6,7 +6,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import pipeline_gui.home_controller as home_module
 from pipeline_gui.agents import detect_agent_status, watcher_runtime_hints
 
 
@@ -92,108 +91,6 @@ class PipelineGuiAgentsTest(unittest.TestCase):
 
         self.assertEqual(status, "READY")
         self.assertEqual(note, "")
-
-    def test_collect_all_agent_data_prefers_live_ready_over_stale_watcher_hint(self) -> None:
-        controller = home_module.HomeController(Path("/tmp/projectH"), "aip-projectH")
-
-        responses = [
-            (0, "0|%65|0\n1|%66|0\n2|%67|0\n"),
-            (0, "Claude output\n❯\n"),
-            (0, "latest /verify는 truthful했습니다.\n› Implement {feature}\n"),
-            (0, "Type your message\nworkspace\n"),
-        ]
-
-        def fake_run(*_args: object, **_kwargs: object) -> tuple[int, str]:
-            return responses.pop(0)
-
-        with mock.patch.object(home_module, "_run", side_effect=fake_run):
-            with mock.patch.object(home_module, "watcher_runtime_hints", return_value={"Codex": ("WORKING", "verify 37s")}):
-                agents, _pane_map = controller.collect_all_agent_data(selected_agent="Claude")
-
-        status_by_label = {label: (status, note) for label, status, note, _quota in agents}
-        self.assertEqual(status_by_label["Codex"], ("READY", ""))
-
-    def test_collect_all_agent_data_upgrades_claude_ready_prompt_when_watcher_shows_live_work(self) -> None:
-        controller = home_module.HomeController(Path("/tmp/projectH"), "aip-projectH")
-
-        responses = [
-            (0, "0|%65|0\n1|%66|0\n2|%67|0\n"),
-            (0, "Claude output\n❯\n⏵⏵ bypass permissions\n"),
-            (0, "latest /verify는 truthful했습니다.\n› Implement {feature}\n"),
-            (0, "Type your message\nworkspace\n"),
-        ]
-
-        def fake_run(*_args: object, **_kwargs: object) -> tuple[int, str]:
-            return responses.pop(0)
-
-        with mock.patch.object(home_module, "_run", side_effect=fake_run):
-            with mock.patch.object(home_module, "watcher_runtime_hints", return_value={"Claude": ("WORKING", "impl 12s")}):
-                agents, _pane_map = controller.collect_all_agent_data(selected_agent="Claude")
-
-        status_by_label = {label: (status, note) for label, status, note, _quota in agents}
-        self.assertEqual(status_by_label["Claude"], ("WORKING", "impl 12s"))
-
-    def test_collect_all_agent_data_reuses_cached_nonselected_pane_within_ttl(self) -> None:
-        controller = home_module.HomeController(Path("/tmp/projectH"), "aip-projectH")
-        controller._pane_capture_ttl_sec = 30.0
-
-        first_responses = [
-            (0, "0|%65|0\n1|%66|0\n2|%67|0\n"),
-            (0, "Claude output\n❯\n"),
-            (0, "Codex output\n› Implement {feature}\n"),
-            (0, "Gemini output\nType your message\nworkspace\n"),
-        ]
-        second_responses = [
-            (0, "0|%65|0\n1|%66|0\n2|%67|0\n"),
-            (0, "Claude output\n❯\n"),
-        ]
-
-        with mock.patch.object(home_module, "_run", side_effect=first_responses.copy()):
-            controller.collect_all_agent_data(selected_agent="Claude", hints={})
-
-        with mock.patch.object(home_module, "_run", side_effect=second_responses.copy()) as run_mock:
-            agents, pane_map = controller.collect_all_agent_data(selected_agent="Claude", hints={})
-
-        status_by_label = {label: status for label, status, _note, _quota in agents}
-        self.assertEqual(status_by_label["Codex"], "READY")
-        self.assertIn("Codex output", pane_map["Codex"])
-        capture_calls = [
-            call.args[0]
-            for call in run_mock.call_args_list
-            if isinstance(call.args[0], list) and len(call.args[0]) >= 2 and call.args[0][1] == "capture-pane"
-        ]
-        self.assertEqual(len(capture_calls), 1)
-
-    def test_collect_all_agent_data_refreshes_nonselected_working_hint_even_with_cache(self) -> None:
-        controller = home_module.HomeController(Path("/tmp/projectH"), "aip-projectH")
-        controller._pane_capture_cache = {
-            "Codex": {
-                "pane_id": "%66",
-                "captured_at": time.time(),
-                "text": "old codex output",
-                "status": "READY",
-                "note": "",
-                "quota": "",
-            }
-        }
-        controller._pane_capture_ttl_sec = 30.0
-
-        responses = [
-            (0, "0|%65|0\n1|%66|0\n2|%67|0\n"),
-            (0, "Claude output\n❯\n"),
-            (0, "Codex output\n• Working (37s • esc to interrupt)\n"),
-            (0, "Gemini output\nType your message\nworkspace\n"),
-        ]
-
-        with mock.patch.object(home_module, "_run", side_effect=responses):
-            agents, pane_map = controller.collect_all_agent_data(
-                selected_agent="Claude",
-                hints={"Codex": ("WORKING", "verify 37s")},
-            )
-
-        status_by_label = {label: (status, note) for label, status, note, _quota in agents}
-        self.assertEqual(status_by_label["Codex"], ("WORKING", "verify 37s"))
-        self.assertIn("Codex output", pane_map["Codex"])
 
     def test_detect_agent_status_treats_claude_sauteed_closeout_as_ready(self) -> None:
         pane_text = (

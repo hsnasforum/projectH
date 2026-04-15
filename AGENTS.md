@@ -173,9 +173,9 @@ Current source-of-truth docs live in the root `docs/` directory.
   - rerun the requested verification honestly
   - leave or update the persistent `/verify` note
   - write the next Claude-facing execution handoff to `.pipeline/claude_handoff.md` when one exact slice is fixed
-  - write `.pipeline/gemini_request.md` when Codex needs a third-party tie-break before operator escalation
+  - write `.pipeline/gemini_request.md` when the only blocker is next-slice ambiguity, overlapping candidates, or a low-confidence tie-break before operator escalation
   - if an active Claude session asks a live side question such as context exhaustion, session rollover, or continue-vs-switch, use `.pipeline/gemini_request.md` only as Codex↔Gemini coordination and relay the answer back to Claude as a short lane reply instead of rewriting `.pipeline/claude_handoff.md` mid-session
-  - write `.pipeline/operator_request.md` when automation must stop for a real operator decision
+  - write `.pipeline/operator_request.md` only when automation must stop for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, or after Gemini advice still leaves no truthful exact slice
 - `.pipeline/claude_handoff.md` is the current Claude-only execution slot.
 - `.pipeline/claude_handoff.md` should declare `STATUS: implement` and should include `CONTROL_SEQ`.
 - When `STATUS: implement` is active, Claude may only implement that exact slice or emit a pane-local `STATUS: implement_blocked` sentinel with `BLOCK_REASON`, `REQUEST: codex_triage`, `HANDOFF`, `HANDOFF_SHA`, and `BLOCK_ID`.
@@ -226,8 +226,8 @@ Current source-of-truth docs live in the root `docs/` directory.
 - Treat `/verify` as the review report for the latest Claude round plus a narrow direction guard, not as a mandatory full-repository diagnosis.
 - After that review, Codex should either:
   - choose one exact next slice and write `STATUS: implement` to `.pipeline/claude_handoff.md`, or
-  - write `.pipeline/gemini_request.md` when a third-party tie-break is needed, or
-  - explicitly stop automation with `.pipeline/operator_request.md`
+  - write `.pipeline/gemini_request.md` when the only blocker is next-slice ambiguity, overlapping candidates, or a low-confidence tie-break, or
+  - explicitly stop automation with `.pipeline/operator_request.md` only when a real operator-only decision remains, approval-record/truth-sync work must happen first, immediate safety requires a stop, or Gemini was already unavailable/inconclusive
 - In the canonical flow, Codex should not close a verification round with pane-only reasoning or a control-slot rewrite alone. Codex must leave or update `/verify` before writing the next control slot.
 - When the latest `/work` and `/verify` already closed one family truthfully, prefer automatic next-slice selection over `needs_operator` if one smaller same-family follow-up remains.
 - Default automatic tie-break order is:
@@ -237,7 +237,7 @@ Current source-of-truth docs live in the root `docs/` directory.
   - internal cleanup
 - However, if the same day already contains 3 or more same-family docs-only truth-sync rounds in a row, Codex must not auto-select yet another narrower docs-only micro-slice from that family. At that point Codex should either:
   - choose one slightly larger but still bounded docs-only bundle that closes the remaining same-family drift in one round, or
-  - open `.pipeline/gemini_request.md` or `.pipeline/operator_request.md` instead of extending the docs-only micro-loop
+  - open `.pipeline/gemini_request.md` first, or `.pipeline/operator_request.md` only if a real operator-only decision remains, instead of extending the docs-only micro-loop
 - If Codex stops with `.pipeline/operator_request.md`, the stop request should still explain the reason and the missing operator decision instead of leaving the rolling slot empty.
 - Do not push slice selection back onto Claude with wording such as "continue only if you can find a good slice."
 - Use a broader whole-project audit only when explicitly requested or when a milestone, release, or trajectory check is needed.
@@ -261,8 +261,9 @@ Current source-of-truth docs live in the root `docs/` directory.
   - new quality axis
   - internal cleanup
 - Use `STATUS: needs_operator` only when:
-  - two or more candidates remain genuinely tied after the order above, or
-  - approval-record or truth-sync work must happen before any new implementation slice can start.
+  - approval-record or truth-sync work must happen before any new implementation slice can start, or
+  - a real operator-only decision or immediate safety stop is required now, or
+  - Gemini arbitration is unavailable or already completed and two or more candidates still remain genuinely tied after the order above.
 
 ## Reviewed-Memory Planning Boundary
 

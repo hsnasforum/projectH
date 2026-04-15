@@ -1,0 +1,1 @@
+{"ts": "2026-04-10T19:34:21.692106Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 451499}, "derived_from": "process_alive"}

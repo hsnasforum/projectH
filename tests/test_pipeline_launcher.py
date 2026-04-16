@@ -289,6 +289,49 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
             self.assertEqual(runtime_view["control_status"], "needs_operator")
             self.assertTrue(any("control_changed needs_operator" in line for line in runtime_view["event_lines"]))
 
+    def test_runtime_view_surfaces_dispatch_stall_event_lines(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-dispatch-stall-") as tmp:
+            project = Path(tmp).resolve()
+
+            with mock.patch.object(
+                pipeline_launcher,
+                "read_runtime_status",
+                return_value={
+                    "runtime_state": "DEGRADED",
+                    "degraded_reason": "dispatch_stall",
+                    "degraded_reasons": ["dispatch_stall"],
+                    "lanes": [
+                        {"name": "Codex", "state": "READY", "note": "waiting_task_accept_after_dispatch"},
+                    ],
+                    "watcher": {"alive": True, "pid": 1234},
+                    "control": {"active_control_status": "implement"},
+                    "autonomy": {"mode": "normal"},
+                },
+            ), mock.patch.object(
+                pipeline_launcher,
+                "read_runtime_event_tail",
+                return_value=[
+                    {
+                        "event_type": "dispatch_stall_detected",
+                        "payload": {
+                            "lane": "Codex",
+                            "action": "degraded",
+                            "reason": "waiting_task_accept_after_dispatch",
+                        },
+                    }
+                ],
+            ):
+                runtime_view = pipeline_launcher._runtime_view(project)
+
+            self.assertEqual(runtime_view["runtime_state"], "DEGRADED")
+            self.assertEqual(runtime_view["degraded_reason"], "dispatch_stall")
+            self.assertTrue(
+                any(
+                    "dispatch_stall_detected Codex degraded waiting_task_accept_after_dispatch" in line
+                    for line in runtime_view["event_lines"]
+                )
+            )
+
     def test_runtime_view_marks_operator_classification_fallback_as_broken_gate(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-operator-gate-") as tmp:
             project = Path(tmp).resolve()

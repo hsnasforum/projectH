@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "receipt_id": "20260417-2026-04-17-sqlite-historical-sav-1e4eae98-r1",
+  "run_id": "20260416T150123Z-p684989",
+  "job_id": "20260417-2026-04-17-sqlite-historical-sav-1e4eae98",
+  "round": 1,
+  "target_lane": "codex",
+  "artifact_path": "/home/xpdlqj/code/projectH/verify/4/17/2026-04-17-sqlite-historical-save-identity-signal-parity-verification.md",
+  "artifact_hash": "sha256:9b57e8858bd83d9522806ad07204074c7c46ab2cb0c9952ecd3562fc97bcbafa",
+  "verify_manifest_path": "/home/xpdlqj/code/projectH/.pipeline/manifests/20260417-2026-04-17-sqlite-historical-sav-1e4eae98/round-1.verify.json",
+  "verify_result": "passed_by_feedback",
+  "control_seq": 226,
+  "closed_at": "2026-04-16T15:18:15.563741Z",
+  "emitted_by": "supervisor"
+}

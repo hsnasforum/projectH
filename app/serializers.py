@@ -3946,6 +3946,13 @@ class SerializerMixin:
                 cua = str(slc.get("updated_at") or "").strip()
                 if cid and cua:
                     current_candidate_index[anchor] = (cid, cua)
+                    continue
+            crk = message.get("candidate_recurrence_key")
+            if isinstance(crk, dict):
+                cid = str(crk.get("source_candidate_id") or "").strip()
+                cua = str(crk.get("source_candidate_updated_at") or "").strip()
+                if cid and cua:
+                    current_candidate_index[anchor] = (cid, cua)
 
         grouped_members: dict[tuple[str, str, str, str, str], dict[tuple[str, str], dict[str, Any]]] = {}
 

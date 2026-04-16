@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "receipt_id": "20260417-2026-04-17-sqlite-recurrence-agg-5aebe5d0-r1",
+  "run_id": "20260416T150123Z-p684989",
+  "job_id": "20260417-2026-04-17-sqlite-recurrence-agg-5aebe5d0",
+  "round": 1,
+  "target_lane": "codex",
+  "artifact_path": "/home/xpdlqj/code/projectH/verify/4/17/2026-04-17-sqlite-recurrence-aggregate-visible-surface-contract-retention-parity-verification.md",
+  "artifact_hash": "sha256:f0744467358c0ebb9ea1610fa82205f28966fe4cb2cf3416c435dfe3a1fbadd0",
+  "verify_manifest_path": "/home/xpdlqj/code/projectH/.pipeline/manifests/20260417-2026-04-17-sqlite-recurrence-agg-5aebe5d0/round-1.verify.json",
+  "verify_result": "passed_by_feedback",
+  "control_seq": 230,
+  "closed_at": "2026-04-16T15:51:17.228359Z",
+  "emitted_by": "supervisor"
+}

@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "receipt_id": "20260417-2026-04-17-sqlite-session-local--9c304490-r1",
+  "run_id": "20260416T150123Z-p684989",
+  "job_id": "20260417-2026-04-17-sqlite-session-local--9c304490",
+  "round": 1,
+  "target_lane": "codex",
+  "artifact_path": "/home/xpdlqj/code/projectH/verify/4/17/2026-04-17-sqlite-session-local-signal-candidate-boundary-parity-verification.md",
+  "artifact_hash": "sha256:ea15a4fba7f6e16df23defafe5087df2c57f8b399782ec0c2ae146464a5072a7",
+  "verify_manifest_path": "/home/xpdlqj/code/projectH/.pipeline/manifests/20260417-2026-04-17-sqlite-session-local--9c304490/round-1.verify.json",
+  "verify_result": "passed_by_feedback",
+  "control_seq": 227,
+  "closed_at": "2026-04-16T15:24:40.418428Z",
+  "emitted_by": "supervisor"
+}

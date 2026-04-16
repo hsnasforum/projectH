@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "receipt_id": "20260416-2026-04-16-sqlite-reviewed-memor-d6cbd7a8-r1",
+  "run_id": "20260416T134327Z-p602671",
+  "job_id": "20260416-2026-04-16-sqlite-reviewed-memor-d6cbd7a8",
+  "round": 1,
+  "target_lane": "codex",
+  "artifact_path": "/home/xpdlqj/code/projectH/verify/4/16/2026-04-16-reviewed-memory-aggregate-reload-smoke-split-verification.md",
+  "artifact_hash": "sha256:6bed3a5bf43cbbb8478adea217dd4cfc90c7518dbc83f35d9370715e11059ab9",
+  "verify_manifest_path": "/home/xpdlqj/code/projectH/.pipeline/manifests/20260416-2026-04-16-sqlite-reviewed-memor-d6cbd7a8/round-1.verify.json",
+  "verify_result": "passed_by_feedback",
+  "control_seq": 217,
+  "closed_at": "2026-04-16T14:16:54.306527Z",
+  "emitted_by": "supervisor"
+}

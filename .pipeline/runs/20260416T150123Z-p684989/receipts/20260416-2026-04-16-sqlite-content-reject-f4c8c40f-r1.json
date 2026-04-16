@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "receipt_id": "20260416-2026-04-16-sqlite-content-reject-f4c8c40f-r1",
+  "run_id": "20260416T150123Z-p684989",
+  "job_id": "20260416-2026-04-16-sqlite-content-reject-f4c8c40f",
+  "round": 1,
+  "target_lane": "codex",
+  "artifact_path": "/home/xpdlqj/code/projectH/verify/4/16/2026-04-16-sqlite-content-reject-late-flip-save-history-parity-verification.md",
+  "artifact_hash": "sha256:1aa9b1d4eab7139e7c3aedbe23abe68ad65b882b3490b53c98661a590c85d803",
+  "verify_manifest_path": "/home/xpdlqj/code/projectH/.pipeline/manifests/20260416-2026-04-16-sqlite-content-reject-f4c8c40f/round-1.verify.json",
+  "verify_result": "passed_by_feedback",
+  "control_seq": 223,
+  "closed_at": "2026-04-16T14:50:36.242157Z",
+  "emitted_by": "supervisor"
+}

@@ -110,6 +110,7 @@ class RuntimeSupervisor:
         self._last_duplicate_control_key = ""
         self._last_stale_operator_control_key = ""
         self._last_operator_gate_key = ""
+        self._last_dispatch_stall_key = ""
         self._last_autonomy_key = ""
         self._last_lane_states: dict[str, str] = {}
         self._last_degraded_reason = ""
@@ -119,6 +120,7 @@ class RuntimeSupervisor:
         self._current_duplicate_control_marker: dict[str, Any] | None = None
         self._current_stale_operator_control_marker: dict[str, Any] | None = None
         self._current_operator_gate_marker: dict[str, Any] | None = None
+        self._current_dispatch_stall_marker: dict[str, Any] | None = None
         self._current_autonomy: dict[str, Any] | None = None
 
     def _make_run_id(self) -> str:
@@ -564,6 +566,40 @@ class RuntimeSupervisor:
             "state": round_state,
             "artifact_path": str(latest_job.get("artifact_path") or ""),
             "status": status,
+            "note": str(latest_job.get("lane_note") or ""),
+            "degraded_reason": str(latest_job.get("degraded_reason") or ""),
+        }
+
+    def _dispatch_stall_marker(self, job_states: list[dict[str, Any]]) -> dict[str, Any] | None:
+        candidates = [
+            job
+            for job in job_states
+            if float(job.get("dispatch_stall_detected_at") or 0.0) > 0.0
+        ]
+        if not candidates:
+            return None
+        latest_job = max(
+            candidates,
+            key=lambda data: (
+                float(data.get("dispatch_stall_detected_at") or 0.0),
+                float(data.get("updated_at") or 0.0),
+                str(data.get("job_id") or ""),
+            ),
+        )
+        detected_at = float(latest_job.get("dispatch_stall_detected_at") or 0.0)
+        if detected_at <= 0.0:
+            return None
+        degraded_reason = str(latest_job.get("degraded_reason") or "")
+        return {
+            "job_id": str(latest_job.get("job_id") or ""),
+            "round": int(latest_job.get("round") or 0),
+            "fingerprint": str(latest_job.get("dispatch_stall_fingerprint") or ""),
+            "attempt": int(latest_job.get("dispatch_stall_count") or 0),
+            "detected_at": iso_utc(detected_at),
+            "reason": str(latest_job.get("lane_note") or "waiting_task_accept_after_dispatch"),
+            "degraded_reason": degraded_reason,
+            "action": "degraded" if degraded_reason == "dispatch_stall" else "requeue",
+            "lane": str(self.role_owners.get("verify") or "Codex"),
         }
 
     def _build_artifacts(self) -> dict[str, Any]:
@@ -721,6 +757,7 @@ class RuntimeSupervisor:
                 note = failure_reason
             else:
                 model_state = str(model.get("state") or "")
+                active_round_note = str((active_round or {}).get("note") or "")
                 implement_busy = False
                 active_lane_tail = ""
                 surface_working = (
@@ -755,13 +792,17 @@ class RuntimeSupervisor:
                         note = "implement"
                 elif surface_working and self._tail_has_ready_indicator(lane_name, active_lane_tail) and not self._tail_has_busy_indicator(active_lane_tail):
                     state = "READY"
-                    if lane_name == str(self.role_owners.get("verify") or "Codex"):
+                    if lane_name == str(self.role_owners.get("verify") or "Codex") and active_round_note:
+                        note = active_round_note
+                    elif lane_name == str(self.role_owners.get("verify") or "Codex"):
                         note = str((active_round or {}).get("state") or "").lower() or "prompt_visible"
                     elif note in {"", "prompt_visible"}:
                         note = "prompt_visible"
                 elif surface_working:
                     state = "WORKING"
-                    if note in {"", "prompt_visible"}:
+                    if lane_name == str(self.role_owners.get("verify") or "Codex") and active_round_note:
+                        note = active_round_note
+                    elif note in {"", "prompt_visible"}:
                         turn_state_name = str((turn_state or {}).get("state") or "")
                         if turn_state_name == "CLAUDE_ACTIVE":
                             note = "implement"
@@ -936,6 +977,8 @@ class RuntimeSupervisor:
             active_control=effective_control or None,
         )
         active_round = self._build_active_round(job_states, last_receipt)
+        dispatch_stall_marker = self._dispatch_stall_marker(job_states)
+        self._current_dispatch_stall_marker = dispatch_stall_marker
         if stale_operator_control is not None or operator_gate is not None:
             control_block = {
                 "active_control_file": "",
@@ -1018,6 +1061,10 @@ class RuntimeSupervisor:
         ]
 
         degraded_reasons = [item for item in [self._launch_failed_reason, receipt_degraded] if item]
+        for job_state in job_states:
+            reason = str(job_state.get("degraded_reason") or "").strip()
+            if reason:
+                degraded_reasons.append(reason)
         for lane in lanes:
             reason = self._maybe_recover_lane(
                 lane,
@@ -1212,6 +1259,21 @@ class RuntimeSupervisor:
         if autonomy_key != self._last_autonomy_key:
             self._last_autonomy_key = autonomy_key
             self._append_event("autonomy_changed", autonomy)
+
+        dispatch_stall = dict(self._current_dispatch_stall_marker or {})
+        dispatch_stall_key = "|".join(
+            [
+                str(dispatch_stall.get("job_id") or ""),
+                str(dispatch_stall.get("round") or ""),
+                str(dispatch_stall.get("fingerprint") or ""),
+                str(dispatch_stall.get("attempt") or ""),
+                str(dispatch_stall.get("action") or ""),
+            ]
+        )
+        if dispatch_stall_key != self._last_dispatch_stall_key:
+            self._last_dispatch_stall_key = dispatch_stall_key
+            if dispatch_stall:
+                self._append_event("dispatch_stall_detected", dispatch_stall)
 
         current_degraded = str(status.get("degraded_reason") or "")
         if current_degraded != self._last_degraded_reason:

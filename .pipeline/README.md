@@ -78,6 +78,10 @@
 - watcher는 active `CLAUDE_ACTIVE` 구현 라운드가 이미 진행 중이면 새 `claude_handoff.md`를 즉시 hot-swap하지 않고, 현재 라운드가 `/work`, `implement_blocked`, 또는 idle timeout으로 닫힌 뒤 다음 판정에서 반영하는 편이 맞습니다.
 - watcher는 control slot 변경만으로 Codex verification round를 닫지 않습니다. 현재 라운드 시작 이후의 `/verify` receipt가 실제로 갱신된 것이 확인될 때만 feedback-only completion을 인정합니다.
 - Codex verification round가 idle timeout에 걸렸는데 current-round `/verify` receipt나 next control output이 아직 incomplete하면, watcher는 그 라운드를 terminal done으로 닫지 않고 `VERIFY_PENDING`으로 되돌려 backoff 후 자동 재시도를 거치게 하는 편이 맞습니다.
+- Codex verification pane이 busy indicator 없이 idle prompt로 빨리 돌아왔는데 current-round `/verify` receipt나 next control output이 아직 incomplete하면, watcher는 5분 full timeout까지 붙들지 말고 short idle window 뒤 `VERIFY_PENDING`으로 되돌려 재시도하는 편이 맞습니다.
+- 같은 fingerprint에서 위 상황이 한 번 더 반복되면 watcher는 이를 `dispatch_stall` incident로 승격하고, lane note를 `waiting_task_accept_after_dispatch`로 남긴 채 추가 자동 재큐잉 없이 degraded surface로 넘기는 편이 맞습니다.
+- launcher recent log에는 이 incident가 `dispatch_stall_detected` 이벤트로 그대로 보여야 하며, controller/index.html은 새 전용 액션 없이 기존 degraded reason / lane note / recent event만 읽는 편이 맞습니다.
+- startup/rolling dispatch 직전에는 prompt 입력줄에 남아 있는 미전송 텍스트를 먼저 비운 뒤 새 prompt를 paste하는 편이 맞습니다. 그래야 stray draft input이 다음 control prompt를 오염시키지 않습니다.
 - stale control slot을 수동 정리해야 할 때는 `.pipeline/archive-stale-control-slots.sh`를 쓰고, newest control file은 archive하지 않는 편이 맞습니다.
 
 ## handoff 작성 원칙

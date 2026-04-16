@@ -2569,6 +2569,126 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
 
+    def test_idle_prompt_with_incomplete_outputs_requeues_before_long_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            work_day = watch_dir / "4" / "10"
+            work_day.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            work_note = work_day / "2026-04-10-slice.md"
+            _write_work_note(work_note, ["tests/test_web_app.py"])
+            job = watcher_core.JobState.from_artifact("job-verify-quick-idle", str(work_note))
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                    "verify_incomplete_idle_retry_sec": 20.0,
+                }
+            )
+
+            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+                job = core.sm._handle_verify_pending(job)
+
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+
+            job.last_activity_at = time.time() - 30
+            job.last_dispatch_at = time.time() - 35
+            job.last_pane_snapshot = "› prompt"
+            core.sm.runtime_started_at = time.time() - 120
+
+            with mock.patch("watcher_core._capture_pane_text", return_value="› prompt"), \
+                 mock.patch("watcher_core._pane_text_has_busy_indicator", return_value=False), \
+                 mock.patch("watcher_core._pane_text_has_input_cursor", return_value=True):
+                job = core.sm._handle_verify_running(job)
+
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertGreater(job.last_failed_dispatch_at, 0.0)
+            self.assertEqual(job.last_failed_dispatch_snapshot, "")
+            self.assertEqual(job.dispatch_stall_count, 1)
+            self.assertEqual(job.degraded_reason, "")
+            self.assertEqual(job.lane_note, "waiting_task_accept_after_dispatch")
+            self.assertIn("dispatch stall", job.history[-1]["reason"])
+
+    def test_repeated_dispatch_stall_marks_job_degraded_after_one_requeue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            work_day = watch_dir / "4" / "10"
+            work_day.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            work_note = work_day / "2026-04-10-slice.md"
+            _write_work_note(work_note, ["tests/test_web_app.py"])
+            job = watcher_core.JobState.from_artifact("job-verify-stall-repeat", str(work_note))
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                    "verify_incomplete_idle_retry_sec": 20.0,
+                }
+            )
+
+            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+                job = core.sm._handle_verify_pending(job)
+
+            first_dispatch_at = time.time() - 35
+            job.last_activity_at = time.time() - 30
+            job.last_dispatch_at = first_dispatch_at
+            job.last_pane_snapshot = "› prompt"
+            core.sm.runtime_started_at = time.time() - 120
+
+            with mock.patch("watcher_core._capture_pane_text", return_value="› prompt"), \
+                 mock.patch("watcher_core._pane_text_has_busy_indicator", return_value=False), \
+                 mock.patch("watcher_core._pane_text_has_input_cursor", return_value=True):
+                job = core.sm._handle_verify_running(job)
+
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(job.dispatch_stall_count, 1)
+            self.assertEqual(job.degraded_reason, "")
+
+            job.last_failed_dispatch_at = time.time() - 30
+            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+                job = core.sm._handle_verify_pending(job)
+
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.dispatch_stall_count, 1)
+            self.assertEqual(job.degraded_reason, "")
+
+            job.last_activity_at = time.time() - 30
+            job.last_dispatch_at = time.time() - 35
+            job.last_pane_snapshot = "› prompt"
+
+            with mock.patch("watcher_core._capture_pane_text", return_value="› prompt"), \
+                 mock.patch("watcher_core._pane_text_has_busy_indicator", return_value=False), \
+                 mock.patch("watcher_core._pane_text_has_input_cursor", return_value=True):
+                job = core.sm._handle_verify_running(job)
+
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(job.dispatch_stall_count, 2)
+            self.assertEqual(job.degraded_reason, "dispatch_stall")
+            self.assertEqual(job.lane_note, "waiting_task_accept_after_dispatch")
+
+            with mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_keys:
+                same_job = core.sm._handle_verify_pending(job)
+
+            self.assertIs(same_job, job)
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            send_keys.assert_not_called()
+
     def test_verify_running_startup_recovery_requeues_stale_idle_dispatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2621,6 +2741,27 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
 
 class CodexDispatchConfirmationTest(unittest.TestCase):
+    def test_dispatch_codex_clears_existing_prompt_input_before_paste(self) -> None:
+        snapshots = iter([
+            "› stale draft",
+            "processing view without prompt",
+        ])
+        run_calls: list[list[str]] = []
+
+        def _run(cmd, **kwargs):
+            run_calls.append(list(cmd))
+            return mock.Mock(stdout="", stderr=b"")
+
+        with mock.patch("watcher_core.subprocess.run", side_effect=_run), \
+             mock.patch("watcher_core._capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_core._pane_has_working_indicator", return_value=True), \
+             mock.patch("watcher_core.time.sleep", return_value=None):
+            result = watcher_core._dispatch_codex("%1", "ROLE: verify")
+
+        self.assertTrue(result)
+        self.assertGreaterEqual(len(run_calls), 3)
+        self.assertEqual(run_calls[0], ["tmux", "send-keys", "-t", "%1", "C-u"])
+
     def test_dispatch_codex_returns_false_when_no_working_or_activity_is_confirmed(self) -> None:
         snapshots = itertools.chain(
             [

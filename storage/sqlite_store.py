@@ -165,6 +165,10 @@ class SQLiteSessionStore:
 
     def __init__(self, db: SQLiteDatabase) -> None:
         self._db = db
+        self._lock = threading.RLock()
+
+    def _now(self) -> str:
+        return _now_iso()
 
     def _load(self, session_id: str) -> dict[str, Any]:
         row = self._db.fetchone("SELECT * FROM sessions WHERE session_id = ?", (session_id,))
@@ -240,31 +244,33 @@ class SQLiteSessionStore:
 
     def append_message(self, session_id: str, message: dict[str, Any]) -> dict[str, Any]:
         data = self._load(session_id)
-        if "message_id" not in message:
-            message["message_id"] = f"msg-{_new_id()}"
-        if "timestamp" not in message:
-            message["timestamp"] = _now_iso()
-        data.setdefault("messages", []).append(message)
+        normalized_message = self._normalize_message(message)
+        data.setdefault("messages", []).append(normalized_message)
         # Auto-title from first user message
-        if len(data["messages"]) == 1 and message.get("role") == "user":
-            data["title"] = message.get("text", "")[:40] or session_id
+        if len(data["messages"]) == 1 and normalized_message.get("role") == "user":
+            data["title"] = normalized_message.get("text", "")[:40] or session_id
         self._save(session_id, data)
-        return message
+        return dict(normalized_message)
 
     def update_last_message(self, session_id: str, updates: dict[str, Any]) -> None:
         data = self._load(session_id)
         messages = data.get("messages", [])
         if messages:
-            messages[-1].update(updates)
+            last_message = dict(messages[-1])
+            last_message.update(updates)
+            messages[-1] = self._normalize_message(last_message)
             self._save(session_id, data)
 
     def update_message(self, session_id: str, message_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
         data = self._load(session_id)
-        for msg in data.get("messages", []):
+        for i, msg in enumerate(data.get("messages", [])):
             if msg.get("message_id") == message_id:
-                msg.update(updates)
+                patched = dict(msg)
+                patched.update(updates)
+                normalized = self._normalize_message(patched)
+                data["messages"][i] = normalized
                 self._save(session_id, data)
-                return msg
+                return dict(normalized)
         return None
 
     def add_pending_approval(self, session_id: str, approval: dict[str, Any]) -> None:
@@ -307,27 +313,42 @@ class SQLiteSessionStore:
         data = self._load(session_id)
         return data.get("permissions", {"web_search": "disabled"})
 
-    # Passthrough methods that delegate to the full data blob
-    def find_artifact_source_message(self, session_id: str, artifact_id: str) -> dict[str, Any] | None:
-        data = self._load(session_id)
-        for msg in data.get("messages", []):
-            if msg.get("artifact_id") == artifact_id:
-                return msg
-        return None
-
-    def record_correction_for_message(self, session_id: str, *, message_id: str, corrected_text: str) -> dict[str, Any] | None:
-        return self.update_message(session_id, message_id, {"corrected_text": corrected_text})
-
-    def record_corrected_outcome_for_artifact(self, session_id: str, *, artifact_id: str | None, outcome: str, approval_id: str | None = None, saved_note_path: str | None = None, preserve_existing: bool = False) -> dict[str, Any] | None:
-        data = self._load(session_id)
-        for msg in data.get("messages", []):
-            if msg.get("artifact_id") == artifact_id:
-                if preserve_existing and msg.get("corrected_outcome"):
-                    return msg
-                msg["corrected_outcome"] = {"outcome": outcome, "approval_id": approval_id, "saved_note_path": saved_note_path}
-                self._save(session_id, data)
-                return msg
-        return None
+    # ── Data-processing parity with SessionStore ─────────────────
+    # Reuse logic from the JSON SessionStore rather than maintaining
+    # divergent simplified implementations.  All methods below operate
+    # on the same session-dict shape; they rely on _now(), _lock,
+    # get_session(), and _save() which this class provides.
+    from storage.session_store import SessionStore as _SS
+    # Normalization helpers
+    _normalize_multiline_text = _SS._normalize_multiline_text
+    _normalize_text_list = _SS._normalize_text_list
+    _normalize_dict_list = _SS._normalize_dict_list
+    _normalize_original_response_snapshot = _SS._normalize_original_response_snapshot
+    _normalize_approval_record = _SS._normalize_approval_record
+    _normalize_corrected_outcome = _SS._normalize_corrected_outcome
+    _normalize_content_reason_record = _SS._normalize_content_reason_record
+    _normalize_candidate_confirmation_record = _SS._normalize_candidate_confirmation_record
+    _normalize_candidate_review_record = _SS._normalize_candidate_review_record
+    _build_original_response_snapshot_from_message = _SS._build_original_response_snapshot_from_message
+    _build_artifact_source_message_ids = _SS._build_artifact_source_message_ids
+    _find_artifact_source_message_in_messages = _SS._find_artifact_source_message_in_messages
+    _normalize_source_message_anchor = _SS._normalize_source_message_anchor
+    _is_matching_anchor = _SS._is_matching_anchor
+    _latest_approval_reason_record_for_anchor = _SS._latest_approval_reason_record_for_anchor
+    _latest_save_signal_for_anchor = _SS._latest_save_signal_for_anchor
+    _normalize_message = _SS._normalize_message
+    _current_correctable_text = _SS._current_correctable_text
+    # Public session-data methods
+    build_session_local_memory_signal = _SS.build_session_local_memory_signal
+    find_artifact_source_message = _SS.find_artifact_source_message
+    record_correction_for_message = _SS.record_correction_for_message
+    record_corrected_outcome_for_artifact = _SS.record_corrected_outcome_for_artifact
+    record_candidate_confirmation_for_message = _SS.record_candidate_confirmation_for_message
+    record_candidate_review_for_message = _SS.record_candidate_review_for_message
+    record_rejected_content_verdict_for_message = _SS.record_rejected_content_verdict_for_message
+    record_content_reason_note_for_message = _SS.record_content_reason_note_for_message
+    add_pending_approval = _SS.add_pending_approval
+    del _SS
 
 
 # ── SQLite Task Logger ────────────────────────────────────────────

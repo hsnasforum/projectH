@@ -1,0 +1,5 @@
+{"ts": "2026-04-16T16:06:51.152390Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 759236}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:06:55.001899Z", "lane": "Codex", "event_type": "READY", "source": "wrapper", "payload": {"pid": 759236, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-16T16:06:56.269808Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 759236}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:07:01.284444Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 759236}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:07:06.294718Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 759236}, "derived_from": "process_alive"}

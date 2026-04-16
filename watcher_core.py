@@ -156,6 +156,11 @@ class JobState:
     validation_score:     float = -1.0  # passed_checks/required_checks (-1 = 미수집)
     blocker_count:        int   = -1    # critical blocker 수 (-1 = 미수집)
     verify_result:        str   = ""    # "passed" | "failed" | "invalid_manifest"
+    dispatch_stall_fingerprint: str = ""
+    dispatch_stall_count:  int   = 0
+    dispatch_stall_detected_at: float = 0.0
+    degraded_reason:       str   = ""
+    lane_note:             str   = ""
     created_at:           float = field(default_factory=time.time)
     updated_at:           float = field(default_factory=time.time)
     history:              list  = field(default_factory=list)
@@ -1185,6 +1190,16 @@ def _normalize_prompt_text(text: str) -> str:
     return text.replace("\\n", "\n")
 
 
+def _clear_prompt_input_line(pane_target: str) -> None:
+    """Clear any stale unsent text before an automated dispatch."""
+    subprocess.run(
+        ["tmux", "send-keys", "-t", pane_target, "C-u"],
+        check=True,
+        capture_output=True,
+    )
+    time.sleep(0.1)
+
+
 def tmux_send_keys(
     pane_target: str,
     command: str,
@@ -1223,6 +1238,7 @@ def _dispatch_codex(pane_target: str, command: str) -> bool:
     Always paste-buffer into the running session — never re-launch codex.
     """
     log.info("dispatching codex prompt: chars=%d", len(command))
+    _clear_prompt_input_line(pane_target)
     subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
     subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
     pasted_snapshot = _capture_pane_text(pane_target)
@@ -1254,6 +1270,7 @@ def _dispatch_codex(pane_target: str, command: str) -> bool:
 
 def _dispatch_claude(pane_target: str, command: str) -> None:
     """Dispatch to Claude pane via paste-buffer + Enter."""
+    _clear_prompt_input_line(pane_target)
     subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
     subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
     time.sleep(1.0)
@@ -1267,6 +1284,7 @@ def _dispatch_claude(pane_target: str, command: str) -> None:
 
 def _dispatch_gemini(pane_target: str, command: str) -> None:
     """Dispatch to Gemini pane via paste-buffer + Enter."""
+    _clear_prompt_input_line(pane_target)
     subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
     subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
     pasted_snapshot = _capture_pane_text(pane_target)
@@ -1309,6 +1327,7 @@ class StateMachine:
         feedback_sig_builder:   Optional[Callable[[JobState], tuple[str, str]]],
         verify_receipt_builder: Optional[Callable[[JobState], tuple[str, float]]],
         verify_retry_backoff_sec: float,
+        verify_incomplete_idle_retry_sec: float,
         runtime_started_at:     float,
         restart_recovery_grace_sec: float,
         completion_paths:       list[Path],
@@ -1327,11 +1346,75 @@ class StateMachine:
         self.feedback_sig_builder   = feedback_sig_builder
         self.verify_receipt_builder = verify_receipt_builder
         self.verify_retry_backoff_sec = verify_retry_backoff_sec
+        self.verify_incomplete_idle_retry_sec = verify_incomplete_idle_retry_sec
         self.runtime_started_at     = runtime_started_at
         self.restart_recovery_grace_sec = restart_recovery_grace_sec
         self.completion_paths       = completion_paths
         self.error_log              = error_log
         self.dry_run                = dry_run
+
+    # ------------------------------------------------------------------
+    def _dispatch_stall_fingerprint(self, job: JobState) -> str:
+        source = "|".join(
+            [
+                job.job_id,
+                str(job.round),
+                job.artifact_hash,
+                job.last_dispatch_slot or "slot_verify",
+                job.verify_receipt_baseline_path,
+            ]
+        )
+        return hashlib.sha1(source.encode("utf-8")).hexdigest()
+
+    # ------------------------------------------------------------------
+    def _clear_dispatch_stall_state(self, job: JobState) -> None:
+        job.dispatch_stall_fingerprint = ""
+        job.dispatch_stall_count = 0
+        job.dispatch_stall_detected_at = 0.0
+        job.degraded_reason = ""
+        job.lane_note = ""
+
+    # ------------------------------------------------------------------
+    def _clear_dispatch_stall_surface(self, job: JobState) -> None:
+        job.degraded_reason = ""
+        job.lane_note = ""
+
+    # ------------------------------------------------------------------
+    def _record_dispatch_stall(
+        self,
+        job: JobState,
+        *,
+        current_pane: str,
+        reason: str,
+    ) -> JobState:
+        fingerprint = self._dispatch_stall_fingerprint(job)
+        now = time.time()
+        same_fingerprint = fingerprint == job.dispatch_stall_fingerprint
+        attempt = job.dispatch_stall_count + 1 if same_fingerprint else 1
+
+        job.dispatch_stall_fingerprint = fingerprint
+        job.dispatch_stall_count = attempt
+        job.dispatch_stall_detected_at = now
+        job.lane_note = "waiting_task_accept_after_dispatch"
+
+        if attempt <= 1:
+            job.degraded_reason = ""
+            return self._requeue_verify_pending(
+                job,
+                current_pane=current_pane,
+                reason=reason,
+            )
+
+        self.dedupe.forget(job.job_id, job.round, job.artifact_hash, "slot_verify")
+        job.last_failed_dispatch_at = now
+        job.dispatch_fail_count += 1
+        job.last_failed_dispatch_snapshot = "" if _pane_text_is_idle(current_pane) else current_pane
+        job.last_dispatch_slot = ""
+        job.degraded_reason = "dispatch_stall"
+        self.lease.release("slot_verify")
+        job.transition(JobStatus.VERIFY_PENDING, reason)
+        job.save(self.state_dir)
+        return job
 
     # ------------------------------------------------------------------
     def _write_feedback_manifest(self, job: JobState, verify_receipt_path: str) -> Optional[Path]:
@@ -1358,6 +1441,25 @@ class StateMachine:
             log.warning("feedback manifest write failed: job=%s path=%s err=%s", job.job_id, manifest_path, exc)
             return None
         return manifest_path
+
+    def _requeue_verify_pending(
+        self,
+        job: JobState,
+        *,
+        current_pane: str,
+        reason: str,
+    ) -> JobState:
+        self.dedupe.forget(job.job_id, job.round, job.artifact_hash, "slot_verify")
+        job.last_failed_dispatch_at = time.time()
+        job.dispatch_fail_count += 1
+        # Once the pane is already back at an idle prompt, a retry should not be
+        # pinned forever behind the exact same snapshot text.
+        job.last_failed_dispatch_snapshot = "" if _pane_text_is_idle(current_pane) else current_pane
+        job.last_dispatch_slot = ""
+        self.lease.release("slot_verify")
+        job.transition(JobStatus.VERIFY_PENDING, reason)
+        job.save(self.state_dir)
+        return job
 
     # ------------------------------------------------------------------
     def step(self, job: JobState) -> JobState:
@@ -1393,6 +1495,12 @@ class StateMachine:
 
     def _handle_verify_pending(self, job: JobState) -> JobState:
         slot = "slot_verify"
+
+        if job.degraded_reason == "dispatch_stall":
+            self.dedupe.mark_suppressed(
+                job.job_id, job.round, job.artifact_hash, slot, "dispatch_stall_degraded"
+            )
+            return job
 
         if job.last_failed_dispatch_at:
             backoff_deadline = job.last_failed_dispatch_at + self.verify_retry_backoff_sec
@@ -1464,6 +1572,7 @@ class StateMachine:
             else:
                 job.verify_receipt_baseline_path = ""
                 job.verify_receipt_baseline_mtime = 0.0
+            self._clear_dispatch_stall_surface(job)
             job.transition(JobStatus.VERIFY_RUNNING, f"dispatched to {slot}")
             job.save(self.state_dir)
             if self.dry_run:
@@ -1530,6 +1639,7 @@ class StateMachine:
                 job.verify_completed_at = time.time()
                 job.validation_score = 1.0
                 job.blocker_count = 0
+                self._clear_dispatch_stall_state(job)
                 self.lease.release("slot_verify")
                 job.transition(JobStatus.VERIFY_DONE,
                                "current-round verify receipt + control changed after dispatch")
@@ -1601,31 +1711,40 @@ class StateMachine:
             else:
                 # Pane unchanged — check idle timeout (5 min idle = timeout)
                 idle_sec = time.time() - last_activity
+                if codex_idle and not outputs_complete and idle_sec > self.verify_incomplete_idle_retry_sec:
+                    log.warning(
+                        "verify dispatch stall detected: job=%s idle=%.0fs total=%.0fs",
+                        job.job_id,
+                        idle_sec,
+                        elapsed,
+                    )
+                    return self._record_dispatch_stall(
+                        job,
+                        current_pane=current_pane,
+                        reason=(
+                            f"dispatch stall after {idle_sec:.0f}s idle, "
+                            f"{elapsed:.0f}s total while waiting_task_accept_after_dispatch"
+                        ),
+                    )
                 if idle_sec > 300:
                     if not outputs_complete:
                         log.warning(
                             "verify idle timeout with incomplete outputs: job=%s idle=%.0fs total=%.0fs → retry pending",
                             job.job_id, idle_sec, elapsed,
                         )
-                        self.dedupe.forget(job.job_id, job.round, job.artifact_hash, "slot_verify")
-                        job.last_failed_dispatch_at = time.time()
-                        job.dispatch_fail_count += 1
-                        # If the pane is already back at an idle prompt, keep only the timed
-                        # backoff and let the next retry re-dispatch instead of permanently
-                        # pinning VERIFY_PENDING on the same visible snapshot.
-                        job.last_failed_dispatch_snapshot = "" if codex_idle else current_pane
-                        job.last_dispatch_slot = ""
-                        self.lease.release("slot_verify")
-                        job.transition(
-                            JobStatus.VERIFY_PENDING,
-                            f"idle timeout with incomplete outputs after {idle_sec:.0f}s idle, {elapsed:.0f}s total",
+                        return self._requeue_verify_pending(
+                            job,
+                            current_pane=current_pane,
+                            reason=(
+                                f"idle timeout with incomplete outputs after {idle_sec:.0f}s idle, "
+                                f"{elapsed:.0f}s total"
+                            ),
                         )
-                        job.save(self.state_dir)
-                        return job
                     log.warning("verify idle timeout: job=%s idle=%.0fs total=%.0fs",
                                 job.job_id, idle_sec, elapsed)
                     job.verify_result = "timeout"
                     job.verify_completed_at = time.time()
+                    self._clear_dispatch_stall_state(job)
                     self.lease.release("slot_verify")
                     job.transition(JobStatus.VERIFY_DONE,
                                    f"idle timeout after {idle_sec:.0f}s idle, {elapsed:.0f}s total")
@@ -1656,6 +1775,7 @@ class StateMachine:
         # blocker가 있으면 failed, 없으면 passed
         job.verify_result = "failed" if job.blocker_count > 0 else "passed"
 
+        self._clear_dispatch_stall_state(job)
         self.lease.release("slot_verify")
         job.transition(
             JobStatus.VERIFY_DONE,
@@ -2043,6 +2163,9 @@ class WatcherCore:
             feedback_sig_builder=self._build_verify_feedback_sigs,
             verify_receipt_builder=self._build_verify_receipt_state,
             verify_retry_backoff_sec=float(config.get("verify_retry_backoff_sec", 20.0)),
+            verify_incomplete_idle_retry_sec=float(
+                config.get("verify_incomplete_idle_retry_sec", 25.0)
+            ),
             runtime_started_at=self.started_at,
             restart_recovery_grace_sec=float(config.get("restart_recovery_grace_sec", 15.0)),
             completion_paths=self.completion_paths,
@@ -3793,6 +3916,7 @@ class WatcherCore:
         job.verify_completed_at = 0.0
         job.validation_score = -1.0
         job.blocker_count = -1
+        self.sm._clear_dispatch_stall_state(job)
         self.stabilizer.clear(job_id)
         job.transition(JobStatus.STABILIZING, f"{reason}, round={job.round}")
         job.save(self.state_dir)

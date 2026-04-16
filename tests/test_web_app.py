@@ -586,6 +586,61 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("핵심 결론이 문서 문맥과 다릅니다.", log_text)
             self.assertIn("explicit_content_rejection", log_text)
 
+    def test_submit_content_reason_note_rejects_blank_note_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            source_path = base / "source.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+            db_path = str(base / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(base / "corrections"),
+                notes_dir=str(base / "notes"),
+                web_search_history_dir=str(base / "web-search"),
+            )
+            service = WebAppService(settings=settings)
+
+            service.session_store.append_message("sqlite-note-blank", {"role": "user", "text": "질문"})
+            stored_message = service.session_store.append_message(
+                "sqlite-note-blank",
+                {
+                    "role": "assistant",
+                    "text": "원본 요약입니다.",
+                    "status": "answer",
+                    "artifact_id": "artifact-sqlite-note-blank",
+                    "artifact_kind": "grounded_brief",
+                    "selected_source_paths": [str(source_path)],
+                    "evidence": [
+                        {
+                            "source_path": str(source_path),
+                            "source_name": "source.md",
+                            "label": "본문 근거",
+                            "snippet": "hello world",
+                        }
+                    ],
+                },
+            )
+            service.submit_content_verdict(
+                {
+                    "session_id": "sqlite-note-blank",
+                    "message_id": stored_message["message_id"],
+                    "content_verdict": "rejected",
+                }
+            )
+
+            with self.assertRaises(WebApiError) as ctx:
+                service.submit_content_reason_note(
+                    {
+                        "session_id": "sqlite-note-blank",
+                        "message_id": stored_message["message_id"],
+                        "reason_note": "   \n  ",
+                    }
+                )
+
+            self.assertEqual(ctx.exception.status_code, 400)
+            self.assertIn("거절 메모를 입력해 주세요.", ctx.exception.message)
+
     def test_submit_content_reason_note_rejects_blank_note(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             base = Path(tmp_dir)
@@ -5687,6 +5742,835 @@ class WebAppServiceTest(unittest.TestCase):
             log_text = (tmp_path / "task_log.jsonl").read_text(encoding="utf-8")
             self.assertIn("preference_candidate_recorded", log_text)
 
+    def test_submit_candidate_review_accept_persists_local_preference_candidate_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            note_path = tmp_path / "notes" / "pref-candidate-sqlite.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            initial = service.handle_chat(
+                {
+                    "session_id": "pref-sqlite-session",
+                    "source_path": str(source_path),
+                    "provider": "mock",
+                }
+            )
+            artifact_id = initial["response"]["artifact_id"]
+            source_message_id = initial["response"]["source_message_id"]
+
+            corrected = service.submit_correction(
+                {
+                    "session_id": "pref-sqlite-session",
+                    "message_id": source_message_id,
+                    "corrected_text": "수정본 A입니다.\n핵심만 남겼습니다.",
+                }
+            )
+            candidate = [
+                message
+                for message in corrected["session"]["messages"]
+                if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
+            ][-1]["session_local_candidate"]
+
+            bridge = service.handle_chat(
+                {
+                    "session_id": "pref-sqlite-session",
+                    "corrected_save_message_id": source_message_id,
+                    "note_path": str(note_path),
+                }
+            )
+            approval_id = bridge["response"]["approval"]["approval_id"]
+            service.handle_chat(
+                {
+                    "session_id": "pref-sqlite-session",
+                    "approved_approval_id": approval_id,
+                }
+            )
+
+            service.submit_candidate_confirmation(
+                {
+                    "session_id": "pref-sqlite-session",
+                    "message_id": source_message_id,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                }
+            )
+
+            service.submit_candidate_review(
+                {
+                    "session_id": "pref-sqlite-session",
+                    "message_id": source_message_id,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                    "review_action": "accept",
+                }
+            )
+
+            prefs = service.list_preferences_payload()
+            self.assertGreaterEqual(prefs["candidate_count"], 1)
+            pref_records = prefs["preferences"]
+            reviewed_candidate_prefs = [
+                p for p in pref_records
+                if isinstance(p.get("reviewed_candidate_source_refs"), list)
+                and len(p["reviewed_candidate_source_refs"]) > 0
+            ]
+            self.assertEqual(len(reviewed_candidate_prefs), 1)
+            pref_record = reviewed_candidate_prefs[0]
+            self.assertEqual(pref_record["status"], "candidate")
+            self.assertTrue(pref_record["delta_fingerprint"])
+            ref = pref_record["reviewed_candidate_source_refs"][0]
+            self.assertEqual(ref["candidate_id"], candidate["candidate_id"])
+            self.assertEqual(ref["session_id"], "pref-sqlite-session")
+
+    def test_recurrence_aggregate_emit_apply_confirm_active_effect_with_sqlite_backend(self) -> None:
+        """SQLite-backed: emit → apply → confirm → active-effect entry."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "sqlite-agg-a.md"
+            second_source_path = tmp_path / "sqlite-agg-b.md"
+            shared_body = "# SQLite Aggregate Lifecycle\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "sqlite-agg-lifecycle-session"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+            operator_reason = "sqlite aggregate lifecycle test"
+
+            # Step 1: first file → correct → save → confirm → review(accept)
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_artifact_id = first["response"]["artifact_id"]
+            first_smi = first["response"]["source_message_id"]
+            first_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": first_smi, "corrected_text": corrected_text}
+            )
+            first_msg = [
+                m for m in first_corrected["session"]["messages"]
+                if m.get("artifact_id") == first_artifact_id and m.get("original_response_snapshot")
+            ][-1]
+            candidate = first_msg["session_local_candidate"]
+
+            note_path = tmp_path / "notes" / "agg-lifecycle.md"
+            bridge = service.handle_chat(
+                {"session_id": session_id, "corrected_save_message_id": first_smi, "note_path": str(note_path)}
+            )
+            approval_id = bridge["response"]["approval"]["approval_id"]
+            service.handle_chat({"session_id": session_id, "approved_approval_id": approval_id})
+
+            service.submit_candidate_confirmation(
+                {
+                    "session_id": session_id,
+                    "message_id": first_smi,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                }
+            )
+            service.submit_candidate_review(
+                {
+                    "session_id": session_id,
+                    "message_id": first_smi,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                    "review_action": "accept",
+                }
+            )
+
+            # Step 2: second file → correct → aggregate emerges unblocked
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_smi = second["response"]["source_message_id"]
+            payload = service.submit_correction(
+                {"session_id": session_id, "message_id": second_smi, "corrected_text": corrected_text}
+            )
+            aggregates = payload["session"].get("recurrence_aggregate_candidates") or []
+            self.assertGreaterEqual(len(aggregates), 1)
+            aggregate = aggregates[0]
+            self.assertEqual(
+                aggregate["reviewed_memory_capability_status"]["capability_outcome"],
+                "unblocked_all_required",
+            )
+            aggregate_fingerprint = aggregate["aggregate_key"]["normalized_delta_fingerprint"]
+
+            # Step 3: emit
+            emitted = service.emit_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "operator_reason_or_note": operator_reason,
+                }
+            )
+            canonical_transition_id = emitted["canonical_transition_id"]
+            self.assertEqual(emitted["transition_record"]["record_stage"], "emitted_record_only_not_applied")
+            self.assertFalse(emitted["session"].get("reviewed_memory_active_effects") or [])
+
+            # Step 4: apply
+            apply_result = service.apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertEqual(apply_result["transition_record"]["record_stage"], "applied_pending_result")
+            self.assertFalse(apply_result["session"].get("reviewed_memory_active_effects") or [])
+
+            # Step 5: confirm → active effect
+            confirm_result = service.confirm_aggregate_transition_result(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            confirm_record = confirm_result["transition_record"]
+            self.assertEqual(confirm_record["record_stage"], "applied_with_result")
+            ar = confirm_record["apply_result"]
+            self.assertEqual(ar["result_stage"], "effect_active")
+            self.assertEqual(ar["applied_effect_kind"], "reviewed_memory_correction_pattern")
+
+            active_effects = confirm_result["session"].get("reviewed_memory_active_effects") or []
+            self.assertEqual(len(active_effects), 1)
+            self.assertEqual(active_effects[0]["effect_kind"], "reviewed_memory_correction_pattern")
+            self.assertEqual(active_effects[0]["aggregate_fingerprint"], aggregate_fingerprint)
+            self.assertEqual(active_effects[0]["transition_ref"], canonical_transition_id)
+
+    def test_recurrence_aggregate_stop_reverse_conflict_with_sqlite_backend(self) -> None:
+        """SQLite-backed: post-confirm lifecycle — stop → reverse → conflict-visibility."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "sqlite-src-a.md"
+            second_source_path = tmp_path / "sqlite-src-b.md"
+            shared_body = "# SQLite Post-Confirm Lifecycle\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "sqlite-post-confirm-session"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+            operator_reason = "sqlite post-confirm lifecycle test"
+
+            # Setup: first file → correct → save → confirm → review(accept)
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_artifact_id = first["response"]["artifact_id"]
+            first_smi = first["response"]["source_message_id"]
+            first_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": first_smi, "corrected_text": corrected_text}
+            )
+            candidate = [
+                m for m in first_corrected["session"]["messages"]
+                if m.get("artifact_id") == first_artifact_id and m.get("original_response_snapshot")
+            ][-1]["session_local_candidate"]
+
+            note_path = tmp_path / "notes" / "post-confirm.md"
+            bridge = service.handle_chat(
+                {"session_id": session_id, "corrected_save_message_id": first_smi, "note_path": str(note_path)}
+            )
+            approval_id = bridge["response"]["approval"]["approval_id"]
+            service.handle_chat({"session_id": session_id, "approved_approval_id": approval_id})
+
+            service.submit_candidate_confirmation(
+                {
+                    "session_id": session_id,
+                    "message_id": first_smi,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                }
+            )
+            service.submit_candidate_review(
+                {
+                    "session_id": session_id,
+                    "message_id": first_smi,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                    "review_action": "accept",
+                }
+            )
+
+            # Setup: second file → correct → aggregate + emit + apply + confirm
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_smi = second["response"]["source_message_id"]
+            payload = service.submit_correction(
+                {"session_id": session_id, "message_id": second_smi, "corrected_text": corrected_text}
+            )
+            aggregate = payload["session"]["recurrence_aggregate_candidates"][0]
+            aggregate_fingerprint = aggregate["aggregate_key"]["normalized_delta_fingerprint"]
+
+            emitted = service.emit_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "operator_reason_or_note": operator_reason,
+                }
+            )
+            canonical_transition_id = emitted["canonical_transition_id"]
+
+            service.apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            service.confirm_aggregate_transition_result(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+
+            # Step 1: stop-apply
+            stop_result = service.stop_apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            stop_record = stop_result["transition_record"]
+            self.assertEqual(stop_record["record_stage"], "stopped")
+            self.assertIn("stopped_at", stop_record)
+            self.assertEqual(stop_record["apply_result"]["result_stage"], "effect_stopped")
+            self.assertFalse(stop_result["session"].get("reviewed_memory_active_effects") or [])
+
+            # Step 2: reverse
+            reverse_result = service.reverse_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            reverse_record = reverse_result["transition_record"]
+            self.assertEqual(reverse_record["record_stage"], "reversed")
+            self.assertIn("reversed_at", reverse_record)
+            self.assertEqual(reverse_record["apply_result"]["result_stage"], "effect_reversed")
+            self.assertFalse(reverse_result["session"].get("reviewed_memory_active_effects") or [])
+
+            # Step 3: conflict-visibility
+            cv_result = service.check_aggregate_conflict_visibility(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertTrue(cv_result["ok"])
+            cv_record = cv_result.get("conflict_visibility_record")
+            if cv_record is not None:
+                self.assertEqual(cv_record["record_stage"], "conflict_visibility_checked")
+
+    def test_recurrence_aggregate_reload_continuity_with_sqlite_backend(self) -> None:
+        """SQLite-backed: persisted reload continuity through full reviewed-memory lifecycle."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "sqlite-reload-a.md"
+            second_source_path = tmp_path / "sqlite-reload-b.md"
+            shared_body = "# SQLite Reload Continuity\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "sqlite-reload-continuity"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+            operator_reason = "sqlite reload continuity test"
+
+            # Setup: first file → correct → save → confirm → review(accept)
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_artifact_id = first["response"]["artifact_id"]
+            first_smi = first["response"]["source_message_id"]
+            first_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": first_smi, "corrected_text": corrected_text}
+            )
+            candidate = [
+                m for m in first_corrected["session"]["messages"]
+                if m.get("artifact_id") == first_artifact_id and m.get("original_response_snapshot")
+            ][-1]["session_local_candidate"]
+
+            note_path = tmp_path / "notes" / "reload-cont.md"
+            bridge = service.handle_chat(
+                {"session_id": session_id, "corrected_save_message_id": first_smi, "note_path": str(note_path)}
+            )
+            approval_id = bridge["response"]["approval"]["approval_id"]
+            service.handle_chat({"session_id": session_id, "approved_approval_id": approval_id})
+            service.submit_candidate_confirmation(
+                {
+                    "session_id": session_id,
+                    "message_id": first_smi,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                }
+            )
+            service.submit_candidate_review(
+                {
+                    "session_id": session_id,
+                    "message_id": first_smi,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                    "review_action": "accept",
+                }
+            )
+
+            # Setup: second file → correct → aggregate
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_smi = second["response"]["source_message_id"]
+            payload = service.submit_correction(
+                {"session_id": session_id, "message_id": second_smi, "corrected_text": corrected_text}
+            )
+            aggregate = payload["session"]["recurrence_aggregate_candidates"][0]
+            aggregate_fingerprint = aggregate["aggregate_key"]["normalized_delta_fingerprint"]
+
+            # ── emit ──
+            emitted = service.emit_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "operator_reason_or_note": operator_reason,
+                }
+            )
+            canonical_transition_id = emitted["canonical_transition_id"]
+
+            # Reload after emit
+            reload_emit = service.get_session_payload(session_id)
+            emit_agg = reload_emit["session"]["recurrence_aggregate_candidates"][0]
+            emit_tr = emit_agg.get("reviewed_memory_transition_record")
+            self.assertIsNotNone(emit_tr)
+            self.assertEqual(emit_tr["record_stage"], "emitted_record_only_not_applied")
+            self.assertEqual(emit_tr["canonical_transition_id"], canonical_transition_id)
+            self.assertFalse(reload_emit["session"].get("reviewed_memory_active_effects") or [])
+
+            # ── apply ──
+            service.apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+
+            # Reload after apply
+            reload_apply = service.get_session_payload(session_id)
+            apply_agg = reload_apply["session"]["recurrence_aggregate_candidates"][0]
+            apply_tr = apply_agg.get("reviewed_memory_transition_record")
+            self.assertIsNotNone(apply_tr)
+            self.assertEqual(apply_tr["record_stage"], "applied_pending_result")
+            self.assertFalse(reload_apply["session"].get("reviewed_memory_active_effects") or [])
+
+            # ── confirm ──
+            service.confirm_aggregate_transition_result(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+
+            # Reload after confirm
+            reload_confirm = service.get_session_payload(session_id)
+            confirm_agg = reload_confirm["session"]["recurrence_aggregate_candidates"][0]
+            confirm_tr = confirm_agg.get("reviewed_memory_transition_record")
+            self.assertIsNotNone(confirm_tr)
+            self.assertEqual(confirm_tr["record_stage"], "applied_with_result")
+            self.assertEqual(confirm_tr["apply_result"]["result_stage"], "effect_active")
+            active_effects = reload_confirm["session"].get("reviewed_memory_active_effects") or []
+            self.assertEqual(len(active_effects), 1)
+            self.assertEqual(active_effects[0]["aggregate_fingerprint"], aggregate_fingerprint)
+
+            # ── stop ──
+            service.stop_apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+
+            # Reload after stop
+            reload_stop = service.get_session_payload(session_id)
+            self.assertFalse(reload_stop["session"].get("reviewed_memory_active_effects") or [])
+
+            # ── reverse ──
+            service.reverse_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+
+            # Reload after reverse
+            reload_reverse = service.get_session_payload(session_id)
+            reverse_agg = reload_reverse["session"]["recurrence_aggregate_candidates"][0]
+            reverse_tr = reverse_agg.get("reviewed_memory_transition_record")
+            self.assertIsNotNone(reverse_tr)
+            self.assertEqual(reverse_tr["record_stage"], "reversed")
+            self.assertEqual(reverse_tr["apply_result"]["result_stage"], "effect_reversed")
+            self.assertFalse(reload_reverse["session"].get("reviewed_memory_active_effects") or [])
+
+            # ── conflict-visibility ──
+            service.check_aggregate_conflict_visibility(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+
+            # Reload after conflict-visibility
+            reload_cv = service.get_session_payload(session_id)
+            cv_agg = reload_cv["session"]["recurrence_aggregate_candidates"][0]
+            cv_record = cv_agg.get("reviewed_memory_conflict_visibility_record")
+            if cv_record is not None:
+                self.assertEqual(cv_record["record_stage"], "conflict_visibility_checked")
+            # Apply transition record still shows reversed
+            final_tr = cv_agg.get("reviewed_memory_transition_record")
+            if final_tr is not None:
+                self.assertEqual(final_tr["canonical_transition_id"], canonical_transition_id)
+
+    def test_submit_content_verdict_records_rejected_outcome_and_logs_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            source_path = base / "source.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+            db_path = str(base / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(base / "corrections"),
+                notes_dir=str(base / "notes"),
+                web_search_history_dir=str(base / "web-search"),
+            )
+            service = WebAppService(settings=settings)
+
+            service.session_store.append_message("sqlite-verdict", {"role": "user", "text": "질문"})
+            stored_message = service.session_store.append_message(
+                "sqlite-verdict",
+                {
+                    "role": "assistant",
+                    "text": "원본 요약입니다.",
+                    "status": "answer",
+                    "artifact_id": "artifact-sqlite-verdict",
+                    "artifact_kind": "grounded_brief",
+                    "selected_source_paths": [str(source_path)],
+                    "evidence": [
+                        {
+                            "source_path": str(source_path),
+                            "source_name": "source.md",
+                            "label": "본문 근거",
+                            "snippet": "hello world",
+                        }
+                    ],
+                },
+            )
+
+            payload = service.submit_content_verdict(
+                {
+                    "session_id": "sqlite-verdict",
+                    "message_id": stored_message["message_id"],
+                    "content_verdict": "rejected",
+                }
+            )
+
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["corrected_outcome"]["outcome"], "rejected")
+            self.assertEqual(payload["corrected_outcome"]["artifact_id"], "artifact-sqlite-verdict")
+            self.assertEqual(payload["corrected_outcome"]["source_message_id"], stored_message["message_id"])
+            self.assertEqual(payload["content_reason_record"]["reason_scope"], "content_reject")
+            self.assertEqual(payload["content_reason_record"]["reason_label"], "explicit_content_rejection")
+            self.assertIsNone(payload["content_reason_record"]["reason_note"])
+
+            session_message = payload["session"]["messages"][-1]
+            self.assertEqual(session_message["corrected_outcome"]["outcome"], "rejected")
+            self.assertEqual(session_message["content_reason_record"]["reason_scope"], "content_reject")
+
+            # Reload persistence
+            reload = service.get_session_payload("sqlite-verdict")
+            reload_msg = reload["session"]["messages"][-1]
+            self.assertEqual(reload_msg["corrected_outcome"]["outcome"], "rejected")
+            self.assertEqual(reload_msg["content_reason_record"]["reason_scope"], "content_reject")
+            self.assertEqual(reload_msg["content_reason_record"]["reason_label"], "explicit_content_rejection")
+
+            # Direct task_log row inspection
+            records = service.task_logger.iter_session_records("sqlite-verdict")
+            verdict_rows = [r for r in records if r["action"] == "content_verdict_recorded"]
+            self.assertEqual(len(verdict_rows), 1)
+            vd = verdict_rows[0]["detail"]
+            self.assertEqual(vd["message_id"], stored_message["message_id"])
+            self.assertEqual(vd["artifact_id"], "artifact-sqlite-verdict")
+            self.assertEqual(vd["artifact_kind"], "grounded_brief")
+            self.assertEqual(vd["source_message_id"], stored_message["message_id"])
+            self.assertEqual(vd["content_verdict"], "rejected")
+            self.assertIsNotNone(vd.get("content_reason_record"))
+            self.assertEqual(vd["content_reason_record"]["reason_label"], "explicit_content_rejection")
+
+            outcome_rows = [r for r in records if r["action"] == "corrected_outcome_recorded"]
+            self.assertEqual(len(outcome_rows), 1)
+            od = outcome_rows[0]["detail"]
+            self.assertEqual(od["outcome"], "rejected")
+            self.assertEqual(od["artifact_id"], "artifact-sqlite-verdict")
+            self.assertEqual(od["source_message_id"], stored_message["message_id"])
+            self.assertIsNotNone(od.get("content_reason_record"))
+            self.assertEqual(od["content_reason_record"]["reason_label"], "explicit_content_rejection")
+
+    def test_submit_content_reason_note_updates_existing_reject_record_and_logs_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            source_path = base / "source.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+            db_path = str(base / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(base / "corrections"),
+                notes_dir=str(base / "notes"),
+                web_search_history_dir=str(base / "web-search"),
+            )
+            service = WebAppService(settings=settings)
+
+            service.session_store.append_message("sqlite-reason", {"role": "user", "text": "질문"})
+            stored_message = service.session_store.append_message(
+                "sqlite-reason",
+                {
+                    "role": "assistant",
+                    "text": "원본 요약입니다.",
+                    "status": "answer",
+                    "artifact_id": "artifact-sqlite-reason",
+                    "artifact_kind": "grounded_brief",
+                    "selected_source_paths": [str(source_path)],
+                    "evidence": [
+                        {
+                            "source_path": str(source_path),
+                            "source_name": "source.md",
+                            "label": "본문 근거",
+                            "snippet": "hello world",
+                        }
+                    ],
+                },
+            )
+
+            rejected = service.submit_content_verdict(
+                {
+                    "session_id": "sqlite-reason",
+                    "message_id": stored_message["message_id"],
+                    "content_verdict": "rejected",
+                }
+            )
+            rejected_recorded_at = rejected["corrected_outcome"]["recorded_at"]
+
+            payload = service.submit_content_reason_note(
+                {
+                    "session_id": "sqlite-reason",
+                    "message_id": stored_message["message_id"],
+                    "reason_note": "핵심 결론이 문서 문맥과 다릅니다.",
+                }
+            )
+
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["corrected_outcome"]["outcome"], "rejected")
+            self.assertEqual(payload["corrected_outcome"]["recorded_at"], rejected_recorded_at)
+            self.assertEqual(payload["content_reason_record"]["reason_scope"], "content_reject")
+            self.assertEqual(payload["content_reason_record"]["reason_label"], "explicit_content_rejection")
+            self.assertEqual(payload["content_reason_record"]["reason_note"], "핵심 결론이 문서 문맥과 다릅니다.")
+
+            # Reload persistence
+            reload = service.get_session_payload("sqlite-reason")
+            reload_msg = reload["session"]["messages"][-1]
+            self.assertEqual(reload_msg["corrected_outcome"]["outcome"], "rejected")
+            self.assertEqual(reload_msg["corrected_outcome"]["recorded_at"], rejected_recorded_at)
+            self.assertEqual(reload_msg["content_reason_record"]["reason_note"], "핵심 결론이 문서 문맥과 다릅니다.")
+
+            # Direct task_log row inspection
+            records = service.task_logger.iter_session_records("sqlite-reason")
+            note_rows = [r for r in records if r["action"] == "content_reason_note_recorded"]
+            self.assertEqual(len(note_rows), 1)
+            nd = note_rows[0]["detail"]
+            self.assertEqual(nd["message_id"], stored_message["message_id"])
+            self.assertEqual(nd["artifact_id"], "artifact-sqlite-reason")
+            self.assertEqual(nd["artifact_kind"], "grounded_brief")
+            self.assertEqual(nd["source_message_id"], stored_message["message_id"])
+            self.assertEqual(nd["reason_scope"], "content_reject")
+            self.assertEqual(nd["reason_label"], "explicit_content_rejection")
+            self.assertEqual(nd["reason_note"], "핵심 결론이 문서 문맥과 다릅니다.")
+            self.assertIsNotNone(nd.get("content_reason_record"))
+
+            # Verify the earlier verdict row also exists
+            verdict_rows = [r for r in records if r["action"] == "content_verdict_recorded"]
+            self.assertEqual(len(verdict_rows), 1)
+            self.assertEqual(verdict_rows[0]["detail"]["content_verdict"], "rejected")
+
+    def test_submit_candidate_review_reject_records_and_removes_queue_item_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            note_path = tmp_path / "notes" / "candidate-review-reject-sqlite.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            initial = service.handle_chat(
+                {"session_id": "review-reject-sqlite", "source_path": str(source_path), "provider": "mock"}
+            )
+            artifact_id = initial["response"]["artifact_id"]
+            source_message_id = initial["response"]["source_message_id"]
+
+            corrected = service.submit_correction(
+                {"session_id": "review-reject-sqlite", "message_id": source_message_id, "corrected_text": "수정본 거절 테스트 sqlite"}
+            )
+            candidate = [
+                m for m in corrected["session"]["messages"]
+                if m.get("artifact_id") == artifact_id and m.get("original_response_snapshot")
+            ][-1]["session_local_candidate"]
+
+            service.handle_chat(
+                {"session_id": "review-reject-sqlite", "corrected_save_message_id": source_message_id, "note_path": str(note_path)}
+            )
+            approval_id = service.get_session_payload("review-reject-sqlite")["session"]["pending_approvals"][-1]["approval_id"]
+            service.handle_chat({"session_id": "review-reject-sqlite", "approved_approval_id": approval_id})
+
+            service.submit_candidate_confirmation(
+                {"session_id": "review-reject-sqlite", "message_id": source_message_id, "candidate_id": candidate["candidate_id"], "candidate_updated_at": candidate["updated_at"]}
+            )
+            self.assertEqual(len(service.get_session_payload("review-reject-sqlite")["session"]["review_queue_items"]), 1)
+
+            payload = service.submit_candidate_review(
+                {"session_id": "review-reject-sqlite", "message_id": source_message_id, "candidate_id": candidate["candidate_id"], "candidate_updated_at": candidate["updated_at"], "review_action": "reject"}
+            )
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["candidate_review_record"]["review_action"], "reject")
+            self.assertEqual(payload["candidate_review_record"]["review_status"], "rejected")
+            self.assertEqual(payload["session"]["review_queue_items"], [])
+
+            # Reload persistence
+            reload = service.get_session_payload("review-reject-sqlite")
+            self.assertEqual(reload["session"]["review_queue_items"], [])
+            reload_msg = [
+                m for m in reload["session"]["messages"]
+                if m.get("message_id") == source_message_id
+            ][0]
+            self.assertIsNotNone(reload_msg.get("candidate_review_record"))
+            self.assertEqual(reload_msg["candidate_review_record"]["review_action"], "reject")
+            self.assertEqual(reload_msg["candidate_review_record"]["review_status"], "rejected")
+
+    def test_submit_candidate_review_defer_records_and_removes_queue_item_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            note_path = tmp_path / "notes" / "candidate-review-defer-sqlite.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            initial = service.handle_chat(
+                {"session_id": "review-defer-sqlite", "source_path": str(source_path), "provider": "mock"}
+            )
+            artifact_id = initial["response"]["artifact_id"]
+            source_message_id = initial["response"]["source_message_id"]
+
+            corrected = service.submit_correction(
+                {"session_id": "review-defer-sqlite", "message_id": source_message_id, "corrected_text": "수정본 보류 테스트 sqlite"}
+            )
+            candidate = [
+                m for m in corrected["session"]["messages"]
+                if m.get("artifact_id") == artifact_id and m.get("original_response_snapshot")
+            ][-1]["session_local_candidate"]
+
+            service.handle_chat(
+                {"session_id": "review-defer-sqlite", "corrected_save_message_id": source_message_id, "note_path": str(note_path)}
+            )
+            approval_id = service.get_session_payload("review-defer-sqlite")["session"]["pending_approvals"][-1]["approval_id"]
+            service.handle_chat({"session_id": "review-defer-sqlite", "approved_approval_id": approval_id})
+
+            service.submit_candidate_confirmation(
+                {"session_id": "review-defer-sqlite", "message_id": source_message_id, "candidate_id": candidate["candidate_id"], "candidate_updated_at": candidate["updated_at"]}
+            )
+            self.assertEqual(len(service.get_session_payload("review-defer-sqlite")["session"]["review_queue_items"]), 1)
+
+            payload = service.submit_candidate_review(
+                {"session_id": "review-defer-sqlite", "message_id": source_message_id, "candidate_id": candidate["candidate_id"], "candidate_updated_at": candidate["updated_at"], "review_action": "defer"}
+            )
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["candidate_review_record"]["review_action"], "defer")
+            self.assertEqual(payload["candidate_review_record"]["review_status"], "deferred")
+            self.assertEqual(payload["session"]["review_queue_items"], [])
+
+            # Reload persistence
+            reload = service.get_session_payload("review-defer-sqlite")
+            self.assertEqual(reload["session"]["review_queue_items"], [])
+            reload_msg = [
+                m for m in reload["session"]["messages"]
+                if m.get("message_id") == source_message_id
+            ][0]
+            self.assertIsNotNone(reload_msg.get("candidate_review_record"))
+            self.assertEqual(reload_msg["candidate_review_record"]["review_action"], "defer")
+            self.assertEqual(reload_msg["candidate_review_record"]["review_status"], "deferred")
+
     def test_submit_candidate_review_reject_records_and_removes_queue_item(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -5790,6 +6674,31 @@ class WebAppServiceTest(unittest.TestCase):
             log_text = (tmp_path / "task_log.jsonl").read_text(encoding="utf-8")
             self.assertIn("\"review_action\": \"defer\"", log_text)
             self.assertIn("\"review_status\": \"deferred\"", log_text)
+
+    def test_submit_candidate_review_rejects_invalid_action_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            service.handle_chat({"session_id": "review-invalid-sqlite", "source_path": str(source_path), "provider": "mock"})
+
+            with self.assertRaises(WebApiError) as ctx:
+                service.submit_candidate_review(
+                    {"session_id": "review-invalid-sqlite", "message_id": "msg-1", "candidate_id": "c-1", "candidate_updated_at": "2026-01-01", "review_action": "bogus"}
+                )
+            self.assertEqual(ctx.exception.status_code, 400)
+            self.assertIn("지원하지 않는 review action", ctx.exception.message)
 
     def test_submit_candidate_review_rejects_invalid_action(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -8324,6 +9233,2445 @@ class WebAppServiceTest(unittest.TestCase):
                 payload["response"]["artifact_id"],
             )
             self.assertTrue(note_path.exists())
+
+    def test_submit_content_verdict_after_original_draft_save_preserves_saved_history_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            note_path = tmp_path / "notes" / "late-flip-note-sqlite.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            saved = service.handle_chat(
+                {
+                    "session_id": "late-flip-sqlite",
+                    "source_path": str(source_path),
+                    "save_summary": True,
+                    "note_path": str(note_path),
+                    "approved": True,
+                    "provider": "mock",
+                }
+            )
+
+            self.assertTrue(saved["ok"])
+            self.assertEqual(saved["response"]["status"], "saved")
+            source_message_id = saved["response"]["source_message_id"]
+            self.assertTrue(source_message_id)
+            saved_body = note_path.read_text(encoding="utf-8")
+
+            payload = service.submit_content_verdict(
+                {
+                    "session_id": "late-flip-sqlite",
+                    "message_id": source_message_id,
+                    "content_verdict": "rejected",
+                }
+            )
+
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["message_id"], source_message_id)
+            self.assertEqual(payload["content_verdict"], "rejected")
+            self.assertEqual(payload["corrected_outcome"]["outcome"], "rejected")
+            self.assertEqual(payload["corrected_outcome"]["source_message_id"], source_message_id)
+            self.assertTrue(note_path.exists())
+            self.assertEqual(note_path.read_text(encoding="utf-8"), saved_body)
+
+            session_messages = payload["session"]["messages"]
+            source_messages = [
+                message
+                for message in session_messages
+                if message.get("artifact_id") == saved["response"]["artifact_id"] and message.get("original_response_snapshot")
+            ]
+            self.assertTrue(source_messages)
+            self.assertEqual(source_messages[-1]["corrected_outcome"]["outcome"], "rejected")
+            self.assertEqual(source_messages[-1].get("saved_note_path"), str(note_path))
+            self.assertEqual(
+                source_messages[-1].get("corrected_outcome", {}).get("saved_note_path"),
+                None,
+            )
+
+            saved_messages = [
+                message for message in session_messages
+                if message.get("saved_note_path") == str(note_path)
+            ]
+            self.assertTrue(saved_messages)
+            self.assertEqual(saved_messages[-1]["artifact_id"], saved["response"]["artifact_id"])
+            self.assertEqual(saved_messages[-1]["save_content_source"], "original_draft")
+
+    def test_superseded_reject_signal_replays_latest_same_anchor_reject_note_without_overwriting_current_signal_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            initial = service.handle_chat(
+                {
+                    "session_id": "superseded-reject-sqlite",
+                    "source_path": str(source_path),
+                    "provider": "mock",
+                }
+            )
+
+            artifact_id = initial["response"]["artifact_id"]
+            source_message_id = initial["response"]["source_message_id"]
+
+            rejected = service.submit_content_verdict(
+                {
+                    "session_id": "superseded-reject-sqlite",
+                    "message_id": source_message_id,
+                    "content_verdict": "rejected",
+                }
+            )
+            rejected_source_message = [
+                message
+                for message in rejected["session"]["messages"]
+                if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
+            ][-1]
+            self.assertEqual(rejected_source_message["corrected_outcome"]["outcome"], "rejected")
+            self.assertNotIn("superseded_reject_signal", rejected_source_message)
+
+            noted = service.submit_content_reason_note(
+                {
+                    "session_id": "superseded-reject-sqlite",
+                    "message_id": source_message_id,
+                    "reason_note": "초기 결론이 문서 문맥과 다릅니다.",
+                }
+            )
+            self.assertTrue(noted["ok"])
+
+            corrected = service.submit_correction(
+                {
+                    "session_id": "superseded-reject-sqlite",
+                    "message_id": source_message_id,
+                    "corrected_text": "수정본입니다.\n핵심만 남겼습니다.",
+                }
+            )
+
+            source_message = [
+                message
+                for message in corrected["session"]["messages"]
+                if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
+            ][-1]
+            current_signal = source_message["session_local_memory_signal"]
+            self.assertEqual(current_signal["content_signal"]["latest_corrected_outcome"]["outcome"], "corrected")
+            self.assertTrue(current_signal["content_signal"]["has_corrected_text"])
+            self.assertNotIn("content_reason_record", current_signal["content_signal"])
+
+            superseded_signal = source_message["superseded_reject_signal"]
+            self.assertEqual(superseded_signal["artifact_id"], artifact_id)
+            self.assertEqual(superseded_signal["source_message_id"], source_message_id)
+            self.assertEqual(superseded_signal["replay_source"], "task_log_audit")
+            self.assertEqual(superseded_signal["corrected_outcome"]["outcome"], "rejected")
+            self.assertEqual(
+                superseded_signal["corrected_outcome"]["recorded_at"],
+                rejected["corrected_outcome"]["recorded_at"],
+            )
+            self.assertEqual(
+                superseded_signal["content_reason_record"]["reason_scope"],
+                "content_reject",
+            )
+            self.assertEqual(
+                superseded_signal["content_reason_record"]["reason_label"],
+                "explicit_content_rejection",
+            )
+            self.assertEqual(
+                superseded_signal["content_reason_record"]["reason_note"],
+                "초기 결론이 문서 문맥과 다릅니다.",
+            )
+            self.assertEqual(
+                superseded_signal["content_reason_record"]["recorded_at"],
+                noted["content_reason_record"]["recorded_at"],
+            )
+
+    def test_superseded_reject_signal_omits_ambiguous_note_association_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            initial = service.handle_chat(
+                {
+                    "session_id": "superseded-reject-ambiguous-sqlite",
+                    "source_path": str(source_path),
+                    "provider": "mock",
+                }
+            )
+
+            artifact_id = initial["response"]["artifact_id"]
+            source_message_id = initial["response"]["source_message_id"]
+
+            rejected = service.submit_content_verdict(
+                {
+                    "session_id": "superseded-reject-ambiguous-sqlite",
+                    "message_id": source_message_id,
+                    "content_verdict": "rejected",
+                }
+            )
+            self.assertTrue(rejected["ok"])
+
+            corrected = service.submit_correction(
+                {
+                    "session_id": "superseded-reject-ambiguous-sqlite",
+                    "message_id": source_message_id,
+                    "corrected_text": "수정본입니다.\n다시 정리했습니다.",
+                }
+            )
+            self.assertTrue(corrected["ok"])
+
+            service.task_logger.log(
+                session_id="superseded-reject-ambiguous-sqlite",
+                action="content_reason_note_recorded",
+                detail={
+                    "message_id": source_message_id,
+                    "artifact_id": artifact_id,
+                    "artifact_kind": "grounded_brief",
+                    "source_message_id": source_message_id,
+                    "reason_scope": "approval_reject",
+                    "reason_label": "explicit_rejection",
+                    "reason_note": "이 메모는 붙으면 안 됩니다.",
+                    "content_reason_record": {
+                        "reason_scope": "approval_reject",
+                        "reason_label": "explicit_rejection",
+                        "reason_note": "이 메모는 붙으면 안 됩니다.",
+                        "recorded_at": "2026-03-27T00:00:00+00:00",
+                        "artifact_id": artifact_id,
+                        "artifact_kind": "grounded_brief",
+                        "source_message_id": source_message_id,
+                    },
+                },
+            )
+
+            payload = service.get_session_payload("superseded-reject-ambiguous-sqlite")
+            source_message = [
+                message
+                for message in payload["session"]["messages"]
+                if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
+            ][-1]
+
+            current_signal = source_message["session_local_memory_signal"]
+            self.assertEqual(current_signal["content_signal"]["latest_corrected_outcome"]["outcome"], "corrected")
+            self.assertNotIn("content_reason_record", current_signal["content_signal"])
+
+            superseded_signal = source_message["superseded_reject_signal"]
+            self.assertEqual(superseded_signal["corrected_outcome"]["outcome"], "rejected")
+            self.assertEqual(
+                superseded_signal["corrected_outcome"]["recorded_at"],
+                rejected["corrected_outcome"]["recorded_at"],
+            )
+            self.assertEqual(
+                superseded_signal["content_reason_record"]["reason_scope"],
+                "content_reject",
+            )
+            self.assertEqual(
+                superseded_signal["content_reason_record"]["reason_label"],
+                "explicit_content_rejection",
+            )
+            self.assertIsNone(superseded_signal["content_reason_record"]["reason_note"])
+
+    def test_historical_save_identity_signal_replays_latest_same_anchor_write_note_without_overwriting_current_save_signal_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            note_path = tmp_path / "notes" / "historical-save-summary.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            initial = service.handle_chat(
+                {
+                    "session_id": "historical-save-signal-sqlite",
+                    "source_path": str(source_path),
+                    "save_summary": True,
+                    "note_path": str(note_path),
+                    "provider": "mock",
+                }
+            )
+
+            artifact_id = initial["response"]["artifact_id"]
+            source_message_id = initial["response"]["source_message_id"]
+            approval_id = initial["response"]["approval"]["approval_id"]
+
+            approved = service.handle_chat(
+                {
+                    "session_id": "historical-save-signal-sqlite",
+                    "approved_approval_id": approval_id,
+                }
+            )
+            approved_source_message = [
+                message
+                for message in approved["session"]["messages"]
+                if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
+            ][-1]
+            self.assertEqual(
+                approved_source_message["session_local_memory_signal"]["save_signal"]["latest_approval_id"],
+                approval_id,
+            )
+            self.assertNotIn("historical_save_identity_signal", approved_source_message)
+
+            corrected = service.submit_correction(
+                {
+                    "session_id": "historical-save-signal-sqlite",
+                    "message_id": source_message_id,
+                    "corrected_text": "저장 뒤에 다시 수정했습니다.\n현재 상태는 아직 미저장입니다.",
+                }
+            )
+
+            source_message = [
+                message
+                for message in corrected["session"]["messages"]
+                if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
+            ][-1]
+            current_save_signal = source_message["session_local_memory_signal"]["save_signal"]
+            self.assertEqual(current_save_signal["latest_save_content_source"], "original_draft")
+            self.assertEqual(current_save_signal["latest_saved_note_path"], str(note_path))
+            self.assertNotIn("latest_approval_id", current_save_signal)
+
+            historical_signal = source_message["historical_save_identity_signal"]
+            self.assertEqual(historical_signal["artifact_id"], artifact_id)
+            self.assertEqual(historical_signal["source_message_id"], source_message_id)
+            self.assertEqual(historical_signal["replay_source"], "task_log_audit")
+            self.assertEqual(historical_signal["approval_id"], approval_id)
+            self.assertEqual(historical_signal["save_content_source"], "original_draft")
+            self.assertEqual(historical_signal["saved_note_path"], str(note_path))
+            self.assertTrue(historical_signal["recorded_at"])
+
+    def test_historical_save_identity_signal_requires_same_anchor_write_note_not_approval_granted_only_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            note_path = tmp_path / "notes" / "historical-save-summary.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            initial = service.handle_chat(
+                {
+                    "session_id": "historical-save-approval-only-sqlite",
+                    "source_path": str(source_path),
+                    "provider": "mock",
+                }
+            )
+            artifact_id = initial["response"]["artifact_id"]
+            source_message_id = initial["response"]["source_message_id"]
+
+            service.session_store.record_corrected_outcome_for_artifact(
+                "historical-save-approval-only-sqlite",
+                artifact_id=artifact_id,
+                outcome="accepted_as_is",
+                approval_id="approval-manual-only",
+                saved_note_path=str(note_path),
+            )
+            service.session_store.append_message(
+                "historical-save-approval-only-sqlite",
+                {
+                    "role": "assistant",
+                    "text": f"요약 노트를 {note_path}에 저장했습니다.",
+                    "status": "saved",
+                    "artifact_id": artifact_id,
+                    "artifact_kind": "grounded_brief",
+                    "source_message_id": source_message_id,
+                    "saved_note_path": str(note_path),
+                    "save_content_source": "original_draft",
+                },
+            )
+            service.submit_correction(
+                {
+                    "session_id": "historical-save-approval-only-sqlite",
+                    "message_id": source_message_id,
+                    "corrected_text": "지금은 수정만 남았습니다.\n저장은 다시 하지 않았습니다.",
+                }
+            )
+            service.task_logger.log(
+                session_id="historical-save-approval-only-sqlite",
+                action="approval_granted",
+                detail={
+                    "approval_id": "approval-manual-only",
+                    "kind": "save_note",
+                    "requested_path": str(note_path),
+                    "artifact_id": artifact_id,
+                    "source_message_id": source_message_id,
+                    "save_content_source": "original_draft",
+                },
+            )
+
+            payload = service.get_session_payload("historical-save-approval-only-sqlite")
+            source_message = [
+                message
+                for message in payload["session"]["messages"]
+                if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
+            ][-1]
+            current_save_signal = source_message["session_local_memory_signal"]["save_signal"]
+            self.assertEqual(current_save_signal["latest_save_content_source"], "original_draft")
+            self.assertEqual(current_save_signal["latest_saved_note_path"], str(note_path))
+            self.assertNotIn("latest_approval_id", current_save_signal)
+            self.assertNotIn("historical_save_identity_signal", source_message)
+
+    def test_source_message_session_local_memory_signal_separates_content_approval_and_save_axes_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            note_path = tmp_path / "notes" / "signal-summary.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            initial = service.handle_chat(
+                {
+                    "session_id": "signal-session-sqlite",
+                    "source_path": str(source_path),
+                    "save_summary": True,
+                    "note_path": str(note_path),
+                    "provider": "mock",
+                }
+            )
+
+            artifact_id = initial["response"]["artifact_id"]
+            source_message_id = initial["response"]["source_message_id"]
+            original_approval_id = initial["response"]["approval"]["approval_id"]
+
+            initial_source_message = [
+                message
+                for message in initial["session"]["messages"]
+                if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
+            ][-1]
+            initial_signal = initial_source_message["session_local_memory_signal"]
+            self.assertEqual(initial_signal["signal_scope"], "session_local")
+            self.assertEqual(initial_signal["artifact_id"], artifact_id)
+            self.assertEqual(initial_signal["source_message_id"], source_message_id)
+            self.assertIsNone(initial_signal["content_signal"]["latest_corrected_outcome"])
+            self.assertFalse(initial_signal["content_signal"]["has_corrected_text"])
+            self.assertNotIn("approval_signal", initial_signal)
+            self.assertNotIn("save_signal", initial_signal)
+            self.assertNotIn("superseded_reject_signal", initial_source_message)
+
+            rejected_approval = service.handle_chat(
+                {
+                    "session_id": "signal-session-sqlite",
+                    "rejected_approval_id": original_approval_id,
+                }
+            )
+
+            rejected_source_message = [
+                message
+                for message in rejected_approval["session"]["messages"]
+                if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
+            ][-1]
+            rejected_signal = rejected_source_message["session_local_memory_signal"]
+            self.assertEqual(
+                rejected_signal["approval_signal"]["latest_approval_reason_record"]["reason_scope"],
+                "approval_reject",
+            )
+            self.assertEqual(
+                rejected_signal["approval_signal"]["latest_approval_reason_record"]["reason_label"],
+                "explicit_rejection",
+            )
+            self.assertEqual(
+                rejected_signal["approval_signal"]["latest_approval_reason_record"]["approval_id"],
+                original_approval_id,
+            )
+            self.assertNotIn("save_signal", rejected_signal)
+            self.assertNotIn("superseded_reject_signal", rejected_source_message)
+
+            service.submit_correction(
+                {
+                    "session_id": "signal-session-sqlite",
+                    "message_id": source_message_id,
+                    "corrected_text": "수정본 시그널입니다.\n핵심만 남겼습니다.",
+                }
+            )
+            bridge = service.handle_chat(
+                {
+                    "session_id": "signal-session-sqlite",
+                    "corrected_save_message_id": source_message_id,
+                }
+            )
+            corrected_approval_id = bridge["response"]["approval"]["approval_id"]
+            approved = service.handle_chat(
+                {
+                    "session_id": "signal-session-sqlite",
+                    "approved_approval_id": corrected_approval_id,
+                }
+            )
+
+            source_message = [
+                message
+                for message in approved["session"]["messages"]
+                if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
+            ][-1]
+            signal = source_message["session_local_memory_signal"]
+            self.assertEqual(signal["signal_scope"], "session_local")
+            self.assertEqual(signal["artifact_id"], artifact_id)
+            self.assertEqual(signal["source_message_id"], source_message_id)
+            self.assertEqual(signal["content_signal"]["latest_corrected_outcome"]["outcome"], "corrected")
+            self.assertTrue(signal["content_signal"]["has_corrected_text"])
+            self.assertNotIn("content_reason_record", signal["content_signal"])
+            self.assertEqual(
+                signal["approval_signal"]["latest_approval_reason_record"]["approval_id"],
+                original_approval_id,
+            )
+            self.assertEqual(signal["save_signal"]["latest_save_content_source"], "corrected_text")
+            self.assertEqual(signal["save_signal"]["latest_saved_note_path"], str(note_path))
+            self.assertEqual(signal["save_signal"]["latest_approval_id"], corrected_approval_id)
+            self.assertNotIn("superseded_reject_signal", source_message)
+
+    def test_session_local_candidate_requires_explicit_corrected_pair_and_stays_separate_from_signals_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            initial = service.handle_chat(
+                {
+                    "session_id": "session-local-candidate-sqlite",
+                    "source_path": str(source_path),
+                    "provider": "mock",
+                }
+            )
+
+            artifact_id = initial["response"]["artifact_id"]
+            source_message_id = initial["response"]["source_message_id"]
+
+            initial_source_message = [
+                message
+                for message in initial["session"]["messages"]
+                if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
+            ][-1]
+            self.assertNotIn("session_local_candidate", initial_source_message)
+            self.assertNotIn("candidate_recurrence_key", initial_source_message)
+
+            rejected = service.submit_content_verdict(
+                {
+                    "session_id": "session-local-candidate-sqlite",
+                    "message_id": source_message_id,
+                    "content_verdict": "rejected",
+                }
+            )
+            rejected_source_message = [
+                message
+                for message in rejected["session"]["messages"]
+                if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
+            ][-1]
+            self.assertNotIn("session_local_candidate", rejected_source_message)
+            self.assertNotIn("candidate_recurrence_key", rejected_source_message)
+
+            corrected = service.submit_correction(
+                {
+                    "session_id": "session-local-candidate-sqlite",
+                    "message_id": source_message_id,
+                    "corrected_text": "수정본입니다.\n핵심만 남겼습니다.",
+                }
+            )
+
+            source_message = [
+                message
+                for message in corrected["session"]["messages"]
+                if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
+            ][-1]
+            candidate = source_message["session_local_candidate"]
+            recurrence_key = source_message["candidate_recurrence_key"]
+            corrected_outcome = source_message["session_local_memory_signal"]["content_signal"]["latest_corrected_outcome"]
+            self.assertEqual(
+                candidate["candidate_id"],
+                f"session-local-candidate:{artifact_id}:{source_message_id}:correction_rewrite_preference",
+            )
+            self.assertEqual(candidate["candidate_scope"], "session_local")
+            self.assertEqual(candidate["candidate_family"], "correction_rewrite_preference")
+            self.assertEqual(
+                candidate["statement"],
+                "explicit rewrite correction recorded for this grounded brief",
+            )
+            self.assertEqual(candidate["supporting_artifact_ids"], [artifact_id])
+            self.assertEqual(candidate["supporting_source_message_ids"], [source_message_id])
+            self.assertEqual(
+                candidate["supporting_signal_refs"],
+                [
+                    {
+                        "signal_name": "session_local_memory_signal.content_signal",
+                        "relationship": "primary_basis",
+                    }
+                ],
+            )
+            self.assertEqual(candidate["evidence_strength"], "explicit_single_artifact")
+            self.assertEqual(candidate["status"], "session_local_candidate")
+            self.assertEqual(candidate["created_at"], corrected_outcome["recorded_at"])
+            self.assertEqual(candidate["updated_at"], corrected_outcome["recorded_at"])
+            self.assertEqual(recurrence_key["candidate_family"], "correction_rewrite_preference")
+            self.assertEqual(recurrence_key["key_scope"], "correction_rewrite_recurrence")
+            self.assertEqual(recurrence_key["key_version"], "explicit_pair_rewrite_delta_v1")
+            self.assertEqual(recurrence_key["derivation_source"], "explicit_corrected_pair")
+            self.assertEqual(recurrence_key["source_candidate_id"], candidate["candidate_id"])
+            self.assertEqual(recurrence_key["source_candidate_updated_at"], candidate["updated_at"])
+            self.assertTrue(recurrence_key["normalized_delta_fingerprint"].startswith("sha256:"))
+            self.assertIn("replace", recurrence_key["rewrite_dimensions"]["change_types"])
+            self.assertGreaterEqual(recurrence_key["rewrite_dimensions"]["changed_segment_count"], 1)
+            self.assertEqual(recurrence_key["stability"], "deterministic_local")
+            self.assertEqual(recurrence_key["derived_at"], candidate["updated_at"])
+            self.assertEqual(
+                source_message["session_local_memory_signal"]["content_signal"]["latest_corrected_outcome"]["outcome"],
+                "corrected",
+            )
+            self.assertIn("superseded_reject_signal", source_message)
+            self.assertNotIn("historical_save_identity_signal", source_message)
+
+    def test_session_local_candidate_uses_current_save_signal_only_for_support_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            note_path = tmp_path / "notes" / "candidate-summary.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            initial = service.handle_chat(
+                {
+                    "session_id": "session-local-candidate-save-support-sqlite",
+                    "source_path": str(source_path),
+                    "provider": "mock",
+                }
+            )
+            artifact_id = initial["response"]["artifact_id"]
+            source_message_id = initial["response"]["source_message_id"]
+
+            service.submit_correction(
+                {
+                    "session_id": "session-local-candidate-save-support-sqlite",
+                    "message_id": source_message_id,
+                    "corrected_text": "수정본 A입니다.\n핵심만 남겼습니다.",
+                }
+            )
+            bridge = service.handle_chat(
+                {
+                    "session_id": "session-local-candidate-save-support-sqlite",
+                    "corrected_save_message_id": source_message_id,
+                    "note_path": str(note_path),
+                }
+            )
+            approval_id = bridge["response"]["approval"]["approval_id"]
+            approved = service.handle_chat(
+                {
+                    "session_id": "session-local-candidate-save-support-sqlite",
+                    "approved_approval_id": approval_id,
+                }
+            )
+
+            approved_source_message = [
+                message
+                for message in approved["session"]["messages"]
+                if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
+            ][-1]
+            supported_candidate = approved_source_message["session_local_candidate"]
+            supported_recurrence_key = approved_source_message["candidate_recurrence_key"]
+            self.assertEqual(supported_candidate["evidence_strength"], "explicit_single_artifact")
+            self.assertEqual(
+                supported_candidate["supporting_signal_refs"],
+                [
+                    {
+                        "signal_name": "session_local_memory_signal.content_signal",
+                        "relationship": "primary_basis",
+                    },
+                    {
+                        "signal_name": "session_local_memory_signal.save_signal",
+                        "relationship": "supporting_evidence",
+                    },
+                ],
+            )
+            self.assertEqual(supported_recurrence_key["source_candidate_id"], supported_candidate["candidate_id"])
+            self.assertEqual(
+                supported_recurrence_key["source_candidate_updated_at"],
+                supported_candidate["updated_at"],
+            )
+            self.assertNotIn("historical_save_identity_signal", approved_source_message)
+
+            corrected_again = service.submit_correction(
+                {
+                    "session_id": "session-local-candidate-save-support-sqlite",
+                    "message_id": source_message_id,
+                    "corrected_text": "수정본 B입니다.\n다시 다듬었습니다.",
+                }
+            )
+
+            source_message = [
+                message
+                for message in corrected_again["session"]["messages"]
+                if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
+            ][-1]
+            candidate = source_message["session_local_candidate"]
+            recurrence_key = source_message["candidate_recurrence_key"]
+            corrected_outcome = source_message["session_local_memory_signal"]["content_signal"]["latest_corrected_outcome"]
+            self.assertEqual(candidate["candidate_family"], "correction_rewrite_preference")
+            self.assertEqual(candidate["evidence_strength"], "explicit_single_artifact")
+            self.assertEqual(
+                candidate["supporting_signal_refs"],
+                [
+                    {
+                        "signal_name": "session_local_memory_signal.content_signal",
+                        "relationship": "primary_basis",
+                    }
+                ],
+            )
+            self.assertEqual(candidate["created_at"], corrected_outcome["recorded_at"])
+            self.assertEqual(candidate["updated_at"], corrected_outcome["recorded_at"])
+            self.assertEqual(recurrence_key["source_candidate_id"], candidate["candidate_id"])
+            self.assertEqual(recurrence_key["source_candidate_updated_at"], candidate["updated_at"])
+            self.assertNotEqual(
+                recurrence_key["normalized_delta_fingerprint"],
+                supported_recurrence_key["normalized_delta_fingerprint"],
+            )
+            self.assertIn("historical_save_identity_signal", source_message)
+            self.assertNotIn(
+                {
+                    "signal_name": "historical_save_identity_signal",
+                    "relationship": "supporting_evidence",
+                },
+                candidate["supporting_signal_refs"],
+            )
+
+    def test_session_local_candidate_omits_same_text_pair_even_if_corrected_outcome_exists_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            stored_source = service.session_store.append_message(
+                "session-local-candidate-same-text-sqlite",
+                {
+                    "role": "assistant",
+                    "text": "원본 요약입니다.",
+                    "status": "answer",
+                    "artifact_id": "artifact-same-text-sqlite",
+                    "artifact_kind": "grounded_brief",
+                    "selected_source_paths": [str(source_path)],
+                    "evidence": [
+                        {
+                            "source_path": str(source_path),
+                            "source_name": "source.md",
+                            "label": "본문 근거",
+                            "snippet": "hello world",
+                        }
+                    ],
+                },
+            )
+            service.session_store.update_message(
+                "session-local-candidate-same-text-sqlite",
+                stored_source["message_id"],
+                {
+                    "corrected_text": "원본 요약입니다.",
+                    "corrected_outcome": {
+                        "outcome": "corrected",
+                        "recorded_at": "2026-03-28T00:00:00+00:00",
+                        "artifact_id": "artifact-same-text-sqlite",
+                        "source_message_id": stored_source["message_id"],
+                    },
+                },
+            )
+
+            payload = service.get_session_payload("session-local-candidate-same-text-sqlite")
+            source_message = [
+                message
+                for message in payload["session"]["messages"]
+                if message.get("artifact_id") == "artifact-same-text-sqlite" and message.get("original_response_snapshot")
+            ][-1]
+            self.assertEqual(
+                source_message["session_local_memory_signal"]["content_signal"]["latest_corrected_outcome"]["outcome"],
+                "corrected",
+            )
+            self.assertTrue(source_message["session_local_memory_signal"]["content_signal"]["has_corrected_text"])
+            self.assertNotIn("session_local_candidate", source_message)
+            self.assertNotIn("candidate_recurrence_key", source_message)
+
+    def test_session_local_candidate_omits_accepted_as_is_only_save_path_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            note_path = tmp_path / "notes" / "accepted-as-is-summary.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            initial = service.handle_chat(
+                {
+                    "session_id": "session-local-candidate-accepted-as-is-sqlite",
+                    "source_path": str(source_path),
+                    "save_summary": True,
+                    "note_path": str(note_path),
+                    "provider": "mock",
+                }
+            )
+            artifact_id = initial["response"]["artifact_id"]
+            approval_id = initial["response"]["approval"]["approval_id"]
+
+            approved = service.handle_chat(
+                {
+                    "session_id": "session-local-candidate-accepted-as-is-sqlite",
+                    "approved_approval_id": approval_id,
+                }
+            )
+
+            source_message = [
+                message
+                for message in approved["session"]["messages"]
+                if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
+            ][-1]
+            self.assertEqual(
+                source_message["session_local_memory_signal"]["content_signal"]["latest_corrected_outcome"]["outcome"],
+                "accepted_as_is",
+            )
+            self.assertNotIn("session_local_candidate", source_message)
+            self.assertNotIn("candidate_recurrence_key", source_message)
+
+    def test_recurrence_aggregate_candidates_require_two_distinct_source_messages_and_ignore_same_anchor_replays_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "source-a.md"
+            second_source_path = tmp_path / "source-b.md"
+            third_source_path = tmp_path / "source-c.md"
+            shared_body = "# Demo\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+            third_source_path.write_text(shared_body, encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            first = service.handle_chat(
+                {
+                    "session_id": "recurrence-aggregate-session-sqlite",
+                    "source_path": str(first_source_path),
+                    "provider": "mock",
+                }
+            )
+            first_artifact_id = first["response"]["artifact_id"]
+            first_source_message_id = first["response"]["source_message_id"]
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+            first_corrected = service.submit_correction(
+                {
+                    "session_id": "recurrence-aggregate-session-sqlite",
+                    "message_id": first_source_message_id,
+                    "corrected_text": corrected_text,
+                }
+            )
+            self.assertNotIn("recurrence_aggregate_candidates", first_corrected["session"])
+
+            second = service.handle_chat(
+                {
+                    "session_id": "recurrence-aggregate-session-sqlite",
+                    "source_path": str(second_source_path),
+                    "provider": "mock",
+                }
+            )
+            second_artifact_id = second["response"]["artifact_id"]
+            second_source_message_id = second["response"]["source_message_id"]
+            second_corrected = service.submit_correction(
+                {
+                    "session_id": "recurrence-aggregate-session-sqlite",
+                    "message_id": second_source_message_id,
+                    "corrected_text": corrected_text,
+                }
+            )
+
+            self.assertIn("recurrence_aggregate_candidates", second_corrected["session"])
+            aggregate = second_corrected["session"]["recurrence_aggregate_candidates"][0]
+            self.assertEqual(len(second_corrected["session"]["recurrence_aggregate_candidates"]), 1)
+            self.assertEqual(aggregate["recurrence_count"], 2)
+            self.assertEqual(aggregate["scope_boundary"], "same_session_current_state_only")
+            self.assertEqual(aggregate["confidence_marker"], "same_session_exact_key_match")
+            self.assertEqual(
+                aggregate["aggregate_promotion_marker"]["promotion_eligibility"],
+                "blocked_pending_reviewed_memory_boundary",
+            )
+            self.assertEqual(
+                aggregate["reviewed_memory_precondition_status"]["overall_status"],
+                "blocked_all_required",
+            )
+            self.assertEqual(
+                aggregate["reviewed_memory_unblock_contract"]["unblock_status"],
+                "blocked_all_required",
+            )
+            self.assertEqual(
+                aggregate["reviewed_memory_capability_status"]["capability_outcome"],
+                "unblocked_all_required",
+            )
+            self.assertNotIn("reviewed_memory_transition_record", aggregate)
+            self.assertEqual(
+                {
+                    (item["artifact_id"], item["source_message_id"])
+                    for item in aggregate["supporting_source_message_refs"]
+                },
+                {
+                    (first_artifact_id, first_source_message_id),
+                    (second_artifact_id, second_source_message_id),
+                },
+            )
+            self.assertEqual(
+                {
+                    (item["artifact_id"], item["source_message_id"])
+                    for item in aggregate["supporting_candidate_refs"]
+                },
+                {
+                    (first_artifact_id, first_source_message_id),
+                    (second_artifact_id, second_source_message_id),
+                },
+            )
+            self.assertNotIn("supporting_review_refs", aggregate)
+
+            third = service.handle_chat(
+                {
+                    "session_id": "recurrence-aggregate-session-sqlite",
+                    "source_path": str(third_source_path),
+                    "provider": "mock",
+                }
+            )
+            third_source_message_id = third["response"]["source_message_id"]
+            third_corrected = service.submit_correction(
+                {
+                    "session_id": "recurrence-aggregate-session-sqlite",
+                    "message_id": third_source_message_id,
+                    "corrected_text": "수정본입니다.\n다르게 손봤습니다.",
+                }
+            )
+            self.assertEqual(len(third_corrected["session"]["recurrence_aggregate_candidates"]), 1)
+            self.assertEqual(
+                third_corrected["session"]["recurrence_aggregate_candidates"][0]["recurrence_count"],
+                2,
+            )
+
+            source_messages = [
+                message
+                for message in third_corrected["session"]["messages"]
+                if message.get("original_response_snapshot")
+            ]
+            for source_message in source_messages:
+                self.assertIn("session_local_candidate", source_message)
+                self.assertIn("candidate_recurrence_key", source_message)
+                self.assertNotIn("candidate_review_record", source_message)
+
+    def test_recurrence_aggregate_candidates_keep_candidate_review_as_support_only_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "source-a.md"
+            second_source_path = tmp_path / "source-b.md"
+            shared_body = "# Demo\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            first = service.handle_chat(
+                {
+                    "session_id": "recurrence-aggregate-review-session-sqlite",
+                    "source_path": str(first_source_path),
+                    "provider": "mock",
+                }
+            )
+            first_artifact_id = first["response"]["artifact_id"]
+            first_source_message_id = first["response"]["source_message_id"]
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+            first_corrected = service.submit_correction(
+                {
+                    "session_id": "recurrence-aggregate-review-session-sqlite",
+                    "message_id": first_source_message_id,
+                    "corrected_text": corrected_text,
+                }
+            )
+            first_source_message = [
+                message
+                for message in first_corrected["session"]["messages"]
+                if message.get("artifact_id") == first_artifact_id and message.get("original_response_snapshot")
+            ][-1]
+            candidate = first_source_message["session_local_candidate"]
+
+            confirmed = service.submit_candidate_confirmation(
+                {
+                    "session_id": "recurrence-aggregate-review-session-sqlite",
+                    "message_id": first_source_message_id,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                }
+            )
+            reviewed = service.submit_candidate_review(
+                {
+                    "session_id": "recurrence-aggregate-review-session-sqlite",
+                    "message_id": first_source_message_id,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                    "review_action": "accept",
+                }
+            )
+            self.assertEqual(reviewed["session"]["review_queue_items"], [])
+
+            second = service.handle_chat(
+                {
+                    "session_id": "recurrence-aggregate-review-session-sqlite",
+                    "source_path": str(second_source_path),
+                    "provider": "mock",
+                }
+            )
+            second_artifact_id = second["response"]["artifact_id"]
+            second_source_message_id = second["response"]["source_message_id"]
+            payload = service.submit_correction(
+                {
+                    "session_id": "recurrence-aggregate-review-session-sqlite",
+                    "message_id": second_source_message_id,
+                    "corrected_text": corrected_text,
+                }
+            )
+
+            self.assertIn("recurrence_aggregate_candidates", payload["session"])
+            aggregate = payload["session"]["recurrence_aggregate_candidates"][0]
+            self.assertEqual(aggregate["recurrence_count"], 2)
+            self.assertEqual(aggregate["confidence_marker"], "same_session_exact_key_match")
+            self.assertEqual(
+                aggregate["aggregate_promotion_marker"]["promotion_eligibility"],
+                "blocked_pending_reviewed_memory_boundary",
+            )
+            self.assertEqual(
+                aggregate["reviewed_memory_precondition_status"]["overall_status"],
+                "blocked_all_required",
+            )
+            self.assertEqual(
+                aggregate["reviewed_memory_unblock_contract"]["unblock_status"],
+                "blocked_all_required",
+            )
+            self.assertEqual(
+                aggregate["reviewed_memory_capability_status"]["capability_outcome"],
+                "unblocked_all_required",
+            )
+            self.assertEqual(
+                {
+                    (item["artifact_id"], item["source_message_id"])
+                    for item in aggregate["supporting_source_message_refs"]
+                },
+                {
+                    (first_artifact_id, first_source_message_id),
+                    (second_artifact_id, second_source_message_id),
+                },
+            )
+            self.assertEqual(
+                aggregate["supporting_review_refs"],
+                [
+                    {
+                        "artifact_id": first_artifact_id,
+                        "source_message_id": first_source_message_id,
+                        "candidate_id": candidate["candidate_id"],
+                        "candidate_updated_at": candidate["updated_at"],
+                        "review_action": "accept",
+                        "review_status": "accepted",
+                        "recorded_at": reviewed["candidate_review_record"]["recorded_at"],
+                    }
+                ],
+            )
+            self.assertEqual(
+                payload["session"]["messages"][-1]["candidate_recurrence_key"]["normalized_delta_fingerprint"],
+                aggregate["aggregate_key"]["normalized_delta_fingerprint"],
+            )
+
+    def test_recurrence_aggregate_reject_defer_do_not_surface_as_supporting_review_refs_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "source-reject.md"
+            second_source_path = tmp_path / "source-defer.md"
+            shared_body = "# Reject Defer Test\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "aggregate-reject-defer-suppression-sqlite"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_artifact_id = first["response"]["artifact_id"]
+            first_smid = first["response"]["source_message_id"]
+            first_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": first_smid, "corrected_text": corrected_text}
+            )
+            first_msg = [
+                m for m in first_corrected["session"]["messages"]
+                if m.get("artifact_id") == first_artifact_id and m.get("original_response_snapshot")
+            ][-1]
+            first_candidate = first_msg["session_local_candidate"]
+            service.submit_candidate_confirmation(
+                {
+                    "session_id": session_id,
+                    "message_id": first_smid,
+                    "candidate_id": first_candidate["candidate_id"],
+                    "candidate_updated_at": first_candidate["updated_at"],
+                }
+            )
+            rejected = service.submit_candidate_review(
+                {
+                    "session_id": session_id,
+                    "message_id": first_smid,
+                    "candidate_id": first_candidate["candidate_id"],
+                    "candidate_updated_at": first_candidate["updated_at"],
+                    "review_action": "reject",
+                }
+            )
+            self.assertEqual(rejected["candidate_review_record"]["review_action"], "reject")
+            self.assertEqual(rejected["candidate_review_record"]["review_status"], "rejected")
+
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_smid = second["response"]["source_message_id"]
+            second_artifact_id = second["response"]["artifact_id"]
+            second_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": second_smid, "corrected_text": corrected_text}
+            )
+            second_msg = [
+                m for m in second_corrected["session"]["messages"]
+                if m.get("artifact_id") == second_artifact_id and m.get("original_response_snapshot")
+            ][-1]
+            second_candidate = second_msg["session_local_candidate"]
+            service.submit_candidate_confirmation(
+                {
+                    "session_id": session_id,
+                    "message_id": second_smid,
+                    "candidate_id": second_candidate["candidate_id"],
+                    "candidate_updated_at": second_candidate["updated_at"],
+                }
+            )
+            deferred = service.submit_candidate_review(
+                {
+                    "session_id": session_id,
+                    "message_id": second_smid,
+                    "candidate_id": second_candidate["candidate_id"],
+                    "candidate_updated_at": second_candidate["updated_at"],
+                    "review_action": "defer",
+                }
+            )
+            self.assertEqual(deferred["candidate_review_record"]["review_action"], "defer")
+            self.assertEqual(deferred["candidate_review_record"]["review_status"], "deferred")
+
+            payload = deferred
+            self.assertIn("recurrence_aggregate_candidates", payload["session"])
+            aggregates = payload["session"]["recurrence_aggregate_candidates"]
+            self.assertTrue(len(aggregates) >= 1)
+            aggregate = aggregates[0]
+            self.assertEqual(aggregate["recurrence_count"], 2)
+            self.assertNotIn(
+                "supporting_review_refs",
+                aggregate,
+                "reject/defer review outcomes must not surface as aggregate supporting_review_refs",
+            )
+
+    def test_recurrence_aggregate_candidates_do_not_materialize_from_save_support_or_historical_adjunct_only_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            corrected_source_path = tmp_path / "corrected-source.md"
+            saved_only_source_path = tmp_path / "saved-only-source.md"
+            corrected_note_path = tmp_path / "notes" / "corrected.md"
+            saved_only_note_path = tmp_path / "notes" / "saved-only.md"
+            corrected_source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+            saved_only_source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            corrected = service.handle_chat(
+                {
+                    "session_id": "recurrence-aggregate-save-support-sqlite",
+                    "source_path": str(corrected_source_path),
+                    "provider": "mock",
+                }
+            )
+            corrected_source_message_id = corrected["response"]["source_message_id"]
+            service.submit_correction(
+                {
+                    "session_id": "recurrence-aggregate-save-support-sqlite",
+                    "message_id": corrected_source_message_id,
+                    "corrected_text": "수정본입니다.\n핵심만 남겼습니다.",
+                }
+            )
+            bridge = service.handle_chat(
+                {
+                    "session_id": "recurrence-aggregate-save-support-sqlite",
+                    "corrected_save_message_id": corrected_source_message_id,
+                    "note_path": str(corrected_note_path),
+                }
+            )
+            service.handle_chat(
+                {
+                    "session_id": "recurrence-aggregate-save-support-sqlite",
+                    "approved_approval_id": bridge["response"]["approval"]["approval_id"],
+                }
+            )
+            historical_only = service.submit_correction(
+                {
+                    "session_id": "recurrence-aggregate-save-support-sqlite",
+                    "message_id": corrected_source_message_id,
+                    "corrected_text": "수정본입니다.\n다르게 손봤습니다.",
+                }
+            )
+
+            saved_only = service.handle_chat(
+                {
+                    "session_id": "recurrence-aggregate-save-support-sqlite",
+                    "source_path": str(saved_only_source_path),
+                    "save_summary": True,
+                    "note_path": str(saved_only_note_path),
+                    "approved": True,
+                    "provider": "mock",
+                }
+            )
+
+            self.assertNotIn("recurrence_aggregate_candidates", saved_only["session"])
+            historical_source_message = [
+                message
+                for message in historical_only["session"]["messages"]
+                if message.get("message_id") == corrected_source_message_id
+            ][-1]
+            self.assertIn("historical_save_identity_signal", historical_source_message)
+            saved_only_source_message = [
+                message
+                for message in saved_only["session"]["messages"]
+                if message.get("artifact_id") == saved_only["response"]["artifact_id"] and message.get("original_response_snapshot")
+            ][-1]
+            self.assertNotIn("candidate_recurrence_key", saved_only_source_message)
+
+    def test_recurrence_aggregate_precondition_blocked_stays_fixed_when_capability_unblocked_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "source-a.md"
+            second_source_path = tmp_path / "source-b.md"
+            first_source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+            second_source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            first = service.handle_chat(
+                {
+                    "session_id": "precondition-parity-session-sqlite",
+                    "source_path": str(first_source_path),
+                    "provider": "mock",
+                }
+            )
+            service.submit_correction(
+                {
+                    "session_id": "precondition-parity-session-sqlite",
+                    "message_id": first["response"]["source_message_id"],
+                    "corrected_text": corrected_text,
+                }
+            )
+
+            second = service.handle_chat(
+                {
+                    "session_id": "precondition-parity-session-sqlite",
+                    "source_path": str(second_source_path),
+                    "provider": "mock",
+                }
+            )
+            result = service.submit_correction(
+                {
+                    "session_id": "precondition-parity-session-sqlite",
+                    "message_id": second["response"]["source_message_id"],
+                    "corrected_text": corrected_text,
+                }
+            )
+
+            self.assertIn("recurrence_aggregate_candidates", result["session"])
+            aggregate = result["session"]["recurrence_aggregate_candidates"][0]
+
+            expected_preconditions = [
+                "reviewed_memory_boundary_defined",
+                "rollback_ready_reviewed_memory_effect",
+                "disable_ready_reviewed_memory_effect",
+                "conflict_visible_reviewed_memory_scope",
+                "operator_auditable_reviewed_memory_transition",
+            ]
+
+            precondition_status = aggregate["reviewed_memory_precondition_status"]
+            self.assertEqual(precondition_status["overall_status"], "blocked_all_required")
+            self.assertTrue(precondition_status["all_required"])
+            self.assertEqual(precondition_status["preconditions"], expected_preconditions)
+
+            unblock_contract = aggregate["reviewed_memory_unblock_contract"]
+            self.assertEqual(unblock_contract["unblock_status"], "blocked_all_required")
+            self.assertEqual(unblock_contract["required_preconditions"], expected_preconditions)
+
+            capability_status = aggregate["reviewed_memory_capability_status"]
+            self.assertEqual(capability_status["capability_outcome"], "unblocked_all_required")
+            self.assertEqual(capability_status["required_preconditions"], expected_preconditions)
+
+            self.assertEqual(precondition_status["overall_status"], "blocked_all_required")
+            self.assertEqual(unblock_contract["unblock_status"], "blocked_all_required")
+            self.assertEqual(capability_status["capability_outcome"], "unblocked_all_required")
+
+    def test_recurrence_aggregate_candidate_retires_on_superseding_correction_before_emit_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "source-a.md"
+            second_source_path = tmp_path / "source-b.md"
+            shared_body = "# Demo\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            first = service.handle_chat(
+                {
+                    "session_id": "aggregate-staleness-session-sqlite",
+                    "source_path": str(first_source_path),
+                    "provider": "mock",
+                }
+            )
+            first_source_message_id = first["response"]["source_message_id"]
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+            service.submit_correction(
+                {
+                    "session_id": "aggregate-staleness-session-sqlite",
+                    "message_id": first_source_message_id,
+                    "corrected_text": corrected_text,
+                }
+            )
+
+            second = service.handle_chat(
+                {
+                    "session_id": "aggregate-staleness-session-sqlite",
+                    "source_path": str(second_source_path),
+                    "provider": "mock",
+                }
+            )
+            second_source_message_id = second["response"]["source_message_id"]
+            second_corrected = service.submit_correction(
+                {
+                    "session_id": "aggregate-staleness-session-sqlite",
+                    "message_id": second_source_message_id,
+                    "corrected_text": corrected_text,
+                }
+            )
+
+            self.assertIn("recurrence_aggregate_candidates", second_corrected["session"])
+            self.assertEqual(len(second_corrected["session"]["recurrence_aggregate_candidates"]), 1)
+            aggregate = second_corrected["session"]["recurrence_aggregate_candidates"][0]
+            self.assertEqual(aggregate["recurrence_count"], 2)
+
+            superseding_text = "완전히 다른 교정입니다.\n새로운 방향으로 작성했습니다."
+            superseded = service.submit_correction(
+                {
+                    "session_id": "aggregate-staleness-session-sqlite",
+                    "message_id": first_source_message_id,
+                    "corrected_text": superseding_text,
+                }
+            )
+
+            self.assertNotIn(
+                "recurrence_aggregate_candidates",
+                superseded["session"],
+                "aggregate must retire when a supporting correction is superseded before emit",
+            )
+
+    def test_recurrence_aggregate_record_backed_lifecycle_survives_supporting_correction_supersession_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "source-a.md"
+            second_source_path = tmp_path / "source-b.md"
+            shared_body = "# Demo\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "lifecycle-survives-supersession-sqlite"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_msg_id = first["response"]["source_message_id"]
+            service.submit_correction(
+                {"session_id": session_id, "message_id": first_msg_id, "corrected_text": corrected_text}
+            )
+
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_msg_id = second["response"]["source_message_id"]
+            second_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": second_msg_id, "corrected_text": corrected_text}
+            )
+
+            self.assertIn("recurrence_aggregate_candidates", second_corrected["session"])
+            aggregate = second_corrected["session"]["recurrence_aggregate_candidates"][0]
+            fingerprint = aggregate["aggregate_key"]["normalized_delta_fingerprint"]
+
+            emitted = service.emit_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": fingerprint,
+                    "operator_reason_or_note": "lifecycle supersession test",
+                }
+            )
+            canonical_transition_id = emitted["canonical_transition_id"]
+
+            service.apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            confirm_result = service.confirm_aggregate_transition_result(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertIn("recurrence_aggregate_candidates", confirm_result["session"])
+            confirmed_agg = confirm_result["session"]["recurrence_aggregate_candidates"][0]
+            self.assertEqual(
+                confirmed_agg["reviewed_memory_transition_record"]["record_stage"],
+                "applied_with_result",
+            )
+            active_effects = confirm_result["session"].get("reviewed_memory_active_effects") or []
+            self.assertTrue(len(active_effects) > 0, "active effect must exist after confirm")
+
+            superseding_text = "완전히 다른 교정입니다.\n새로운 방향으로 작성했습니다."
+            superseded = service.submit_correction(
+                {"session_id": session_id, "message_id": first_msg_id, "corrected_text": superseding_text}
+            )
+
+            self.assertIn(
+                "recurrence_aggregate_candidates",
+                superseded["session"],
+                "aggregate with record-backed lifecycle must survive supporting correction supersession",
+            )
+            surviving_agg = superseded["session"]["recurrence_aggregate_candidates"][0]
+            self.assertEqual(
+                surviving_agg["reviewed_memory_transition_record"]["record_stage"],
+                "applied_with_result",
+            )
+            surviving_effects = superseded["session"].get("reviewed_memory_active_effects") or []
+            self.assertTrue(
+                len(surviving_effects) > 0,
+                "active effects must remain visible after supporting correction supersession",
+            )
+
+            stop_result = service.stop_apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertIn("recurrence_aggregate_candidates", stop_result["session"])
+            stopped_agg = stop_result["session"]["recurrence_aggregate_candidates"][0]
+            self.assertEqual(stopped_agg["reviewed_memory_transition_record"]["record_stage"], "stopped")
+
+    def test_stored_transition_record_reject_defer_review_refs_sanitized_on_reload_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "source-stored-a.md"
+            second_source_path = tmp_path / "source-stored-b.md"
+            shared_body = "# Stored Sanitize Test\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "stored-review-ref-sanitize-sqlite"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_smid = first["response"]["source_message_id"]
+            first_artifact_id = first["response"]["artifact_id"]
+            first_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": first_smid, "corrected_text": corrected_text}
+            )
+            first_msg = [
+                m for m in first_corrected["session"]["messages"]
+                if m.get("artifact_id") == first_artifact_id and m.get("original_response_snapshot")
+            ][-1]
+            first_candidate = first_msg["session_local_candidate"]
+            service.submit_candidate_confirmation(
+                {
+                    "session_id": session_id, "message_id": first_smid,
+                    "candidate_id": first_candidate["candidate_id"],
+                    "candidate_updated_at": first_candidate["updated_at"],
+                }
+            )
+            service.submit_candidate_review(
+                {
+                    "session_id": session_id, "message_id": first_smid,
+                    "candidate_id": first_candidate["candidate_id"],
+                    "candidate_updated_at": first_candidate["updated_at"],
+                    "review_action": "accept",
+                }
+            )
+
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_smid = second["response"]["source_message_id"]
+            payload = service.submit_correction(
+                {"session_id": session_id, "message_id": second_smid, "corrected_text": corrected_text}
+            )
+            aggregate = payload["session"]["recurrence_aggregate_candidates"][0]
+            aggregate_fingerprint = aggregate["aggregate_key"]["normalized_delta_fingerprint"]
+
+            emitted = service.emit_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "operator_reason_or_note": "stored sanitize test",
+                }
+            )
+            canonical_transition_id = emitted["canonical_transition_id"]
+
+            session = service.session_store.get_session(session_id)
+            stored_records = session.get("reviewed_memory_emitted_transition_records")
+            self.assertIsInstance(stored_records, list)
+            self.assertTrue(len(stored_records) >= 1, "transition record must be stored after emit")
+            transition_rec = stored_records[0]
+            accept_refs = transition_rec.get("supporting_review_refs", [])
+            self.assertTrue(len(accept_refs) >= 1, "emitted transition must carry accepted review refs")
+            self.assertEqual(accept_refs[0]["review_action"], "accept")
+
+            reject_ref = {
+                "artifact_id": first_artifact_id,
+                "source_message_id": first_smid,
+                "candidate_id": first_candidate["candidate_id"],
+                "candidate_updated_at": first_candidate["updated_at"],
+                "review_action": "reject",
+                "review_status": "rejected",
+                "recorded_at": "2026-04-10T00:00:00+00:00",
+            }
+            for rec in stored_records:
+                existing_refs = rec.get("supporting_review_refs", [])
+                if not isinstance(existing_refs, list):
+                    existing_refs = []
+                rec["supporting_review_refs"] = existing_refs + [reject_ref]
+            service.session_store._save(session_id, session)
+
+            reloaded_session = service.session_store.get_session(session_id)
+            reloaded_payload = service._serialize_session(reloaded_session)
+            reloaded_aggregate = reloaded_payload["recurrence_aggregate_candidates"][0]
+
+            self.assertIn("supporting_review_refs", reloaded_aggregate)
+            for ref in reloaded_aggregate["supporting_review_refs"]:
+                self.assertEqual(ref["review_action"], "accept")
+
+            transition_record = reloaded_aggregate.get("reviewed_memory_transition_record")
+            self.assertIsNotNone(
+                transition_record,
+                "emitted transition record must still be present on reload",
+            )
+            stored_refs = transition_record.get("supporting_review_refs", [])
+            for ref in stored_refs:
+                self.assertEqual(
+                    ref["review_action"], "accept",
+                    "stored transition record must not resurface reject/defer review refs",
+                )
+            reject_actions = [r for r in stored_refs if r.get("review_action") in ("reject", "defer")]
+            self.assertEqual(reject_actions, [], "no reject/defer refs should survive sanitize")
+
+    def test_stored_conflict_visibility_record_reject_defer_review_refs_sanitized_on_reload_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "source-cv-a.md"
+            second_source_path = tmp_path / "source-cv-b.md"
+            shared_body = "# CV Sanitize Test\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "stored-cv-review-ref-sanitize-sqlite"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_smid = first["response"]["source_message_id"]
+            first_artifact_id = first["response"]["artifact_id"]
+            first_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": first_smid, "corrected_text": corrected_text}
+            )
+            first_msg = [
+                m for m in first_corrected["session"]["messages"]
+                if m.get("artifact_id") == first_artifact_id and m.get("original_response_snapshot")
+            ][-1]
+            first_candidate = first_msg["session_local_candidate"]
+            service.submit_candidate_confirmation(
+                {
+                    "session_id": session_id, "message_id": first_smid,
+                    "candidate_id": first_candidate["candidate_id"],
+                    "candidate_updated_at": first_candidate["updated_at"],
+                }
+            )
+            service.submit_candidate_review(
+                {
+                    "session_id": session_id, "message_id": first_smid,
+                    "candidate_id": first_candidate["candidate_id"],
+                    "candidate_updated_at": first_candidate["updated_at"],
+                    "review_action": "accept",
+                }
+            )
+
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_smid = second["response"]["source_message_id"]
+            payload = service.submit_correction(
+                {"session_id": session_id, "message_id": second_smid, "corrected_text": corrected_text}
+            )
+            aggregate = payload["session"]["recurrence_aggregate_candidates"][0]
+            aggregate_fingerprint = aggregate["aggregate_key"]["normalized_delta_fingerprint"]
+
+            emitted = service.emit_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "operator_reason_or_note": "cv sanitize test",
+                }
+            )
+            canonical_transition_id = emitted["canonical_transition_id"]
+
+            service.apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            service.confirm_aggregate_transition_result(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            service.stop_apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            service.reverse_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            cv_result = service.check_aggregate_conflict_visibility(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertTrue(cv_result["ok"])
+
+            session = service.session_store.get_session(session_id)
+            stored_records = session.get("reviewed_memory_emitted_transition_records")
+            self.assertIsInstance(stored_records, list)
+            cv_records = [
+                r for r in stored_records
+                if isinstance(r, dict)
+                and r.get("transition_action") == "future_reviewed_memory_conflict_visibility"
+            ]
+            self.assertTrue(len(cv_records) >= 1, "conflict-visibility record must be stored")
+
+            reject_ref = {
+                "artifact_id": first_artifact_id,
+                "source_message_id": first_smid,
+                "candidate_id": first_candidate["candidate_id"],
+                "candidate_updated_at": first_candidate["updated_at"],
+                "review_action": "reject",
+                "review_status": "rejected",
+                "recorded_at": "2026-04-10T00:00:00+00:00",
+            }
+            defer_ref = dict(reject_ref)
+            defer_ref["review_action"] = "defer"
+            defer_ref["review_status"] = "deferred"
+            for rec in stored_records:
+                existing_refs = rec.get("supporting_review_refs", [])
+                if not isinstance(existing_refs, list):
+                    existing_refs = []
+                rec["supporting_review_refs"] = existing_refs + [reject_ref, defer_ref]
+            service.session_store._save(session_id, session)
+
+            reloaded_session = service.session_store.get_session(session_id)
+            reloaded_payload = service._serialize_session(reloaded_session)
+            reloaded_aggregate = reloaded_payload["recurrence_aggregate_candidates"][0]
+
+            conflict_record = reloaded_aggregate.get("reviewed_memory_conflict_visibility_record")
+            self.assertIsNotNone(
+                conflict_record,
+                "conflict-visibility record must still be present on reload",
+            )
+            stored_refs = conflict_record.get("supporting_review_refs", [])
+            for ref in stored_refs:
+                self.assertEqual(
+                    ref["review_action"], "accept",
+                    "stored conflict-visibility record must not resurface reject/defer review refs",
+                )
+            bad_actions = [r for r in stored_refs if r.get("review_action") in ("reject", "defer")]
+            self.assertEqual(bad_actions, [], "no reject/defer refs should survive sanitize")
+
+    def test_recurrence_aggregate_payload_keeps_proof_record_store_internal_and_ui_blocked_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            messages = [
+                {
+                    "message_id": "msg-web-proof-a",
+                    "source_message_id": "msg-web-proof-a",
+                    "artifact_id": "artifact-web-proof-a",
+                    "artifact_kind": "grounded_brief",
+                    "role": "assistant",
+                    "text": "초안입니다.",
+                    "original_response_snapshot": {
+                        "artifact_id": "artifact-web-proof-a",
+                        "artifact_kind": "grounded_brief",
+                        "draft_text": "초안입니다.",
+                    },
+                    "corrected_text": "다듬은 초안입니다.",
+                    "corrected_outcome": {
+                        "outcome": "corrected",
+                        "recorded_at": "2026-03-28T00:01:00+00:00",
+                        "artifact_id": "artifact-web-proof-a",
+                        "source_message_id": "msg-web-proof-a",
+                    },
+                },
+                {
+                    "message_id": "msg-web-proof-b",
+                    "source_message_id": "msg-web-proof-b",
+                    "artifact_id": "artifact-web-proof-b",
+                    "artifact_kind": "grounded_brief",
+                    "role": "assistant",
+                    "text": "초안입니다.",
+                    "original_response_snapshot": {
+                        "artifact_id": "artifact-web-proof-b",
+                        "artifact_kind": "grounded_brief",
+                        "draft_text": "초안입니다.",
+                    },
+                    "corrected_text": "다듬은 초안입니다.",
+                    "corrected_outcome": {
+                        "outcome": "corrected",
+                        "recorded_at": "2026-03-28T00:02:00+00:00",
+                        "artifact_id": "artifact-web-proof-b",
+                        "source_message_id": "msg-web-proof-b",
+                    },
+                },
+            ]
+            session_payload = {
+                "session_id": "web-proof-record-session-sqlite",
+                "messages": messages,
+            }
+            for message in messages:
+                session_local_memory_signal = service.session_store.build_session_local_memory_signal(
+                    session_payload,
+                    source_message=message,
+                )
+                session_local_candidate = service._build_session_local_candidate_for_message(
+                    message=message,
+                    session_local_memory_signal=session_local_memory_signal,
+                )
+                message["candidate_recurrence_key"] = service._serialize_candidate_recurrence_key(
+                    service._build_candidate_recurrence_key_for_message(
+                        message=message,
+                        session_local_candidate=session_local_candidate,
+                    )
+                )
+
+            base_aggregate = service._build_recurrence_aggregate_candidates(messages)[0]
+            proof_record_store_entries = (
+                service._build_reviewed_memory_local_effect_presence_proof_record_store_entries(
+                    [base_aggregate]
+                )
+            )
+            self.assertEqual(len(proof_record_store_entries), 1)
+            self.assertIsNotNone(proof_record_store_entries[0].get("applied_effect_id"))
+
+            payload = service._serialize_session(
+                {
+                    "session_id": session_payload["session_id"],
+                    "title": "web-proof-record-session-sqlite",
+                    "messages": messages,
+                    "pending_approvals": [],
+                    "permissions": {"web_search": "disabled"},
+                    "created_at": "2026-03-28T00:00:00+00:00",
+                    "updated_at": "2026-03-28T00:02:00+00:00",
+                }
+            )
+
+            self.assertNotIn("reviewed_memory_local_effect_presence_proof_record_store", payload)
+            aggregate = payload["recurrence_aggregate_candidates"][0]
+            self.assertNotIn("_reviewed_memory_local_effect_presence_proof_record_store_entries", aggregate)
+            self.assertNotIn("reviewed_memory_local_effect_presence_proof_record", aggregate)
+            self.assertNotIn("reviewed_memory_local_effect_presence_proof_boundary", aggregate)
+            self.assertNotIn("reviewed_memory_local_effect_presence_fact_source_instance", aggregate)
+            self.assertNotIn("reviewed_memory_local_effect_presence_fact_source", aggregate)
+            self.assertNotIn("reviewed_memory_local_effect_presence_event", aggregate)
+            self.assertNotIn("reviewed_memory_local_effect_presence_event_producer", aggregate)
+            self.assertNotIn("reviewed_memory_local_effect_presence_event_source", aggregate)
+            self.assertNotIn("reviewed_memory_local_effect_presence_record", aggregate)
+            self.assertNotIn("reviewed_memory_applied_effect_target", aggregate)
+            self.assertNotIn("reviewed_memory_reversible_effect_handle", aggregate)
+            self.assertNotIn("reviewed_memory_capability_source_refs", aggregate)
+            self.assertIn("reviewed_memory_capability_basis", aggregate)
+            capability_basis = aggregate["reviewed_memory_capability_basis"]
+            self.assertEqual(capability_basis["basis_version"], "same_session_reviewed_memory_capability_basis_v1")
+            self.assertEqual(capability_basis["basis_status"], "all_required_capabilities_present")
+            self.assertNotIn("reviewed_memory_transition_record", aggregate)
+            self.assertEqual(
+                aggregate["reviewed_memory_capability_status"]["capability_outcome"],
+                "unblocked_all_required",
+            )
+
+    def test_recurrence_aggregate_visible_transition_result_active_effect_lifecycle_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "vt-source-a.md"
+            second_source_path = tmp_path / "vt-source-b.md"
+            third_source_path = tmp_path / "vt-source-c.md"
+            shared_body = "# Visible Transition Lifecycle\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+            third_source_path.write_text("# Post-confirm chat test\n\ntest", encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "visible-transition-lifecycle-sqlite"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+            operator_reason = "visible transition lifecycle test reason"
+
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_artifact_id = first["response"]["artifact_id"]
+            first_source_message_id = first["response"]["source_message_id"]
+            first_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": first_source_message_id, "corrected_text": corrected_text}
+            )
+            first_source_message = [
+                m for m in first_corrected["session"]["messages"]
+                if m.get("artifact_id") == first_artifact_id and m.get("original_response_snapshot")
+            ][-1]
+            candidate = first_source_message["session_local_candidate"]
+            service.submit_candidate_confirmation(
+                {
+                    "session_id": session_id,
+                    "message_id": first_source_message_id,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                }
+            )
+            service.submit_candidate_review(
+                {
+                    "session_id": session_id,
+                    "message_id": first_source_message_id,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                    "review_action": "accept",
+                }
+            )
+
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_source_message_id = second["response"]["source_message_id"]
+            payload = service.submit_correction(
+                {"session_id": session_id, "message_id": second_source_message_id, "corrected_text": corrected_text}
+            )
+            aggregate = payload["session"]["recurrence_aggregate_candidates"][0]
+            aggregate_fingerprint = aggregate["aggregate_key"]["normalized_delta_fingerprint"]
+            initial_identity = dict(aggregate["aggregate_key"])
+
+            self.assertNotIn("reviewed_memory_transition_record", aggregate)
+
+            emitted = service.emit_aggregate_transition(
+                {"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "operator_reason_or_note": operator_reason}
+            )
+            canonical_transition_id = emitted["canonical_transition_id"]
+            self.assertEqual(emitted["transition_record"]["record_stage"], "emitted_record_only_not_applied")
+            self.assertEqual(emitted["transition_record"]["operator_reason_or_note"], operator_reason)
+            self.assertFalse(emitted["session"].get("reviewed_memory_active_effects") or [])
+
+            apply_result = service.apply_aggregate_transition(
+                {"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id}
+            )
+            self.assertEqual(apply_result["transition_record"]["record_stage"], "applied_pending_result")
+            self.assertFalse(apply_result["session"].get("reviewed_memory_active_effects") or [])
+
+            confirm_result = service.confirm_aggregate_transition_result(
+                {"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id}
+            )
+            self.assertEqual(confirm_result["transition_record"]["record_stage"], "applied_with_result")
+            self.assertEqual(confirm_result["transition_record"]["apply_result"]["result_stage"], "effect_active")
+            active_effects = confirm_result["session"].get("reviewed_memory_active_effects") or []
+            self.assertEqual(len(active_effects), 1)
+            self.assertEqual(active_effects[0]["aggregate_fingerprint"], aggregate_fingerprint)
+
+            post_confirm_chat = service.handle_chat(
+                {"session_id": session_id, "source_path": str(third_source_path), "provider": "mock"}
+            )
+            self.assertIn("[검토 메모 활성]", post_confirm_chat["response"].get("text") or "")
+
+            stop_result = service.stop_apply_aggregate_transition(
+                {"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id}
+            )
+            self.assertEqual(stop_result["transition_record"]["record_stage"], "stopped")
+            self.assertEqual(stop_result["transition_record"]["apply_result"]["result_stage"], "effect_stopped")
+            self.assertFalse(stop_result["session"].get("reviewed_memory_active_effects") or [])
+
+            post_stop_chat = service.handle_chat(
+                {"session_id": session_id, "source_path": str(third_source_path), "provider": "mock"}
+            )
+            self.assertNotIn("[검토 메모 활성]", post_stop_chat["response"].get("text") or "")
+
+            reverse_result = service.reverse_aggregate_transition(
+                {"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id}
+            )
+            self.assertEqual(reverse_result["transition_record"]["record_stage"], "reversed")
+            self.assertEqual(reverse_result["transition_record"]["apply_result"]["result_stage"], "effect_reversed")
+
+            cv_result = service.check_aggregate_conflict_visibility(
+                {"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id}
+            )
+            self.assertTrue(cv_result["ok"])
+
+    def test_recurrence_aggregate_boundary_draft_stays_draft_not_applied_through_lifecycle_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "bd-source-a.md"
+            second_source_path = tmp_path / "bd-source-b.md"
+            shared_body = "# Boundary Draft Lifecycle\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "boundary-draft-lifecycle-sqlite"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_artifact_id = first["response"]["artifact_id"]
+            first_source_message_id = first["response"]["source_message_id"]
+            first_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": first_source_message_id, "corrected_text": corrected_text}
+            )
+            first_source_message = [
+                m for m in first_corrected["session"]["messages"]
+                if m.get("artifact_id") == first_artifact_id and m.get("original_response_snapshot")
+            ][-1]
+            candidate = first_source_message["session_local_candidate"]
+            service.submit_candidate_confirmation(
+                {"session_id": session_id, "message_id": first_source_message_id, "candidate_id": candidate["candidate_id"], "candidate_updated_at": candidate["updated_at"]}
+            )
+            service.submit_candidate_review(
+                {"session_id": session_id, "message_id": first_source_message_id, "candidate_id": candidate["candidate_id"], "candidate_updated_at": candidate["updated_at"], "review_action": "accept"}
+            )
+
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_source_message_id = second["response"]["source_message_id"]
+            payload = service.submit_correction(
+                {"session_id": session_id, "message_id": second_source_message_id, "corrected_text": corrected_text}
+            )
+            aggregate = payload["session"]["recurrence_aggregate_candidates"][0]
+            aggregate_fingerprint = aggregate["aggregate_key"]["normalized_delta_fingerprint"]
+            initial_boundary_draft = dict(aggregate["reviewed_memory_boundary_draft"])
+            self.assertEqual(initial_boundary_draft["boundary_stage"], "draft_not_applied")
+
+            def assert_bd(label, session_data):
+                agg = session_data["recurrence_aggregate_candidates"][0]
+                bd = agg.get("reviewed_memory_boundary_draft")
+                self.assertIsNotNone(bd, f"boundary_draft missing after {label}")
+                self.assertEqual(bd["boundary_stage"], "draft_not_applied", f"boundary_stage changed after {label}")
+                self.assertEqual(bd["aggregate_identity_ref"], initial_boundary_draft["aggregate_identity_ref"], f"identity changed after {label}")
+
+            emitted = service.emit_aggregate_transition({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "operator_reason_or_note": "bd lifecycle test"})
+            canonical_transition_id = emitted["canonical_transition_id"]
+            assert_bd("emit", emitted["session"])
+            apply_result = service.apply_aggregate_transition({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id})
+            assert_bd("apply", apply_result["session"])
+            confirm_result = service.confirm_aggregate_transition_result({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id})
+            assert_bd("confirm", confirm_result["session"])
+            stop_result = service.stop_apply_aggregate_transition({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id})
+            assert_bd("stop", stop_result["session"])
+            reverse_result = service.reverse_aggregate_transition({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id})
+            assert_bd("reverse", reverse_result["session"])
+            cv_result = service.check_aggregate_conflict_visibility({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id})
+            assert_bd("conflict_visibility", cv_result["session"])
+
+    def test_recurrence_aggregate_contract_refs_retained_through_lifecycle_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "cref-source-a.md"
+            second_source_path = tmp_path / "cref-source-b.md"
+            shared_body = "# Contract Ref Lifecycle\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "contract-ref-lifecycle-sqlite"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_artifact_id = first["response"]["artifact_id"]
+            first_source_message_id = first["response"]["source_message_id"]
+            first_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": first_source_message_id, "corrected_text": corrected_text}
+            )
+            first_source_message = [
+                m for m in first_corrected["session"]["messages"]
+                if m.get("artifact_id") == first_artifact_id and m.get("original_response_snapshot")
+            ][-1]
+            candidate = first_source_message["session_local_candidate"]
+            service.submit_candidate_confirmation(
+                {"session_id": session_id, "message_id": first_source_message_id, "candidate_id": candidate["candidate_id"], "candidate_updated_at": candidate["updated_at"]}
+            )
+            service.submit_candidate_review(
+                {"session_id": session_id, "message_id": first_source_message_id, "candidate_id": candidate["candidate_id"], "candidate_updated_at": candidate["updated_at"], "review_action": "accept"}
+            )
+
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_source_message_id = second["response"]["source_message_id"]
+            payload = service.submit_correction(
+                {"session_id": session_id, "message_id": second_source_message_id, "corrected_text": corrected_text}
+            )
+            aggregate = payload["session"]["recurrence_aggregate_candidates"][0]
+            aggregate_fingerprint = aggregate["aggregate_key"]["normalized_delta_fingerprint"]
+            initial_rollback_stage = aggregate["reviewed_memory_rollback_contract"]["rollback_stage"]
+            initial_disable_stage = aggregate["reviewed_memory_disable_contract"]["disable_stage"]
+            initial_conflict_stage = aggregate["reviewed_memory_conflict_contract"]["conflict_visibility_stage"]
+            initial_audit_stage = aggregate["reviewed_memory_transition_audit_contract"]["audit_stage"]
+            self.assertEqual(initial_rollback_stage, "contract_only_not_applied")
+            self.assertEqual(initial_disable_stage, "contract_only_not_applied")
+            self.assertEqual(initial_conflict_stage, "contract_only_not_resolved")
+            self.assertEqual(initial_audit_stage, "contract_only_not_emitted")
+
+            def assert_contracts(label, session_data):
+                agg = session_data["recurrence_aggregate_candidates"][0]
+                self.assertEqual(agg["reviewed_memory_rollback_contract"]["rollback_stage"], "contract_only_not_applied", f"rollback changed after {label}")
+                self.assertEqual(agg["reviewed_memory_disable_contract"]["disable_stage"], "contract_only_not_applied", f"disable changed after {label}")
+                self.assertEqual(agg["reviewed_memory_conflict_contract"]["conflict_visibility_stage"], "contract_only_not_resolved", f"conflict changed after {label}")
+                self.assertEqual(agg["reviewed_memory_transition_audit_contract"]["audit_stage"], "contract_only_not_emitted", f"audit changed after {label}")
+
+            emitted = service.emit_aggregate_transition({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "operator_reason_or_note": "contract ref lifecycle test"})
+            canonical_transition_id = emitted["canonical_transition_id"]
+            assert_contracts("emit", emitted["session"])
+            apply_result = service.apply_aggregate_transition({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id})
+            assert_contracts("apply", apply_result["session"])
+            confirm_result = service.confirm_aggregate_transition_result({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id})
+            assert_contracts("confirm", confirm_result["session"])
+            stop_result = service.stop_apply_aggregate_transition({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id})
+            assert_contracts("stop", stop_result["session"])
+            reverse_result = service.reverse_aggregate_transition({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id})
+            assert_contracts("reverse", reverse_result["session"])
+            cv_result = service.check_aggregate_conflict_visibility({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id})
+            assert_contracts("conflict_visibility", cv_result["session"])
+
+    def test_recurrence_aggregate_source_family_refs_retained_through_lifecycle_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "sf-source-a.md"
+            second_source_path = tmp_path / "sf-source-b.md"
+            shared_body = "# Source Family Lifecycle\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "source-family-lifecycle-sqlite"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_artifact_id = first["response"]["artifact_id"]
+            first_source_message_id = first["response"]["source_message_id"]
+            first_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": first_source_message_id, "corrected_text": corrected_text}
+            )
+            first_source_message = [
+                m for m in first_corrected["session"]["messages"]
+                if m.get("artifact_id") == first_artifact_id and m.get("original_response_snapshot")
+            ][-1]
+            candidate = first_source_message["session_local_candidate"]
+            service.submit_candidate_confirmation(
+                {"session_id": session_id, "message_id": first_source_message_id, "candidate_id": candidate["candidate_id"], "candidate_updated_at": candidate["updated_at"]}
+            )
+            service.submit_candidate_review(
+                {"session_id": session_id, "message_id": first_source_message_id, "candidate_id": candidate["candidate_id"], "candidate_updated_at": candidate["updated_at"], "review_action": "accept"}
+            )
+
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_source_message_id = second["response"]["source_message_id"]
+            payload = service.submit_correction(
+                {"session_id": session_id, "message_id": second_source_message_id, "corrected_text": corrected_text}
+            )
+            aggregate = payload["session"]["recurrence_aggregate_candidates"][0]
+            aggregate_fingerprint = aggregate["aggregate_key"]["normalized_delta_fingerprint"]
+
+            def resolve_refs(label, msgs):
+                preliminary = service._build_recurrence_aggregate_candidates(msgs)
+                self.assertTrue(len(preliminary) >= 1, f"no aggregate after {label}")
+                proof_entries = service._build_reviewed_memory_local_effect_presence_proof_record_store_entries(preliminary)
+                enriched = service._build_recurrence_aggregate_candidates(msgs, proof_record_store_entries=proof_entries or None)
+                agg = enriched[0]
+                sc = service._build_recurrence_aggregate_reviewed_memory_source_context(agg)
+                self.assertIsNotNone(sc, f"source_context is None after {label}")
+                return {
+                    "boundary_source_ref": service._resolve_recurrence_aggregate_reviewed_memory_boundary_source_ref(agg, sc),
+                    "rollback_source_ref": service._resolve_recurrence_aggregate_reviewed_memory_rollback_source_ref(agg, sc),
+                    "disable_source_ref": service._resolve_recurrence_aggregate_reviewed_memory_disable_source_ref(agg, sc),
+                    "conflict_source_ref": service._resolve_recurrence_aggregate_reviewed_memory_conflict_source_ref(agg, sc),
+                    "transition_audit_source_ref": service._resolve_recurrence_aggregate_reviewed_memory_transition_audit_source_ref(agg, sc),
+                }
+
+            initial_refs = resolve_refs("initial", payload["session"]["messages"])
+            for k, v in initial_refs.items():
+                self.assertIsNotNone(v, f"{k} is None at initial")
+
+            def assert_refs(label, msgs):
+                current = resolve_refs(label, msgs)
+                for k in initial_refs:
+                    self.assertEqual(current[k], initial_refs[k], f"{k} changed after {label}")
+
+            emitted = service.emit_aggregate_transition({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "operator_reason_or_note": "source family test"})
+            canonical_transition_id = emitted["canonical_transition_id"]
+            assert_refs("emit", emitted["session"]["messages"])
+            apply_result = service.apply_aggregate_transition({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id})
+            assert_refs("apply", apply_result["session"]["messages"])
+            confirm_result = service.confirm_aggregate_transition_result({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id})
+            assert_refs("confirm", confirm_result["session"]["messages"])
+            stop_result = service.stop_apply_aggregate_transition({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id})
+            assert_refs("stop", stop_result["session"]["messages"])
+            reverse_result = service.reverse_aggregate_transition({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id})
+            assert_refs("reverse", reverse_result["session"]["messages"])
+            cv_result = service.check_aggregate_conflict_visibility({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id})
+            assert_refs("conflict_visibility", cv_result["session"]["messages"])
+
+    def test_recurrence_aggregate_local_effect_chain_retained_through_lifecycle_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "lec-source-a.md"
+            second_source_path = tmp_path / "lec-source-b.md"
+            shared_body = "# Local Effect Chain Lifecycle\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            db_path = str(tmp_path / "test.db")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "local-effect-chain-lifecycle-sqlite"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_artifact_id = first["response"]["artifact_id"]
+            first_source_message_id = first["response"]["source_message_id"]
+            first_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": first_source_message_id, "corrected_text": corrected_text}
+            )
+            first_source_message = [
+                m for m in first_corrected["session"]["messages"]
+                if m.get("artifact_id") == first_artifact_id and m.get("original_response_snapshot")
+            ][-1]
+            candidate = first_source_message["session_local_candidate"]
+            service.submit_candidate_confirmation(
+                {"session_id": session_id, "message_id": first_source_message_id, "candidate_id": candidate["candidate_id"], "candidate_updated_at": candidate["updated_at"]}
+            )
+            service.submit_candidate_review(
+                {"session_id": session_id, "message_id": first_source_message_id, "candidate_id": candidate["candidate_id"], "candidate_updated_at": candidate["updated_at"], "review_action": "accept"}
+            )
+
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_source_message_id = second["response"]["source_message_id"]
+            payload = service.submit_correction(
+                {"session_id": session_id, "message_id": second_source_message_id, "corrected_text": corrected_text}
+            )
+            aggregate = payload["session"]["recurrence_aggregate_candidates"][0]
+            aggregate_fingerprint = aggregate["aggregate_key"]["normalized_delta_fingerprint"]
+
+            def resolve_chain(label, msgs):
+                preliminary = service._build_recurrence_aggregate_candidates(msgs)
+                self.assertTrue(len(preliminary) >= 1, f"no aggregate after {label}")
+                proof_entries = service._build_reviewed_memory_local_effect_presence_proof_record_store_entries(preliminary)
+                enriched = service._build_recurrence_aggregate_candidates(msgs, proof_record_store_entries=proof_entries or None)
+                agg = enriched[0]
+                sc = service._build_recurrence_aggregate_reviewed_memory_source_context(agg)
+                self.assertIsNotNone(sc, f"source_context is None after {label}")
+                return {
+                    "proof_record": service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_proof_record(agg, sc),
+                    "proof_boundary": service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_proof_boundary(agg, sc),
+                    "fact_source_instance": service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_fact_source_instance(agg, sc),
+                    "fact_source": service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_fact_source(agg, sc),
+                    "event": service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event(agg, sc),
+                    "event_producer": service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_producer(agg, sc),
+                    "event_source": service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_event_source(agg, sc),
+                    "record": service._build_recurrence_aggregate_reviewed_memory_local_effect_presence_record(agg, sc),
+                }
+
+            initial_chain = resolve_chain("initial", payload["session"]["messages"])
+            for k, v in initial_chain.items():
+                self.assertIsNotNone(v, f"{k} is None at initial")
+
+            def assert_chain(label, msgs):
+                current = resolve_chain(label, msgs)
+                for k in initial_chain:
+                    self.assertEqual(current[k], initial_chain[k], f"{k} changed after {label}")
+
+            emitted = service.emit_aggregate_transition({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "operator_reason_or_note": "local effect chain test"})
+            canonical_transition_id = emitted["canonical_transition_id"]
+            assert_chain("emit", emitted["session"]["messages"])
+            apply_result = service.apply_aggregate_transition({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id})
+            assert_chain("apply", apply_result["session"]["messages"])
+            confirm_result = service.confirm_aggregate_transition_result({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id})
+            assert_chain("confirm", confirm_result["session"]["messages"])
+            stop_result = service.stop_apply_aggregate_transition({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id})
+            assert_chain("stop", stop_result["session"]["messages"])
+            reverse_result = service.reverse_aggregate_transition({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id})
+            assert_chain("reverse", reverse_result["session"]["messages"])
+            cv_result = service.check_aggregate_conflict_visibility({"session_id": session_id, "aggregate_fingerprint": aggregate_fingerprint, "canonical_transition_id": canonical_transition_id})
+            assert_chain("conflict_visibility", cv_result["session"]["messages"])
 
     def test_submit_content_verdict_after_original_draft_save_preserves_saved_history(self) -> None:
         with TemporaryDirectory() as tmp_dir:

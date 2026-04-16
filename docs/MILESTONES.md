@@ -159,6 +159,7 @@
 - browser folder picker mixed scanned-PDF search-plus-summary partial-failure + preview exact-field + transcript preview exact-field smoke
 - response feedback capture
 - local web-search history storage
+- SQLite browser smoke baseline (`e2e/playwright.sqlite.config.mjs`): opt-in sqlite backend parity gate covering recurrence aggregate emitted-apply-confirm lifecycle, stale-candidate retirement before apply start, post-confirm active lifecycle survival through supporting correction supersession, post-confirm recorded-basis label survival through supporting correction supersession, stop-reverse-conflict cleanup, document-loop save/correction/verdict continuity (saved history vs late reject verdict, reject keeps approval then explicit save supersedes, corrected-save first bridge snapshot at request time, corrected-save stays frozen after later reject + re-correction), and core document productivity loop (summary + evidence + summary chunks, browser file picker summary, browser folder picker search, search-only hidden-body + preview-card)
 
 ## In Progress
 

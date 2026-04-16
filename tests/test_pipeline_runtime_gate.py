@@ -10,6 +10,137 @@ from pipeline_runtime.supervisor import RuntimeSupervisor
 
 
 class PipelineRuntimeGateSoakTest(unittest.TestCase):
+    def test_wait_for_runtime_readiness_returns_last_snapshot_on_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            time_values = iter([0.0, 0.0, 0.6, 1.1, 1.2])
+            stale_status = {
+                "runtime_state": "STARTING",
+                "watcher": {"alive": False, "pid": None},
+                "lanes": [
+                    {
+                        "name": "Codex",
+                        "state": "BOOTING",
+                        "attachable": True,
+                        "pid": 4242,
+                        "note": "",
+                        "last_event_at": "",
+                        "last_heartbeat_at": "",
+                    }
+                ],
+                "control": {"active_control_status": "implement"},
+                "active_round": {"state": "VERIFY_PENDING"},
+            }
+
+            with mock.patch.object(
+                pipeline_runtime_gate,
+                "_read_status",
+                side_effect=[stale_status, stale_status, stale_status],
+            ), \
+                mock.patch.object(pipeline_runtime_gate.time, "sleep", return_value=None), \
+                mock.patch.object(pipeline_runtime_gate.time, "time", side_effect=lambda: next(time_values)):
+                ok, status, wait_sec = pipeline_runtime_gate._wait_for_runtime_readiness(
+                    root,
+                    timeout_sec=1.0,
+                )
+
+        self.assertFalse(ok)
+        self.assertEqual(status, stale_status)
+        self.assertGreaterEqual(wait_sec, 1.0)
+
+    def test_run_soak_waits_for_ready_before_counting_samples(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ready_status = {
+                "runtime_state": "RUNNING",
+                "watcher": {"alive": True, "pid": 123},
+                "lanes": [{"name": "Codex", "state": "READY", "attachable": True, "pid": 456, "note": ""}],
+                "control": {
+                    "active_control_file": "",
+                    "active_control_seq": -1,
+                    "active_control_status": "none",
+                },
+                "active_round": {"state": ""},
+            }
+            time_values = iter([0.0, 0.0, 1.0])
+
+            with mock.patch.object(pipeline_runtime_gate, "_start_runtime", return_value=(True, "started")), \
+                 mock.patch.object(pipeline_runtime_gate, "_stop_runtime", return_value=(True, "stopped")), \
+                 mock.patch.object(
+                     pipeline_runtime_gate,
+                     "_wait_for_runtime_readiness",
+                     return_value=(True, ready_status, 3.5),
+                 ) as ready_wait, \
+                 mock.patch.object(pipeline_runtime_gate, "_read_status", return_value=ready_status), \
+                 mock.patch.object(
+                     pipeline_runtime_gate,
+                     "_analyze_run_artifacts",
+                     return_value={"dispatch_count": 0, "duplicate_dispatch_count": 0, "orphan_session": False},
+                 ), \
+                 mock.patch.object(pipeline_runtime_gate, "parse_control_slots", return_value={"active": {}}), \
+                 mock.patch.object(pipeline_runtime_gate.time, "sleep", return_value=None), \
+                 mock.patch.object(pipeline_runtime_gate.time, "time", side_effect=lambda: next(time_values)):
+                ok, summary = pipeline_runtime_gate.run_soak(
+                    root,
+                    mode="experimental",
+                    session="aip-test",
+                    duration_sec=0.5,
+                    sample_interval_sec=0.5,
+                    ready_timeout_sec=45.0,
+                )
+
+        self.assertTrue(ok)
+        self.assertTrue(summary["ready_ok"])
+        self.assertEqual(summary["ready_wait_sec"], 3.5)
+        self.assertEqual(summary["state_counts"], {"RUNNING": 1})
+        ready_wait.assert_called_once_with(root, timeout_sec=45.0)
+
+    def test_run_soak_fails_when_ready_barrier_times_out_with_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            readiness_status = {
+                "runtime_state": "STARTING",
+                "watcher": {"alive": False, "pid": None},
+                "lanes": [
+                    {
+                        "name": "Claude",
+                        "state": "BOOTING",
+                        "attachable": True,
+                        "pid": 111,
+                        "note": "",
+                        "last_event_at": "",
+                        "last_heartbeat_at": "",
+                    }
+                ],
+                "control": {"active_control_status": "implement"},
+                "active_round": {"state": "VERIFY_PENDING"},
+            }
+
+            with mock.patch.object(pipeline_runtime_gate, "_start_runtime", return_value=(True, "started")), \
+                 mock.patch.object(pipeline_runtime_gate, "_stop_runtime", return_value=(True, "stopped")), \
+                 mock.patch.object(
+                     pipeline_runtime_gate,
+                     "_wait_for_runtime_readiness",
+                     return_value=(False, readiness_status, 45.0),
+                 ):
+                ok, summary = pipeline_runtime_gate.run_soak(
+                    root,
+                    mode="experimental",
+                    session="aip-test",
+                    duration_sec=5.0,
+                    sample_interval_sec=1.0,
+                    ready_timeout_sec=45.0,
+                )
+
+        self.assertFalse(ok)
+        self.assertFalse(summary["ready_ok"])
+        self.assertEqual(summary["ready_wait_sec"], 45.0)
+        self.assertEqual(summary["samples"], 0)
+        self.assertEqual(
+            summary["readiness_snapshot"],
+            pipeline_runtime_gate._status_readiness_snapshot(readiness_status),
+        )
+
     def test_run_soak_fails_when_degraded_is_seen(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -19,9 +150,28 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
                  mock.patch.object(pipeline_runtime_gate, "_stop_runtime", return_value=(True, "stopped")), \
                  mock.patch.object(
                      pipeline_runtime_gate,
+                     "_wait_for_runtime_readiness",
+                     return_value=(
+                         True,
+                         {
+                             "runtime_state": "RUNNING",
+                             "watcher": {"alive": True, "pid": 1},
+                             "lanes": [{"state": "READY", "attachable": True}],
+                         },
+                         0.5,
+                     ),
+                 ), \
+                 mock.patch.object(
+                     pipeline_runtime_gate,
                      "_read_status",
                      return_value={"runtime_state": "DEGRADED", "degraded_reason": "receipt_manifest:job-1:missing_manifest_path"},
                  ), \
+                 mock.patch.object(
+                     pipeline_runtime_gate,
+                     "_analyze_run_artifacts",
+                     return_value={"dispatch_count": 0, "duplicate_dispatch_count": 0, "orphan_session": False},
+                 ), \
+                 mock.patch.object(pipeline_runtime_gate, "parse_control_slots", return_value={"active": {}}), \
                  mock.patch.object(pipeline_runtime_gate.time, "sleep", return_value=None), \
                  mock.patch.object(pipeline_runtime_gate.time, "time", side_effect=lambda: next(time_values)):
                 ok, summary = pipeline_runtime_gate.run_soak(
@@ -47,6 +197,19 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
                  mock.patch.object(pipeline_runtime_gate, "_stop_runtime", return_value=(True, "stopped")), \
                  mock.patch.object(
                      pipeline_runtime_gate,
+                     "_wait_for_runtime_readiness",
+                     return_value=(
+                         True,
+                         {
+                             "runtime_state": "RUNNING",
+                             "watcher": {"alive": True, "pid": 1},
+                             "lanes": [{"state": "READY", "attachable": True}],
+                         },
+                         0.5,
+                     ),
+                 ), \
+                 mock.patch.object(
+                     pipeline_runtime_gate,
                      "_read_status",
                      return_value={
                          "runtime_state": "RUNNING",
@@ -63,6 +226,12 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
                          },
                      },
                  ), \
+                 mock.patch.object(
+                     pipeline_runtime_gate,
+                     "_analyze_run_artifacts",
+                     return_value={"dispatch_count": 0, "duplicate_dispatch_count": 0, "orphan_session": False},
+                 ), \
+                 mock.patch.object(pipeline_runtime_gate, "parse_control_slots", return_value={"active": {}}), \
                  mock.patch.object(pipeline_runtime_gate.time, "sleep", return_value=None), \
                  mock.patch.object(pipeline_runtime_gate.time, "time", side_effect=lambda: next(time_values)):
                 ok, summary = pipeline_runtime_gate.run_soak(

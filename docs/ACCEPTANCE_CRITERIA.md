@@ -1477,6 +1477,20 @@ These are placeholders for the next phase design target and its immediate follow
   - browser folder picker mixed scanned-PDF search-plus-summary → partial-failure notice + readable file preview exact fields(`1. notes.txt`, `mixed-search-folder/notes.txt` tooltip, `내용 일치`, `budget` snippet) + transcript preview exact fields 유지
   - history-card entity-card `다시 불러오기` click reload → 브라우저 composer(`#user-text` + `submit-request`)를 거친 plain follow-up(`이 결과 한 문장으로 요약해줘`) `/api/chat/stream` POST payload가 `load_web_search_record_id`를 전혀 포함하지 않고, follow-up 이후에도 `#claim-coverage-box` visible, `#claim-coverage-text`에 저장된 entity-card `장르` / `[단일 출처]` 슬롯, history-card `.meta` 정확히 `사실 검증 단일 출처 1 · 단일 출처 상태 1건.` 유지
   - history-card latest-update `다시 불러오기` click reload → 브라우저 composer(`#user-text` + `submit-request`)를 거친 plain follow-up(`이 결과 한 문장으로 요약해줘`) `/api/chat/stream` POST payload가 `load_web_search_record_id`를 전혀 포함하지 않고, follow-up 이후에도 `#claim-coverage-box` hidden, history-card `.meta` count `0` 유지
+- SQLite browser smoke (`e2e/playwright.sqlite.config.mjs`) covers the opt-in sqlite storage backend parity gate on port 8880 with an isolated sqlite DB, corrections dir, and web-search history dir per run; `LOCAL_AI_NOTES_DIR` stays at the repo default (`data/notes/`) so saved-note assertions mirror the JSON-default path. Current sqlite browser gate scenarios:
+  - same-session recurrence aggregate emitted-apply-confirm lifecycle으로 활성화 (sqlite backend)
+  - same-session recurrence aggregate stale candidate retires before apply start (sqlite backend)
+  - same-session recurrence aggregate active lifecycle survives supporting correction supersession (sqlite backend)
+  - same-session recurrence aggregate recorded basis label survives supporting correction supersession (sqlite backend)
+  - same-session recurrence aggregate stop-reverse-conflict lifecycle 정리 (sqlite backend)
+  - 원문 저장 후 늦게 내용 거절해도 saved history와 latest verdict가 분리 (sqlite backend)
+  - 내용 거절은 approval을 유지하고 나중 explicit save로 supersede (sqlite backend)
+  - corrected-save first bridge path가 기록본 기준 승인 스냅샷으로 저장 (sqlite backend)
+  - corrected-save 저장 뒤 늦게 내용 거절하고 다시 수정해도 saved snapshot과 latest state가 분리 (sqlite backend)
+  - 파일 요약 후 근거와 요약 구간 노출 (sqlite backend)
+  - 브라우저 파일 선택 파일 요약 (sqlite backend)
+  - 브라우저 폴더 선택 문서 검색 (sqlite backend)
+  - 검색만 응답은 transcript preview cards 노출 + 본문 텍스트 숨김 (sqlite backend)
 
 ### In Progress
 - Improve regression fixtures for weak-slot reinvestigation and source consensus.

@@ -263,6 +263,29 @@ Current smoke scenarios:
 
 `make e2e-test` launches a dedicated Playwright web server for smoke with inherited `LOCAL_AI_MODEL_PROVIDER` / `LOCAL_AI_OLLAMA_MODEL` overrides cleared, `LOCAL_AI_MODEL_PROVIDER=mock` reapplied, and existing servers on the smoke port not reused. Shell overrides such as `LOCAL_AI_MODEL_PROVIDER=ollama` therefore do not change the automated baseline. Other runtimes remain optional and are validated separately.
 
+### SQLite Browser Smoke (opt-in backend parity gate)
+
+SQLite browser smoke uses a dedicated Playwright config (`e2e/playwright.sqlite.config.mjs`) that starts `app.web` on port 8880 with `LOCAL_AI_STORAGE_BACKEND=sqlite` and isolated temp dirs for the sqlite DB and writable state. It runs the same `web-smoke.spec.mjs` scenarios as the JSON-default smoke but under the sqlite storage backend.
+
+Run: `cd e2e && npx playwright test -c playwright.sqlite.config.mjs -g "<scenario>" --reporter=line`
+
+Current sqlite browser smoke gate scenarios:
+1. `same-session recurrence aggregate는 emitted-apply-confirm lifecycle으로 활성화됩니다`
+2. `same-session recurrence aggregate stale candidate retires before apply start`
+3. `same-session recurrence aggregate active lifecycle survives supporting correction supersession`
+4. `same-session recurrence aggregate recorded basis label survives supporting correction supersession`
+5. `same-session recurrence aggregate는 stop-reverse-conflict lifecycle으로 정리됩니다`
+6. `원문 저장 후 늦게 내용 거절해도 saved history와 latest verdict가 분리됩니다`
+7. `내용 거절은 approval을 유지하고 나중 explicit save로 supersede 됩니다`
+8. `corrected-save first bridge path가 기록본 기준 승인 스냅샷으로 저장됩니다`
+9. `corrected-save 저장 뒤 늦게 내용 거절하고 다시 수정해도 saved snapshot과 latest state가 분리됩니다`
+10. `파일 요약 후 근거와 요약 구간이 보입니다`
+11. `브라우저 파일 선택으로도 파일 요약이 됩니다`
+12. `브라우저 폴더 선택으로도 문서 검색이 됩니다`
+13. `검색만 응답은 transcript에서 preview cards만 보이고 본문 텍스트는 숨겨집니다`
+
+Note: The sqlite browser config keeps `LOCAL_AI_NOTES_DIR` at the repo default (`data/notes/`) so saved-note assertions in the document-loop scenarios work identically to the JSON-default path. The sqlite DB, corrections dir, and web-search history dir remain isolated per run.
+
 ### Controller Smoke (separate from app.web)
 
 Controller smoke uses a dedicated Playwright config (`e2e/playwright.controller.config.mjs`) that starts `python3 -m controller.server` on port 8781 by default. The port can be overridden via `CONTROLLER_SMOKE_PORT`. These scenarios are internal/operator tooling tests and are not part of the `app.web` release gate.

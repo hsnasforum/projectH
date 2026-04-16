@@ -1,1 +1,1 @@
-4/16/2026-04-16-accepted-reviewed-candidate-persists-local-preference-candidate.md
+4/16/2026-04-16-sqlite-content-reject-reason-trace-parity.md

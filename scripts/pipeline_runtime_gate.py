@@ -254,6 +254,65 @@ def _status_ready_for_faults(status: dict[str, Any] | None) -> bool:
     return False
 
 
+def _status_readiness_snapshot(status: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(status, dict):
+        return {}
+    watcher = dict(status.get("watcher") or {})
+    control = dict(status.get("control") or {})
+    active_round = dict(status.get("active_round") or {})
+    lanes: list[dict[str, Any]] = []
+    for lane in list(status.get("lanes") or []):
+        if not isinstance(lane, dict):
+            continue
+        lanes.append(
+            {
+                "name": str(lane.get("name") or ""),
+                "state": str(lane.get("state") or ""),
+                "attachable": bool(lane.get("attachable")),
+                "pid": lane.get("pid"),
+                "note": str(lane.get("note") or ""),
+                "last_event_at": str(lane.get("last_event_at") or ""),
+                "last_heartbeat_at": str(lane.get("last_heartbeat_at") or ""),
+            }
+        )
+    return {
+        "runtime_state": str(status.get("runtime_state") or ""),
+        "watcher": {
+            "alive": bool(watcher.get("alive")),
+            "pid": watcher.get("pid"),
+        },
+        "lanes": lanes,
+        "control": {
+            "active_control_status": str(control.get("active_control_status") or ""),
+        },
+        "active_round": {
+            "state": str(active_round.get("state") or ""),
+        },
+    }
+
+
+def _wait_for_runtime_readiness(
+    project_root: Path,
+    *,
+    timeout_sec: float,
+    interval_sec: float = 0.5,
+) -> tuple[bool, dict[str, Any] | None, float]:
+    started_at = time.time()
+    deadline = started_at + timeout_sec
+    last_status: dict[str, Any] | None = None
+    while time.time() < deadline:
+        status = _read_status(project_root)
+        if isinstance(status, dict):
+            last_status = status
+            if _status_ready_for_faults(status):
+                return True, status, time.time() - started_at
+        time.sleep(interval_sec)
+    status = _read_status(project_root)
+    if isinstance(status, dict):
+        last_status = status
+    return False, last_status, time.time() - started_at
+
+
 def _markdown_report(
     *,
     title: str,
@@ -366,22 +425,21 @@ def run_fault_check(
         if not started:
             return False, checks
 
-        status = _wait_until(
-            lambda: (
-                payload
-                if _status_ready_for_faults(payload := _read_status(project_root))
-                else None
-            ),
+        ready_ok, status, ready_wait_sec = _wait_for_runtime_readiness(
+            project_root,
             timeout_sec=30.0,
         )
         checks.append(
             {
                 "name": "status surface ready",
-                "ok": isinstance(status, dict),
-                "detail": f"runtime_state={str((status or {}).get('runtime_state') or '')}",
+                "ok": ready_ok,
+                "detail": (
+                    f"wait_sec={ready_wait_sec:.1f}, "
+                    + json.dumps(_status_readiness_snapshot(status), ensure_ascii=False, sort_keys=True)
+                ),
             }
         )
-        if not isinstance(status, dict):
+        if not ready_ok or not isinstance(status, dict):
             return False, checks
 
         adapter.kill_session()
@@ -475,6 +533,7 @@ def run_soak(
     sample_interval_sec: float,
     extra_env: dict[str, str] | None = None,
     min_receipts: int = 0,
+    ready_timeout_sec: float = 45.0,
 ) -> tuple[bool, dict[str, Any]]:
     started, detail = _start_runtime(project_root, mode=mode, session=session, extra_env=extra_env)
     state_counts: dict[str, int] = {}
@@ -492,6 +551,35 @@ def run_soak(
     try:
         if not started:
             return False, {"start_detail": detail, "samples": 0, "state_counts": {}, "degraded_counts": {}}
+        ready_ok, ready_status, ready_wait_sec = _wait_for_runtime_readiness(
+            project_root,
+            timeout_sec=ready_timeout_sec,
+        )
+        readiness_snapshot = _status_readiness_snapshot(ready_status)
+        if not ready_ok:
+            return False, {
+                "start_detail": detail,
+                "ready_ok": False,
+                "ready_wait_sec": round(ready_wait_sec, 3),
+                "ready_timeout_sec": ready_timeout_sec,
+                "readiness_snapshot": readiness_snapshot,
+                "samples": 0,
+                "state_counts": {},
+                "degraded_counts": {},
+                "degraded_seen": False,
+                "broken_seen": False,
+                "duration_sec": duration_sec,
+                "receipt_count": 0,
+                "control_change_count": 0,
+                "control_mismatch_samples": 0,
+                "control_mismatch_max_streak": 0,
+                "receipt_pending_samples": 0,
+                "classification_gate_failures": 0,
+                "classification_gate_details": [],
+                "dispatch_count": 0,
+                "duplicate_dispatch_count": 0,
+                "orphan_session": False,
+            }
         deadline = time.time() + duration_sec
         while time.time() < deadline:
             status = _read_status(project_root)
@@ -554,6 +642,10 @@ def run_soak(
         "degraded_seen": degraded_seen,
         "broken_seen": broken_seen,
         "duration_sec": duration_sec,
+        "ready_ok": True,
+        "ready_wait_sec": round(ready_wait_sec, 3),
+        "ready_timeout_sec": ready_timeout_sec,
+        "readiness_snapshot": readiness_snapshot,
         "receipt_count": receipt_count,
         "control_change_count": len(control_keys),
         "control_mismatch_samples": control_mismatch_samples,
@@ -667,6 +759,7 @@ def build_parser() -> argparse.ArgumentParser:
     soak = sub.add_parser("soak")
     soak.add_argument("--duration-sec", type=float, default=60.0)
     soak.add_argument("--sample-interval-sec", type=float, default=2.0)
+    soak.add_argument("--ready-timeout-sec", type=float, default=45.0)
     soak.add_argument("--report", default="")
 
     gate = sub.add_parser("check-operator-classification")
@@ -675,6 +768,7 @@ def build_parser() -> argparse.ArgumentParser:
     synthetic = sub.add_parser("synthetic-soak")
     synthetic.add_argument("--duration-sec", type=float, default=60.0)
     synthetic.add_argument("--sample-interval-sec", type=float, default=2.0)
+    synthetic.add_argument("--ready-timeout-sec", type=float, default=45.0)
     synthetic.add_argument("--report", default="")
     synthetic.add_argument("--workspace-root", default="")
     synthetic.add_argument("--keep-workspace", action="store_true")
@@ -729,6 +823,7 @@ def main(argv: list[str] | None = None) -> int:
             sample_interval_sec=float(args.sample_interval_sec),
             extra_env=extra_env,
             min_receipts=max(0, int(args.min_receipts)),
+            ready_timeout_sec=float(args.ready_timeout_sec),
         )
         workspace_retained, cleanup_mode = _finalize_synthetic_workspace(
             workspace=synthetic_root,
@@ -740,6 +835,9 @@ def main(argv: list[str] | None = None) -> int:
             f"session={synthetic_session}",
             f"mode={args.mode}",
             f"duration_sec={summary.get('duration_sec')}",
+            f"ready_ok={bool(summary.get('ready_ok'))}",
+            f"ready_wait_sec={summary.get('ready_wait_sec')}",
+            f"ready_timeout_sec={summary.get('ready_timeout_sec')}",
             f"samples={summary.get('samples')}",
             f"state_counts={json.dumps(summary.get('state_counts') or {}, ensure_ascii=False, sort_keys=True)}",
             f"degraded_counts={json.dumps(summary.get('degraded_counts') or {}, ensure_ascii=False, sort_keys=True)}",
@@ -757,11 +855,25 @@ def main(argv: list[str] | None = None) -> int:
             f"workspace_retained={workspace_retained}",
             f"workspace_cleanup={cleanup_mode}",
         ]
+        if summary.get("readiness_snapshot"):
+            lines.append(
+                "readiness_snapshot="
+                + json.dumps(summary.get("readiness_snapshot") or {}, ensure_ascii=False, sort_keys=True)
+            )
         checks = [
             {
                 "name": "runtime start",
                 "ok": bool(summary.get("start_detail")),
                 "detail": str(summary.get("start_detail") or ""),
+            },
+            {
+                "name": "runtime ready barrier",
+                "ok": bool(summary.get("ready_ok")),
+                "detail": (
+                    f"wait_sec={summary.get('ready_wait_sec')}, "
+                    f"timeout_sec={summary.get('ready_timeout_sec')}, "
+                    + json.dumps(summary.get("readiness_snapshot") or {}, ensure_ascii=False, sort_keys=True)
+                ),
             },
             {
                 "name": "synthetic workload produced receipts",
@@ -846,12 +958,16 @@ def main(argv: list[str] | None = None) -> int:
         session=session,
         duration_sec=float(args.duration_sec),
         sample_interval_sec=float(args.sample_interval_sec),
+        ready_timeout_sec=float(args.ready_timeout_sec),
     )
     lines = [
         f"project={project_root}",
         f"session={session}",
         f"mode={args.mode}",
         f"duration_sec={summary.get('duration_sec')}",
+        f"ready_ok={bool(summary.get('ready_ok'))}",
+        f"ready_wait_sec={summary.get('ready_wait_sec')}",
+        f"ready_timeout_sec={summary.get('ready_timeout_sec')}",
         f"samples={summary.get('samples')}",
         f"state_counts={json.dumps(summary.get('state_counts') or {}, ensure_ascii=False, sort_keys=True)}",
         f"degraded_counts={json.dumps(summary.get('degraded_counts') or {}, ensure_ascii=False, sort_keys=True)}",
@@ -867,11 +983,25 @@ def main(argv: list[str] | None = None) -> int:
         f"orphan_session={bool(summary.get('orphan_session'))}",
         f"broken_seen={bool(summary.get('broken_seen'))}",
     ]
+    if summary.get("readiness_snapshot"):
+        lines.append(
+            "readiness_snapshot="
+            + json.dumps(summary.get("readiness_snapshot") or {}, ensure_ascii=False, sort_keys=True)
+        )
     checks = [
         {
             "name": "runtime start",
             "ok": bool(summary.get("start_detail")),
             "detail": str(summary.get("start_detail") or ""),
+        },
+        {
+            "name": "runtime ready barrier",
+            "ok": bool(summary.get("ready_ok")),
+            "detail": (
+                f"wait_sec={summary.get('ready_wait_sec')}, "
+                f"timeout_sec={summary.get('ready_timeout_sec')}, "
+                + json.dumps(summary.get("readiness_snapshot") or {}, ensure_ascii=False, sort_keys=True)
+            ),
         },
         {
             "name": "soak completed without BROKEN",

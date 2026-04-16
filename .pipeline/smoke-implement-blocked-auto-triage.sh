@@ -226,7 +226,7 @@ for raw in sys.stdin:
     if stripped.startswith("NEXT_CONTROL_SEQ: "):
         next_control_seq = stripped.split(":", 1)[1].strip() or "2"
         continue
-    if stripped.startswith("BLOCK_ID: ") and role == "codex_blocked_triage" and handoff and not written:
+    if stripped.startswith("BLOCK_ID: ") and role in {"codex_blocked_triage", "verify_triage"} and handoff and not written:
         target = Path(handoff)
         if not target.is_absolute():
             target = Path(os.getcwd()) / target
@@ -250,9 +250,9 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
     tmux kill-session -t "$SESSION"
 fi
 
-tmux new-session -d -s "$SESSION" -c "$PROJECT_ROOT" "python3 -u \"$CLAUDE_SHIM\""
+tmux new-session -d -s "$SESSION" -c "$PROJECT_ROOT" "bash --noprofile --norc -lc 'while true; do PYTHONPATH=\"$PROJECT_ROOT\${PYTHONPATH:+:\$PYTHONPATH}\" python3 -u \"$CLAUDE_SHIM\"; sleep 1; done'"
 CLAUDE_PANE="$(tmux display-message -t "$SESSION:0.0" -p '#{pane_id}')"
-CODEX_PANE="$(tmux split-window -P -F '#{pane_id}' -h -t "$SESSION:0" -c "$PROJECT_ROOT" "python3 -u \"$CODEX_SHIM\"")"
+CODEX_PANE="$(tmux split-window -P -F '#{pane_id}' -h -t "$SESSION:0" -c "$PROJECT_ROOT" "env PYTHONPATH=\"$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}\" python3 -u \"$CODEX_SHIM\"")"
 GEMINI_PANE="$(tmux split-window -P -F '#{pane_id}' -v -t "$CODEX_PANE" -c "$PROJECT_ROOT" "bash --noprofile --norc")"
 
 wait_for_cli_ready "$CLAUDE_PANE" 20 || true
@@ -286,10 +286,19 @@ if ! wait_for_header_value "$CLAUDE_HANDOFF" "CONTROL_SEQ" "2" "$TIMEOUT_SEC"; t
     exit 1
 fi
 
-if ! wait_for_log_contains "$RAW_LOG" "\"reason\": \"claude_handoff_updated\"" "$TIMEOUT_SEC"; then
-    echo "Claude re-notify after blocked triage timed out" >&2
+if ! grep -Eq '"event": "claude_handoff_deferred"|"reason": "claude_handoff_updated"' "$RAW_LOG" 2>/dev/null; then
+    if ! wait_for_log_contains "$RAW_LOG" "\"event\": \"claude_handoff_deferred\"" "$TIMEOUT_SEC" && \
+       ! wait_for_log_contains "$RAW_LOG" "\"reason\": \"claude_handoff_updated\"" "$TIMEOUT_SEC"; then
+        echo "Claude handoff transition after blocked triage timed out" >&2
+        echo "watcher log: $WATCHER_LOG" >&2
+        cat "$RAW_LOG" >&2 || true
+        exit 1
+    fi
+fi
+
+if [ ! -f "$CLAUDE_HANDOFF" ]; then
+    echo "Recovered handoff missing after blocked triage" >&2
     echo "watcher log: $WATCHER_LOG" >&2
-    cat "$RAW_LOG" >&2 || true
     exit 1
 fi
 
@@ -302,6 +311,12 @@ fi
 if [ -f "$GEMINI_REQUEST" ] || [ -f "$GEMINI_ADVICE" ]; then
     echo "Gemini control slots should stay unopened in blocked auto-triage smoke" >&2
     ls -l "$GEMINI_REQUEST" "$GEMINI_ADVICE" 2>/dev/null >&2 || true
+    exit 1
+fi
+
+if ! python3 "$PROJECT_ROOT/scripts/pipeline_runtime_gate.py" --project-root "$PROJECT_ROOT" --session "$SESSION" check-operator-classification >/dev/null; then
+    echo "classification_fallback_detected during blocked auto-triage smoke" >&2
+    echo "watcher log: $WATCHER_LOG" >&2
     exit 1
 fi
 

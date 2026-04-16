@@ -3,7 +3,7 @@
   "backend_type": "tmux",
   "run_id": "20260416T114452Z-p480332",
   "current_run_id": "20260416T114452Z-p480332",
-  "runtime_state": "RUNNING",
+  "runtime_state": "STOPPED",
   "degraded_reason": "",
   "degraded_reasons": [],
   "autonomy": {
@@ -24,61 +24,69 @@
     "last_self_triage_at": ""
   },
   "control": {
-    "active_control_file": ".pipeline/claude_handoff.md",
-    "active_control_seq": 205,
-    "active_control_status": "implement",
-    "active_control_updated_at": "2026-04-16T12:23:31.026899Z"
+    "active_control_file": "",
+    "active_control_seq": -1,
+    "active_control_status": "none",
+    "active_control_updated_at": ""
   },
   "lanes": [
     {
       "name": "Claude",
-      "state": "WORKING",
-      "pid": 519078,
-      "attachable": true,
-      "last_event_at": "2026-04-16T12:32:02.698436Z",
-      "last_heartbeat_at": "2026-04-16T12:32:02.698436Z",
-      "note": "seq 205"
+      "state": "OFF",
+      "pid": null,
+      "attachable": false,
+      "last_event_at": "2026-04-16T13:43:24.062899Z",
+      "last_heartbeat_at": "2026-04-16T13:43:24.062899Z",
+      "note": ""
     },
     {
       "name": "Codex",
-      "state": "READY",
-      "pid": 516251,
-      "attachable": true,
-      "last_event_at": "2026-04-16T12:32:01.605602Z",
-      "last_heartbeat_at": "2026-04-16T12:32:01.605602Z",
-      "note": "prompt_visible"
+      "state": "OFF",
+      "pid": null,
+      "attachable": false,
+      "last_event_at": "2026-04-16T13:43:21.928069Z",
+      "last_heartbeat_at": "2026-04-16T13:43:21.928069Z",
+      "note": ""
     },
     {
       "name": "Gemini",
-      "state": "READY",
-      "pid": 480537,
-      "attachable": true,
-      "last_event_at": "2026-04-16T12:32:00.329071Z",
-      "last_heartbeat_at": "2026-04-16T12:32:00.329071Z",
-      "note": "prompt_visible"
+      "state": "OFF",
+      "pid": null,
+      "attachable": false,
+      "last_event_at": "2026-04-16T13:43:23.921429Z",
+      "last_heartbeat_at": "2026-04-16T13:43:23.921429Z",
+      "note": ""
     }
   ],
-  "active_round": {
-    "job_id": "20260416-2026-04-16-reviewed-memory-aggre-bf2eb8b3",
+  "active_round": null,
+  "last_receipt": {
+    "schema_version": 1,
+    "receipt_id": "20260416-2026-04-16-reviewed-memory-aggre-7e876945-r1",
+    "run_id": "20260416T114452Z-p480332",
+    "job_id": "20260416-2026-04-16-reviewed-memory-aggre-7e876945",
     "round": 1,
-    "state": "VERIFYING",
-    "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-reviewed-memory-aggregate-reload-smoke-split.md",
-    "status": "VERIFY_RUNNING"
+    "target_lane": "codex",
+    "artifact_path": "/home/xpdlqj/code/projectH/verify/4/16/2026-04-16-reviewed-memory-aggregate-reload-smoke-split-verification.md",
+    "artifact_hash": "sha256:b399f78b971f94e2bd6c541978249dba1784343c9e531e6dde3ba941974caa48",
+    "verify_manifest_path": "/home/xpdlqj/code/projectH/.pipeline/manifests/20260416-2026-04-16-reviewed-memory-aggre-7e876945/round-1.verify.json",
+    "verify_result": "passed_by_feedback",
+    "control_seq": 210,
+    "closed_at": "2026-04-16T13:27:39.352467Z",
+    "emitted_by": "supervisor"
   },
-  "last_receipt": null,
-  "last_receipt_id": "",
+  "last_receipt_id": "20260416-2026-04-16-reviewed-memory-aggre-7e876945-r1",
   "watcher": {
-    "alive": true,
-    "pid": 480572
+    "alive": false,
+    "pid": null
   },
   "artifacts": {
     "latest_work": {
-      "path": "4/16/2026-04-16-reviewed-memory-aggregate-reload-smoke-split.md",
-      "mtime": 1776340275.1073937
+      "path": "4/16/2026-04-16-reviewed-memory-aggregate-record-backed-historical-basis-clarity.md",
+      "mtime": 1776345544.0029275
     },
     "latest_verify": {
       "path": "4/16/2026-04-16-reviewed-memory-aggregate-reload-smoke-split-verification.md",
-      "mtime": 1776340719.5736063
+      "mtime": 1776346054.3509157
     }
   },
   "compat": {
@@ -87,23 +95,23 @@
         "file": "claude_handoff.md",
         "status": "implement",
         "label": "Claude 실행",
-        "mtime": 1776342211.0268986,
-        "control_seq": 205
+        "mtime": 1776346965.3909764,
+        "control_seq": 213
       },
       "stale": [
         {
           "file": "gemini_advice.md",
           "status": "advice_ready",
           "label": "Codex follow-up",
-          "mtime": 1776342049.014888,
-          "control_seq": 204
+          "mtime": 1776346798.5989072,
+          "control_seq": 212
         },
         {
           "file": "gemini_request.md",
           "status": "request_open",
           "label": "Gemini 실행",
-          "mtime": 1776340719.6975856,
-          "control_seq": 203
+          "mtime": 1776346071.106916,
+          "control_seq": 211
         },
         {
           "file": "operator_request.md",
@@ -116,12 +124,12 @@
     },
     "turn_state": {
       "state": "CLAUDE_ACTIVE",
-      "entered_at": 1776342212.1109233,
+      "entered_at": 1776346966.4537146,
       "reason": "claude_handoff_updated",
       "active_control_file": "claude_handoff.md",
-      "active_control_seq": 205
+      "active_control_seq": 213
     }
   },
-  "last_heartbeat_at": "2026-04-16T12:32:04.770112Z",
-  "updated_at": "2026-04-16T12:32:04.770125Z"
+  "last_heartbeat_at": "2026-04-16T13:43:26.191525Z",
+  "updated_at": "2026-04-16T13:43:26.191539Z"
 }

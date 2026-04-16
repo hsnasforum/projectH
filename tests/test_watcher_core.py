@@ -205,6 +205,18 @@ class PanePromptDetectionTest(unittest.TestCase):
 
         self.assertTrue(watcher_core._pane_text_has_input_cursor(text))
 
+    def test_gemini_current_cli_prompt_counts_as_input_ready(self) -> None:
+        text = "\n".join(
+            [
+                "Gemini CLI v0.38.1",
+                "YOLO Ctrl+Y",
+                "*   Type your message or @path/to/file",
+                "workspace              sandbox",
+            ]
+        )
+
+        self.assertTrue(watcher_core._pane_text_has_input_cursor(text))
+
     def test_non_prompt_text_does_not_count_as_input_ready(self) -> None:
         text = "\n".join(
             [

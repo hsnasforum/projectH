@@ -1,9 +1,9 @@
 {
   "lane": "Claude",
   "active": true,
-  "job_id": "20260416-2026-04-16-reviewed-memory-aggre-bf2eb8b3",
-  "control_seq": 205,
+  "job_id": "20260416-2026-04-16-reviewed-memory-aggre-7e876945",
+  "control_seq": 213,
   "attempt": 1,
   "inactive_reason": "",
-  "updated_at": "2026-04-16T12:32:04.578067Z"
+  "updated_at": "2026-04-16T13:43:25.912805Z"
 }

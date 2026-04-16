@@ -54,6 +54,11 @@ _BUSY_TAIL_MARKERS = (
     "inferring",
     "thinking with ",
 )
+_READY_TAIL_MARKERS = {
+    "Claude": ("❯", "claude code", "bypass permissions"),
+    "Codex": ("›", "openai codex"),
+    "Gemini": ("type your message", "gemini cli", "workspace"),
+}
 
 
 class RuntimeSupervisor:
@@ -652,6 +657,12 @@ class RuntimeSupervisor:
             return False
         return any(marker in lower for marker in _BUSY_TAIL_MARKERS)
 
+    def _tail_has_ready_indicator(self, lane_name: str, text: str) -> bool:
+        lower = str(text or "").lower()
+        if not lower.strip():
+            return False
+        return any(marker.lower() in lower for marker in _READY_TAIL_MARKERS.get(lane_name, ()))
+
     def _build_lane_statuses(
         self,
         *,
@@ -711,6 +722,16 @@ class RuntimeSupervisor:
             else:
                 model_state = str(model.get("state") or "")
                 implement_busy = False
+                active_lane_tail = ""
+                surface_working = (
+                    model_state in {"READY", "WORKING"}
+                    and self._lane_should_surface_working(
+                        lane_name=lane_name,
+                        active_lane=active_lane,
+                        active_round=active_round,
+                        turn_state=turn_state,
+                    )
+                )
                 if (
                     duplicate_control is None
                     and lane_name == implement_owner
@@ -723,19 +744,22 @@ class RuntimeSupervisor:
                         )
                     except Exception:
                         implement_busy = False
+                elif surface_working and lane_name == active_lane:
+                    try:
+                        active_lane_tail = self.adapter.capture_tail(lane_name, lines=80)
+                    except Exception:
+                        active_lane_tail = ""
                 if implement_busy:
                     state = "WORKING"
                     if note in {"", "prompt_visible"}:
                         note = "implement"
-                elif (
-                    model_state in {"READY", "WORKING"}
-                    and self._lane_should_surface_working(
-                        lane_name=lane_name,
-                        active_lane=active_lane,
-                        active_round=active_round,
-                        turn_state=turn_state,
-                    )
-                ):
+                elif surface_working and self._tail_has_ready_indicator(lane_name, active_lane_tail) and not self._tail_has_busy_indicator(active_lane_tail):
+                    state = "READY"
+                    if lane_name == str(self.role_owners.get("verify") or "Codex"):
+                        note = str((active_round or {}).get("state") or "").lower() or "prompt_visible"
+                    elif note in {"", "prompt_visible"}:
+                        note = "prompt_visible"
+                elif surface_working:
                     state = "WORKING"
                     if note in {"", "prompt_visible"}:
                         turn_state_name = str((turn_state or {}).get("state") or "")

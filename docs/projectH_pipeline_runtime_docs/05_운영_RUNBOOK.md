@@ -80,11 +80,14 @@ runtime 채택 게이트 전에는 real repo truth를 건드리지 않는 synthe
   `python3 scripts/pipeline_runtime_gate.py --mode experimental synthetic-soak --duration-sec 21600 --sample-interval-sec 10 --min-receipts 10 --report report/pipeline_runtime/verification/<date>-6h-synthetic-soak.md`
 - 24h soak:
   `python3 scripts/pipeline_runtime_gate.py --mode experimental synthetic-soak --duration-sec 86400 --sample-interval-sec 10 --min-receipts 20 --report report/pipeline_runtime/verification/<date>-24h-synthetic-soak.md`
+- operator metadata quick gate:
+  `python3 scripts/pipeline_runtime_gate.py --project-root <project-root> --mode experimental check-operator-classification --report report/pipeline_runtime/verification/<date>-operator-classification-gate.md`
 
 이 경로의 기준:
 - temp workspace에서 supervisor + watcher + wrapper + receipt/control 전이를 실제로 밟습니다.
 - `fault-check`도 동일하게 synthetic workspace에서 실행하며, 실 repo truth를 직접 오염시키지 않습니다.
 - report에는 `receipt_count`, `duplicate_dispatch_count`, `control_mismatch_samples`, `control_mismatch_max_streak`, `orphan_session`를 함께 남깁니다.
+- report/check에는 `classification_gate_failures`와 `classification_fallback_detected` 여부도 함께 남깁니다.
 - `control_mismatch_samples`는 transition 시점에 1회 관측될 수 있으므로, 채택 판단은 persistent mismatch(`control_mismatch_max_streak > 1`) 기준으로 봅니다.
 
 ## 4. 알림 및 모니터링
@@ -205,8 +208,10 @@ controller browser UI의 active runtime contract는 아래로 제한합니다.
 - 상태 authority는 계속 `status.json`과 `events.jsonl`이며, controller는 이 payload를 읽는 operator UX layer일 뿐입니다.
 - `Office View` 같은 시각화 토글은 허용되지만, 이는 같은 runtime status/tail을 다른 형태로 그려주는 read-model일 뿐 별도 상태 판정 경로가 아닙니다.
 - 현재 browser Office View는 projectH 전용 `runtime war-room` 장면으로 유지합니다. Claude / Codex / Gemini는 동등한 3석으로 보이고 watcher는 장면 안 `ops core` 오브젝트로만 표현되며, 이 연출은 모두 기존 runtime payload를 읽는 시각화일 뿐입니다.
+- launcher가 operator candidate status에서 `classification_source` fallback을 감지하면 runtime authority를 직접 덮어쓰지는 않지만, launcher surface에서는 `BROKEN` gate와 `classification_fallback_detected` recent log로 즉시 드러내는 편이 맞습니다.
 - `runtime_state`가 `STOPPED`, `STOPPING`, `BROKEN`이면 controller는 `control`, `round`, lane action을 active처럼 보여주지 않습니다.
 - `runtime_state=DEGRADED`이면서 `degraded_reason`이 `supervisor_missing_recent_ambiguous` 또는 `supervisor_missing_snapshot_undated`이면 controller는 runtime summary를 uncertain runtime으로 보여야 합니다. badge는 amber `DEGRADED`, `Control`/`Round`는 `uncertain`, `Watcher`는 `Unknown`이어야 하며, active control/round를 초록 활성 상태처럼 강조하면 안 됩니다.
+- `active_round=VERIFY_PENDING|VERIFYING`이어도 Codex pane이 이미 prompt-visible이고 busy tail이 없으면 controller lane badge는 `WORKING`이 아니라 `READY`로 내려와야 합니다. pending work truth는 runtime summary와 lane note(`verify_pending`/`verifying`)로만 남깁니다.
 - log modal은 tail 확인 + bounded one-line 입력용입니다. permission/plan prompt 같은 interactive 선택이 뜨면 현재 lane에 `1`, `2`, `3` 같은 짧은 응답을 보낼 수 있습니다. backend route가 없는 lane pause/resume/restart나 attach 버튼은 계속 노출하지 않습니다.
 - Codex startup 시 self-update dialog가 뜨면 wrapper가 `Skip until next version`을 자동 선택해야 하며, update dialog 자체를 `READY(prompt_visible)`로 surface하면 안 됩니다. `codex_exit:0`와 함께 pane에 `Please restart Codex`가 남았다면 self-update prompt miss로 봅니다.
 - 상태별 GIF를 테스트하려면 operator가 `controller/assets/BOOTING.gif`, `WORKING.gif`, `BROKEN.gif`, `READY.gif`, `DEAD.gif`를 두고 controller를 새로고침하면 됩니다. browser는 이 다섯 파일을 우선 사용합니다.

@@ -1,0 +1,12 @@
+2026-04-16T22:38:51 [INFO] watcher_core: manifest schema loaded: /home/xpdlqj/code/projectH/schemas/agent_manifest.schema.json  jsonschema=True
+2026-04-16T22:38:51 [INFO] watcher_core: WatcherCore v2.1 started  watch_dir=/home/xpdlqj/code/projectH/.pipeline/live-blocked-smoke-9crJXb/work  dry_run=False  poll=1.0s  startup_grace=3.0s  jsonschema=True  implement_pane=%104  verify_pane=%105  enabled_lanes=Claude,Codex,Gemini
+2026-04-16T22:38:54 [INFO] watcher_core: initial turn: claude
+2026-04-16T22:38:54 [INFO] watcher_core: turn_state IDLE -> CLAUDE_ACTIVE  reason=startup_turn_claude
+2026-04-16T22:38:54 [INFO] watcher_core: notify_claude: reason=startup_turn_claude target=%104 owner=Claude
+2026-04-16T22:38:54 [INFO] watcher_core: send-keys target=%104 pane_type=claude dry_run=False
+2026-04-16T22:39:02 [INFO] watcher_core: CLAUDE_ACTIVE: baseline_files=0
+2026-04-16T22:39:03 [INFO] watcher_core: send-keys target=%105 pane_type=codex dry_run=False
+2026-04-16T22:39:06 [INFO] watcher_core: dispatching codex prompt: chars=1772
+2026-04-16T22:39:08 [INFO] watcher_core: codex response activity detected: attempt 1
+2026-04-16T22:39:09 [INFO] watcher_core: claude handoff updated during active Claude round: defer hot-swap until round exit
+2026-04-16T22:39:51 [INFO] watcher_core: A/B ratios [experimental]  raw=7  suppressed=0 (0.0%)  dispatch=0 (0.0%)

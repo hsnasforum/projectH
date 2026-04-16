@@ -105,6 +105,7 @@
 - `STATUS: advice_ready`이면 Gemini가 recommendation을 남긴 상태입니다. watcher는 Codex follow-up을 먼저 부릅니다.
 - `STATUS: needs_operator` file이 생겼다고 해서 곧바로 current truth operator stop이 되는 것은 아닙니다. supervisor/watcher는 `safety_stop`, `approval_required`, `truth_sync_required`만 즉시 publish하고, 나머지는 최대 24시간 동안 gated candidate로 다룹니다.
 - supervisor/watcher는 operator stop publish/gate를 `OPERATOR_POLICY` 우선, `REASON_CODE` 다음, 설명 prose 마지막 참고 순서로 판정합니다. 구조화 metadata가 없거나 알 수 없으면 fail-safe로 즉시 publish하는 편이 맞습니다.
+- launcher와 runtime soak/smoke gate도 operator candidate status에서 `classification_source`가 `operator_policy` 또는 `reason_code`가 아니면 `classification_fallback_detected`로 즉시 실패시키는 편이 맞습니다. 즉 fallback metadata는 화면 경고가 아니라 운영 게이트 실패로 다룹니다.
 - gate 중인 후보는 runtime `status.control=none`으로 내려가고, 대신 `status.autonomy.mode = recovery|triage|hibernate|pending_operator`와 `block_reason`, `suppress_operator_until`, `operator_eligible`로 surface됩니다. 이 동안 watcher는 Codex follow-up 또는 idle hibernate를 먼저 선택하고, 즉시 operator wait로 고정하지 않습니다.
 - gate window가 지나도 같은 fingerprint가 남아 있고 여전히 real operator-only decision이면 그때 `STATUS: needs_operator`가 current truth로 publish될 수 있습니다. Claude는 current truth가 아닌 gated stop 슬롯을 직접 따르지 않습니다.
 - `STATUS: needs_operator`는 bare stop line만 남기는 용도가 아닙니다. 이 상태를 쓸 때는 최소한 아래를 같이 적는 편이 canonical입니다.
@@ -211,6 +212,7 @@ operator 확인 필요:
   - `gemini_advice.md`가 `STATUS: advice_ready`
   - `report/gemini/*.md` advisory log 생성
   - 이후 `claude_handoff.md` 또는 `operator_request.md` 생성
+  - 마지막 runtime status가 operator candidate일 경우 `classification_source`가 structured source(`operator_policy|reason_code`)로 검증됨
 - 성공 시 기본값으로 smoke tmux session은 정리하고, smoke 산출물 디렉터리는 남겨 둡니다.
 - 성공 시 기본값으로 최근 `3`개 smoke 디렉터리만 남기고 더 오래된 `live-arb-smoke-*` 디렉터리는 정리합니다.
 - `PIPELINE_SMOKE_KEEP_RECENT=0`이면 자동 정리를 끌 수 있습니다.

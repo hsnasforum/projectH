@@ -1,0 +1,7 @@
+{
+  "state": "CLAUDE_ACTIVE",
+  "entered_at": 1776346818.6247962,
+  "reason": "startup_turn_claude",
+  "active_control_file": "claude_handoff.md",
+  "active_control_seq": 1
+}

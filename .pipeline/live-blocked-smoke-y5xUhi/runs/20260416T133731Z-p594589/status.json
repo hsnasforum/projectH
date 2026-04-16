@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "run_id": "20260416T133731Z-p594589",
+  "state": "RUNNING",
+  "runtime_state": "RUNNING",
+  "turn_state": "CLAUDE_ACTIVE",
+  "degraded_reason": "",
+  "control": {
+    "active_control_file": ".pipeline/claude_handoff.md",
+    "active_control_seq": 1,
+    "active_control_status": "implement",
+    "active_control_updated_at": "2026-04-16T13:37:30.046912Z"
+  },
+  "lanes": [
+    {
+      "name": "Claude",
+      "state": "WORKING",
+      "attachable": true,
+      "last_heartbeat_at": "2026-04-16T13:37:34.383230Z"
+    },
+    {
+      "name": "Codex",
+      "state": "READY",
+      "attachable": true,
+      "last_heartbeat_at": "2026-04-16T13:37:34.383230Z"
+    },
+    {
+      "name": "Gemini",
+      "state": "READY",
+      "attachable": true,
+      "last_heartbeat_at": "2026-04-16T13:37:34.383230Z"
+    }
+  ],
+  "last_receipt_id": "",
+  "last_heartbeat_at": "2026-04-16T13:37:34.383230Z",
+  "updated_at": "2026-04-16T13:37:34.383230Z"
+}

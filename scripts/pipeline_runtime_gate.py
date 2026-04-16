@@ -20,8 +20,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from pipeline_gui.project import _session_name_for
+from pipeline_runtime.control_writers import validate_operator_candidate_status
 from pipeline_runtime.schema import parse_control_slots, read_json
 from pipeline_runtime.tmux_adapter import TmuxAdapter
+
+_CLASSIFICATION_FALLBACK_EVENT = "classification_fallback_detected"
 
 
 def _project_root(value: str | None) -> Path:
@@ -76,6 +79,24 @@ def _read_events(project_root: Path) -> list[dict[str, Any]]:
         if isinstance(data, dict):
             events.append(data)
     return events
+
+
+def _operator_classification_gate_detail(status: dict[str, Any] | None) -> str:
+    if not isinstance(status, dict):
+        return ""
+    try:
+        validate_operator_candidate_status(status)
+    except ValueError as exc:
+        return f"{_CLASSIFICATION_FALLBACK_EVENT}: {exc}"
+    return ""
+
+
+def run_operator_classification_gate(project_root: Path) -> tuple[bool, str]:
+    status = _read_status(project_root)
+    detail = _operator_classification_gate_detail(status)
+    if detail:
+        return False, detail
+    return True, "structured operator classification_source OK"
 
 
 def _runtime_env(extra_env: dict[str, str] | None = None) -> dict[str, str]:
@@ -466,6 +487,8 @@ def run_soak(
     control_mismatch_streak = 0
     control_mismatch_max_streak = 0
     receipt_pending_samples = 0
+    classification_gate_failures = 0
+    classification_gate_details: set[str] = set()
     try:
         if not started:
             return False, {"start_detail": detail, "samples": 0, "state_counts": {}, "degraded_counts": {}}
@@ -474,6 +497,10 @@ def run_soak(
             status = _read_status(project_root)
             if isinstance(status, dict):
                 samples += 1
+                gate_detail = _operator_classification_gate_detail(status)
+                if gate_detail:
+                    classification_gate_failures += 1
+                    classification_gate_details.add(gate_detail)
                 runtime_state = str(status.get("runtime_state") or "unknown")
                 degraded_reason = str(status.get("degraded_reason") or "")
                 state_counts[runtime_state] = state_counts.get(runtime_state, 0) + 1
@@ -518,6 +545,7 @@ def run_soak(
         and artifact_summary["duplicate_dispatch_count"] == 0
         and not artifact_summary["orphan_session"]
         and receipt_count >= min_receipts
+        and classification_gate_failures == 0
     ), {
         "start_detail": detail,
         "samples": samples,
@@ -531,6 +559,8 @@ def run_soak(
         "control_mismatch_samples": control_mismatch_samples,
         "control_mismatch_max_streak": control_mismatch_max_streak,
         "receipt_pending_samples": receipt_pending_samples,
+        "classification_gate_failures": classification_gate_failures,
+        "classification_gate_details": sorted(classification_gate_details),
         **artifact_summary,
     }
 
@@ -639,6 +669,9 @@ def build_parser() -> argparse.ArgumentParser:
     soak.add_argument("--sample-interval-sec", type=float, default=2.0)
     soak.add_argument("--report", default="")
 
+    gate = sub.add_parser("check-operator-classification")
+    gate.add_argument("--report", default="")
+
     synthetic = sub.add_parser("synthetic-soak")
     synthetic.add_argument("--duration-sec", type=float, default=60.0)
     synthetic.add_argument("--sample-interval-sec", type=float, default=2.0)
@@ -716,6 +749,9 @@ def main(argv: list[str] | None = None) -> int:
             f"control_mismatch_samples={summary.get('control_mismatch_samples')}",
             f"control_mismatch_max_streak={summary.get('control_mismatch_max_streak')}",
             f"receipt_pending_samples={summary.get('receipt_pending_samples')}",
+            f"classification_gate_failures={summary.get('classification_gate_failures')}",
+            "classification_gate_details="
+            + json.dumps(summary.get("classification_gate_details") or [], ensure_ascii=False, sort_keys=True),
             f"orphan_session={bool(summary.get('orphan_session'))}",
             f"broken_seen={bool(summary.get('broken_seen'))}",
             f"workspace_retained={workspace_retained}",
@@ -756,6 +792,11 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             },
             {
+                "name": "classification_fallback_detected",
+                "ok": int(summary.get("classification_gate_failures") or 0) == 0,
+                "detail": json.dumps(summary.get("classification_gate_details") or [], ensure_ascii=False),
+            },
+            {
                 "name": "stop left no orphan session",
                 "ok": not bool(summary.get("orphan_session")),
                 "detail": f"orphan_session={bool(summary.get('orphan_session'))}",
@@ -769,6 +810,33 @@ def main(argv: list[str] | None = None) -> int:
         report_path = Path(args.report).resolve() if args.report else _default_report_path(project_root, "pipeline-runtime-synthetic-soak")
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(report_text, encoding="utf-8")
+        sys.stdout.write(report_text)
+        return 0 if ok else 1
+
+    if args.command == "check-operator-classification":
+        ok, detail = run_operator_classification_gate(project_root)
+        lines = [
+            f"project={project_root}",
+            f"session={session}",
+            f"result={'ok' if ok else 'failed'}",
+            f"detail={detail}",
+        ]
+        checks = [
+            {
+                "name": "classification_fallback_detected",
+                "ok": ok,
+                "detail": detail,
+            }
+        ]
+        report_text = _markdown_report(
+            title="Pipeline Runtime operator classification gate",
+            summary=lines,
+            checks=checks,
+        )
+        report_path = Path(args.report).resolve() if args.report else None
+        if report_path is not None:
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(report_text, encoding="utf-8")
         sys.stdout.write(report_text)
         return 0 if ok else 1
 
@@ -793,6 +861,9 @@ def main(argv: list[str] | None = None) -> int:
         f"control_mismatch_samples={summary.get('control_mismatch_samples')}",
         f"control_mismatch_max_streak={summary.get('control_mismatch_max_streak')}",
         f"receipt_pending_samples={summary.get('receipt_pending_samples')}",
+        f"classification_gate_failures={summary.get('classification_gate_failures')}",
+        "classification_gate_details="
+        + json.dumps(summary.get("classification_gate_details") or [], ensure_ascii=False, sort_keys=True),
         f"orphan_session={bool(summary.get('orphan_session'))}",
         f"broken_seen={bool(summary.get('broken_seen'))}",
     ]
@@ -824,6 +895,11 @@ def main(argv: list[str] | None = None) -> int:
                 f"control_mismatch_samples={summary.get('control_mismatch_samples')}, "
                 f"max_streak={summary.get('control_mismatch_max_streak')}"
             ),
+        },
+        {
+            "name": "classification_fallback_detected",
+            "ok": int(summary.get("classification_gate_failures") or 0) == 0,
+            "detail": json.dumps(summary.get("classification_gate_details") or [], ensure_ascii=False),
         },
         {
             "name": "stop left no orphan session",

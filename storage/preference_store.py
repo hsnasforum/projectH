@@ -187,6 +187,57 @@ class PreferenceStore:
     def reject_preference(self, preference_id: str) -> dict[str, Any] | None:
         return self._transition(preference_id, PreferenceStatus.REJECTED, "rejected_at")
 
+    def record_reviewed_candidate_preference(
+        self,
+        *,
+        delta_fingerprint: str,
+        candidate_family: str,
+        description: str,
+        source_refs: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist one local preference candidate from an accepted reviewed candidate.
+
+        Idempotent on *delta_fingerprint*: refreshes timestamps and source_refs
+        instead of creating a duplicate record.
+        """
+        with self._lock:
+            existing = self.find_by_fingerprint(delta_fingerprint)
+            if existing is not None:
+                now = utc_now_iso()
+                existing["updated_at"] = now
+                existing.setdefault("reviewed_candidate_source_refs", [])
+                existing_ref_ids = {
+                    str(ref.get("candidate_id") or "")
+                    for ref in existing["reviewed_candidate_source_refs"]
+                    if isinstance(ref, dict)
+                }
+                if str(source_refs.get("candidate_id") or "") not in existing_ref_ids:
+                    existing["reviewed_candidate_source_refs"].append(source_refs)
+                atomic_write(self._path(existing["preference_id"]), existing)
+                return existing
+
+            now = utc_now_iso()
+            preference_id = f"pref-{uuid4().hex[:12]}"
+            record: dict[str, Any] = {
+                "preference_id": preference_id,
+                "delta_fingerprint": delta_fingerprint,
+                "pattern_family": candidate_family,
+                "description": description,
+                "source_corrections": [],
+                "reviewed_candidate_source_refs": [source_refs],
+                "evidence_count": 1,
+                "cross_session_count": 0,
+                "delta_summary": {},
+                "status": PreferenceStatus.CANDIDATE,
+                "activated_at": None,
+                "paused_at": None,
+                "rejected_at": None,
+                "created_at": now,
+                "updated_at": now,
+            }
+            atomic_write(self._path(preference_id), record)
+            return record
+
     def list_all(self, limit: int = 50) -> list[dict[str, Any]]:
         with self._lock:
             all_records = self._scan_all()

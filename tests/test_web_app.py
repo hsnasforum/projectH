@@ -5595,6 +5595,98 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("\"review_status\": \"accepted\"", log_text)
             self.assertIn(candidate["candidate_id"], log_text)
 
+    def test_submit_candidate_review_accept_persists_local_preference_candidate(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            note_path = tmp_path / "notes" / "pref-candidate.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                preferences_dir=str(tmp_path / "preferences"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            initial = service.handle_chat(
+                {
+                    "session_id": "pref-candidate-session",
+                    "source_path": str(source_path),
+                    "provider": "mock",
+                }
+            )
+            artifact_id = initial["response"]["artifact_id"]
+            source_message_id = initial["response"]["source_message_id"]
+
+            corrected = service.submit_correction(
+                {
+                    "session_id": "pref-candidate-session",
+                    "message_id": source_message_id,
+                    "corrected_text": "수정본 A입니다.\n핵심만 남겼습니다.",
+                }
+            )
+            candidate = [
+                message
+                for message in corrected["session"]["messages"]
+                if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
+            ][-1]["session_local_candidate"]
+
+            bridge = service.handle_chat(
+                {
+                    "session_id": "pref-candidate-session",
+                    "corrected_save_message_id": source_message_id,
+                    "note_path": str(note_path),
+                }
+            )
+            approval_id = bridge["response"]["approval"]["approval_id"]
+            service.handle_chat(
+                {
+                    "session_id": "pref-candidate-session",
+                    "approved_approval_id": approval_id,
+                }
+            )
+
+            service.submit_candidate_confirmation(
+                {
+                    "session_id": "pref-candidate-session",
+                    "message_id": source_message_id,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                }
+            )
+
+            service.submit_candidate_review(
+                {
+                    "session_id": "pref-candidate-session",
+                    "message_id": source_message_id,
+                    "candidate_id": candidate["candidate_id"],
+                    "candidate_updated_at": candidate["updated_at"],
+                    "review_action": "accept",
+                }
+            )
+
+            prefs = service.list_preferences_payload()
+            self.assertGreaterEqual(prefs["candidate_count"], 1)
+            pref_records = prefs["preferences"]
+            reviewed_candidate_prefs = [
+                p for p in pref_records
+                if isinstance(p.get("reviewed_candidate_source_refs"), list)
+                and len(p["reviewed_candidate_source_refs"]) > 0
+            ]
+            self.assertEqual(len(reviewed_candidate_prefs), 1)
+            pref_record = reviewed_candidate_prefs[0]
+            self.assertEqual(pref_record["status"], "candidate")
+            self.assertTrue(pref_record["delta_fingerprint"])
+            ref = pref_record["reviewed_candidate_source_refs"][0]
+            self.assertEqual(ref["candidate_id"], candidate["candidate_id"])
+            self.assertEqual(ref["session_id"], "pref-candidate-session")
+
+            log_text = (tmp_path / "task_log.jsonl").read_text(encoding="utf-8")
+            self.assertIn("preference_candidate_recorded", log_text)
+
     def test_submit_candidate_review_reject_records_and_removes_queue_item(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

@@ -455,6 +455,73 @@ class SQLitePreferenceStore:
     def reject_preference(self, preference_id: str) -> dict[str, Any] | None:
         return self._update_status(preference_id, "rejected")
 
+    def record_reviewed_candidate_preference(
+        self,
+        *,
+        delta_fingerprint: str,
+        candidate_family: str,
+        description: str,
+        source_refs: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist one local preference candidate from an accepted reviewed candidate."""
+        row = self._db.fetchone(
+            "SELECT * FROM preferences WHERE delta_fingerprint = ?", (delta_fingerprint,)
+        )
+        now = _now_iso()
+        if row:
+            data = json.loads(row["data"])
+            data.update({
+                "preference_id": row["preference_id"],
+                "description": row["description"],
+                "status": row["status"],
+                "delta_fingerprint": row["delta_fingerprint"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "activated_at": row["activated_at"],
+            })
+            data.setdefault("reviewed_candidate_source_refs", [])
+            existing_ref_ids = {
+                str(ref.get("candidate_id") or "")
+                for ref in data["reviewed_candidate_source_refs"]
+                if isinstance(ref, dict)
+            }
+            if str(source_refs.get("candidate_id") or "") not in existing_ref_ids:
+                data["reviewed_candidate_source_refs"].append(source_refs)
+            data["updated_at"] = now
+            blob = json.dumps(data, ensure_ascii=False, default=str)
+            self._db.execute(
+                "UPDATE preferences SET data = ?, updated_at = ? WHERE preference_id = ?",
+                (blob, now, data["preference_id"]),
+            )
+            self._db.commit()
+            return data
+
+        preference_id = f"pref-{_new_id()}"
+        data: dict[str, Any] = {
+            "preference_id": preference_id,
+            "delta_fingerprint": delta_fingerprint,
+            "pattern_family": candidate_family,
+            "description": description,
+            "source_corrections": [],
+            "reviewed_candidate_source_refs": [source_refs],
+            "evidence_count": 1,
+            "cross_session_count": 0,
+            "delta_summary": {},
+            "status": "candidate",
+            "activated_at": None,
+            "paused_at": None,
+            "rejected_at": None,
+            "created_at": now,
+            "updated_at": now,
+        }
+        blob = json.dumps(data, ensure_ascii=False, default=str)
+        self._db.execute(
+            "INSERT INTO preferences (preference_id, delta_fingerprint, description, status, data, created_at, updated_at, activated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (preference_id, delta_fingerprint, description, "candidate", blob, now, now, None),
+        )
+        self._db.commit()
+        return data
+
     def _update_status(self, preference_id: str, new_status: str) -> dict[str, Any] | None:
         now = _now_iso()
         activated = now if new_status == "active" else None

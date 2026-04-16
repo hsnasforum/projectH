@@ -643,7 +643,12 @@ def _pane_text_has_gemini_ready_prompt(text: str) -> bool:
     if not recent_lines:
         return False
     window = recent_lines[-12:]
-    has_type_your_message = any(line == "type your message" for line in window)
+    has_type_your_message = any(
+        line == "type your message"
+        or line.startswith("type your message ")
+        or "type your message" in line
+        for line in window
+    )
     has_workspace_hint = any(line == "workspace" or line.startswith("workspace ") for line in window)
     has_gemini_banner = any("gemini cli" in line for line in window)
     return has_type_your_message and (has_workspace_hint or has_gemini_banner)

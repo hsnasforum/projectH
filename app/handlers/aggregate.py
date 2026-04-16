@@ -210,6 +210,40 @@ class AggregateHandlerMixin:
             },
         )
 
+        if review_action == CandidateReviewAction.ACCEPT:
+            candidate_recurrence_key = self._serialize_candidate_recurrence_key(
+                self._build_candidate_recurrence_key_for_message(
+                    message=source_message,
+                    session_local_candidate=session_local_candidate,
+                )
+            )
+            if candidate_recurrence_key is not None:
+                fingerprint = str(candidate_recurrence_key.get("normalized_delta_fingerprint") or "").strip()
+                if fingerprint:
+                    self.preference_store.record_reviewed_candidate_preference(
+                        delta_fingerprint=fingerprint,
+                        candidate_family=str(durable_candidate.get("candidate_family") or ""),
+                        description=str(durable_candidate.get("statement") or "검토 수락된 교정 패턴"),
+                        source_refs={
+                            "candidate_id": candidate_id,
+                            "candidate_updated_at": candidate_updated_at,
+                            "artifact_id": str(source_message.get("artifact_id") or ""),
+                            "source_message_id": str(source_message.get("message_id") or ""),
+                            "review_action": review_action,
+                            "session_id": session_id,
+                        },
+                    )
+                    self.task_logger.log(
+                        session_id=session_id,
+                        action="preference_candidate_recorded",
+                        detail={
+                            "delta_fingerprint": fingerprint,
+                            "candidate_id": candidate_id,
+                            "candidate_family": durable_candidate.get("candidate_family"),
+                            "source": "accepted_reviewed_candidate",
+                        },
+                    )
+
         return {
             "ok": True,
             "message_id": message_id,

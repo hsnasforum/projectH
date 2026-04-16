@@ -171,6 +171,53 @@ class PreferenceStoreTest(unittest.TestCase):
             created = pref.promote_from_corrections(fp, corr)
             self.assertIn("교정 패턴", created["description"])
 
+    def test_record_reviewed_candidate_preference_creates_and_idempotent(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, _ = self._make_stores(tmp)
+            fp = "sha256:test_fingerprint_abc123"
+            source_refs_a = {
+                "candidate_id": "cand-aaa",
+                "candidate_updated_at": "2026-04-16T00:00:00Z",
+                "artifact_id": "art-1",
+                "source_message_id": "msg-1",
+                "review_action": "accept",
+                "session_id": "s1",
+            }
+            r1 = pref.record_reviewed_candidate_preference(
+                delta_fingerprint=fp,
+                candidate_family="correction_rewrite",
+                description="검토 수락된 교정 패턴",
+                source_refs=source_refs_a,
+            )
+            self.assertEqual(r1["status"], PreferenceStatus.CANDIDATE)
+            self.assertEqual(r1["delta_fingerprint"], fp)
+            self.assertEqual(len(r1["reviewed_candidate_source_refs"]), 1)
+
+            # same candidate_id => no duplicate
+            r2 = pref.record_reviewed_candidate_preference(
+                delta_fingerprint=fp,
+                candidate_family="correction_rewrite",
+                description="검토 수락된 교정 패턴",
+                source_refs=source_refs_a,
+            )
+            self.assertEqual(r2["preference_id"], r1["preference_id"])
+            self.assertEqual(len(r2["reviewed_candidate_source_refs"]), 1)
+
+            # different candidate_id => appended
+            source_refs_b = dict(source_refs_a, candidate_id="cand-bbb", session_id="s2")
+            r3 = pref.record_reviewed_candidate_preference(
+                delta_fingerprint=fp,
+                candidate_family="correction_rewrite",
+                description="검토 수락된 교정 패턴",
+                source_refs=source_refs_b,
+            )
+            self.assertEqual(r3["preference_id"], r1["preference_id"])
+            self.assertEqual(len(r3["reviewed_candidate_source_refs"]), 2)
+
+            # shows up in list_all
+            all_prefs = pref.list_all()
+            self.assertEqual(len(all_prefs), 1)
+
     def test_refresh_evidence_on_new_correction(self) -> None:
         with TemporaryDirectory() as tmp:
             pref, corr = self._make_stores(tmp)

@@ -1378,7 +1378,7 @@ The next phase should standardize one `grounded brief` artifact.
 
 ### Not Implemented
 - separate `grounded brief` artifact store
-- correction / approval / preference memory store
+- correction / approval / preference memory store (accepted reviewed candidates are now persisted as local preference candidate records through the existing `PreferenceStore` / `SQLitePreferenceStore` via `record_reviewed_candidate_preference`; activation and cross-session application remain not-implemented)
 - OCR
 - background automation
 - proprietary model training

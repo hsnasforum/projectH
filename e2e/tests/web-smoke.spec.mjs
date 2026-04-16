@@ -1348,6 +1348,49 @@ test("same-session recurrence aggregate active lifecycle survives supporting cor
   expect(stoppedPayload.session.recurrence_aggregate_candidates[0].reviewed_memory_transition_record.record_stage).toBe("stopped");
 });
 
+test("same-session recurrence aggregate recorded basis label survives supporting correction supersession", async ({ page }, testInfo) => {
+  testInfo.setTimeout(120_000);
+  const { sessionId, canonicalTransitionId } = await advanceAggregateToActiveEffect(page);
+  const aggregateTriggerBox = page.getByTestId("aggregate-trigger-box");
+
+  await expect(aggregateTriggerBox).toBeVisible();
+
+  // Before supersession: review-support line has recorded-basis prefix because transition record exists
+  const reviewSupportLine = aggregateTriggerBox.getByTestId("aggregate-trigger-review-support");
+  await expect(reviewSupportLine).toBeVisible();
+  await expect(reviewSupportLine).toContainText("[기록된 기준]");
+  await expect(reviewSupportLine).toContainText("교정 2건");
+  await expect(reviewSupportLine).toContainText("거절·보류는 감사 기록만");
+
+  // Supersede one supporting correction
+  const activePayload = await fetchSessionPayload(page, sessionId);
+  const firstSourceMessageId = activePayload.session.recurrence_aggregate_candidates[0]
+    .supporting_source_message_refs[0].source_message_id;
+
+  const correctionResponse = await page.request.post("/api/correction", {
+    data: {
+      session_id: sessionId,
+      message_id: firstSourceMessageId,
+      corrected_text: "완전히 다른 교정입니다.\n새로운 방향으로 작성했습니다.",
+    },
+  });
+  expect(correctionResponse.ok()).toBeTruthy();
+
+  // Reload and verify recorded-basis label survives
+  await page.evaluate(async (sid) => {
+    document.getElementById("session-id").value = sid;
+    document.getElementById("load-session").click();
+  }, sessionId);
+  await expect(page.locator("#current-session-title")).toBeVisible({ timeout: 10_000 });
+  await expect(aggregateTriggerBox).toBeVisible({ timeout: 5_000 });
+
+  const reviewSupportAfter = aggregateTriggerBox.getByTestId("aggregate-trigger-review-support");
+  await expect(reviewSupportAfter).toBeVisible();
+  await expect(reviewSupportAfter).toContainText("[기록된 기준]");
+  await expect(reviewSupportAfter).toContainText("교정 2건");
+  await expect(reviewSupportAfter).toContainText("거절·보류는 감사 기록만");
+});
+
 test("same-session recurrence aggregate는 stop-reverse-conflict lifecycle으로 정리됩니다", async ({ page }, testInfo) => {
   testInfo.setTimeout(150_000);
   const { sessionId, canonicalTransitionId } = await advanceAggregateToActiveEffect(page);

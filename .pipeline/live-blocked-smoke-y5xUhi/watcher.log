@@ -1,0 +1,17 @@
+2026-04-16T22:37:31 [INFO] watcher_core: manifest schema loaded: /home/xpdlqj/code/projectH/schemas/agent_manifest.schema.json  jsonschema=True
+2026-04-16T22:37:31 [INFO] watcher_core: WatcherCore v2.1 started  watch_dir=/home/xpdlqj/code/projectH/.pipeline/live-blocked-smoke-y5xUhi/work  dry_run=False  poll=1.0s  startup_grace=3.0s  jsonschema=True  implement_pane=%101  verify_pane=%102  enabled_lanes=Claude,Codex,Gemini
+2026-04-16T22:37:34 [INFO] watcher_core: initial turn: claude
+2026-04-16T22:37:34 [INFO] watcher_core: turn_state IDLE -> CLAUDE_ACTIVE  reason=startup_turn_claude
+2026-04-16T22:37:34 [INFO] watcher_core: notify_claude: reason=startup_turn_claude target=%101 owner=Claude
+2026-04-16T22:37:34 [INFO] watcher_core: send-keys target=%101 pane_type=claude dry_run=False
+2026-04-16T22:37:42 [INFO] watcher_core: CLAUDE_ACTIVE: baseline_files=0
+2026-04-16T22:37:43 [INFO] watcher_core: send-keys target=%102 pane_type=codex dry_run=False
+2026-04-16T22:37:46 [INFO] watcher_core: dispatching codex prompt: chars=1772
+2026-04-16T22:37:49 [INFO] watcher_core: codex prompt consumed: attempt 1
+2026-04-16T22:37:55 [INFO] watcher_core: codex dispatch not confirmed after consume: no working indicator or response activity
+2026-04-16T22:37:56 [INFO] watcher_core: codex prompt consumed: attempt 2
+2026-04-16T22:38:02 [INFO] watcher_core: codex dispatch not confirmed after consume: no working indicator or response activity
+2026-04-16T22:38:04 [INFO] watcher_core: codex prompt consumed: attempt 3
+2026-04-16T22:38:10 [INFO] watcher_core: codex dispatch not confirmed after consume: no working indicator or response activity
+2026-04-16T22:38:10 [INFO] watcher_core: codex prompt still visible or unconfirmed after retries
+2026-04-16T22:38:31 [INFO] watcher_core: A/B ratios [experimental]  raw=47  suppressed=0 (0.0%)  dispatch=0 (0.0%)

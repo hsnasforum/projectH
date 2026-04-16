@@ -767,6 +767,7 @@
 
 112. Review-queue `reject`/`defer` browser parity Playwright smoke coverage (`검토 거절됨`/`검토 보류됨` quick-meta, transcript-meta, follow-up retention, stale-clear, and payload `review_action`/`review_status` verification)
 113. Aggregate card now shows a visible review-support line (`검토 수락 N건 / 교정 M건 (거절·보류는 감사 기록만)`) derived from accept-only `supporting_review_refs` count, making the review-support state visible at a glance when reject/defer outcomes coexist with the aggregate card.
+114. Transition-backed aggregate cards now prefix the review-support line with `[기록된 기준]` to indicate the displayed counts describe the persisted recorded basis behind the lifecycle card; the label survives supporting correction supersession.
 
 ## Later, After The Memory Phase
 
@@ -812,7 +813,7 @@
 1. OCR
 2. separate grounded-brief artifact store beyond the current source-message outcome and content-verdict capture
 3. structured correction-memory schema
-4. durable preference memory
+4. durable preference memory (accepted reviewed candidates are now persisted as local preference candidate records via `record_reviewed_candidate_preference`; activation, cross-session application, and prompt injection of newly recorded candidates remain future)
 5. approval-gated local program operation
 6. personalized local model training
 

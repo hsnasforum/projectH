@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from scripts import pipeline_runtime_gate
+from pipeline_runtime.supervisor import RuntimeSupervisor
 
 
 class PipelineRuntimeGateSoakTest(unittest.TestCase):
@@ -94,6 +95,48 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
                 '"classification_source":"metadata_fallback"}}',
                 encoding="utf-8",
             )
+
+            ok, detail = pipeline_runtime_gate.run_operator_classification_gate(root)
+
+        self.assertFalse(ok)
+        self.assertIn("classification_fallback_detected", detail)
+
+    def test_run_operator_classification_gate_fails_after_supervisor_writes_malformed_operator_request_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pipeline_runtime_gate._write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "operator_request.md").write_text(
+                "STATUS: needs_operator\nCONTROL_SEQ: 190\n\nReason:\n- slice_ambiguity\n",
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                            {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["autonomy"]["classification_source"], "metadata_missing_fallback")
 
             ok, detail = pipeline_runtime_gate.run_operator_classification_gate(root)
 

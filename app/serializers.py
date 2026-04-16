@@ -3761,33 +3761,6 @@ class SerializerMixin:
         if not isinstance(aggregate_candidate, dict):
             return None
 
-        expected_transition_audit_contract = self._build_recurrence_aggregate_reviewed_memory_transition_audit_contract(
-            aggregate_candidate
-        )
-        if expected_transition_audit_contract is None:
-            return None
-        current_transition_audit_contract = aggregate_candidate.get("reviewed_memory_transition_audit_contract")
-        if (
-            not isinstance(current_transition_audit_contract, dict)
-            or dict(current_transition_audit_contract) != expected_transition_audit_contract
-        ):
-            return None
-
-        expected_capability_status = self._build_recurrence_aggregate_reviewed_memory_capability_status(
-            aggregate_candidate
-        )
-        if expected_capability_status is None:
-            return None
-        current_capability_status = aggregate_candidate.get("reviewed_memory_capability_status")
-        if (
-            not isinstance(current_capability_status, dict)
-            or dict(current_capability_status) != expected_capability_status
-        ):
-            return None
-
-        if str(expected_capability_status.get("capability_outcome") or "").strip() != "unblocked_all_required":
-            return None
-
         aggregate_key = aggregate_candidate.get("aggregate_key")
         if not isinstance(aggregate_key, dict):
             return None
@@ -3799,6 +3772,7 @@ class SerializerMixin:
         if not isinstance(stored_records, list):
             return None
 
+        matching_record: dict[str, Any] | None = None
         for record in stored_records:
             if not isinstance(record, dict):
                 continue
@@ -3814,15 +3788,50 @@ class SerializerMixin:
                 continue
             if str(record.get("transition_action") or "").strip() != "future_reviewed_memory_apply":
                 continue
-            result = dict(record)
-            sanitized = sanitize_supporting_review_refs(result.get("supporting_review_refs"))
-            if sanitized:
-                result["supporting_review_refs"] = sanitized
-            else:
-                result.pop("supporting_review_refs", None)
-            return result
+            matching_record = record
+            break
 
-        return None
+        if matching_record is None:
+            return None
+
+        record_stage = str(matching_record.get("record_stage") or "").strip()
+        record_backed = record_stage not in ("", "emitted_record_only_not_applied")
+
+        if not record_backed:
+            expected_transition_audit_contract = (
+                self._build_recurrence_aggregate_reviewed_memory_transition_audit_contract(aggregate_candidate)
+            )
+            if expected_transition_audit_contract is None:
+                return None
+            current_transition_audit_contract = aggregate_candidate.get("reviewed_memory_transition_audit_contract")
+            if (
+                not isinstance(current_transition_audit_contract, dict)
+                or dict(current_transition_audit_contract) != expected_transition_audit_contract
+            ):
+                return None
+
+            expected_capability_status = self._build_recurrence_aggregate_reviewed_memory_capability_status(
+                aggregate_candidate
+            )
+            if expected_capability_status is None:
+                return None
+            current_capability_status = aggregate_candidate.get("reviewed_memory_capability_status")
+            if (
+                not isinstance(current_capability_status, dict)
+                or dict(current_capability_status) != expected_capability_status
+            ):
+                return None
+
+            if str(expected_capability_status.get("capability_outcome") or "").strip() != "unblocked_all_required":
+                return None
+
+        result = dict(matching_record)
+        sanitized = sanitize_supporting_review_refs(result.get("supporting_review_refs"))
+        if sanitized:
+            result["supporting_review_refs"] = sanitized
+        else:
+            result.pop("supporting_review_refs", None)
+        return result
 
     def _build_recurrence_aggregate_reviewed_memory_conflict_visibility_record(
         self,
@@ -4002,27 +4011,45 @@ class SerializerMixin:
             ):
                 group_members[anchor] = member
 
+        record_backed_fingerprints: set[str] = set()
+        if isinstance(emitted_transition_records, list):
+            for rec in emitted_transition_records:
+                if not isinstance(rec, dict):
+                    continue
+                rec_identity = rec.get("aggregate_identity_ref")
+                if not isinstance(rec_identity, dict):
+                    continue
+                fp = str(rec_identity.get("normalized_delta_fingerprint") or "").strip()
+                if fp:
+                    record_backed_fingerprints.add(fp)
+
         aggregate_candidates: list[dict[str, Any]] = []
+        emitted_fingerprints: set[str] = set()
         for aggregate_identity, group_members in grouped_members.items():
             if len(group_members) < 2:
                 continue
 
-            stale = False
-            for anchor, member in group_members.items():
-                current = current_candidate_index.get(anchor)
-                if current is None:
-                    stale = True
-                    break
-                current_cid, current_cua = current
-                if (
-                    str(member.get("candidate_id") or "").strip() != current_cid
-                    or str(member.get("candidate_updated_at") or "").strip() != current_cua
-                ):
-                    stale = True
-                    break
-            if stale:
-                continue
+            fingerprint = aggregate_identity[4]
+            has_record_backed_lifecycle = fingerprint in record_backed_fingerprints
 
+            if not has_record_backed_lifecycle:
+                stale = False
+                for anchor, member in group_members.items():
+                    current = current_candidate_index.get(anchor)
+                    if current is None:
+                        stale = True
+                        break
+                    current_cid, current_cua = current
+                    if (
+                        str(member.get("candidate_id") or "").strip() != current_cid
+                        or str(member.get("candidate_updated_at") or "").strip() != current_cua
+                    ):
+                        stale = True
+                        break
+                if stale:
+                    continue
+
+            emitted_fingerprints.add(fingerprint)
             members = list(group_members.values())
             members.sort(
                 key=lambda item: (
@@ -4158,6 +4185,127 @@ class SerializerMixin:
             if reviewed_memory_planning_target_ref is not None:
                 aggregate_candidate["reviewed_memory_planning_target_ref"] = reviewed_memory_planning_target_ref
             aggregate_candidates.append(aggregate_candidate)
+
+        missing_record_backed = record_backed_fingerprints - emitted_fingerprints
+        if missing_record_backed and isinstance(emitted_transition_records, list):
+            for rec in emitted_transition_records:
+                if not isinstance(rec, dict):
+                    continue
+                rec_identity = rec.get("aggregate_identity_ref")
+                if not isinstance(rec_identity, dict):
+                    continue
+                fp = str(rec_identity.get("normalized_delta_fingerprint") or "").strip()
+                if not fp or fp not in missing_record_backed or fp in emitted_fingerprints:
+                    continue
+                emitted_fingerprints.add(fp)
+                stored_source_refs = [
+                    dict(ref) for ref in rec.get("supporting_source_message_refs", [])
+                    if isinstance(ref, dict)
+                ]
+                stored_candidate_refs = [
+                    dict(ref) for ref in rec.get("supporting_candidate_refs", [])
+                    if isinstance(ref, dict)
+                ]
+                if not stored_source_refs:
+                    continue
+                timestamps = [
+                    str(ref.get("candidate_updated_at") or "")
+                    for ref in stored_candidate_refs
+                    if str(ref.get("candidate_updated_at") or "").strip()
+                ]
+                first_seen = min(timestamps) if timestamps else str(rec.get("emitted_at") or "")
+                last_seen = max(timestamps) if timestamps else str(rec.get("emitted_at") or "")
+                aggregate_candidate = {
+                    "aggregate_key": dict(rec_identity),
+                    "supporting_source_message_refs": stored_source_refs,
+                    "supporting_candidate_refs": stored_candidate_refs,
+                    "recurrence_count": len(stored_source_refs),
+                    "scope_boundary": "same_session_current_state_only",
+                    "confidence_marker": "same_session_exact_key_match",
+                    "first_seen_at": first_seen,
+                    "last_seen_at": last_seen,
+                }
+                stored_review_refs = [
+                    dict(ref) for ref in rec.get("supporting_review_refs", [])
+                    if isinstance(ref, dict)
+                ]
+                if stored_review_refs:
+                    aggregate_candidate["supporting_review_refs"] = stored_review_refs
+                if isinstance(proof_record_store_entries, list) and proof_record_store_entries:
+                    aggregate_candidate["_reviewed_memory_local_effect_presence_proof_record_store_entries"] = [
+                        dict(item) for item in proof_record_store_entries if isinstance(item, dict)
+                    ]
+                aggregate_candidate["_reviewed_memory_emitted_transition_records"] = [
+                    dict(item) for item in emitted_transition_records if isinstance(item, dict)
+                ]
+                aggregate_promotion_marker = self._build_recurrence_aggregate_promotion_marker(aggregate_candidate)
+                if aggregate_promotion_marker is not None:
+                    aggregate_candidate["aggregate_promotion_marker"] = aggregate_promotion_marker
+                reviewed_memory_precondition_status = (
+                    self._build_recurrence_aggregate_reviewed_memory_precondition_status(aggregate_candidate)
+                )
+                if reviewed_memory_precondition_status is not None:
+                    aggregate_candidate["reviewed_memory_precondition_status"] = reviewed_memory_precondition_status
+                reviewed_memory_boundary_draft = (
+                    self._build_recurrence_aggregate_reviewed_memory_boundary_draft(aggregate_candidate)
+                )
+                if reviewed_memory_boundary_draft is not None:
+                    aggregate_candidate["reviewed_memory_boundary_draft"] = reviewed_memory_boundary_draft
+                reviewed_memory_rollback_contract = (
+                    self._build_recurrence_aggregate_reviewed_memory_rollback_contract(aggregate_candidate)
+                )
+                if reviewed_memory_rollback_contract is not None:
+                    aggregate_candidate["reviewed_memory_rollback_contract"] = reviewed_memory_rollback_contract
+                reviewed_memory_disable_contract = (
+                    self._build_recurrence_aggregate_reviewed_memory_disable_contract(aggregate_candidate)
+                )
+                if reviewed_memory_disable_contract is not None:
+                    aggregate_candidate["reviewed_memory_disable_contract"] = reviewed_memory_disable_contract
+                reviewed_memory_conflict_contract = (
+                    self._build_recurrence_aggregate_reviewed_memory_conflict_contract(aggregate_candidate)
+                )
+                if reviewed_memory_conflict_contract is not None:
+                    aggregate_candidate["reviewed_memory_conflict_contract"] = reviewed_memory_conflict_contract
+                reviewed_memory_transition_audit_contract = (
+                    self._build_recurrence_aggregate_reviewed_memory_transition_audit_contract(aggregate_candidate)
+                )
+                if reviewed_memory_transition_audit_contract is not None:
+                    aggregate_candidate["reviewed_memory_transition_audit_contract"] = (
+                        reviewed_memory_transition_audit_contract
+                    )
+                reviewed_memory_unblock_contract = (
+                    self._build_recurrence_aggregate_reviewed_memory_unblock_contract(aggregate_candidate)
+                )
+                if reviewed_memory_unblock_contract is not None:
+                    aggregate_candidate["reviewed_memory_unblock_contract"] = reviewed_memory_unblock_contract
+                reviewed_memory_capability_basis = (
+                    self._build_recurrence_aggregate_reviewed_memory_capability_basis(aggregate_candidate)
+                )
+                if reviewed_memory_capability_basis is not None:
+                    aggregate_candidate["reviewed_memory_capability_basis"] = reviewed_memory_capability_basis
+                reviewed_memory_capability_status = (
+                    self._build_recurrence_aggregate_reviewed_memory_capability_status(aggregate_candidate)
+                )
+                if reviewed_memory_capability_status is not None:
+                    aggregate_candidate["reviewed_memory_capability_status"] = reviewed_memory_capability_status
+                reviewed_memory_transition_record = (
+                    self._build_recurrence_aggregate_reviewed_memory_transition_record(aggregate_candidate)
+                )
+                if reviewed_memory_transition_record is not None:
+                    aggregate_candidate["reviewed_memory_transition_record"] = reviewed_memory_transition_record
+                reviewed_memory_conflict_visibility_record = (
+                    self._build_recurrence_aggregate_reviewed_memory_conflict_visibility_record(aggregate_candidate)
+                )
+                if reviewed_memory_conflict_visibility_record is not None:
+                    aggregate_candidate["reviewed_memory_conflict_visibility_record"] = (
+                        reviewed_memory_conflict_visibility_record
+                    )
+                reviewed_memory_planning_target_ref = (
+                    self._build_recurrence_aggregate_reviewed_memory_planning_target_ref(aggregate_candidate)
+                )
+                if reviewed_memory_planning_target_ref is not None:
+                    aggregate_candidate["reviewed_memory_planning_target_ref"] = reviewed_memory_planning_target_ref
+                aggregate_candidates.append(aggregate_candidate)
 
         aggregate_candidates.sort(
             key=lambda item: str(

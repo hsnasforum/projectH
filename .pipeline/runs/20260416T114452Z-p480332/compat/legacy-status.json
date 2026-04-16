@@ -25,60 +25,74 @@
   },
   "control": {
     "active_control_file": ".pipeline/claude_handoff.md",
-    "active_control_seq": 205,
+    "active_control_seq": 207,
     "active_control_status": "implement",
-    "active_control_updated_at": "2026-04-16T12:23:31.026899Z"
+    "active_control_updated_at": "2026-04-16T12:57:15.850911Z"
   },
   "lanes": [
     {
       "name": "Claude",
-      "state": "WORKING",
+      "state": "READY",
       "pid": 519078,
       "attachable": true,
-      "last_event_at": "2026-04-16T12:32:02.698436Z",
-      "last_heartbeat_at": "2026-04-16T12:32:02.698436Z",
-      "note": "seq 205"
+      "last_event_at": "2026-04-16T13:10:52.976259Z",
+      "last_heartbeat_at": "2026-04-16T13:10:52.976259Z",
+      "note": "prompt_visible"
     },
     {
       "name": "Codex",
-      "state": "READY",
+      "state": "WORKING",
       "pid": 516251,
       "attachable": true,
-      "last_event_at": "2026-04-16T12:32:01.605602Z",
-      "last_heartbeat_at": "2026-04-16T12:32:01.605602Z",
-      "note": "prompt_visible"
+      "last_event_at": "2026-04-16T13:10:51.834342Z",
+      "last_heartbeat_at": "2026-04-16T13:10:51.834342Z",
+      "note": "seq 207"
     },
     {
       "name": "Gemini",
       "state": "READY",
       "pid": 480537,
       "attachable": true,
-      "last_event_at": "2026-04-16T12:32:00.329071Z",
-      "last_heartbeat_at": "2026-04-16T12:32:00.329071Z",
+      "last_event_at": "2026-04-16T13:10:53.982553Z",
+      "last_heartbeat_at": "2026-04-16T13:10:53.982553Z",
       "note": "prompt_visible"
     }
   ],
   "active_round": {
-    "job_id": "20260416-2026-04-16-reviewed-memory-aggre-bf2eb8b3",
+    "job_id": "20260416-2026-04-16-reviewed-memory-aggre-b5465bca",
     "round": 1,
     "state": "VERIFYING",
-    "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-reviewed-memory-aggregate-reload-smoke-split.md",
+    "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-reviewed-memory-aggregate-review-support-visibility-after-reject-defer.md",
     "status": "VERIFY_RUNNING"
   },
-  "last_receipt": null,
-  "last_receipt_id": "",
+  "last_receipt": {
+    "schema_version": 1,
+    "receipt_id": "20260416-2026-04-16-reviewed-memory-aggre-c7e1952a-r1",
+    "run_id": "20260416T114452Z-p480332",
+    "job_id": "20260416-2026-04-16-reviewed-memory-aggre-c7e1952a",
+    "round": 1,
+    "target_lane": "codex",
+    "artifact_path": "/home/xpdlqj/code/projectH/verify/4/16/2026-04-16-reviewed-memory-aggregate-reload-smoke-split-verification.md",
+    "artifact_hash": "sha256:ebbf7a8138ee0690fe7ff42edf9dfdb66915650546bea3f8ff99ebaa3c7c33d3",
+    "verify_manifest_path": "/home/xpdlqj/code/projectH/.pipeline/manifests/20260416-2026-04-16-reviewed-memory-aggre-c7e1952a/round-1.verify.json",
+    "verify_result": "passed_by_feedback",
+    "control_seq": 207,
+    "closed_at": "2026-04-16T12:57:17.437926Z",
+    "emitted_by": "supervisor"
+  },
+  "last_receipt_id": "20260416-2026-04-16-reviewed-memory-aggre-c7e1952a-r1",
   "watcher": {
     "alive": true,
     "pid": 480572
   },
   "artifacts": {
     "latest_work": {
-      "path": "4/16/2026-04-16-reviewed-memory-aggregate-reload-smoke-split.md",
-      "mtime": 1776340275.1073937
+      "path": "4/16/2026-04-16-reviewed-memory-aggregate-review-support-visibility-after-reject-defer.md",
+      "mtime": 1776344498.9669104
     },
     "latest_verify": {
       "path": "4/16/2026-04-16-reviewed-memory-aggregate-reload-smoke-split-verification.md",
-      "mtime": 1776340719.5736063
+      "mtime": 1776344216.2389097
     }
   },
   "compat": {
@@ -87,8 +101,8 @@
         "file": "claude_handoff.md",
         "status": "implement",
         "label": "Claude 실행",
-        "mtime": 1776342211.0268986,
-        "control_seq": 205
+        "mtime": 1776344235.8509114,
+        "control_seq": 207
       },
       "stale": [
         {
@@ -115,13 +129,13 @@
       ]
     },
     "turn_state": {
-      "state": "CLAUDE_ACTIVE",
-      "entered_at": 1776342212.1109233,
-      "reason": "claude_handoff_updated",
-      "active_control_file": "claude_handoff.md",
-      "active_control_seq": 205
+      "state": "IDLE",
+      "entered_at": 1776344500.367297,
+      "reason": "claude_activity_detected",
+      "active_control_file": "",
+      "active_control_seq": -1
     }
   },
-  "last_heartbeat_at": "2026-04-16T12:32:04.770112Z",
-  "updated_at": "2026-04-16T12:32:04.770125Z"
+  "last_heartbeat_at": "2026-04-16T13:10:54.487756Z",
+  "updated_at": "2026-04-16T13:10:54.487771Z"
 }

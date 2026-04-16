@@ -555,8 +555,10 @@ These are placeholders for the next phase design target and its immediate follow
   - if the repo cannot derive a deterministic normalized delta fingerprint from the explicit pair without free-form model summary or hidden classifier behavior, the key must be omitted and repeated-signal promotion must remain blocked
   - repeated edits on one `artifact_id` + `source_message_id` do not count as multi-brief recurrence
   - two distinct grounded briefs is the first truthful baseline for `correction_rewrite_preference`, but later families may require a stricter threshold
-- The first current post-key aggregation slice should stay same-session-only and read-only:
+- The first current post-key aggregation slice should stay same-session-only, read-only, and current-version only:
   - the session payload may expose one optional top-level `recurrence_aggregate_candidates`
+  - aggregates are retired automatically when any supporting correction is superseded by a newer correction version before transition emit; the aggregate disappears from `recurrence_aggregate_candidates` entirely rather than showing a stale badge
+  - aggregates with a record-backed lifecycle (stored emitted/applied/stopped/reversed transition records) survive supporting correction supersession so the lifecycle controls (stop, reverse, conflict-check) remain visible and active effects are not orphaned
   - one aggregate should be emitted only when at least two distinct grounded-brief source messages in the same current session share the same exact recurrence identity:
     - `candidate_family`
     - `key_scope`
@@ -825,6 +827,7 @@ These are placeholders for the next phase design target and its immediate follow
   - `recurrence_aggregate_candidates` appear only when at least two distinct grounded-brief anchors in the same session share the same exact recurrence identity
   - repeated updates on one `artifact_id` + `source_message_id` do not inflate `recurrence_count`
   - `candidate_review_record` may surface as `supporting_review_refs` only when the review action is `accept`; `reject` and `defer` outcomes stay source-message audit-only and do not appear in aggregate support refs; review support does not create aggregate identity by itself
+  - each aggregate card shows a visible review-support line (`검토 수락 N건 / 교정 M건 (거절·보류는 감사 기록만)`) derived from accept-only `supporting_review_refs` count vs `recurrence_count`, so users can see at a glance how much accepted support backs the aggregate
   - approval-backed save support, historical adjuncts, queue presence, and task-log replay alone never materialize an aggregate
   - the first aggregate surface remains read-only and does not create repeated-signal promotion, reviewed memory, or user-level memory
 - Focused regression for the first future post-aggregate marker slice should verify at least:

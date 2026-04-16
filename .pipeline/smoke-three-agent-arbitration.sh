@@ -297,6 +297,13 @@ if [ "$FINAL_SEQ" != "$EXPECTED_NEXT_SEQ" ]; then
     exit 1
 fi
 
+if ! python3 "$PROJECT_ROOT/scripts/pipeline_runtime_gate.py" --project-root "$PROJECT_ROOT" --session "$SESSION" check-operator-classification >/dev/null; then
+    echo "classification_fallback_detected during 3-agent arbitration smoke" >&2
+    echo "watcher log: $WATCHER_LOG" >&2
+    cat "$FINAL_SLOT" >&2 || true
+    exit 1
+fi
+
 SUCCESS=1
 prune_old_smoke_dirs "$KEEP_RECENT_SMOKES"
 echo "3-agent arbitration smoke OK"

@@ -591,7 +591,51 @@ class RuntimeSupervisorTest(unittest.TestCase):
                 )
             codex = next(lane for lane in lanes if lane["name"] == "Codex")
             self.assertEqual(codex["state"], "READY")
-            self.assertEqual(codex["note"], "prompt_visible")
+            self.assertEqual(codex["note"], "verifying")
+
+    def test_prompt_visible_verify_pending_downgrades_codex_from_working_to_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    return_value={"alive": True, "pid": 4242, "attachable": True, "pane_id": "%2"},
+                ),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "capture_tail",
+                    side_effect=lambda lane_name, lines=80: (
+                        "› Use /skills to list available skills\n\n"
+                        "gpt-5.4 xhigh fast · ~/code/projectH\n"
+                        if lane_name == "Codex"
+                        else ""
+                    ),
+                ),
+            ):
+                lanes, _models = supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Codex": {
+                            "state": "WORKING",
+                            "note": "seq 205",
+                            "accepted_task": {"job_id": "job-42", "control_seq": 205, "attempt": 1},
+                            "last_event_at": "2026-04-16T12:38:57.552104Z",
+                            "last_heartbeat_at": "2026-04-16T12:38:57.552104Z",
+                        }
+                    },
+                    active_lane="Codex",
+                    active_round={
+                        "job_id": "job-42",
+                        "state": "VERIFY_PENDING",
+                        "status": "VERIFY_PENDING",
+                    },
+                    turn_state={"state": "IDLE"},
+                )
+            codex = next(lane for lane in lanes if lane["name"] == "Codex")
+            self.assertEqual(codex["state"], "READY")
+            self.assertEqual(codex["note"], "verify_pending")
 
     def test_active_implement_turn_keeps_claude_surface_working_even_if_wrapper_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

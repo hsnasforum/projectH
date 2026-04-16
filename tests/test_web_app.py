@@ -1697,6 +1697,109 @@ class WebAppServiceTest(unittest.TestCase):
                 "aggregate must retire when a supporting correction is superseded before emit",
             )
 
+    def test_recurrence_aggregate_record_backed_lifecycle_survives_supporting_correction_supersession(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "source-a.md"
+            second_source_path = tmp_path / "source-b.md"
+            shared_body = "# Demo\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "lifecycle-survives-supersession"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_msg_id = first["response"]["source_message_id"]
+            service.submit_correction(
+                {"session_id": session_id, "message_id": first_msg_id, "corrected_text": corrected_text}
+            )
+
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_msg_id = second["response"]["source_message_id"]
+            second_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": second_msg_id, "corrected_text": corrected_text}
+            )
+
+            self.assertIn("recurrence_aggregate_candidates", second_corrected["session"])
+            aggregate = second_corrected["session"]["recurrence_aggregate_candidates"][0]
+            fingerprint = aggregate["aggregate_key"]["normalized_delta_fingerprint"]
+
+            emitted = service.emit_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": fingerprint,
+                    "operator_reason_or_note": "lifecycle supersession test",
+                }
+            )
+            canonical_transition_id = emitted["canonical_transition_id"]
+
+            service.apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            confirm_result = service.confirm_aggregate_transition_result(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertIn("recurrence_aggregate_candidates", confirm_result["session"])
+            confirmed_agg = confirm_result["session"]["recurrence_aggregate_candidates"][0]
+            self.assertEqual(
+                confirmed_agg["reviewed_memory_transition_record"]["record_stage"],
+                "applied_with_result",
+            )
+            active_effects = confirm_result["session"].get("reviewed_memory_active_effects") or []
+            self.assertTrue(len(active_effects) > 0, "active effect must exist after confirm")
+
+            superseding_text = "완전히 다른 교정입니다.\n새로운 방향으로 작성했습니다."
+            superseded = service.submit_correction(
+                {"session_id": session_id, "message_id": first_msg_id, "corrected_text": superseding_text}
+            )
+
+            self.assertIn(
+                "recurrence_aggregate_candidates",
+                superseded["session"],
+                "aggregate with record-backed lifecycle must survive supporting correction supersession",
+            )
+            surviving_agg = superseded["session"]["recurrence_aggregate_candidates"][0]
+            self.assertEqual(
+                surviving_agg["reviewed_memory_transition_record"]["record_stage"],
+                "applied_with_result",
+            )
+            surviving_effects = superseded["session"].get("reviewed_memory_active_effects") or []
+            self.assertTrue(
+                len(surviving_effects) > 0,
+                "active effects must remain visible after supporting correction supersession",
+            )
+
+            stop_result = service.stop_apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertIn("recurrence_aggregate_candidates", stop_result["session"])
+            stopped_agg = stop_result["session"]["recurrence_aggregate_candidates"][0]
+            self.assertEqual(stopped_agg["reviewed_memory_transition_record"]["record_stage"], "stopped")
+
     def test_recurrence_aggregate_payload_keeps_proof_record_store_internal_and_ui_blocked(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

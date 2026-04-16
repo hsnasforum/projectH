@@ -41,8 +41,10 @@ from pipeline_gui.setup_profile import (
     resolve_project_active_profile,
     resolve_project_runtime_adapter,
 )
+from pipeline_runtime.control_writers import validate_operator_candidate_status
 
 _START_READY_TIMEOUT_SEC = 15.0
+_OPERATOR_CLASSIFICATION_GATE_REASON = "classification_fallback_detected"
 
 
 # ── 프로젝트 경로 결정 ────────────────────────────────────────
@@ -310,12 +312,30 @@ def runtime_lane_name_map(project: Path) -> dict[int, str]:
 
 def _runtime_view(project: Path) -> dict[str, object]:
     status = normalize_runtime_status(read_runtime_status(project))
+    if isinstance(status, dict):
+        status = dict(status)
     artifacts = dict(status.get("artifacts") or {})
     lanes = list(status.get("lanes") or [])
     watcher = dict(status.get("watcher") or {})
     control = dict(status.get("control") or {})
     active_round = dict(status.get("active_round") or {})
     autonomy = dict(status.get("autonomy") or {})
+    launcher_gate_status = ""
+    launcher_gate_reason = ""
+    launcher_gate_detail = ""
+    try:
+        validate_operator_candidate_status(status)
+    except ValueError as exc:
+        launcher_gate_status = "FAILED"
+        launcher_gate_reason = _OPERATOR_CLASSIFICATION_GATE_REASON
+        launcher_gate_detail = str(exc)
+        status["runtime_state"] = "BROKEN"
+        if not str(status.get("degraded_reason") or "").strip():
+            status["degraded_reason"] = launcher_gate_reason
+        degraded_reasons = [str(item) for item in list(status.get("degraded_reasons") or []) if str(item)]
+        if launcher_gate_reason not in degraded_reasons:
+            degraded_reasons.insert(0, launcher_gate_reason)
+        status["degraded_reasons"] = degraded_reasons
     raw_events: list[dict[str, object]] = []
     event_lines: list[str] = []
     for event in read_runtime_event_tail(project, max_lines=12):
@@ -356,6 +376,8 @@ def _runtime_view(project: Path) -> dict[str, object]:
         else:
             subject = str(payload.get("lane") or payload.get("job_id") or payload.get("receipt_id") or "")
         event_lines.append(f"{event_type} {subject}".strip())
+    if launcher_gate_status:
+        event_lines.insert(0, f"{launcher_gate_reason} {launcher_gate_detail}".strip())
     return {
         "runtime_state": str(status.get("runtime_state") or "STOPPED"),
         "degraded_reason": str(status.get("degraded_reason") or ""),
@@ -376,6 +398,9 @@ def _runtime_view(project: Path) -> dict[str, object]:
         "lanes": lanes,
         "event_lines": event_lines,
         "events": raw_events,
+        "launcher_gate_status": launcher_gate_status,
+        "launcher_gate_reason": launcher_gate_reason,
+        "launcher_gate_detail": launcher_gate_detail,
     }
 
 

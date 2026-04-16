@@ -1,9 +1,9 @@
 {
   "lane": "Codex",
-  "active": false,
-  "job_id": "",
-  "control_seq": -1,
+  "active": true,
+  "job_id": "20260416-2026-04-16-reviewed-memory-aggre-b5465bca",
+  "control_seq": 207,
   "attempt": 1,
-  "inactive_reason": "task_hint_cleared",
-  "updated_at": "2026-04-16T12:32:04.578350Z"
+  "inactive_reason": "",
+  "updated_at": "2026-04-16T13:10:54.259757Z"
 }

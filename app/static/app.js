@@ -2672,6 +2672,16 @@
         ].join(" · ");
         card.appendChild(identitySummary);
 
+        const acceptedReviewRefs = Array.isArray(item.supporting_review_refs) ? item.supporting_review_refs.length : 0;
+        const totalMembers = Number.isFinite(Number(item.recurrence_count)) ? Number(item.recurrence_count) : 0;
+        const reviewSupportLine = document.createElement("div");
+        reviewSupportLine.className = "history-item-summary";
+        reviewSupportLine.setAttribute("data-testid", "aggregate-trigger-review-support");
+        reviewSupportLine.textContent = acceptedReviewRefs > 0
+          ? `검토 수락 ${acceptedReviewRefs}건 / 교정 ${totalMembers}건 (거절·보류는 감사 기록만)`
+          : `검토 수락 0건 / 교정 ${totalMembers}건 (거절·보류는 감사 기록만)`;
+        card.appendChild(reviewSupportLine);
+
         if (planningTargetLabel) {
           const planningTarget = document.createElement("div");
           planningTarget.className = "history-item-summary";

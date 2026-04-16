@@ -67,7 +67,7 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
             ), mock.patch.object(
                 pipeline_launcher,
                 "read_runtime_status",
-                return_value={"runtime_state": "RUNNING"},
+                return_value={"runtime_state": "RUNNING", "watcher": {"alive": True, "pid": 1234}},
             ), mock.patch.object(
                 pipeline_launcher,
                 "_spawn_runtime_cli",
@@ -124,6 +124,7 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                 pipeline_launcher,
                 "read_runtime_status",
                 return_value={
+                    "runtime_state": "RUNNING",
                     "lanes": [
                         {"name": "Claude", "state": "READY", "pid": 111, "last_event_at": "2026-04-11T00:00:00Z"},
                         {"name": "Codex", "state": "WORKING", "pid": 222, "last_event_at": "2026-04-11T00:01:00Z"},
@@ -141,8 +142,9 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                 "run",
                 return_value=mock.Mock(returncode=0),
             ) as run_attach:
-                snapshots = pipeline_launcher.pane_snapshots(project, session)
-                details = pipeline_launcher.focused_lane_details(project, 0)
+                runtime_view = pipeline_launcher._runtime_view(project)
+                snapshots = pipeline_launcher.pane_snapshots(runtime_view)
+                details = pipeline_launcher.focused_lane_details(project, runtime_view, 0)
                 pipeline_launcher.runtime_attach(project, session)
 
             self.assertEqual(
@@ -163,6 +165,7 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                 pipeline_launcher,
                 "read_runtime_status",
                 return_value={
+                    "runtime_state": "RUNNING",
                     "lanes": [
                         {
                             "name": "Claude",
@@ -187,8 +190,9 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                     }
                 ],
             ):
-                snapshots = pipeline_launcher.pane_snapshots(project, session)
-                details = pipeline_launcher.focused_lane_details(project, 0)
+                runtime_view = pipeline_launcher._runtime_view(project)
+                snapshots = pipeline_launcher.pane_snapshots(runtime_view)
+                details = pipeline_launcher.focused_lane_details(project, runtime_view, 0)
 
             self.assertEqual([(snap.label, snap.status, snap.status_note) for snap in snapshots], [("Claude", "READY", "waiting_next_control")])
             self.assertIn("note=waiting_next_control", details)
@@ -258,6 +262,12 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                         "active_control_seq": 155,
                         "active_control_status": "needs_operator",
                     },
+                    "autonomy": {
+                        "mode": "needs_operator",
+                        "reason_code": "approval_required",
+                        "operator_policy": "immediate_publish",
+                        "classification_source": "operator_policy",
+                    },
                 },
             ), mock.patch.object(
                 pipeline_launcher,
@@ -278,6 +288,41 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
             self.assertEqual(runtime_view["runtime_state"], "RUNNING")
             self.assertEqual(runtime_view["control_status"], "needs_operator")
             self.assertTrue(any("control_changed needs_operator" in line for line in runtime_view["event_lines"]))
+
+    def test_runtime_view_marks_operator_classification_fallback_as_broken_gate(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-operator-gate-") as tmp:
+            project = Path(tmp).resolve()
+
+            with mock.patch.object(
+                pipeline_launcher,
+                "read_runtime_status",
+                return_value={
+                    "runtime_state": "RUNNING",
+                    "lanes": [],
+                    "watcher": {"alive": True, "pid": 1234},
+                    "control": {
+                        "active_control_file": ".pipeline/operator_request.md",
+                        "active_control_seq": 205,
+                        "active_control_status": "needs_operator",
+                    },
+                    "autonomy": {
+                        "mode": "needs_operator",
+                        "reason_code": "approval_required",
+                        "operator_policy": "immediate_publish",
+                        "classification_source": "metadata_missing_fallback",
+                    },
+                },
+            ), mock.patch.object(
+                pipeline_launcher,
+                "read_runtime_event_tail",
+                return_value=[],
+            ):
+                runtime_view = pipeline_launcher._runtime_view(project)
+
+            self.assertEqual(runtime_view["runtime_state"], "BROKEN")
+            self.assertEqual(runtime_view["degraded_reason"], "classification_fallback_detected")
+            self.assertEqual(runtime_view["launcher_gate_status"], "FAILED")
+            self.assertTrue(any("classification_fallback_detected" in line for line in runtime_view["event_lines"]))
 
     def test_build_snapshot_surfaces_autonomy_when_operator_is_gated(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-autonomy-") as tmp:
@@ -325,6 +370,7 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                 pipeline_launcher,
                 "read_runtime_status",
                 return_value={
+                    "runtime_state": "RUNNING",
                     "lanes": [
                         {"name": "Claude", "state": "OFF", "attachable": False},
                         {"name": "Codex", "state": "BOOTING", "attachable": True},
@@ -332,7 +378,8 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                     ]
                 },
             ):
-                snapshots = pipeline_launcher.pane_snapshots(project, session)
+                runtime_view = pipeline_launcher._runtime_view(project)
+                snapshots = pipeline_launcher.pane_snapshots(runtime_view)
 
             self.assertEqual(
                 [(snap.label, snap.status) for snap in snapshots],

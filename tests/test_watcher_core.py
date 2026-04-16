@@ -2007,6 +2007,87 @@ class TransitionTurnTest(unittest.TestCase):
             self.assertEqual(events[0]["event_type"], "runtime_started")
             self.assertEqual(events[-1]["event_type"], "control_changed")
 
+    def test_runtime_export_keeps_claude_working_while_implement_control_is_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path.write_text("STATUS: implement\nCONTROL_SEQ: 17\n", encoding="utf-8")
+
+            core = watcher_core.WatcherCore({
+                "watch_dir": str(watch_dir),
+                "base_dir": str(base_dir),
+                "repo_root": str(root),
+                "dry_run": True,
+            })
+
+            with mock.patch("watcher_core._capture_pane_text", return_value="• Working (12s • esc to interrupt)\n"):
+                core._transition_turn(
+                    watcher_core.WatcherTurnState.CODEX_VERIFY,
+                    "work_needs_verify",
+                    active_control_file="claude_handoff.md",
+                    active_control_seq=17,
+                    verify_job_id="test-job-1",
+                )
+
+            status_path = base_dir / "runs" / core.run_id / "status.json"
+            status = json.loads(status_path.read_text())
+            claude = next(lane for lane in status["lanes"] if lane["name"] == "Claude")
+            codex = next(lane for lane in status["lanes"] if lane["name"] == "Codex")
+
+            self.assertEqual(status["control"]["active_control_status"], "implement")
+            self.assertEqual(claude["state"], "WORKING")
+            self.assertEqual(codex["state"], "WORKING")
+
+    def test_runtime_export_keeps_idle_claude_ready_during_verify_follow_on(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path.write_text("STATUS: implement\nCONTROL_SEQ: 17\n", encoding="utf-8")
+
+            core = watcher_core.WatcherCore({
+                "watch_dir": str(watch_dir),
+                "base_dir": str(base_dir),
+                "repo_root": str(root),
+                "dry_run": True,
+            })
+
+            with mock.patch(
+                "watcher_core._capture_pane_text",
+                return_value=(
+                    "❯ \n"
+                    "───────────────────────────────────────────────────────────────────────────────\n"
+                    "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt\n"
+                ),
+            ):
+                core._transition_turn(
+                    watcher_core.WatcherTurnState.CODEX_VERIFY,
+                    "work_needs_verify",
+                    active_control_file="claude_handoff.md",
+                    active_control_seq=17,
+                    verify_job_id="test-job-1",
+                )
+
+            status_path = base_dir / "runs" / core.run_id / "status.json"
+            status = json.loads(status_path.read_text())
+            claude = next(lane for lane in status["lanes"] if lane["name"] == "Claude")
+            codex = next(lane for lane in status["lanes"] if lane["name"] == "Codex")
+
+            self.assertEqual(status["control"]["active_control_status"], "implement")
+            self.assertEqual(claude["state"], "READY")
+            self.assertEqual(codex["state"], "WORKING")
+
     def test_transition_updates_internal_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2174,12 +2255,18 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
             self.assertGreater(job.last_failed_dispatch_at, 0.0)
-            self.assertEqual(job.last_failed_dispatch_snapshot, "$ ")
+            self.assertEqual(job.last_failed_dispatch_snapshot, "")
             self.assertGreaterEqual(job.dispatch_fail_count, 1)
             self.assertEqual(job.verify_receipt_baseline_path, "")
             self.assertFalse(
                 core.dedupe.is_duplicate(job.job_id, job.round, job.artifact_hash, "slot_verify")
             )
+
+            job.last_failed_dispatch_at = time.time() - 30
+            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+                job = core.sm._handle_verify_pending(job)
+
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
 
     def test_verify_running_startup_recovery_requeues_stale_idle_dispatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

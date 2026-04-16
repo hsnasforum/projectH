@@ -54,6 +54,8 @@
 3. active round 처리 정책 확인
 4. `STOPPED` 및 final receipt flush 확인
 5. run 종료 보고 작성
+- stop 성공은 supervisor pid 소멸만으로 판단하지 않습니다. final status에 `runtime_state=STOPPED`, `control=none`, `active_round=null`, watcher dead, lane inactive가 함께 flush되었는지 확인합니다.
+- controller가 오래된 `STOPPING` run을 다시 읽더라도 supervisor PID가 이미 없으면 UI는 이를 `STOPPED`로 정규화하고 `Control=none`, `Round=IDLE`로 보여야 합니다. 이 reader 정규화는 graceful flush 실패에 대비한 fallback safety net입니다.
 
 ## 3.5 채택 전 synthetic soak
 runtime 채택 게이트 전에는 real repo truth를 건드리지 않는 synthetic soak를 먼저 사용합니다.
@@ -159,6 +161,9 @@ runtime 채택 게이트 전에는 real repo truth를 건드리지 않는 synthe
 3. cleanup 이벤트 발생 확인
 4. cleanup 실패 시 supervisor restart 고려
 
+- verify lane이 `VERIFY_RUNNING` idle timeout 뒤 `VERIFY_PENDING`으로 복귀했는데 pane이 이미 idle prompt인 경우, same-snapshot guard는 short backoff만 적용하고 이후 재dispatch를 허용해야 합니다.
+- 이런 상황에서 `dispatch_backoff_same_snapshot`만 반복되고 새 dispatch가 다시 일어나지 않으면 stale retry loop로 보고 watcher retry state를 먼저 점검합니다.
+
 ## 6.5 corrupt state
 1. quarantine 이벤트 확인
 2. 손상된 파일 백업 경로 확인
@@ -171,27 +176,43 @@ runtime 채택 게이트 전에는 real repo truth를 건드리지 않는 synthe
 3. lane 재생성 또는 전체 backend 재기동
 4. current_run continuity 확인
 
-## 6.7 controller typed command palette
-controller browser UI에서는 아래처럼 bounded runtime command만 입력할 수 있습니다.
+메모:
 
-- `start`
-- `stop`
-- `restart`
-- `attach [Claude|Codex|Gemini]`
-- `tail <Claude|Codex|Gemini> [lines]`
-- `view <all|Claude|Codex|Gemini>`
-- `text <on|off> [lines]`
-- `status`
-- `help`
+- supervisor pid 가 이미 없고 recent status 안의 watcher/lane pid 도 모두 dead 로 확인되면, browser/controller 는 stale timeout 을 기다리지 않고 runtime 을 즉시 `BROKEN(supervisor_missing)` 으로 강등할 수 있습니다.
+- pid 가 비어 있더라도 recent status 가 이미 `control=none`, `active_round=null`, watcher dead, lane inactive 로 정리돼 있으면 같은 fast-path 를 적용할 수 있습니다.
+- recent status 이고 supervisor 는 없지만 `control != none`, `active_round != null`, active lane state 같은 activity claim 이 남아 있고 watcher/active lane pid 로 live identity 를 증명하지 못하면, browser/controller 는 이를 `DEGRADED(supervisor_missing_recent_ambiguous)` uncertain runtime 으로 먼저 surface 합니다.
+- 같은 ambiguous payload 인데 `updated_at`까지 비어 있으면 browser/controller 는 `DEGRADED(supervisor_missing_snapshot_undated)` uncertain runtime 으로 surface 하고, stale timeout 기준이 복구되기 전까지 clean `RUNNING`으로 올려 보지 않습니다.
+- 이 fast-path 는 recent `RUNNING` 착시를 줄이기 위한 reader safety net 이며, primary truth 는 여전히 supervisor final flush 입니다.
+
+## 6.7 controller browser contract
+controller browser UI의 active runtime contract는 아래로 제한합니다.
+
+- `GET /api/runtime/status`
+- `POST /api/runtime/start`
+- `POST /api/runtime/stop`
+- `POST /api/runtime/restart`
+- `GET /api/runtime/capture-tail?lane=<Claude|Codex|Gemini>&lines=<n>`
 
 주의:
 
-- 이 입력창은 arbitrary shell exec가 아닙니다.
-- 모든 실행은 기존 controller runtime API 경로로만 매핑됩니다.
-- 상태 authority는 계속 `status.json`과 `events.jsonl`이며, command palette는 operator UX layer일 뿐입니다.
+- browser controller는 arbitrary shell exec를 열지 않습니다.
+- 상태 authority는 계속 `status.json`과 `events.jsonl`이며, controller는 이 payload를 읽는 operator UX layer일 뿐입니다.
 - `Office View` 같은 시각화 토글은 허용되지만, 이는 같은 runtime status/tail을 다른 형태로 그려주는 read-model일 뿐 별도 상태 판정 경로가 아닙니다.
 - 현재 browser Office View는 projectH 전용 `runtime war-room` 장면으로 유지합니다. Claude / Codex / Gemini는 동등한 3석으로 보이고 watcher는 장면 안 `ops core` 오브젝트로만 표현되며, 이 연출은 모두 기존 runtime payload를 읽는 시각화일 뿐입니다.
-- sprite sheet를 테스트하려면 operator가 PNG를 `controller/assets/fren-office-sheet.png`에 둔 뒤 `python3 scripts/build_office_sprites.py`를 실행해 `controller/assets/generated/office-sprite-manifest.json`과 normalized frame PNG를 만들고, 그 다음 controller를 새로고침하면 됩니다. generated 자산이 없으면 raw sheet fallback 또는 CSS fallback avatar를 유지합니다.
+- `runtime_state`가 `STOPPED`, `STOPPING`, `BROKEN`이면 controller는 `control`, `round`, lane action을 active처럼 보여주지 않습니다.
+- `runtime_state=DEGRADED`이면서 `degraded_reason`이 `supervisor_missing_recent_ambiguous` 또는 `supervisor_missing_snapshot_undated`이면 controller는 runtime summary를 uncertain runtime으로 보여야 합니다. badge는 amber `DEGRADED`, `Control`/`Round`는 `uncertain`, `Watcher`는 `Unknown`이어야 하며, active control/round를 초록 활성 상태처럼 강조하면 안 됩니다.
+- log modal은 tail 확인용입니다. backend route가 없는 lane pause/resume/restart나 attach 버튼은 노출하지 않습니다.
+- Codex startup 시 self-update dialog가 뜨면 wrapper가 `Skip until next version`을 자동 선택해야 하며, update dialog 자체를 `READY(prompt_visible)`로 surface하면 안 됩니다. `codex_exit:0`와 함께 pane에 `Please restart Codex`가 남았다면 self-update prompt miss로 봅니다.
+- 상태별 GIF를 테스트하려면 operator가 `controller/assets/BOOTING.gif`, `WORKING.gif`, `BROKEN.gif`, `READY.gif`, `DEAD.gif`를 두고 controller를 새로고침하면 됩니다. browser는 이 다섯 파일을 우선 사용합니다.
+- background는 `/controller-assets/background.png`를 먼저 시도하고, 필요 시 `/controller-assets/generated/bg-office.png`로 fallback 합니다. sidebar `Scene` 값이 `fallback` 또는 `asset_error`면 자산 경로/로딩 문제를 먼저 의심합니다.
+- log modal info strip 은 좁은 viewport 에서도 wrap 되어야 하며, body 는 전체 폭을 유지해야 합니다. 내부 pane 이 좁은 고정폭처럼 보이는 스타일을 다시 넣지 않습니다.
+- Office View의 packet/날씨/펫/ambient audio는 runtime payload에서 읽은 read-model 연출입니다. `latest_work`, `latest_verify`, `last_receipt`, `control_seq`, lane state 변화와 맞물려 보여야 하며, pane text scraping이나 hidden route에 의존하면 안 됩니다.
+- `working` / `booting` lane은 desk anchor 위에 유지하되, `ready` / `idle` lane은 browser-local roam spot 사이를 이동할 수 있습니다. 이 wandering은 purely decorative이며 runtime state 판정과는 분리해서 봐야 합니다.
+- ambient audio는 operator가 mute 버튼 등 explicit browser gesture를 준 뒤에만 시작해야 합니다. 새로고침 직후 자동 재생되면 현재 운영 계약과 어긋난 것입니다.
+- toolbar의 `✨` 버튼으로 reduced-motion 모드를 켜면 weather rain, pet roaming, event particle, delivery packet animation이 멈춥니다. agent 렌더링, runtime badge, event log, log modal, needs-operator overlay는 그대로 유지됩니다. 이 설정은 browser-local이며 backend에 영향을 주지 않습니다.
+- reduced-motion(`✨`)과 ambient mute(`🔊`) 토글 상태는 `localStorage`에 저장되어 새로고침 후에도 유지됩니다. muted 복원 시 audio가 자동 재생되지는 않습니다.
+- `localStorage`가 차단된 환경(private browsing 등)에서는 controller event log에 `환경 설정 저장 불가` 경고가 한 번 표시되고, toolbar 영역에 `⚠ 설정 비저장` 경고 chip이 지속 표시됩니다. 이 경우 toolbar 토글은 현재 페이지에서 정상 동작하지만, 새로고침 시 기본값으로 초기화됩니다. 이 경고는 runtime authority와 무관한 browser-local 안내입니다.
+- GIF 세트가 없거나 일부만 준비된 경우에는 `controller/assets/fren-office-sheet.png`를 기준으로 `python3 scripts/build_office_sprites.py`를 실행해 `controller/assets/generated/office-sprite-manifest.json`과 normalized frame PNG를 만들면 됩니다. generated 자산까지 없으면 raw sheet fallback 또는 CSS fallback avatar를 유지합니다.
 - 설명용 흰 배경 시트를 그대로 넣었을 때는 controller browser가 frame crop과 가장자리 white trim을 시도해 자연스러운 sprite animation으로 보여줄 수 있습니다. 다만 완전한 transparency 품질이 필요하면 투명 배경 PNG를 우선합니다.
 - 프레임별 sprite 크기가 들쭉날쭉해 보이면 Office View는 browser에서 viewport normalization과 ping-pong/crossfade를 적용합니다. 그래도 어색하면 sprite sheet의 frame 간 safe margin과 기준선 자체를 더 맞춘 자산이 필요합니다.
 

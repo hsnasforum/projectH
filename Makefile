@@ -1,4 +1,4 @@
-.PHONY: run test e2e-install e2e-test eval eval-mock
+.PHONY: run test e2e-install e2e-test controller-test eval eval-mock
 
 run:
 	python -m app.main
@@ -11,6 +11,9 @@ e2e-install:
 
 e2e-test:
 	cd e2e && npm test
+
+controller-test:
+	cd e2e && npx playwright test -c playwright.controller.config.mjs --reporter=line
 
 eval-mock:
 	python -m eval.harness --provider mock --save

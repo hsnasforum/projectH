@@ -22,6 +22,7 @@ from core.contracts import (
     ResponseOriginKind,
     ResponseOriginProvider,
     WebSearchPermission,
+    sanitize_supporting_review_refs,
 )
 from core.agent_loop import AgentResponse
 
@@ -3813,7 +3814,13 @@ class SerializerMixin:
                 continue
             if str(record.get("transition_action") or "").strip() != "future_reviewed_memory_apply":
                 continue
-            return dict(record)
+            result = dict(record)
+            sanitized = sanitize_supporting_review_refs(result.get("supporting_review_refs"))
+            if sanitized:
+                result["supporting_review_refs"] = sanitized
+            else:
+                result.pop("supporting_review_refs", None)
+            return result
 
         return None
 
@@ -3851,7 +3858,13 @@ class SerializerMixin:
                 continue
             if str(record.get("record_stage") or "").strip() != RecordStage.CONFLICT_CHECKED:
                 continue
-            return dict(record)
+            result = dict(record)
+            sanitized = sanitize_supporting_review_refs(result.get("supporting_review_refs"))
+            if sanitized:
+                result["supporting_review_refs"] = sanitized
+            else:
+                result.pop("supporting_review_refs", None)
+            return result
 
         return None
 
@@ -4031,6 +4044,7 @@ class SerializerMixin:
                 dict(review_ref)
                 for member in members
                 if isinstance((review_ref := member.get("review_ref")), dict)
+                and str(review_ref.get("review_action") or "").strip() == "accept"
             ]
             if supporting_review_refs:
                 aggregate_candidate["supporting_review_refs"] = supporting_review_refs

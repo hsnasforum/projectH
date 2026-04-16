@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "receipt_id": "20260416-2026-04-16-reviewed-memory-store-3c30ab2d-r1",
+  "run_id": "20260415T145313Z-p3228934",
+  "job_id": "20260416-2026-04-16-reviewed-memory-store-3c30ab2d",
+  "round": 1,
+  "target_lane": "codex",
+  "artifact_path": "/home/xpdlqj/code/projectH/verify/4/16/2026-04-16-controller-office-reset-base-verification.md",
+  "artifact_hash": "sha256:ca646fca66b59a2aa2cb5ce17dad0446e7bd32b9987b830ad60acc768903bd5c",
+  "verify_manifest_path": "/home/xpdlqj/code/projectH/.pipeline/manifests/20260416-2026-04-16-reviewed-memory-store-3c30ab2d/round-1.verify.json",
+  "verify_result": "passed_by_feedback",
+  "control_seq": 163,
+  "closed_at": "2026-04-15T16:07:55.121808Z",
+  "emitted_by": "supervisor"
+}

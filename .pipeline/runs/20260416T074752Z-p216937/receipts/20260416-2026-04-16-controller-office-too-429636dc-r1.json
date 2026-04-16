@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "receipt_id": "20260416-2026-04-16-controller-office-too-429636dc-r1",
+  "run_id": "20260416T074752Z-p216937",
+  "job_id": "20260416-2026-04-16-controller-office-too-429636dc",
+  "round": 1,
+  "target_lane": "codex",
+  "artifact_path": "/home/xpdlqj/code/projectH/verify/4/16/2026-04-16-controller-background-preload-readiness-hardening-verification.md",
+  "artifact_hash": "sha256:ea5b177089f4e12f9c753a85469eaa9dad508f149c80fce060c10a7caf00023a",
+  "verify_manifest_path": "/home/xpdlqj/code/projectH/.pipeline/manifests/20260416-2026-04-16-controller-office-too-429636dc/round-1.verify.json",
+  "verify_result": "passed_by_feedback",
+  "control_seq": 182,
+  "closed_at": "2026-04-16T07:52:19.562409Z",
+  "emitted_by": "supervisor"
+}

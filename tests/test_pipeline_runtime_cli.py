@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import signal
 import tempfile
 import unittest
 from argparse import Namespace
@@ -27,10 +28,9 @@ class WrapperEmitterTest(unittest.TestCase):
                 "\n".join(
                     [
                         "✨ Update available! 0.1",
-                        "1. Update now (runs `npm install -g @openai/codex`)",
+                        "› 1. Update now (runs `npm install -g @openai/codex`)",
                         "2. Skip",
                         "3. Skip until next version",
-                        "Press enter to continue",
                     ]
                 )
                 + "\n"
@@ -45,15 +45,43 @@ class WrapperEmitterTest(unittest.TestCase):
                 "\n".join(
                     [
                         "✨ Update available! 0.1",
-                        "1. Update now (runs `npm install -g @openai/codex`)",
+                        "› 1. Update now (runs `npm install -g @openai/codex`)",
                         "2. Skip",
                         "3. Skip until next version",
-                        "Press enter to continue",
                     ]
                 )
                 + "\n"
             )
             self.assertEqual(sent, [b"3\r"])
+
+    def test_codex_update_prompt_is_not_misclassified_as_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sent: list[bytes] = []
+            emitter = _WrapperEmitter(
+                wrapper_dir=Path(tmp),
+                lane_name="Codex",
+                task_hint_dir=None,
+                child_pid=124,
+                send_child_bytes=sent.append,
+            )
+
+            emitter.feed(
+                "\n".join(
+                    [
+                        "✨ Update available! 0.121.0 -> 0.122.0",
+                        "Release notes: https://github.com/openai/codex/releases/latest",
+                        "› 1. Update now",
+                        "2. Skip",
+                        "3. Skip until next version",
+                    ]
+                )
+                + "\n"
+            )
+
+            self.assertEqual(sent, [b"3\r"])
+            wrapper_log = Path(tmp) / "codex.jsonl"
+            if wrapper_log.exists():
+                self.assertNotIn('"event_type": "READY"', wrapper_log.read_text(encoding="utf-8"))
 
     def test_codex_prompt_visible_emits_ready_when_not_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -262,7 +290,7 @@ class SupervisorCliTest(unittest.TestCase):
             self.assertEqual(live_pid, 1234)
             self.assertEqual(pid_path.read_text(encoding="utf-8").strip(), "1234")
 
-    def test_stop_supervisor_kills_duplicate_live_daemons(self) -> None:
+    def test_stop_supervisor_signals_duplicate_live_daemons_and_waits_for_flush(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project_root = Path(tmp)
             pid_path = project_root / ".pipeline" / "supervisor.pid"
@@ -270,15 +298,62 @@ class SupervisorCliTest(unittest.TestCase):
             pid_path.write_text("111", encoding="utf-8")
             args = Namespace(project_root=str(project_root), legacy_mode="", session="aip-projectH")
 
-            killed: list[int] = []
+            signaled: list[tuple[int, int]] = []
             with (
                 patch.object(runtime_cli, "_list_supervisor_pids", return_value=[111, 222]),
                 patch.object(runtime_cli, "_supervisor_running", return_value=111),
+                patch.object(runtime_cli, "_signal_pid", side_effect=lambda pid, sig: signaled.append((pid, sig))),
+                patch.object(runtime_cli, "_wait_for_stop_completion", return_value=True),
+            ):
+                code = runtime_cli._stop_supervisor(args)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(signaled, [(111, signal.SIGTERM), (222, signal.SIGTERM)])
+            self.assertFalse(pid_path.exists())
+
+    def test_stop_supervisor_waits_for_graceful_stopped_status_flush(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            pid_path = project_root / ".pipeline" / "supervisor.pid"
+            pid_path.parent.mkdir(parents=True, exist_ok=True)
+            pid_path.write_text("111", encoding="utf-8")
+            args = Namespace(project_root=str(project_root), legacy_mode="", session="aip-projectH")
+
+            signaled: list[tuple[int, int]] = []
+            with (
+                patch.object(runtime_cli, "_list_supervisor_pids", return_value=[111]),
+                patch.object(runtime_cli, "_supervisor_running", return_value=111),
+                patch.object(runtime_cli, "_signal_pid", side_effect=lambda pid, sig: signaled.append((pid, sig))),
+                patch.object(runtime_cli, "_wait_for_stop_completion", return_value=True) as wait_stop,
+            ):
+                code = runtime_cli._stop_supervisor(args)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(signaled, [(111, signal.SIGTERM)])
+            wait_stop.assert_called_once_with(project_root, "aip-projectH")
+            self.assertFalse(pid_path.exists())
+
+    def test_stop_supervisor_returns_failure_when_graceful_flush_never_arrives(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            pid_path = project_root / ".pipeline" / "supervisor.pid"
+            pid_path.parent.mkdir(parents=True, exist_ok=True)
+            pid_path.write_text("111", encoding="utf-8")
+            args = Namespace(project_root=str(project_root), legacy_mode="", session="aip-projectH")
+
+            signaled: list[tuple[int, int]] = []
+            killed: list[int] = []
+            with (
+                patch.object(runtime_cli, "_list_supervisor_pids", side_effect=[[111], [111]]),
+                patch.object(runtime_cli, "_supervisor_running", return_value=111),
+                patch.object(runtime_cli, "_signal_pid", side_effect=lambda pid, sig: signaled.append((pid, sig))),
+                patch.object(runtime_cli, "_wait_for_stop_completion", return_value=False),
                 patch.object(runtime_cli, "_kill_pid", side_effect=killed.append),
                 patch.object(runtime_cli, "_wait_for_supervisors_exit", return_value=True),
             ):
                 code = runtime_cli._stop_supervisor(args)
 
-            self.assertEqual(code, 0)
-            self.assertEqual(killed, [111, 222])
+            self.assertEqual(code, 1)
+            self.assertEqual(signaled, [(111, signal.SIGTERM)])
+            self.assertEqual(killed, [111])
             self.assertFalse(pid_path.exists())

@@ -1068,7 +1068,7 @@ The first official artifact is the `grounded brief`.
     - exact aggregate identity from current `recurrence_aggregate_candidates`
     - distinct grounded-brief source-message anchors only
     - current `durable_candidate` only when it still matches the same source-message candidate version
-    - current `candidate_review_record` only as confidence support when it still matches the same source-message candidate version
+    - current `candidate_review_record` only as confidence support when the review action is `accept` and it still matches the same source-message candidate version; `reject` and `defer` outcomes stay source-message audit-only and do not surface as aggregate `supporting_review_refs`
   - review acceptance, approval-backed save, and historical adjuncts remain outside promotion identity:
     - review acceptance may strengthen later confidence, but it does not replace aggregate identity
     - approval-backed save remains supporting evidence only

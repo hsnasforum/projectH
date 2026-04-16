@@ -107,7 +107,7 @@
   - aggregate identity stays limited to `candidate_family`, `key_scope`, `key_version`, `derivation_source`, and `normalized_delta_fingerprint`
   - distinctness still requires different grounded-brief `artifact_id` + `source_message_id` anchors in the same session
   - `source_candidate_id` and `source_candidate_updated_at` remain supporting refs only
-  - `candidate_review_record` may appear only as optional `supporting_review_refs` when it still matches the same current source-message candidate version
+  - `candidate_review_record` may appear only as optional `supporting_review_refs` when the review action is `accept` and it still matches the same current source-message candidate version; `reject` and `defer` outcomes stay source-message audit-only
   - `confidence_marker` currently stays fixed at `same_session_exact_key_match`
   - approval-backed save, `superseded_reject_signal`, `historical_save_identity_signal`, queue presence, fixed statement text, and task-log replay stay out of aggregate identity
   - current aggregates stay promotion-ineligible; the full reviewed-memory precondition family is shipped and the capability satisfaction path is open while promotion and cross-session counting remain later

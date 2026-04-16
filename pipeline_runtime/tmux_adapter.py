@@ -8,6 +8,8 @@ from typing import Any
 
 class TmuxAdapter:
     LANE_INDEX = {"Claude": 0, "Codex": 1, "Gemini": 2}
+    DEFAULT_SESSION_COLS = 420
+    DEFAULT_SESSION_ROWS = 72
 
     def __init__(self, project_root: Path, session_name: str, *, run_id: str = "") -> None:
         self.project_root = project_root
@@ -37,7 +39,20 @@ class TmuxAdapter:
     def create_scaffold(self) -> dict[str, str]:
         self.kill_session()
         result = self._run(
-            ["tmux", "new-session", "-d", "-s", self.session_name, "-c", str(self.project_root), "bash"],
+            [
+                "tmux",
+                "new-session",
+                "-d",
+                "-x",
+                str(self.DEFAULT_SESSION_COLS),
+                "-y",
+                str(self.DEFAULT_SESSION_ROWS),
+                "-s",
+                self.session_name,
+                "-c",
+                str(self.project_root),
+                "bash",
+            ],
             timeout=10.0,
         )
         if result.returncode != 0:
@@ -74,6 +89,7 @@ class TmuxAdapter:
             ["tmux", "set-window-option", "-t", self.session_name, "window-status-format", "#I:#W"],
             ["tmux", "set-window-option", "-t", self.session_name, "window-status-current-format", "#[bold]#I:#W"],
             ["tmux", "set-window-option", "-t", f"{self.session_name}:0", "remain-on-exit", "on"],
+            ["tmux", "set-window-option", "-t", f"{self.session_name}:0", "window-size", "manual"],
         ]
         for cmd in session_options:
             self._run(cmd, timeout=5.0)
@@ -255,34 +271,32 @@ class TmuxAdapter:
             },
         }
 
-    def attach(self, lane_name: str | None = None) -> int:
-        target = self.session_name
+    def _attach_shell_command(self, lane_name: str | None = None) -> str | None:
+        if not self.session_exists():
+            return None
         if lane_name:
             pane = self.pane_for_lane(lane_name)
-            if pane is not None:
+            if pane is not None and not bool(pane.get("dead")):
                 target = str(pane["pane_id"])
+                return f"tmux select-pane -t {shlex.quote(target)} \\; attach -t {shlex.quote(self.session_name)}"
+        return f"tmux attach -t {shlex.quote(self.session_name)}"
+
+    def attach(self, lane_name: str | None = None) -> int:
+        command = self._attach_shell_command(lane_name)
+        if not command:
+            return -1
         process = subprocess.Popen(
-            [
-                "bash",
-                "-lc",
-                f"tmux select-pane -t {shlex.quote(target)} \\; attach -t {shlex.quote(self.session_name)}",
-            ],
+            ["bash", "-lc", command],
             start_new_session=True,
         )
         return int(process.pid)
 
     def attach_blocking(self, lane_name: str | None = None) -> int:
-        target = self.session_name
-        if lane_name:
-            pane = self.pane_for_lane(lane_name)
-            if pane is not None:
-                target = str(pane["pane_id"])
+        command = self._attach_shell_command(lane_name)
+        if not command:
+            return 1
         result = subprocess.run(
-            [
-                "bash",
-                "-lc",
-                f"tmux select-pane -t {shlex.quote(target)} \\; attach -t {shlex.quote(self.session_name)}",
-            ],
+            ["bash", "-lc", command],
             text=True,
         )
         return int(result.returncode)

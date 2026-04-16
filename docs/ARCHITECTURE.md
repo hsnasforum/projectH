@@ -31,7 +31,7 @@ Responsibilities:
 - local web shell / CLI entry
 - request parsing
 - session list and timeline rendering
-- compact pending review queue rendering for eligible current `durable_candidate` items, plus one `accept`-only reviewed-but-not-applied action
+- compact pending review queue rendering for eligible current `durable_candidate` items, with `accept` / `reject` / `defer` reviewed-but-not-applied actions
 - streaming progress and cancel
 - approval card interactions
 - session serialization for evidence, summary chunks, approval objects, and feedback
@@ -810,7 +810,7 @@ The next phase should standardize one `grounded brief` artifact.
     - exact same-session aggregate identity from current `recurrence_aggregate_candidates`
     - distinct grounded-brief anchors only
     - current `durable_candidate` only when it still matches the same source-message candidate version
-    - current `candidate_review_record` only as confidence support when it still matches the same source-message candidate version
+    - current `candidate_review_record` only as confidence support when the review action is `accept` and it still matches the same source-message candidate version; `reject` and `defer` outcomes stay source-message audit-only and do not surface as aggregate `supporting_review_refs`
   - never treat review acceptance, approval-backed save, historical adjuncts, queue presence, fixed statement text, `candidate_family` alone, or task-log replay as promotion identity
   - current architecture now emits one aggregate-level blocked marker only inside each current aggregate item:
     - `aggregate_promotion_marker`
@@ -1140,7 +1140,7 @@ The next phase should standardize one `grounded brief` artifact.
   - `review_queue_items` remain the pending-only surface for one current `durable_candidate`
   - `candidate_review_record` remains the reviewed-but-not-applied outcome for one current candidate version
   - reviewed acceptance may later strengthen repeated-signal promotion evidence, but it must not replace the recurrence key itself
-- this contract should come before broader `edit` / `reject` / `defer` expansion because those actions still operate on one source-message candidate version, while the recurrence-key-plus-same-session-aggregate boundary is the first truthful cross-source identity needed before same-family aggregation or repeated-signal promotion can be honest
+- this contract should come before broader `edit` expansion because that action still operates on one source-message candidate version, while the recurrence-key-plus-same-session-aggregate boundary is the first truthful cross-source identity needed before same-family aggregation or repeated-signal promotion can be honest (`reject` and `defer` are now shipped alongside `accept`)
   - this contract should also come before repeated-signal promotion because current architecture ships rollback / disable / conflict / operator-audit contract surfaces as read-only and the apply / stop-apply / reversal / conflict-visibility lifecycle above them, but still has no payload-visible reviewed-memory store, no cross-session counting, and no repeated-signal promotion
   - the next architecture widening should still stay closed:
     - keep the shipped readiness surface separate from the blocked-only status object:

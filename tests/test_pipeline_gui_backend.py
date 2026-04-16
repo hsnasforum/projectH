@@ -622,7 +622,11 @@ class TestRuntimeStatusRead(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            result = read_runtime_status(root)
+            with (
+                mock.patch("pipeline_gui.backend._supervisor_pid", return_value=999),
+                mock.patch("pipeline_gui.backend._pid_is_alive", side_effect=lambda pid: pid == 999),
+            ):
+                result = read_runtime_status(root)
             self.assertIsNotNone(result)
             self.assertEqual(result["run_id"], "20260411T010203Z-p123")
             self.assertEqual(result["runtime_state"], "RUNNING")
@@ -631,6 +635,670 @@ class TestRuntimeStatusRead(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self.assertIsNone(read_runtime_status(root))
+
+    def test_read_runtime_status_marks_stale_running_status_broken_when_supervisor_is_missing(self) -> None:
+        import json
+        from pipeline_runtime.schema import parse_iso_utc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pipeline_dir = root / ".pipeline"
+            run_dir = pipeline_dir / "runs" / "20260411T010203Z-p123"
+            updated_at = "2026-04-11T01:02:03Z"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "20260411T010203Z-p123",
+                        "status_path": ".pipeline/runs/20260411T010203Z-p123/status.json",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "status.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "run_id": "20260411T010203Z-p123",
+                        "runtime_state": "RUNNING",
+                        "updated_at": updated_at,
+                        "degraded_reason": "",
+                        "degraded_reasons": [],
+                        "control": {
+                            "active_control_file": ".pipeline/claude_handoff.md",
+                            "active_control_seq": 17,
+                            "active_control_status": "implement",
+                            "active_control_updated_at": updated_at,
+                        },
+                        "lanes": [
+                            {
+                                "name": "Claude",
+                                "state": "READY",
+                                "note": "prompt_visible",
+                                "attachable": True,
+                                "pid": 4243,
+                            }
+                        ],
+                        "active_round": {
+                            "job_id": "job-1",
+                            "round": 1,
+                            "state": "VERIFYING",
+                        },
+                        "watcher": {
+                            "alive": True,
+                            "pid": 4242,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch("pipeline_gui.backend.time.time", return_value=parse_iso_utc(updated_at) + 20.0):
+                result = read_runtime_status(root)
+
+            self.assertIsNotNone(result)
+            self.assertEqual(result["runtime_state"], "BROKEN")
+            self.assertEqual(result["degraded_reason"], "supervisor_missing")
+            self.assertIn("supervisor_missing", result["degraded_reasons"])
+            self.assertEqual(result["control"]["active_control_status"], "none")
+            self.assertEqual(result["control"]["active_control_seq"], -1)
+            self.assertIsNone(result["active_round"])
+            self.assertEqual(result["lanes"][0]["state"], "BROKEN")
+            self.assertEqual(result["lanes"][0]["note"], "supervisor_missing")
+            self.assertIsNone(result["lanes"][0]["pid"])
+            self.assertFalse(result["lanes"][0]["attachable"])
+            self.assertEqual(result["watcher"]["alive"], False)
+            self.assertIsNone(result["watcher"]["pid"])
+
+    def test_read_runtime_status_converts_stopping_without_supervisor_into_stopped(self) -> None:
+        import json
+        from pipeline_runtime.schema import parse_iso_utc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pipeline_dir = root / ".pipeline"
+            run_dir = pipeline_dir / "runs" / "20260411T010203Z-p123"
+            updated_at = "2026-04-11T01:02:03Z"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "20260411T010203Z-p123",
+                        "status_path": ".pipeline/runs/20260411T010203Z-p123/status.json",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "status.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "run_id": "20260411T010203Z-p123",
+                        "runtime_state": "STOPPING",
+                        "updated_at": updated_at,
+                        "degraded_reason": "",
+                        "degraded_reasons": [],
+                        "control": {
+                            "active_control_file": ".pipeline/claude_handoff.md",
+                            "active_control_seq": 17,
+                            "active_control_status": "implement",
+                            "active_control_updated_at": updated_at,
+                        },
+                        "lanes": [
+                            {
+                                "name": "Claude",
+                                "state": "READY",
+                                "note": "prompt_visible",
+                                "attachable": True,
+                                "pid": 4243,
+                            }
+                        ],
+                        "active_round": {
+                            "job_id": "job-1",
+                            "round": 1,
+                            "state": "VERIFYING",
+                        },
+                        "watcher": {
+                            "alive": True,
+                            "pid": 4242,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch("pipeline_gui.backend.time.time", return_value=parse_iso_utc(updated_at) + 1.0):
+                result = read_runtime_status(root)
+
+            self.assertIsNotNone(result)
+            self.assertEqual(result["runtime_state"], "STOPPED")
+            self.assertEqual(result["degraded_reason"], "")
+            self.assertEqual(result["degraded_reasons"], [])
+            self.assertEqual(result["control"]["active_control_status"], "none")
+            self.assertEqual(result["control"]["active_control_seq"], -1)
+            self.assertIsNone(result["active_round"])
+            self.assertEqual(result["lanes"][0]["state"], "OFF")
+            self.assertEqual(result["lanes"][0]["note"], "stopped")
+            self.assertIsNone(result["lanes"][0]["pid"])
+            self.assertFalse(result["lanes"][0]["attachable"])
+            self.assertEqual(result["watcher"]["alive"], False)
+            self.assertIsNone(result["watcher"]["pid"])
+
+    def test_read_runtime_status_normalizes_broken_payload_when_supervisor_is_missing(self) -> None:
+        import json
+        from pipeline_runtime.schema import parse_iso_utc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pipeline_dir = root / ".pipeline"
+            run_dir = pipeline_dir / "runs" / "20260411T010203Z-p123"
+            updated_at = "2026-04-11T01:02:03Z"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "20260411T010203Z-p123",
+                        "status_path": ".pipeline/runs/20260411T010203Z-p123/status.json",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "status.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "run_id": "20260411T010203Z-p123",
+                        "runtime_state": "BROKEN",
+                        "updated_at": updated_at,
+                        "degraded_reason": "auth_login_required",
+                        "degraded_reasons": ["auth_login_required"],
+                        "control": {
+                            "active_control_file": ".pipeline/claude_handoff.md",
+                            "active_control_seq": 17,
+                            "active_control_status": "implement",
+                            "active_control_updated_at": updated_at,
+                        },
+                        "lanes": [
+                            {
+                                "name": "Claude",
+                                "state": "BROKEN",
+                                "note": "auth_login_required",
+                                "attachable": True,
+                                "pid": 4243,
+                            }
+                        ],
+                        "active_round": {
+                            "job_id": "job-1",
+                            "round": 1,
+                            "state": "VERIFYING",
+                        },
+                        "watcher": {
+                            "alive": True,
+                            "pid": 4242,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch("pipeline_gui.backend.time.time", return_value=parse_iso_utc(updated_at) + 1.0):
+                result = read_runtime_status(root)
+
+            self.assertIsNotNone(result)
+            self.assertEqual(result["runtime_state"], "BROKEN")
+            self.assertEqual(result["degraded_reason"], "supervisor_missing")
+            self.assertIn("supervisor_missing", result["degraded_reasons"])
+            self.assertEqual(result["control"]["active_control_status"], "none")
+            self.assertEqual(result["control"]["active_control_seq"], -1)
+            self.assertIsNone(result["active_round"])
+            self.assertEqual(result["lanes"][0]["state"], "BROKEN")
+            self.assertEqual(result["lanes"][0]["note"], "supervisor_missing")
+            self.assertIsNone(result["lanes"][0]["pid"])
+            self.assertFalse(result["lanes"][0]["attachable"])
+            self.assertEqual(result["watcher"]["alive"], False)
+            self.assertIsNone(result["watcher"]["pid"])
+
+    def test_read_runtime_status_marks_recent_quiescent_running_status_broken_without_supervisor(self) -> None:
+        import json
+        from pipeline_runtime.schema import parse_iso_utc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pipeline_dir = root / ".pipeline"
+            run_dir = pipeline_dir / "runs" / "20260411T010203Z-p123"
+            updated_at = "2026-04-11T01:02:03Z"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "20260411T010203Z-p123",
+                        "status_path": ".pipeline/runs/20260411T010203Z-p123/status.json",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "status.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "run_id": "20260411T010203Z-p123",
+                        "runtime_state": "RUNNING",
+                        "updated_at": updated_at,
+                        "degraded_reason": "",
+                        "degraded_reasons": [],
+                        "control": {
+                            "active_control_file": ".pipeline/claude_handoff.md",
+                            "active_control_seq": 17,
+                            "active_control_status": "implement",
+                            "active_control_updated_at": updated_at,
+                        },
+                        "lanes": [
+                            {
+                                "name": "Claude",
+                                "state": "READY",
+                                "note": "prompt_visible",
+                                "attachable": True,
+                                "pid": 4243,
+                            }
+                        ],
+                        "active_round": {
+                            "job_id": "job-1",
+                            "round": 1,
+                            "state": "VERIFYING",
+                        },
+                        "watcher": {
+                            "alive": True,
+                            "pid": 4242,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                mock.patch("pipeline_gui.backend.time.time", return_value=parse_iso_utc(updated_at) + 1.0),
+                mock.patch("pipeline_gui.backend._pid_is_alive", side_effect=lambda pid: False),
+            ):
+                result = read_runtime_status(root)
+
+            self.assertIsNotNone(result)
+            self.assertEqual(result["runtime_state"], "BROKEN")
+            self.assertEqual(result["degraded_reason"], "supervisor_missing")
+            self.assertIn("supervisor_missing", result["degraded_reasons"])
+            self.assertEqual(result["control"]["active_control_status"], "none")
+            self.assertEqual(result["control"]["active_control_seq"], -1)
+            self.assertIsNone(result["active_round"])
+            self.assertEqual(result["lanes"][0]["state"], "BROKEN")
+            self.assertEqual(result["lanes"][0]["note"], "supervisor_missing")
+            self.assertIsNone(result["lanes"][0]["pid"])
+            self.assertFalse(result["lanes"][0]["attachable"])
+            self.assertEqual(result["watcher"]["alive"], False)
+            self.assertIsNone(result["watcher"]["pid"])
+
+    def test_read_runtime_status_marks_recent_field_quiescent_running_status_broken_without_pids(self) -> None:
+        import json
+        from pipeline_runtime.schema import parse_iso_utc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pipeline_dir = root / ".pipeline"
+            run_dir = pipeline_dir / "runs" / "20260411T010203Z-p123"
+            updated_at = "2026-04-11T01:02:03Z"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "20260411T010203Z-p123",
+                        "status_path": ".pipeline/runs/20260411T010203Z-p123/status.json",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "status.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "run_id": "20260411T010203Z-p123",
+                        "runtime_state": "RUNNING",
+                        "updated_at": updated_at,
+                        "degraded_reason": "",
+                        "degraded_reasons": [],
+                        "control": {
+                            "active_control_file": "",
+                            "active_control_seq": -1,
+                            "active_control_status": "none",
+                            "active_control_updated_at": "",
+                        },
+                        "lanes": [
+                            {
+                                "name": "Claude",
+                                "state": "OFF",
+                                "note": "stopped",
+                                "attachable": False,
+                                "pid": None,
+                            }
+                        ],
+                        "active_round": None,
+                        "watcher": {
+                            "alive": False,
+                            "pid": None,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch("pipeline_gui.backend.time.time", return_value=parse_iso_utc(updated_at) + 1.0):
+                result = read_runtime_status(root)
+
+            self.assertIsNotNone(result)
+            self.assertEqual(result["runtime_state"], "BROKEN")
+            self.assertEqual(result["degraded_reason"], "supervisor_missing")
+            self.assertIn("supervisor_missing", result["degraded_reasons"])
+            self.assertEqual(result["control"]["active_control_status"], "none")
+            self.assertEqual(result["control"]["active_control_seq"], -1)
+            self.assertIsNone(result["active_round"])
+            self.assertEqual(result["lanes"][0]["state"], "OFF")
+            self.assertEqual(result["lanes"][0]["note"], "supervisor_missing")
+            self.assertIsNone(result["lanes"][0]["pid"])
+            self.assertFalse(result["lanes"][0]["attachable"])
+            self.assertEqual(result["watcher"]["alive"], False)
+            self.assertIsNone(result["watcher"]["pid"])
+
+    def test_read_runtime_status_marks_recent_active_lane_without_supervisor_pid_degraded_ambiguous(self) -> None:
+        import json
+        from pipeline_runtime.schema import parse_iso_utc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pipeline_dir = root / ".pipeline"
+            run_dir = pipeline_dir / "runs" / "20260411T010203Z-p123"
+            updated_at = "2026-04-11T01:02:03Z"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "20260411T010203Z-p123",
+                        "status_path": ".pipeline/runs/20260411T010203Z-p123/status.json",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "status.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "run_id": "20260411T010203Z-p123",
+                        "runtime_state": "RUNNING",
+                        "updated_at": updated_at,
+                        "lanes": [
+                            {
+                                "name": "Claude",
+                                "state": "READY",
+                                "note": "prompt_visible",
+                                "attachable": True,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch("pipeline_gui.backend.time.time", return_value=parse_iso_utc(updated_at) + 10.0):
+                result = read_runtime_status(root)
+
+            self.assertIsNotNone(result)
+            self.assertEqual(result["runtime_state"], "DEGRADED")
+            self.assertEqual(result["degraded_reason"], "supervisor_missing_recent_ambiguous")
+            self.assertIn("supervisor_missing_recent_ambiguous", result["degraded_reasons"])
+            self.assertEqual(result["lanes"][0]["state"], "READY")
+
+    def test_read_runtime_status_converts_aged_ambiguous_snapshot_into_broken(self) -> None:
+        import json
+        from pipeline_runtime.schema import parse_iso_utc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pipeline_dir = root / ".pipeline"
+            run_dir = pipeline_dir / "runs" / "20260411T010203Z-p123"
+            updated_at = "2026-04-11T01:02:03Z"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "20260411T010203Z-p123",
+                        "status_path": ".pipeline/runs/20260411T010203Z-p123/status.json",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "status.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "run_id": "20260411T010203Z-p123",
+                        "runtime_state": "RUNNING",
+                        "updated_at": updated_at,
+                        "control": {
+                            "active_control_file": ".pipeline/claude_handoff.md",
+                            "active_control_seq": 17,
+                            "active_control_status": "implement",
+                            "active_control_updated_at": updated_at,
+                        },
+                        "lanes": [
+                            {
+                                "name": "Claude",
+                                "state": "READY",
+                                "note": "prompt_visible",
+                                "attachable": True,
+                                "pid": None,
+                            }
+                        ],
+                        "active_round": {
+                            "job_id": "job-1",
+                            "round": 1,
+                            "state": "VERIFYING",
+                        },
+                        "watcher": {
+                            "alive": False,
+                            "pid": None,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch("pipeline_gui.backend.time.time", return_value=parse_iso_utc(updated_at) + 20.0):
+                result = read_runtime_status(root)
+
+            self.assertIsNotNone(result)
+            self.assertEqual(result["runtime_state"], "BROKEN")
+            self.assertEqual(result["degraded_reason"], "supervisor_missing")
+            self.assertEqual(result["control"]["active_control_status"], "none")
+            self.assertIsNone(result["active_round"])
+            self.assertEqual(result["lanes"][0]["state"], "BROKEN")
+            self.assertEqual(result["lanes"][0]["note"], "supervisor_missing")
+            self.assertEqual(result["watcher"]["alive"], False)
+
+    def test_read_runtime_status_does_not_mark_ambiguous_when_supervisor_is_alive(self) -> None:
+        import json
+        from pipeline_runtime.schema import parse_iso_utc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pipeline_dir = root / ".pipeline"
+            run_dir = pipeline_dir / "runs" / "20260411T010203Z-p123"
+            updated_at = "2026-04-11T01:02:03Z"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "20260411T010203Z-p123",
+                        "status_path": ".pipeline/runs/20260411T010203Z-p123/status.json",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "status.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "run_id": "20260411T010203Z-p123",
+                        "runtime_state": "RUNNING",
+                        "updated_at": updated_at,
+                        "control": {
+                            "active_control_file": ".pipeline/claude_handoff.md",
+                            "active_control_seq": 17,
+                            "active_control_status": "implement",
+                            "active_control_updated_at": updated_at,
+                        },
+                        "lanes": [
+                            {
+                                "name": "Claude",
+                                "state": "READY",
+                                "note": "prompt_visible",
+                                "attachable": True,
+                                "pid": None,
+                            }
+                        ],
+                        "active_round": {
+                            "job_id": "job-1",
+                            "round": 1,
+                            "state": "VERIFYING",
+                        },
+                        "watcher": {
+                            "alive": False,
+                            "pid": None,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                mock.patch("pipeline_gui.backend.time.time", return_value=parse_iso_utc(updated_at) + 10.0),
+                mock.patch("pipeline_gui.backend._supervisor_pid", return_value=999),
+                mock.patch("pipeline_gui.backend._pid_is_alive", side_effect=lambda pid: pid == 999),
+            ):
+                result = read_runtime_status(root)
+
+            self.assertIsNotNone(result)
+            self.assertEqual(result["runtime_state"], "RUNNING")
+            self.assertEqual(result["control"]["active_control_status"], "implement")
+            self.assertEqual(result["lanes"][0]["state"], "READY")
+
+    def test_read_runtime_status_marks_undated_ambiguous_snapshot_degraded(self) -> None:
+        import json
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pipeline_dir = root / ".pipeline"
+            run_dir = pipeline_dir / "runs" / "20260411T010203Z-p123"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "20260411T010203Z-p123",
+                        "status_path": ".pipeline/runs/20260411T010203Z-p123/status.json",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "status.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "run_id": "20260411T010203Z-p123",
+                        "runtime_state": "RUNNING",
+                        "control": {
+                            "active_control_file": ".pipeline/claude_handoff.md",
+                            "active_control_seq": 17,
+                            "active_control_status": "implement",
+                            "active_control_updated_at": "",
+                        },
+                        "lanes": [
+                            {
+                                "name": "Claude",
+                                "state": "READY",
+                                "note": "prompt_visible",
+                                "attachable": True,
+                                "pid": None,
+                            }
+                        ],
+                        "active_round": {
+                            "job_id": "job-1",
+                            "round": 1,
+                            "state": "VERIFYING",
+                        },
+                        "watcher": {
+                            "alive": True,
+                            "pid": None,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = read_runtime_status(root)
+
+            self.assertIsNotNone(result)
+            self.assertEqual(result["runtime_state"], "DEGRADED")
+            self.assertEqual(result["degraded_reason"], "supervisor_missing_snapshot_undated")
+            self.assertIn("supervisor_missing_snapshot_undated", result["degraded_reasons"])
+            self.assertEqual(result["control"]["active_control_status"], "implement")
+            self.assertEqual(result["watcher"]["alive"], True)
+
+    def test_read_runtime_status_marks_watcher_only_alive_without_pid_degraded_ambiguous(self) -> None:
+        import json
+        from pipeline_runtime.schema import parse_iso_utc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pipeline_dir = root / ".pipeline"
+            run_dir = pipeline_dir / "runs" / "20260411T010203Z-p123"
+            updated_at = "2026-04-11T01:02:03Z"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "20260411T010203Z-p123",
+                        "status_path": ".pipeline/runs/20260411T010203Z-p123/status.json",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "status.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "run_id": "20260411T010203Z-p123",
+                        "runtime_state": "RUNNING",
+                        "updated_at": updated_at,
+                        "control": {
+                            "active_control_file": "",
+                            "active_control_seq": -1,
+                            "active_control_status": "none",
+                            "active_control_updated_at": "",
+                        },
+                        "lanes": [],
+                        "active_round": None,
+                        "watcher": {
+                            "alive": True,
+                            "pid": None,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch("pipeline_gui.backend.time.time", return_value=parse_iso_utc(updated_at) + 5.0):
+                result = read_runtime_status(root)
+
+            self.assertIsNotNone(result)
+            self.assertEqual(result["runtime_state"], "DEGRADED")
+            self.assertEqual(result["degraded_reason"], "supervisor_missing_recent_ambiguous")
+            self.assertIn("supervisor_missing_recent_ambiguous", result["degraded_reasons"])
+            self.assertEqual(result["watcher"]["alive"], True)
 
     def test_normalize_runtime_status_drops_non_mapping_payload(self) -> None:
         self.assertEqual(normalize_runtime_status("broken-payload"), {})

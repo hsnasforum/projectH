@@ -3,2007 +3,2555 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pipeline Controller</title>
+<title>Pipeline Controller — Office</title>
 <style>
+  /* ═══════════════════════════════════════ */
+  /* Reset & Base                           */
+  /* ═══════════════════════════════════════ */
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; }
-  body { font-family: 'Noto Sans KR', -apple-system, sans-serif; background: #0f0f0f; color: #e0e0e0; }
+  body {
+    font-family: 'Noto Sans KR', -apple-system, 'Segoe UI', sans-serif;
+    background: #0a0c14; color: #cdd6e4;
+  }
 
-  /* ── Toolbar ── */
+  /* ═══════════════════════════════════════ */
+  /* Toolbar                                */
+  /* ═══════════════════════════════════════ */
   .toolbar {
-    display: flex; align-items: center; gap: 16px;
-    padding: 10px 20px; background: #1a1a1a; border-bottom: 1px solid #333;
-    min-width: 0; overflow: hidden;
+    display: flex; align-items: center; gap: 12px;
+    height: 44px; padding: 0 16px;
+    background: #111520; border-bottom: 1px solid #1e2636;
   }
-  .toolbar .title { font-size: 15px; font-weight: 700; color: #60a5fa; }
-  .toolbar .status { font-size: 13px; padding: 3px 10px; border-radius: 12px; }
-  .toolbar .status.running { background: #064e3b; color: #34d399; }
-  .toolbar .status.stopped { background: #7f1d1d; color: #fca5a5; }
-  .toolbar .btn {
-    padding: 5px 14px; border: 1px solid #444; border-radius: 6px;
-    background: #222; color: #ccc; font-size: 12px; cursor: pointer;
+  .toolbar .title {
+    font-size: 14px; font-weight: 700; color: #60a5fa;
+    letter-spacing: 0;
   }
-  .toolbar .btn:hover { background: #333; }
-  .toolbar .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .toolbar .view-tabs { display: flex; align-items: center; gap: 6px; }
-  .toolbar .view-label { font-size: 11px; color: #777; }
-  .toolbar .view-tab {
-    padding: 4px 10px; border: 1px solid #444; border-radius: 999px;
-    background: #181818; color: #aaa; font-size: 11px; cursor: pointer;
+  .toolbar .badge {
+    font-size: 11px; font-weight: 700; padding: 2px 10px;
+    border-radius: 999px; text-transform: uppercase; letter-spacing: .04em;
   }
-  .toolbar .view-tab.active { background: #1d4ed8; border-color: #2563eb; color: #fff; }
+  .badge.running  { background: #064e3b; color: #34d399; }
+  .badge.stopped  { background: #7f1d1d; color: #fca5a5; }
+  .badge.degraded { background: #78350f; color: #fbbf24; }
+  .badge.stopping { background: #1d3557; color: #93c5fd; }
+  .badge.broken   { background: #451a1a; color: #f87171; }
   .toolbar .spacer { flex: 1; }
-  .toolbar .info {
-    font-size: 11px; color: #888; min-width: 0; max-width: 32vw;
+  .toolbar .btn {
+    padding: 4px 12px; border: 1px solid #2b3548; border-radius: 6px;
+    background: #161c2a; color: #8fa3b8; font-size: 11px; cursor: pointer;
+    font-family: inherit; transition: background 80ms;
+  }
+  .toolbar .btn:hover { background: #1e2840; color: #cdd6e4; }
+  .toolbar .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .toolbar .storage-warn {
+    display: none; font-size: 10px; color: #fbbf24; padding: 2px 8px;
+    border: 1px solid #78350f; border-radius: 6px; background: rgba(120,53,15,0.3);
+    white-space: nowrap; cursor: default;
+  }
+  .toolbar .project-path {
+    font-size: 10px; color: #3d4e5e;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 28vw;
   }
 
-  /* ── Layout ── */
-  .main { display: flex; height: calc(100vh - 44px); min-width: 0; overflow: hidden; }
-  .sidebar {
-    width: 180px; background: #141414; border-right: 1px solid #333; padding: 12px;
-    overflow-y: auto; overflow-x: hidden; flex-shrink: 0; min-width: 180px;
-  }
-  .center { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
-  .right-panel {
-    width: 280px; background: #141414; border-left: 1px solid #333; padding: 12px;
-    overflow-y: auto; overflow-x: hidden; flex-shrink: 0; min-width: 220px;
-  }
-  .main.focus-mode .sidebar { width: 140px; }
-  .main.focus-mode .right-panel { display: block; }
-
-  /* ── Sidebar ── */
-  .sidebar h3 { font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
-  .sidebar .item {
-    font-size: 12px; color: #aaa; margin-bottom: 6px; line-height: 1.5;
-    overflow-wrap: anywhere; word-break: break-word;
-  }
-  .sidebar .item .label { color: #666; }
-  .agent-list { margin-top: 12px; }
-  .agent-item {
-    display: flex; align-items: center; gap: 8px;
-    padding: 6px 8px; border-radius: 6px; margin-bottom: 4px; font-size: 12px;
-    min-width: 0;
-  }
-  .agent-item:hover { background: #1e1e1e; }
-  .agent-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .agent-meta { margin-left: auto; display: flex; align-items: center; gap: 6px; min-width: 0; }
-  .agent-status {
-    font-size: 10px; padding: 2px 8px; border-radius: 999px; text-transform: uppercase;
-    letter-spacing: .03em; font-weight: 700;
-  }
-  .agent-status.working { background: #064e3b; color: #34d399; }
-  .agent-status.ready { background: #1e3a5f; color: #60a5fa; }
-  .agent-status.booting, .agent-status.unknown { background: #4a3414; color: #fbbf24; }
-  .agent-status.broken { background: #7f1d1d; color: #fca5a5; }
-  .agent-status.dead, .agent-status.off { background: #7f1d1d; color: #fca5a5; }
-  .agent-note {
-    color: #999; font-size: 10px; min-width: 0; max-width: 56px;
-    text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .dot.working { background: #34d399; }
-  .dot.idle, .dot.ready { background: #60a5fa; }
-  .dot.booting { background: #f59e0b; }
-  .dot.broken { background: #ef4444; }
-  .dot.off { background: #555; }
-  .dot.dead { background: #ef4444; }
-  .dot.unknown { background: #a78bfa; }
-  .agent-role { color: #666; font-size: 10px; }
-
- /* 2. 패널 전체 영역 설정 확인 */
-  .pane-area {
-    flex: 1;
-    display: flex;
-    gap: 1px;
-    background: #333;
-    overflow: hidden;
-    align-items: stretch;
-    width: 100%; /* 부모 너비의 100% 사용 */
-  }
-  /* 1. 개별 패널의 너비 제한 풀기 */
-  .pane {
-    flex: 1 1 0;      /* 중요: 세 영역이 화면을 정확히 1/3씩 나눠 갖도록 함 */
-    min-width: 0;     /* 기존 280px 설정을 0으로 줄여서 유연하게 확장 */
-    display: flex;
-    flex-direction: column;
-    background: #0f0f0f;
-    overflow: hidden;
-  }
-  .pane-area.focused .pane {
-    flex: 1 0 100%;
-    min-width: 100%;
-  }
-  .pane-header {
-    display: flex; align-items: center; gap: 6px;
-    padding: 6px 10px; background: #1a1a1a; border-bottom: 1px solid #333;
-    font-size: 12px; flex-shrink: 0; min-width: 0;
-  }
-  .pane-header .name {
-    font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .pane-header .badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; }
-  .pane-header .badge.working { background: #064e3b; color: #34d399; }
-  .pane-header .badge.idle, .pane-header .badge.ready { background: #1e3a5f; color: #60a5fa; }
-  .pane-header .badge.booting, .pane-header .badge.unknown { background: #4a3414; color: #fbbf24; }
-  .pane-header .badge.broken { background: #7f1d1d; color: #fca5a5; }
-  .pane-header .badge.off { background: #333; color: #888; }
-  .pane-header .badge.dead { background: #7f1d1d; color: #fca5a5; }
-  .pane-header .meta { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .pane-header .note {
-    font-size: 10px; color: #a3a3a3; min-width: 0; max-width: 96px;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .pane-body {
-  flex: 1;
-  padding: 12px 14px;
-  overflow-y: auto;
-  overflow-x: hidden;
-  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
-  font-size: 13px;
-  line-height: 1.5;
-  color: #ccc;
-
-  /* ── 이 설정들이 그릇을 넓혀줍니다 ── */
-  display: block !important;
-  width: 100% !important;
-  min-width: 0 !important;
-  box-sizing: border-box;
-
-  white-space: pre-wrap;     /* 줄바꿈 유지 */
-  word-break: normal;
-  overflow-wrap: anywhere;   /* 박스 이탈 방지 */
-  tab-size: 2;
-  text-align: left;
-  }
-  .pane-area::-webkit-scrollbar,
-  .pane-body::-webkit-scrollbar {
-    width: 12px;
-    height: 12px;
-  }
-  .pane-area::-webkit-scrollbar-thumb,
-  .pane-body::-webkit-scrollbar-thumb {
-    background: #3f3f46;
-    border-radius: 999px;
-    border: 2px solid #111;
-  }
-  .pane-area::-webkit-scrollbar-track,
-  .pane-body::-webkit-scrollbar-track {
-    background: #111;
-  }
-  .center.office-mode .pane-area { display: none; }
-  .office-area {
-    display: none;
-    flex: 1;
-    overflow: auto;
-    padding: 18px;
-    background:
-      radial-gradient(circle at 16% 10%, rgba(59, 130, 246, 0.16), transparent 24%),
-      radial-gradient(circle at 52% 4%, rgba(34, 197, 94, 0.10), transparent 22%),
-      radial-gradient(circle at 84% 12%, rgba(125, 211, 252, 0.12), transparent 24%),
-      linear-gradient(180deg, #0d1118 0%, #090c12 46%, #06080c 100%);
-  }
-  .center.office-mode .office-area { display: block; }
-  .office-stage {
-    min-height: 100%;
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
-  }
-  .office-card {
-    background:
-      linear-gradient(180deg, rgba(17, 21, 31, 0.97), rgba(9, 11, 17, 0.98)),
-      linear-gradient(135deg, rgba(96, 165, 250, 0.05), transparent 70%);
-    border: 1px solid #2b3140;
-    border-radius: 18px;
-    padding: 12px 14px;
-    box-shadow: 0 14px 30px rgba(0,0,0,0.28);
-    min-width: 0;
-  }
-  .office-card .label {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: #7c8596;
-    margin-bottom: 6px;
-  }
-  .office-card .value {
-    font-size: 16px;
-    font-weight: 700;
-    color: #f3f4f6;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-  }
-  .office-card .subvalue {
-    margin-top: 6px;
-    color: #9aa3b5;
-    font-size: 11px;
-    line-height: 1.45;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-  }
-  .office-card .value.running { color: #34d399; }
-  .office-card .value.alive { color: #60a5fa; }
-  .office-card .value.degraded,
-  .office-card .value.broken { color: #fca5a5; }
-  .office-shell {
-    display: grid;
-    grid-template-columns: minmax(0, 1.55fr) 260px;
-    gap: 16px;
-    align-items: stretch;
-    min-height: 640px;
-  }
-  .office-floor {
-    position: relative;
-    min-height: 640px;
-    border: 1px solid #232938;
-    border-radius: 28px;
-    padding: 24px;
-    overflow: hidden;
-    background:
-      radial-gradient(circle at 50% 0%, rgba(148, 163, 184, 0.10), transparent 45%),
-      linear-gradient(180deg, rgba(22, 28, 39, 0.98), rgba(8, 10, 15, 0.99));
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03), 0 22px 48px rgba(0,0,0,0.36);
-  }
-  .office-floor.degraded {
-    background:
-      radial-gradient(circle at 50% 0%, rgba(248, 113, 113, 0.12), transparent 42%),
-      linear-gradient(180deg, rgba(28, 20, 23, 0.98), rgba(10, 9, 12, 0.99));
-  }
-  .office-floor::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background-image:
-      linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
-    background-size: 36px 36px, 36px 36px;
-    opacity: 0.26;
-    pointer-events: none;
-  }
-  .office-floor::after {
-    content: "";
-    position: absolute;
-    left: 22px;
-    right: 22px;
-    bottom: 0;
-    height: 180px;
-    border-radius: 24px 24px 0 0;
-    background:
-      linear-gradient(180deg, rgba(67, 74, 92, 0.10), rgba(17, 21, 28, 0.18)),
-      linear-gradient(180deg, rgba(34, 38, 47, 0.22), rgba(13, 16, 21, 0.82));
-    pointer-events: none;
-  }
-  .office-floor-glow {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background:
-      radial-gradient(circle at 15% 56%, rgba(59, 130, 246, 0.14), transparent 20%),
-      radial-gradient(circle at 50% 48%, rgba(16, 185, 129, 0.12), transparent 18%),
-      radial-gradient(circle at 84% 56%, rgba(129, 140, 248, 0.12), transparent 20%);
-    opacity: 0.9;
-  }
-  .office-floor.degraded .office-floor-glow {
-    background:
-      radial-gradient(circle at 50% 18%, rgba(248, 113, 113, 0.18), transparent 22%),
-      radial-gradient(circle at 50% 68%, rgba(239, 68, 68, 0.10), transparent 26%);
-  }
-  .office-window-band {
-    position: absolute;
-    left: 28px;
-    right: 28px;
-    top: 22px;
-    height: 118px;
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 14px;
-    opacity: 0.95;
-    pointer-events: none;
-  }
-  .office-window {
-    position: relative;
-    border-radius: 18px 18px 10px 10px;
-    border: 1px solid rgba(92, 101, 122, 0.4);
-    background:
-      linear-gradient(180deg, rgba(9, 17, 29, 0.96), rgba(15, 25, 45, 0.72)),
-      linear-gradient(90deg, rgba(255,255,255,0.03), transparent 25%, rgba(255,255,255,0.04) 55%, transparent 85%);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
-    overflow: hidden;
-  }
-  .office-window::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background:
-      linear-gradient(180deg, rgba(255,255,255,0.07), transparent 42%),
-      repeating-linear-gradient(90deg, transparent 0 62px, rgba(255,255,255,0.08) 62px 64px);
-    opacity: 0.45;
-  }
-  .office-window::after {
-    content: "";
-    position: absolute;
-    inset: auto 14px 12px 14px;
-    height: 30px;
-    border-radius: 999px;
-    background: radial-gradient(circle, rgba(148, 197, 255, 0.22), transparent 70%);
-    filter: blur(10px);
-  }
-  .office-floor-header {
-    position: relative;
-    z-index: 1;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 12px;
-    color: #d6d9df;
-  }
-  .office-floor-title {
-    font-size: 24px;
-    font-weight: 800;
-    letter-spacing: -0.02em;
-  }
-  .office-floor-hint {
-    font-size: 11px;
-    color: #99a2b5;
-    line-height: 1.5;
-  }
-  .office-grid {
-    position: relative;
-    z-index: 1;
-    min-height: 560px;
-    margin-top: 18px;
-  }
-  .office-desks {
-    position: relative;
-    min-height: 560px;
-    padding: 110px 12px 18px;
-  }
-  .office-desk {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    min-height: 360px;
-    border: none;
-    border-radius: 22px;
-    padding: 0;
-    background: transparent;
-    box-shadow: none;
-    overflow: visible;
-  }
-  .office-desk-scene {
-    position: absolute;
-    width: min(31%, 320px);
-    min-width: 260px;
-    max-width: 360px;
-    transition: transform 220ms ease, filter 220ms ease;
-  }
-  .office-desk-scene.claude {
-    left: 2%;
-    bottom: 18px;
-  }
-  .office-desk-scene.codex {
-    left: 34%;
-    bottom: 54px;
-  }
-  .office-desk-scene.gemini {
-    right: 2%;
-    bottom: 12px;
-  }
-  .office-desk-scene.active {
-    transform: translateY(-6px) scale(1.01);
-  }
-  .office-desk-scene.implement .office-desk-header { color: #dbeafe; }
-  .office-desk-scene.verify .office-desk-header { color: #dcfce7; }
-  .office-desk-scene.advisory .office-desk-header { color: #e0e7ff; }
-  .office-desk-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    margin-bottom: 10px;
-    padding: 0 8px 10px;
-  }
-  .office-agent-label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-  }
-  .office-agent-label .name {
-    font-size: 14px;
-    font-weight: 700;
-    color: #f3f4f6;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .office-agent-label .role {
-    display: none;
-  }
-  .office-state-pill {
-    font-size: 10px;
-    padding: 3px 8px;
-    border-radius: 999px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  .office-state-pill.ready { background: #1e3a5f; color: #93c5fd; }
-  .office-state-pill.working { background: #064e3b; color: #6ee7b7; }
-  .office-state-pill.booting,
-  .office-state-pill.unknown { background: #4a3414; color: #fbbf24; }
-  .office-state-pill.broken,
-  .office-state-pill.dead,
-  .office-state-pill.off { background: #7f1d1d; color: #fca5a5; }
-  .office-bubble {
-    min-height: 48px;
-    padding: 9px 11px;
-    border-radius: 14px;
-    border: 1px solid #394253;
-    background: rgba(13, 16, 24, 0.94);
-    color: #d3d8e2;
-    font-size: 10px;
-    line-height: 1.45;
-    white-space: pre-wrap;
-    word-break: normal;
-    overflow-wrap: anywhere;
-    margin: 0 6px 14px;
-    box-shadow: 0 10px 20px rgba(0,0,0,0.22);
-  }
-  .office-bubble.idle {
-    display: flex;
-    align-items: center;
-    color: #98a2b3;
-    border-color: #2f3744;
-    background: rgba(11, 14, 21, 0.92);
-  }
-  .office-avatar-zone {
-    position: relative;
-    flex: 1;
-    display: flex;
-    align-items: flex-end;
-    justify-content: center;
-    min-height: 206px;
-  }
-  .office-monitor {
-    position: absolute;
-    left: 18px;
-    bottom: 54px;
-    width: 102px;
-    height: 70px;
-    border-radius: 10px;
-    border: 2px solid #2a3140;
-    background: #0b1220;
-    box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.35);
-  }
-  .office-monitor::before {
-    content: "";
-    position: absolute;
-    inset: 7px;
-    border-radius: 6px;
-    background:
-      linear-gradient(180deg, rgba(96,165,250,0.22), rgba(16,24,40,0.7)),
-      repeating-linear-gradient(180deg, rgba(255,255,255,0.08) 0 2px, transparent 2px 7px);
-    opacity: 0.65;
-  }
-  .office-monitor::after {
-    content: "";
-    position: absolute;
-    left: 32px;
-    right: 32px;
-    bottom: -13px;
-    height: 14px;
-    border-radius: 0 0 10px 10px;
-    background: #2a3140;
-  }
-  .office-desk.working .office-monitor::before {
-    animation: monitor-flicker 1.4s steps(3) infinite;
-  }
-  .office-desk-scene.auth-required .office-monitor {
-    border-color: #dc2626;
-    box-shadow: 0 0 0 3px rgba(127, 29, 29, 0.34);
-  }
-  .office-agent {
-    position: relative;
-    width: 92px;
-    height: 132px;
-    transform-origin: center bottom;
-    animation: office-idle 3.4s ease-in-out infinite;
-  }
-  .office-agent.ready { animation: office-idle 3.4s ease-in-out infinite; }
-  .office-agent.working { animation: office-typing 0.9s ease-in-out infinite; }
-  .office-agent.booting { animation: office-boot 0.8s ease-in-out infinite alternate; }
-  .office-agent.broken,
-  .office-agent.dead,
-  .office-agent.off { animation: office-alert 1.8s ease-in-out infinite; }
-  .office-agent-shadow {
-    position: absolute;
-    left: 16px;
-    right: 16px;
-    bottom: -4px;
-    height: 12px;
-    border-radius: 999px;
-    background: rgba(0, 0, 0, 0.34);
-    filter: blur(2px);
-  }
-  .office-agent-head {
-    position: absolute;
-    top: 0;
-    left: 24px;
-    width: 34px;
-    height: 34px;
-    border-radius: 11px;
-    background: #f1c7a9;
-    box-shadow: inset 0 -2px 0 rgba(0,0,0,0.14);
-  }
-  .office-agent-head::before {
-    content: "";
-    position: absolute;
-    inset: 0 0 14px 0;
-    border-radius: 11px 11px 8px 8px;
-    background: linear-gradient(180deg, #20242d 0%, #353946 100%);
-  }
-  .office-agent-body {
-    position: absolute;
-    top: 28px;
-    left: 18px;
-    width: 46px;
-    height: 48px;
-    border-radius: 12px 12px 18px 18px;
-    background: linear-gradient(180deg, #60a5fa, #2563eb);
-  }
-  .office-agent.working .office-agent-body { background: linear-gradient(180deg, #34d399, #0f766e); }
-  .office-agent.booting .office-agent-body { background: linear-gradient(180deg, #fbbf24, #b45309); }
-  .office-agent.broken .office-agent-body,
-  .office-agent.dead .office-agent-body,
-  .office-agent.off .office-agent-body { background: linear-gradient(180deg, #ef4444, #991b1b); }
-  .office-agent-arm {
-    position: absolute;
-    top: 38px;
-    width: 13px;
-    height: 42px;
-    border-radius: 999px;
-    background: #f1c7a9;
-  }
-  .office-agent-arm.left { left: 10px; transform: rotate(18deg); }
-  .office-agent-arm.right { right: 10px; transform: rotate(-18deg); }
-  .office-agent.working .office-agent-arm.left { animation: arm-left 0.7s ease-in-out infinite; }
-  .office-agent.working .office-agent-arm.right { animation: arm-right 0.7s ease-in-out infinite; }
-  .office-sprite-stage {
-    position: relative;
-    width: 240px;
-    height: 240px;
-    display: flex;
-    align-items: flex-end;
-    justify-content: center;
-    transform-origin: center bottom;
-    animation: office-idle 3.4s ease-in-out infinite;
-  }
-  .office-sprite-stage::after {
-    content: "";
-    position: absolute;
-    left: 50%;
-    bottom: 6px;
-    width: 96px;
-    height: 18px;
-    margin-left: -48px;
-    border-radius: 999px;
-    background: rgba(0, 0, 0, 0.28);
-    filter: blur(6px);
-  }
-  .office-sprite-layers {
-    position: relative;
-    width: 240px;
-    height: 220px;
-  }
-  .office-sprite-stage.working { animation: office-typing 0.9s ease-in-out infinite; }
-  .office-sprite-stage.booting { animation: office-boot 0.8s ease-in-out infinite alternate; }
-  .office-sprite-stage.broken,
-  .office-sprite-stage.dead,
-  .office-sprite-stage.off {
-    animation: office-alert 1.8s ease-in-out infinite;
-  }
-  .office-sprite-stage.ready { animation: office-idle 3.4s ease-in-out infinite; }
-  .office-sprite {
-    position: absolute;
-    left: 50%;
-    bottom: 0;
-    transform: translateX(-50%);
-    z-index: 1;
-    display: block;
-    max-width: 240px;
-    max-height: 210px;
+  /* ═══════════════════════════════════════ */
+  /* Main Layout                            */
+  /* ═══════════════════════════════════════ */
+  .main {
+    display: flex; height: calc(100vh - 44px);
+  }
+  .canvas-wrap {
+    flex: 1; position: relative; overflow: hidden;
+    background: #0d1018;
+  }
+  #office {
+    display: block; width: 100%; height: 100%;
     image-rendering: pixelated;
-    image-rendering: crisp-edges;
-    filter: drop-shadow(0 10px 12px rgba(0, 0, 0, 0.35));
-    opacity: 0;
-    transition: opacity 140ms linear;
-    will-change: opacity;
-  }
-  .office-sprite.active { opacity: 1; }
-  .office-sprite.office-state-gif {
-    width: 180px;
-    height: auto;
-    max-width: 180px;
-    max-height: 210px;
-    object-fit: contain;
-  }
-  .office-sprite.broken,
-  .office-sprite.dead,
-  .office-sprite.off {
-    filter: grayscale(1) brightness(0.82) drop-shadow(0 10px 12px rgba(0, 0, 0, 0.35));
-  }
-  .office-agent-leg {
-    position: absolute;
-    bottom: 8px;
-    width: 14px;
-    height: 44px;
-    border-radius: 999px;
-    background: #1f2937;
-  }
-  .office-agent-leg.left { left: 24px; }
-  .office-agent-leg.right { right: 24px; }
-  .office-desk-surface {
-    margin-top: -12px;
-    height: 24px;
-    border-radius: 14px 14px 22px 22px;
-    background:
-      linear-gradient(180deg, #5d687d, #212734),
-      linear-gradient(90deg, rgba(255,255,255,0.06), transparent 28%, rgba(255,255,255,0.04) 72%, transparent);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 18px rgba(0,0,0,0.20);
-  }
-  .office-meta {
-    margin-top: 12px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    color: #9aa3b5;
-    font-size: 9px;
-    line-height: 1.4;
-  }
-  .office-meta-chip {
-    padding: 4px 8px;
-    border-radius: 999px;
-    background: rgba(19, 25, 35, 0.9);
-    border: 1px solid #2f3745;
-  }
-  .office-desk-scene.working .office-desk-surface {
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 1px rgba(52,211,153,0.22), 0 12px 28px rgba(16,185,129,0.16);
-  }
-  .office-desk-scene.ready .office-desk-surface {
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 1px rgba(96,165,250,0.16), 0 10px 20px rgba(59,130,246,0.12);
-  }
-  .office-desk-scene.broken .office-desk-surface,
-  .office-desk-scene.off .office-desk-surface,
-  .office-desk-scene.dead .office-desk-surface {
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 0 0 1px rgba(239,68,68,0.20), 0 12px 24px rgba(127,29,29,0.18);
-  }
-  .office-inspector {
-    position: relative;
-    min-height: 640px;
-    border-radius: 24px;
-    border: 1px solid #232938;
-    background:
-      linear-gradient(180deg, rgba(18, 20, 28, 0.97), rgba(9, 10, 14, 0.98)),
-      linear-gradient(135deg, rgba(59, 130, 246, 0.06), transparent 60%);
-    box-shadow: 0 20px 44px rgba(0,0,0,0.34);
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .office-inspector-title {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    color: #7c8596;
-    margin-bottom: 2px;
-  }
-  .office-inspector-value {
-    color: #f3f4f6;
-    font-size: 15px;
-    font-weight: 700;
-    line-height: 1.4;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-  }
-  .office-inspector-note {
-    color: #9aa3b5;
-    font-size: 11px;
-    line-height: 1.5;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-  }
-  .office-inspector-stack {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  .office-inspector-panel {
-    border-radius: 16px;
-    border: 1px solid #2b3140;
-    background: rgba(12, 15, 22, 0.88);
-    padding: 12px 13px;
-  }
-  .office-watcher {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .office-watcher-server {
-    width: 18px;
-    height: 28px;
-    border-radius: 6px;
-    background:
-      linear-gradient(180deg, #3b4250, #161b23);
-    border: 1px solid #4b5563;
-    position: relative;
-  }
-  .office-watcher-server::before,
-  .office-watcher-server::after {
-    content: "";
-    position: absolute;
-    left: 3px;
-    right: 3px;
-    height: 3px;
-    border-radius: 999px;
-    background: #34d399;
-    box-shadow: 0 0 6px rgba(52, 211, 153, 0.55);
-  }
-  .office-watcher-server::before { top: 7px; }
-  .office-watcher-server::after { top: 16px; }
-  @keyframes office-idle {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-3px); }
-  }
-  @keyframes office-typing {
-    0%, 100% { transform: rotate(0deg) translateY(0); }
-    25% { transform: rotate(-1deg) translateY(-2px); }
-    50% { transform: rotate(1deg) translateY(0); }
-    75% { transform: rotate(-1deg) translateY(-1px); }
-  }
-  @keyframes office-boot {
-    from { transform: translateY(0) scale(0.985); }
-    to { transform: translateY(-4px) scale(1.015); }
-  }
-  @keyframes office-alert {
-    0%, 100% { transform: translateX(0); }
-    20% { transform: translateX(-2px); }
-    40% { transform: translateX(2px); }
-    60% { transform: translateX(-1px); }
-    80% { transform: translateX(1px); }
-  }
-  @keyframes arm-left {
-    0%, 100% { transform: rotate(22deg); }
-    50% { transform: rotate(5deg); }
-  }
-  @keyframes arm-right {
-    0%, 100% { transform: rotate(-22deg); }
-    50% { transform: rotate(-5deg); }
-  }
-  @keyframes monitor-flicker {
-    0%, 100% { opacity: 0.48; }
-    50% { opacity: 0.92; }
-  }
-  @media (max-width: 980px) {
-    .office-shell {
-      grid-template-columns: 1fr;
-    }
-    .office-floor {
-      padding: 16px;
-    }
-    .office-inspector {
-      min-height: 0;
-    }
-    .office-desks {
-      display: flex;
-      flex-direction: column;
-      gap: 18px;
-      padding: 18px 4px 8px;
-      min-height: 0;
-    }
-    .office-desk-scene {
-      position: relative;
-      width: 100%;
-      max-width: none;
-      min-width: 0;
-      left: auto;
-      right: auto;
-      bottom: auto;
-    }
-    .office-window-band {
-      height: 88px;
-      gap: 8px;
-    }
-  }
-  @media (max-width: 680px) {
-    .office-floor-title {
-      font-size: 18px;
-    }
-    .office-floor-hint {
-      font-size: 10px;
-    }
   }
 
-  /* ── Right Panel ── */
-  .right-panel h3 { font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
-  .slot-card {
-    background: #1a1a1a; border: 1px solid #333; border-radius: 8px;
-    padding: 10px; margin-bottom: 8px;
+  /* ═══════════════════════════════════════ */
+  /* Sidebar                                */
+  /* ═══════════════════════════════════════ */
+  .sidebar {
+    width: 260px; flex-shrink: 0;
+    background: #111520; border-left: 1px solid #1e2636;
+    overflow-y: auto; overflow-x: hidden;
+    padding: 14px 12px;
+    display: flex; flex-direction: column; gap: 16px;
   }
-  .slot-card .slot-name { font-size: 11px; font-weight: 600; color: #aaa; margin-bottom: 4px; }
-  .slot-card .slot-status { font-size: 12px; font-weight: 600; }
-  .slot-card .slot-status.implement { color: #34d399; }
-  .slot-card .slot-status.needs_operator { color: #f59e0b; }
-  .slot-card .slot-status.none { color: #555; }
-  .slot-card .slot-preview { font-size: 10px; color: #777; margin-top: 4px; line-height: 1.4; max-height: 60px; overflow: hidden; }
-  .slot-card .slot-mtime { font-size: 10px; color: #555; margin-top: 4px; }
-  .watcher-box {
-    background: #1a1a1a; border: 1px solid #333; border-radius: 8px;
-    padding: 10px; margin-bottom: 12px;
+  .sidebar::-webkit-scrollbar { width: 4px; }
+  .sidebar::-webkit-scrollbar-thumb { background: #2b3548; border-radius: 999px; }
+  .sidebar::-webkit-scrollbar-track { background: transparent; }
+
+  .section-title {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
+    color: #3d5070; margin-bottom: 8px;
   }
-  .watcher-box .label { font-size: 11px; color: #666; }
-  .watcher-box .value { font-size: 12px; font-weight: 600; }
-  .watcher-box .value.alive { color: #34d399; }
-  .watcher-box .value.dead { color: #ef4444; }
-  .watcher-box .value,
-  .slot-card .slot-preview,
-  #sidebar-project {
-    overflow-wrap: anywhere;
-    word-break: break-word;
+
+  /* Agent cards */
+  .agent-card {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; border-radius: 10px;
+    background: #161c2a; border: 1px solid #1e2636;
+    margin-bottom: 6px; cursor: pointer;
+    transition: background 80ms, border-color 80ms;
   }
-  .command-card {
-    background: #1a1a1a; border: 1px solid #333; border-radius: 8px;
-    padding: 10px; margin-bottom: 12px;
+  .agent-card:hover { background: #1a2236; border-color: #2b3a52; }
+  .agent-avatar {
+    width: 28px; height: 28px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 800; color: #0a0c14;
+    flex-shrink: 0;
   }
-  .command-input {
-    width: 100%;
-    padding: 8px 10px;
-    border: 1px solid #333;
-    border-radius: 6px;
-    background: #101010;
-    color: #ddd;
-    font-size: 12px;
+  .agent-info { flex: 1; min-width: 0; }
+  .agent-name { font-size: 12px; font-weight: 700; color: #e2e8f0; }
+  .agent-role { font-size: 9px; color: #4a6080; text-transform: uppercase; letter-spacing: .08em; }
+  .agent-detail { font-size: 10px; color: #5a7090; margin-top: 2px; line-height: 1.3; }
+  .agent-state-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  }
+  .agent-fatigue {
+    font-size: 9px; color: #fbbf24; margin-top: 2px;
+    letter-spacing: .02em;
+  }
+  .agent-fatigue[data-fatigue="coffee"] { color: #34d399; }
+
+  /* Info rows */
+  .info-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 4px 0; font-size: 11px;
+  }
+  .info-label { color: #3d5070; }
+  .info-value { color: #8fa3b8; font-weight: 600; text-align: right;
+    max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .info-value.ok      { color: #34d399; }
+  .info-value.warn    { color: #fbbf24; }
+  .info-value.err     { color: #f87171; }
+  .info-value.neutral { color: #60a5fa; }
+  .info-value.dim     { color: #70839b; }
+
+  /* Event log */
+  .event-list { max-height: 160px; overflow-y: auto; }
+  .event-item {
+    display: flex; gap: 6px; align-items: flex-start;
+    padding: 3px 0; font-size: 10px; line-height: 1.35;
+  }
+  .event-time { color: #2a3a4e; min-width: 36px; flex-shrink: 0; font-size: 9px; }
+  .event-dot  { width: 5px; height: 5px; border-radius: 50%; margin-top: 3px; flex-shrink: 0; }
+  .event-dot.ok   { background: #34d399; }
+  .event-dot.warn { background: #fbbf24; }
+  .event-dot.err  { background: #f87171; }
+  .event-dot.info { background: #3b82f6; }
+  .event-msg  { color: #5a7a98; }
+
+  /* Controls section */
+  .controls-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .controls-row .btn {
+    padding: 5px 14px; border: 1px solid #2b3548; border-radius: 6px;
+    background: #161c2a; color: #8fa3b8; font-size: 11px; cursor: pointer;
+    font-family: inherit;
+  }
+  .controls-row .btn:hover { background: #1e2840; }
+
+  /* Tooltip on canvas */
+  .canvas-tooltip {
+    display: none; position: absolute; z-index: 100;
+    padding: 6px 10px; border-radius: 8px;
+    background: rgba(14,18,30,0.94); border: 1px solid #2b3a52;
+    color: #c0cee0; font-size: 11px; pointer-events: none;
+    backdrop-filter: blur(6px); white-space: nowrap;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  }
+  .canvas-tooltip .tt-name { font-weight: 700; color: #e2e8f0; }
+  .canvas-tooltip .tt-state { font-size: 10px; margin-top: 2px; }
+  .canvas-tooltip .tt-note { font-size: 9px; color: #5a7a98; margin-top: 2px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+
+  /* ═══ Terminal Log Modal ═══ */
+  .log-modal-backdrop {
+    display: none; position: fixed; inset: 0; z-index: 1000;
+    background: rgba(5,8,16,0.78); backdrop-filter: blur(4px);
+    align-items: center; justify-content: center;
+  }
+  .log-modal-backdrop.open { display: flex; }
+  .log-modal {
+    background: #0c1018; border: 1px solid #1e2a40; border-radius: 14px;
+    width: min(1360px, 98vw); max-height: 88vh;
+    display: flex; flex-direction: column;
+    box-shadow: 0 24px 72px rgba(0,0,0,0.65); overflow: hidden;
+  }
+  .log-modal-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 16px; background: #111828; border-bottom: 1px solid #1e2a40;
+  }
+  .log-modal-header .lm-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .log-modal-header .lm-name { font-size: 14px; font-weight: 700; color: #e2e8f0; }
+  .log-modal-header .lm-role { font-size: 10px; color: #4a6080; text-transform: uppercase; }
+  .log-modal-header .lm-state {
+    font-size: 10px; padding: 2px 9px; border-radius: 999px; font-weight: 700; letter-spacing: .03em;
+  }
+  .lm-actions {
+    margin-left: auto; display: flex; gap: 4px; align-items: center;
+  }
+  .lm-actions .lm-act {
+    padding: 3px 8px; border: 1px solid #1e2a40; border-radius: 5px;
+    background: transparent; color: #5a7a98; font-size: 10px; font-weight: 600;
+    cursor: pointer; font-family: inherit; transition: background 80ms, color 80ms;
+  }
+  .lm-actions .lm-act:hover { background: #1a2538; color: #c0d0e0; }
+  .lm-actions .lm-act:active { background: #243050; }
+  .lm-actions .lm-close {
+    width: 28px; height: 28px; border-radius: 6px;
+    border: 1px solid #1e2a40; background: transparent; color: #5a7090;
+    font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    margin-left: 4px;
+  }
+  .lm-actions .lm-close:hover { background: #1a2236; color: #ccc; }
+  .log-modal-info {
+    display: flex; gap: 8px 14px; flex-wrap: wrap; padding: 8px 16px; font-size: 10px; color: #3d5a78;
+    border-bottom: 1px solid #141e30;
+  }
+  .log-modal-info span { white-space: normal; }
+  .log-modal-body {
+    flex: 1; overflow: auto; padding: 14px 16px;
     font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    font-size: 11px; line-height: 1.65; color: #7a94a8;
+    white-space: pre; word-break: keep-all; overflow-wrap: normal;
+    background: #080c14; min-height: 200px; width: 100%; min-width: 0;
   }
-  .command-input:focus {
-    outline: none;
-    border-color: #2563eb;
-    box-shadow: 0 0 0 1px #2563eb inset;
-  }
-  .command-actions {
-    display: flex; gap: 6px; margin-top: 8px;
-  }
-  .command-actions .btn {
-    flex: 0 0 auto;
-  }
-  .command-hint {
-    margin-top: 8px;
-    color: #777;
-    font-size: 10px;
-    line-height: 1.4;
-    overflow-wrap: anywhere;
-  }
-  .command-output {
-    margin-top: 8px;
-    max-height: 180px;
-    overflow: auto;
-    padding: 8px 10px;
-    border-radius: 6px;
-    background: #101010;
-    border: 1px solid #2a2a2a;
-    color: #cfcfcf;
-    font-size: 11px;
-    line-height: 1.45;
-    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
-    white-space: pre-wrap;
-    word-break: normal;
-    overflow-wrap: anywhere;
-  }
+  .log-modal-body::-webkit-scrollbar { width: 5px; height: 5px; }
+  .log-modal-body::-webkit-scrollbar-thumb { background: #1e2a40; border-radius: 999px; }
+  .log-modal-body::-webkit-scrollbar-track { background: transparent; }
+  .log-modal-body .log-loading { color: #3d5a78; font-style: italic; }
 </style>
 </head>
 <body>
 
-<!-- Toolbar -->
+<!-- ═══ Toolbar ═══ -->
 <div class="toolbar">
-  <span class="title">Pipeline Controller</span>
-  <span id="pipeline-status" class="status stopped">Stopped</span>
-  <div class="view-tabs" id="view-tabs"></div>
-  <button class="view-tab" id="tail-toggle" onclick="toggleTail()">텍스트 OFF</button>
-  <button class="view-tab" id="office-toggle" onclick="toggleOfficeView()">Office View OFF</button>
+  <span class="title">Pipeline Office</span>
+  <span class="badge stopped" id="status-badge">Stopped</span>
   <div class="spacer"></div>
-  <button class="btn" id="btn-start" onclick="apiPost('/api/runtime/start')">▶ Start</button>
-  <button class="btn" id="btn-stop" onclick="apiPost('/api/runtime/stop')">■ Stop</button>
-  <button class="btn" id="btn-restart" onclick="apiPost('/api/runtime/restart')">↻ Restart</button>
-  <span class="info" id="project-path">—</span>
+  <button class="btn" id="btn-start" onclick="apiPost('/api/runtime/start')">Start</button>
+  <button class="btn" id="btn-stop"  onclick="apiPost('/api/runtime/stop')">Stop</button>
+  <button class="btn" id="btn-restart" onclick="apiPost('/api/runtime/restart')">Restart</button>
+  <button class="btn" id="mute-btn" onclick="AmbientAudio.toggle()" title="음소거" style="font-size:13px;padding:2px 8px">🔊</button>
+  <button class="btn" id="motion-btn" onclick="toggleLowMotion()" title="장식 효과 줄이기" style="font-size:13px;padding:2px 8px">✨</button>
+  <span class="storage-warn" id="storage-warn" title="localStorage 사용 불가 — 새로고침 시 toolbar 설정이 초기화됩니다">⚠ 설정 비저장</span>
+  <span class="project-path" id="project-path">—</span>
 </div>
 
-<!-- Main -->
+<!-- ═══ Main ═══ -->
 <div class="main">
-  <!-- Sidebar -->
+  <div class="canvas-wrap">
+    <canvas id="office"></canvas>
+    <div class="canvas-tooltip" id="tooltip">
+      <div class="tt-name"></div>
+      <div class="tt-state"></div>
+      <div class="tt-note"></div>
+    </div>
+  </div>
+
+  <!-- Terminal Log Modal -->
+  <div class="log-modal-backdrop" id="log-modal" onclick="closeLogModal(event)">
+    <div class="log-modal" onclick="event.stopPropagation()">
+      <div class="log-modal-header">
+        <div class="lm-dot" id="lm-dot"></div>
+        <span class="lm-name" id="lm-name">Agent</span>
+        <span class="lm-role" id="lm-role"></span>
+        <span class="lm-state" id="lm-state">—</span>
+        <div class="lm-actions">
+          <button class="lm-close" onclick="closeLogModal()">×</button>
+        </div>
+      </div>
+      <div class="log-modal-info" id="lm-info"></div>
+      <div class="log-modal-body" id="lm-body"><span class="log-loading">대기 중...</span></div>
+    </div>
+  </div>
+
   <div class="sidebar">
-    <h3>프로젝트</h3>
-    <div class="item" id="sidebar-project">—</div>
-
-    <h3 style="margin-top:16px;">Agent 상태</h3>
-    <div class="agent-list" id="agent-list"></div>
-
-    <h3 style="margin-top:16px;">Watcher</h3>
-    <div class="watcher-box">
-      <div class="label">상태</div>
-      <div class="value" id="watcher-status">—</div>
-      <div class="label" style="margin-top:4px;">PID</div>
-      <div class="value" id="watcher-pid" style="color:#aaa;">—</div>
-    </div>
-  </div>
-
-  <!-- Center: 3 Panes -->
-  <div class="center">
-    <div class="pane-area" id="pane-area"></div>
-    <div class="office-area" id="office-area"></div>
-  </div>
-
-  <!-- Right Panel -->
-  <div class="right-panel">
-    <h3>Runtime 명령</h3>
-    <div class="command-card">
-      <input
-        id="runtime-command-input"
-        class="command-input"
-        type="text"
-        spellcheck="false"
-        placeholder="start | stop | restart | attach Codex | tail Codex 120 | status | help"
-      />
-      <div class="command-actions">
-        <button class="btn" id="btn-run-command" onclick="submitRuntimeCommand()">실행</button>
-      </div>
-      <div class="command-hint">
-        허용: start, stop, restart, attach [lane], tail &lt;lane&gt; [lines], view &lt;lane|all&gt;, text &lt;on|off&gt;, status, help
-      </div>
-      <pre class="command-output" id="runtime-command-output">(명령 대기)</pre>
+    <!-- Agents -->
+    <div>
+      <div class="section-title">에이전트</div>
+      <div id="agent-cards"></div>
     </div>
 
-    <h3>Handoff 상태</h3>
-    <div id="slots-area"></div>
+    <!-- Runtime info -->
+    <div>
+      <div class="section-title">Runtime</div>
+      <div id="runtime-info"></div>
+    </div>
+
+    <!-- Controls -->
+    <div>
+      <div class="section-title">Controls</div>
+      <div class="controls-row">
+        <button class="btn" onclick="apiPost('/api/runtime/start')">▶ Start</button>
+        <button class="btn" onclick="apiPost('/api/runtime/stop')">■ Stop</button>
+        <button class="btn" onclick="apiPost('/api/runtime/restart')">↻ Restart</button>
+      </div>
+    </div>
+
+    <!-- Events -->
+    <div>
+      <div class="section-title">이벤트</div>
+      <div class="event-list" id="event-list">
+        <div class="event-item"><span class="event-time">—</span><span class="event-msg">대기 중</span></div>
+      </div>
+    </div>
   </div>
 </div>
 
 <script>
-const POLL_MS = 1000;
-const OFFICE_SPRITE_MANIFEST_URL = "/controller-assets/generated/office-sprite-manifest.json";
-const OFFICE_SPRITE_SHEET_URL = "/controller-assets/fren-office-sheet.png";
-const OFFICE_READY_GIF_URL = "/controller-assets/READY.gif";
-const OFFICE_SPRITE_ANIMATIONS = {
-  ready: {
-    intervalMs: 180,
-    sequence: [0, 0, 1, 2, 3, 3, 2, 1],
-    clips: [
-      { x: 650, y: 24, w: 320, h: 300 },
-      { x: 985, y: 24, w: 320, h: 300 },
-      { x: 1300, y: 24, w: 320, h: 300 },
-      { x: 1620, y: 24, w: 320, h: 300 },
-    ],
-  },
-  working: {
-    intervalMs: 120,
-    sequence: [0, 1, 2, 3, 2, 1],
-    clips: [
-      { x: 700, y: 300, w: 440, h: 300 },
-      { x: 1080, y: 300, w: 400, h: 300 },
-      { x: 1425, y: 300, w: 400, h: 300 },
-      { x: 1750, y: 300, w: 380, h: 300 },
-    ],
-  },
-  booting: {
-    intervalMs: 145,
-    sequence: [0, 1, 2, 3, 2, 1],
-    clips: [
-      { x: 790, y: 560, w: 270, h: 290 },
-      { x: 1060, y: 560, w: 270, h: 290 },
-      { x: 1320, y: 540, w: 330, h: 310 },
-      { x: 1660, y: 560, w: 270, h: 290 },
-    ],
-  },
-  broken: {
-    intervalMs: 220,
-    sequence: [0, 1, 2, 3, 2, 1],
-    clips: [
-      { x: 730, y: 810, w: 340, h: 320 },
-      { x: 1040, y: 810, w: 340, h: 320 },
-      { x: 1350, y: 810, w: 340, h: 320 },
-      { x: 1660, y: 810, w: 340, h: 320 },
-    ],
-  },
-  dead: {
-    intervalMs: 520,
-    sequence: [0, 1, 2, 3, 2, 1],
-    clips: [
-      { x: 870, y: 1090, w: 240, h: 270 },
-      { x: 1120, y: 1090, w: 240, h: 270 },
-      { x: 1360, y: 1090, w: 240, h: 270 },
-      { x: 1610, y: 1090, w: 240, h: 270 },
-    ],
-  },
+// ═══════════════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════════════
+const POLL_MS    = 2000;
+const VIRTUAL_W  = 1000;
+const VIRTUAL_H  = 700;
+const WALK_SPEED = 120; // 걷기 속도 (픽셀/초)
+
+const STATE_COLORS = {
+  working: '#34d399',
+  ready:   '#60a5fa',
+  booting: '#fbbf24',
+  broken:  '#ef4444',
+  dead:    '#991b1b',
+  off:     '#475569',
+  unknown: '#a78bfa',
 };
-let selectedView = "";
-let showTail = false;
-let showOffice = false;
-let officeSpriteAvailable = false;
-let officeSpritePrepared = false;
-let officeSpritePreparePromise = null;
-let officeSpriteMode = "dynamic";
-const officeSpriteAnimationOverrides = {};
-const officeSpriteFrameCache = {};
-const tailCache = {};
-let tailLineCountOverride = null;
 
-function escapeHtml(s) {
-  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-}
+const LANE_ROLES = {
+  claude: 'implement',
+  codex:  'verify',
+  gemini: 'advisory',
+};
 
-function normalizeTailText(text) {
-  const isStructuredLine = (content) => {
-    return /^(•|[-*] |\d+[.)] |[│└┌├╰╭]|›|> |\$ |❯|✻|□|▪|▸|▹|────────────────)/.test(content)
-      || /^[A-Za-z가-힣 _./()-]{1,18}:\s/.test(content);
-  };
-  const joinWrappedText = (left, right) => {
-    const prev = left.replace(/[ \t]+$/g, "");
-    const next = right.replace(/^[ \t]+/g, "");
-    if (!prev) return next;
-    if (!next) return prev;
-    const last = prev.slice(-1);
-    const first = next[0];
-    const needsSpace =
-      /[A-Za-z0-9)]/.test(last)
-      && /([A-Za-z0-9()]|\[|`)/.test(first)
-      && !/[./_-]$/.test(prev);
-    return needsSpace ? `${prev} ${next}` : `${prev}${next}`;
-  };
-  const lines = String(text || "")
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .map(line => line.replace(/[ \t]+$/g, ""));
+const STATE_GIF_ASSETS = {
+  booting: '/controller-assets/BOOTING.gif',
+  working: '/controller-assets/WORKING.gif',
+  broken: '/controller-assets/BROKEN.gif',
+  ready: '/controller-assets/READY.gif',
+  dead: '/controller-assets/DEAD.gif',
+};
+const AMBIGUOUS_RUNTIME_REASON = 'supervisor_missing_recent_ambiguous';
+const UNDATED_AMBIGUOUS_RUNTIME_REASON = 'supervisor_missing_snapshot_undated';
+const UNCERTAIN_RUNTIME_REASONS = new Set([AMBIGUOUS_RUNTIME_REASON, UNDATED_AMBIGUOUS_RUNTIME_REASON]);
+const INACTIVE_RUNTIME_STATES = new Set(['STOPPED', 'STOPPING', 'BROKEN']);
 
-  while (lines.length && !lines[0].trim()) lines.shift();
-  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+// ═══════════════════════════════════════════════════════
+// SPRITE MANAGER
+// ═══════════════════════════════════════════════════════
+const SpriteManager = {
+  manifest: null,
+  stateGifs: {},
+  frames: {},
+  sequences: {},
+  loaded: false,
 
-  const compact = [];
-  let blankOpen = false;
-  for (const rawLine of lines) {
-    if (!rawLine.trim()) {
-      if (!blankOpen) compact.push("");
-      blankOpen = true;
-      continue;
+  async init() {
+    for (const[state, src] of Object.entries(STATE_GIF_ASSETS)) {
+      const img = new Image();
+      img.src = src;
+      this.stateGifs[state] = img;
     }
-    blankOpen = false;
-    let normalized = rawLine.replace(/\t/g, "  ");
-    const content = normalized.trimStart();
-    if (/^\s{6,}\S/.test(normalized)) {
-      normalized = "  " + content;
-    }
+    this.stateGifs.off = this.stateGifs.dead || null;
+    this.stateGifs.idle = this.stateGifs.ready || null;
+    this.stateGifs.unknown = this.stateGifs.ready || null;
 
-    if (!compact.length || !compact[compact.length - 1] || isStructuredLine(content)) {
-      compact.push(normalized);
-      continue;
-    }
-
-    const previous = compact[compact.length - 1];
-    const previousContent = previous.trimStart();
-    const previousStructured = isStructuredLine(previousContent);
-    const previousEndsLabel = /:\s*$/.test(previousContent);
-    const currentLooksStandalone = /^(`|\/|~\/|[A-Za-z0-9_.-]+\/|[A-Za-z_][\w./-]*\.(py|md|json|toml|txt)\b)/.test(content);
-
-    if (previousStructured || previousEndsLabel || currentLooksStandalone) {
-      compact.push(normalized);
-      continue;
-    }
-
-    compact[compact.length - 1] = joinWrappedText(previous, content);
-  }
-  return compact.join("\n");
-}
-
-function timeAgo(mtime) {
-  if (!mtime) return "";
-  const diff = Math.floor(Date.now()/1000 - mtime);
-  if (diff < 60) return `${diff}초 전`;
-  if (diff < 3600) return `${Math.floor(diff/60)}분 전`;
-  return `${Math.floor(diff/3600)}시간 전`;
-}
-
-function timeAgoIso(isoText) {
-  const ts = Date.parse(String(isoText || ""));
-  if (!Number.isFinite(ts)) return "";
-  return timeAgo(Math.floor(ts / 1000));
-}
-
-function truncateMiddle(text, limit = 80) {
-  const value = String(text || "");
-  if (value.length <= limit) return value;
-  const keep = Math.max(8, Math.floor((limit - 1) / 2));
-  return `${value.slice(0, keep)}…${value.slice(-keep)}`;
-}
-
-function tailPreviewText(text) {
-  const normalized = normalizeTailText(text || "");
-  if (!normalized) return "";
-  const lines = normalized.split("\n").filter(Boolean).slice(-10);
-  let preview = lines.join("\n");
-  if (preview.length > 420) {
-    preview = `…${preview.slice(-419)}`;
-  }
-  return preview;
-}
-
-async function ensureOfficeSpriteAvailability() {
-  if (officeSpritePrepared) return officeSpriteAvailable;
-  if (officeSpritePreparePromise) return officeSpritePreparePromise;
-  officeSpritePreparePromise = (async () => {
     try {
-      const manifest = await loadOfficeSpriteManifest();
-      if (manifest && manifest.states) {
-        officeSpriteMode = "generated";
-        for (const [state, config] of Object.entries(manifest.states)) {
-          officeSpriteFrameCache[state] = Array.isArray(config.frames) ? config.frames : [];
-          officeSpriteAnimationOverrides[state] = {
-            intervalMs: Number(config.interval_ms || config.intervalMs || 180),
-            sequence: Array.isArray(config.sequence) ? config.sequence : [],
-          };
+      const res = await fetch('/controller-assets/generated/office-sprite-manifest.json');
+      this.manifest = await res.json();
+
+      for (const [state, config] of Object.entries(this.manifest.states || {})) {
+        this.frames[state] = (config.frames ||[]).map(f => {
+          const img = new Image();
+          img.src = f.src;
+          return img;
+        });
+        this.sequences[state] = {
+          sequence: config.sequence || [0],
+          intervalMs: config.interval_ms || 180,
+        };
+      }
+      this.frames.off = this.frames.dead ||[];
+      this.frames.idle = this.frames.ready ||[];
+      this.frames.unknown = this.frames.ready ||[];
+      this.sequences.off = this.sequences.dead || this.sequences.ready;
+      this.sequences.idle = this.sequences.ready;
+      this.sequences.unknown = this.sequences.ready;
+
+      this.loaded = true;
+    } catch (e) {
+      this.loaded = false;
+    }
+  },
+
+  getAgentFrame(state, timeSeconds) {
+    const gif = this.stateGifs[state] || this.stateGifs.ready || null;
+    if (gif && gif.complete && gif.naturalWidth > 0) {
+      return gif;
+    }
+
+    const frames = this.frames[state] || this.frames.ready || [];
+    const seq = this.sequences[state] || this.sequences.ready;
+    if (!frames.length || !seq) return null;
+
+    const idx = Math.floor((timeSeconds * 1000 / seq.intervalMs) % seq.sequence.length);
+    const frameIdx = seq.sequence[idx] || 0;
+    const img = frames[frameIdx];
+    return (img && img.complete && img.naturalWidth > 0) ? img : null;
+  }
+};
+
+// ═══════════════════════════════════════════════════════
+// WAYPOINTS & LOCATIONS (사이버펑크 오피스 배경 기준)
+// ═══════════════════════════════════════════════════════
+
+// 직각 이동을 위한 네비게이션 포인트
+const NAV = {
+  aisle_top: { x: 404, y: 236 },
+  aisle_mid: { x: 404, y: 366 },
+  aisle_bot: { x: 404, y: 496 },
+  server_door: { x: 304, y: 366 },   // 서버실 문 앞
+  server_stairs: { x: 164, y: 366 }, // 서버실 내부 계단 아래 (직각 이동용)
+};
+
+const LOCATIONS = {
+  // Recalibrated against the current background's chair / floor anchors.
+  claude_desk:  { x: 492, y: 236 },
+  codex_desk:   { x: 492, y: 366 },
+  gemini_desk:  { x: 492, y: 496 },
+  sofa:         { x: 772, y: 220 },
+  coffee:       { x: 804, y: 468 },
+  server_room:  { x: 164, y: 274 },
+  entrance:     { x: 868, y: 664 },
+};
+
+const IDLE_ROAM_SPOTS = [
+  // Corridor / aisle zone (wider jitter so agents don't stack on nav-points)
+  { anchor: NAV.aisle_top, jitterX: 36, jitterY: 24 },
+  { anchor: NAV.aisle_mid, jitterX: 36, jitterY: 24 },
+  { anchor: NAV.aisle_bot, jitterX: 36, jitterY: 24 },
+  // Open floor between desks and lounge
+  { anchor: { x: 580, y: 280 }, jitterX: 44, jitterY: 30 },
+  { anchor: { x: 600, y: 420 }, jitterX: 50, jitterY: 36 },
+  { anchor: { x: 560, y: 560 }, jitterX: 44, jitterY: 30 },
+  // Lounge area — wide roam zone
+  { anchor: { x: 720, y: 300 }, jitterX: 46, jitterY: 28 }, // sofa front floor
+  { anchor: { x: 820, y: 340 }, jitterX: 38, jitterY: 28 }, // right lounge floor
+  { anchor: { x: 760, y: 460 }, jitterX: 40, jitterY: 28 }, // near coffee lounge
+  // Coffee machine vicinity
+  { anchor: LOCATIONS.coffee, jitterX: 30, jitterY: 20 },
+  // Server room corridor mouth
+  { anchor: { x: 310, y: 366 }, jitterX: 30, jitterY: 24 },
+  // Lower open floor toward entrance
+  { anchor: { x: 680, y: 600 }, jitterX: 50, jitterY: 30 },
+  { anchor: { x: 820, y: 580 }, jitterX: 40, jitterY: 28 },
+];
+
+// ═══════════════════════════════════════════════════════
+// AGENT ENTITY — Pathfinding, Constant Speed, Sprite Flip, Speech
+// ═══════════════════════════════════════════════════════
+class Agent {
+  constructor(name) {
+    this.name   = name;
+    this.role   = LANE_ROLES[name.toLowerCase()] || '';
+    this.state  = 'off';
+    this.note   = '';
+    this.pid    = null;
+    this.lastEventAt = '';
+
+    // position & facing
+    this.x = LOCATIONS.entrance.x;
+    this.y = LOCATIONS.entrance.y;
+    this.facingRight = true;
+
+    // waypoint queue
+    this._waypoints =[];
+    this._atTarget  = true;
+
+    // animation & speech
+    this.bobPhase   = Math.random() * Math.PI * 2;
+    this.blinkTimer = Math.random() * 3;
+    this.isBlinking = false;
+    this.movePhase  = 0;
+    this.bubble     = { text: '', timer: 0 }; // 말풍선 데이터
+
+    // idle behavior
+    this._idleCooldown = 0;
+
+    // fatigue system
+    this.fatigue = 0;             // 0 ~ 100
+    this._fatigueSweatTimer = 0;  // sweat particle cooldown
+    this._coffeeTimer = 0;        // time spent at coffee machine
+    this._atCoffee = false;       // currently drinking coffee
+
+    // GIF overlay <img> element (for animated GIF rendering)
+    this._gifEl = document.createElement('img');
+    this._gifEl.style.cssText = 'position:absolute;pointer-events:none;image-rendering:pixelated;z-index:10;display:none;';
+    this._gifState = ''; // track which state GIF is loaded
+    document.querySelector('.canvas-wrap')?.appendChild(this._gifEl);
+  }
+
+  get color() { return STATE_COLORS[this.state] || STATE_COLORS.off; }
+
+  /** Observable fatigue state for sidebar indicator */
+  get fatigueState() {
+    if (this._atCoffee) return 'coffee';
+    if (this.state === 'working' && this.fatigue >= 15) return 'fatigued';
+    return '';
+  }
+
+  /** 말풍선 띄우기 */
+  speak(text, duration = 3.5) {
+    if (!text) return;
+    this.bubble = { text: truncate(text, 25), timer: duration };
+  }
+
+  /** Update state from API data and pick a target location */
+  applyLaneData(lane) {
+    const prevState = this.state;
+    const prevNote = this.note;
+
+    this.state = (lane.state || 'off').toLowerCase();
+    this.note  = lane.note || lane.status_note || '';
+    this.pid   = lane.pid || null;
+    this.lastEventAt = lane.last_event_at || '';
+
+    // 상태가 변했을 때
+    if (prevState !== this.state) {
+      this._pickTarget();
+      if (prevState !== 'off') {
+        spawnStateParticle(this.name, this.state);
+        if (this.state === 'working') SoundFX.success();
+        else if (this.state === 'broken' || this.state === 'dead') SoundFX.error();
+        else SoundFX.blip();
+      }
+    }
+
+    // 작업 내용(note)이 변경되었을 때 말풍선으로 브리핑
+    if (this.note && prevNote !== this.note && this.state === 'working') {
+      this.speak(this.note, 4.0);
+    }
+  }
+
+  /** 상태에 따라 목적지를 정하고, 가구를 피하는 경로(배열)를 생성 */
+  _pickIdleTarget() {
+    // Fatigued? Coffee first!
+    if (this.fatigue >= 15 && LOCATIONS.coffee) {
+      this.speak('커피 마시러...☕', 2.5);
+      const c = LOCATIONS.coffee;
+      return { x: c.x + (Math.random() - 0.5) * 10, y: c.y + (Math.random() - 0.5) * 10 };
+    }
+    if (!IDLE_ROAM_SPOTS.length) return LOCATIONS.entrance;
+    const pool = IDLE_ROAM_SPOTS.map((spot, index) => ({ spot, index }));
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    for (const { spot } of pool) {
+      const ax = spot.anchor.x;
+      const ay = spot.anchor.y;
+      const dx = ax - this.x;
+      const dy = ay - this.y;
+      if (Math.hypot(dx, dy) < 60) continue;
+      return {
+        x: ax + (Math.random() - 0.5) * (spot.jitterX || 0),
+        y: ay + (Math.random() - 0.5) * (spot.jitterY || 0),
+      };
+    }
+    const fallback = pool[0].spot;
+    return {
+      x: fallback.anchor.x + (Math.random() - 0.5) * (fallback.jitterX || 0),
+      y: fallback.anchor.y + (Math.random() - 0.5) * (fallback.jitterY || 0),
+    };
+  }
+
+  _pickTarget() {
+    this._waypoints =[];
+    const deskKey = `${this.name.toLowerCase()}_desk`;
+    const desk = LOCATIONS[deskKey];
+    let dest;
+
+    // 1. 최종 목적지 결정
+    switch (this.state) {
+      case 'working':
+      case 'booting':
+        dest = desk || LOCATIONS.entrance;
+        break;
+      case 'ready':
+      case 'idle':
+        dest = this._pickIdleTarget();
+        break;
+      case 'broken':
+      case 'dead':
+        dest = desk ? { x: desk.x + 20, y: desk.y + 10 } : LOCATIONS.entrance;
+        break;
+      default:
+        dest = { x: LOCATIONS.entrance.x, y: LOCATIONS.entrance.y };
+    }
+
+    // 2. 경로 생성 (방 탈출 -> 복도 -> 목적지 방 진입)
+
+    // 현재 위치에서 빠져나오기
+    if (this.x < 250) { // 서버실 내부에 있음
+      this._waypoints.push(NAV.server_stairs);
+      this._waypoints.push(NAV.server_door);
+      this._waypoints.push(NAV.aisle_mid);
+    } else if (this.x > 350 && this.x < 550) { // 책상 구역에 있음
+      if (this.y < 400) this._waypoints.push(NAV.aisle_top);
+      else if (this.y < 550) this._waypoints.push(NAV.aisle_mid);
+      else this._waypoints.push(NAV.aisle_bot);
+    } else if (this.x > 750) { // 우측 휴게 구역에 있음
+      if (this.y < 450) this._waypoints.push(NAV.aisle_top);
+      else this._waypoints.push(NAV.aisle_bot);
+    }
+
+    // 목적지로 들어가기
+    if (dest.x < 250) { // 목적지가 서버실
+      this._waypoints.push(NAV.aisle_mid);
+      this._waypoints.push(NAV.server_door);
+      this._waypoints.push(NAV.server_stairs);
+    } else if (dest.x > 350 && dest.x < 550) { // 목적지가 책상
+      if (dest.y < 400) this._waypoints.push(NAV.aisle_top);
+      else if (dest.y < 550) this._waypoints.push(NAV.aisle_mid);
+      else this._waypoints.push(NAV.aisle_bot);
+    } else if (dest.x > 750) { // 목적지가 우측 휴게 구역
+      if (dest.y < 450) this._waypoints.push(NAV.aisle_top);
+      else this._waypoints.push(NAV.aisle_bot);
+    }
+
+    // 최종 목적지 추가
+    this._waypoints.push(dest);
+    this._atTarget = false;
+  }
+
+  update(dt) {
+    // ── Fatigue system ──
+    const FATIGUE_THRESHOLD = 15; // seconds of work before tired
+    const fatigued = this.fatigue >= FATIGUE_THRESHOLD;
+
+    if (this.state === 'working') {
+      this.fatigue += dt; // 1 per second while working
+      this._atCoffee = false;
+    }
+
+    // Sweat particles when tired and working
+    if (fatigued && this.state === 'working') {
+      this._fatigueSweatTimer -= dt;
+      if (this._fatigueSweatTimer <= 0) {
+        this._fatigueSweatTimer = 1.2 + Math.random() * 0.8;
+        spawnParticle(this.name, '💦', { size: 12, lifetime: 1.0 });
+      }
+    }
+
+    // Coffee stop: wait 2 seconds, then reset fatigue
+    if (this._atCoffee) {
+      this._coffeeTimer += dt;
+      if (this._coffeeTimer >= 2.0) {
+        this.fatigue = 0;
+        this._atCoffee = false;
+        this._coffeeTimer = 0;
+        spawnParticle(this.name, '☕', { size: 16, lifetime: 1.5 });
+        this.speak('커피 충전 완료!', 2.0);
+      }
+    }
+
+    // ── Walk along waypoints ──
+    const speedMult = fatigued ? 0.6 : 1.0;
+    if (this._waypoints.length > 0) {
+      const wp = this._waypoints[0];
+      const dx = wp.x - this.x;
+      const dy = wp.y - this.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (Math.abs(dx) > 2) this.facingRight = dx > 0;
+
+      const step = WALK_SPEED * speedMult * dt;
+
+      if (dist <= step) {
+        this.x = wp.x;
+        this.y = wp.y;
+        this._waypoints.shift();
+        if (this._waypoints.length === 0) {
+          this._atTarget = true;
+          // Check if arrived at coffee machine
+          const coffeeLoc = LOCATIONS.coffee;
+          if (coffeeLoc && Math.abs(this.x - coffeeLoc.x) < 40 && Math.abs(this.y - coffeeLoc.y) < 40) {
+            this._atCoffee = true;
+            this._coffeeTimer = 0;
+          }
         }
       } else {
-        const sheet = await loadOfficeSpriteSheetImage();
-        officeSpriteMode = "dynamic";
-        for (const [state, animation] of Object.entries(OFFICE_SPRITE_ANIMATIONS)) {
-          officeSpriteFrameCache[state] = buildOfficeAnimationFrames(sheet, animation);
-        }
+        this.x += (dx / dist) * step;
+        this.y += (dy / dist) * step;
       }
-      officeSpriteFrameCache.off = officeSpriteFrameCache.dead || [];
-      officeSpriteFrameCache.unknown = officeSpriteFrameCache.ready || [];
-      officeSpriteAvailable = Object.values(officeSpriteFrameCache).some((frames) => (frames || []).length > 0);
-    } catch (error) {
-      officeSpriteAvailable = false;
-    } finally {
-      officeSpritePrepared = true;
+
+      this.movePhase += dt * 8;
+      this._atTarget = false;
+    } else {
+      this._atTarget = true;
+      if (this.movePhase > 0) this.movePhase = Math.max(0, this.movePhase - dt * 12);
     }
-    return officeSpriteAvailable;
-  })();
-  return officeSpritePreparePromise;
-}
 
-async function loadOfficeSpriteManifest() {
-  if (loadOfficeSpriteManifest._promise) return loadOfficeSpriteManifest._promise;
-  loadOfficeSpriteManifest._promise = (async () => {
-    try {
-      const response = await fetch(`${OFFICE_SPRITE_MANIFEST_URL}?v=office-sprite-manifest-v1`);
-      if (!response.ok) return null;
-      return await response.json();
-    } catch (error) {
-      return null;
+    // ── Animations & Timers ──
+    this.bobPhase += dt * (this.state === 'working' ? 4 : 1.8);
+    this.blinkTimer -= dt;
+    if (this.blinkTimer <= 0) {
+      this.isBlinking = !this.isBlinking;
+      this.blinkTimer = this.isBlinking ? 0.12 : 2 + Math.random() * 3;
     }
-  })();
-  return loadOfficeSpriteManifest._promise;
-}
-loadOfficeSpriteManifest._promise = null;
 
-function loadOfficeSpriteSheetImage() {
-  if (loadOfficeSpriteSheetImage._promise) return loadOfficeSpriteSheetImage._promise;
-  loadOfficeSpriteSheetImage._promise = new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error("sprite image load failed"));
-    image.src = `${OFFICE_SPRITE_SHEET_URL}?v=office-sprite-v4`;
-  });
-  return loadOfficeSpriteSheetImage._promise;
-}
-loadOfficeSpriteSheetImage._promise = null;
+    if (this.bubble.timer > 0) {
+      this.bubble.timer -= dt;
+    }
 
-function isEdgeWhitespace(data, width, height, x, y) {
-  const idx = (y * width + x) * 4;
-  const alpha = data[idx + 3];
-  if (alpha < 8) return true;
-  const red = data[idx];
-  const green = data[idx + 1];
-  const blue = data[idx + 2];
-  const brightest = Math.max(red, green, blue);
-  const darkest = Math.min(red, green, blue);
-  return brightest >= 245 && darkest >= 235 && brightest - darkest <= 18;
-}
-
-function clearEdgeWhitespace(imageData, width, height) {
-  const { data } = imageData;
-  const visited = new Uint8Array(width * height);
-  const queue = [];
-  const push = (x, y) => {
-    if (x < 0 || x >= width || y < 0 || y >= height) return;
-    const index = y * width + x;
-    if (visited[index]) return;
-    visited[index] = 1;
-    if (!isEdgeWhitespace(data, width, height, x, y)) return;
-    queue.push([x, y]);
-  };
-
-  for (let x = 0; x < width; x += 1) {
-    push(x, 0);
-    push(x, height - 1);
-  }
-  for (let y = 0; y < height; y += 1) {
-    push(0, y);
-    push(width - 1, y);
-  }
-
-  while (queue.length) {
-    const [x, y] = queue.shift();
-    const idx = (y * width + x) * 4;
-    data[idx + 3] = 0;
-    push(x + 1, y);
-    push(x - 1, y);
-    push(x, y + 1);
-    push(x, y - 1);
-  }
-}
-
-function trimSpriteCanvas(canvas) {
-  const ctx = canvas.getContext("2d");
-  const { width, height } = canvas;
-  const imageData = ctx.getImageData(0, 0, width, height);
-  const { data } = imageData;
-  let minX = width;
-  let minY = height;
-  let maxX = -1;
-  let maxY = -1;
-
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const alpha = data[(y * width + x) * 4 + 3];
-      if (alpha < 8) continue;
-      if (x < minX) minX = x;
-      if (y < minY) minY = y;
-      if (x > maxX) maxX = x;
-      if (y > maxY) maxY = y;
+    // ── Idle wandering ──
+    if (this._atTarget && !this._atCoffee && (this.state === 'ready' || this.state === 'idle')) {
+      this._idleCooldown -= dt;
+      if (this._idleCooldown <= 0) {
+        this._idleCooldown = 4 + Math.random() * 8;
+        this._pickTarget();
+      }
     }
   }
 
-  if (maxX < minX || maxY < minY) {
-    return { canvas, width, height };
-  }
+  draw(ctx, scale) {
+    const sx = this.x * scale;
+    const sy = this.y * scale;
+    const bob = Math.sin(this.bobPhase) * (this.state === 'working' ? 1.5 : 2.5) * scale;
+    const walk = this._atTarget ? 0 : Math.sin(this.movePhase) * 2 * scale;
 
-  const pad = 4;
-  const cropX = Math.max(0, minX - pad);
-  const cropY = Math.max(0, minY - pad);
-  const cropW = Math.min(width - cropX, maxX - minX + 1 + pad * 2);
-  const cropH = Math.min(height - cropY, maxY - minY + 1 + pad * 2);
-  const trimmed = document.createElement("canvas");
-  trimmed.width = cropW;
-  trimmed.height = cropH;
-  const trimmedCtx = trimmed.getContext("2d");
-  trimmedCtx.imageSmoothingEnabled = false;
-  trimmedCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-  return { canvas: trimmed, width: cropW, height: cropH };
-}
+    // Check if a GIF asset exists for this state
+    const gifSrc = STATE_GIF_ASSETS[this.state] || STATE_GIF_ASSETS.ready || '';
+    const hasGif = Boolean(gifSrc);
+    let headY = sy;
 
-function fitSpriteDimensions(width, height) {
-  const maxWidth = 210;
-  const maxHeight = 186;
-  const scale = Math.min(maxWidth / width, maxHeight / height, 1);
-  return {
-    width: Math.max(1, Math.round(width * scale)),
-    height: Math.max(1, Math.round(height * scale)),
-  };
-}
+    if (hasGif) {
+      // ═══ ANIMATED GIF MODE (via <img> overlay) ═══
+      // Update GIF src if state changed
+      if (this._gifState !== this.state) {
+        this._gifEl.src = gifSrc;
+        this._gifState = this.state;
+      }
+      this._gifEl.style.display = 'block';
 
-function normalizeSpriteFrame(rawFrame, viewport, renderSize) {
-  const canvas = document.createElement("canvas");
-  canvas.width = viewport.width;
-  canvas.height = viewport.height;
-  const ctx = canvas.getContext("2d");
-  ctx.imageSmoothingEnabled = false;
-  const drawX = Math.round((viewport.width - rawFrame.sourceWidth) / 2);
-  const drawY = viewport.height - rawFrame.sourceHeight;
-  ctx.clearRect(0, 0, viewport.width, viewport.height);
-  ctx.drawImage(rawFrame.canvas, drawX, drawY, rawFrame.sourceWidth, rawFrame.sourceHeight);
-  return {
-    src: canvas.toDataURL("image/png"),
-    width: renderSize.width,
-    height: renderSize.height,
-  };
-}
+      const spriteH = 90 * scale;
+      const spriteW = spriteH * (this._gifEl.naturalWidth && this._gifEl.naturalHeight
+        ? this._gifEl.naturalWidth / this._gifEl.naturalHeight : 1);
+      headY = sy - spriteH + 12 * scale + bob + walk;
 
-function buildOfficeAnimationFrames(sheet, animation) {
-  const rawFrames = animation.clips.map((clip) => extractSpriteFrame(sheet, clip));
-  const viewport = {
-    width: Math.max(...rawFrames.map((frame) => frame.sourceWidth), 1),
-    height: Math.max(...rawFrames.map((frame) => frame.sourceHeight), 1),
-  };
-  const renderSize = fitSpriteDimensions(viewport.width, viewport.height);
-  return rawFrames.map((frame) => normalizeSpriteFrame(frame, viewport, renderSize));
-}
+      // Position the <img> overlay on top of canvas
+      this._gifEl.style.width  = spriteW + 'px';
+      this._gifEl.style.height = spriteH + 'px';
+      this._gifEl.style.left   = (sx - spriteW / 2) + 'px';
+      this._gifEl.style.top    = headY + 'px';
+      this._gifEl.style.transform = this.facingRight ? 'scaleX(1)' : 'scaleX(-1)';
 
-function extractSpriteFrame(sheet, clip) {
-  const pad = 12;
-  const canvas = document.createElement("canvas");
-  canvas.width = clip.w + pad * 2;
-  canvas.height = clip.h + pad * 2;
-  const ctx = canvas.getContext("2d");
-  ctx.imageSmoothingEnabled = false;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(sheet, clip.x, clip.y, clip.w, clip.h, pad, pad, clip.w, clip.h);
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  clearEdgeWhitespace(imageData, canvas.width, canvas.height);
-  ctx.putImageData(imageData, 0, 0);
-  const trimmed = trimSpriteCanvas(canvas);
-  return {
-    canvas: trimmed.canvas,
-    sourceWidth: trimmed.width,
-    sourceHeight: trimmed.height,
-  };
-}
+      // Grayscale filter for broken/dead
+      if (this.state === 'broken' || this.state === 'dead' || this.state === 'off') {
+        this._gifEl.style.filter = 'grayscale(0.9) brightness(0.7)';
+      } else {
+        this._gifEl.style.filter = '';
+      }
 
-function officeAnimationStateKey(stateClass) {
-  const normalized = String(stateClass || "ready").toLowerCase();
-  if (normalized === "working") return "working";
-  if (normalized === "booting" || normalized === "starting") return "booting";
-  if (normalized === "broken") return "broken";
-  if (normalized === "dead" || normalized === "off") return "dead";
-  return "ready";
-}
+      // Shadow on canvas
+      ctx.fillStyle = 'rgba(0,0,0,0.28)';
+      ctx.beginPath();
+      ctx.ellipse(sx, sy + 6 * scale, spriteW * 0.35, 5 * scale, 0, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // Hide GIF overlay when no GIF
+      this._gifEl.style.display = 'none';
+      // ═══ CIRCLE FALLBACK ═══
+      const r = 13 * scale;
+      const bodyY = sy + bob + walk;
+      headY = bodyY - r;
 
-function officeLaneSeed(laneName) {
-  return Array.from(String(laneName || ""))
-    .reduce((acc, ch) => ((acc * 33) + ch.charCodeAt(0)) % 9973, 17);
-}
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      ctx.beginPath(); ctx.ellipse(sx, sy + r + 3 * scale, r * 0.7, r * 0.22, 0, 0, Math.PI * 2); ctx.fill();
 
-function resolveAnimatedSpriteFrame(laneName, stateClass) {
-  if (!officeSpriteAvailable) return null;
-  const stateKey = officeAnimationStateKey(stateClass);
-  const animation =
-    officeSpriteAnimationOverrides[stateKey]
-    || OFFICE_SPRITE_ANIMATIONS[stateKey]
-    || OFFICE_SPRITE_ANIMATIONS.ready;
-  const frames = officeSpriteFrameCache[stateKey] || officeSpriteFrameCache.ready || [];
-  if (!frames.length) return null;
-  const sequence = Array.isArray(animation.sequence) && animation.sequence.length
-    ? animation.sequence
-    : frames.map((_, index) => index);
-  const seed = officeLaneSeed(laneName);
-  const offset = Math.floor(seed / 11) % sequence.length;
-  const tick = Math.floor((Date.now() + (seed % animation.intervalMs)) / animation.intervalMs);
-  return frames[sequence[(tick + offset) % sequence.length]];
-}
+      ctx.fillStyle = this.color;
+      ctx.beginPath(); ctx.arc(sx, bodyY, r, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.18)';
+      ctx.beginPath(); ctx.arc(sx - r * 0.25, bodyY - r * 0.3, r * 0.55, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1.2 * scale;
+      ctx.beginPath(); ctx.arc(sx, bodyY, r, 0, Math.PI * 2); ctx.stroke();
 
-function resolveOfficeStateGif(stateClass) {
-  const normalized = String(stateClass || "").toLowerCase();
-  if (normalized !== "ready") return null;
-  return {
-    src: `${OFFICE_READY_GIF_URL}?v=office-ready-gif-v1`,
-    width: 416,
-    height: 484,
-  };
-}
+      if (!this.isBlinking) {
+        const eyeY = bodyY - 2 * scale, eyeOx = 4.5 * scale, eyeR = 2.2 * scale, pupR = 1.2 * scale;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(sx - eyeOx, eyeY, eyeR, 0, Math.PI * 2); ctx.arc(sx + eyeOx, eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
+        const lookX = (this.facingRight ? 1 : -1) * 0.8 * scale;
+        ctx.fillStyle = '#1a1a2e';
+        ctx.beginPath(); ctx.arc(sx - eyeOx + lookX, eyeY, pupR, 0, Math.PI * 2); ctx.arc(sx + eyeOx + lookX, eyeY, pupR, 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.4 * scale;
+        const eyeY = bodyY - 2 * scale;
+        ctx.beginPath(); ctx.moveTo(sx - 6 * scale, eyeY); ctx.lineTo(sx - 3 * scale, eyeY);
+        ctx.moveTo(sx + 3 * scale, eyeY); ctx.lineTo(sx + 6 * scale, eyeY); ctx.stroke();
+      }
 
-function applyOfficeSpriteFrame(img, frame) {
-  if (!img || !frame) return;
-  img.src = frame.src;
-  img.dataset.frameSrc = frame.src;
-  img.width = frame.width;
-  img.height = frame.height;
-}
-
-function refreshOfficeSpriteFrames() {
-  document.querySelectorAll(".office-sprite-stage[data-lane]").forEach((stage) => {
-    const laneName = stage.dataset.lane || "";
-    const stateClass = stage.dataset.state || "ready";
-    const frame = resolveAnimatedSpriteFrame(laneName, stateClass);
-    const activeLayerName = stage.dataset.activeLayer || "a";
-    const activeImg = stage.querySelector(`img.office-sprite[data-layer="${activeLayerName}"]`);
-    const inactiveLayerName = activeLayerName === "a" ? "b" : "a";
-    const inactiveImg = stage.querySelector(`img.office-sprite[data-layer="${inactiveLayerName}"]`);
-    if (!frame || !activeImg || !inactiveImg) return;
-    if (activeImg.dataset.frameSrc === frame.src) {
-      applyOfficeSpriteFrame(activeImg, frame);
-      return;
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1 * scale;
+      if (this.state === 'working') {
+        ctx.beginPath(); ctx.moveTo(sx - 3 * scale, bodyY + 4 * scale); ctx.lineTo(sx + 3 * scale, bodyY + 4 * scale); ctx.stroke();
+      } else if (this.state === 'broken' || this.state === 'dead') {
+        ctx.beginPath(); ctx.arc(sx, bodyY + 7 * scale, 3 * scale, Math.PI, 0); ctx.stroke();
+      } else {
+        ctx.beginPath(); ctx.arc(sx, bodyY + 3 * scale, 3 * scale, 0, Math.PI); ctx.stroke();
+      }
     }
-    applyOfficeSpriteFrame(inactiveImg, frame);
-    inactiveImg.classList.add("active");
-    activeImg.classList.remove("active");
-    stage.dataset.activeLayer = inactiveLayerName;
-  });
-}
 
-function setCommandOutput(text) {
-  const output = document.getElementById("runtime-command-output");
-  if (output) output.textContent = text;
-}
+    // ═══ LABELS ═══
+    const r = 13 * scale;
+    ctx.font = `bold ${9.5 * scale}px 'Noto Sans KR', sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillText(this.name, sx + 1, sy - (hasGif ? 72 * scale : r + 5 * scale) + 1);
+    ctx.fillStyle = '#e8ecf4';
+    ctx.fillText(this.name, sx, sy - (hasGif ? 72 * scale : r + 5 * scale));
 
-function tokenizeCommand(input) {
-  const tokens = [];
-  const pattern = /"([^"]*)"|'([^']*)'|`([^`]*)`|(\S+)/g;
-  let match;
-  while ((match = pattern.exec(String(input || "")))) {
-    tokens.push(match[1] ?? match[2] ?? match[3] ?? match[4]);
-  }
-  return tokens;
-}
+    const stateText = this.state.toUpperCase();
+    ctx.font = `bold ${7 * scale}px sans-serif`;
+    const tw = ctx.measureText(stateText).width;
+    const pillW = tw + 8 * scale, pillH = 12 * scale;
+    const pillX = sx - pillW / 2;
+    const pillY = sy + (hasGif ? 10 : r + 8) * scale;
+    ctx.fillStyle = this.color + '33';
+    ctx.beginPath(); ctx.roundRect(pillX, pillY, pillW, pillH, 3 * scale); ctx.fill();
+    ctx.fillStyle = this.color; ctx.textBaseline = 'middle';
+    ctx.fillText(stateText, sx, pillY + pillH / 2);
 
-function normalizeLaneName(value) {
-  const lane = String(value || "").trim().toLowerCase();
-  if (lane === "claude") return "Claude";
-  if (lane === "codex") return "Codex";
-  if (lane === "gemini") return "Gemini";
-  if (lane === "all") return "all";
-  return "";
-}
+    // ═══ SPEECH BUBBLE (말풍선) ═══
+    if (this.bubble.timer > 0) {
+      ctx.save();
+      const padX = 10 * scale, padY = 6 * scale;
+      ctx.font = `bold ${10 * scale}px 'Noto Sans KR', sans-serif`;
+      const textW = ctx.measureText(this.bubble.text).width;
+      const boxW = textW + padX * 2;
+      const boxH = 16 * scale + padY * 2;
 
-function clampTailLines(value, fallback = 120) {
-  const parsed = Number.parseInt(String(value || fallback), 10);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(1, Math.min(400, parsed));
-}
+      // 말풍선 위치 (캐릭터 머리 위)
+      const bx = sx;
+      const by = headY - 15 * scale;
 
-async function fetchJson(url, options = {}) {
-  const res = await fetch(url, options);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || data.ok === false) {
-    throw new Error(data.error || `HTTP ${res.status}`);
-  }
-  return data;
-}
+      // 꼬리 그리기
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+      ctx.beginPath();
+      ctx.moveTo(bx - 5 * scale, by - boxH + 2 * scale);
+      ctx.lineTo(bx + 5 * scale, by - boxH + 2 * scale);
+      ctx.lineTo(bx, by + 4 * scale);
+      ctx.fill();
 
-function summarizeRuntimeStatus(data) {
-  const lines = [];
-  lines.push(`runtime=${data.runtime_state || "STOPPED"}`);
-  const control = data.control || {};
-  if (control.active_control_status) {
-    const suffix = control.active_control_seq >= 0 ? ` seq=${control.active_control_seq}` : "";
-    lines.push(`control=${control.active_control_status}${suffix}`);
-  }
-  const round = data.active_round || {};
-  if (round.state) {
-    lines.push(`round=${round.state}${round.job_id ? ` job=${round.job_id}` : ""}`);
-  }
-  for (const lane of (data.lanes || [])) {
-    const note = lane.note ? ` note=${lane.note}` : "";
-    lines.push(`${lane.name}: ${lane.state || "OFF"}${note}`);
-  }
-  return lines.join("\n");
-}
+      // 박스 그리기
+      ctx.beginPath();
+      ctx.roundRect(bx - boxW / 2, by - boxH, boxW, boxH, 8 * scale);
+      ctx.fill();
 
-async function runRuntimeCommand(rawCommand) {
-  const tokens = tokenizeCommand(rawCommand);
-  if (!tokens.length) {
-    return "입력된 명령이 없습니다.";
-  }
-
-  const command = String(tokens[0] || "").toLowerCase();
-
-  if (command === "help") {
-    return [
-      "지원 명령:",
-      "  start",
-      "  stop",
-      "  restart",
-      "  attach [Claude|Codex|Gemini]",
-      "  tail <Claude|Codex|Gemini> [lines]",
-      "  view <all|Claude|Codex|Gemini>",
-      "  text <on|off> [lines]",
-      "  status",
-      "  help",
-    ].join("\n");
-  }
-
-  if (command === "status") {
-    const data = await fetchJson("/api/runtime/status");
-    return summarizeRuntimeStatus(data);
-  }
-
-  if (command === "start" || command === "stop" || command === "restart") {
-    const data = await fetchJson(`/api/runtime/${command}`, { method: "POST" });
-    setTimeout(poll, 250);
-    setTimeout(poll, 1500);
-    return data.message || `${command} 요청 완료`;
-  }
-
-  if (command === "attach") {
-    const lane = normalizeLaneName(tokens[1] || "");
-    const query = lane && lane !== "all" ? `?lane=${encodeURIComponent(lane)}` : "";
-    const data = await fetchJson(`/api/runtime/attach${query}`, { method: "POST" });
-    setTimeout(poll, 250);
-    return lane && lane !== "all"
-      ? `${lane} attach 요청 완료 (pid=${data.pid ?? "—"})`
-      : `session attach 요청 완료 (pid=${data.pid ?? "—"})`;
-  }
-
-  if (command === "tail") {
-    const lane = normalizeLaneName(tokens[1] || "");
-    if (!lane || lane === "all") {
-      return "tail 명령은 lane 이름이 필요합니다. 예: tail Codex 120";
+      // 텍스트 그리기
+      ctx.fillStyle = '#0f172a';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(this.bubble.text, bx, by - boxH / 2 + 1 * scale);
+      ctx.restore();
     }
-    tailLineCountOverride = clampTailLines(tokens[2], 120);
-    selectedView = lane.toLowerCase();
-    showTail = true;
-    renderTailToggle();
-    await hydrateTail([{ name: lane }]);
-    poll();
-    return `${lane} tail 표시로 전환했습니다. lines=${tailLineCountOverride}`;
   }
 
-  if (command === "view") {
-    const view = normalizeLaneName(tokens[1] || "all");
-    if (!view) {
-      return "view 명령은 all 또는 lane 이름이 필요합니다.";
-    }
-    setView(view === "all" ? "all" : view.toLowerCase());
-    return view === "all" ? "전체 보기로 전환했습니다." : `${view} 보기로 전환했습니다.`;
+  hitTest(vx, vy) {
+    const dx = vx - this.x; const dy = vy - this.y;
+    return Math.sqrt(dx * dx + dy * dy) < 20;
   }
-
-  if (command === "text") {
-    const mode = String(tokens[1] || "").trim().toLowerCase();
-    if (mode === "on") {
-      showTail = true;
-      tailLineCountOverride = tokens[2] ? clampTailLines(tokens[2], 120) : tailLineCountOverride;
-      renderTailToggle();
-      poll();
-      return `텍스트 표시를 켰습니다.${tailLineCountOverride ? ` lines=${tailLineCountOverride}` : ""}`;
-    }
-    if (mode === "off") {
-      showTail = false;
-      tailLineCountOverride = null;
-      renderTailToggle();
-      poll();
-      return "텍스트 표시를 껐습니다.";
-    }
-    return "text 명령은 on 또는 off만 지원합니다.";
-  }
-
-  return "지원하지 않는 명령입니다. help를 입력해 보세요.";
 }
 
-async function submitRuntimeCommand() {
-  const input = document.getElementById("runtime-command-input");
-  if (!input) return;
-  const raw = String(input.value || "").trim();
-  if (!raw) {
-    setCommandOutput("입력된 명령이 없습니다.");
+// ═══════════════════════════════════════════════════════
+// PARTICLE
+// ═══════════════════════════════════════════════════════
+const STATE_PARTICLES = { working: '💡', ready: '💤', booting: '⚡', broken: '💦', dead: '💀', off: '🌙' };
+const EVENT_PARTICLES = { ok: '✅', warn: '❗', err: '🔥', info: '💬' };
+
+class Particle {
+  constructor(vx, vy, text, opts = {}) {
+    this.vx = vx + (Math.random() - 0.5) * 14;
+    this.vy = vy - 30;
+    this.text = text;
+    this.color   = opts.color    || '#e2e8f0';
+    this.lifetime = opts.lifetime || 1.6;
+    this.maxLife  = this.lifetime;
+    this.size     = opts.size     || 16;
+    this.driftX   = (Math.random() - 0.5) * 12;
+    this.driftY   = -(25 + Math.random() * 15);
+    this.alive = true;
+  }
+  update(dt) {
+    this.vx += this.driftX * dt; this.vy += this.driftY * dt;
+    this.lifetime -= dt; if (this.lifetime <= 0) this.alive = false;
+  }
+  draw(ctx, scale) {
+    const alpha = Math.max(0, this.lifetime / this.maxLife);
+    const sx = this.vx * scale, sy = this.vy * scale, sz = this.size * scale;
+    ctx.save(); ctx.globalAlpha = alpha; ctx.font = `${sz}px sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const lifeFrac = 1 - (this.lifetime / this.maxLife);
+    const pop = lifeFrac < 0.15 ? 1 + (0.15 - lifeFrac) * 3 : 1;
+    ctx.translate(sx, sy); ctx.scale(pop, pop);
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillText(this.text, 1, 1);
+    ctx.fillStyle = this.color; ctx.fillText(this.text, 0, 0);
+    ctx.restore();
+  }
+}
+
+function spawnParticle(agentName, text, opts) {
+  if (_lowMotion) return;
+  const agent = agents.get(agentName);
+  if (!agent) return;
+  particles.push(new Particle(agent.x, agent.y, text, opts));
+}
+function spawnStateParticle(agentName, newState) {
+  spawnParticle(agentName, STATE_PARTICLES[newState] || '❓', { size: 20, lifetime: 1.8 });
+}
+function spawnEventParticle(agentName, eventType) {
+  spawnParticle(agentName, EVENT_PARTICLES[eventType] || '💬', { size: 14, lifetime: 1.3 });
+}
+
+// ═══════════════════════════════════════════════════════
+// OFFICE RENDERER
+// ═══════════════════════════════════════════════════════
+const BACKGROUND_ASSET_CANDIDATES = [
+  '/controller-assets/background.png',
+  '/controller-assets/generated/bg-office.png',
+];
+const _bgImg = new Image();
+let _bgReady = false;
+let _bgSource = '';
+let _bgLoadError = '';
+let _bgSignalKey = '';
+let _eventLogReady = false;
+const _pendingBackgroundSignals = [];
+
+function _emitBackgroundSignal(type, key, msg) {
+  if (_bgSignalKey === key) return;
+  _bgSignalKey = key;
+  if (!_eventLogReady) {
+    _pendingBackgroundSignals.push({ type, msg });
     return;
   }
-  setCommandOutput(`> ${raw}\n\n실행 중...`);
+  pushEvent(type, msg);
+}
+
+function _flushBackgroundSignals() {
+  if (!_eventLogReady) return;
+  while (_pendingBackgroundSignals.length) {
+    const entry = _pendingBackgroundSignals.shift();
+    pushEvent(entry.type, entry.msg);
+  }
+}
+
+function _loadBackgroundAsset(index = 0) {
+  const src = BACKGROUND_ASSET_CANDIDATES[index];
+  if (!src) {
+    _bgReady = false;
+    _bgSource = '';
+    _bgLoadError = 'background_unavailable';
+    _emitBackgroundSignal('err', 'background:error:none', 'Scene background load failed');
+    return;
+  }
+
+  _bgImg.onload = () => {
+    if (_bgSource === src && _bgReady) return;
+    _bgReady = true;
+    _bgSource = src;
+    _bgLoadError = '';
+    if (index > 0) {
+      _emitBackgroundSignal('warn', `background:fallback:${src}`, `Scene background fallback → ${basename(src)}`);
+    }
+  };
+  _bgImg.onerror = () => {
+    if (index + 1 < BACKGROUND_ASSET_CANDIDATES.length) {
+      _loadBackgroundAsset(index + 1);
+      return;
+    }
+    _bgReady = false;
+    _bgSource = '';
+    _bgLoadError = basename(src);
+    _emitBackgroundSignal('err', `background:error:${src}`, `Scene background load failed → ${basename(src)}`);
+  };
+  _bgImg.src = src;
+
+  if (_bgImg.complete) {
+    if (_bgImg.naturalWidth > 0) {
+      _bgImg.onload();
+    } else if (index + 1 < BACKGROUND_ASSET_CANDIDATES.length) {
+      _loadBackgroundAsset(index + 1);
+    } else {
+      _bgImg.onerror();
+    }
+  }
+}
+
+_loadBackgroundAsset();
+
+const OfficeRenderer = {
+  drawRoom(ctx, cw, ch, scale) {
+    if (_bgReady) {
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(_bgImg, 0, 0, VIRTUAL_W * scale, VIRTUAL_H * scale);
+    } else {
+      ctx.fillStyle = '#0a0f1a';
+      ctx.fillRect(0, 0, cw, ch);
+    }
+  }
+};
+
+// ═══════════════════════════════════════════════════════
+// MONITOR MATRIX EFFECT + HOLOGRAM
+// ═══════════════════════════════════════════════════════
+
+/** Monitor screen areas (virtual coords, mapped to desks) */
+const MONITOR_SCREENS = {
+  claude: { x: 440, y: 190, w: 56, h: 34 },
+  codex:  { x: 440, y: 320, w: 56, h: 34 },
+  gemini: { x: 440, y: 450, w: 56, h: 34 },
+};
+
+/** Matrix rain columns per monitor */
+const _matrixState = {};
+const MATRIX_CHARS = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789ABCDEF<>/{}[];=+-*';
+
+function _initMatrix(key, cols) {
+  _matrixState[key] = {
+    columns: Array.from({ length: cols }, () => ({
+      y: Math.random() * -20,
+      speed: 1.5 + Math.random() * 3,
+      chars: Array.from({ length: 8 }, () =>
+        MATRIX_CHARS[Math.floor(Math.random() * MATRIX_CHARS.length)]
+      ),
+    })),
+  };
+}
+
+const MonitorFX = {
+  /** Draw matrix code rain inside a monitor screen area */
+  drawMatrix(ctx, scale, key, dt) {
+    const scr = MONITOR_SCREENS[key];
+    if (!scr) return;
+    if (!_matrixState[key]) _initMatrix(key, 7);
+    const state = _matrixState[key];
+
+    const sx = scr.x * scale, sy = scr.y * scale;
+    const sw = scr.w * scale, sh = scr.h * scale;
+
+    ctx.save();
+
+    // Clip to monitor screen
+    ctx.beginPath();
+    ctx.rect(sx, sy, sw, sh);
+    ctx.clip();
+
+    // Dark screen background
+    ctx.fillStyle = 'rgba(0,8,4,0.85)';
+    ctx.fillRect(sx, sy, sw, sh);
+
+    // Matrix columns
+    const fontSize = 5 * scale;
+    ctx.font = `${fontSize}px monospace`;
+    ctx.textAlign = 'center';
+
+    const colW = sw / state.columns.length;
+    for (let c = 0; c < state.columns.length; c++) {
+      const col = state.columns[c];
+      col.y += col.speed * dt * 12;
+
+      for (let i = 0; i < col.chars.length; i++) {
+        const cy = sy + (col.y + i) * fontSize;
+        if (cy < sy - fontSize || cy > sy + sh + fontSize) continue;
+
+        const brightness = i === col.chars.length - 1 ? 1.0 : 0.3 + (i / col.chars.length) * 0.4;
+        const green = Math.floor(80 + brightness * 175);
+        ctx.fillStyle = i === col.chars.length - 1
+          ? `rgba(180,255,180,${brightness})`
+          : `rgba(0,${green},0,${brightness * 0.7})`;
+        ctx.fillText(col.chars[i], sx + c * colW + colW / 2, cy);
+      }
+
+      // Reset column when it scrolls past screen
+      if ((col.y) * fontSize > sh + fontSize * col.chars.length) {
+        col.y = -col.chars.length;
+        col.speed = 1.5 + Math.random() * 3;
+        // Randomize a few chars
+        for (let i = 0; i < col.chars.length; i++) {
+          if (Math.random() < 0.5) {
+            col.chars[i] = MATRIX_CHARS[Math.floor(Math.random() * MATRIX_CHARS.length)];
+          }
+        }
+      }
+    }
+
+    // Scanline overlay
+    ctx.fillStyle = 'rgba(0,0,0,0.06)';
+    for (let ly = sy; ly < sy + sh; ly += 2 * scale) {
+      ctx.fillRect(sx, ly, sw, 1);
+    }
+
+    // Screen edge glow
+    const edgeGrad = ctx.createLinearGradient(sx, sy, sx, sy + sh);
+    edgeGrad.addColorStop(0, 'rgba(0,255,80,0.08)');
+    edgeGrad.addColorStop(1, 'rgba(0,255,80,0)');
+    ctx.fillStyle = edgeGrad;
+    ctx.fillRect(sx, sy, sw, sh);
+
+    ctx.restore();
+  },
+
+  /** Draw hologram above working desk */
+  drawHologram(ctx, scale, key, text, time) {
+    const scr = MONITOR_SCREENS[key];
+    if (!scr) return;
+
+    const cx = (scr.x + scr.w / 2) * scale;
+    const baseY = (scr.y - 8) * scale;
+    const bob = Math.sin(time * 2) * 3 * scale;
+    const hy = baseY - 22 * scale + bob;
+
+    ctx.save();
+
+    // Hologram beam (narrow triangle from monitor to text)
+    const beamGrad = ctx.createLinearGradient(cx, baseY, cx, hy);
+    beamGrad.addColorStop(0, 'rgba(96,165,250,0.12)');
+    beamGrad.addColorStop(1, 'rgba(96,165,250,0.02)');
+    ctx.fillStyle = beamGrad;
+    ctx.beginPath();
+    ctx.moveTo(cx - 12 * scale, baseY);
+    ctx.lineTo(cx + 12 * scale, baseY);
+    ctx.lineTo(cx + 30 * scale, hy + 8 * scale);
+    ctx.lineTo(cx - 30 * scale, hy + 8 * scale);
+    ctx.closePath();
+    ctx.fill();
+
+    // Glowing text
+    const displayText = text.length > 18 ? '…' + text.slice(-17) : text;
+    ctx.font = `bold ${6 * scale}px 'Cascadia Code', 'Fira Code', monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Outer glow
+    ctx.fillStyle = `rgba(96,165,250,${0.15 + Math.sin(time * 3) * 0.05})`;
+    const tw = ctx.measureText(displayText).width;
+    ctx.beginPath();
+    ctx.roundRect(cx - tw / 2 - 6 * scale, hy - 6 * scale, tw + 12 * scale, 12 * scale, 3 * scale);
+    ctx.fill();
+
+    // Text with flicker
+    const flicker = 0.7 + Math.sin(time * 8) * 0.15;
+    ctx.fillStyle = `rgba(147,197,253,${flicker})`;
+    ctx.fillText(displayText, cx, hy);
+
+    // Horizontal scan line
+    const scanY = hy - 5 * scale + ((time * 20 * scale) % (12 * scale));
+    ctx.fillStyle = 'rgba(96,165,250,0.1)';
+    ctx.fillRect(cx - tw / 2 - 4 * scale, scanY, tw + 8 * scale, 1);
+
+    ctx.restore();
+  },
+};
+
+// ═══════════════════════════════════════════════════════
+// STATE & SETUP
+// ═══════════════════════════════════════════════════════
+const agents = new Map();
+const particles =[];
+let runtimeData = null;
+
+/** Test-only hook: inject fatigue state deterministically.
+ *  value: 'fatigued' | 'coffee' | '' (reset) */
+window.setAgentFatigue = function(name, value) {
+  const agent = agents.get(name);
+  if (!agent) return;
+  if (value === 'coffee') {
+    agent._atCoffee = true;
+    agent.fatigue = 0;
+  } else if (value === 'fatigued') {
+    agent._atCoffee = false;
+    agent.fatigue = 15;
+  } else {
+    agent._atCoffee = false;
+    agent.fatigue = 0;
+  }
+  // Re-render sidebar cards with current lanes
+  if (runtimeData && runtimeData.lanes) renderAgentCards(runtimeData.lanes);
+};
+const eventLog =[];
+const MAX_EVENTS = 40;
+const _prev = { runtimeState: null, controlStatus: null, watcherStatus: null, uncertainRuntime: null, laneStates: {} };
+
+const canvas = document.getElementById('office');
+const ctx    = canvas.getContext('2d');
+let cw = 0, ch = 0, scale = 1;
+
+function resize() {
+  const wrap = canvas.parentElement;
+  const dpr  = window.devicePixelRatio || 1;
+  cw = wrap.clientWidth; ch = wrap.clientHeight;
+  canvas.width  = cw * dpr; canvas.height = ch * dpr;
+  canvas.style.width  = cw + 'px'; canvas.style.height = ch + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  scale = Math.min(cw / VIRTUAL_W, ch / VIRTUAL_H);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// Tooltip & Modal Logic
+const tooltip = document.getElementById('tooltip');
+canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) / scale, my = (e.clientY - rect.top) / scale;
+  let hit = null;
+  for (const a of agents.values()) { if (a.hitTest(mx, my)) { hit = a; break; } }
+  if (hit) {
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.clientX - rect.left + 14) + 'px';
+    tooltip.style.top  = (e.clientY - rect.top  - 8) + 'px';
+    tooltip.querySelector('.tt-name').textContent  = `${hit.name} (${hit.role})`;
+    tooltip.querySelector('.tt-state').textContent = hit.state.toUpperCase();
+    tooltip.querySelector('.tt-state').style.color = hit.color;
+    tooltip.querySelector('.tt-note').textContent  = hit.note || '';
+  } else { tooltip.style.display = 'none'; }
+});
+canvas.addEventListener('mouseleave', () => tooltip.style.display = 'none');
+
+// ── Clickable environment zones (virtual coords + bounding boxes) ──
+const CLICK_ZONES = [
+  {
+    id: 'coffee',
+    x: 770, y: 440, w: 70, h: 60,
+    action() {
+      SoundFX.blip();
+      // Steam particles rising from machine
+      for (let i = 0; i < 5; i++) {
+        const p = new Particle(
+          804 + (Math.random() - 0.5) * 20,
+          448,
+          ['☁️', '♨️', '💨'][Math.floor(Math.random() * 3)],
+          { size: 10 + Math.random() * 6, lifetime: 1.2 + Math.random() * 0.8 }
+        );
+        p.driftY = -(15 + Math.random() * 12);
+        p.driftX = (Math.random() - 0.5) * 8;
+        particles.push(p);
+      }
+    },
+  },
+  {
+    id: 'plant_br',
+    x: 840, y: 560, w: 50, h: 50,
+    action() {
+      SoundFX.blip();
+      const emojis = ['🌸', '💖', '🌷', '🌼', '✨'];
+      for (let i = 0; i < 4; i++) {
+        const p = new Particle(
+          865 + (Math.random() - 0.5) * 18,
+          570,
+          emojis[Math.floor(Math.random() * emojis.length)],
+          { size: 12 + Math.random() * 6, lifetime: 1.0 + Math.random() * 0.6 }
+        );
+        p.driftY = -(20 + Math.random() * 15);
+        p.driftX = (Math.random() - 0.5) * 18;
+        particles.push(p);
+      }
+    },
+  },
+  {
+    id: 'plant_tl',
+    x: 100, y: 580, w: 50, h: 50,
+    action() {
+      SoundFX.blip();
+      const emojis = ['🌿', '🍀', '💚', '🌱'];
+      for (let i = 0; i < 3; i++) {
+        const p = new Particle(
+          125 + (Math.random() - 0.5) * 14,
+          590,
+          emojis[Math.floor(Math.random() * emojis.length)],
+          { size: 11 + Math.random() * 5, lifetime: 0.9 + Math.random() * 0.5 }
+        );
+        p.driftY = -(18 + Math.random() * 10);
+        p.driftX = (Math.random() - 0.5) * 14;
+        particles.push(p);
+      }
+    },
+  },
+];
+
+function hitBox(mx, my, zone) {
+  return mx >= zone.x && mx <= zone.x + zone.w && my >= zone.y && my <= zone.y + zone.h;
+}
+
+canvas.addEventListener('click', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) / scale, my = (e.clientY - rect.top) / scale;
+
+  // 1. Agent click → log modal (priority)
+  for (const a of agents.values()) {
+    if (a.hitTest(mx, my)) { openLogModal(a); return; }
+  }
+
+  // 2. Environment easter eggs
+  for (const zone of CLICK_ZONES) {
+    if (hitBox(mx, my, zone)) { zone.action(); return; }
+  }
+});
+
+let _logRefreshInterval = null;
+let _modalLaneName = '';
+
+async function openLogModal(agent) {
+  _modalLaneName = agent.name;
+  const modal = document.getElementById('log-modal');
+  document.getElementById('lm-dot').style.background = agent.color;
+  document.getElementById('lm-name').textContent = agent.name;
+  document.getElementById('lm-role').textContent = agent.role;
+  const stateEl = document.getElementById('lm-state');
+  stateEl.textContent = agent.state.toUpperCase();
+  stateEl.style.background = agent.color + '33'; stateEl.style.color = agent.color;
+
+  const infoItems =[
+    agent.pid ? `PID ${agent.pid}` : null,
+    agent.note ? truncate(agent.note, 60) : null,
+    agent.lastEventAt ? `event: ${agent.lastEventAt}` : null,
+  ].filter(Boolean);
+  document.getElementById('lm-info').innerHTML = infoItems.map(t => `<span>${esc(t)}</span>`).join('');
+
+  const body = document.getElementById('lm-body');
+  body.innerHTML = '<span class="log-loading">$ tail -f …</span>';
+  modal.classList.add('open');
+
+  await _fetchTail(agent.name, body);
+  if (_logRefreshInterval) clearInterval(_logRefreshInterval);
+  _logRefreshInterval = setInterval(() => {
+    if (!modal.classList.contains('open')) { clearInterval(_logRefreshInterval); return; }
+    _fetchTail(agent.name, body);
+  }, 3000);
+}
+
+async function _fetchTail(laneName, bodyEl) {
   try {
-    const result = await runRuntimeCommand(raw);
-    setCommandOutput(`> ${raw}\n\n${result}`);
-  } catch (error) {
-    setCommandOutput(`> ${raw}\n\n실패: ${error.message}`);
-  }
+    const res = await fetch(`/api/runtime/capture-tail?lane=${encodeURIComponent(laneName)}&lines=100`);
+    const data = await res.json();
+    if (data.ok && data.text) {
+      const wasAtBottom = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 40;
+      bodyEl.textContent = data.text;
+      if (wasAtBottom) bodyEl.scrollTop = bodyEl.scrollHeight;
+    } else { bodyEl.innerHTML = `<span class="log-loading">(${esc(laneName)} — 활성 로그 없음)</span>`; }
+  } catch (e) { bodyEl.innerHTML = `<span class="log-loading">(로그 조회 실패: ${esc(e.message)})</span>`; }
 }
 
-function renderAgentList(agents) {
-  const el = document.getElementById("agent-list");
-  el.innerHTML = agents.map(a => `
-    <div class="agent-item">
-      <div class="dot ${(a.state || "").toLowerCase()}"></div>
-      <span class="agent-name">${a.name}</span>
-      <div class="agent-meta">
-        <span class="agent-status ${(a.state || "").toLowerCase()}">${a.state || "OFF"}</span>
-      </div>
-    </div>
-  `).join("");
+function closeLogModal(e) {
+  if (e && e.target !== document.getElementById('log-modal')) return;
+  document.getElementById('log-modal').classList.remove('open');
+  _modalLaneName = '';
+  if (_logRefreshInterval) { clearInterval(_logRefreshInterval); _logRefreshInterval = null; }
 }
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLogModal(); });
 
-function visibleAgentsForView(agents) {
-  return selectedView === "all"
-    ? agents
-    : agents.filter(a => a.name.toLowerCase() === selectedView);
-}
+// ═══════════════════════════════════════════════════════
+// ANIMATION LOOP & IDLE CHATTER
+// ═══════════════════════════════════════════════════════
+let lastTime = performance.now();
 
-function renderTailToggle() {
-  const btn = document.getElementById("tail-toggle");
-  if (!btn) return;
-  btn.textContent = showTail ? "텍스트 ON" : "텍스트 OFF";
-  btn.classList.toggle("active", showTail);
-}
-
-function renderOfficeToggle() {
-  const btn = document.getElementById("office-toggle");
-  if (!btn) return;
-  btn.textContent = showOffice ? "Office View ON" : "Office View OFF";
-  btn.classList.toggle("active", showOffice);
-}
-
-function toggleTail() {
-  showTail = !showTail;
-  renderTailToggle();
-  poll();
-}
-
-function toggleOfficeView() {
-  showOffice = !showOffice;
-  renderOfficeToggle();
-  document.querySelector(".center")?.classList.toggle("office-mode", showOffice);
-  poll();
-}
-
-function officeDeskClass(agentName) {
-  const key = String(agentName || "").toLowerCase();
-  if (key === "claude") return "claude";
-  if (key === "codex") return "codex";
-  if (key === "gemini") return "gemini";
-  return "claude";
-}
-
-function officeShortNote(agent) {
-  const note = String(agent.note || "").trim();
-  if (!note) return "standby";
-  if (note === "prompt_visible") return "prompt standby";
-  if (note === "waiting_next_control") return "waiting next control";
-  if (note === "followup") return "followup pending";
-  if (note === "auth_login_required") return "auth required";
-  return note.replaceAll("_", " ");
-}
-
-async function hydrateTail(agents) {
-  if (!showTail) return agents;
-  const visibleAgents = visibleAgentsForView(agents);
-  const lineCount = tailLineCountOverride || (selectedView === "all" ? 40 : 120);
-  await Promise.all(visibleAgents.map(async (agent) => {
-    try {
-      const url = `/api/runtime/capture-tail?lane=${encodeURIComponent(agent.name)}&lines=${lineCount}`;
-      const res = await fetch(url);
-      const data = await res.json();
-      if (res.ok && data.ok !== false) {
-        tailCache[agent.name] = String(data.text || "");
-      }
-    } catch (e) {
-      // keep the last cached tail on transient failures
-    }
-  }));
-  return agents.map(a => ({ ...a, tail_text: tailCache[a.name] || "" }));
-}
-
-function renderPanes(agents) {
-  const area = document.getElementById("pane-area");
-  const visibleAgents = visibleAgentsForView(agents);
-  area.classList.toggle("focused", selectedView !== "all");
-
-  // 첫 렌더링이면 생성, 이후는 내용만 업데이트
-  if (area.children.length !== visibleAgents.length) {
-    area.innerHTML = visibleAgents.map((a, i) => `
-      <div class="pane" id="pane-${i}">
-        <div class="pane-header">
-          <div class="dot ${(a.state || "").toLowerCase()}"></div>
-          <span class="name">${a.name}</span>
-          <div class="meta">
-            ${a.note ? `<span class="note">${escapeHtml(a.note)}</span>` : ``}
-            <span class="badge ${(a.state || "").toLowerCase()}">${a.state || "OFF"}</span>
-          </div>
-        </div>
-        <div class="pane-body" id="pane-body-${i}"></div>
-      </div>
-    `).join("");
-  }
-  visibleAgents.forEach((a, i) => {
-    // 헤더 업데이트
-    const header = document.querySelector(`#pane-${i} .pane-header`);
-    if (header) {
-      header.innerHTML = `
-        <div class="dot ${(a.state || "").toLowerCase()}"></div>
-        <span class="name">${a.name}</span>
-        <div class="meta">
-          ${a.note ? `<span class="note">${escapeHtml(a.note)}</span>` : ``}
-          <span class="badge ${(a.state || "").toLowerCase()}">${a.state || "OFF"}</span>
-        </div>
-      `;
-    }
-    const body = document.getElementById(`pane-body-${i}`);
-    if (body) {
-      const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 50;
-      if (showTail) {
-        const text = normalizeTailText(a.tail_text || "");
-        body.textContent = text || "(최근 output 없음)";
-      } else {
-        const lines = [];
-        if (a.pid) lines.push(`pid: ${a.pid}`);
-        if (a.last_event_at) lines.push(`last_event_at: ${a.last_event_at}`);
-        if (a.attachable === false) lines.push("attachable: false");
-        body.textContent = lines.length ? lines.join("\n") : "(runtime status only)";
-      }
-      if (atBottom) body.scrollTop = body.scrollHeight;
-    }
-  });
-}
-
-function renderOffice(agents, runtime) {
-  const area = document.getElementById("office-area");
-  if (!area) return;
-  const visibleAgents = visibleAgentsForView(agents);
-  const control = runtime.control || {};
-  const round = runtime.active_round || {};
-  const watcher = runtime.watcher || {};
-  const artifacts = runtime.artifacts || {};
-  const latestWork = artifacts.latest_work || {};
-  const latestVerify = artifacts.latest_verify || {};
-  const degradedReasons = Array.isArray(runtime.degraded_reasons) ? runtime.degraded_reasons.filter(Boolean) : [];
-  const runtimeDegraded = Boolean(degradedReasons.length || runtime.degraded_reason || String(runtime.runtime_state || "").toUpperCase() === "DEGRADED");
-  const runtimeStateClass = String(runtime.runtime_state || "stopped").toLowerCase();
-  const activeControlStatus = String(control.active_control_status || "none");
-  const desks = visibleAgents.map((agent) => {
-    const stateClass = String(agent.state || "off").toLowerCase();
-    const deskClass = officeDeskClass(agent.name);
-    const note = officeShortNote(agent);
-    const transcript = showTail ? tailPreviewText(agent.tail_text || "") : "";
-    const bubbleText = transcript || (showTail ? "(최근 output 없음)" : note);
-    const bubbleClass = transcript ? "" : "idle";
-    const meta = [
-      agent.pid ? `pid ${agent.pid}` : "",
-      agent.last_event_at ? `event ${timeAgoIso(agent.last_event_at) || agent.last_event_at}` : "",
-    ].filter(Boolean);
-    const stateGif = resolveOfficeStateGif(stateClass);
-    const spriteFrame = resolveAnimatedSpriteFrame(agent.name, stateClass);
-    const spriteMarkup = stateGif
-      ? `<div class="office-sprite-stage ${stateClass}" data-state="${escapeHtml(stateClass)}">
-          <div class="office-sprite-layers">
-            <img
-              class="office-sprite ${stateClass} active office-state-gif"
-              alt="${escapeHtml(agent.name)} ready gif"
-              src="${stateGif.src}"
-              data-frame-src="${stateGif.src}"
-              width="${stateGif.width}"
-              height="${stateGif.height}"
-            >
-          </div>
-        </div>`
-      : officeSpriteAvailable
-      ? `<div class="office-sprite-stage ${stateClass}" data-lane="${escapeHtml(agent.name)}" data-state="${escapeHtml(stateClass)}" data-active-layer="a">
-          <div class="office-sprite-layers">
-            <img
-              class="office-sprite ${stateClass} active"
-              data-layer="a"
-              alt="${escapeHtml(agent.name)} sprite"
-              src="${spriteFrame ? spriteFrame.src : ""}"
-              data-frame-src="${spriteFrame ? spriteFrame.src : ""}"
-              width="${spriteFrame ? spriteFrame.width : 120}"
-              height="${spriteFrame ? spriteFrame.height : 160}"
-            >
-            <img
-              class="office-sprite ${stateClass}"
-              data-layer="b"
-              alt=""
-              src=""
-              data-frame-src=""
-              width="${spriteFrame ? spriteFrame.width : 120}"
-              height="${spriteFrame ? spriteFrame.height : 160}"
-            >
-          </div>
-        </div>`
-      : `<div class="office-agent ${stateClass}">
-            <div class="office-agent-shadow"></div>
-            <div class="office-agent-head"></div>
-            <div class="office-agent-body"></div>
-            <div class="office-agent-arm left"></div>
-            <div class="office-agent-arm right"></div>
-            <div class="office-agent-leg left"></div>
-            <div class="office-agent-leg right"></div>
-          </div>`;
-    return `
-      <div class="office-desk office-desk-scene ${deskClass} ${stateClass}">
-        <div class="office-desk-header">
-          <div class="office-agent-label">
-            <div class="dot ${stateClass}"></div>
-            <span class="name">${escapeHtml(agent.name)}</span>
-          </div>
-          <span class="office-state-pill ${stateClass}">${escapeHtml(agent.state || "OFF")}</span>
-        </div>
-        <div class="office-bubble ${bubbleClass}">${escapeHtml(bubbleText)}</div>
-        <div class="office-avatar-zone">
-          <div class="office-monitor"></div>
-          ${spriteMarkup}
-        </div>
-        <div class="office-desk-surface"></div>
-        <div class="office-meta">
-          ${meta.map((item) => `<span class="office-meta-chip">${escapeHtml(item)}</span>`).join("")}
-        </div>
-      </div>
-    `;
-  }).join("");
-
-  area.innerHTML = `
-    <div class="office-stage">
-      <div class="office-shell">
-        <div class="office-floor ${runtimeDegraded ? "degraded" : ""}">
-          <div class="office-floor-glow"></div>
-          <div class="office-window-band">
-            <div class="office-window"></div>
-            <div class="office-window"></div>
-            <div class="office-window"></div>
-          </div>
-          <div class="office-floor-header">
-            <div>
-              <div class="office-floor-title">Runtime Room</div>
-              <div class="office-floor-hint">${escapeHtml(runtime.runtime_state || "STOPPED")} · ${escapeHtml(round.state || "IDLE")}${round.job_id ? ` · ${escapeHtml(truncateMiddle(round.job_id, 84))}` : ""}</div>
-            </div>
-            <div class="office-floor-hint">${escapeHtml(activeControlStatus)}${control.active_control_seq >= 0 ? ` · seq ${control.active_control_seq}` : ""}</div>
-          </div>
-          <div class="office-grid">
-            <div class="office-desks">
-              ${desks || `<div class="office-card"><div class="value">표시할 agent가 없습니다.</div></div>`}
-            </div>
-          </div>
-        </div>
-        <div class="office-inspector">
-          <div>
-            <div class="office-inspector-value">${escapeHtml(runtime.project_root || "—")}</div>
-            <div class="office-inspector-note">${escapeHtml(runtime.runtime_state || "STOPPED")} · control seq ${control.active_control_seq >= 0 ? escapeHtml(String(control.active_control_seq)) : "—"}</div>
-          </div>
-          <div class="office-inspector-stack">
-            <div class="office-inspector-panel">
-              <div class="office-inspector-value">${escapeHtml(round.state || "IDLE")}</div>
-              <div class="office-inspector-note">${round.job_id ? escapeHtml(truncateMiddle(round.job_id, 78)) : "active round 없음"}</div>
-            </div>
-            <div class="office-inspector-panel">
-              <div class="office-inspector-value">${escapeHtml(activeControlStatus)}</div>
-              <div class="office-inspector-note">${escapeHtml(truncateMiddle(control.active_control_file || "(없음)", 90))}</div>
-            </div>
-            <div class="office-inspector-panel">
-              <div class="office-inspector-value">${watcher.alive ? "Alive" : "Dead"}</div>
-              <div class="office-inspector-note">pid ${escapeHtml(String(watcher.pid || "—"))}</div>
-            </div>
-            <div class="office-inspector-panel">
-              <div class="office-inspector-note">work ${escapeHtml(truncateMiddle(latestWork.path || "—", 72))}</div>
-              <div class="office-inspector-note">verify ${escapeHtml(truncateMiddle(latestVerify.path || "—", 72))}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-  refreshOfficeSpriteFrames();
-}
-
-function renderViewTabs(agents) {
-  const tabs = document.getElementById("view-tabs");
-  const options = [{ key: "all", label: "전체" }].concat(
-    agents.map(a => ({ key: a.name.toLowerCase(), label: a.name }))
+function processIdleChatter() {
+  const idleAgents =[...agents.values()].filter(a =>
+    (a.state === 'ready' || a.state === 'idle') && a._atTarget
   );
-  tabs.innerHTML = `
-    <span class="view-label">보기</span>
-    ${options.map(opt => `
-      <button class="view-tab ${selectedView === opt.key ? "active" : ""}" onclick="setView('${opt.key}')">${opt.label}</button>
-    `).join("")}
-  `;
+
+  for (let i = 0; i < idleAgents.length; i++) {
+    const a1 = idleAgents[i];
+    if (a1.bubble.timer > 0) continue;
+
+    if (Math.random() < 0.003) {
+      let nearest = null, minDist = 120;
+      for (let j = 0; j < idleAgents.length; j++) {
+        if (i === j) continue;
+        const a2 = idleAgents[j];
+        const dist = Math.hypot(a1.x - a2.x, a1.y - a2.y);
+        if (dist < minDist && a2.bubble.timer <= 0) {
+          minDist = dist; nearest = a2;
+        }
+      }
+
+      if (nearest) {
+        a1.facingRight = nearest.x > a1.x;
+        nearest.facingRight = a1.x > nearest.x;
+
+        const chats =["커피 한잔 하실래요?", "오늘 빡세네요 💦", "서버실 온도 괜찮나요?", "버그 잡기 힘드네요", "잠깐 쉬는 중입니다", "코드 리뷰 부탁드려요!"];
+        a1.speak(chats[Math.floor(Math.random() * chats.length)], 3.5);
+
+        setTimeout(() => {
+          if (nearest.state === 'ready' || nearest.state === 'idle') {
+            const replies =["그러게요!", "화이팅입니다!", "조금만 더 힘내죠", "넵 확인하겠습니다", "☕ 좋습니다", "하하 맞아요"];
+            nearest.speak(replies[Math.floor(Math.random() * replies.length)], 3.0);
+          }
+        }, 1500);
+      }
+    }
+  }
 }
 
-function setView(view) {
-  selectedView = view;
-  const main = document.querySelector(".main");
-  main.classList.toggle("focus-mode", selectedView !== "all");
-  poll();
+// ═══════════════════════════════════════════════════════
+// IDEA 1 — DATA DELIVERY VISUALIZATION
+// A short-lived particle that travels from one desk to another
+// when active_control_seq or lane handoff changes.
+// ═══════════════════════════════════════════════════════
+const deliveryPackets = [];
+
+function speakAgent(name, text, duration = 2.8) {
+  if (!text) return;
+  const agent = agents.get(name);
+  if (!agent) return;
+  agent.speak(text, duration);
 }
 
-function renderSlots(slots) {
-  const area = document.getElementById("slots-area");
-  const control = slots.control || {};
-  const activeRound = slots.active_round || {};
-  const lastReceipt = slots.last_receipt || {};
-  const artifacts = slots.artifacts || {};
-  const latestWork = artifacts.latest_work || {};
-  const latestVerify = artifacts.latest_verify || {};
-  const degradedReasons = Array.isArray(slots.degraded_reasons) ? slots.degraded_reasons.filter(Boolean) : [];
-  const degradedReason = degradedReasons.length ? degradedReasons.join("\n") : (slots.degraded_reason || "");
-  area.innerHTML = `
-    <div class="slot-card">
-      <div class="slot-name">active control</div>
-      <div class="slot-status ${control.active_control_status === "implement" ? "implement" : control.active_control_status === "needs_operator" ? "needs_operator" : "none"}">${control.active_control_status || "none"}</div>
-      <div class="slot-preview">${escapeHtml(control.active_control_file || "(없음)")}</div>
-      ${control.active_control_seq !== undefined && control.active_control_seq >= 0 ? `<div class="slot-mtime">seq ${control.active_control_seq}</div>` : ""}
-    </div>
-    <div class="slot-card">
-      <div class="slot-name">active round</div>
-      <div class="slot-status none">${escapeHtml(activeRound.state || "IDLE")}</div>
-      ${activeRound.job_id ? `<div class="slot-preview">${escapeHtml(activeRound.job_id)}</div>` : ""}
-      ${activeRound.round ? `<div class="slot-mtime">round ${activeRound.round}</div>` : ""}
-    </div>
-    <div class="slot-card">
-      <div class="slot-name">last receipt</div>
-      <div class="slot-status none">${escapeHtml(lastReceipt.verify_result || "(없음)")}</div>
-      ${lastReceipt.receipt_id ? `<div class="slot-preview">${escapeHtml(lastReceipt.receipt_id)}</div>` : ""}
-      ${lastReceipt.closed_at ? `<div class="slot-mtime">${escapeHtml(lastReceipt.closed_at)}</div>` : ""}
-    </div>
-    <div class="slot-card">
-      <div class="slot-name">artifacts</div>
-      <div class="slot-preview">work: ${escapeHtml(latestWork.path || "—")}</div>
-      <div class="slot-preview">verify: ${escapeHtml(latestVerify.path || "—")}</div>
-    </div>
-    ${degradedReason ? `
-      <div class="slot-card">
-        <div class="slot-name">degraded</div>
-        <div class="slot-status needs_operator">${escapeHtml(degradedReason)}</div>
-      </div>
-    ` : ""}
-  `;
+function playDeliverySound(kind = 'blip') {
+  if (kind === 'success') SoundFX.success();
+  else if (kind === 'warn') SoundFX.warn();
+  else SoundFX.blip();
+}
+
+class DeliveryPacket {
+  constructor(fromName, toName, label, opts = {}) {
+    const fromAgent = agents.get(fromName);
+    const toAgent = agents.get(toName);
+    const src = fromAgent
+      ? { x: fromAgent.x, y: fromAgent.y - 28 }
+      : (LOCATIONS[`${fromName.toLowerCase()}_desk`] || LOCATIONS.entrance);
+    const dst = toAgent
+      ? { x: toAgent.x, y: toAgent.y - 28 }
+      : (LOCATIONS[`${toName.toLowerCase()}_desk`] || LOCATIONS.entrance);
+    this.fromName = fromName;
+    this.toName = toName;
+    this.x = src.x; this.y = src.y;
+    this.tx = dst.x; this.ty = dst.y;
+    this.label = label || '📦';
+    this.receiverText = opts.receiverText || '';
+    this.receiverDuration = opts.receiverDuration || 2.6;
+    this.deliverySound = opts.deliverySound || 'blip';
+    this.lifetime = opts.lifetime || 2.0;
+    this.maxLife = this.lifetime;
+    this.delivered = false;
+    this.alive = true;
+  }
+  update(dt) {
+    const frac = 1 - (this.lifetime / this.maxLife);
+    this.x += (this.tx - this.x) * 0.04;
+    this.y += (this.ty - this.y) * 0.04;
+    // Arc: rise then fall
+    this.arcY = -Math.sin(frac * Math.PI) * 40;
+    const remaining = Math.hypot(this.tx - this.x, this.ty - this.y);
+    if (!this.delivered && remaining < 18) {
+      this.delivered = true;
+      speakAgent(this.toName, this.receiverText, this.receiverDuration);
+      playDeliverySound(this.deliverySound);
+    }
+    this.lifetime -= dt;
+    if (this.lifetime <= 0) this.alive = false;
+  }
+  draw(ctx, scale) {
+    const alpha = Math.min(1, this.lifetime / (this.maxLife * 0.3));
+    const sx = this.x * scale;
+    const sy = (this.y + this.arcY) * scale;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    // Glow trail
+    ctx.fillStyle = 'rgba(96,165,250,0.15)';
+    ctx.beginPath();
+    ctx.arc(sx, sy, 14 * scale, 0, Math.PI * 2);
+    ctx.fill();
+    // Emoji
+    ctx.font = `${14 * scale}px sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff';
+    ctx.fillText(this.label, sx, sy);
+    ctx.restore();
+  }
+}
+
+const _deliveryState = {
+  initialized: false,
+  controlSeq: null,
+  latestWorkPath: '',
+  latestWorkMtime: '',
+  latestVerifyPath: '',
+  latestVerifyMtime: '',
+  lastReceiptId: '',
+};
+
+function emitDelivery(fromName, toName, label, opts = {}) {
+  if (opts.senderText) speakAgent(fromName, opts.senderText, opts.senderDuration || 2.4);
+  deliveryPackets.push(new DeliveryPacket(fromName, toName, label, {
+    receiverText: opts.receiverText || '',
+    receiverDuration: opts.receiverDuration,
+    deliverySound: opts.sound || 'blip',
+    lifetime: opts.lifetime,
+  }));
+  if (opts.eventMsg) pushEvent(opts.eventType || 'info', opts.eventMsg);
+}
+
+// ═══════════════════════════════════════════════════════
+// DELIVERY DRONE — flies in from off-screen with a package
+// ═══════════════════════════════════════════════════════
+const drones = [];
+
+class Drone {
+  /**
+   * @param {string} targetLane - agent name to deliver to
+   */
+  constructor(targetLane) {
+    const deskKey = `${targetLane.toLowerCase()}_desk`;
+    const desk = LOCATIONS[deskKey] || LOCATIONS.entrance;
+    this.targetName = targetLane;
+
+    // Spawn from above (off-screen) or from window area
+    this.x = desk.x + (Math.random() - 0.5) * 200;
+    this.y = -50;
+    this.tx = desk.x;
+    this.ty = desk.y - 30; // hover above desk
+
+    this.phase = 'arriving';  // arriving → hovering → departing → done
+    this.hoverTimer = 0;
+    this.alive = true;
+    this.propPhase = Math.random() * Math.PI * 2;
+
+    // Exit target (fly back off-screen)
+    this.exitX = desk.x + (Math.random() < 0.5 ? -300 : 300);
+    this.exitY = -80;
+  }
+
+  update(dt) {
+    this.propPhase += dt * 20;
+
+    switch (this.phase) {
+      case 'arriving': {
+        // Smooth approach (lerp toward desk)
+        this.x += (this.tx - this.x) * 2.5 * dt;
+        this.y += (this.ty - this.y) * 2.5 * dt;
+        const dist = Math.sqrt((this.tx - this.x) ** 2 + (this.ty - this.y) ** 2);
+        if (dist < 5) {
+          this.x = this.tx; this.y = this.ty;
+          this.phase = 'hovering';
+          this.hoverTimer = 0;
+        }
+        break;
+      }
+      case 'hovering': {
+        // Hover + drop package
+        this.y += Math.sin(this.propPhase * 0.3) * 0.3;
+        this.hoverTimer += dt;
+        if (this.hoverTimer >= 0.6) {
+          // Drop the package
+          spawnParticle(this.targetName, '📦', { size: 18, lifetime: 1.5 });
+          SoundFX.blip();
+          this.phase = 'departing';
+        }
+        break;
+      }
+      case 'departing': {
+        // Fly away
+        this.x += (this.exitX - this.x) * 3.0 * dt;
+        this.y += (this.exitY - this.y) * 3.0 * dt;
+        if (this.y < -60) {
+          this.alive = false;
+        }
+        break;
+      }
+    }
+  }
+
+  draw(ctx, scale) {
+    const sx = this.x * scale;
+    const sy = this.y * scale;
+    const sz = 6 * scale;
+
+    ctx.save();
+
+    // Propeller blur circle
+    const propAlpha = 0.2 + Math.sin(this.propPhase) * 0.1;
+    ctx.fillStyle = `rgba(150,200,255,${propAlpha})`;
+    ctx.beginPath();
+    ctx.ellipse(sx, sy - sz * 1.5, sz * 2.2, sz * 0.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Body (small dark quad)
+    ctx.fillStyle = '#2a3548';
+    ctx.beginPath();
+    ctx.roundRect(sx - sz, sy - sz, sz * 2, sz * 1.5, 2 * scale);
+    ctx.fill();
+
+    // LED lights
+    ctx.fillStyle = this.phase === 'hovering' ? '#34d399' : '#60a5fa';
+    ctx.beginPath();
+    ctx.arc(sx - sz * 0.5, sy - sz * 0.3, 1.5 * scale, 0, Math.PI * 2);
+    ctx.arc(sx + sz * 0.5, sy - sz * 0.3, 1.5 * scale, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Arms
+    ctx.strokeStyle = '#4a5c72';
+    ctx.lineWidth = 1.5 * scale;
+    ctx.beginPath();
+    ctx.moveTo(sx - sz * 1.8, sy - sz * 1.2);
+    ctx.lineTo(sx - sz * 0.3, sy - sz * 0.5);
+    ctx.moveTo(sx + sz * 1.8, sy - sz * 1.2);
+    ctx.lineTo(sx + sz * 0.3, sy - sz * 0.5);
+    ctx.stroke();
+
+    // Propeller discs
+    const propW = sz * 1.2;
+    ctx.fillStyle = `rgba(200,220,255,${0.3 + Math.sin(this.propPhase * 2) * 0.15})`;
+    ctx.beginPath();
+    ctx.ellipse(sx - sz * 1.8, sy - sz * 1.5, propW, sz * 0.25, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(sx + sz * 1.8, sy - sz * 1.5, propW, sz * 0.25, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Package dangling (while arriving/hovering)
+    if (this.phase !== 'departing') {
+      ctx.fillStyle = '#8B6914';
+      ctx.fillRect(sx - 3 * scale, sy + sz * 0.5, 6 * scale, 5 * scale);
+      ctx.strokeStyle = '#5a4510';
+      ctx.lineWidth = 0.5 * scale;
+      ctx.strokeRect(sx - 3 * scale, sy + sz * 0.5, 6 * scale, 5 * scale);
+      // String
+      ctx.strokeStyle = '#777';
+      ctx.lineWidth = 0.5 * scale;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy + sz * 0.1);
+      ctx.lineTo(sx, sy + sz * 0.5);
+      ctx.stroke();
+    }
+
+    // Shadow on ground
+    if (this.phase === 'hovering') {
+      ctx.fillStyle = 'rgba(0,0,0,0.12)';
+      ctx.beginPath();
+      ctx.ellipse(sx, (this.ty + 35) * scale, 10 * scale, 3 * scale, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+}
+
+/** Spawn a delivery drone to a specific agent desk */
+function spawnDrone(targetLane) {
+  if (_lowMotion) return;
+  drones.push(new Drone(targetLane));
+}
+
+function checkDeliveryTrigger(data) {
+  const seq = (data.control || {}).active_control_seq;
+  const artifacts = data.artifacts || {};
+  const latestWorkPath = String((artifacts.latest_work || {}).path || '').trim();
+  const latestWorkMtime = String((artifacts.latest_work || {}).mtime || '').trim();
+  const latestVerifyPath = String((artifacts.latest_verify || {}).path || '').trim();
+  const latestVerifyMtime = String((artifacts.latest_verify || {}).mtime || '').trim();
+  const lastReceiptId = String(data.last_receipt_id || ((data.last_receipt || {}).receipt_id) || '').trim();
+
+  if (!_deliveryState.initialized) {
+    _deliveryState.initialized = true;
+    _deliveryState.controlSeq = seq;
+    _deliveryState.latestWorkPath = latestWorkPath;
+    _deliveryState.latestWorkMtime = latestWorkMtime;
+    _deliveryState.latestVerifyPath = latestVerifyPath;
+    _deliveryState.latestVerifyMtime = latestVerifyMtime;
+    _deliveryState.lastReceiptId = lastReceiptId;
+    return;
+  }
+
+  if (seq != null && seq >= 0 && _deliveryState.controlSeq !== null && seq !== _deliveryState.controlSeq) {
+    // Determine sender/receiver from control status
+    const status = (data.control || {}).active_control_status || '';
+    if (status === 'implement') {
+      emitDelivery('Codex', 'Claude', '📋', {
+        senderText: '구현 부탁드립니다',
+        receiverText: '받았습니다',
+        eventType: 'info',
+        eventMsg: `Implement handoff → Claude (seq ${seq})`,
+      });
+    } else if (status === 'needs_operator') {
+      emitDelivery('Claude', 'Codex', '⚠️', {
+        senderText: '확인 필요합니다',
+        receiverText: '운영자 대기합니다',
+        eventType: 'warn',
+        eventMsg: `Operator review requested (seq ${seq})`,
+        sound: 'warn',
+      });
+    } else {
+      emitDelivery('Claude', 'Codex', '📦', {
+        senderText: '다음 단계로 넘깁니다',
+        receiverText: '이어받겠습니다',
+        eventType: 'info',
+        eventMsg: `Control changed → ${status || 'none'} (seq ${seq})`,
+      });
+    }
+  }
+
+  const workChanged = latestWorkPath && latestWorkPath !== '—' && _deliveryState.latestWorkPath && (
+    latestWorkPath !== _deliveryState.latestWorkPath ||
+    (latestWorkMtime && latestWorkMtime !== _deliveryState.latestWorkMtime)
+  );
+  if (workChanged) {
+    emitDelivery('Claude', 'Codex', '📁', {
+      senderText: '작업 넘깁니다',
+      receiverText: '검증 시작합니다',
+      eventType: 'ok',
+      eventMsg: `Work delivered → ${basename(latestWorkPath)}`,
+      sound: 'success',
+    });
+  }
+
+  const verifyChanged = latestVerifyPath && latestVerifyPath !== '—' && _deliveryState.latestVerifyPath && (
+    latestVerifyPath !== _deliveryState.latestVerifyPath ||
+    (latestVerifyMtime && latestVerifyMtime !== _deliveryState.latestVerifyMtime)
+  );
+  if (verifyChanged) {
+    emitDelivery('Codex', 'Claude', '✅', {
+      senderText: '검증 마쳤습니다',
+      receiverText: '다음 라운드 확인',
+      eventType: 'info',
+      eventMsg: `Verify updated → ${basename(latestVerifyPath)}`,
+    });
+  }
+
+  if (_deliveryState.lastReceiptId && lastReceiptId && lastReceiptId !== _deliveryState.lastReceiptId) {
+    emitDelivery('Codex', 'Claude', '🧾', {
+      senderText: 'receipt 발급 완료',
+      receiverText: '라운드 종료 확인',
+      eventType: 'ok',
+      eventMsg: `Receipt issued → ${lastReceiptId}`,
+      sound: 'success',
+    });
+  }
+
+  _deliveryState.controlSeq = seq;
+  _deliveryState.latestWorkPath = latestWorkPath;
+  _deliveryState.latestWorkMtime = latestWorkMtime;
+  _deliveryState.latestVerifyPath = latestVerifyPath;
+  _deliveryState.latestVerifyMtime = latestVerifyMtime;
+  _deliveryState.lastReceiptId = lastReceiptId;
+}
+
+// ═══════════════════════════════════════════════════════
+// IDEA 3 — WEATHER & TIME (decorative only)
+// Day/night tint + occasional rain when degraded
+// ═══════════════════════════════════════════════════════
+const Weather = {
+  raindrops: [],
+  MAX_RAIN: 60,
+
+  /** Get time-of-day tint overlay */
+  getTimeTint() {
+    const h = new Date().getHours();
+    if (h >= 6 && h < 9)   return 'rgba(255,200,100,0.04)'; // morning warm
+    if (h >= 9 && h < 17)  return 'rgba(255,255,255,0.02)'; // daytime neutral
+    if (h >= 17 && h < 20) return 'rgba(255,140,60,0.05)';  // sunset
+    return 'rgba(20,30,80,0.12)'; // night
+  },
+
+  /** Update rain (active when degraded) */
+  update(dt, isDegraded) {
+    // Spawn rain when degraded
+    if (isDegraded && this.raindrops.length < this.MAX_RAIN) {
+      for (let i = 0; i < 2; i++) {
+        this.raindrops.push({
+          x: Math.random() * VIRTUAL_W,
+          y: -10,
+          speed: 300 + Math.random() * 200,
+          len: 8 + Math.random() * 12,
+          alpha: 0.15 + Math.random() * 0.2,
+        });
+      }
+    }
+    // Update existing
+    for (let i = this.raindrops.length - 1; i >= 0; i--) {
+      const r = this.raindrops[i];
+      r.y += r.speed * dt;
+      if (r.y > VIRTUAL_H + 20) this.raindrops.splice(i, 1);
+    }
+    // Fade out rain when not degraded
+    if (!isDegraded && this.raindrops.length > 0) {
+      // Let existing drops fall off screen naturally
+    }
+  },
+
+  /** Draw weather effects on canvas */
+  draw(ctx, cw, ch, scale) {
+    // Time tint
+    ctx.fillStyle = this.getTimeTint();
+    ctx.fillRect(0, 0, cw, ch);
+
+    // Rain
+    if (this.raindrops.length > 0) {
+      ctx.strokeStyle = 'rgba(150,180,220,0.35)';
+      ctx.lineWidth = 1;
+      for (const r of this.raindrops) {
+        ctx.globalAlpha = r.alpha;
+        ctx.beginPath();
+        ctx.moveTo(r.x * scale, r.y * scale);
+        ctx.lineTo((r.x - 2) * scale, (r.y + r.len) * scale);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
+  },
+};
+
+// ═══════════════════════════════════════════════════════
+// IDEA 4 — OFFICE PET (decorative cat NPC)
+// Wanders, naps on sofa, alert when broken/degraded
+// ═══════════════════════════════════════════════════════
+const Pet = {
+  x: 300, y: 500,
+  targetX: 300, targetY: 500,
+  state: 'idle',      // idle, walk, nap, alert
+  facingRight: true,
+  _timer: 3,
+  _napTimer: 0,
+  _blinkTimer: 2,
+  _isBlinking: false,
+  _tailPhase: 0,
+
+  update(dt, hasBroken) {
+    this._tailPhase += dt * 3;
+    this._blinkTimer -= dt;
+    if (this._blinkTimer <= 0) {
+      this._isBlinking = !this._isBlinking;
+      this._blinkTimer = this._isBlinking ? 0.1 : 2 + Math.random() * 4;
+    }
+
+    // React to broken/red-alert state
+    if ((hasBroken || _redAlert) && this.state !== 'alert') {
+      this.state = 'alert';
+      this._timer = 5;
+      // Panic — pick a random spot to bolt toward
+      this.targetX = 200 + Math.random() * 600;
+      this.targetY = 250 + Math.random() * 350;
+    }
+
+    switch (this.state) {
+      case 'idle':
+        this._timer -= dt;
+        if (this._timer <= 0) {
+          if (Math.random() < 0.4) {
+            // Decide to nap on sofa
+            this.state = 'walk';
+            this.targetX = LOCATIONS.sofa.x + 20;
+            this.targetY = LOCATIONS.sofa.y - 5;
+            this._napTimer = 8 + Math.random() * 10;
+          } else {
+            // Wander randomly
+            this.state = 'walk';
+            this.targetX = 100 + Math.random() * 800;
+            this.targetY = 420 + Math.random() * 200;
+          }
+        }
+        break;
+
+      case 'walk': {
+        const dx = this.targetX - this.x;
+        const dy = this.targetY - this.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (Math.abs(dx) > 2) this.facingRight = dx > 0;
+        if (dist > 3) {
+          const spd = 40 * dt;
+          this.x += (dx / dist) * spd;
+          this.y += (dy / dist) * spd;
+        } else {
+          this.x = this.targetX; this.y = this.targetY;
+          if (this._napTimer > 0) { this.state = 'nap'; }
+          else { this.state = 'idle'; this._timer = 3 + Math.random() * 5; }
+        }
+        break;
+      }
+
+      case 'nap':
+        this._napTimer -= dt;
+        if (this._napTimer <= 0) {
+          this.state = 'idle';
+          this._timer = 4 + Math.random() * 6;
+        }
+        break;
+
+      case 'alert': {
+        this._timer -= dt;
+        const dx2 = this.targetX - this.x;
+        const dy2 = this.targetY - this.y;
+        const d2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+        // 1.5x speed during red alert (82 vs normal 55)
+        const alertSpd = (_redAlert ? 82 : 55) * dt;
+        if (d2 > 3) {
+          if (Math.abs(dx2) > 2) this.facingRight = dx2 > 0;
+          this.x += (dx2 / d2) * alertSpd;
+          this.y += (dy2 / d2) * alertSpd;
+        } else if (_redAlert || hasBroken) {
+          // Arrived — pick another panic destination
+          this.targetX = 150 + Math.random() * 700;
+          this.targetY = 220 + Math.random() * 400;
+        }
+        if (this._timer <= 0 && !hasBroken && !_redAlert) {
+          this.state = 'idle'; this._timer = 2;
+        }
+        break;
+      }
+    }
+  },
+
+  draw(ctx, scale) {
+    const sx = this.x * scale;
+    const sy = this.y * scale;
+    const sz = 7 * scale;
+
+    ctx.save();
+    if (!this.facingRight) {
+      ctx.translate(sx, 0);
+      ctx.scale(-1, 1);
+      ctx.translate(-sx, 0);
+    }
+
+    // Body (oval)
+    ctx.fillStyle = this.state === 'alert' ? '#d97706' : '#8b6f5a';
+    ctx.beginPath();
+    ctx.ellipse(sx, sy, sz * 1.4, sz, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Head
+    ctx.fillStyle = this.state === 'alert' ? '#d97706' : '#a0846c';
+    ctx.beginPath();
+    ctx.arc(sx + sz * 1.2, sy - sz * 0.4, sz * 0.7, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Ears
+    ctx.fillStyle = '#6b5344';
+    ctx.beginPath();
+    ctx.moveTo(sx + sz * 1.5, sy - sz * 1.1);
+    ctx.lineTo(sx + sz * 1.9, sy - sz * 1.8);
+    ctx.lineTo(sx + sz * 2.1, sy - sz * 0.9);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(sx + sz * 0.7, sy - sz * 1.0);
+    ctx.lineTo(sx + sz * 0.5, sy - sz * 1.8);
+    ctx.lineTo(sx + sz * 1.1, sy - sz * 1.0);
+    ctx.fill();
+
+    // Eyes
+    if (!this._isBlinking && this.state !== 'nap') {
+      ctx.fillStyle = this.state === 'alert' ? '#fbbf24' : '#2dd4bf';
+      ctx.beginPath();
+      ctx.arc(sx + sz * 1.0, sy - sz * 0.5, 1.5 * scale, 0, Math.PI * 2);
+      ctx.arc(sx + sz * 1.5, sy - sz * 0.5, 1.5 * scale, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (this.state === 'nap') {
+      // Zzz
+      ctx.font = `${8 * scale}px sans-serif`;
+      ctx.fillStyle = 'rgba(255,255,255,0.3)';
+      ctx.textAlign = 'center';
+      ctx.fillText('💤', sx + sz * 1.2, sy - sz * 2);
+    }
+
+    // Tail (wagging)
+    const tailWag = Math.sin(this._tailPhase) * 0.4;
+    ctx.strokeStyle = this.state === 'alert' ? '#d97706' : '#8b6f5a';
+    ctx.lineWidth = 2 * scale;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(sx - sz * 1.3, sy);
+    ctx.quadraticCurveTo(
+      sx - sz * 2.0, sy - sz * (1.0 + tailWag),
+      sx - sz * 2.2, sy - sz * (0.5 + tailWag)
+    );
+    ctx.stroke();
+
+    ctx.restore();
+  },
+};
+
+// ═══════════════════════════════════════════════════════
+// IDEA 5 — AMBIENT AUDIO (typing + room tone + mute)
+// ═══════════════════════════════════════════════════════
+const AmbientAudio = {
+  _typingOsc: null,
+  _typingGain: null,
+  _toneOsc: null,
+  _toneGain: null,
+  _running: false,
+  muted: false,
+  _targetTypingVol: 0,
+
+  toggle() {
+    this.muted = !this.muted;
+    const btn = document.getElementById('mute-btn');
+    if (btn) {
+      btn.textContent = this.muted ? '🔇' : '🔊';
+      btn.title = this.muted ? '사운드 켜기' : '음소거';
+    }
+    PrefStore.set('office_muted', this.muted ? '1' : '0');
+    if (this.muted) this._stop(); else this._start();
+  },
+
+  _start() {
+    if (this._running || this.muted) return;
+    const ac = SoundFX._ensure();
+    if (!ac) return;
+    this._running = true;
+
+    // Room tone (very quiet low hum)
+    this._toneOsc = ac.createOscillator();
+    this._toneGain = ac.createGain();
+    this._toneOsc.type = 'sine';
+    this._toneOsc.frequency.value = 85;
+    this._toneGain.gain.value = 0.008;
+    this._toneOsc.connect(this._toneGain);
+    this._toneGain.connect(ac.destination);
+    this._toneOsc.start();
+
+    // Typing noise (filtered noise via oscillator trick)
+    this._typingOsc = ac.createOscillator();
+    this._typingGain = ac.createGain();
+    this._typingOsc.type = 'square';
+    this._typingOsc.frequency.value = 200;
+    this._typingGain.gain.value = 0;
+    this._typingOsc.connect(this._typingGain);
+    this._typingGain.connect(ac.destination);
+    this._typingOsc.start();
+  },
+
+  _stop() {
+    try { this._toneOsc?.stop(); } catch(e) {}
+    try { this._typingOsc?.stop(); } catch(e) {}
+    this._running = false;
+    this._toneOsc = null; this._typingOsc = null;
+    this._toneGain = null; this._typingGain = null;
+  },
+
+  /** Call each frame — adjust typing volume based on working agent count */
+  update(workingCount) {
+    if (!this._running || this.muted) return;
+    // More working agents = slightly louder typing texture
+    this._targetTypingVol = Math.min(0.015, workingCount * 0.005);
+    if (this._typingGain) {
+      const cur = this._typingGain.gain.value;
+      this._typingGain.gain.value = cur + (this._targetTypingVol - cur) * 0.05;
+    }
+    // Randomize typing pitch for texture
+    if (this._typingOsc && Math.random() < 0.1) {
+      this._typingOsc.frequency.value = 150 + Math.random() * 300;
+    }
+  },
+};
+
+// ═══════════════════════════════════════════════════════
+// TASK 2 — NEEDS_OPERATOR CANVAS OVERLAY
+// Red pulsing border + large centered warning text
+// ═══════════════════════════════════════════════════════
+let _needsOperator = false;
+let _needsOperatorPhase = 0;
+let _redAlert = false;       // BROKEN or watcher dead
+let _redAlertPhase = 0;
+let _fireTimer = 0;
+
+function drawNeedsOperatorOverlay(ctx, cw, ch, dt) {
+  if (!_needsOperator && !_redAlert) return;
+
+  // ═══ RED ALERT — BROKEN / watcher dead ═══
+  if (_redAlert) {
+    _redAlertPhase += dt * 4;
+    const siren = 0.06 + Math.sin(_redAlertPhase) * 0.06; // 0.00 ~ 0.12
+
+    ctx.save();
+    // Full-screen red wash
+    ctx.fillStyle = `rgba(255,0,0,${siren})`;
+    ctx.fillRect(0, 0, cw, ch);
+
+    // Heavy red border
+    const borderPulse = 0.5 + Math.sin(_redAlertPhase * 1.3) * 0.3;
+    ctx.strokeStyle = `rgba(239,30,30,${borderPulse})`;
+    ctx.lineWidth = 8;
+    ctx.strokeRect(4, 4, cw - 8, ch - 8);
+
+    // RED ALERT text
+    const textPulse = 0.6 + Math.sin(_redAlertPhase * 2) * 0.35;
+    ctx.globalAlpha = textPulse;
+    ctx.font = `bold ${22}px 'Noto Sans KR', sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ff4444';
+    ctx.fillText('🚨 RED ALERT', cw / 2, 28);
+    ctx.font = `bold ${12}px sans-serif`;
+    ctx.fillStyle = '#fca5a5';
+    ctx.fillText('PIPELINE BROKEN — 즉시 확인 필요', cw / 2, 52);
+
+    ctx.restore();
+    return; // Red alert supersedes needs_operator
+  }
+
+  // ═══ NEEDS OPERATOR (amber, existing) ═══
+  _needsOperatorPhase += dt * 3;
+  const pulse = 0.4 + Math.sin(_needsOperatorPhase) * 0.2;
+
+  ctx.save();
+  ctx.strokeStyle = `rgba(239,68,68,${pulse})`;
+  ctx.lineWidth = 6;
+  ctx.strokeRect(3, 3, cw - 6, ch - 6);
+
+  const textAlpha = 0.5 + Math.sin(_needsOperatorPhase * 1.5) * 0.3;
+  ctx.globalAlpha = textAlpha;
+  ctx.font = `bold ${18}px 'Noto Sans KR', sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#fca5a5';
+  ctx.fillText('⚠ OPERATOR NEEDED', cw / 2, 30);
+  ctx.font = `${11}px sans-serif`;
+  ctx.fillStyle = 'rgba(252,165,165,0.6)';
+  ctx.fillText('needs_operator — 운영자 확인 필요', cw / 2, 52);
+  ctx.restore();
+}
+
+/** Spawn fire/smoke particles from server rack during red alert */
+function spawnFireParticles(dt) {
+  if (!_redAlert) return;
+  _fireTimer += dt;
+  if (_fireTimer < 0.08) return; // throttle: ~12 particles/sec
+  _fireTimer = 0;
+
+  // Server rack position
+  const fx = LOCATIONS.server_room.x;
+  const fy = LOCATIONS.server_room.y;
+
+  // Fire particle (orange/red, rises fast)
+  particles.push(new Particle(
+    fx + (Math.random() - 0.5) * 30,
+    fy,
+    Math.random() < 0.5 ? '🔥' : '🟠',
+    { size: 10 + Math.random() * 8, lifetime: 0.8 + Math.random() * 0.6 }
+  ));
+
+  // Smoke particle (gray, rises slow, longer life)
+  if (Math.random() < 0.5) {
+    const smoke = new Particle(
+      fx + (Math.random() - 0.5) * 40,
+      fy - 10,
+      '🌫️',
+      { size: 12 + Math.random() * 6, lifetime: 1.8 + Math.random() * 1.2 }
+    );
+    smoke.driftY = -(12 + Math.random() * 8); // slower rise
+    smoke.driftX = (Math.random() - 0.5) * 20;
+    particles.push(smoke);
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// BROWSER-LOCAL STORAGE HELPER
+// Wraps localStorage access with one-time failure detection.
+// On first failure, surfaces a non-authoritative event signal
+// so the operator knows toolbar preferences will not persist.
+// ═══════════════════════════════════════════════════════
+const PrefStore = (() => {
+  let _available = null; // null = untested, true/false after probe
+  function _probe() {
+    if (_available !== null) return _available;
+    try {
+      const k = '__office_storage_probe__';
+      localStorage.setItem(k, '1');
+      localStorage.removeItem(k);
+      _available = true;
+    } catch (e) {
+      _available = false;
+      pushEvent('warn', '환경 설정 저장 불가 — 새로고침 시 toolbar 설정이 초기화됩니다');
+    }
+    return _available;
+  }
+  return {
+    get(key) { return _probe() ? localStorage.getItem(key) : null; },
+    set(key, val) { if (_probe()) localStorage.setItem(key, val); },
+    get available() { return _probe(); },
+  };
+})();
+
+// ═══════════════════════════════════════════════════════
+// LOW-MOTION MODE — browser-local decorative motion gate
+// ═══════════════════════════════════════════════════════
+let _lowMotion = false;
+
+function _applyLowMotionUI() {
+  const btn = document.getElementById('motion-btn');
+  if (btn) {
+    btn.textContent = _lowMotion ? '🚫' : '✨';
+    btn.title = _lowMotion ? '장식 효과 켜기' : '장식 효과 줄이기';
+  }
+}
+
+function toggleLowMotion() {
+  _lowMotion = !_lowMotion;
+  _applyLowMotionUI();
+  PrefStore.set('office_low_motion', _lowMotion ? '1' : '0');
+  if (_lowMotion) {
+    particles.length = 0;
+    deliveryPackets.length = 0;
+    drones.length = 0;
+  }
+}
+
+// Restore low-motion preference from browser-local storage
+if (PrefStore.get('office_low_motion') === '1') { _lowMotion = true; _applyLowMotionUI(); }
+
+// ═══════════════════════════════════════════════════════
+// MAIN LOOP (updated with all ideas)
+// ═══════════════════════════════════════════════════════
+function loop(now) {
+  requestAnimationFrame(loop);
+  const dt = Math.min((now - lastTime) / 1000, 0.1);
+  lastTime = now;
+
+  // Determine scene state
+  const rd = runtimeData || {};
+  const isDegraded = Boolean((rd.degraded_reasons || []).length || rd.degraded_reason);
+  const hasBroken = [...agents.values()].some(a => a.state === 'broken' || a.state === 'dead');
+  const workingCount = [...agents.values()].filter(a => a.state === 'working').length;
+  const watcherDead = rd.watcher && rd.watcher.alive === false && !INACTIVE_RUNTIME_STATES.has(rd.runtime_state);
+  const runtimeBroken = String(rd.runtime_state || '').toUpperCase() === 'BROKEN';
+  _redAlert = runtimeBroken || watcherDead;
+
+  // Fire/smoke particles during red alert
+  if (!_lowMotion) spawnFireParticles(dt);
+
+  // Update systems
+  for (const a of agents.values()) a.update(dt);
+  if (!_lowMotion) {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      particles[i].update(dt);
+      if (!particles[i].alive) particles.splice(i, 1);
+    }
+    for (let i = deliveryPackets.length - 1; i >= 0; i--) {
+      deliveryPackets[i].update(dt);
+      if (!deliveryPackets[i].alive) deliveryPackets.splice(i, 1);
+    }
+    for (let i = drones.length - 1; i >= 0; i--) {
+      drones[i].update(dt);
+      if (!drones[i].alive) drones.splice(i, 1);
+    }
+    Weather.update(dt, isDegraded);
+    Pet.update(dt, hasBroken);
+    processIdleChatter();
+  }
+  AmbientAudio.update(workingCount);
+
+  // ── Render ──
+  ctx.clearRect(0, 0, cw, ch);
+  OfficeRenderer.drawRoom(ctx, cw, ch, scale);
+
+  // Monitor matrix + hologram (under agents, over background)
+  const latestWorkPath = ((rd.artifacts || {}).latest_work || {}).path || '';
+  const workFile = latestWorkPath ? basename(latestWorkPath) : '';
+  for (const [name, agent] of agents) {
+    const key = name.toLowerCase();
+    if (agent.state === 'working' && MONITOR_SCREENS[key]) {
+      MonitorFX.drawMatrix(ctx, scale, key, dt);
+      if (workFile) MonitorFX.drawHologram(ctx, scale, key, workFile, now / 1000);
+    }
+  }
+
+  if (!_lowMotion) {
+    // Weather tint + rain (under agents)
+    Weather.draw(ctx, cw, ch, scale);
+  }
+
+  // Agents sorted by Y
+  const sorted = [...agents.values()].sort((a, b) => a.y - b.y);
+  if (!_lowMotion) {
+    // Insert pet into depth sort
+    let petDrawn = false;
+    for (const a of sorted) {
+      if (!petDrawn && Pet.y < a.y) { Pet.draw(ctx, scale); petDrawn = true; }
+      a.draw(ctx, scale);
+    }
+    if (!petDrawn) Pet.draw(ctx, scale);
+  } else {
+    for (const a of sorted) a.draw(ctx, scale);
+  }
+
+  if (!_lowMotion) {
+    // Delivery packets
+    for (const d of deliveryPackets) d.draw(ctx, scale);
+    // Drones (above agents)
+    for (const dr of drones) dr.draw(ctx, scale);
+    // Particles on top
+    for (const p of particles) p.draw(ctx, scale);
+  }
+
+  // Needs-operator overlay (topmost)
+  drawNeedsOperatorOverlay(ctx, cw, ch, dt);
+}
+requestAnimationFrame(loop);
+
+// ═══════════════════════════════════════════════════════
+// EVENT LOG & API POLLER
+// ═══════════════════════════════════════════════════════
+function pushEvent(type, msg) {
+  const t = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  eventLog.unshift({ type, msg, time: t });
+  if (eventLog.length > MAX_EVENTS) eventLog.length = MAX_EVENTS;
+  renderEvents();
+}
+
+function renderEvents() {
+  const el = document.getElementById('event-list');
+  if (!eventLog.length) { el.innerHTML = '<div class="event-item"><span class="event-time">—</span><span class="event-msg">대기 중</span></div>'; return; }
+  el.innerHTML = eventLog.map(e => `<div class="event-item"><span class="event-time">${esc(e.time)}</span><span class="event-dot ${e.type}"></span><span class="event-msg">${esc(e.msg)}</span></div>`).join('');
+}
+_eventLogReady = true;
+_flushBackgroundSignals();
+
+function runtimeBadgeClass(runtimeState) {
+  if (runtimeState === 'RUNNING') return 'running';
+  if (runtimeState === 'DEGRADED') return 'degraded';
+  if (runtimeState === 'STOPPING') return 'stopping';
+  if (runtimeState === 'BROKEN') return 'broken';
+  return 'stopped';
+}
+
+function getRuntimePresentation(data) {
+  const runtimeState = String(data.runtime_state || 'STOPPED').toUpperCase();
+  const control = data.control || {};
+  const watcher = data.watcher || {};
+  const round = data.active_round || {};
+  const degradedReasons = (data.degraded_reasons || []).filter(Boolean);
+  const degradedReason = degradedReasons[0] || String(data.degraded_reason || '').trim();
+  const uncertain = runtimeState === 'DEGRADED' && degradedReasons.some(reason => UNCERTAIN_RUNTIME_REASONS.has(reason));
+  const inactive = INACTIVE_RUNTIME_STATES.has(runtimeState);
+  const showLiveRuntime = !inactive && !uncertain;
+  const controlStatus = showLiveRuntime ? (control.active_control_status || 'none') : (uncertain ? 'uncertain' : 'none');
+  const roundState = showLiveRuntime ? (round.state || 'IDLE') : (uncertain ? 'uncertain' : 'IDLE');
+  let watcherStatus = 'Dead';
+  let watcherClass = 'dim';
+  if (uncertain) {
+    watcherStatus = 'Unknown';
+    watcherClass = 'warn';
+  } else if (watcher.alive) {
+    watcherStatus = 'Alive';
+    watcherClass = 'ok';
+  } else if (runtimeState === 'BROKEN') {
+    watcherClass = 'err';
+  } else if (runtimeState === 'STOPPING') {
+    watcherClass = 'neutral';
+  }
+  const controlClass = controlStatus === 'implement'
+    ? 'ok'
+    : controlStatus === 'needs_operator' || controlStatus === 'uncertain'
+      ? 'warn'
+      : controlStatus === 'none'
+        ? 'dim'
+        : 'neutral';
+  const roundClass = roundState === 'uncertain' ? 'warn' : roundState === 'IDLE' ? 'dim' : 'neutral';
+  const runtimeClass = runtimeState === 'RUNNING'
+    ? 'ok'
+    : runtimeState === 'DEGRADED'
+      ? 'warn'
+      : runtimeState === 'STOPPING'
+        ? 'neutral'
+        : runtimeState === 'BROKEN'
+          ? 'err'
+          : 'dim';
+  return {
+    runtimeState,
+    runtimeClass,
+    badgeClass: runtimeBadgeClass(runtimeState),
+    uncertain,
+    inactive,
+    controlStatus,
+    controlClass,
+    roundState,
+    roundClass,
+    watcherStatus,
+    watcherClass,
+    degradedReason,
+  };
+}
+
+function detectChanges(data) {
+  const presentation = getRuntimePresentation(data);
+  const rs = presentation.runtimeState;
+  const cs = presentation.controlStatus;
+  const ws = presentation.watcherStatus;
+  const uncertaintyChanged = _prev.uncertainRuntime !== null && _prev.uncertainRuntime !== presentation.uncertain;
+
+  if (_prev.runtimeState !== null && _prev.runtimeState !== rs) {
+    const runtimeEventType = rs === 'RUNNING' ? 'ok' : rs === 'DEGRADED' ? 'warn' : rs === 'BROKEN' ? 'err' : 'info';
+    pushEvent(runtimeEventType, `Runtime: ${_prev.runtimeState} → ${rs}`);
+  }
+  _prev.runtimeState = rs;
+
+  if (uncertaintyChanged) {
+    pushEvent(
+      presentation.uncertain ? 'warn' : 'info',
+      presentation.uncertain ? `Runtime truth uncertain: ${presentation.degradedReason || AMBIGUOUS_RUNTIME_REASON}` : 'Runtime truth restored',
+    );
+  }
+  _prev.uncertainRuntime = presentation.uncertain;
+
+  if (!uncertaintyChanged && _prev.controlStatus !== null && _prev.controlStatus !== cs) {
+    const t = cs === 'implement' ? 'ok' : cs === 'needs_operator' || cs === 'uncertain' ? 'warn' : 'info';
+    pushEvent(t, `Control: ${_prev.controlStatus} → ${cs}`);
+    if (cs === 'needs_operator') SoundFX.warn();
+  }
+  _prev.controlStatus = cs;
+
+  if (!uncertaintyChanged && _prev.watcherStatus !== null && _prev.watcherStatus !== ws) {
+    const t = ws === 'Alive' ? 'ok' : ws === 'Unknown' ? 'warn' : 'err';
+    pushEvent(t, `Watcher: ${_prev.watcherStatus} → ${ws}`);
+  }
+  _prev.watcherStatus = ws;
+
+  for (const lane of (data.lanes ||[])) {
+    const n = lane.name || ''; const s = (lane.state || 'off').toLowerCase(); const p = _prev.laneStates[n];
+    if (p !== undefined && p !== s) {
+      const t = s === 'working' ? 'ok' : (s === 'broken' || s === 'dead') ? 'err' : 'info';
+      pushEvent(t, `${n}: ${p} → ${s}`);
+      spawnEventParticle(n, t);
+      // Drone delivery when agent starts working
+      if (s === 'working' && p !== 'working') spawnDrone(n);
+    }
+    _prev.laneStates[n] = s;
+  }
 }
 
 async function poll() {
   try {
-    await ensureOfficeSpriteAvailability();
-    const res = await fetch("/api/runtime/status");
+    const res  = await fetch('/api/runtime/status');
     const data = await res.json();
+    runtimeData = data;
+    const presentation = getRuntimePresentation(data);
+    detectChanges(data);
+    _needsOperator = ((data.control || {}).active_control_status === 'needs_operator');
 
-    // Toolbar
-    document.getElementById("project-path").textContent = data.project_root || "—";
-    document.getElementById("sidebar-project").textContent = data.project_root || "—";
-    const statusEl = document.getElementById("pipeline-status");
-    if ((data.runtime_state || "STOPPED") !== "STOPPED") {
-      statusEl.textContent = "Running";
-      statusEl.className = "status running";
-    } else {
-      statusEl.textContent = "Stopped";
-      statusEl.className = "status stopped";
-      for (const key of Object.keys(tailCache)) delete tailCache[key];
-      tailLineCountOverride = null;
+    // Ambient audio requires explicit user gesture (mute button toggle).
+    // Do not auto-start from poll().
+
+    const badge = document.getElementById('status-badge');
+    badge.textContent = presentation.runtimeState;
+    badge.className = 'badge ' + presentation.badgeClass;
+    document.getElementById('project-path').textContent = data.project_root || '—';
+
+    const lanes = data.lanes ||[];
+    const seenNames = new Set();
+    for (const lane of lanes) {
+      const name = lane.name || ''; seenNames.add(name);
+      if (!agents.has(name)) agents.set(name, new Agent(name));
+      agents.get(name).applyLaneData(lane);
+    }
+    for (const[name, agent] of agents) {
+      if (!seenNames.has(name)) {
+        agent._gifEl?.remove(); // cleanup GIF overlay
+        agents.delete(name);
+      }
     }
 
-    // Watcher
-    const w = data.watcher || {};
-    const ws = document.getElementById("watcher-status");
-    ws.textContent = w.alive ? "● Alive" : "✗ Dead";
-    ws.className = `value ${w.alive ? "alive" : "dead"}`;
-    document.getElementById("watcher-pid").textContent = w.pid || "—";
-
-    // Agents
-    if (!selectedView) {
-      const working = (data.lanes || []).find(a => (a.state || "").toLowerCase() === "working");
-      selectedView = working ? working.name.toLowerCase() : "all";
-      document.querySelector(".main").classList.toggle("focus-mode", selectedView !== "all");
-    }
-    document.querySelector(".center")?.classList.toggle("office-mode", showOffice);
-    renderTailToggle();
-    renderOfficeToggle();
-    const enrichedLanes = await hydrateTail(data.lanes || []);
-    renderAgentList(enrichedLanes || []);
-    renderViewTabs(enrichedLanes || []);
-    renderPanes(enrichedLanes || []);
-    renderOffice(enrichedLanes || [], data || {});
-
-    renderSlots(data || {});
-
+    checkDeliveryTrigger(data);
+    renderAgentCards(lanes);
+    renderRuntimeInfo(data, presentation);
   } catch (e) {
-    document.getElementById("pipeline-status").textContent = "API Error";
-    document.getElementById("pipeline-status").className = "status stopped";
+    document.getElementById('status-badge').textContent = 'API Error';
+    document.getElementById('status-badge').className = 'badge broken';
   }
 }
+
+// Sidebar Renderers
+function renderAgentCards(lanes) {
+  const el = document.getElementById('agent-cards');
+  if (!lanes.length) { el.innerHTML = '<div style="font-size:11px;color:#3d5070">에이전트 없음</div>'; return; }
+  el.innerHTML = lanes.map(lane => {
+    const s = (lane.state || 'off').toLowerCase(), color = STATE_COLORS[s] || STATE_COLORS.off;
+    const role = LANE_ROLES[(lane.name || '').toLowerCase()] || '', note = lane.note || lane.status_note || '';
+    const initial = (lane.name || '?')[0].toUpperCase();
+    const agent = agents.get(lane.name || '');
+    const fatigue = agent ? agent.fatigueState : '';
+    const fatigueLabel = fatigue === 'coffee' ? '☕ 커피 충전 중' : fatigue === 'fatigued' ? '💦 피로 누적' : '';
+    return `<div class="agent-card" data-agent="${esc(lane.name || '')}" data-fatigue="${fatigue}"><div class="agent-avatar" style="background:${color}">${esc(initial)}</div>
+      <div class="agent-info"><div class="agent-name">${esc(lane.name || '?')}</div><div class="agent-role">${esc(role)}</div>
+      ${note ? `<div class="agent-detail">${esc(truncate(note, 50))}</div>` : ''}
+      ${fatigueLabel ? `<div class="agent-fatigue" data-fatigue="${fatigue}">${fatigueLabel}</div>` : ''}</div>
+      <div class="agent-state-dot" style="background:${color}" title="${esc(s)}"></div></div>`;
+  }).join('');
+}
+
+function renderRuntimeInfo(data, presentation = getRuntimePresentation(data)) {
+  const el = document.getElementById('runtime-info');
+  const lr = data.last_receipt || {}, lw = (data.artifacts || {}).latest_work || {}, dr = (data.degraded_reasons ||[]).filter(Boolean);
+  const sceneState = _bgReady ? (_bgSource === BACKGROUND_ASSET_CANDIDATES[0] ? 'root' : 'fallback') : (_bgLoadError ? 'asset_error' : 'loading');
+  const sceneClass = _bgReady ? (_bgSource === BACKGROUND_ASSET_CANDIDATES[0] ? 'ok' : 'warn') : (_bgLoadError ? 'err' : 'neutral');
+  el.innerHTML = `
+    <div class="info-row"><span class="info-label">상태</span><span class="info-value ${presentation.runtimeClass}">${esc(presentation.runtimeState)}</span></div>
+    <div class="info-row"><span class="info-label">Control</span><span class="info-value ${presentation.controlClass}">${esc(presentation.controlStatus)}</span></div>
+    <div class="info-row"><span class="info-label">Round</span><span class="info-value ${presentation.roundClass}">${esc(presentation.roundState)}</span></div>
+    <div class="info-row"><span class="info-label">Watcher</span><span class="info-value ${presentation.watcherClass}">${esc(presentation.watcherStatus)}</span></div>
+    <div class="info-row"><span class="info-label">Scene</span><span class="info-value ${sceneClass}">${esc(sceneState)}</span></div>
+    ${lr.verify_result ? `<div class="info-row"><span class="info-label">Receipt</span><span class="info-value">${esc(lr.verify_result)}</span></div>` : ''}
+    ${lw.path ? `<div class="info-row"><span class="info-label">Work</span><span class="info-value">${esc(basename(lw.path))}</span></div>` : ''}
+    ${dr.length ? `<div class="info-row"><span class="info-label">Degraded</span><span class="info-value ${presentation.uncertain ? 'warn' : 'err'}">${esc(presentation.degradedReason || dr[0])}</span></div>` : ''}
+  `;
+}
+
+// Sound FX
+const SoundFX = {
+  _ctx: null, _enabled: true,
+  _ensure() {
+    if (!this._ctx) { try { this._ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { this._enabled = false; } }
+    if (this._ctx && this._ctx.state === 'suspended') this._ctx.resume();
+    return this._ctx;
+  },
+  _play(notes, { gain = 0.12, type = 'square' } = {}) {
+    if (!this._enabled) return; const ctx = this._ensure(); if (!ctx) return;
+    const now = ctx.currentTime, osc = ctx.createOscillator(), vol = ctx.createGain();
+    osc.type = type; osc.connect(vol); vol.connect(ctx.destination);
+    let t = now;
+    for (const[freq, dur] of notes) {
+      osc.frequency.setValueAtTime(freq, t); vol.gain.setValueAtTime(gain, t);
+      vol.gain.setValueAtTime(gain, t + dur * 0.7); vol.gain.linearRampToValueAtTime(0, t + dur); t += dur;
+    }
+    osc.start(now); osc.stop(t);
+  },
+  click() { this._play([[880, 0.06]], { gain: 0.08 }); },
+  success() { this._play([[523, 0.08],[659, 0.08],[784, 0.12]], { gain: 0.10 }); },
+  error() { this._play([[220, 0.12],[165, 0.18]], { gain: 0.13, type: 'sawtooth' }); },
+  warn() { this._play([[440, 0.08],[0, 0.06],[440, 0.08]], { gain: 0.09 }); },
+  blip() { this._play([[660, 0.05]], { gain: 0.06 }); },
+};
 
 async function apiPost(path) {
+  SoundFX.click();
   try {
-    const res = await fetch(path, { method: "POST" });
+    const res  = await fetch(path, { method: 'POST' });
     const data = await res.json();
-    if (!res.ok || data.ok === false) {
-      alert("요청 실패: " + (data.error || "unknown error"));
-      setTimeout(poll, 250);
-      return;
+    if (!res.ok || data.ok === false) { pushEvent('err', '요청 실패: ' + (data.error || 'unknown')); SoundFX.error(); }
+    else {
+      pushEvent('ok', path.split('/').pop() + ' 완료');
+      if (path.includes('start')) SoundFX.success(); else if (path.includes('stop')) SoundFX.warn(); else SoundFX.blip();
     }
-    setTimeout(poll, 1500);
-  } catch (e) {
-    alert("요청 실패: " + e.message);
-  }
+    setTimeout(poll, 1200);
+  } catch (e) { pushEvent('err', '요청 실패: ' + e.message); SoundFX.error(); }
 }
 
-// 1초마다 폴링
-setInterval(poll, POLL_MS);
-setInterval(() => {
-  if (!showOffice || !officeSpriteAvailable) return;
-  refreshOfficeSpriteFrames();
-}, 220);
-renderTailToggle();
-renderOfficeToggle();
-const runtimeCommandInput = document.getElementById("runtime-command-input");
-if (runtimeCommandInput) {
-  runtimeCommandInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      submitRuntimeCommand();
-    }
-  });
+function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function basename(p) { return String(p || '').split('/').filter(Boolean).pop() || '—'; }
+function truncate(s, n) { return s.length > n ? s.slice(0, n) + '…' : s; }
+
+// BOOT
+// Restore muted preference from browser-local storage (keep audio off, no autoplay)
+if (PrefStore.get('office_muted') === '1') {
+  AmbientAudio.muted = true;
+  const mb = document.getElementById('mute-btn');
+  if (mb) { mb.textContent = '🔇'; mb.title = '사운드 켜기'; }
 }
+// Show toolbar storage-unavailable indicator if preference persistence is blocked
+if (!PrefStore.available) {
+  const sw = document.getElementById('storage-warn');
+  if (sw) sw.style.display = 'inline-block';
+}
+SpriteManager.init();
+setInterval(poll, POLL_MS);
 poll();
 </script>
 </body>

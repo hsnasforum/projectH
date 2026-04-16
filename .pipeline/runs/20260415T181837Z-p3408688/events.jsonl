@@ -1,0 +1,14 @@
+{"seq": 1, "ts": "2026-04-15T18:18:37.669817Z", "run_id": "20260415T181837Z-p3408688", "event_type": "runtime_started", "source": "supervisor", "payload": {"runtime_state": "STARTING"}}
+{"seq": 2, "ts": "2026-04-15T18:18:38.119450Z", "run_id": "20260415T181837Z-p3408688", "event_type": "control_changed", "source": "supervisor", "payload": {"active_control_file": ".pipeline/claude_handoff.md", "active_control_seq": 174, "active_control_status": "implement", "active_control_updated_at": "2026-04-15T17:56:54.890994Z"}}
+{"seq": 3, "ts": "2026-04-15T18:18:38.119634Z", "run_id": "20260415T181837Z-p3408688", "event_type": "lane_booting", "source": "supervisor", "payload": {"lane": "Claude", "state": "BOOTING"}}
+{"seq": 4, "ts": "2026-04-15T18:18:38.119765Z", "run_id": "20260415T181837Z-p3408688", "event_type": "lane_booting", "source": "supervisor", "payload": {"lane": "Codex", "state": "BOOTING"}}
+{"seq": 5, "ts": "2026-04-15T18:18:38.119887Z", "run_id": "20260415T181837Z-p3408688", "event_type": "lane_booting", "source": "supervisor", "payload": {"lane": "Gemini", "state": "BOOTING"}}
+{"seq": 6, "ts": "2026-04-15T18:18:42.470608Z", "run_id": "20260415T181837Z-p3408688", "event_type": "lane_ready", "source": "supervisor", "payload": {"lane": "Claude", "state": "READY"}}
+{"seq": 7, "ts": "2026-04-15T18:18:42.470763Z", "run_id": "20260415T181837Z-p3408688", "event_type": "lane_working", "source": "supervisor", "payload": {"lane": "Codex", "state": "WORKING"}}
+{"seq": 8, "ts": "2026-04-15T18:18:46.745541Z", "run_id": "20260415T181837Z-p3408688", "event_type": "lane_ready", "source": "supervisor", "payload": {"lane": "Gemini", "state": "READY"}}
+{"seq": 9, "ts": "2026-04-15T18:18:51.072942Z", "run_id": "20260415T181837Z-p3408688", "event_type": "control_changed", "source": "supervisor", "payload": {"active_control_file": "", "active_control_seq": -1, "active_control_status": "none", "active_control_updated_at": ""}}
+{"seq": 10, "ts": "2026-04-15T18:18:51.073042Z", "run_id": "20260415T181837Z-p3408688", "event_type": "degraded_entered", "source": "supervisor", "payload": {"reason": "claude_prompt_visible"}}
+{"seq": 11, "ts": "2026-04-15T18:18:51.073125Z", "run_id": "20260415T181837Z-p3408688", "event_type": "lane_spawned", "source": "supervisor", "payload": {"lane": "Claude", "state": "OFF"}}
+{"seq": 12, "ts": "2026-04-15T18:18:51.073198Z", "run_id": "20260415T181837Z-p3408688", "event_type": "lane_spawned", "source": "supervisor", "payload": {"lane": "Codex", "state": "OFF"}}
+{"seq": 13, "ts": "2026-04-15T18:18:51.073274Z", "run_id": "20260415T181837Z-p3408688", "event_type": "lane_spawned", "source": "supervisor", "payload": {"lane": "Gemini", "state": "OFF"}}
+{"seq": 14, "ts": "2026-04-15T18:18:51.073350Z", "run_id": "20260415T181837Z-p3408688", "event_type": "runtime_stopped", "source": "supervisor", "payload": {"runtime_state": "STOPPED"}}

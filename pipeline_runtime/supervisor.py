@@ -647,6 +647,8 @@ class RuntimeSupervisor:
         active_round: dict[str, Any] | None,
     ) -> str:
         lane_name = str(lane.get("name") or "")
+        if self._stop_requested or not self._runtime_started:
+            return ""
         if str(lane.get("state") or "") != "BROKEN":
             return ""
         failure_reason = str(lane_model.get("failure_reason") or lane.get("note") or "").strip()
@@ -760,6 +762,18 @@ class RuntimeSupervisor:
             duplicate_control=duplicate_control,
         )
         watcher = self._watcher_status()
+        session_alive = self.adapter.session_exists()
+        if not self._runtime_started and not session_alive and not watcher.get("alive"):
+            lanes = [
+                {
+                    **lane,
+                    "state": "OFF",
+                    "pid": None,
+                    "attachable": False,
+                    "note": "",
+                }
+                for lane in lanes
+            ]
         artifacts = self._build_artifacts()
         lane_configs = self.runtime_lane_configs or [
             {"name": lane, "enabled": lane in self.enabled_lanes}
@@ -780,7 +794,6 @@ class RuntimeSupervisor:
             )
             if reason:
                 degraded_reasons.append(reason)
-        session_alive = self.adapter.session_exists()
         enabled_lanes = [lane for lane in lanes if str(lane.get("state") or "") != "OFF"]
         if self._runtime_started and not self._stop_requested and not session_alive and configured_enabled_lanes:
             degraded_reasons.append("session_missing")
@@ -1355,6 +1368,8 @@ class RuntimeSupervisor:
             self._write_status()
             if self._runtime_started:
                 self._stop_runtime()
+            self._runtime_started = False
+            self._stop_requested = False
             self.runtime_state = "STOPPED"
             final_status = self._write_status()
             self._record_status_events(final_status)

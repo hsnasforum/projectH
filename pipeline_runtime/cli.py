@@ -213,6 +213,22 @@ def _reconcile_supervisors(
     return None
 
 
+def _current_run_matches(project_root: Path, run_id: str) -> bool:
+    current_run = read_json(project_root / ".pipeline" / "current_run.json")
+    if not current_run:
+        return False
+    current_run_id = str(current_run.get("run_id") or "").strip()
+    if current_run_id != run_id:
+        return False
+    status_path_value = str(current_run.get("status_path") or "").strip()
+    if status_path_value:
+        status_path = project_root / status_path_value
+    else:
+        status_path = project_root / ".pipeline" / "runs" / run_id / "status.json"
+    status = read_json(status_path)
+    return isinstance(status, dict) and str(status.get("run_id") or "") == run_id
+
+
 def _spawn_supervisor(args: argparse.Namespace) -> int:
     project_root, mode = _normalize_project_and_mode(args)
     session_name = args.session or _session_name_for(project_root)
@@ -247,9 +263,7 @@ def _spawn_supervisor(args: argparse.Namespace) -> int:
         )
     deadline = time.time() + 20.0
     while time.time() < deadline:
-        current_run = read_json(project_root / ".pipeline" / "current_run.json")
-        status = read_json(project_root / ".pipeline" / "runs" / run_id / "status.json")
-        if current_run and status:
+        if _current_run_matches(project_root, run_id):
             return 0
         if process.poll() is not None:
             return process.returncode or 1
@@ -292,8 +306,9 @@ def _restart_supervisor(args: argparse.Namespace) -> int:
 def _attach(args: argparse.Namespace) -> int:
     project_root = _project_root(args.project_root)
     adapter = TmuxAdapter(project_root, args.session or _session_name_for(project_root))
-    adapter.attach(args.lane)
-    return 0
+    if not adapter.session_exists():
+        return 1
+    return adapter.attach_blocking(args.lane)
 
 
 def _load_task_hint(task_hint_dir: Path | None, lane_name: str) -> dict[str, object]:

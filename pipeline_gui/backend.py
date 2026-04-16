@@ -472,6 +472,33 @@ def read_runtime_event_tail(project: Path, *, max_lines: int = 14) -> list[dict[
     return [dict(item) for item in read_jsonl_tail(events_path, max_lines=max_lines)]
 
 
+def supervisor_alive(project: Path) -> tuple[bool, int | None]:
+    """Return whether the run supervisor PID is still live."""
+    pid_path = project / ".pipeline" / "supervisor.pid"
+    if IS_WINDOWS:
+        code, content = _run(["cat", _wsl_path_str(pid_path)], timeout=FILE_QUERY_TIMEOUT)
+        if code != 0 or not content.strip():
+            return False, None
+        try:
+            pid = int(content.strip().splitlines()[-1].strip())
+        except ValueError:
+            return False, None
+        code, _ = _run(["kill", "-0", str(pid)], timeout=2.0)
+        return code == 0, pid if code == 0 else None
+
+    if not pid_path.exists():
+        return False, None
+    try:
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return False, None
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False, None
+    return True, pid
+
+
 def runtime_state(project: Path) -> str:
     status = normalize_runtime_status(read_runtime_status(project))
     if not status:

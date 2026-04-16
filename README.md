@@ -108,10 +108,13 @@ repo 안의 internal/operator tooling은 릴리즈 게이트 밖이지만 계속
   - internal/operator tool only; not part of the current release-candidate browser contract
   - canonical runtime API는 `/api/runtime/status`, `/api/runtime/start|stop|restart`, `/api/runtime/capture-tail?lane=`입니다.
   - controller/browser UI는 supervisor가 쓴 run-scoped runtime status만 읽고, direct pane/log/file scan을 current truth로 사용하지 않습니다.
+  - 이미 receipt로 닫힌 duplicate `STATUS: implement` handoff는 debug용 `compat.control_slots`에는 남아도, canonical `control` block에서는 `none`으로 내려 controller가 `implement + all READY` 같은 stale 표기를 하지 않게 합니다.
   - recent runtime snapshot이 supervisor/pid 없이 불완전하게 남아 있거나, 같은 ambiguous snapshot에 `updated_at`까지 비어 있으면 controller는 이를 즉시 `STOPPED/BROKEN`으로 단정하지 않고 uncertain `DEGRADED`(`supervisor_missing_recent_ambiguous` / `supervisor_missing_snapshot_undated`)로 표기합니다.
+  - `.pipeline/operator_request.md`는 file 자체만으로 곧바로 current truth가 되지 않습니다. supervisor는 `safety_stop`, `approval_required`, `truth_sync_required`만 즉시 publish하고, 나머지 `needs_operator`는 최대 24시간 동안 `autonomy.recovery|triage|hibernate|pending_operator`로 gate합니다.
+  - gate된 operator candidate는 canonical `control` block에서는 `none`으로 내려가고, status의 `autonomy` block(`mode`, `block_reason`, `suppress_operator_until`, `operator_eligible` 등)으로만 노출됩니다. 오래 방치된 stop은 watcher가 Codex 재심사(`operator_wait_idle_retriage` 또는 gated follow-up)로 다시 넘깁니다.
   - browser log modal은 현재 tail read-model만 제공합니다. lane pause/resume/restart나 attach 같은 backend 미연결 액션은 노출하지 않습니다.
   - Office View background는 `/controller-assets/background.png`를 우선 사용하고, 필요할 때만 `/controller-assets/generated/bg-office.png`로 fallback하며, sidebar `Scene` 상태와 event log로 load/fallback/error를 표시합니다.
-  - `ready` / `idle` 상태 에이전트는 복도 waypoint에 고정되지 않고 오픈 플로어 존(책상-라운지 사이, 라운지 영역, 입구 근처)을 넓은 jitter로 자유 배회합니다. `working` / `booting` / `broken` / `dead` 에이전트는 기존 desk/status 고정 동작을 유지합니다.
+  - `ready` / `idle` 상태 에이전트는 복도 waypoint에 고정되지 않고 오픈 플로어 존(중앙 복도, 책상-라운지 사이, 라운지 영역, 입구 근처, 소파 앞 상단, 우측 오픈 에어리어)을 넓은 jitter로 자유 배회합니다. walkable floor bounds와 desk exclusion rect가 적용되어 에이전트가 벽, 가구, 책상 위에 서지 않습니다. 배회 대상 선정 시 다른 idle 에이전트와의 거리를 고려하여 겹침(stacking)을 방지하고, 최근 5곳 방문 이력에 graduated penalty를 부여하여 같은 자리를 반복 방문하는 현상을 줄입니다. 45% 확률로 정해진 anchor spot 대신 walkable floor 전체에서 무작위 지점을 선택하고, spot 기반 선택에도 넓은 jitter(×2.6)를 적용하여 움직임에 예측 불가능한 자연스러움을 더합니다. 오픈 플로어에서 다른 오픈 플로어로 이동할 때는 복도 waypoint를 거치지 않고 직선으로 걸어가며, 배회 간격(60% 짧은 1.0-3.5초, 30% 중간 2.5-5.5초, 10% 장시간 6-11초 체류)과 10초 이상 같은 자리에 서 있으면 강제 재선택하는 stale-position timer, 정지 중 micro-drift 및 주기적인 시선 전환(glance)이 적용되어 고정된 느낌을 줄입니다. `working` / `booting` / `broken` / `dead` 에이전트는 기존 desk/status 고정 동작을 유지합니다.
   - live fault / soak harness는 `python3 scripts/pipeline_runtime_gate.py ...` 경로를 사용합니다.
   - WSL에서 실행하면 Windows 브라우저 접근을 위해 기본 bind host를 `0.0.0.0`로 잡고, 브라우저 URL은 계속 `127.0.0.1` 기준으로 안내합니다.
   - 만약 Windows에서 `127.0.0.1:8780`이 안 열리면, 시작 로그에 함께 출력되는 `Windows fallback: http://<WSL-IP>:8780/controller` 주소를 사용하시면 됩니다.

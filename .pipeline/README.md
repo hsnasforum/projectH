@@ -101,7 +101,9 @@
 - Claude가 그 슬라이스를 실행할 수 없으면 operator 선택지를 직접 열지 않고 `STATUS: implement_blocked` + `BLOCK_REASON` + `REQUEST: codex_triage` + `HANDOFF` + `HANDOFF_SHA` + `BLOCK_ID`를 pane에 남기고 멈추는 편이 맞습니다.
 - `STATUS: request_open`이면 Codex가 Gemini arbitration을 먼저 요청한 상태입니다. watcher는 Gemini를 먼저 부릅니다.
 - `STATUS: advice_ready`이면 Gemini가 recommendation을 남긴 상태입니다. watcher는 Codex follow-up을 먼저 부릅니다.
-- `STATUS: needs_operator`이면 Codex가 아직 다음 단일 슬라이스를 truthful하게 확정하지 못한 상태입니다. Claude는 이 stop 슬롯을 읽지 않고 operator 판단을 기다립니다.
+- `STATUS: needs_operator` file이 생겼다고 해서 곧바로 current truth operator stop이 되는 것은 아닙니다. supervisor/watcher는 `safety_stop`, `approval_required`, `truth_sync_required`만 즉시 publish하고, 나머지는 최대 24시간 동안 gated candidate로 다룹니다.
+- gate 중인 후보는 runtime `status.control=none`으로 내려가고, 대신 `status.autonomy.mode = recovery|triage|hibernate|pending_operator`와 `block_reason`, `suppress_operator_until`, `operator_eligible`로 surface됩니다. 이 동안 watcher는 Codex follow-up 또는 idle hibernate를 먼저 선택하고, 즉시 operator wait로 고정하지 않습니다.
+- gate window가 지나도 같은 fingerprint가 남아 있고 여전히 real operator-only decision이면 그때 `STATUS: needs_operator`가 current truth로 publish될 수 있습니다. Claude는 current truth가 아닌 gated stop 슬롯을 직접 따르지 않습니다.
 - `STATUS: needs_operator`는 bare stop line만 남기는 용도가 아닙니다. 이 상태를 쓸 때는 최소한 아래를 같이 적는 편이 canonical입니다.
   - stop reason
   - 근거가 된 latest `/work`와 latest `/verify`
@@ -141,7 +143,7 @@
 7-2. watcher는 이런 active-session side-question을 감지해도 `.pipeline/gemini_request.md`를 자동으로 열지 않습니다. 필요하면 Codex/Gemini가 idle이고 Claude가 idle이거나 짧게 settle된 상태일 때 `.pipeline/session_arbitration_draft.md`만 생성하고, Codex가 직접 canonical 슬롯 승격 여부를 정합니다.
 7-3. watcher가 생성한 `.pipeline/session_arbitration_draft.md`는 perpetual slot이 아닙니다. Claude가 다시 작업을 시작하거나 canonical Gemini/operator 슬롯이 열리면 watcher가 정리하고, 같은 fingerprint는 짧은 cooldown 동안 반복 생성하지 않는 편이 맞습니다.
 8. `.pipeline/codex_feedback.md`는 필요하면 scratch로 남길 수 있지만, watcher는 그것을 stop/go 실행 신호로 읽지 않습니다.
-9. watcher 또는 자동화는 최신 valid control 기준으로 `.pipeline/claude_handoff.md`의 `STATUS: implement`일 때만 Claude에 전달하고, `.pipeline/gemini_request.md`가 최신이면 Gemini를, `.pipeline/gemini_advice.md`가 최신이면 Codex follow-up을, `.pipeline/operator_request.md`가 최신 pending stop이면 자동 진행을 중단하는 쪽이 맞습니다.
+9. watcher 또는 자동화는 최신 valid control 기준으로 `.pipeline/claude_handoff.md`의 `STATUS: implement`일 때만 Claude에 전달하고, `.pipeline/gemini_request.md`가 최신이면 Gemini를, `.pipeline/gemini_advice.md`가 최신이면 Codex follow-up을 실행합니다. `.pipeline/operator_request.md`는 latest slot이어도 gate 대상이면 바로 operator로 서지 않고, immediate publish 사유일 때나 24시간 gate가 지난 뒤에만 operator wait current truth가 됩니다.
 10. watcher의 책임은 파일 변경 감지와 올바른 pane 전달까지입니다. 전송 후 Claude 또는 Codex or Gemini pane이 바쁘거나 interrupted 상태여서 처리가 안 되는 경우는 watcher contract 문제가 아니라 세션 상태 문제입니다.
 11. Codex가 다음 슬라이스를 고를 때는, 같은 family 안의 작은 current-risk reduction을 먼저 닫고 그다음 새 quality axis로 넘어가는 편이 기본값입니다.
 12. startup dispatch는 pane이 실제로 입력을 받을 준비가 됐는지 먼저 확인한 뒤 보내는 편이 맞습니다. 그 뒤에는 짧은 readiness 확인과 watcher retry에 맡기는 쪽이 기본값입니다.

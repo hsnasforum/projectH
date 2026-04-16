@@ -53,6 +53,7 @@ class ControllerServerLaunchGateTests(unittest.TestCase):
             status = controller_server._runtime_status_or_placeholder()
         self.assertEqual(status["runtime_state"], "STOPPED")
         self.assertEqual(status["project_root"], str(controller_server.PROJECT_ROOT))
+        self.assertEqual(status["autonomy"]["mode"], "normal")
 
     def test_pipeline_start_propagates_launch_gate_error_from_backend(self) -> None:
         with mock.patch.object(controller_server, "backend_pipeline_start", return_value="실행 차단: active profile이 없습니다 (.pipeline/config/agent_profile.json)."):

@@ -18,6 +18,7 @@ from pipeline_gui.platform import resolve_project_runtime_file
 from pipeline_gui.project import _session_name_for
 from pipeline_gui.setup_profile import resolve_project_runtime_adapter
 
+from .operator_autonomy import classify_operator_candidate
 from .receipts import build_receipt, receipt_path, validate_manifest, write_receipt
 from .schema import (
     RUNTIME_LANE_ORDER,
@@ -43,6 +44,14 @@ _AUTH_LOGIN_PATTERNS = (
     re.compile(r"please run\s+/login", re.IGNORECASE),
     re.compile(r"api error:\s*401", re.IGNORECASE),
     re.compile(r'"type"\s*:\s*"authentication_error"', re.IGNORECASE),
+)
+_BUSY_TAIL_MARKERS = (
+    "working (",
+    "working for ",
+    "• working",
+    "◦ working",
+    "inferring",
+    "thinking with ",
 )
 
 
@@ -70,6 +79,7 @@ class RuntimeSupervisor:
         self.task_hints_dir = self.run_dir / "task-hints"
         self.compat_dir = self.run_dir / "compat"
         self.backend_dir = self.run_dir / "backend"
+        self.autonomy_state_path = self.base_dir / "state" / "autonomy_state.json"
         self.status_path = self.run_dir / "status.json"
         self.events_path = self.run_dir / "events.jsonl"
         self.current_run_path = self.base_dir / "current_run.json"
@@ -93,6 +103,8 @@ class RuntimeSupervisor:
         self._last_control_key = ""
         self._last_duplicate_control_key = ""
         self._last_stale_operator_control_key = ""
+        self._last_operator_gate_key = ""
+        self._last_autonomy_key = ""
         self._last_lane_states: dict[str, str] = {}
         self._last_degraded_reason = ""
         self._lane_restart_counts: dict[str, int] = {}
@@ -100,6 +112,8 @@ class RuntimeSupervisor:
         self._launch_failed_reason = ""
         self._current_duplicate_control_marker: dict[str, Any] | None = None
         self._current_stale_operator_control_marker: dict[str, Any] | None = None
+        self._current_operator_gate_marker: dict[str, Any] | None = None
+        self._current_autonomy: dict[str, Any] | None = None
 
     def _make_run_id(self) -> str:
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -283,10 +297,39 @@ class RuntimeSupervisor:
             text = str(path)
         return text.replace("\\", "/")
 
+    def _default_autonomy_block(self) -> dict[str, Any]:
+        return {
+            "mode": "normal",
+            "block_reason": "",
+            "first_seen_at": "",
+            "suppress_operator_until": "",
+            "operator_eligible": False,
+            "same_fingerprint_retries": 0,
+            "last_self_heal_at": "",
+            "last_self_triage_at": "",
+        }
+
+    def _load_autonomy_state(self) -> dict[str, Any]:
+        data = read_json(self.autonomy_state_path)
+        return data if isinstance(data, dict) else {}
+
+    def _save_autonomy_state(self, data: dict[str, Any]) -> None:
+        atomic_write_json(self.autonomy_state_path, data)
+
+    def _control_text(self, control: dict[str, Any]) -> str:
+        control_path = self._control_path(control)
+        if control_path is None or not control_path.exists():
+            return ""
+        try:
+            return control_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+
     def _stale_operator_control_marker(
         self,
         control: dict[str, Any],
         job_states: list[dict[str, Any]],
+        turn_state: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         control_status = str(control.get("active_control_status") or control.get("status") or "")
         if control_status != "needs_operator":
@@ -305,7 +348,19 @@ class RuntimeSupervisor:
                 if self._normalize_artifact_path(match.group(1))
             }
         )
+        reason = str((turn_state or {}).get("reason") or "")
+        retriage_active = (
+            str((turn_state or {}).get("state") or "") == "CODEX_FOLLOWUP"
+            and reason == "operator_wait_idle_retriage"
+        )
         if not referenced_work_paths:
+            if retriage_active:
+                return {
+                    "control_file": str(control.get("active_control_file") or control.get("file") or ""),
+                    "control_seq": int(control.get("active_control_seq") or control.get("control_seq") or -1),
+                    "reason": "operator_wait_idle_retriage",
+                    "resolved_work_paths": [],
+                }
             return None
         verified_work_paths = {
             self._normalize_artifact_path(job_state.get("artifact_path"))
@@ -314,6 +369,13 @@ class RuntimeSupervisor:
         }
         unresolved = [path for path in referenced_work_paths if path not in verified_work_paths]
         if unresolved:
+            if retriage_active:
+                return {
+                    "control_file": str(control.get("active_control_file") or control.get("file") or ""),
+                    "control_seq": int(control.get("active_control_seq") or control.get("control_seq") or -1),
+                    "reason": "operator_wait_idle_retriage",
+                    "resolved_work_paths": [],
+                }
             return None
         return {
             "control_file": str(control.get("active_control_file") or control.get("file") or ""),
@@ -321,6 +383,81 @@ class RuntimeSupervisor:
             "reason": "verified_blockers_resolved",
             "resolved_work_paths": referenced_work_paths,
         }
+
+    def _operator_gate_marker(
+        self,
+        control: dict[str, Any],
+        *,
+        turn_state: dict[str, Any] | None,
+        active_round: dict[str, Any] | None,
+        wrapper_models: dict[str, dict[str, Any]],
+    ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+        autonomy = self._default_autonomy_block()
+        control_status = str(control.get("active_control_status") or control.get("status") or "")
+        if control_status != "needs_operator":
+            return None, autonomy
+
+        control_path = self._control_path(control)
+        if control_path is None or not control_path.exists():
+            return None, autonomy
+
+        try:
+            control_mtime = float(control.get("mtime") or control_path.stat().st_mtime)
+        except OSError:
+            control_mtime = 0.0
+
+        decision = classify_operator_candidate(
+            self._control_text(control),
+            control_path=str(control_path),
+            control_seq=int(control.get("active_control_seq") or control.get("control_seq") or -1),
+            control_mtime=control_mtime,
+            turn_reason=str((turn_state or {}).get("reason") or ""),
+            lane_notes=[
+                str(model.get("failure_reason") or model.get("note") or "")
+                for model in wrapper_models.values()
+            ],
+            idle_stable=not active_round or str((active_round or {}).get("state") or "") == "CLOSED",
+        )
+        persisted = self._load_autonomy_state()
+        fingerprint = str(decision.get("fingerprint") or "")
+        same_fingerprint = fingerprint and fingerprint == str(persisted.get("fingerprint") or "")
+        retries = int(persisted.get("same_fingerprint_retries") or 0) if same_fingerprint else 0
+        autonomy = {
+            "mode": str(decision.get("mode") or "normal"),
+            "block_reason": str(decision.get("block_reason") or ""),
+            "first_seen_at": str(decision.get("first_seen_at") or ""),
+            "suppress_operator_until": str(decision.get("suppress_operator_until") or ""),
+            "operator_eligible": bool(decision.get("operator_eligible")),
+            "same_fingerprint_retries": retries,
+            "last_self_heal_at": (
+                str(persisted.get("last_self_heal_at") or "")
+                if same_fingerprint
+                else (iso_utc() if str(decision.get("suppressed_mode") or "") == "recovery" else "")
+            ),
+            "last_self_triage_at": (
+                str(persisted.get("last_self_triage_at") or "")
+                if same_fingerprint
+                else (
+                    iso_utc()
+                    if str(decision.get("suppressed_mode") or "") in {"triage", "pending_operator", "hibernate"}
+                    else ""
+                )
+            ),
+        }
+
+        if bool(decision.get("operator_eligible")):
+            return None, autonomy
+
+        marker = {
+            "control_file": str(control.get("active_control_file") or control.get("file") or ""),
+            "control_seq": int(control.get("active_control_seq") or control.get("control_seq") or -1),
+            "reason": str(decision.get("block_reason") or ""),
+            "mode": str(decision.get("suppressed_mode") or ""),
+            "routed_to": str(decision.get("routed_to") or ""),
+            "suppress_operator_until": str(decision.get("suppress_operator_until") or ""),
+            "fingerprint": fingerprint,
+        }
+        return marker, autonomy
 
     def _active_lane_for_runtime(
         self,
@@ -451,6 +588,8 @@ class RuntimeSupervisor:
         if lane_name != active_lane:
             return False
         turn_state_name = str((turn_state or {}).get("state") or "")
+        if turn_state_name == "CLAUDE_ACTIVE":
+            return True
         if turn_state_name == "CODEX_FOLLOWUP":
             return True
         if not active_round:
@@ -480,6 +619,12 @@ class RuntimeSupervisor:
             if pattern.search(tail_text):
                 return _AUTH_LOGIN_REASON
         return ""
+
+    def _tail_has_busy_indicator(self, text: str) -> bool:
+        lower = str(text or "").lower()
+        if not lower.strip():
+            return False
+        return any(marker in lower for marker in _BUSY_TAIL_MARKERS)
 
     def _build_lane_statuses(
         self,
@@ -527,7 +672,6 @@ class RuntimeSupervisor:
             elif (
                 duplicate_control is not None
                 and lane_name == implement_owner
-                and str(control.get("active_control_status") or "") == "implement"
             ):
                 state = "READY"
                 note = "waiting_next_control"
@@ -540,7 +684,24 @@ class RuntimeSupervisor:
                 note = failure_reason
             else:
                 model_state = str(model.get("state") or "")
+                implement_busy = False
                 if (
+                    duplicate_control is None
+                    and lane_name == implement_owner
+                    and str(control.get("active_control_status") or "") == "implement"
+                    and model_state in {"READY", "WORKING"}
+                ):
+                    try:
+                        implement_busy = self._tail_has_busy_indicator(
+                            self.adapter.capture_tail(lane_name, lines=80)
+                        )
+                    except Exception:
+                        implement_busy = False
+                if implement_busy:
+                    state = "WORKING"
+                    if note in {"", "prompt_visible"}:
+                        note = "implement"
+                elif (
                     model_state in {"READY", "WORKING"}
                     and self._lane_should_surface_working(
                         lane_name=lane_name,
@@ -552,7 +713,9 @@ class RuntimeSupervisor:
                     state = "WORKING"
                     if note in {"", "prompt_visible"}:
                         turn_state_name = str((turn_state or {}).get("state") or "")
-                        if turn_state_name == "CODEX_FOLLOWUP":
+                        if turn_state_name == "CLAUDE_ACTIVE":
+                            note = "implement"
+                        elif turn_state_name == "CODEX_FOLLOWUP":
                             note = "followup"
                         else:
                             note = str((active_round or {}).get("state") or "").lower() or "active_round"
@@ -702,15 +865,28 @@ class RuntimeSupervisor:
         control_slots = parse_control_slots(self.base_dir)
         active_control = dict(control_slots.get("active") or {})
         job_states = load_job_states(self.base_dir / "state")
-        stale_operator_control = self._stale_operator_control_marker(active_control, job_states)
+        wrapper_models = build_lane_read_models(self.wrapper_events_dir)
+        active_round_preview = self._build_active_round(job_states, latest_receipt(self.receipts_dir))
+        stale_operator_control = self._stale_operator_control_marker(active_control, job_states, turn_state)
+        operator_gate, autonomy = (
+            (None, self._default_autonomy_block())
+            if stale_operator_control is not None
+            else self._operator_gate_marker(
+                active_control,
+                turn_state=turn_state if isinstance(turn_state, dict) else None,
+                active_round=active_round_preview,
+                wrapper_models=wrapper_models,
+            )
+        )
         self._current_stale_operator_control_marker = stale_operator_control
-        effective_control = {} if stale_operator_control is not None else active_control
+        self._current_operator_gate_marker = operator_gate
+        effective_control = {} if stale_operator_control is not None or operator_gate is not None else active_control
         last_receipt, receipt_degraded = self._reconcile_receipts(
             job_states=job_states,
             active_control=effective_control or None,
         )
         active_round = self._build_active_round(job_states, last_receipt)
-        if stale_operator_control is not None:
+        if stale_operator_control is not None or operator_gate is not None:
             control_block = {
                 "active_control_file": "",
                 "active_control_seq": -1,
@@ -736,16 +912,22 @@ class RuntimeSupervisor:
                     else ""
                 ),
             }
-        wrapper_models = build_lane_read_models(self.wrapper_events_dir)
         duplicate_control = self._duplicate_control_marker(control_block)
         self._current_duplicate_control_marker = duplicate_control
+        if duplicate_control is not None:
+            control_block = {
+                "active_control_file": "",
+                "active_control_seq": -1,
+                "active_control_status": "none",
+                "active_control_updated_at": "",
+            }
         active_lane = self._active_lane_for_runtime(
             turn_state,
             active_round,
             control=control_block,
             last_receipt=last_receipt,
             duplicate_control=duplicate_control,
-            stale_operator_control=stale_operator_control,
+            stale_operator_control=stale_operator_control or operator_gate,
         )
         self._write_task_hints(
             active_lane=active_lane,
@@ -820,6 +1002,34 @@ class RuntimeSupervisor:
         else:
             self.runtime_state = "STOPPED"
 
+        persisted_autonomy = self._load_autonomy_state()
+        stable_idle = (
+            control_block.get("active_control_status") == "none"
+            and duplicate_control is None
+            and stale_operator_control is None
+            and operator_gate is None
+            and (not active_round or str((active_round or {}).get("state") or "") == "CLOSED")
+            and all(str(lane.get("state") or "") in {"READY", "OFF"} for lane in lanes)
+        )
+        if stale_operator_control is not None:
+            autonomy = {
+                **self._default_autonomy_block(),
+                "mode": "recovery",
+                "block_reason": str(stale_operator_control.get("reason") or ""),
+                "last_self_heal_at": str(persisted_autonomy.get("last_self_heal_at") or iso_utc()),
+            }
+        elif stable_idle:
+            autonomy = {
+                **self._default_autonomy_block(),
+                "mode": "hibernate",
+                "block_reason": "idle_stable",
+                "last_self_triage_at": str(persisted_autonomy.get("last_self_triage_at") or iso_utc()),
+            }
+        self._current_autonomy = autonomy
+        desired_autonomy_state = {"fingerprint": str((operator_gate or {}).get("fingerprint") or ""), **autonomy}
+        if desired_autonomy_state != persisted_autonomy:
+            self._save_autonomy_state(desired_autonomy_state)
+
         status = {
             "schema_version": 1,
             "backend_type": "tmux",
@@ -828,6 +1038,7 @@ class RuntimeSupervisor:
             "runtime_state": self.runtime_state,
             "degraded_reason": self.degraded_reason,
             "degraded_reasons": list(self.degraded_reasons),
+            "autonomy": autonomy,
             "control": control_block,
             "lanes": lanes,
             "active_round": active_round,
@@ -851,6 +1062,8 @@ class RuntimeSupervisor:
         control = dict(status.get("control") or {})
         duplicate_control = dict(self._current_duplicate_control_marker or {})
         stale_operator_control = dict(self._current_stale_operator_control_marker or {})
+        operator_gate = dict(self._current_operator_gate_marker or {})
+        autonomy = dict(status.get("autonomy") or {})
         control_key = "|".join(
             [
                 str(control.get("active_control_file") or ""),
@@ -904,6 +1117,42 @@ class RuntimeSupervisor:
                         "resolved_work_paths": list(stale_operator_control.get("resolved_work_paths") or []),
                     },
                 )
+
+        operator_gate_key = "|".join(
+            [
+                str(operator_gate.get("control_file") or ""),
+                str(operator_gate.get("control_seq") or ""),
+                str(operator_gate.get("reason") or ""),
+                str(operator_gate.get("mode") or ""),
+                str(operator_gate.get("fingerprint") or ""),
+            ]
+        )
+        if operator_gate_key != self._last_operator_gate_key:
+            self._last_operator_gate_key = operator_gate_key
+            if operator_gate:
+                self._append_event(
+                    "control_operator_gated",
+                    {
+                        "control_file": str(operator_gate.get("control_file") or ""),
+                        "control_seq": int(operator_gate.get("control_seq") or -1),
+                        "reason": str(operator_gate.get("reason") or ""),
+                        "mode": str(operator_gate.get("mode") or ""),
+                        "routed_to": str(operator_gate.get("routed_to") or ""),
+                        "suppress_operator_until": str(operator_gate.get("suppress_operator_until") or ""),
+                    },
+                )
+
+        autonomy_key = "|".join(
+            [
+                str(autonomy.get("mode") or ""),
+                str(autonomy.get("block_reason") or ""),
+                str(autonomy.get("first_seen_at") or ""),
+                str(autonomy.get("suppress_operator_until") or ""),
+            ]
+        )
+        if autonomy_key != self._last_autonomy_key:
+            self._last_autonomy_key = autonomy_key
+            self._append_event("autonomy_changed", autonomy)
 
         current_degraded = str(status.get("degraded_reason") or "")
         if current_degraded != self._last_degraded_reason:

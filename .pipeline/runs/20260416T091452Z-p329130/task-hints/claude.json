@@ -1,9 +1,9 @@
 {
   "lane": "Claude",
-  "active": true,
-  "job_id": "20260416-2026-04-16-controller-determinis-3631b053",
-  "control_seq": 196,
+  "active": false,
+  "job_id": "",
+  "control_seq": -1,
   "attempt": 1,
-  "inactive_reason": "",
-  "updated_at": "2026-04-16T09:27:38.912126Z"
+  "inactive_reason": "task_hint_cleared",
+  "updated_at": "2026-04-16T09:37:12.723269Z"
 }

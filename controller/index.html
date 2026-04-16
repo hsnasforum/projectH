@@ -428,26 +428,66 @@ const LOCATIONS = {
   entrance:     { x: 868, y: 664 },
 };
 
+// Walkable floor bounds — keeps idle agents off desks, walls, and furniture
+const WALKABLE_BOUNDS = { xMin: 280, xMax: 920, yMin: 190, yMax: 660 };
+// Desk exclusion rects (agents should not idle on top of desks)
+const DESK_RECTS = [
+  { x: 460, y: 210, w: 70, h: 50 },  // claude_desk
+  { x: 460, y: 340, w: 70, h: 50 },  // codex_desk
+  { x: 460, y: 470, w: 70, h: 50 },  // gemini_desk
+];
+function clampToWalkable(px, py) {
+  let x = Math.max(WALKABLE_BOUNDS.xMin, Math.min(WALKABLE_BOUNDS.xMax, px));
+  let y = Math.max(WALKABLE_BOUNDS.yMin, Math.min(WALKABLE_BOUNDS.yMax, py));
+  // Push out of desk rects
+  for (const r of DESK_RECTS) {
+    if (x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h) {
+      // Nudge to nearest edge
+      const dL = x - r.x, dR = r.x + r.w - x, dT = y - r.y, dB = r.y + r.h - y;
+      const m = Math.min(dL, dR, dT, dB);
+      if (m === dL) x = r.x - 4;
+      else if (m === dR) x = r.x + r.w + 4;
+      else if (m === dT) y = r.y - 4;
+      else y = r.y + r.h + 4;
+    }
+  }
+  return { x, y };
+}
+
 const IDLE_ROAM_SPOTS = [
-  // Corridor / aisle zone (wider jitter so agents don't stack on nav-points)
-  { anchor: NAV.aisle_top, jitterX: 36, jitterY: 24 },
-  { anchor: NAV.aisle_mid, jitterX: 36, jitterY: 24 },
-  { anchor: NAV.aisle_bot, jitterX: 36, jitterY: 24 },
-  // Open floor between desks and lounge
-  { anchor: { x: 580, y: 280 }, jitterX: 44, jitterY: 30 },
-  { anchor: { x: 600, y: 420 }, jitterX: 50, jitterY: 36 },
-  { anchor: { x: 560, y: 560 }, jitterX: 44, jitterY: 30 },
+  // Central open floor — wide walkable zone between desks and lounge
+  { anchor: { x: 580, y: 260 }, jitterX: 60, jitterY: 40 },
+  { anchor: { x: 620, y: 340 }, jitterX: 64, jitterY: 42 },
+  { anchor: { x: 600, y: 420 }, jitterX: 64, jitterY: 44 },
+  { anchor: { x: 560, y: 520 }, jitterX: 60, jitterY: 40 },
+  { anchor: { x: 640, y: 480 }, jitterX: 60, jitterY: 40 },
+  { anchor: { x: 550, y: 310 }, jitterX: 50, jitterY: 36 },
+  { anchor: { x: 610, y: 560 }, jitterX: 56, jitterY: 38 },
   // Lounge area — wide roam zone
-  { anchor: { x: 720, y: 300 }, jitterX: 46, jitterY: 28 }, // sofa front floor
-  { anchor: { x: 820, y: 340 }, jitterX: 38, jitterY: 28 }, // right lounge floor
-  { anchor: { x: 760, y: 460 }, jitterX: 40, jitterY: 28 }, // near coffee lounge
+  { anchor: { x: 710, y: 280 }, jitterX: 56, jitterY: 38 },
+  { anchor: { x: 760, y: 360 }, jitterX: 52, jitterY: 36 },
+  { anchor: { x: 820, y: 320 }, jitterX: 48, jitterY: 36 },
+  { anchor: { x: 760, y: 460 }, jitterX: 52, jitterY: 36 },
+  { anchor: { x: 700, y: 400 }, jitterX: 50, jitterY: 34 },
+  { anchor: { x: 850, y: 420 }, jitterX: 44, jitterY: 32 },
   // Coffee machine vicinity
-  { anchor: LOCATIONS.coffee, jitterX: 30, jitterY: 20 },
+  { anchor: LOCATIONS.coffee, jitterX: 34, jitterY: 22 },
+  // Corridor pass-through (wider jitter to avoid nav-point stacking)
+  { anchor: { x: 420, y: 300 }, jitterX: 36, jitterY: 32 },
+  { anchor: { x: 420, y: 430 }, jitterX: 36, jitterY: 32 },
   // Server room corridor mouth
   { anchor: { x: 310, y: 366 }, jitterX: 30, jitterY: 24 },
-  // Lower open floor toward entrance
-  { anchor: { x: 680, y: 600 }, jitterX: 50, jitterY: 30 },
-  { anchor: { x: 820, y: 580 }, jitterX: 40, jitterY: 28 },
+  // Lower open floor toward entrance — expanded
+  { anchor: { x: 680, y: 580 }, jitterX: 64, jitterY: 40 },
+  { anchor: { x: 780, y: 560 }, jitterX: 56, jitterY: 36 },
+  { anchor: { x: 720, y: 640 }, jitterX: 58, jitterY: 32 },
+  { anchor: { x: 600, y: 620 }, jitterX: 60, jitterY: 34 },
+  { anchor: { x: 860, y: 580 }, jitterX: 44, jitterY: 30 },
+  // Upper open floor — near sofa but on walkable ground
+  { anchor: { x: 660, y: 220 }, jitterX: 52, jitterY: 28 },
+  { anchor: { x: 580, y: 200 }, jitterX: 48, jitterY: 24 },
+  // Mid-right open area
+  { anchor: { x: 900, y: 500 }, jitterX: 40, jitterY: 30 },
 ];
 
 // ═══════════════════════════════════════════════════════
@@ -480,6 +520,10 @@ class Agent {
 
     // idle behavior
     this._idleCooldown = 0;
+    this._lastRoamIdx  = -1;  // avoid re-picking the same spot
+    this._roamHistory  = [];  // last N visited spot indices for variety
+    this._glanceCooldown = 0; // occasional facing flip while standing
+    this._staleTimer   = 0;   // time spent at same target position (force re-pick)
 
     // fatigue system
     this.fatigue = 0;             // 0 ~ 100
@@ -544,28 +588,82 @@ class Agent {
       const c = LOCATIONS.coffee;
       return { x: c.x + (Math.random() - 0.5) * 10, y: c.y + (Math.random() - 0.5) * 10 };
     }
+
+    // Collect positions of other idle/ready agents to avoid stacking
+    const otherIdlePositions = [];
+    for (const [, other] of agents) {
+      if (other === this) continue;
+      if (other.state === 'ready' || other.state === 'idle') {
+        const wp = other._waypoints.length > 0
+          ? other._waypoints[other._waypoints.length - 1] : other;
+        otherIdlePositions.push({ x: wp.x, y: wp.y });
+      }
+    }
+
+    // 45% chance: free-walk to a random walkable floor point (not anchored to a spot)
+    // Higher probability keeps agents from clustering on the same anchor grid
+    if (Math.random() < 0.45) {
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const rx = WALKABLE_BOUNDS.xMin + Math.random() * (WALKABLE_BOUNDS.xMax - WALKABLE_BOUNDS.xMin);
+        const ry = WALKABLE_BOUNDS.yMin + Math.random() * (WALKABLE_BOUNDS.yMax - WALKABLE_BOUNDS.yMin);
+        const pt = clampToWalkable(rx, ry);
+        const selfDist = Math.hypot(pt.x - this.x, pt.y - this.y);
+        if (selfDist < 40) continue;
+        let tooClose = false;
+        for (const op of otherIdlePositions) {
+          if (Math.hypot(pt.x - op.x, pt.y - op.y) < 50) { tooClose = true; break; }
+        }
+        if (!tooClose) return pt;
+      }
+      // fallthrough to spot-based if free-walk couldn't find a good point
+    }
+
     if (!IDLE_ROAM_SPOTS.length) return LOCATIONS.entrance;
+
     const pool = IDLE_ROAM_SPOTS.map((spot, index) => ({ spot, index }));
     for (let i = pool.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [pool[i], pool[j]] = [pool[j], pool[i]];
     }
-    for (const { spot } of pool) {
+
+    // Score candidates: prefer spots far from self, far from others, not recently visited
+    let best = null;
+    let bestScore = -Infinity;
+    let bestIdx = -1;
+    for (const { spot, index } of pool) {
       const ax = spot.anchor.x;
       const ay = spot.anchor.y;
-      const dx = ax - this.x;
-      const dy = ay - this.y;
-      if (Math.hypot(dx, dy) < 60) continue;
-      return {
-        x: ax + (Math.random() - 0.5) * (spot.jitterX || 0),
-        y: ay + (Math.random() - 0.5) * (spot.jitterY || 0),
-      };
+      const selfDist = Math.hypot(ax - this.x, ay - this.y);
+      if (selfDist < 50) continue;
+
+      // Penalize proximity to other idle agents
+      let minOtherDist = Infinity;
+      for (const op of otherIdlePositions) {
+        const d = Math.hypot(ax - op.x, ay - op.y);
+        if (d < minOtherDist) minOtherDist = d;
+      }
+      // Graduated penalty for recently visited spots (stronger for more recent)
+      let historyPenalty = 0;
+      const histPos = this._roamHistory.indexOf(index);
+      if (histPos !== -1) historyPenalty = -150 + histPos * 30; // most recent = -150, older = less
+      // Score: distance from self (capped) + distance from nearest other agent + variety
+      const score = Math.min(selfDist, 300) + Math.min(minOtherDist, 200) * 1.5
+        + historyPenalty + (Math.random() * 120);
+      if (score > bestScore) {
+        bestScore = score;
+        best = spot;
+        bestIdx = index;
+      }
     }
-    const fallback = pool[0].spot;
-    return {
-      x: fallback.anchor.x + (Math.random() - 0.5) * (fallback.jitterX || 0),
-      y: fallback.anchor.y + (Math.random() - 0.5) * (fallback.jitterY || 0),
-    };
+
+    if (!best) { best = pool[0].spot; bestIdx = pool[0].index; }
+    // Track last 5 visited spots for variety
+    this._roamHistory.unshift(bestIdx);
+    if (this._roamHistory.length > 5) this._roamHistory.pop();
+    this._lastRoamIdx = bestIdx;
+    const rawX = best.anchor.x + (Math.random() - 0.5) * (best.jitterX || 0) * 2.6;
+    const rawY = best.anchor.y + (Math.random() - 0.5) * (best.jitterY || 0) * 2.6;
+    return clampToWalkable(rawX, rawY);
   }
 
   _pickTarget() {
@@ -593,6 +691,17 @@ class Agent {
     }
 
     // 2. 경로 생성 (방 탈출 -> 복도 -> 목적지 방 진입)
+
+    // Idle/ready agents on walkable floor: walk directly to nearby open-floor
+    // destinations instead of routing through hallway waypoints (feels more natural)
+    const isIdleRoam = (this.state === 'ready' || this.state === 'idle');
+    const onOpenFloor = this.x >= 250 && dest.x >= 250 && !(this.x < 250) && !(dest.x < 250);
+    if (isIdleRoam && onOpenFloor) {
+      // Direct walk — skip rigid waypoint routing for open-floor movement
+      this._waypoints.push(dest);
+      this._atTarget = false;
+      return;
+    }
 
     // 현재 위치에서 빠져나오기
     if (this.x < 250) { // 서버실 내부에 있음
@@ -709,11 +818,37 @@ class Agent {
 
     // ── Idle wandering ──
     if (this._atTarget && !this._atCoffee && (this.state === 'ready' || this.state === 'idle')) {
+      // Micro-drift while standing — prevents "pinned" look
+      if (Math.random() < 0.06 * dt) {
+        const nudge = clampToWalkable(
+          this.x + (Math.random() - 0.5) * 18,
+          this.y + (Math.random() - 0.5) * 14
+        );
+        this.x = nudge.x;
+        this.y = nudge.y;
+      }
+      // Occasional glance: flip facing direction while idle to look around
+      this._glanceCooldown -= dt;
+      if (this._glanceCooldown <= 0) {
+        this._glanceCooldown = 2.5 + Math.random() * 5;
+        if (Math.random() < 0.45) this.facingRight = !this.facingRight;
+      }
+      // Stale-position force re-pick: if standing still too long, move
+      this._staleTimer += dt;
       this._idleCooldown -= dt;
-      if (this._idleCooldown <= 0) {
-        this._idleCooldown = 4 + Math.random() * 8;
+      if (this._idleCooldown <= 0 || this._staleTimer > 10) {
+        this._staleTimer = 0;
+        // Varied cooldowns: short pauses, medium walks, occasional lingering
+        const roll = Math.random();
+        this._idleCooldown = roll < 0.10
+          ? 6 + Math.random() * 5      // 10% linger long (6-11s)
+          : roll < 0.40
+          ? 2.5 + Math.random() * 3    // 30% medium pause (2.5-5.5s)
+          : 1.0 + Math.random() * 2.5; // 60% active roam (1.0-3.5s)
         this._pickTarget();
       }
+    } else {
+      this._staleTimer = 0;
     }
   }
 

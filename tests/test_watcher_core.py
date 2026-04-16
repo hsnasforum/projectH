@@ -1585,6 +1585,131 @@ class TurnResolutionTest(unittest.TestCase):
             self.assertEqual(core._get_pending_operator_mtime(), 0.0)
             self.assertEqual(core._resolve_turn(), "codex_followup")
 
+    def test_aged_operator_request_resolves_to_codex_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            operator_path = base_dir / "operator_request.md"
+            operator_path.write_text(
+                "\n".join(
+                    [
+                        "STATUS: needs_operator",
+                        "CONTROL_SEQ: 23",
+                        "",
+                        "Reason:",
+                        "- still waiting",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            old = time.time() - 30
+            os.utime(operator_path, (old, old))
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "operator_wait_retriage_sec": 5,
+                }
+            )
+
+            marker = core._operator_control_recovery_marker()
+            self.assertIsNotNone(marker)
+            self.assertEqual(marker["reason"], "operator_wait_idle_retriage")
+            self.assertEqual(core._resolve_turn(), "codex_followup")
+
+    def test_fresh_slice_ambiguity_operator_request_routes_to_codex_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            operator_path = base_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\nCONTROL_SEQ: 26\n\nReason:\n- slice_ambiguity\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+
+            marker = core._operator_gate_marker()
+            self.assertIsNotNone(marker)
+            self.assertEqual(marker["reason"], "slice_ambiguity")
+            self.assertEqual(core._resolve_turn(), "codex_followup")
+
+    def test_truth_sync_operator_request_stays_operator_turn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            operator_path = base_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\nCONTROL_SEQ: 27\n\nReason:\n- truth-sync blocker\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+
+            self.assertIsNone(core._operator_gate_marker())
+            self.assertEqual(core._resolve_turn(), "operator")
+
+    def test_fresh_idle_operator_request_hibernates_instead_of_operator_wait(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            operator_path = base_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\nCONTROL_SEQ: 28\n\nReason:\n- still pending\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+
+            marker = core._operator_gate_marker()
+            self.assertIsNotNone(marker)
+            self.assertEqual(marker["mode"], "hibernate")
+            self.assertEqual(core._resolve_turn(), "idle")
+
     def test_codex_verify_before_claude_even_for_metadata_only_note(self) -> None:
         """Metadata-only work note still triggers Codex verify before Claude."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -1777,6 +1902,85 @@ class RollingSignalTransitionTest(unittest.TestCase):
 
             notify.assert_called_once()
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CODEX_FOLLOWUP)
+
+    def test_startup_turn_uses_codex_operator_retriage_for_aged_operator_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            operator_path = base_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\nCONTROL_SEQ: 25\n\nReason:\n- still pending\n",
+                encoding="utf-8",
+            )
+            old = time.time() - 30
+            os.utime(operator_path, (old, old))
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "operator_wait_retriage_sec": 5,
+                }
+            )
+            core.started_at = time.time() - core.startup_grace_sec - 1.0
+
+            with mock.patch.object(core, "_notify_codex_operator_retriage") as notify:
+                core._poll()
+
+            notify.assert_called_once()
+            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CODEX_FOLLOWUP)
+
+    def test_operator_wait_idle_timeout_routes_to_codex_operator_retriage_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            operator_path = base_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\nCONTROL_SEQ: 24\n\nReason:\n- still pending\n",
+                encoding="utf-8",
+            )
+            old = time.time() - 30
+            os.utime(operator_path, (old, old))
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "operator_wait_retriage_sec": 5,
+                }
+            )
+            core._transition_turn(
+                watcher_core.WatcherTurnState.OPERATOR_WAIT,
+                "test_setup_operator_wait",
+                active_control_file="operator_request.md",
+                active_control_seq=24,
+            )
+
+            with (
+                mock.patch("watcher_core._capture_pane_text", return_value="$ "),
+                mock.patch("watcher_core._pane_text_is_idle", return_value=True),
+                mock.patch.object(core, "_notify_codex_operator_retriage") as notify,
+            ):
+                core._check_operator_wait_idle_timeout()
+                core._check_operator_wait_idle_timeout()
+
+            notify.assert_called_once()
+            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CODEX_FOLLOWUP)
+            self.assertEqual(core._turn_active_control_seq, 24)
 
     def test_higher_seq_handoff_is_deferred_while_claude_round_is_active(self) -> None:
         """An updated handoff should not hot-swap into an already active Claude round."""

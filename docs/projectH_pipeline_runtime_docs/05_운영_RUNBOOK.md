@@ -17,6 +17,7 @@
 5. next-slice ambiguity는 Gemini arbitration을 먼저 사용하고, `needs_operator`는 real operator-only decision에만 남깁니다.
 6. fresh `needs_operator`는 즉시 stop slot current truth가 아니라 24시간 gate 후보일 수 있으므로, `status.control`보다 `status.autonomy`를 먼저 확인합니다.
 7. operator stop 판정은 free-form prose가 아니라 `OPERATOR_POLICY` 우선, `REASON_CODE` 다음 순서로 봅니다. 구조화 metadata가 없거나 알 수 없으면 fail-safe로 즉시 publish합니다.
+8. runtime/script가 `operator_request.md`나 `implement_blocked` sentinel을 machine-write해야 할 때는 `pipeline_runtime.control_writers` helper와 classification-source 검사를 우선 사용합니다.
 
 ## 3. 일상 운영 절차
 
@@ -196,6 +197,7 @@ controller browser UI의 active runtime contract는 아래로 제한합니다.
 - `POST /api/runtime/stop`
 - `POST /api/runtime/restart`
 - `GET /api/runtime/capture-tail?lane=<Claude|Codex|Gemini>&lines=<n>`
+- `POST /api/runtime/send-input` with JSON body `{ "lane": "<Claude|Codex|Gemini>", "text": "..." }`
 
 주의:
 
@@ -205,7 +207,7 @@ controller browser UI의 active runtime contract는 아래로 제한합니다.
 - 현재 browser Office View는 projectH 전용 `runtime war-room` 장면으로 유지합니다. Claude / Codex / Gemini는 동등한 3석으로 보이고 watcher는 장면 안 `ops core` 오브젝트로만 표현되며, 이 연출은 모두 기존 runtime payload를 읽는 시각화일 뿐입니다.
 - `runtime_state`가 `STOPPED`, `STOPPING`, `BROKEN`이면 controller는 `control`, `round`, lane action을 active처럼 보여주지 않습니다.
 - `runtime_state=DEGRADED`이면서 `degraded_reason`이 `supervisor_missing_recent_ambiguous` 또는 `supervisor_missing_snapshot_undated`이면 controller는 runtime summary를 uncertain runtime으로 보여야 합니다. badge는 amber `DEGRADED`, `Control`/`Round`는 `uncertain`, `Watcher`는 `Unknown`이어야 하며, active control/round를 초록 활성 상태처럼 강조하면 안 됩니다.
-- log modal은 tail 확인용입니다. backend route가 없는 lane pause/resume/restart나 attach 버튼은 노출하지 않습니다.
+- log modal은 tail 확인 + bounded one-line 입력용입니다. permission/plan prompt 같은 interactive 선택이 뜨면 현재 lane에 `1`, `2`, `3` 같은 짧은 응답을 보낼 수 있습니다. backend route가 없는 lane pause/resume/restart나 attach 버튼은 계속 노출하지 않습니다.
 - Codex startup 시 self-update dialog가 뜨면 wrapper가 `Skip until next version`을 자동 선택해야 하며, update dialog 자체를 `READY(prompt_visible)`로 surface하면 안 됩니다. `codex_exit:0`와 함께 pane에 `Please restart Codex`가 남았다면 self-update prompt miss로 봅니다.
 - 상태별 GIF를 테스트하려면 operator가 `controller/assets/BOOTING.gif`, `WORKING.gif`, `BROKEN.gif`, `READY.gif`, `DEAD.gif`를 두고 controller를 새로고침하면 됩니다. browser는 이 다섯 파일을 우선 사용합니다.
 - background는 `/controller-assets/background.png`를 먼저 시도하고, 필요 시 `/controller-assets/generated/bg-office.png`로 fallback 합니다. sidebar `Scene` 값이 `fallback` 또는 `asset_error`면 자산 경로/로딩 문제를 먼저 의심합니다.

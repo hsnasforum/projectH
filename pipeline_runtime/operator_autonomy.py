@@ -41,6 +41,13 @@ _INTERNAL_REASON_CODES = {
     "idle_hibernate": {"mode": "hibernate", "routed_to": "hibernate"},
 }
 
+SUPPORTED_OPERATOR_POLICIES = frozenset({"immediate_publish", "gate_24h", "internal_only"})
+SUPPORTED_REASON_CODES = frozenset(
+    set(_IMMEDIATE_REASON_CODES)
+    | set(_GATED_REASON_CODES)
+    | set(_INTERNAL_REASON_CODES)
+)
+
 _REASON_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("safety_stop", ("safety_stop", "safety stop", "immediate safety stop")),
     ("approval_required", ("approval_required", "approval required", "approval blocker")),

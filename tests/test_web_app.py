@@ -1627,6 +1627,76 @@ class WebAppServiceTest(unittest.TestCase):
                 self.assertIn("candidate_recurrence_key", source_message)
                 self.assertNotIn("candidate_review_record", source_message)
 
+    def test_recurrence_aggregate_candidate_retires_on_superseding_correction_before_emit(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "source-a.md"
+            second_source_path = tmp_path / "source-b.md"
+            shared_body = "# Demo\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            first = service.handle_chat(
+                {
+                    "session_id": "aggregate-staleness-session",
+                    "source_path": str(first_source_path),
+                    "provider": "mock",
+                }
+            )
+            first_source_message_id = first["response"]["source_message_id"]
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+            service.submit_correction(
+                {
+                    "session_id": "aggregate-staleness-session",
+                    "message_id": first_source_message_id,
+                    "corrected_text": corrected_text,
+                }
+            )
+
+            second = service.handle_chat(
+                {
+                    "session_id": "aggregate-staleness-session",
+                    "source_path": str(second_source_path),
+                    "provider": "mock",
+                }
+            )
+            second_source_message_id = second["response"]["source_message_id"]
+            second_corrected = service.submit_correction(
+                {
+                    "session_id": "aggregate-staleness-session",
+                    "message_id": second_source_message_id,
+                    "corrected_text": corrected_text,
+                }
+            )
+
+            self.assertIn("recurrence_aggregate_candidates", second_corrected["session"])
+            self.assertEqual(len(second_corrected["session"]["recurrence_aggregate_candidates"]), 1)
+            aggregate = second_corrected["session"]["recurrence_aggregate_candidates"][0]
+            self.assertEqual(aggregate["recurrence_count"], 2)
+
+            superseding_text = "완전히 다른 교정입니다.\n새로운 방향으로 작성했습니다."
+            superseded = service.submit_correction(
+                {
+                    "session_id": "aggregate-staleness-session",
+                    "message_id": first_source_message_id,
+                    "corrected_text": superseding_text,
+                }
+            )
+
+            self.assertNotIn(
+                "recurrence_aggregate_candidates",
+                superseded["session"],
+                "aggregate must retire when a supporting correction is superseded before emit",
+            )
+
     def test_recurrence_aggregate_payload_keeps_proof_record_store_internal_and_ui_blocked(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

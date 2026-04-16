@@ -896,8 +896,69 @@ test("review-queue reject/defer는 accept와 동일한 quick-meta, transcript-me
   expect(messagesWithReview[1].candidate_review_record.review_status).toBe("deferred");
 });
 
-test("same-session recurrence aggregate는 separate blocked trigger surface로 렌더링됩니다", async ({ page }, testInfo) => {
-  testInfo.setTimeout(240_000);
+/**
+ * Drive a fresh session through two corrections → emit → apply → confirm-result
+ * to reach the active-effect state quickly, without reload-continuity checks.
+ * Returns { sessionId, canonicalTransitionId } for downstream assertions.
+ */
+async function advanceAggregateToActiveEffect(page) {
+  const correctedText = "수정 방향 A입니다.\n핵심만 남겼습니다.";
+  const sessionId = await prepareSession(page, "aggregate-trigger");
+  const aggregateTriggerBox = page.getByTestId("aggregate-trigger-box");
+
+  // First correction + candidate confirmation
+  await page.getByTestId("source-path").fill(shortFixturePath);
+  await page.getByTestId("submit-request").click();
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).toContainText(middleSignal);
+  await page.getByTestId("response-correction-input").fill(correctedText);
+  await page.getByTestId("response-correction-submit").click();
+  await expect(page.locator("#notice-box")).toHaveText("수정본을 기록했습니다. 저장 승인은 별도 흐름으로 유지됩니다.");
+  await expect(page.getByTestId("response-candidate-confirmation-box")).toBeVisible();
+  await page.getByTestId("response-candidate-confirmation-submit").click();
+  await expect(page.locator("#notice-box")).toHaveText("현재 수정 방향을 나중에도 다시 써도 된다는 확인을 기록했습니다. 저장 승인과는 별도입니다.");
+
+  // Second correction — triggers aggregate
+  await page.getByTestId("source-path").fill(shortFixturePath);
+  await page.getByTestId("submit-request").click();
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).toContainText(middleSignal);
+  await page.getByTestId("response-correction-input").fill(correctedText);
+  await page.getByTestId("response-correction-submit").click();
+  await expect(page.locator("#notice-box")).toHaveText("수정본을 기록했습니다. 저장 승인은 별도 흐름으로 유지됩니다.");
+  await expect(aggregateTriggerBox).toBeVisible();
+
+  // Emit transition record
+  const noteInput = aggregateTriggerBox.getByTestId("aggregate-trigger-note");
+  await noteInput.fill("반복 교정 패턴을 적용합니다.");
+  const startButton = aggregateTriggerBox.getByTestId("aggregate-trigger-start");
+  await expect(startButton).toBeEnabled();
+  await startButton.click();
+  await expect(page.locator("#notice-box")).toContainText("transition record가 발행되었습니다.");
+
+  // Apply
+  const applyButton = aggregateTriggerBox.getByTestId("aggregate-trigger-apply");
+  await expect(applyButton).toBeVisible();
+  await expect(applyButton).toBeEnabled();
+  await applyButton.click();
+  await expect(page.locator("#notice-box")).toContainText("검토 메모 적용이 실행되었습니다.");
+
+  // Confirm result — now in active-effect state
+  const confirmButton = aggregateTriggerBox.getByTestId("aggregate-trigger-confirm-result");
+  await expect(confirmButton).toBeVisible();
+  await expect(confirmButton).toBeEnabled();
+  await confirmButton.click();
+  await expect(page.locator("#notice-box")).toContainText("검토 메모 적용 결과가 확정되었습니다.");
+
+  const payload = await fetchSessionPayload(page, sessionId);
+  const canonicalTransitionId =
+    payload.session.recurrence_aggregate_candidates[0].reviewed_memory_transition_record.canonical_transition_id;
+
+  return { sessionId, canonicalTransitionId };
+}
+
+test("same-session recurrence aggregate는 emitted-apply-confirm lifecycle으로 활성화됩니다", async ({ page }, testInfo) => {
+  testInfo.setTimeout(150_000);
   const correctedText = "수정 방향 A입니다.\n핵심만 남겼습니다.";
   const sessionId = await prepareSession(page, "aggregate-trigger");
   const reviewQueueBox = page.getByTestId("review-queue-box");
@@ -1121,6 +1182,68 @@ test("same-session recurrence aggregate는 separate blocked trigger surface로 �
   await expect(page.getByTestId("response-text")).toBeVisible();
   await expect(page.getByTestId("response-text")).toContainText("[검토 메모 활성]");
   await expect(page.getByTestId("response-text")).toContainText("반복 교정 패턴을 적용합니다.");
+});
+
+test("same-session recurrence aggregate stale candidate retires before apply start", async ({ page }, testInfo) => {
+  testInfo.setTimeout(90_000);
+  const correctedText = "수정 방향 A입니다.\n핵심만 남겼습니다.";
+  const sessionId = await prepareSession(page, "aggregate-stale");
+  const aggregateTriggerBox = page.getByTestId("aggregate-trigger-box");
+
+  await page.getByTestId("source-path").fill(shortFixturePath);
+  await page.getByTestId("submit-request").click();
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).toContainText(middleSignal);
+  await expect(aggregateTriggerBox).toBeHidden();
+
+  await page.getByTestId("response-correction-input").fill(correctedText);
+  await page.getByTestId("response-correction-submit").click();
+  await expect(page.locator("#notice-box")).toHaveText("수정본을 기록했습니다. 저장 승인은 별도 흐름으로 유지됩니다.");
+  await expect(aggregateTriggerBox).toBeHidden();
+
+  await page.getByTestId("source-path").fill(shortFixturePath);
+  await page.getByTestId("submit-request").click();
+  await expect(page.getByTestId("response-text")).toBeVisible();
+  await expect(page.getByTestId("response-text")).toContainText(middleSignal);
+
+  await page.getByTestId("response-correction-input").fill(correctedText);
+  await page.getByTestId("response-correction-submit").click();
+  await expect(page.locator("#notice-box")).toHaveText("수정본을 기록했습니다. 저장 승인은 별도 흐름으로 유지됩니다.");
+
+  await expect(aggregateTriggerBox).toBeVisible();
+  await expect(aggregateTriggerBox.locator(".sidebar-section-label")).toHaveText("검토 메모 적용 후보");
+
+  const payload = await fetchSessionPayload(page, sessionId);
+  expect(payload.session.recurrence_aggregate_candidates).toHaveLength(1);
+  expect(payload.session.recurrence_aggregate_candidates[0].recurrence_count).toBe(2);
+
+  const firstSourceMessageId = payload.session.recurrence_aggregate_candidates[0]
+    .supporting_source_message_refs[0].source_message_id;
+
+  const supersedingText = "완전히 다른 교정입니다.\n새로운 방향으로 작성했습니다.";
+  const correctionResponse = await page.request.post("/api/correct", {
+    data: {
+      session_id: sessionId,
+      message_id: firstSourceMessageId,
+      corrected_text: supersedingText,
+    },
+  });
+  expect(correctionResponse.ok()).toBeTruthy();
+  const correctionData = await correctionResponse.json();
+  expect(correctionData.session.recurrence_aggregate_candidates).toBeUndefined();
+
+  await page.evaluate(async (sid) => {
+    document.getElementById("session-id").value = sid;
+    document.getElementById("load-session").click();
+  }, sessionId);
+  await expect(page.locator("#current-session-title")).toBeVisible({ timeout: 10_000 });
+  await expect(aggregateTriggerBox).toBeHidden({ timeout: 5_000 });
+});
+
+test("same-session recurrence aggregate는 stop-reverse-conflict lifecycle으로 정리됩니다", async ({ page }, testInfo) => {
+  testInfo.setTimeout(150_000);
+  const { sessionId, canonicalTransitionId } = await advanceAggregateToActiveEffect(page);
+  const aggregateTriggerBox = page.getByTestId("aggregate-trigger-box");
 
   const stopButton = aggregateTriggerBox.getByTestId("aggregate-trigger-stop");
   await expect(stopButton).toBeVisible();
@@ -1166,7 +1289,7 @@ test("same-session recurrence aggregate는 separate blocked trigger surface로 �
   expect(stoppedReloadAggregate.reviewed_memory_transition_record.record_stage).toBe("stopped");
   expect(stoppedReloadAggregate.reviewed_memory_transition_record.apply_result.result_stage).toBe("effect_stopped");
   expect(stoppedReloadAggregate.reviewed_memory_transition_record.canonical_transition_id).toBe(
-    emittedAggregate.reviewed_memory_transition_record.canonical_transition_id
+    canonicalTransitionId
   );
   const stoppedActiveEffects = stoppedReloadPayload.session.reviewed_memory_active_effects;
   expect(!Array.isArray(stoppedActiveEffects) || stoppedActiveEffects.length === 0).toBe(true);
@@ -1192,7 +1315,7 @@ test("same-session recurrence aggregate는 separate blocked trigger surface로 �
   expect(reversedAggregate.reviewed_memory_transition_record.reversed_at).toBeTruthy();
   expect(reversedAggregate.reviewed_memory_transition_record.apply_result.result_stage).toBe("effect_reversed");
   expect(reversedAggregate.reviewed_memory_transition_record.canonical_transition_id).toBe(
-    emittedAggregate.reviewed_memory_transition_record.canonical_transition_id
+    canonicalTransitionId
   );
   await expect(page.locator("#notice-box")).toHaveText(`검토 메모 적용이 되돌려졌습니다. (${reversedAggregate.reviewed_memory_transition_record.canonical_transition_id})`);
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-reversed")).toHaveText(`적용 되돌림 완료 (${reversedAggregate.reviewed_memory_transition_record.canonical_transition_id})`);
@@ -1219,7 +1342,7 @@ test("same-session recurrence aggregate는 separate blocked trigger surface로 �
   expect(reversedReloadAggregate.reviewed_memory_transition_record.record_stage).toBe("reversed");
   expect(reversedReloadAggregate.reviewed_memory_transition_record.apply_result.result_stage).toBe("effect_reversed");
   expect(reversedReloadAggregate.reviewed_memory_transition_record.canonical_transition_id).toBe(
-    emittedAggregate.reviewed_memory_transition_record.canonical_transition_id
+    canonicalTransitionId
   );
   const reversedActiveEffects = reversedReloadPayload.session.reviewed_memory_active_effects;
   expect(!Array.isArray(reversedActiveEffects) || reversedActiveEffects.length === 0).toBe(true);
@@ -1248,14 +1371,14 @@ test("same-session recurrence aggregate는 separate blocked trigger surface로 �
   expect(conflictAggregate.reviewed_memory_conflict_visibility_record.canonical_transition_id).toBeTruthy();
   expect(conflictAggregate.reviewed_memory_conflict_visibility_record.checked_at).toBeTruthy();
   expect(conflictAggregate.reviewed_memory_conflict_visibility_record.source_apply_transition_ref).toBe(
-    emittedAggregate.reviewed_memory_transition_record.canonical_transition_id
+    canonicalTransitionId
   );
   expect(typeof conflictAggregate.reviewed_memory_conflict_visibility_record.conflict_entry_count).toBe("number");
   expect(Array.isArray(conflictAggregate.reviewed_memory_conflict_visibility_record.conflict_entries)).toBe(true);
 
   expect(conflictAggregate.reviewed_memory_transition_record.record_stage).toBe("reversed");
   expect(conflictAggregate.reviewed_memory_transition_record.canonical_transition_id).toBe(
-    emittedAggregate.reviewed_memory_transition_record.canonical_transition_id
+    canonicalTransitionId
   );
   await expect(page.locator("#notice-box")).toHaveText(`충돌 확인이 완료되었습니다. (${conflictAggregate.reviewed_memory_conflict_visibility_record.canonical_transition_id})`);
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-conflict-checked")).toHaveText(`충돌 확인 완료 (${conflictAggregate.reviewed_memory_conflict_visibility_record.canonical_transition_id} · 항목 ${conflictAggregate.reviewed_memory_conflict_visibility_record.conflict_entry_count}건)`);
@@ -1294,12 +1417,12 @@ test("same-session recurrence aggregate는 separate blocked trigger surface로 �
   expect(reloadAggregate.reviewed_memory_transition_record).toBeDefined();
   expect(reloadAggregate.reviewed_memory_transition_record.record_stage).toBe("reversed");
   expect(reloadAggregate.reviewed_memory_transition_record.canonical_transition_id).toBe(
-    emittedAggregate.reviewed_memory_transition_record.canonical_transition_id
+    canonicalTransitionId
   );
   expect(reloadAggregate.reviewed_memory_conflict_visibility_record).toBeDefined();
   expect(reloadAggregate.reviewed_memory_conflict_visibility_record.record_stage).toBe("conflict_visibility_checked");
   expect(reloadAggregate.reviewed_memory_conflict_visibility_record.source_apply_transition_ref).toBe(
-    emittedAggregate.reviewed_memory_transition_record.canonical_transition_id
+    canonicalTransitionId
   );
   expect(reloadAggregate.reviewed_memory_conflict_visibility_record.conflict_entry_count).toBe(
     conflictAggregate.reviewed_memory_conflict_visibility_record.conflict_entry_count

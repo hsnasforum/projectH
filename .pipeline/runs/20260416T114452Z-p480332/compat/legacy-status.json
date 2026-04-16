@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "backend_type": "tmux",
+  "run_id": "20260416T114452Z-p480332",
+  "current_run_id": "20260416T114452Z-p480332",
+  "runtime_state": "RUNNING",
+  "degraded_reason": "",
+  "degraded_reasons": [],
+  "autonomy": {
+    "mode": "normal",
+    "block_reason": "",
+    "reason_code": "",
+    "operator_policy": "",
+    "decision_class": "",
+    "decision_required": "",
+    "based_on_work": "",
+    "based_on_verify": "",
+    "classification_source": "",
+    "first_seen_at": "",
+    "suppress_operator_until": "",
+    "operator_eligible": false,
+    "same_fingerprint_retries": 0,
+    "last_self_heal_at": "",
+    "last_self_triage_at": ""
+  },
+  "control": {
+    "active_control_file": ".pipeline/claude_handoff.md",
+    "active_control_seq": 205,
+    "active_control_status": "implement",
+    "active_control_updated_at": "2026-04-16T12:23:31.026899Z"
+  },
+  "lanes": [
+    {
+      "name": "Claude",
+      "state": "WORKING",
+      "pid": 519078,
+      "attachable": true,
+      "last_event_at": "2026-04-16T12:32:02.698436Z",
+      "last_heartbeat_at": "2026-04-16T12:32:02.698436Z",
+      "note": "seq 205"
+    },
+    {
+      "name": "Codex",
+      "state": "READY",
+      "pid": 516251,
+      "attachable": true,
+      "last_event_at": "2026-04-16T12:32:01.605602Z",
+      "last_heartbeat_at": "2026-04-16T12:32:01.605602Z",
+      "note": "prompt_visible"
+    },
+    {
+      "name": "Gemini",
+      "state": "READY",
+      "pid": 480537,
+      "attachable": true,
+      "last_event_at": "2026-04-16T12:32:00.329071Z",
+      "last_heartbeat_at": "2026-04-16T12:32:00.329071Z",
+      "note": "prompt_visible"
+    }
+  ],
+  "active_round": {
+    "job_id": "20260416-2026-04-16-reviewed-memory-aggre-bf2eb8b3",
+    "round": 1,
+    "state": "VERIFYING",
+    "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-reviewed-memory-aggregate-reload-smoke-split.md",
+    "status": "VERIFY_RUNNING"
+  },
+  "last_receipt": null,
+  "last_receipt_id": "",
+  "watcher": {
+    "alive": true,
+    "pid": 480572
+  },
+  "artifacts": {
+    "latest_work": {
+      "path": "4/16/2026-04-16-reviewed-memory-aggregate-reload-smoke-split.md",
+      "mtime": 1776340275.1073937
+    },
+    "latest_verify": {
+      "path": "4/16/2026-04-16-reviewed-memory-aggregate-reload-smoke-split-verification.md",
+      "mtime": 1776340719.5736063
+    }
+  },
+  "compat": {
+    "control_slots": {
+      "active": {
+        "file": "claude_handoff.md",
+        "status": "implement",
+        "label": "Claude 실행",
+        "mtime": 1776342211.0268986,
+        "control_seq": 205
+      },
+      "stale": [
+        {
+          "file": "gemini_advice.md",
+          "status": "advice_ready",
+          "label": "Codex follow-up",
+          "mtime": 1776342049.014888,
+          "control_seq": 204
+        },
+        {
+          "file": "gemini_request.md",
+          "status": "request_open",
+          "label": "Gemini 실행",
+          "mtime": 1776340719.6975856,
+          "control_seq": 203
+        },
+        {
+          "file": "operator_request.md",
+          "status": "needs_operator",
+          "label": "operator 대기",
+          "mtime": 1776337491.8969235,
+          "control_seq": 200
+        }
+      ]
+    },
+    "turn_state": {
+      "state": "CLAUDE_ACTIVE",
+      "entered_at": 1776342212.1109233,
+      "reason": "claude_handoff_updated",
+      "active_control_file": "claude_handoff.md",
+      "active_control_seq": 205
+    }
+  },
+  "last_heartbeat_at": "2026-04-16T12:32:04.770112Z",
+  "updated_at": "2026-04-16T12:32:04.770125Z"
+}

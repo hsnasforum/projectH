@@ -223,6 +223,36 @@
   .log-modal-body::-webkit-scrollbar-thumb { background: #1e2a40; border-radius: 999px; }
   .log-modal-body::-webkit-scrollbar-track { background: transparent; }
   .log-modal-body .log-loading { color: #3d5a78; font-style: italic; }
+  .log-modal-input {
+    display: flex; gap: 8px; align-items: center;
+    padding: 10px 16px; border-top: 1px solid #141e30; background: #0b111a;
+  }
+  .log-modal-input input {
+    flex: 1; min-width: 0; height: 34px;
+    border: 1px solid #1e2a40; border-radius: 6px;
+    background: #08111d; color: #c9d6e6; padding: 0 10px;
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    font-size: 11px;
+  }
+  .log-modal-input input::placeholder { color: #49617d; }
+  .log-modal-input input:focus {
+    outline: none; border-color: #2f74ff;
+    box-shadow: 0 0 0 1px rgba(47,116,255,0.22);
+  }
+  .log-modal-input .lm-send {
+    height: 34px; padding: 0 12px; border-radius: 6px;
+    border: 1px solid #21406c; background: #10233f; color: #9ec5ff;
+    font-size: 11px; font-weight: 700; cursor: pointer; font-family: inherit;
+    flex-shrink: 0;
+  }
+  .log-modal-input .lm-send:hover { background: #14305a; color: #dbeafe; }
+  .log-modal-input .lm-send:disabled { opacity: 0.45; cursor: not-allowed; }
+  .log-modal-send-status {
+    padding: 0 16px 10px; font-size: 10px; color: #4e6784;
+    background: #0b111a; min-height: 20px;
+  }
+  .log-modal-send-status.err { color: #f87171; }
+  .log-modal-send-status.ok { color: #34d399; }
 </style>
 </head>
 <body>
@@ -266,6 +296,11 @@
       </div>
       <div class="log-modal-info" id="lm-info"></div>
       <div class="log-modal-body" id="lm-body"><span class="log-loading">대기 중...</span></div>
+      <div class="log-modal-input">
+        <input id="lm-input" type="text" placeholder="이 lane에 한 줄 입력을 보냅니다. 예: 1 / 2 / 3" autocomplete="off" />
+        <button class="lm-send" id="lm-send" onclick="sendModalInput()">전송</button>
+      </div>
+      <div class="log-modal-send-status" id="lm-send-status">읽기 전용 tail만 보이는 상태였던 문제를 피하려고, 이 창에서 한 줄 입력을 lane으로 보낼 수 있습니다.</div>
     </div>
   </div>
 
@@ -1510,6 +1545,25 @@ canvas.addEventListener('click', (e) => {
 
 let _logRefreshInterval = null;
 let _modalLaneName = '';
+let _modalSendInFlight = false;
+
+function setLogSendStatus(message, tone = '') {
+  const el = document.getElementById('lm-send-status');
+  if (!el) return;
+  el.textContent = message || '';
+  el.classList.remove('ok', 'err');
+  if (tone) el.classList.add(tone);
+}
+
+function syncModalInputState() {
+  const input = document.getElementById('lm-input');
+  const button = document.getElementById('lm-send');
+  if (!input || !button) return;
+  const hasLane = !!_modalLaneName;
+  const hasText = !!String(input.value || '').trim();
+  input.disabled = !hasLane || _modalSendInFlight;
+  button.disabled = !hasLane || !hasText || _modalSendInFlight;
+}
 
 async function openLogModal(agent) {
   _modalLaneName = agent.name;
@@ -1529,10 +1583,17 @@ async function openLogModal(agent) {
   document.getElementById('lm-info').innerHTML = infoItems.map(t => `<span>${esc(t)}</span>`).join('');
 
   const body = document.getElementById('lm-body');
+  const input = document.getElementById('lm-input');
   body.innerHTML = '<span class="log-loading">$ tail -f …</span>';
+  if (input) input.value = '';
+  setLogSendStatus('숫자 선택이나 짧은 응답이 필요한 prompt가 뜨면 여기서 바로 보내실 수 있습니다.');
+  syncModalInputState();
   modal.classList.add('open');
 
   await _fetchTail(agent.name, body);
+  requestAnimationFrame(() => {
+    if (input) input.focus();
+  });
   if (_logRefreshInterval) clearInterval(_logRefreshInterval);
   _logRefreshInterval = setInterval(() => {
     if (!modal.classList.contains('open')) { clearInterval(_logRefreshInterval); return; }
@@ -1556,9 +1617,56 @@ function closeLogModal(e) {
   if (e && e.target !== document.getElementById('log-modal')) return;
   document.getElementById('log-modal').classList.remove('open');
   _modalLaneName = '';
+  _modalSendInFlight = false;
+  const input = document.getElementById('lm-input');
+  if (input) {
+    input.value = '';
+    input.disabled = true;
+  }
+  setLogSendStatus('');
+  syncModalInputState();
   if (_logRefreshInterval) { clearInterval(_logRefreshInterval); _logRefreshInterval = null; }
 }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLogModal(); });
+document.getElementById('lm-input').addEventListener('input', syncModalInputState);
+document.getElementById('lm-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    sendModalInput();
+  }
+});
+
+async function sendModalInput() {
+  const lane = String(_modalLaneName || '').trim();
+  const input = document.getElementById('lm-input');
+  const body = document.getElementById('lm-body');
+  const text = String(input?.value || '');
+  if (!lane || !text.trim() || _modalSendInFlight) return;
+  _modalSendInFlight = true;
+  syncModalInputState();
+  setLogSendStatus(`${lane}에 입력 전송 중…`);
+  try {
+    const res = await fetch('/api/runtime/send-input', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lane, text }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.ok === false) throw new Error(data.error || 'send failed');
+    if (input) input.value = '';
+    setLogSendStatus(`${lane}에 입력을 보냈습니다.`, 'ok');
+    SoundFX.blip();
+    await _fetchTail(lane, body);
+    setTimeout(() => _fetchTail(lane, body), 350);
+  } catch (e) {
+    setLogSendStatus(`입력 전송 실패: ${e.message}`, 'err');
+    SoundFX.error();
+  } finally {
+    _modalSendInFlight = false;
+    syncModalInputState();
+    if (input) input.focus();
+  }
+}
 
 // ═══════════════════════════════════════════════════════
 // ANIMATION LOOP & IDLE CHATTER

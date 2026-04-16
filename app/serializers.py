@@ -3924,6 +3924,20 @@ class SerializerMixin:
         proof_record_store_entries: list[dict[str, Any]] | None = None,
         emitted_transition_records: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
+        current_candidate_index: dict[tuple[str, str], tuple[str, str]] = {}
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            anchor = self._normalize_source_message_anchor(message)
+            if anchor is None:
+                continue
+            slc = message.get("session_local_candidate")
+            if isinstance(slc, dict):
+                cid = str(slc.get("candidate_id") or "").strip()
+                cua = str(slc.get("updated_at") or "").strip()
+                if cid and cua:
+                    current_candidate_index[anchor] = (cid, cua)
+
         grouped_members: dict[tuple[str, str, str, str, str], dict[tuple[str, str], dict[str, Any]]] = {}
 
         for message in messages:
@@ -3991,6 +4005,22 @@ class SerializerMixin:
         aggregate_candidates: list[dict[str, Any]] = []
         for aggregate_identity, group_members in grouped_members.items():
             if len(group_members) < 2:
+                continue
+
+            stale = False
+            for anchor, member in group_members.items():
+                current = current_candidate_index.get(anchor)
+                if current is None:
+                    stale = True
+                    break
+                current_cid, current_cua = current
+                if (
+                    str(member.get("candidate_id") or "").strip() != current_cid
+                    or str(member.get("candidate_updated_at") or "").strip() != current_cua
+                ):
+                    stale = True
+                    break
+            if stale:
                 continue
 
             members = list(group_members.values())

@@ -24,6 +24,7 @@ from pipeline_gui.backend import (
     pipeline_stop as backend_pipeline_stop,
     read_runtime_status,
     runtime_capture_tail as backend_runtime_capture_tail,
+    runtime_send_input as backend_runtime_send_input,
 )
 from pipeline_gui.project import _session_name_for
 
@@ -172,6 +173,23 @@ def runtime_capture_tail(lane: str | None = None, *, lines: int = 120) -> tuple[
     }, HTTPStatus.OK
 
 
+def runtime_send_input(lane: str | None = None, *, text: str = "") -> tuple[dict, HTTPStatus]:
+    lane_name = str(lane or "").strip()
+    payload = str(text or "")
+    if not lane_name:
+        return {"ok": False, "error": "lane is required"}, HTTPStatus.BAD_REQUEST
+    if not payload.strip():
+        return {"ok": False, "error": "text is required"}, HTTPStatus.BAD_REQUEST
+    ok = backend_runtime_send_input(PROJECT_ROOT, SESSION_NAME, lane_name, text=payload)
+    if not ok:
+        return {"ok": False, "error": "failed to send input"}, HTTPStatus.BAD_GATEWAY
+    return {
+        "ok": True,
+        "lane": lane_name,
+        "text": payload,
+    }, HTTPStatus.OK
+
+
 class ControllerHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -213,6 +231,23 @@ class ControllerHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/runtime/restart":
             self._json(pipeline_restart())
+            return
+        if parsed.path == "/api/runtime/send-input":
+            content_length = int(self.headers.get("Content-Length") or "0")
+            try:
+                raw = self.rfile.read(content_length) if content_length > 0 else b"{}"
+                payload = json.loads(raw.decode("utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                self._json({"ok": False, "error": "invalid json"}, HTTPStatus.BAD_REQUEST)
+                return
+            if not isinstance(payload, dict):
+                self._json({"ok": False, "error": "invalid json"}, HTTPStatus.BAD_REQUEST)
+                return
+            data, status = runtime_send_input(
+                lane=payload.get("lane"),
+                text=str(payload.get("text") or ""),
+            )
+            self._json(data, status)
             return
 
         self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)

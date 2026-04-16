@@ -48,6 +48,35 @@ class RuntimeSupervisorTest(unittest.TestCase):
         self.assertEqual(args.legacy_mode, "baseline")
         self.assertTrue(args.no_attach)
 
+    def test_build_artifacts_uses_canonical_round_notes_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            work_readme = root / "work" / "README.md"
+            verify_readme = root / "verify" / "README.md"
+            work_note = root / "work" / "4" / "16" / "2026-04-16-real-round.md"
+            verify_note = root / "verify" / "4" / "16" / "2026-04-16-real-verify.md"
+            work_note.parent.mkdir(parents=True, exist_ok=True)
+            verify_note.parent.mkdir(parents=True, exist_ok=True)
+            work_readme.parent.mkdir(parents=True, exist_ok=True)
+            verify_readme.parent.mkdir(parents=True, exist_ok=True)
+            work_note.write_text("# work\n", encoding="utf-8")
+            verify_note.write_text("# verify\n", encoding="utf-8")
+            work_readme.write_text("# metadata\n", encoding="utf-8")
+            verify_readme.write_text("# metadata\n", encoding="utf-8")
+
+            os.utime(work_note, (100.0, 100.0))
+            os.utime(verify_note, (200.0, 200.0))
+            os.utime(work_readme, (300.0, 300.0))
+            os.utime(verify_readme, (400.0, 400.0))
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            artifacts = supervisor._build_artifacts()
+
+            self.assertEqual(artifacts["latest_work"]["path"], "4/16/2026-04-16-real-round.md")
+            self.assertEqual(artifacts["latest_verify"]["path"], "4/16/2026-04-16-real-verify.md")
+
     def test_write_status_emits_receipt_and_control_block(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1605,6 +1634,15 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertIn(str(root), command)
             self.assertIn("--lane Codex", command)
             self.assertIn("--run run-123", command)
+
+    def test_lane_vendor_command_uses_yolo_for_gemini(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            with mock.patch.object(supervisor, "_find_cli_bin", side_effect=lambda name: f"/usr/bin/{name}"):
+                command = supervisor._lane_vendor_command("Gemini")
+            self.assertEqual(command, 'exec "/usr/bin/gemini" --yolo')
 
     def test_lane_shell_command_carries_pythonpath_into_tmux_environment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -25,7 +25,7 @@ from .schema import (
     atomic_write_json,
     append_jsonl,
     iso_utc,
-    latest_markdown,
+    latest_round_markdown,
     latest_receipt,
     load_job_states,
     parse_iso_utc,
@@ -562,8 +562,8 @@ class RuntimeSupervisor:
         }
 
     def _build_artifacts(self) -> dict[str, Any]:
-        work_rel, work_mtime = latest_markdown(self.project_root / "work")
-        verify_rel, verify_mtime = latest_markdown(self.project_root / "verify")
+        work_rel, work_mtime = latest_round_markdown(self.project_root / "work")
+        verify_rel, verify_mtime = latest_round_markdown(self.project_root / "verify")
         return {
             "latest_work": {"path": work_rel, "mtime": work_mtime},
             "latest_verify": {"path": verify_rel, "mtime": verify_mtime},
@@ -766,7 +766,7 @@ class RuntimeSupervisor:
 
     def _latest_verify_path(self) -> Path | None:
         verify_root = self.project_root / "verify"
-        best_rel, _best_mtime = latest_markdown(verify_root)
+        best_rel, _best_mtime = latest_round_markdown(verify_root)
         if best_rel == "—":
             return None
         return verify_root / best_rel
@@ -1331,7 +1331,7 @@ class RuntimeSupervisor:
         if lane_name == "Codex":
             return f'exec "{self._find_cli_bin("codex")}" --ask-for-approval never --disable apps'
         if lane_name == "Gemini":
-            return f'exec "{self._find_cli_bin("gemini")}" --approval-mode auto_edit'
+            return f'exec "{self._find_cli_bin("gemini")}" --yolo'
         return "exec bash"
 
     def _lane_shell_command(self, lane_name: str) -> str:

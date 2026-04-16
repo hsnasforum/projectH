@@ -25,6 +25,7 @@ CONTROL_SLOT_LABELS: dict[str, str] = {
 
 RUNTIME_LANE_ORDER = ("Claude", "Codex", "Gemini")
 _CONTROL_HEADER_LINE_RE = re.compile(r"^\s*([A-Z][A-Z0-9_]*):\s*(.*?)\s*$")
+ROUND_NOTE_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-.+\.md$")
 
 
 def iso_utc(ts: float | None = None) -> str:
@@ -46,6 +47,13 @@ def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(f"{path.suffix}.tmp")
     tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path.replace(path)
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+    tmp_path.write_text(text, encoding="utf-8")
     tmp_path.replace(path)
 
 
@@ -122,6 +130,30 @@ def latest_markdown(directory: Path) -> tuple[str, float]:
     except ValueError:
         rel = best_path.name
     return rel, best_mtime
+
+
+def latest_round_markdown(directory: Path) -> tuple[str, float]:
+    best_path: Path | None = None
+    best_mtime = 0.0
+    if not directory.exists():
+        return "—", 0.0
+    for candidate in directory.rglob("*.md"):
+        try:
+            rel = candidate.relative_to(directory)
+        except ValueError:
+            continue
+        if len(rel.parts) < 3 or not ROUND_NOTE_NAME_RE.match(candidate.name):
+            continue
+        try:
+            mtime = candidate.stat().st_mtime
+        except OSError:
+            continue
+        if mtime > best_mtime:
+            best_path = candidate
+            best_mtime = mtime
+    if best_path is None:
+        return "—", 0.0
+    return str(best_path.relative_to(directory)), best_mtime
 
 
 def read_control_meta(path: Path, *, max_lines: int = 20) -> dict[str, Any]:

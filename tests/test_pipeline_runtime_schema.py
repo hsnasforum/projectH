@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
 
-from pipeline_runtime.schema import parse_control_slots, read_control_meta
+from pipeline_runtime.schema import latest_round_markdown, parse_control_slots, read_control_meta
 
 
 class RuntimeSchemaTest(unittest.TestCase):
@@ -61,6 +62,25 @@ class RuntimeSchemaTest(unittest.TestCase):
 
             self.assertEqual(slots["active"]["file"], "claude_handoff.md")
             self.assertEqual(slots["stale"][0]["file"], "operator_request.md")
+
+    def test_latest_round_markdown_ignores_root_readme(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            readme = root / "README.md"
+            readme.write_text("# metadata\n", encoding="utf-8")
+            round_note = root / "4" / "16" / "2026-04-16-real-round.md"
+            round_note.parent.mkdir(parents=True, exist_ok=True)
+            round_note.write_text("# round\n", encoding="utf-8")
+
+            round_mtime = round_note.stat().st_mtime + 1
+            readme_mtime = round_mtime + 10
+            os.utime(round_note, (round_mtime, round_mtime))
+            os.utime(readme, (readme_mtime, readme_mtime))
+
+            rel, mtime = latest_round_markdown(root)
+
+            self.assertEqual(rel, "4/16/2026-04-16-real-round.md")
+            self.assertEqual(mtime, round_mtime)
 
 
 if __name__ == "__main__":

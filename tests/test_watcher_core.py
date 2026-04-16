@@ -601,6 +601,29 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
         self.assertEqual(signal["reason"], "renderresult follow-up correctly drops review-outcome")
         self.assertEqual(signal["fingerprint"], "abcdef1234567890fedcba0987654321:renderResult-follow-up")
 
+    def test_extract_implement_blocked_prefers_structured_reason_code_and_escalation_class(self) -> None:
+        signal = watcher_core._extract_claude_implement_blocked_signal(
+            "\n".join(
+                [
+                    "STATUS: implement_blocked",
+                    "BLOCK_REASON: context window exhausted after diff review",
+                    "BLOCK_REASON_CODE: context_exhaustion",
+                    "REQUEST: codex_triage",
+                    "ESCALATION_CLASS: codex_triage",
+                    "HANDOFF: .pipeline/claude_handoff.md",
+                    "HANDOFF_SHA: abcdef1234567890",
+                    "BLOCK_ID: block-structured-001",
+                ]
+            ),
+            active_handoff_path=".pipeline/claude_handoff.md",
+            active_handoff_sha="abcdef1234567890",
+        )
+
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal["reason_code"], "context_exhaustion")
+        self.assertEqual(signal["escalation_class"], "codex_triage")
+        self.assertEqual(signal["request"], "codex_triage")
+
     def test_extract_implement_blocked_ignores_prompt_template_example(self) -> None:
         signal = watcher_core._extract_claude_implement_blocked_signal(
             "\n".join(
@@ -654,7 +677,9 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                 "claude-pane": (
                     "STATUS: implement_blocked\n"
                     "BLOCK_REASON: handoff_not_actionable\n"
+                    "BLOCK_REASON_CODE: codex_triage_only\n"
                     "REQUEST: codex_triage\n"
+                    "ESCALATION_CLASS: codex_triage\n"
                     "HANDOFF: .pipeline/claude_handoff.md\n"
                     f"HANDOFF_SHA: {handoff_sha}\n"
                     "BLOCK_ID: block-001\n"
@@ -673,6 +698,8 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             self.assertIn("ROLE: verify_triage", args[1])
             self.assertIn("OWNER: Codex", args[1])
             self.assertIn("BLOCK_REASON: handoff_not_actionable", args[1])
+            self.assertIn("BLOCK_REASON_CODE: codex_triage_only", args[1])
+            self.assertIn("ESCALATION_CLASS: codex_triage", args[1])
             self.assertIn("BLOCK_ID: block-001", args[1])
             self.assertEqual(kwargs.get("pane_type"), "codex")
             self.assertEqual(core._last_claude_blocked_fingerprint, "block-001")
@@ -1551,6 +1578,11 @@ class TurnResolutionTest(unittest.TestCase):
                     [
                         "STATUS: needs_operator",
                         "CONTROL_SEQ: 20",
+                        "REASON_CODE: truth_sync_required",
+                        "OPERATOR_POLICY: immediate_publish",
+                        "DECISION_CLASS: operator_only",
+                        "DECISION_REQUIRED: confirm blocker closeout",
+                        "BASED_ON_WORK: work/4/10/2026-04-10-review-queue-source-message-review-outcome-visibility.md",
                         "",
                         "Stop now:",
                         "- `work/4/10/2026-04-10-review-queue-source-message-review-outcome-visibility.md`",
@@ -1636,7 +1668,12 @@ class TurnResolutionTest(unittest.TestCase):
 
             operator_path = base_dir / "operator_request.md"
             operator_path.write_text(
-                "STATUS: needs_operator\nCONTROL_SEQ: 26\n\nReason:\n- slice_ambiguity\n",
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 26\n"
+                "REASON_CODE: slice_ambiguity\n"
+                "OPERATOR_POLICY: gate_24h\n"
+                "DECISION_CLASS: operator_only\n"
+                "DECISION_REQUIRED: choose exact next slice\n",
                 encoding="utf-8",
             )
 
@@ -1652,6 +1689,7 @@ class TurnResolutionTest(unittest.TestCase):
             marker = core._operator_gate_marker()
             self.assertIsNotNone(marker)
             self.assertEqual(marker["reason"], "slice_ambiguity")
+            self.assertEqual(marker["operator_policy"], "gate_24h")
             self.assertEqual(core._resolve_turn(), "codex_followup")
 
     def test_truth_sync_operator_request_stays_operator_turn(self) -> None:
@@ -1665,7 +1703,12 @@ class TurnResolutionTest(unittest.TestCase):
 
             operator_path = base_dir / "operator_request.md"
             operator_path.write_text(
-                "STATUS: needs_operator\nCONTROL_SEQ: 27\n\nReason:\n- truth-sync blocker\n",
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 27\n"
+                "REASON_CODE: truth_sync_required\n"
+                "OPERATOR_POLICY: immediate_publish\n"
+                "DECISION_CLASS: operator_only\n"
+                "DECISION_REQUIRED: confirm truth sync\n",
                 encoding="utf-8",
             )
 
@@ -1692,7 +1735,12 @@ class TurnResolutionTest(unittest.TestCase):
 
             operator_path = base_dir / "operator_request.md"
             operator_path.write_text(
-                "STATUS: needs_operator\nCONTROL_SEQ: 28\n\nReason:\n- still pending\n",
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 28\n"
+                "REASON_CODE: idle_hibernate\n"
+                "OPERATOR_POLICY: internal_only\n"
+                "DECISION_CLASS: internal_only\n"
+                "DECISION_REQUIRED: wait for next control\n",
                 encoding="utf-8",
             )
 
@@ -1709,6 +1757,33 @@ class TurnResolutionTest(unittest.TestCase):
             self.assertIsNotNone(marker)
             self.assertEqual(marker["mode"], "hibernate")
             self.assertEqual(core._resolve_turn(), "idle")
+
+    def test_operator_request_missing_structured_headers_stays_fail_safe_operator(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            operator_path = base_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\nCONTROL_SEQ: 29\n\nReason:\n- slice_ambiguity\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+
+            self.assertIsNone(core._operator_gate_marker())
+            self.assertEqual(core._resolve_turn(), "operator")
 
     def test_codex_verify_before_claude_even_for_metadata_only_note(self) -> None:
         """Metadata-only work note still triggers Codex verify before Claude."""
@@ -1819,6 +1894,11 @@ class RollingSignalTransitionTest(unittest.TestCase):
                     [
                         "STATUS: needs_operator",
                         "CONTROL_SEQ: 21",
+                        "REASON_CODE: truth_sync_required",
+                        "OPERATOR_POLICY: immediate_publish",
+                        "DECISION_CLASS: operator_only",
+                        "DECISION_REQUIRED: confirm blocker closeout",
+                        "BASED_ON_WORK: work/4/10/2026-04-10-review-queue-source-message-review-outcome-visibility.md",
                         "",
                         "Stop now:",
                         "- `work/4/10/2026-04-10-review-queue-source-message-review-outcome-visibility.md`",
@@ -1869,6 +1949,11 @@ class RollingSignalTransitionTest(unittest.TestCase):
                     [
                         "STATUS: needs_operator",
                         "CONTROL_SEQ: 22",
+                        "REASON_CODE: truth_sync_required",
+                        "OPERATOR_POLICY: immediate_publish",
+                        "DECISION_CLASS: operator_only",
+                        "DECISION_REQUIRED: confirm blocker closeout",
+                        "BASED_ON_WORK: work/4/10/2026-04-10-review-queue-source-message-review-outcome-visibility.md",
                         "",
                         "Stop now:",
                         "- `work/4/10/2026-04-10-review-queue-source-message-review-outcome-visibility.md`",

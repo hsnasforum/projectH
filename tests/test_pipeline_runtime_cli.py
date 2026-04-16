@@ -357,3 +357,72 @@ class SupervisorCliTest(unittest.TestCase):
             self.assertEqual(signaled, [(111, signal.SIGTERM)])
             self.assertEqual(killed, [111])
             self.assertFalse(pid_path.exists())
+
+    def test_stop_supervisor_cleans_orphan_runtime_when_supervisor_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            pid_path = project_root / ".pipeline" / "supervisor.pid"
+            pid_path.parent.mkdir(parents=True, exist_ok=True)
+            pid_path.write_text("111", encoding="utf-8")
+            args = Namespace(project_root=str(project_root), legacy_mode="", session="aip-projectH")
+
+            with (
+                patch.object(runtime_cli, "_list_supervisor_pids", return_value=[]),
+                patch.object(runtime_cli, "_supervisor_running", return_value=None),
+                patch.object(runtime_cli, "_orphan_runtime_needs_cleanup", return_value=True),
+                patch.object(runtime_cli, "_cleanup_orphan_runtime") as cleanup,
+            ):
+                code = runtime_cli._stop_supervisor(args)
+
+            self.assertEqual(code, 0)
+            cleanup.assert_called_once_with(project_root, "aip-projectH")
+            self.assertFalse(pid_path.exists())
+
+    def test_coerce_status_to_stopped_clears_live_runtime_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            run_dir = project_root / ".pipeline" / "runs" / "run-1"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            current_run = project_root / ".pipeline" / "current_run.json"
+            current_run.parent.mkdir(parents=True, exist_ok=True)
+            current_run.write_text(
+                json.dumps(
+                    {
+                        "run_id": "run-1",
+                        "status_path": ".pipeline/runs/run-1/status.json",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            status_path = run_dir / "status.json"
+            status_path.write_text(
+                json.dumps(
+                    {
+                        "runtime_state": "STOPPING",
+                        "control": {
+                            "active_control_file": ".pipeline/operator_request.md",
+                            "active_control_seq": 197,
+                            "active_control_status": "needs_operator",
+                            "active_control_updated_at": "2026-04-16T10:40:00Z",
+                        },
+                        "active_round": {"state": "CLOSED", "job_id": "job-1"},
+                        "watcher": {"alive": True, "pid": 123},
+                        "lanes": [
+                            {"name": "Claude", "state": "READY", "pid": 11, "attachable": True, "note": "prompt_visible"}
+                        ],
+                        "autonomy": {"mode": "recovery", "block_reason": "verified_blockers_resolved"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            runtime_cli._coerce_status_to_stopped(project_root)
+
+            repaired = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(repaired["runtime_state"], "STOPPED")
+            self.assertEqual(repaired["control"]["active_control_status"], "none")
+            self.assertIsNone(repaired["active_round"])
+            self.assertEqual(repaired["watcher"], {"alive": False, "pid": None})
+            self.assertEqual(repaired["autonomy"]["mode"], "normal")
+            self.assertEqual(repaired["lanes"][0]["state"], "OFF")
+            self.assertEqual(repaired["lanes"][0]["pid"], None)

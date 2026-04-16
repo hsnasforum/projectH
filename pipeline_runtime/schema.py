@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import re
 import time
 from collections import deque
 from pathlib import Path
@@ -23,6 +24,7 @@ CONTROL_SLOT_LABELS: dict[str, str] = {
 }
 
 RUNTIME_LANE_ORDER = ("Claude", "Codex", "Gemini")
+_CONTROL_HEADER_LINE_RE = re.compile(r"^\s*([A-Z][A-Z0-9_]*):\s*(.*?)\s*$")
 
 
 def iso_utc(ts: float | None = None) -> str:
@@ -122,25 +124,39 @@ def latest_markdown(directory: Path) -> tuple[str, float]:
     return rel, best_mtime
 
 
-def _read_control_header(path: Path) -> tuple[str | None, int | None]:
+def read_control_meta(path: Path, *, max_lines: int = 20) -> dict[str, Any]:
     if not path.exists():
-        return None, None
+        return {}
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return None, None
-    status: str | None = None
-    control_seq: int | None = None
-    for line in text.splitlines()[:12]:
-        stripped = line.strip()
-        if stripped.startswith("STATUS:"):
-            status = stripped.split(":", 1)[1].strip()
-        elif stripped.startswith("CONTROL_SEQ:"):
+        return {}
+    meta: dict[str, Any] = {}
+    for line in text.splitlines()[:max_lines]:
+        match = _CONTROL_HEADER_LINE_RE.match(line)
+        if not match:
+            continue
+        key = match.group(1).strip().lower()
+        if key in meta:
+            continue
+        raw_value = match.group(2).strip()
+        if key == "control_seq":
             try:
-                parsed = int(stripped.split(":", 1)[1].strip())
+                parsed = int(raw_value)
             except ValueError:
-                parsed = -1
-            control_seq = parsed if parsed >= 0 else None
+                continue
+            meta[key] = parsed if parsed >= 0 else None
+            continue
+        meta[key] = raw_value
+    return meta
+
+
+def _read_control_header(path: Path) -> tuple[str | None, int | None]:
+    meta = read_control_meta(path, max_lines=12)
+    status = str(meta.get("status") or "").strip() or None
+    control_seq = meta.get("control_seq")
+    if not isinstance(control_seq, int) or control_seq < 0:
+        control_seq = None
     return status, control_seq
 
 

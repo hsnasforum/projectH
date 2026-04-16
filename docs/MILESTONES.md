@@ -24,7 +24,7 @@
 - duplicate/receipted `STATUS: implement` handoffs stay on the debug `compat.control_slots` surface only; canonical `control` drops back to `none` so launcher/controller do not show stale `implement` while every lane is already `READY`
 - `tmux` remains available for attach/debug through `TmuxAdapter`, not as the upper-layer state authority
 - 오래 방치된 `operator_request.md`는 watcher가 Codex re-triage로 다시 넘기고, supervisor canonical `control` block은 그 재심사 동안 `needs_operator`를 숨겨 internal controller/launcher가 같은 stop에 고정되지 않게 합니다
-- controller has dedicated Playwright smoke (`e2e/playwright.controller.config.mjs`, `make controller-test`) covering the `#storage-warn` toolbar chip, event-log storage warning when browser storage is blocked, agent-card `data-fatigue` observability, and deterministic `fatigued`/`coffee` state transitions via `window.setAgentFatigue` test hook; smoke port is configurable via `CONTROLLER_SMOKE_PORT` (default `8781`)
+- controller has dedicated Playwright smoke (`e2e/playwright.controller.config.mjs`, `make controller-test`) covering the `#storage-warn` toolbar chip, event-log storage warning when browser storage is blocked, agent-card `data-fatigue` observability, deterministic `fatigued`/`coffee` state transitions via `window.setAgentFatigue` test hook, deterministic idle roam bounds/desk-exclusion safety via `window.testPickIdleTargets` + `window.getRoamBounds` test hooks, anti-stacking proximity avoidance via `window.testAntiStacking` test hook, and `_roamHistory` penalty observability via `window.testHistoryPenalty` test hook; smoke port is configurable via `CONTROLLER_SMOKE_PORT` (default `8781`)
 
 ### Milestone 1: Local Document Loop
 - local file read

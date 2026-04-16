@@ -16,6 +16,7 @@
 4. 장애 시 “억지 재시도”보다 “현재 run 상태 보존 후 복구”를 우선합니다.
 5. next-slice ambiguity는 Gemini arbitration을 먼저 사용하고, `needs_operator`는 real operator-only decision에만 남깁니다.
 6. fresh `needs_operator`는 즉시 stop slot current truth가 아니라 24시간 gate 후보일 수 있으므로, `status.control`보다 `status.autonomy`를 먼저 확인합니다.
+7. operator stop 판정은 free-form prose가 아니라 `OPERATOR_POLICY` 우선, `REASON_CODE` 다음 순서로 봅니다. 구조화 metadata가 없거나 알 수 없으면 fail-safe로 즉시 publish합니다.
 
 ## 3. 일상 운영 절차
 
@@ -56,6 +57,8 @@
 4. `STOPPED` 및 final receipt flush 확인
 5. run 종료 보고 작성
 - stop 성공은 supervisor pid 소멸만으로 판단하지 않습니다. final status에 `runtime_state=STOPPED`, `control=none`, `active_round=null`, watcher dead, lane inactive가 함께 flush되었는지 확인합니다.
+- 최신 CLI stop은 먼저 graceful flush를 기다리고, timeout 뒤에만 강제 종료 fallback을 사용합니다. `STOPPING`이 오래 남았는데 supervisor가 이미 사라졌다면 graceful flush miss 가능성을 먼저 의심합니다.
+- supervisor가 이미 죽었지만 watcher/tmux session 같은 orphan runtime이 남아 있으면, stop CLI는 orphan cleanup 뒤 `status.json`을 `STOPPED + inactive truth`로 보정합니다.
 - controller가 오래된 `STOPPING` run을 다시 읽더라도 supervisor PID가 이미 없으면 UI는 이를 `STOPPED`로 정규화하고 `Control=none`, `Round=IDLE`로 보여야 합니다. 이 reader 정규화는 graceful flush 실패에 대비한 fallback safety net입니다.
 
 ## 3.5 채택 전 synthetic soak

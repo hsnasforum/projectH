@@ -3,17 +3,17 @@
   "backend_type": "tmux",
   "run_id": "20260416T104037Z-p425927",
   "current_run_id": "20260416T104037Z-p425927",
-  "runtime_state": "STOPPING",
+  "runtime_state": "STOPPED",
   "degraded_reason": "",
   "degraded_reasons": [],
   "autonomy": {
-    "mode": "recovery",
-    "block_reason": "verified_blockers_resolved",
+    "mode": "normal",
+    "block_reason": "",
     "first_seen_at": "",
     "suppress_operator_until": "",
     "operator_eligible": false,
     "same_fingerprint_retries": 0,
-    "last_self_heal_at": "2026-04-16T10:40:37.610356Z",
+    "last_self_heal_at": "",
     "last_self_triage_at": ""
   },
   "control": {
@@ -25,39 +25,33 @@
   "lanes": [
     {
       "name": "Claude",
-      "state": "READY",
-      "pid": 426063,
-      "attachable": true,
+      "state": "OFF",
+      "pid": null,
+      "attachable": false,
       "last_event_at": "2026-04-16T10:40:47.878539Z",
       "last_heartbeat_at": "2026-04-16T10:40:47.878539Z",
-      "note": "prompt_visible"
+      "note": "stopped"
     },
     {
       "name": "Codex",
-      "state": "WORKING",
-      "pid": 426086,
-      "attachable": true,
+      "state": "OFF",
+      "pid": null,
+      "attachable": false,
       "last_event_at": "2026-04-16T10:40:48.003120Z",
       "last_heartbeat_at": "2026-04-16T10:40:48.003120Z",
-      "note": "followup"
+      "note": "stopped"
     },
     {
       "name": "Gemini",
-      "state": "READY",
-      "pid": 426112,
-      "attachable": true,
+      "state": "OFF",
+      "pid": null,
+      "attachable": false,
       "last_event_at": "2026-04-16T10:40:48.079016Z",
       "last_heartbeat_at": "2026-04-16T10:40:48.079016Z",
-      "note": "prompt_visible"
+      "note": "stopped"
     }
   ],
-  "active_round": {
-    "job_id": "20260416-2026-04-16-controller-determinis-3631b053",
-    "round": 1,
-    "state": "CLOSED",
-    "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-controller-deterministic-fatigue-transition-smoke.md",
-    "status": "VERIFY_DONE"
-  },
+  "active_round": null,
   "last_receipt": {
     "schema_version": 1,
     "receipt_id": "20260416-2026-04-16-controller-determinis-3631b053-r1",
@@ -75,8 +69,8 @@
   },
   "last_receipt_id": "20260416-2026-04-16-controller-determinis-3631b053-r1",
   "watcher": {
-    "alive": true,
-    "pid": 426181
+    "alive": false,
+    "pid": null
   },
   "artifacts": {
     "latest_work": {
@@ -129,6 +123,6 @@
       "active_control_seq": -1
     }
   },
-  "last_heartbeat_at": "2026-04-16T10:40:49.569964Z",
-  "updated_at": "2026-04-16T10:40:49.569983Z"
+  "last_heartbeat_at": "2026-04-16T10:46:08.771395Z",
+  "updated_at": "2026-04-16T10:46:08.771416Z"
 }

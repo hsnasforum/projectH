@@ -108,9 +108,11 @@ repo 안의 internal/operator tooling은 릴리즈 게이트 밖이지만 계속
   - internal/operator tool only; not part of the current release-candidate browser contract
   - canonical runtime API는 `/api/runtime/status`, `/api/runtime/start|stop|restart`, `/api/runtime/capture-tail?lane=`입니다.
   - controller/browser UI는 supervisor가 쓴 run-scoped runtime status만 읽고, direct pane/log/file scan을 current truth로 사용하지 않습니다.
+  - stop은 graceful flush 우선입니다. CLI/controller는 먼저 final `STOPPED` status flush를 기다리고, timeout 뒤에만 강제 종료 fallback을 사용합니다. supervisor가 이미 사라진 orphan watcher/session만 남아 있으면 stop이 이를 정리하고 `status.json`을 `control=none`, `active_round=null`, watcher dead, lane `OFF`로 보정합니다.
   - 이미 receipt로 닫힌 duplicate `STATUS: implement` handoff는 debug용 `compat.control_slots`에는 남아도, canonical `control` block에서는 `none`으로 내려 controller가 `implement + all READY` 같은 stale 표기를 하지 않게 합니다.
   - recent runtime snapshot이 supervisor/pid 없이 불완전하게 남아 있거나, 같은 ambiguous snapshot에 `updated_at`까지 비어 있으면 controller는 이를 즉시 `STOPPED/BROKEN`으로 단정하지 않고 uncertain `DEGRADED`(`supervisor_missing_recent_ambiguous` / `supervisor_missing_snapshot_undated`)로 표기합니다.
-  - `.pipeline/operator_request.md`는 file 자체만으로 곧바로 current truth가 되지 않습니다. supervisor는 `safety_stop`, `approval_required`, `truth_sync_required`만 즉시 publish하고, 나머지 `needs_operator`는 최대 24시간 동안 `autonomy.recovery|triage|hibernate|pending_operator`로 gate합니다.
+  - `.pipeline/operator_request.md`는 `CONTROL_SEQ`, `REASON_CODE`, `OPERATOR_POLICY`, `DECISION_CLASS`, `DECISION_REQUIRED`, `BASED_ON_WORK`, `BASED_ON_VERIFY`를 top header로 함께 두는 편이 canonical입니다. supervisor는 `OPERATOR_POLICY` 우선, `REASON_CODE` 다음 순서로 publish/gate를 판정하고, 구조화 metadata가 없거나 알 수 없으면 fail-safe로 즉시 publish합니다.
+  - 구조화 metadata가 있는 `needs_operator`만 24시간 gate 대상이 됩니다. `safety_stop`, `approval_required`, `truth_sync_required`는 즉시 publish하고, 그 밖의 gated candidate는 `autonomy.recovery|triage|hibernate|pending_operator`로 먼저 surface합니다.
   - gate된 operator candidate는 canonical `control` block에서는 `none`으로 내려가고, status의 `autonomy` block(`mode`, `block_reason`, `suppress_operator_until`, `operator_eligible` 등)으로만 노출됩니다. 오래 방치된 stop은 watcher가 Codex 재심사(`operator_wait_idle_retriage` 또는 gated follow-up)로 다시 넘깁니다.
   - browser log modal은 현재 tail read-model만 제공합니다. lane pause/resume/restart나 attach 같은 backend 미연결 액션은 노출하지 않습니다.
   - Office View background는 `/controller-assets/background.png`를 우선 사용하고, 필요할 때만 `/controller-assets/generated/bg-office.png`로 fallback하며, sidebar `Scene` 상태와 event log로 load/fallback/error를 표시합니다.
@@ -275,6 +277,9 @@ Current controller smoke scenarios:
 3. agent cards expose `data-fatigue` attribute for fatigue observability — verifies that a working agent's sidebar card carries `data-agent` and `data-fatigue` attributes, with no `.agent-fatigue` indicator visible before the fatigue threshold is reached
 4. `setAgentFatigue` hook transitions card to `fatigued` state — injects fatigue via `window.setAgentFatigue("Claude", "fatigued")` and asserts `data-fatigue="fatigued"` with `💦 피로 누적` label
 5. `setAgentFatigue` hook transitions card to `coffee` state — injects coffee via `window.setAgentFatigue("Claude", "coffee")` and asserts `data-fatigue="coffee"` with `☕ 커피 충전 중` label
+6. idle roam targets stay within walkable bounds and outside desk exclusion rects — forces 30 idle roam target picks via `window.testPickIdleTargets("Claude", 30)`, reads `WALKABLE_BOUNDS` and `DESK_RECTS` via `window.getRoamBounds()`, and asserts every picked point satisfies both constraints
+7. idle roam avoids proximity to other idle agents (anti-stacking) — places a phantom idle agent at walkable center via `window.testAntiStacking("Claude", cx, cy, 50)` and asserts fewer than 15% of 50 picks land within 50px of the phantom
+8. idle roam deprioritizes recently visited spots via `_roamHistory` penalty — pre-fills history with spots 0–4 via `window.testHistoryPenalty("Claude", [0,1,2,3,4], 120)` and asserts the most-penalized spot (index 0, −150) is chosen less than 10% of spot-based picks
 
 ## Safety Defaults
 

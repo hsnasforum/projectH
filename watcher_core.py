@@ -47,7 +47,8 @@ if _PROJECT_IMPORT_ROOT:
         sys.path.insert(0, project_import_path)
 
 from pipeline_gui.setup_profile import resolve_project_runtime_adapter
-from pipeline_runtime.operator_autonomy import classify_operator_candidate
+from pipeline_runtime.operator_autonomy import classify_operator_candidate, normalize_reason_code
+from pipeline_runtime.schema import read_control_meta
 
 # jsonschema는 선택적 의존성 — 없으면 필수 필드 구조 검증만 수행
 try:
@@ -947,8 +948,16 @@ def _extract_claude_implement_blocked_signal(
                 block_lines.append(stripped)
 
         request = fields.get("REQUEST", "").lower()
+        escalation_class = fields.get("ESCALATION_CLASS", "").strip().lower()
         if request and request not in {"verify_triage", "codex_triage"}:
             return None
+        if escalation_class and escalation_class not in {"verify_triage", "codex_triage"}:
+            return None
+        if escalation_class and request and escalation_class != request:
+            return None
+        request = escalation_class or request or "codex_triage"
+
+        block_reason_code = normalize_reason_code(fields.get("BLOCK_REASON_CODE", ""))
 
         handoff_hint = fields.get("HANDOFF", "")
         if active_handoff_path and handoff_hint:
@@ -978,6 +987,9 @@ def _extract_claude_implement_blocked_signal(
         return {
             "source": "sentinel",
             "reason": block_reason,
+            "reason_code": block_reason_code,
+            "escalation_class": request,
+            "request": request,
             "excerpt_lines": block_lines[:6],
             "fingerprint": fingerprint,
             "handoff_hint": handoff_hint,
@@ -1007,6 +1019,9 @@ def _extract_claude_forbidden_menu_signal(text: str, active_handoff_sha: str = "
     return {
         "source": "soft_blocked",
         "reason": "forbidden_operator_menu",
+        "reason_code": "codex_triage_only",
+        "escalation_class": "codex_triage",
+        "request": "codex_triage",
         "excerpt_lines": matched_lines[:6],
         "fingerprint": hashlib.sha1(fingerprint_source.encode("utf-8")).hexdigest(),
         "handoff_hint": "",
@@ -1042,6 +1057,9 @@ def _extract_claude_completed_handoff_signal(text: str, active_handoff_sha: str 
     return {
         "source": "soft_completed",
         "reason": "handoff_already_completed",
+        "reason_code": "duplicate_handoff",
+        "escalation_class": "codex_triage",
+        "request": "codex_triage",
         "excerpt_lines": excerpt_lines,
         "fingerprint": hashlib.sha1(fingerprint_source.encode("utf-8")).hexdigest(),
         "handoff_hint": "",
@@ -1749,7 +1767,9 @@ class WatcherCore:
             "BLOCKED_SENTINEL:\n"
             "STATUS: implement_blocked\n"
             "BLOCK_REASON: <short_reason>\n"
-            "REQUEST: verify_triage\n"
+            "BLOCK_REASON_CODE: <reason_code>\n"
+            "REQUEST: codex_triage\n"
+            "ESCALATION_CLASS: codex_triage\n"
             "HANDOFF: {active_handoff_path}\n"
             "HANDOFF_SHA: {active_handoff_sha}\n"
             "BLOCK_ID: {active_handoff_sha}:<short_reason>"
@@ -1803,6 +1823,7 @@ class WatcherCore:
             "- .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: {next_control_seq})\n"
             "RULES:\n"
             "- write exactly one next control outcome\n"
+            "- if you write .pipeline/operator_request.md, keep STATUS/CONTROL_SEQ in the first 12 lines and also include REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, and BASED_ON_VERIFY near the top\n"
             "- after Gemini advice, write .pipeline/operator_request.md only if the advice itself recommends a real operator decision or still leaves no truthful exact slice"
         )
         self.control_recovery_prompt = _normalize_prompt_text(
@@ -1832,6 +1853,7 @@ class WatcherCore:
             "- .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: {next_control_seq})\n"
             "RULES:\n"
             "- write exactly one next control outcome\n"
+            "- if you write .pipeline/operator_request.md, keep STATUS/CONTROL_SEQ in the first 12 lines and also include REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, and BASED_ON_VERIFY near the top\n"
             "- if the only blocker is next-slice ambiguity, overlapping candidates, or low-confidence prioritization, write .pipeline/gemini_request.md before .pipeline/operator_request.md\n"
             "- do not leave runtime idle on a stale operator stop alone\n"
             "- only use STATUS: needs_operator without Gemini for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, or when Gemini is unavailable/already inconclusive"
@@ -1863,6 +1885,7 @@ class WatcherCore:
             "- .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: {next_control_seq})\n"
             "RULES:\n"
             "- write exactly one next control outcome\n"
+            "- if you write .pipeline/operator_request.md, keep STATUS/CONTROL_SEQ in the first 12 lines and also include REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, and BASED_ON_VERIFY near the top\n"
             "- prefer .pipeline/gemini_request.md before .pipeline/operator_request.md when the only blocker is next-slice ambiguity\n"
             "- only keep STATUS: needs_operator if a real operator-only decision, approval/truth-sync blocker, or immediate safety stop still remains right now"
         )
@@ -1876,6 +1899,8 @@ class WatcherCore:
             "HANDOFF_SHA: {active_handoff_sha}\n"
             "BLOCK_SOURCE: {blocked_source}\n"
             "BLOCK_REASON: {blocked_reason}\n"
+            "BLOCK_REASON_CODE: {blocked_reason_code}\n"
+            "ESCALATION_CLASS: {blocked_escalation_class}\n"
             "BLOCK_ID: {blocked_fingerprint}\n"
             "NEXT_CONTROL_SEQ: {next_control_seq}\n"
             "WORK: {latest_work_path}\n"
@@ -1897,6 +1922,7 @@ class WatcherCore:
             "RULES:\n"
             "- write exactly one next control outcome\n"
             "- do not leave Claude waiting on an operator-choice menu\n"
+            "- if you write .pipeline/operator_request.md, keep STATUS/CONTROL_SEQ in the first 12 lines and also include REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, and BASED_ON_VERIFY near the top\n"
             "- if the only blocker is next-slice ambiguity, overlapping candidates, or low-confidence prioritization, write .pipeline/gemini_request.md before .pipeline/operator_request.md\n"
             "- only use STATUS: needs_operator without Gemini for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, or when Gemini is unavailable/already inconclusive"
         )
@@ -2003,6 +2029,7 @@ class WatcherCore:
                 "- .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: {next_control_seq})\n"
                 "RULES:\n"
                 "- keep one exact next slice or one exact operator decision only\n"
+                "- if you write .pipeline/operator_request.md, keep STATUS/CONTROL_SEQ in the first 12 lines and also include REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, and BASED_ON_VERIFY near the top\n"
                 "- if the only blocker is next-slice ambiguity, overlapping candidates, or low-confidence prioritization, open .pipeline/gemini_request.md before .pipeline/operator_request.md\n"
                 "- use .pipeline/operator_request.md without Gemini only for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, or when Gemini is unavailable/already inconclusive\n"
                 "- if same-day same-family docs-only truth-sync already repeated 3+ times, do not choose another narrower docs-only micro-slice; choose one bounded docs bundle or escalate",
@@ -2421,13 +2448,18 @@ class WatcherCore:
             control_text = self.operator_request_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return None
-        referenced_work_paths = sorted(
-            {
-                self._normalize_artifact_path(match.group(1))
-                for match in WORK_PATH_RE.finditer(control_text)
-                if self._normalize_artifact_path(match.group(1))
-            }
-        )
+        control_meta = read_control_meta(self.operator_request_path)
+        based_on_work = self._normalize_artifact_path(control_meta.get("based_on_work"))
+        if based_on_work:
+            referenced_work_paths = [based_on_work]
+        else:
+            referenced_work_paths = sorted(
+                {
+                    self._normalize_artifact_path(match.group(1))
+                    for match in WORK_PATH_RE.finditer(control_text)
+                    if self._normalize_artifact_path(match.group(1))
+                }
+            )
         if not referenced_work_paths:
             return None
         verified_work_paths = self._verified_work_paths()
@@ -2449,8 +2481,10 @@ class WatcherCore:
             control_text = self.operator_request_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return None
+        control_meta = read_control_meta(self.operator_request_path)
         decision = classify_operator_candidate(
             control_text,
+            control_meta=control_meta,
             control_path=str(self.operator_request_path),
             control_seq=self._read_control_seq_from_path(self.operator_request_path),
             control_mtime=self._get_path_mtime(self.operator_request_path),
@@ -2467,6 +2501,10 @@ class WatcherCore:
             "control_file": "operator_request.md",
             "control_seq": self._read_control_seq_from_path(self.operator_request_path),
             "reason": str(decision.get("block_reason") or ""),
+            "reason_code": str(decision.get("reason_code") or ""),
+            "operator_policy": str(decision.get("operator_policy") or ""),
+            "decision_class": str(decision.get("decision_class") or ""),
+            "classification_source": str(decision.get("classification_source") or ""),
             "mode": str(decision.get("suppressed_mode") or ""),
             "routed_to": str(decision.get("routed_to") or ""),
             "suppress_operator_until": str(decision.get("suppress_operator_until") or ""),
@@ -2733,6 +2771,8 @@ class WatcherCore:
             **self._build_implement_prompt_context(self.claude_handoff_path),
             "blocked_source": str(signal.get("source", "sentinel")),
             "blocked_reason": str(signal.get("reason", "implement_blocked")),
+            "blocked_reason_code": str(signal.get("reason_code", "")),
+            "blocked_escalation_class": str(signal.get("escalation_class", "codex_triage")),
             "blocked_fingerprint": str(signal.get("fingerprint", "")),
             "blocked_excerpt": "\n".join(
                 f"- {line}" for line in signal.get("excerpt_lines", [])
@@ -3176,7 +3216,12 @@ class WatcherCore:
                 "codex_blocked_triage_skipped",
                 str(self.claude_handoff_path),
                 "turn_signal",
-                {"reason": "codex_busy", "blocked_reason": signal.get("reason", "implement_blocked")},
+                {
+                    "reason": "codex_busy",
+                    "blocked_reason": signal.get("reason", "implement_blocked"),
+                    "blocked_reason_code": signal.get("reason_code", ""),
+                    "blocked_escalation_class": signal.get("escalation_class", "codex_triage"),
+                },
             )
             return False
 
@@ -3188,7 +3233,9 @@ class WatcherCore:
             {
                 "reason": reason,
                 "blocked_reason": signal.get("reason", "implement_blocked"),
+                "blocked_reason_code": signal.get("reason_code", ""),
                 "blocked_source": signal.get("source", "sentinel"),
+                "blocked_escalation_class": signal.get("escalation_class", "codex_triage"),
                 "blocked_fingerprint": signal.get("fingerprint", ""),
                 "handoff_sha": handoff_sha,
             },

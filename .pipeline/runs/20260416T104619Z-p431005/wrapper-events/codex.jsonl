@@ -1,0 +1,25 @@
+{"ts": "2026-04-16T10:46:20.382918Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:46:25.032406Z", "lane": "Codex", "event_type": "READY", "source": "wrapper", "payload": {"pid": 431725, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-16T10:46:25.562392Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:46:30.568173Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:46:35.586875Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:46:40.597453Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:46:45.606781Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:46:50.614272Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:46:55.620871Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:47:00.627421Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:47:05.633697Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:47:10.652862Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:47:15.663034Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:47:20.670896Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:47:25.678437Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:47:30.685951Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:47:35.692889Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:47:40.707944Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:47:45.718414Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:47:50.727286Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:47:55.734106Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:48:00.740999Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:48:05.747501Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:48:10.755044Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T10:48:15.765809Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 431725}, "derived_from": "process_alive"}

@@ -47,6 +47,7 @@ if _PROJECT_IMPORT_ROOT:
         sys.path.insert(0, project_import_path)
 
 from pipeline_gui.setup_profile import resolve_project_runtime_adapter
+from pipeline_runtime.operator_autonomy import classify_operator_candidate
 
 # jsonschema는 선택적 의존성 — 없으면 필수 필드 구조 검증만 수행
 try:
@@ -1835,6 +1836,36 @@ class WatcherCore:
             "- do not leave runtime idle on a stale operator stop alone\n"
             "- only use STATUS: needs_operator without Gemini for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, or when Gemini is unavailable/already inconclusive"
         )
+        self.operator_retriage_prompt = _normalize_prompt_text(
+            config.get("operator_retriage_prompt")
+            or
+            "ROLE: operator_retriage\n"
+            "OWNER: {runtime_verify_owner}\n"
+            "ACTIVE_CONTROL: {operator_request_path}\n"
+            "ACTIVE_CONTROL_SEQ: {stale_control_seq}\n"
+            "PENDING_AGE_SEC: {operator_wait_age_sec}\n"
+            "REASON: {stale_control_reason}\n"
+            "WORK: {latest_work_path}\n"
+            "VERIFY: {latest_verify_path}\n"
+            "GOAL:\n"
+            "- the active operator stop is pending or gated, so runtime should re-triage it instead of publishing operator wait immediately\n"
+            "- verify whether the stop is still a real operator-only decision after self-heal / triage / hibernate checks\n"
+            "- then write exactly one next control outcome\n"
+            "READ_FIRST:\n"
+            "- {runtime_verify_read_first_doc}\n"
+            "- verify/README.md\n"
+            "- {operator_request_path}\n"
+            "- {latest_work_path}\n"
+            "- {latest_verify_path}\n"
+            "OUTPUTS:\n"
+            "- .pipeline/claude_handoff.md (STATUS: implement, CONTROL_SEQ: {next_control_seq})\n"
+            "- .pipeline/gemini_request.md (STATUS: request_open, CONTROL_SEQ: {next_control_seq})\n"
+            "- .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: {next_control_seq})\n"
+            "RULES:\n"
+            "- write exactly one next control outcome\n"
+            "- prefer .pipeline/gemini_request.md before .pipeline/operator_request.md when the only blocker is next-slice ambiguity\n"
+            "- only keep STATUS: needs_operator if a real operator-only decision, approval/truth-sync blocker, or immediate safety stop still remains right now"
+        )
         self.verify_triage_prompt = _normalize_prompt_text(
             config.get("verify_triage_prompt")
             or config.get("codex_blocked_triage_prompt")
@@ -1875,6 +1906,7 @@ class WatcherCore:
         self._last_gemini_request_sig: str = self._get_path_sig(self.gemini_request_path)
         self._last_gemini_advice_sig: str = self._get_path_sig(self.gemini_advice_path)
         self._last_operator_request_sig: str = self._get_path_sig(self.operator_request_path)
+        self._last_operator_retriage_sig: str = ""
         self._last_session_arbitration_draft_sig: str = self._get_path_sig(self.session_arbitration_draft_path)
         self._last_session_arbitration_fingerprint: str = ""
         self._session_arbitration_snapshot_fingerprints: dict[str, str] = {}
@@ -1913,6 +1945,9 @@ class WatcherCore:
         # Claude idle timeout tracking
         self.claude_active_idle_timeout_sec: float = float(
             config.get("claude_active_idle_timeout_sec", 300)
+        )
+        self.operator_wait_retriage_sec: float = float(
+            config.get("operator_wait_retriage_sec", 3600)
         )
         self._last_progress_at: float = 0.0
         self._last_active_pane_fingerprint: str = ""
@@ -2407,6 +2442,63 @@ class WatcherCore:
         }
 
     # ------------------------------------------------------------------
+    def _operator_gate_marker(self) -> Optional[dict[str, object]]:
+        if not self._is_active_control(self.operator_request_path, "needs_operator"):
+            return None
+        try:
+            control_text = self.operator_request_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        decision = classify_operator_candidate(
+            control_text,
+            control_path=str(self.operator_request_path),
+            control_seq=self._read_control_seq_from_path(self.operator_request_path),
+            control_mtime=self._get_path_mtime(self.operator_request_path),
+            idle_stable=(
+                not self._latest_work_needs_verify_broad()
+                and not self._is_active_control(self.claude_handoff_path, "implement")
+                and self._get_gemini_request_mtime() == 0.0
+                and self._get_gemini_advice_mtime() == 0.0
+            ),
+        )
+        if bool(decision.get("operator_eligible")):
+            return None
+        return {
+            "control_file": "operator_request.md",
+            "control_seq": self._read_control_seq_from_path(self.operator_request_path),
+            "reason": str(decision.get("block_reason") or ""),
+            "mode": str(decision.get("suppressed_mode") or ""),
+            "routed_to": str(decision.get("routed_to") or ""),
+            "suppress_operator_until": str(decision.get("suppress_operator_until") or ""),
+            "fingerprint": str(decision.get("fingerprint") or ""),
+        }
+
+    # ------------------------------------------------------------------
+    def _idle_operator_retriage_marker(self) -> Optional[dict[str, object]]:
+        if not self._is_active_control(self.operator_request_path, "needs_operator"):
+            return None
+        control_mtime = self._get_path_mtime(self.operator_request_path)
+        if control_mtime <= 0:
+            return None
+        age_sec = max(0.0, time.time() - control_mtime)
+        if age_sec < self.operator_wait_retriage_sec:
+            return None
+        return {
+            "control_file": "operator_request.md",
+            "control_seq": self._read_control_seq_from_path(self.operator_request_path),
+            "reason": "operator_wait_idle_retriage",
+            "resolved_work_paths": [],
+            "operator_wait_age_sec": int(age_sec),
+        }
+
+    # ------------------------------------------------------------------
+    def _operator_control_recovery_marker(self) -> Optional[dict[str, object]]:
+        stale = self._stale_operator_control_marker()
+        if stale is not None:
+            return stale
+        return self._idle_operator_retriage_marker()
+
+    # ------------------------------------------------------------------
     def _path_mention(self, path: Optional[Path]) -> str:
         if path is None:
             return "(없음)"
@@ -2691,6 +2783,8 @@ class WatcherCore:
         """operator_request가 실제 pending stop이면 mtime을 반환한다."""
         if self._stale_operator_control_marker() is not None:
             return 0.0
+        if self._operator_gate_marker() is not None:
+            return 0.0
         if self._is_active_control(self.operator_request_path, "needs_operator"):
             return self._get_path_mtime(self.operator_request_path)
         return 0.0
@@ -2811,10 +2905,15 @@ class WatcherCore:
         This is a pure query — it does not trigger transitions or side effects.
         Used by both initial turn and rolling turn decisions.
         """
-        stale_operator = self._stale_operator_control_marker()
+        operator_recovery = self._operator_control_recovery_marker()
+        operator_gate = self._operator_gate_marker()
 
         # 1. operator_request active → operator
-        if self._is_active_control(self.operator_request_path, "needs_operator") and stale_operator is None:
+        if (
+            self._is_active_control(self.operator_request_path, "needs_operator")
+            and operator_recovery is None
+            and operator_gate is None
+        ):
             return "operator"
 
         # 2. gemini_request active → gemini
@@ -2841,7 +2940,11 @@ class WatcherCore:
             return "claude"
 
         # 6.5. stale operator stop cleared → codex follow-up
-        if stale_operator is not None:
+        if operator_recovery is not None:
+            return "codex_followup"
+
+        # 6.6. gated operator candidate → Codex follow-up or quiet hibernate
+        if operator_gate is not None and str(operator_gate.get("routed_to") or "") != "hibernate":
             return "codex_followup"
 
         # 7. fallback
@@ -2890,6 +2993,38 @@ class WatcherCore:
         self._last_idle_release_handoff_sig = self._get_path_sig(self.claude_handoff_path)
         self._last_idle_release_at = now
         self._transition_turn(WatcherTurnState.IDLE, "claude_idle_timeout")
+
+    # ------------------------------------------------------------------
+    def _check_operator_wait_idle_timeout(self) -> None:
+        if self._current_turn_state != WatcherTurnState.OPERATOR_WAIT:
+            return
+        marker = self._idle_operator_retriage_marker()
+        if marker is None:
+            return
+        operator_sig = self._get_path_sig(self.operator_request_path)
+        if not operator_sig or operator_sig == self._last_operator_retriage_sig:
+            return
+        target = self._role_pane_target("verify")
+        if not target:
+            return
+        codex_snapshot = _capture_pane_text(target)
+        if not _pane_text_is_idle(codex_snapshot):
+            return
+        self._last_operator_retriage_sig = operator_sig
+        self._clear_claude_blocked_state("operator_wait_idle_retriage")
+        self._transition_turn(
+            WatcherTurnState.CODEX_FOLLOWUP,
+            "operator_wait_idle_retriage",
+            active_control_file="operator_request.md",
+            active_control_seq=int(marker.get("control_seq") or -1),
+        )
+        self._log_raw(
+            "operator_request_idle_retriage",
+            str(self.operator_request_path),
+            "turn_signal",
+            marker,
+        )
+        self._notify_codex_operator_retriage("operator_wait_idle_retriage", marker)
 
     # ------------------------------------------------------------------
     def _is_idle_release_cooldown_active(self) -> bool:
@@ -2984,6 +3119,16 @@ class WatcherCore:
         return _normalize_prompt_text(self.control_recovery_prompt.format(**context))
 
     # ------------------------------------------------------------------
+    def _format_operator_retriage_prompt(self, marker: dict[str, object]) -> str:
+        context = {
+            **self._build_runtime_prompt_context(),
+            "stale_control_seq": str(marker.get("control_seq") or "none"),
+            "stale_control_reason": str(marker.get("reason") or "operator_wait_idle_retriage"),
+            "operator_wait_age_sec": str(marker.get("operator_wait_age_sec") or "0"),
+        }
+        return _normalize_prompt_text(self.operator_retriage_prompt.format(**context))
+
+    # ------------------------------------------------------------------
     def _notify_codex_control_recovery(self, reason: str, marker: dict[str, object]) -> None:
         """stale operator stop 해소 뒤 Codex가 다음 control을 재결정하도록 호출."""
         target = self._role_pane_target("verify")
@@ -2999,6 +3144,23 @@ class WatcherCore:
             {"reason": reason, **marker},
         )
         prompt = self._format_control_recovery_prompt(marker)
+        tmux_send_keys(target, prompt, self.dry_run, pane_type=pane_type)
+
+    # ------------------------------------------------------------------
+    def _notify_codex_operator_retriage(self, reason: str, marker: dict[str, object]) -> None:
+        target = self._role_pane_target("verify")
+        pane_type = self._role_pane_type("verify")
+        if not target:
+            log.warning("notify_codex_operator_retriage skipped: no verify owner target")
+            return
+        log.info("notify_codex_operator_retriage: reason=%s target=%s owner=%s", reason, target, self._role_owner("verify"))
+        self._log_raw(
+            "codex_operator_retriage_notify",
+            str(self.operator_request_path),
+            "turn_signal",
+            {"reason": reason, **marker},
+        )
+        prompt = self._format_operator_retriage_prompt(marker)
         tmux_send_keys(target, prompt, self.dry_run, pane_type=pane_type)
 
     # ------------------------------------------------------------------
@@ -3092,27 +3254,54 @@ class WatcherCore:
         if operator_sig and operator_sig != self._last_operator_request_sig:
             self._last_operator_request_sig = operator_sig
             status = self._read_status_from_path(self.operator_request_path) or "missing"
-            stale_operator = self._stale_operator_control_marker()
+            operator_recovery = self._operator_control_recovery_marker()
+            operator_gate = self._operator_gate_marker()
             if (
                 active_control is not None
                 and active_control.path == self.operator_request_path
                 and active_control.control_seq >= self._turn_active_control_seq
             ):
-                if stale_operator is not None:
-                    log.info("operator request updated but stale: Codex follow-up resumes")
-                    self._clear_claude_blocked_state("operator_request_stale_ignored")
+                if operator_recovery is not None:
+                    recovery_reason = str(operator_recovery.get("reason") or "verified_blockers_resolved")
+                    log.info("operator request updated but recoverable: Codex follow-up resumes (%s)", recovery_reason)
+                    self._clear_claude_blocked_state(recovery_reason)
                     self._transition_turn(
                         WatcherTurnState.CODEX_FOLLOWUP,
-                        "operator_request_stale_ignored",
+                        recovery_reason,
                         active_control_seq=active_control.control_seq,
                     )
+                    if recovery_reason == "operator_wait_idle_retriage":
+                        self._last_operator_retriage_sig = operator_sig
                     self._log_raw(
                         "operator_request_stale_ignored",
                         str(self.operator_request_path),
                         "turn_signal",
-                        {"status": status, **stale_operator},
+                        {"status": status, **operator_recovery},
                     )
-                    self._notify_codex_control_recovery("operator_request_stale_ignored", stale_operator)
+                    if recovery_reason == "operator_wait_idle_retriage":
+                        self._notify_codex_operator_retriage(recovery_reason, operator_recovery)
+                    else:
+                        self._notify_codex_control_recovery("operator_request_stale_ignored", operator_recovery)
+                    return
+                if operator_gate is not None:
+                    gate_reason = str(operator_gate.get("reason") or "operator_candidate_pending")
+                    self._clear_claude_blocked_state(gate_reason)
+                    self._log_raw(
+                        "operator_request_gated",
+                        str(self.operator_request_path),
+                        "turn_signal",
+                        {"status": status, **operator_gate},
+                    )
+                    if str(operator_gate.get("routed_to") or "") == "hibernate":
+                        self._transition_turn(WatcherTurnState.IDLE, "operator_request_gated_hibernate")
+                        return
+                    self._last_operator_retriage_sig = operator_sig
+                    self._transition_turn(
+                        WatcherTurnState.CODEX_FOLLOWUP,
+                        "operator_request_gated",
+                        active_control_seq=active_control.control_seq,
+                    )
+                    self._notify_codex_operator_retriage("operator_request_gated", operator_gate)
                     return
                 log.info("operator request updated: STATUS=needs_operator → Claude notify 차단")
                 self._clear_claude_blocked_state("operator_request_pending")
@@ -3604,15 +3793,31 @@ class WatcherCore:
                 return
             if turn == "codex_followup":
                 self._transition_turn(WatcherTurnState.CODEX_FOLLOWUP, "startup_turn_codex_followup")
-                stale_operator = self._stale_operator_control_marker()
-                if stale_operator is not None:
+                operator_recovery = self._operator_control_recovery_marker()
+                operator_gate = self._operator_gate_marker()
+                if operator_recovery is not None:
+                    recovery_reason = str(operator_recovery.get("reason") or "verified_blockers_resolved")
+                    if recovery_reason == "operator_wait_idle_retriage":
+                        self._last_operator_retriage_sig = self._get_path_sig(self.operator_request_path)
                     self._log_raw(
                         "operator_request_stale_ignored",
                         str(self.operator_request_path),
                         "startup",
-                        stale_operator,
+                        operator_recovery,
                     )
-                    self._notify_codex_control_recovery("startup_turn_stale_operator", stale_operator)
+                    if recovery_reason == "operator_wait_idle_retriage":
+                        self._notify_codex_operator_retriage("startup_turn_operator_idle_retriage", operator_recovery)
+                    else:
+                        self._notify_codex_control_recovery("startup_turn_stale_operator", operator_recovery)
+                elif operator_gate is not None:
+                    self._last_operator_retriage_sig = self._get_path_sig(self.operator_request_path)
+                    self._log_raw(
+                        "operator_request_gated",
+                        str(self.operator_request_path),
+                        "startup",
+                        operator_gate,
+                    )
+                    self._notify_codex_operator_retriage("startup_turn_operator_gated", operator_gate)
                 else:
                     self._notify_codex_followup("startup_turn_codex_followup")
                 return
@@ -3625,6 +3830,7 @@ class WatcherCore:
 
         # --- rolling handoff / operator 슬롯 감시 (Codex → Claude / operator 방향) ---
         self._check_pipeline_signal_updates()
+        self._check_operator_wait_idle_timeout()
 
         # --- 최신 control signal이 operator stop이면 자동 진행을 멈춤 ---
         _, handoff_mtime = self._get_latest_implement_handoff()

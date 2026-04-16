@@ -315,6 +315,7 @@ def _runtime_view(project: Path) -> dict[str, object]:
     watcher = dict(status.get("watcher") or {})
     control = dict(status.get("control") or {})
     active_round = dict(status.get("active_round") or {})
+    autonomy = dict(status.get("autonomy") or {})
     raw_events: list[dict[str, object]] = []
     event_lines: list[str] = []
     for event in read_runtime_event_tail(project, max_lines=12):
@@ -340,6 +341,16 @@ def _runtime_view(project: Path) -> dict[str, object]:
             reason = str(payload.get("reason") or "stale_operator_control")
             seq = payload.get("control_seq")
             subject = f"{reason} seq={seq}" if seq is not None else reason
+        elif event_type == "control_operator_gated":
+            reason = str(payload.get("reason") or "operator_gate")
+            mode = str(payload.get("mode") or "")
+            seq = payload.get("control_seq")
+            detail = " ".join(part for part in [reason, mode, f"seq={seq}" if seq is not None else ""] if part)
+            subject = detail
+        elif event_type == "autonomy_changed":
+            mode = str(payload.get("mode") or "")
+            reason = str(payload.get("block_reason") or "")
+            subject = " ".join(part for part in [mode, reason] if part)
         elif event_type == "runtime_started":
             subject = str(payload.get("runtime_state") or "")
         else:
@@ -358,6 +369,8 @@ def _runtime_view(project: Path) -> dict[str, object]:
         "control_file": str(control.get("active_control_file") or ""),
         "control_seq": int(control.get("active_control_seq") or -1),
         "control_status": str(control.get("active_control_status") or "none"),
+        "autonomy_mode": str(autonomy.get("mode") or "normal"),
+        "autonomy_reason": str(autonomy.get("block_reason") or ""),
         "active_round": active_round,
         "last_receipt_id": str(status.get("last_receipt_id") or ""),
         "lanes": lanes,
@@ -441,6 +454,8 @@ def build_snapshot(project: Path, session: str, runtime_view: dict[str, object] 
     control_file = str(runtime_view.get("control_file") or "")
     control_seq = int(runtime_view.get("control_seq") or -1)
     control_status = str(runtime_view.get("control_status") or "none")
+    autonomy_mode = str(runtime_view.get("autonomy_mode") or "normal")
+    autonomy_reason = str(runtime_view.get("autonomy_reason") or "")
     degraded_reason = str(runtime_view.get("degraded_reason") or "")
     degraded_reasons = [str(item) for item in list(runtime_view.get("degraded_reasons") or []) if str(item)]
 
@@ -455,6 +470,7 @@ def build_snapshot(project: Path, session: str, runtime_view: dict[str, object] 
         f"Latest verify: {verify_name} ({time_ago(verify_mtime)})" if verify_mtime else f"Latest verify: {verify_name}",
         "",
         f"Control: {_control_summary(control_file, control_seq, control_status)}",
+        f"Autonomy: {autonomy_mode}" + (f" / {autonomy_reason}" if autonomy_reason else ""),
         f"Round  : {active_round.get('state') or 'IDLE'}" + (
             f" / {active_round.get('job_id')}" if active_round.get("job_id") else ""
         ),
@@ -697,6 +713,8 @@ def draw(
     control_file = str(runtime_view.get("control_file") or "")
     control_seq = int(runtime_view.get("control_seq") or -1)
     control_status = str(runtime_view.get("control_status") or "none")
+    autonomy_mode = str(runtime_view.get("autonomy_mode") or "normal")
+    autonomy_reason = str(runtime_view.get("autonomy_reason") or "")
 
     safe_addstr(stdscr, row, 0, "│ ", CYAN)
     safe_addstr(stdscr, row, 2, "Latest work:   ", WHITE)
@@ -717,6 +735,14 @@ def draw(
     control_display = _control_summary(control_file, control_seq, control_status)
     control_attr = YELLOW if control_status == "needs_operator" else WHITE
     safe_addstr(stdscr, row, 17, control_display[:max(0, w - 20)], control_attr)
+    safe_addstr(stdscr, row, w - 1, "│", CYAN)
+    row += 1
+
+    safe_addstr(stdscr, row, 0, "│ ", CYAN)
+    safe_addstr(stdscr, row, 2, "Autonomy:      ", WHITE)
+    autonomy_display = autonomy_mode + (f" / {autonomy_reason}" if autonomy_reason else "")
+    autonomy_attr = YELLOW if autonomy_mode not in {"", "normal"} else WHITE
+    safe_addstr(stdscr, row, 17, autonomy_display[:max(0, w - 20)], autonomy_attr)
     safe_addstr(stdscr, row, w - 1, "│", CYAN)
     row += 1
 

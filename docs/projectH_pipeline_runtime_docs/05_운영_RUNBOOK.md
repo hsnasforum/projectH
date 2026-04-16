@@ -15,6 +15,7 @@
 3. round close는 receipt 없이는 인정하지 않습니다.
 4. 장애 시 “억지 재시도”보다 “현재 run 상태 보존 후 복구”를 우선합니다.
 5. next-slice ambiguity는 Gemini arbitration을 먼저 사용하고, `needs_operator`는 real operator-only decision에만 남깁니다.
+6. fresh `needs_operator`는 즉시 stop slot current truth가 아니라 24시간 gate 후보일 수 있으므로, `status.control`보다 `status.autonomy`를 먼저 확인합니다.
 
 ## 3. 일상 운영 절차
 
@@ -245,7 +246,23 @@ controller browser UI의 active runtime contract는 아래로 제한합니다.
 - watcher는 이 상태에서 startup/rolling turn을 `CODEX_FOLLOWUP`으로 다시 열고, Codex에게 다음 canonical control outcome을 다시 쓰도록 1회 control-recovery prompt를 보낼 수 있습니다.
 - 이때 browser/TUI 표면에서는 `control=none`이더라도 Codex lane이 `WORKING` / `followup`으로 보일 수 있습니다.
 
-## 6.10 duplicate supervisor
+## 6.10 gated operator candidate
+다음 조건이 동시에 보이면 gated operator candidate로 판단합니다.
+
+- `.pipeline/operator_request.md`는 존재하고 valid `STATUS: needs_operator` + `CONTROL_SEQ`를 가진다.
+- runtime `status.control`은 `none`이다.
+- runtime `status.autonomy.mode`가 `recovery`, `triage`, `hibernate`, `pending_operator` 중 하나다.
+- recent events에 `control_operator_gated` 또는 `autonomy_changed`가 보인다.
+
+이 상태의 의미:
+
+- canonical operator stop 파일은 남아 있지만, supervisor/watcher가 이를 즉시 operator wait current truth로 승격하지 않은 상태입니다.
+- `status.autonomy.block_reason`과 `suppress_operator_until`이 24시간 gate의 이유와 deadline입니다.
+- `recovery`면 lane/session/receipt/auth 계열 자가복구가 먼저이고, `triage`면 Codex/Gemini 판단이 먼저이며, `hibernate`면 현재는 idle stable이라 operator 호출 없이 unattended로 유지하는 편이 맞습니다.
+- `pending_operator`는 immediate safety/approval/truth-sync는 아니지만 아직 exact self-route가 닫히지 않은 후보라는 뜻입니다.
+- 이 상태에서 operator는 stop 파일만 보고 즉시 재기동/강제 attach하지 말고, Codex follow-up 또는 gate window 경과 여부를 먼저 확인해야 합니다.
+
+## 6.11 duplicate supervisor
 다음 조건이 보이면 duplicate supervisor로 판단합니다.
 
 - 같은 `project_root + session`으로 `pipeline_runtime.cli daemon`이 2개 이상 떠 있음

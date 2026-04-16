@@ -279,6 +279,36 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
             self.assertEqual(runtime_view["control_status"], "needs_operator")
             self.assertTrue(any("control_changed needs_operator" in line for line in runtime_view["event_lines"]))
 
+    def test_build_snapshot_surfaces_autonomy_when_operator_is_gated(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-autonomy-") as tmp:
+            project = Path(tmp).resolve()
+            session = _session_name_for(project)
+
+            lines = pipeline_launcher.build_snapshot(
+                project,
+                session,
+                runtime_view={
+                    "runtime_state": "RUNNING",
+                    "watcher_alive": True,
+                    "watcher_pid": 2020,
+                    "work_name": "—",
+                    "work_mtime": 0.0,
+                    "verify_name": "—",
+                    "verify_mtime": 0.0,
+                    "control_file": "",
+                    "control_seq": -1,
+                    "control_status": "none",
+                    "autonomy_mode": "triage",
+                    "autonomy_reason": "slice_ambiguity",
+                    "active_round": {"state": "IDLE"},
+                    "lanes": [],
+                    "event_lines": [],
+                    "events": [],
+                },
+            )
+
+        self.assertTrue(any("Autonomy: triage / slice_ambiguity" in line for line in lines))
+
     def test_launcher_source_keeps_runtime_wording_for_attach_and_start_pending(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "pipeline-launcher.py").read_text(encoding="utf-8")
         self.assertNotIn("def tmux_attach", source)

@@ -81,6 +81,16 @@ def _runtime_status_or_placeholder() -> dict:
         "runtime_state": "STOPPED",
         "degraded_reason": "",
         "degraded_reasons": [],
+        "autonomy": {
+            "mode": "normal",
+            "block_reason": "",
+            "first_seen_at": "",
+            "suppress_operator_until": "",
+            "operator_eligible": False,
+            "same_fingerprint_retries": 0,
+            "last_self_heal_at": "",
+            "last_self_triage_at": "",
+        },
         "control": {
             "active_control_file": "",
             "active_control_seq": -1,

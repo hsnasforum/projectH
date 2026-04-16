@@ -8,6 +8,8 @@ from typing import Any
 
 class TmuxAdapter:
     LANE_INDEX = {"Claude": 0, "Codex": 1, "Gemini": 2}
+    DEFAULT_SESSION_COLS = 240
+    DEFAULT_SESSION_ROWS = 72
 
     def __init__(self, project_root: Path, session_name: str, *, run_id: str = "") -> None:
         self.project_root = project_root
@@ -16,6 +18,14 @@ class TmuxAdapter:
 
     def _run(self, cmd: list[str], *, timeout: float = 8.0) -> subprocess.CompletedProcess[str]:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+    def _run_required(self, cmd: list[str], *, timeout: float = 8.0, label: str = "") -> subprocess.CompletedProcess[str]:
+        result = self._run(cmd, timeout=timeout)
+        if result.returncode != 0:
+            tag = f" ({label})" if label else ""
+            detail = result.stderr.strip() or "non-zero exit"
+            raise RuntimeError(f"required tmux command failed{tag}: {detail}")
+        return result
 
     def _pane_pid(self, pane_id: str) -> int | None:
         result = self._run(["tmux", "display-message", "-p", "-t", pane_id, "#{pane_pid}"], timeout=5.0)
@@ -37,16 +47,43 @@ class TmuxAdapter:
     def create_scaffold(self) -> dict[str, str]:
         self.kill_session()
         result = self._run(
-            ["tmux", "new-session", "-d", "-s", self.session_name, "-c", str(self.project_root), "bash"],
+            [
+                "tmux",
+                "new-session",
+                "-d",
+                "-x",
+                str(self.DEFAULT_SESSION_COLS),
+                "-y",
+                str(self.DEFAULT_SESSION_ROWS),
+                "-s",
+                self.session_name,
+                "-c",
+                str(self.project_root),
+                "bash",
+            ],
             timeout=10.0,
         )
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or "tmux new-session failed")
 
-        session_options = [
-            ["tmux", "set-option", "-g", "destroy-unattached", "off"],
-            ["tmux", "set-option", "-g", "exit-empty", "off"],
-            ["tmux", "set-option", "-t", self.session_name, "destroy-unattached", "off"],
+        try:
+            return self._bootstrap_scaffold()
+        except Exception:
+            self._run(["tmux", "kill-session", "-t", self.session_name], timeout=5.0)
+            raise
+
+    def _bootstrap_scaffold(self) -> dict[str, str]:
+        required_options = [
+            (["tmux", "set-option", "-g", "destroy-unattached", "off"], "global destroy-unattached"),
+            (["tmux", "set-option", "-g", "exit-empty", "off"], "global exit-empty"),
+            (["tmux", "set-option", "-t", self.session_name, "window-size", "manual"], "window-size manual"),
+            (["tmux", "set-option", "-t", self.session_name, "destroy-unattached", "off"], "session destroy-unattached"),
+            (["tmux", "set-window-option", "-t", f"{self.session_name}:0", "remain-on-exit", "on"], "remain-on-exit"),
+        ]
+        for cmd, label in required_options:
+            self._run_required(cmd, timeout=5.0, label=label)
+
+        cosmetic_options = [
             ["tmux", "set-option", "-t", self.session_name, "mouse", "on"],
             ["tmux", "set-option", "-t", self.session_name, "status-position", "bottom"],
             ["tmux", "set-option", "-t", self.session_name, "status-style", "bg=colour235,fg=colour250"],
@@ -73,17 +110,18 @@ class TmuxAdapter:
             ],
             ["tmux", "set-window-option", "-t", self.session_name, "window-status-format", "#I:#W"],
             ["tmux", "set-window-option", "-t", self.session_name, "window-status-current-format", "#[bold]#I:#W"],
-            ["tmux", "set-window-option", "-t", f"{self.session_name}:0", "remain-on-exit", "on"],
         ]
-        for cmd in session_options:
+        for cmd in cosmetic_options:
             self._run(cmd, timeout=5.0)
         self._run(["tmux", "set-option", "-u", "-t", self.session_name, "status-format[1]"], timeout=5.0)
 
-        claude_pane = self._run(
+        claude_pane = self._run_required(
             ["tmux", "display-message", "-t", f"{self.session_name}:0.0", "-p", "#{pane_id}"],
-            timeout=5.0,
+            timeout=5.0, label="base pane id",
         ).stdout.strip()
-        codex_pane = self._run(
+        if not claude_pane:
+            raise RuntimeError("required tmux command failed (base pane id): empty pane id")
+        codex_pane = self._run_required(
             [
                 "tmux",
                 "split-window",
@@ -97,9 +135,11 @@ class TmuxAdapter:
                 str(self.project_root),
                 "bash",
             ],
-            timeout=5.0,
+            timeout=5.0, label="split Codex pane",
         ).stdout.strip()
-        gemini_pane = self._run(
+        if not codex_pane:
+            raise RuntimeError("required tmux command failed (split Codex pane): empty pane id")
+        gemini_pane = self._run_required(
             [
                 "tmux",
                 "split-window",
@@ -113,9 +153,14 @@ class TmuxAdapter:
                 str(self.project_root),
                 "bash",
             ],
-            timeout=5.0,
+            timeout=5.0, label="split Gemini pane",
         ).stdout.strip()
-        self._run(["tmux", "select-layout", "-t", f"{self.session_name}:0", "even-horizontal"], timeout=5.0)
+        if not gemini_pane:
+            raise RuntimeError("required tmux command failed (split Gemini pane): empty pane id")
+        self._run_required(
+            ["tmux", "select-layout", "-t", f"{self.session_name}:0", "even-horizontal"],
+            timeout=5.0, label="select-layout",
+        )
         return {"Claude": claude_pane, "Codex": codex_pane, "Gemini": gemini_pane}
 
     def list_panes(self) -> list[dict[str, Any]]:

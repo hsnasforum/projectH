@@ -3219,6 +3219,388 @@ class WebAppServiceTest(unittest.TestCase):
                 aggregate["aggregate_key"]["normalized_delta_fingerprint"],
             )
 
+    def test_recurrence_aggregate_reject_defer_do_not_surface_as_supporting_review_refs(self) -> None:
+        """reject/defer review outcomes stay source-message audit-only; only accept surfaces as aggregate support."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "source-reject.md"
+            second_source_path = tmp_path / "source-defer.md"
+            shared_body = "# Reject Defer Test\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "aggregate-reject-defer-suppression"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            # first source message: correct, confirm, reject
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_artifact_id = first["response"]["artifact_id"]
+            first_smid = first["response"]["source_message_id"]
+            first_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": first_smid, "corrected_text": corrected_text}
+            )
+            first_msg = [
+                m for m in first_corrected["session"]["messages"]
+                if m.get("artifact_id") == first_artifact_id and m.get("original_response_snapshot")
+            ][-1]
+            first_candidate = first_msg["session_local_candidate"]
+            service.submit_candidate_confirmation(
+                {
+                    "session_id": session_id,
+                    "message_id": first_smid,
+                    "candidate_id": first_candidate["candidate_id"],
+                    "candidate_updated_at": first_candidate["updated_at"],
+                }
+            )
+            rejected = service.submit_candidate_review(
+                {
+                    "session_id": session_id,
+                    "message_id": first_smid,
+                    "candidate_id": first_candidate["candidate_id"],
+                    "candidate_updated_at": first_candidate["updated_at"],
+                    "review_action": "reject",
+                }
+            )
+            self.assertEqual(rejected["candidate_review_record"]["review_action"], "reject")
+            self.assertEqual(rejected["candidate_review_record"]["review_status"], "rejected")
+
+            # second source message: correct, confirm, defer
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_smid = second["response"]["source_message_id"]
+            second_artifact_id = second["response"]["artifact_id"]
+            second_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": second_smid, "corrected_text": corrected_text}
+            )
+            second_msg = [
+                m for m in second_corrected["session"]["messages"]
+                if m.get("artifact_id") == second_artifact_id and m.get("original_response_snapshot")
+            ][-1]
+            second_candidate = second_msg["session_local_candidate"]
+            service.submit_candidate_confirmation(
+                {
+                    "session_id": session_id,
+                    "message_id": second_smid,
+                    "candidate_id": second_candidate["candidate_id"],
+                    "candidate_updated_at": second_candidate["updated_at"],
+                }
+            )
+            deferred = service.submit_candidate_review(
+                {
+                    "session_id": session_id,
+                    "message_id": second_smid,
+                    "candidate_id": second_candidate["candidate_id"],
+                    "candidate_updated_at": second_candidate["updated_at"],
+                    "review_action": "defer",
+                }
+            )
+            self.assertEqual(deferred["candidate_review_record"]["review_action"], "defer")
+            self.assertEqual(deferred["candidate_review_record"]["review_status"], "deferred")
+
+            # aggregate should exist (recurrence key matches) but have NO supporting_review_refs
+            payload = deferred
+            self.assertIn("recurrence_aggregate_candidates", payload["session"])
+            aggregates = payload["session"]["recurrence_aggregate_candidates"]
+            self.assertTrue(len(aggregates) >= 1)
+            aggregate = aggregates[0]
+            self.assertEqual(aggregate["recurrence_count"], 2)
+            self.assertNotIn(
+                "supporting_review_refs",
+                aggregate,
+                "reject/defer review outcomes must not surface as aggregate supporting_review_refs",
+            )
+
+    def test_stored_transition_record_reject_defer_review_refs_sanitized_on_reload(self) -> None:
+        """Pre-fix stored transition/conflict records with reject/defer supporting_review_refs must not resurface them."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "source-stored-a.md"
+            second_source_path = tmp_path / "source-stored-b.md"
+            shared_body = "# Stored Sanitize Test\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "stored-review-ref-sanitize"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            # Step 1: first file → correct → confirm → accept review
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_smid = first["response"]["source_message_id"]
+            first_artifact_id = first["response"]["artifact_id"]
+            first_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": first_smid, "corrected_text": corrected_text}
+            )
+            first_msg = [
+                m for m in first_corrected["session"]["messages"]
+                if m.get("artifact_id") == first_artifact_id and m.get("original_response_snapshot")
+            ][-1]
+            first_candidate = first_msg["session_local_candidate"]
+            service.submit_candidate_confirmation(
+                {
+                    "session_id": session_id, "message_id": first_smid,
+                    "candidate_id": first_candidate["candidate_id"],
+                    "candidate_updated_at": first_candidate["updated_at"],
+                }
+            )
+            service.submit_candidate_review(
+                {
+                    "session_id": session_id, "message_id": first_smid,
+                    "candidate_id": first_candidate["candidate_id"],
+                    "candidate_updated_at": first_candidate["updated_at"],
+                    "review_action": "accept",
+                }
+            )
+
+            # Step 2: second file → correct → aggregate emerges unblocked
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_smid = second["response"]["source_message_id"]
+            payload = service.submit_correction(
+                {"session_id": session_id, "message_id": second_smid, "corrected_text": corrected_text}
+            )
+            aggregate = payload["session"]["recurrence_aggregate_candidates"][0]
+            aggregate_fingerprint = aggregate["aggregate_key"]["normalized_delta_fingerprint"]
+
+            # Step 3: emit transition → creates stored reviewed_memory_emitted_transition_records
+            emitted = service.emit_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "operator_reason_or_note": "stored sanitize test",
+                }
+            )
+            canonical_transition_id = emitted["canonical_transition_id"]
+
+            # Verify stored transition record actually exists and has accepted review refs
+            session = service.session_store.get_session(session_id)
+            stored_records = session.get("reviewed_memory_emitted_transition_records")
+            self.assertIsInstance(stored_records, list)
+            self.assertTrue(len(stored_records) >= 1, "transition record must be stored after emit")
+            transition_rec = stored_records[0]
+            accept_refs = transition_rec.get("supporting_review_refs", [])
+            self.assertTrue(len(accept_refs) >= 1, "emitted transition must carry accepted review refs")
+            self.assertEqual(accept_refs[0]["review_action"], "accept")
+
+            # Simulate pre-fix stored state: inject a reject ref into the stored transition record
+            reject_ref = {
+                "artifact_id": first_artifact_id,
+                "source_message_id": first_smid,
+                "candidate_id": first_candidate["candidate_id"],
+                "candidate_updated_at": first_candidate["updated_at"],
+                "review_action": "reject",
+                "review_status": "rejected",
+                "recorded_at": "2026-04-10T00:00:00+00:00",
+            }
+            for rec in stored_records:
+                existing_refs = rec.get("supporting_review_refs", [])
+                if not isinstance(existing_refs, list):
+                    existing_refs = []
+                rec["supporting_review_refs"] = existing_refs + [reject_ref]
+            service.session_store._save(session_id, session)
+
+            # Reload and verify: transition record must not contain reject ref
+            reloaded_session = service.session_store.get_session(session_id)
+            reloaded_payload = service._serialize_session(reloaded_session)
+            reloaded_aggregate = reloaded_payload["recurrence_aggregate_candidates"][0]
+
+            # Live aggregate supporting_review_refs should still be accept-only
+            self.assertIn("supporting_review_refs", reloaded_aggregate)
+            for ref in reloaded_aggregate["supporting_review_refs"]:
+                self.assertEqual(ref["review_action"], "accept")
+
+            # Stored transition record must exist and be sanitized
+            transition_record = reloaded_aggregate.get("reviewed_memory_transition_record")
+            self.assertIsNotNone(
+                transition_record,
+                "emitted transition record must still be present on reload",
+            )
+            stored_refs = transition_record.get("supporting_review_refs", [])
+            for ref in stored_refs:
+                self.assertEqual(
+                    ref["review_action"], "accept",
+                    "stored transition record must not resurface reject/defer review refs",
+                )
+            reject_actions = [r for r in stored_refs if r.get("review_action") in ("reject", "defer")]
+            self.assertEqual(reject_actions, [], "no reject/defer refs should survive sanitize")
+
+    def test_stored_conflict_visibility_record_reject_defer_review_refs_sanitized_on_reload(self) -> None:
+        """Pre-fix stored conflict-visibility records with reject/defer supporting_review_refs must not resurface them."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "source-cv-a.md"
+            second_source_path = tmp_path / "source-cv-b.md"
+            shared_body = "# CV Sanitize Test\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "stored-cv-review-ref-sanitize"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            # Step 1: first file → correct → confirm → accept review
+            first = service.handle_chat(
+                {"session_id": session_id, "source_path": str(first_source_path), "provider": "mock"}
+            )
+            first_smid = first["response"]["source_message_id"]
+            first_artifact_id = first["response"]["artifact_id"]
+            first_corrected = service.submit_correction(
+                {"session_id": session_id, "message_id": first_smid, "corrected_text": corrected_text}
+            )
+            first_msg = [
+                m for m in first_corrected["session"]["messages"]
+                if m.get("artifact_id") == first_artifact_id and m.get("original_response_snapshot")
+            ][-1]
+            first_candidate = first_msg["session_local_candidate"]
+            service.submit_candidate_confirmation(
+                {
+                    "session_id": session_id, "message_id": first_smid,
+                    "candidate_id": first_candidate["candidate_id"],
+                    "candidate_updated_at": first_candidate["updated_at"],
+                }
+            )
+            service.submit_candidate_review(
+                {
+                    "session_id": session_id, "message_id": first_smid,
+                    "candidate_id": first_candidate["candidate_id"],
+                    "candidate_updated_at": first_candidate["updated_at"],
+                    "review_action": "accept",
+                }
+            )
+
+            # Step 2: second file → correct → aggregate emerges unblocked
+            second = service.handle_chat(
+                {"session_id": session_id, "source_path": str(second_source_path), "provider": "mock"}
+            )
+            second_smid = second["response"]["source_message_id"]
+            payload = service.submit_correction(
+                {"session_id": session_id, "message_id": second_smid, "corrected_text": corrected_text}
+            )
+            aggregate = payload["session"]["recurrence_aggregate_candidates"][0]
+            aggregate_fingerprint = aggregate["aggregate_key"]["normalized_delta_fingerprint"]
+
+            # Step 3: full lifecycle → emit → apply → confirm → stop → reverse → conflict-visibility
+            emitted = service.emit_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "operator_reason_or_note": "cv sanitize test",
+                }
+            )
+            canonical_transition_id = emitted["canonical_transition_id"]
+
+            service.apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            service.confirm_aggregate_transition_result(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            service.stop_apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            service.reverse_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            cv_result = service.check_aggregate_conflict_visibility(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertTrue(cv_result["ok"])
+
+            # Verify stored conflict-visibility record exists
+            session = service.session_store.get_session(session_id)
+            stored_records = session.get("reviewed_memory_emitted_transition_records")
+            self.assertIsInstance(stored_records, list)
+            cv_records = [
+                r for r in stored_records
+                if isinstance(r, dict)
+                and r.get("transition_action") == "future_reviewed_memory_conflict_visibility"
+            ]
+            self.assertTrue(len(cv_records) >= 1, "conflict-visibility record must be stored")
+
+            # Simulate pre-fix stored state: inject reject/defer refs into stored conflict-visibility record
+            reject_ref = {
+                "artifact_id": first_artifact_id,
+                "source_message_id": first_smid,
+                "candidate_id": first_candidate["candidate_id"],
+                "candidate_updated_at": first_candidate["updated_at"],
+                "review_action": "reject",
+                "review_status": "rejected",
+                "recorded_at": "2026-04-10T00:00:00+00:00",
+            }
+            defer_ref = dict(reject_ref)
+            defer_ref["review_action"] = "defer"
+            defer_ref["review_status"] = "deferred"
+            for rec in stored_records:
+                existing_refs = rec.get("supporting_review_refs", [])
+                if not isinstance(existing_refs, list):
+                    existing_refs = []
+                rec["supporting_review_refs"] = existing_refs + [reject_ref, defer_ref]
+            service.session_store._save(session_id, session)
+
+            # Reload and verify: conflict-visibility record must not contain reject/defer refs
+            reloaded_session = service.session_store.get_session(session_id)
+            reloaded_payload = service._serialize_session(reloaded_session)
+            reloaded_aggregate = reloaded_payload["recurrence_aggregate_candidates"][0]
+
+            conflict_record = reloaded_aggregate.get("reviewed_memory_conflict_visibility_record")
+            self.assertIsNotNone(
+                conflict_record,
+                "conflict-visibility record must still be present on reload",
+            )
+            stored_refs = conflict_record.get("supporting_review_refs", [])
+            for ref in stored_refs:
+                self.assertEqual(
+                    ref["review_action"], "accept",
+                    "stored conflict-visibility record must not resurface reject/defer review refs",
+                )
+            bad_actions = [r for r in stored_refs if r.get("review_action") in ("reject", "defer")]
+            self.assertEqual(bad_actions, [], "no reject/defer refs should survive sanitize")
+
     def test_recurrence_aggregate_candidates_do_not_materialize_from_save_support_or_historical_adjunct_only(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

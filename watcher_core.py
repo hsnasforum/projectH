@@ -1588,7 +1588,10 @@ class StateMachine:
                         self.dedupe.forget(job.job_id, job.round, job.artifact_hash, "slot_verify")
                         job.last_failed_dispatch_at = time.time()
                         job.dispatch_fail_count += 1
-                        job.last_failed_dispatch_snapshot = current_pane
+                        # If the pane is already back at an idle prompt, keep only the timed
+                        # backoff and let the next retry re-dispatch instead of permanently
+                        # pinning VERIFY_PENDING on the same visible snapshot.
+                        job.last_failed_dispatch_snapshot = "" if codex_idle else current_pane
                         job.last_dispatch_slot = ""
                         self.lease.release("slot_verify")
                         job.transition(
@@ -2096,9 +2099,26 @@ class WatcherCore:
         return ""
 
     # ------------------------------------------------------------------
+    def _implement_control_should_surface_working(self, active_control: Optional[ControlSignal]) -> bool:
+        if active_control is None:
+            return False
+        if active_control.status != "implement" or active_control.control_seq < 0:
+            return False
+        implement_target = self._role_pane_target("implement")
+        if not implement_target:
+            return False
+        pane_text = _capture_pane_text(implement_target)
+        if not pane_text.strip():
+            return False
+        return not _pane_text_is_idle(pane_text)
+
+    # ------------------------------------------------------------------
     def _build_lane_statuses(self, heartbeat_iso: str) -> list[dict[str, object]]:
         lane_statuses: list[dict[str, object]] = []
         active_lane = self._active_lane_name_for_turn()
+        active_control = self._get_active_control_signal()
+        implement_lane = self._role_owner("implement") or ""
+        implement_live = self._implement_control_should_surface_working(active_control)
         seen_names: set[str] = set()
         lane_configs = self.runtime_lane_configs or [
             {"name": "Claude", "enabled": True},
@@ -2113,7 +2133,7 @@ class WatcherCore:
             enabled = bool(lane.get("enabled", True))
             state = "OFF"
             if enabled:
-                state = "WORKING" if name == active_lane else "READY"
+                state = "WORKING" if name == active_lane or (implement_live and name == implement_lane) else "READY"
             lane_statuses.append(
                 {
                     "name": name,
@@ -2128,7 +2148,11 @@ class WatcherCore:
             lane_statuses.append(
                 {
                     "name": fallback_name,
-                    "state": "WORKING" if fallback_name == active_lane else "READY",
+                    "state": (
+                        "WORKING"
+                        if fallback_name == active_lane or (implement_live and fallback_name == implement_lane)
+                        else "READY"
+                    ),
                     "attachable": True,
                     "last_heartbeat_at": heartbeat_iso,
                 }

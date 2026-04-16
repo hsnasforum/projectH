@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "receipt_id": "20260416-2026-04-16-reviewed-memory-rever-04243453-r1",
+  "run_id": "20260415T170738Z-p3369000",
+  "job_id": "20260416-2026-04-16-reviewed-memory-rever-04243453",
+  "round": 1,
+  "target_lane": "codex",
+  "artifact_path": "/home/xpdlqj/code/projectH/verify/4/16/2026-04-16-controller-office-reset-base-verification.md",
+  "artifact_hash": "sha256:84296ae0f7ac3312f7885e475eb93cd5ad20832b82b116c28a84582cda604f7d",
+  "verify_manifest_path": "/home/xpdlqj/code/projectH/.pipeline/manifests/20260416-2026-04-16-reviewed-memory-rever-04243453/round-1.verify.json",
+  "verify_result": "passed_by_feedback",
+  "control_seq": 169,
+  "closed_at": "2026-04-15T17:07:35.900598Z",
+  "emitted_by": "supervisor"
+}

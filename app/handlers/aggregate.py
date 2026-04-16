@@ -11,6 +11,7 @@ from core.contracts import (
     CandidateReviewAction,
     RecordStage,
     ResultStage,
+    sanitize_supporting_review_refs,
 )
 
 
@@ -265,9 +266,11 @@ class AggregateHandlerMixin:
             "task_log_mirror_relation": "mirror_allowed_not_canonical",
             "emitted_at": now,
         }
-        supporting_review_refs = target_aggregate.get("supporting_review_refs")
-        if isinstance(supporting_review_refs, list) and supporting_review_refs:
-            transition_record["supporting_review_refs"] = list(supporting_review_refs)
+        supporting_review_refs = sanitize_supporting_review_refs(
+            target_aggregate.get("supporting_review_refs")
+        )
+        if supporting_review_refs:
+            transition_record["supporting_review_refs"] = supporting_review_refs
 
         existing_records = session.get("reviewed_memory_emitted_transition_records")
         if not isinstance(existing_records, list):
@@ -650,9 +653,11 @@ class AggregateHandlerMixin:
             "task_log_mirror_relation": "mirror_allowed_not_canonical",
             "checked_at": now,
         }
-        supporting_review_refs = target_record.get("supporting_review_refs")
-        if isinstance(supporting_review_refs, list) and supporting_review_refs:
-            conflict_visibility_record["supporting_review_refs"] = list(supporting_review_refs)
+        supporting_review_refs = sanitize_supporting_review_refs(
+            target_record.get("supporting_review_refs")
+        )
+        if supporting_review_refs:
+            conflict_visibility_record["supporting_review_refs"] = supporting_review_refs
 
         existing_records.append(conflict_visibility_record)
         session["reviewed_memory_emitted_transition_records"] = existing_records

@@ -122,6 +122,74 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(receipt["control_seq"], 17)
             self.assertEqual(receipt["verify_result"], "passed_by_feedback")
 
+    def test_write_status_clears_live_fields_when_runtime_has_stopped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "claude_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: 17\n",
+                encoding="utf-8",
+            )
+            (state_dir / "turn_state.json").write_text(
+                json.dumps(
+                    {
+                        "state": "CODEX_VERIFY",
+                        "entered_at": 1.0,
+                        "active_control_file": ".pipeline/claude_handoff.md",
+                        "active_control_seq": 17,
+                        "verify_job_id": "job-stop-1",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "job-stop-1.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-stop-1",
+                        "status": "VERIFY_RUNNING",
+                        "artifact_path": "work/4/16/work-note.md",
+                        "artifact_hash": "artifact-hash-stop-1",
+                        "round": 1,
+                        "updated_at": 100.0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": False, "pid": None}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=False),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": "prompt_visible"},
+                            {"name": "Codex", "state": "WORKING", "attachable": True, "pid": 12, "note": "seq 17"},
+                        ],
+                        {"Claude": {}, "Codex": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status(force_runtime_state="STOPPED")
+
+            self.assertEqual(status["runtime_state"], "STOPPED")
+            self.assertEqual(status["control"]["active_control_status"], "none")
+            self.assertEqual(status["control"]["active_control_seq"], -1)
+            self.assertIsNone(status["active_round"])
+            self.assertEqual(status["watcher"]["alive"], False)
+            self.assertEqual([lane["state"] for lane in status["lanes"]], ["OFF", "OFF"])
+            self.assertEqual([lane["pid"] for lane in status["lanes"]], [None, None])
+            self.assertEqual([lane["attachable"] for lane in status["lanes"]], [False, False])
+            self.assertEqual([lane["note"] for lane in status["lanes"]], ["stopped", "stopped"])
+
     def test_current_run_pointer_tracks_run_scoped_status_and_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -419,6 +487,134 @@ class RuntimeSupervisorTest(unittest.TestCase):
                     },
                 )
             codex = next(lane for lane in lanes if lane["name"] == "Codex")
+            self.assertEqual(codex["state"], "WORKING")
+            self.assertEqual(codex["note"], "verifying")
+
+    def test_active_implement_turn_keeps_claude_surface_working_even_if_wrapper_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            with mock.patch.object(
+                supervisor.adapter,
+                "lane_health",
+                return_value={"alive": True, "pid": 31337, "attachable": True, "pane_id": "%1"},
+            ):
+                lanes, _models = supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Claude": {
+                            "state": "READY",
+                            "note": "prompt_visible",
+                            "last_event_at": "2026-04-16T07:02:45.265662Z",
+                            "last_heartbeat_at": "2026-04-16T07:02:51.125129Z",
+                        }
+                    },
+                    active_lane="Claude",
+                    active_round=None,
+                    turn_state={"state": "CLAUDE_ACTIVE"},
+                    control={"active_control_status": "implement"},
+                )
+            claude = next(lane for lane in lanes if lane["name"] == "Claude")
+            self.assertEqual(claude["state"], "WORKING")
+            self.assertEqual(claude["note"], "implement")
+
+    def test_active_implement_control_keeps_claude_working_even_during_verify_follow_on(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    return_value={"alive": True, "pid": 31337, "attachable": True, "pane_id": "%1"},
+                ),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "capture_tail",
+                    side_effect=lambda lane_name, lines=80: (
+                        "• Working (12s • esc to interrupt)\n"
+                        if lane_name == "Claude"
+                        else ""
+                    ),
+                ),
+            ):
+                lanes, _models = supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Claude": {
+                            "state": "READY",
+                            "note": "prompt_visible",
+                            "last_event_at": "2026-04-16T07:07:03.432725Z",
+                            "last_heartbeat_at": "2026-04-16T07:07:03.432725Z",
+                        },
+                        "Codex": {
+                            "state": "WORKING",
+                            "note": "verifying",
+                            "last_event_at": "2026-04-16T07:07:03.557365Z",
+                            "last_heartbeat_at": "2026-04-16T07:07:03.557365Z",
+                        },
+                    },
+                    active_lane="Codex",
+                    active_round={
+                        "job_id": "job-42",
+                        "state": "VERIFYING",
+                        "status": "VERIFY_RUNNING",
+                    },
+                    turn_state={"state": "IDLE", "reason": "claude_activity_detected"},
+                    control={"active_control_status": "implement", "active_control_seq": 180},
+                )
+            claude = next(lane for lane in lanes if lane["name"] == "Claude")
+            codex = next(lane for lane in lanes if lane["name"] == "Codex")
+            self.assertEqual(claude["state"], "WORKING")
+            self.assertEqual(claude["note"], "implement")
+            self.assertEqual(codex["state"], "WORKING")
+            self.assertEqual(codex["note"], "verifying")
+
+    def test_idle_implement_owner_stays_ready_during_verify_follow_on(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    return_value={"alive": True, "pid": 31337, "attachable": True, "pane_id": "%1"},
+                ),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "capture_tail",
+                    side_effect=lambda lane_name, lines=80: "❯ " if lane_name == "Claude" else "",
+                ),
+            ):
+                lanes, _models = supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Claude": {
+                            "state": "READY",
+                            "note": "prompt_visible",
+                            "last_event_at": "2026-04-16T07:07:03.432725Z",
+                            "last_heartbeat_at": "2026-04-16T07:07:03.432725Z",
+                        },
+                        "Codex": {
+                            "state": "WORKING",
+                            "note": "verifying",
+                            "last_event_at": "2026-04-16T07:07:03.557365Z",
+                            "last_heartbeat_at": "2026-04-16T07:07:03.557365Z",
+                        },
+                    },
+                    active_lane="Codex",
+                    active_round={
+                        "job_id": "job-42",
+                        "state": "VERIFYING",
+                        "status": "VERIFY_RUNNING",
+                    },
+                    turn_state={"state": "IDLE", "reason": "verify_running"},
+                    control={"active_control_status": "implement", "active_control_seq": 180},
+                )
+            claude = next(lane for lane in lanes if lane["name"] == "Claude")
+            codex = next(lane for lane in lanes if lane["name"] == "Codex")
+            self.assertEqual(claude["state"], "READY")
+            self.assertEqual(claude["note"], "prompt_visible")
             self.assertEqual(codex["state"], "WORKING")
             self.assertEqual(codex["note"], "verifying")
 

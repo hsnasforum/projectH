@@ -260,6 +260,17 @@ CANDIDATE_REVIEW_ACTION_TO_STATUS: dict[str, str] = {
 }
 
 
+def sanitize_supporting_review_refs(refs: object) -> list[dict]:
+    """Return only accepted review refs; reject/defer stay source-message audit-only."""
+    if not isinstance(refs, list):
+        return []
+    return [
+        dict(ref) for ref in refs
+        if isinstance(ref, dict)
+        and str(ref.get("review_action") or "").strip() == CandidateReviewAction.ACCEPT
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Stream event types
 # ---------------------------------------------------------------------------

@@ -24,7 +24,6 @@ from pipeline_gui.backend import (
     pipeline_stop as backend_pipeline_stop,
     read_runtime_status,
     runtime_capture_tail as backend_runtime_capture_tail,
-    runtime_attach as backend_runtime_attach,
 )
 from pipeline_gui.project import _session_name_for
 
@@ -106,67 +105,6 @@ def _runtime_status_or_placeholder() -> dict:
     }
 
 
-def _compat_agents(runtime_status: dict) -> list[dict]:
-    agents = []
-    for lane in list(runtime_status.get("lanes") or []):
-        state = str(lane.get("state") or "OFF").lower()
-        agents.append(
-            {
-                "name": str(lane.get("name") or ""),
-                "role": "",
-                "status": state,
-                "status_note": str(lane.get("note") or ""),
-                "pane_id": None,
-                "pane_text": "",
-            }
-        )
-    return agents
-
-
-def _compat_slots(runtime_status: dict) -> dict:
-    compat = dict(runtime_status.get("compat") or {})
-    control_slots = dict(compat.get("control_slots") or {})
-    slot_map = {
-        "claude_handoff": {"exists": False, "status": None, "preview": None, "mtime": None},
-        "operator_request": {"exists": False, "status": None, "preview": None, "mtime": None},
-        "gemini_request": {"exists": False, "status": None, "preview": None, "mtime": None},
-        "gemini_advice": {"exists": False, "status": None, "preview": None, "mtime": None},
-    }
-    entries = []
-    active = control_slots.get("active")
-    if isinstance(active, dict):
-        entries.append(active)
-    entries.extend(list(control_slots.get("stale") or []))
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        file_name = str(entry.get("file") or "")
-        key = file_name.replace(".md", "")
-        if key not in slot_map:
-            continue
-        slot_map[key] = {
-            "exists": True,
-            "status": entry.get("status"),
-            "preview": entry.get("label"),
-            "mtime": entry.get("mtime"),
-        }
-    return slot_map
-
-
-def get_full_state() -> dict:
-    runtime_status = _runtime_status_or_placeholder()
-    watcher = dict(runtime_status.get("watcher") or {})
-    compat = dict(runtime_status.get("compat") or {})
-    return {
-        "project_root": str(PROJECT_ROOT),
-        "session_alive": str(runtime_status.get("runtime_state") or "STOPPED") not in {"STOPPED", "BROKEN"},
-        "watcher": watcher or {"alive": False, "pid": None},
-        "runtime_status": runtime_status,
-        "agents": _compat_agents(runtime_status),
-        "slots": _compat_slots(runtime_status),
-    }
-
-
 def get_runtime_status() -> tuple[dict, HTTPStatus]:
     status = normalize_runtime_status(read_runtime_status(PROJECT_ROOT))
     if not status:
@@ -211,14 +149,6 @@ def pipeline_restart() -> dict:
     return pipeline_start()
 
 
-def pipeline_attach(lane: str | None = None) -> dict:
-    try:
-        pid = backend_runtime_attach(PROJECT_ROOT, SESSION_NAME, lane=lane)
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
-    return {"ok": True, "pid": pid}
-
-
 def runtime_capture_tail(lane: str | None = None, *, lines: int = 120) -> tuple[dict, HTTPStatus]:
     lane_name = str(lane or "").strip()
     if not lane_name:
@@ -241,10 +171,6 @@ class ControllerHandler(BaseHTTPRequestHandler):
             self._serve_controller_asset(rel_path)
             return
 
-        if parsed.path == "/api/state":
-            self._json(get_full_state())
-            return
-
         if parsed.path == "/api/runtime/status":
             data, status = get_runtime_status()
             self._json(data, status)
@@ -261,10 +187,6 @@ class ControllerHandler(BaseHTTPRequestHandler):
             self._json(data, status)
             return
 
-        if parsed.path == "/api/health":
-            self._json({"ok": True})
-            return
-
         if parsed.path in ("/", "/controller", "/controller/"):
             self._serve_html()
             return
@@ -273,20 +195,14 @@ class ControllerHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        query = parse_qs(parsed.query or "")
-        lane = (query.get("lane") or [None])[0]
-
-        if parsed.path in {"/api/start", "/api/runtime/start"}:
+        if parsed.path == "/api/runtime/start":
             self._json(pipeline_start())
             return
-        if parsed.path in {"/api/stop", "/api/runtime/stop"}:
+        if parsed.path == "/api/runtime/stop":
             self._json(pipeline_stop())
             return
-        if parsed.path in {"/api/restart", "/api/runtime/restart"}:
+        if parsed.path == "/api/runtime/restart":
             self._json(pipeline_restart())
-            return
-        if parsed.path == "/api/runtime/attach":
-            self._json(pipeline_attach(lane=lane))
             return
 
         self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
@@ -334,7 +250,6 @@ def main() -> None:
     fallback_host = _controller_windows_fallback_host()
     print(f"Pipeline Controller: http://{browser_host}:{CONTROLLER_PORT}/controller")
     print(f"  Project: {PROJECT_ROOT}")
-    print(f"  API: http://{browser_host}:{CONTROLLER_PORT}/api/state")
     print(f"  Runtime API: http://{browser_host}:{CONTROLLER_PORT}/api/runtime/status")
     if CONTROLLER_HOST != browser_host:
         print(f"  Bind: {CONTROLLER_HOST}:{CONTROLLER_PORT} (WSL -> Windows 브라우저 접근용)")

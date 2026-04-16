@@ -1,0 +1,8 @@
+{"seq": 1, "ts": "2026-04-15T17:33:38.942654Z", "run_id": "20260415T173338Z-p3382395", "event_type": "runtime_started", "source": "supervisor", "payload": {"runtime_state": "STARTING"}}
+{"seq": 2, "ts": "2026-04-15T17:33:39.369316Z", "run_id": "20260415T173338Z-p3382395", "event_type": "control_changed", "source": "supervisor", "payload": {"active_control_file": ".pipeline/claude_handoff.md", "active_control_seq": 171, "active_control_status": "implement", "active_control_updated_at": "2026-04-15T17:28:54.874707Z"}}
+{"seq": 3, "ts": "2026-04-15T17:33:39.369492Z", "run_id": "20260415T173338Z-p3382395", "event_type": "lane_booting", "source": "supervisor", "payload": {"lane": "Claude", "state": "BOOTING"}}
+{"seq": 4, "ts": "2026-04-15T17:33:39.369664Z", "run_id": "20260415T173338Z-p3382395", "event_type": "lane_booting", "source": "supervisor", "payload": {"lane": "Codex", "state": "BOOTING"}}
+{"seq": 5, "ts": "2026-04-15T17:33:39.369781Z", "run_id": "20260415T173338Z-p3382395", "event_type": "lane_booting", "source": "supervisor", "payload": {"lane": "Gemini", "state": "BOOTING"}}
+{"seq": 6, "ts": "2026-04-15T17:33:42.585886Z", "run_id": "20260415T173338Z-p3382395", "event_type": "lane_ready", "source": "supervisor", "payload": {"lane": "Claude", "state": "READY"}}
+{"seq": 7, "ts": "2026-04-15T17:33:44.740363Z", "run_id": "20260415T173338Z-p3382395", "event_type": "lane_working", "source": "supervisor", "payload": {"lane": "Codex", "state": "WORKING"}}
+{"seq": 8, "ts": "2026-04-15T17:33:46.857734Z", "run_id": "20260415T173338Z-p3382395", "event_type": "lane_ready", "source": "supervisor", "payload": {"lane": "Gemini", "state": "READY"}}

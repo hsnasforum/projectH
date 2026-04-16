@@ -111,6 +111,7 @@ repo 안의 internal/operator tooling은 릴리즈 게이트 밖이지만 계속
   - recent runtime snapshot이 supervisor/pid 없이 불완전하게 남아 있거나, 같은 ambiguous snapshot에 `updated_at`까지 비어 있으면 controller는 이를 즉시 `STOPPED/BROKEN`으로 단정하지 않고 uncertain `DEGRADED`(`supervisor_missing_recent_ambiguous` / `supervisor_missing_snapshot_undated`)로 표기합니다.
   - browser log modal은 현재 tail read-model만 제공합니다. lane pause/resume/restart나 attach 같은 backend 미연결 액션은 노출하지 않습니다.
   - Office View background는 `/controller-assets/background.png`를 우선 사용하고, 필요할 때만 `/controller-assets/generated/bg-office.png`로 fallback하며, sidebar `Scene` 상태와 event log로 load/fallback/error를 표시합니다.
+  - `ready` / `idle` 상태 에이전트는 복도 waypoint에 고정되지 않고 오픈 플로어 존(책상-라운지 사이, 라운지 영역, 입구 근처)을 넓은 jitter로 자유 배회합니다. `working` / `booting` / `broken` / `dead` 에이전트는 기존 desk/status 고정 동작을 유지합니다.
   - live fault / soak harness는 `python3 scripts/pipeline_runtime_gate.py ...` 경로를 사용합니다.
   - WSL에서 실행하면 Windows 브라우저 접근을 위해 기본 bind host를 `0.0.0.0`로 잡고, 브라우저 URL은 계속 `127.0.0.1` 기준으로 안내합니다.
   - 만약 Windows에서 `127.0.0.1:8780`이 안 열리면, 시작 로그에 함께 출력되는 `Windows fallback: http://<WSL-IP>:8780/controller` 주소를 사용하시면 됩니다.
@@ -256,6 +257,21 @@ Current smoke scenarios:
 126. review-queue `reject`/`defer` review action이 `accept`와 동일한 quick-meta(`검토 거절됨`/`검토 보류됨`), transcript-meta, follow-up retention, stale-clear 경로를 따르고, payload에 `review_action: reject`/`review_status: rejected` 및 `review_action: defer`/`review_status: deferred`가 기록되는지 확인
 
 `make e2e-test` launches a dedicated Playwright web server for smoke with inherited `LOCAL_AI_MODEL_PROVIDER` / `LOCAL_AI_OLLAMA_MODEL` overrides cleared, `LOCAL_AI_MODEL_PROVIDER=mock` reapplied, and existing servers on the smoke port not reused. Shell overrides such as `LOCAL_AI_MODEL_PROVIDER=ollama` therefore do not change the automated baseline. Other runtimes remain optional and are validated separately.
+
+### Controller Smoke (separate from app.web)
+
+Controller smoke uses a dedicated Playwright config (`e2e/playwright.controller.config.mjs`) that starts `python3 -m controller.server` on port 8781 by default. The port can be overridden via `CONTROLLER_SMOKE_PORT`. These scenarios are internal/operator tooling tests and are not part of the `app.web` release gate.
+
+Run: `make controller-test`
+
+Override port: `CONTROLLER_SMOKE_PORT=8782 make controller-test`
+
+Current controller smoke scenarios:
+1. controller shows `#storage-warn` chip (`⚠ 설정 비저장`) with expected tooltip when browser localStorage is blocked via `Storage.prototype` throw, and event log contains the one-time storage warning (`환경 설정 저장 불가`) exactly once
+2. controller hides `#storage-warn` chip and event log contains no storage warning when browser localStorage is available
+3. agent cards expose `data-fatigue` attribute for fatigue observability — verifies that a working agent's sidebar card carries `data-agent` and `data-fatigue` attributes, with no `.agent-fatigue` indicator visible before the fatigue threshold is reached
+4. `setAgentFatigue` hook transitions card to `fatigued` state — injects fatigue via `window.setAgentFatigue("Claude", "fatigued")` and asserts `data-fatigue="fatigued"` with `💦 피로 누적` label
+5. `setAgentFatigue` hook transitions card to `coffee` state — injects coffee via `window.setAgentFatigue("Claude", "coffee")` and asserts `data-fatigue="coffee"` with `☕ 커피 충전 중` label
 
 ## Safety Defaults
 

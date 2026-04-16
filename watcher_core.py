@@ -661,8 +661,6 @@ def _pane_text_has_busy_indicator(text: str) -> bool:
         "background terminal",      # background terminal (active)
         "germinating",      # Codex startup indicator
         "flumoxing",        # Claude thinking indicator
-        "thinking",         # generic thinking
-        "esc to interrupt", # still running if this is visible
     ]
     for pattern in busy_patterns:
         if pattern in lower:

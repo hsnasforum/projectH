@@ -67,8 +67,9 @@ _READY_MARKERS = {
 }
 _CODEX_UPDATE_SKIP_MARKERS = (
     "update available",
-    "update now",
+    "@openai/codex",
     "skip until next version",
+    "press enter to continue",
 )
 
 
@@ -166,13 +167,6 @@ def _kill_pid(pid: int) -> None:
         pass
 
 
-def _signal_pid(pid: int, sig: int) -> None:
-    try:
-        os.kill(pid, sig)
-    except OSError:
-        return
-
-
 def _wait_for_supervisors_exit(
     project_root: Path,
     session_name: str,
@@ -183,57 +177,6 @@ def _wait_for_supervisors_exit(
     deadline = time.time() + timeout
     while time.time() < deadline:
         if not _list_supervisor_pids(project_root, session_name, proc_root=proc_root):
-            return True
-        time.sleep(0.25)
-    return False
-
-
-def _current_runtime_status(project_root: Path) -> dict[str, object] | None:
-    current_run = read_json(project_root / ".pipeline" / "current_run.json")
-    if not isinstance(current_run, dict):
-        return None
-    status_path_value = str(current_run.get("status_path") or "").strip()
-    if status_path_value:
-        status = read_json(project_root / status_path_value)
-        if isinstance(status, dict):
-            return status
-    run_id = str(current_run.get("run_id") or "").strip()
-    if not run_id:
-        return None
-    status = read_json(project_root / ".pipeline" / "runs" / run_id / "status.json")
-    return status if isinstance(status, dict) else None
-
-
-def _stop_status_flushed(project_root: Path) -> bool:
-    status = _current_runtime_status(project_root)
-    if not isinstance(status, dict):
-        return False
-    runtime_state = str(status.get("runtime_state") or "").upper()
-    control_status = str(((status.get("control") or {}).get("active_control_status") or "none"))
-    active_round = status.get("active_round")
-    watcher_alive = bool(((status.get("watcher") or {}).get("alive")))
-    lanes = [lane for lane in list(status.get("lanes") or []) if isinstance(lane, dict)]
-    lanes_stopped = all(str(lane.get("state") or "OFF").upper() == "OFF" for lane in lanes)
-    return (
-        runtime_state == "STOPPED"
-        and control_status == "none"
-        and active_round is None
-        and not watcher_alive
-        and lanes_stopped
-    )
-
-
-def _wait_for_stop_completion(
-    project_root: Path,
-    session_name: str,
-    *,
-    proc_root: Path | None = None,
-    timeout: float = 12.0,
-) -> bool:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        supervisors_gone = not _list_supervisor_pids(project_root, session_name, proc_root=proc_root)
-        if supervisors_gone and _stop_status_flushed(project_root):
             return True
         time.sleep(0.25)
     return False
@@ -270,6 +213,22 @@ def _reconcile_supervisors(
     return None
 
 
+def _current_run_matches(project_root: Path, run_id: str) -> bool:
+    current_run = read_json(project_root / ".pipeline" / "current_run.json")
+    if not current_run:
+        return False
+    current_run_id = str(current_run.get("run_id") or "").strip()
+    if current_run_id != run_id:
+        return False
+    status_path_value = str(current_run.get("status_path") or "").strip()
+    if status_path_value:
+        status_path = project_root / status_path_value
+    else:
+        status_path = project_root / ".pipeline" / "runs" / run_id / "status.json"
+    status = read_json(status_path)
+    return isinstance(status, dict) and str(status.get("run_id") or "") == run_id
+
+
 def _spawn_supervisor(args: argparse.Namespace) -> int:
     project_root, mode = _normalize_project_and_mode(args)
     session_name = args.session or _session_name_for(project_root)
@@ -304,9 +263,7 @@ def _spawn_supervisor(args: argparse.Namespace) -> int:
         )
     deadline = time.time() + 20.0
     while time.time() < deadline:
-        current_run = read_json(project_root / ".pipeline" / "current_run.json")
-        status = read_json(project_root / ".pipeline" / "runs" / run_id / "status.json")
-        if current_run and status:
+        if _current_run_matches(project_root, run_id):
             return 0
         if process.poll() is not None:
             return process.returncode or 1
@@ -328,16 +285,8 @@ def _stop_supervisor(args: argparse.Namespace) -> int:
             pass
         return 0
     for live_pid in sorted(pids):
-        _signal_pid(live_pid, signal.SIGTERM)
-    if not _wait_for_stop_completion(project_root, session_name):
-        remaining = _list_supervisor_pids(project_root, session_name)
-        for live_pid in sorted(remaining):
-            _kill_pid(live_pid)
-        _wait_for_supervisors_exit(project_root, session_name, timeout=5.0)
-        try:
-            _supervisor_pid_path(project_root).unlink()
-        except FileNotFoundError:
-            pass
+        _kill_pid(live_pid)
+    if not _wait_for_supervisors_exit(project_root, session_name):
         return 1
     try:
         _supervisor_pid_path(project_root).unlink()
@@ -357,8 +306,9 @@ def _restart_supervisor(args: argparse.Namespace) -> int:
 def _attach(args: argparse.Namespace) -> int:
     project_root = _project_root(args.project_root)
     adapter = TmuxAdapter(project_root, args.session or _session_name_for(project_root))
-    adapter.attach(args.lane)
-    return 0
+    if not adapter.session_exists():
+        return 1
+    return adapter.attach_blocking(args.lane)
 
 
 def _load_task_hint(task_hint_dir: Path | None, lane_name: str) -> dict[str, object]:
@@ -374,14 +324,7 @@ def _text_is_busy(text: str) -> bool:
     return any(marker in lower for marker in _BUSY_MARKERS)
 
 
-def _is_codex_update_prompt(text: str) -> bool:
-    lower = text.lower()
-    return all(marker in lower for marker in _CODEX_UPDATE_SKIP_MARKERS)
-
-
 def _text_is_ready(lane_name: str, text: str) -> bool:
-    if lane_name == "Codex" and _is_codex_update_prompt(text):
-        return False
     markers = _READY_MARKERS.get(lane_name, ())
     lower = text.lower()
     return any(marker.lower() in lower for marker in markers)
@@ -528,7 +471,8 @@ class _WrapperEmitter:
     def _maybe_auto_dismiss_blocking_prompt(self, text: str) -> bool:
         if self.lane_name != "Codex":
             return False
-        if not _is_codex_update_prompt(text):
+        lower = text.lower()
+        if not all(marker in lower for marker in _CODEX_UPDATE_SKIP_MARKERS):
             return False
         action_key = "codex_update_skip_until_next_version"
         if action_key in self._auto_actions_sent:

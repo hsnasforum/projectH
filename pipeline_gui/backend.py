@@ -10,7 +10,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
-from pipeline_runtime.schema import parse_iso_utc, read_jsonl_tail
+from pipeline_runtime.schema import read_jsonl_tail
 from pipeline_runtime.tmux_adapter import TmuxAdapter
 
 from . import legacy_backend_debug
@@ -31,10 +31,6 @@ _VERIFY_ACTIVITY_LABELS = {
     "VERIFY_PENDING": "Codex 검증 준비 중",
     "VERIFY_RUNNING": "Codex 검증 실행 중",
 }
-_RUNTIME_STATUS_STALE_AFTER_SEC = 15.0
-_STALE_RUNTIME_REASON = "supervisor_missing"
-_AMBIGUOUS_RUNTIME_REASON = "supervisor_missing_recent_ambiguous"
-_UNDATED_AMBIGUOUS_RUNTIME_REASON = "supervisor_missing_snapshot_undated"
 
 
 def _read_log_lines(path: Path, *, tail_count: int) -> list[str]:
@@ -77,204 +73,6 @@ def normalize_runtime_status(value: object | None) -> dict[str, object]:
     if isinstance(value, dict):
         return value
     return {}
-
-
-def _supervisor_pid(project: Path) -> int | None:
-    path = project / ".pipeline" / "supervisor.pid"
-    if IS_WINDOWS:
-        code, content = _run(["cat", _wsl_path_str(path)], timeout=FILE_QUERY_TIMEOUT)
-        if code != 0:
-            return None
-        text = content.strip()
-    else:
-        if not path.exists():
-            return None
-        try:
-            text = path.read_text(encoding="utf-8").strip()
-        except OSError:
-            return None
-    try:
-        return int(text)
-    except ValueError:
-        return None
-
-
-def _pid_is_alive(pid: int | None) -> bool:
-    if pid is None or pid <= 0:
-        return False
-    if IS_WINDOWS:
-        return True
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    return True
-
-
-def _runtime_status_age_sec(status: dict[str, object]) -> float | None:
-    updated_at = parse_iso_utc(str(status.get("updated_at") or ""))
-    if updated_at <= 0:
-        return None
-    return max(0.0, time.time() - updated_at)
-
-
-def _coerce_optional_int(value: object) -> int | None:
-    try:
-        return int(value) if value is not None else None
-    except (TypeError, ValueError):
-        return None
-
-
-def _lane_status_quiescent(lane: object) -> bool:
-    if not isinstance(lane, dict):
-        return False
-    lane_state = str(lane.get("state") or "").upper()
-    if lane_state in {"OFF", "BROKEN", "DEAD"}:
-        return True
-    lane_pid = _coerce_optional_int(lane.get("pid"))
-    if lane_pid is None:
-        return False
-    return not _pid_is_alive(lane_pid)
-
-
-def _lane_status_inactive(lane: object) -> bool:
-    if not isinstance(lane, dict):
-        return False
-    return str(lane.get("state") or "").upper() in {"OFF", "BROKEN", "DEAD"}
-
-
-def _runtime_status_processes_quiescent(status: dict[str, object]) -> bool:
-    watcher = dict(status.get("watcher") or {})
-    watcher_pid = _coerce_optional_int(watcher.get("pid"))
-    watcher_alive_claim = bool(watcher.get("alive"))
-    watcher_reported = bool(watcher) and ("alive" in watcher or watcher_pid is not None)
-    watcher_quiescent = watcher_reported and (
-        (watcher_pid is not None and not _pid_is_alive(watcher_pid))
-        or (watcher_pid is None and not watcher_alive_claim)
-    )
-    lanes = [lane for lane in list(status.get("lanes") or []) if isinstance(lane, dict)]
-    return watcher_quiescent and bool(lanes) and all(_lane_status_quiescent(lane) for lane in lanes)
-
-
-def _runtime_status_fields_quiescent(status: dict[str, object]) -> bool:
-    control = dict(status.get("control") or {})
-    watcher = dict(status.get("watcher") or {})
-    lanes = [lane for lane in list(status.get("lanes") or []) if isinstance(lane, dict)]
-    control_inactive = str(control.get("active_control_status") or "none") == "none"
-    watcher_inactive = bool(watcher) and not bool(watcher.get("alive"))
-    lanes_inactive = bool(lanes) and all(_lane_status_inactive(lane) for lane in lanes)
-    return control_inactive and status.get("active_round") is None and watcher_inactive and lanes_inactive
-
-
-def _runtime_status_claims_activity(status: dict[str, object]) -> bool:
-    control = dict(status.get("control") or {})
-    watcher = dict(status.get("watcher") or {})
-    if str(control.get("active_control_status") or "none") != "none":
-        return True
-    if status.get("active_round") is not None:
-        return True
-    if bool(watcher.get("alive")):
-        return True
-    lanes = [lane for lane in list(status.get("lanes") or []) if isinstance(lane, dict)]
-    return any(not _lane_status_inactive(lane) for lane in lanes)
-
-
-def _runtime_status_live_identity_missing(status: dict[str, object]) -> bool:
-    watcher = dict(status.get("watcher") or {})
-    watcher_pid = _coerce_optional_int(watcher.get("pid"))
-    watcher_has_live_identity = watcher_pid is not None and _pid_is_alive(watcher_pid)
-    lanes = [lane for lane in list(status.get("lanes") or []) if isinstance(lane, dict)]
-    active_lanes = [lane for lane in lanes if not _lane_status_inactive(lane)]
-    active_lane_has_pid = any(_coerce_optional_int(lane.get("pid")) is not None for lane in active_lanes)
-    return not watcher_has_live_identity and not active_lane_has_pid
-
-
-def _runtime_status_ambiguous(status: dict[str, object]) -> bool:
-    return _runtime_status_claims_activity(status) and _runtime_status_live_identity_missing(status)
-
-
-def _clear_inactive_runtime_fields(status: dict[str, object]) -> dict[str, object]:
-    result = dict(status)
-    control = dict(result.get("control") or {})
-    control["active_control_file"] = ""
-    control["active_control_seq"] = -1
-    control["active_control_status"] = "none"
-    control["active_control_updated_at"] = ""
-    result["control"] = control
-    result["active_round"] = None
-    return result
-
-
-def _mark_runtime_status_stale(status: dict[str, object]) -> dict[str, object]:
-    result = _clear_inactive_runtime_fields(status)
-    prior_runtime_state = str(status.get("runtime_state") or "").upper()
-
-    if prior_runtime_state == "STOPPING":
-        result["runtime_state"] = "STOPPED"
-        result["degraded_reason"] = ""
-        result["degraded_reasons"] = []
-
-        normalized_lanes = []
-        for lane in list(result.get("lanes") or []):
-            lane_copy = dict(lane) if isinstance(lane, dict) else {}
-            lane_copy["state"] = "OFF"
-            lane_copy["note"] = "stopped"
-            lane_copy["pid"] = None
-            lane_copy["attachable"] = False
-            normalized_lanes.append(lane_copy)
-        result["lanes"] = normalized_lanes
-
-        watcher = dict(result.get("watcher") or {})
-        watcher["alive"] = False
-        watcher["pid"] = None
-        result["watcher"] = watcher
-        return result
-
-    degraded_reasons = [str(item) for item in list(result.get("degraded_reasons") or []) if str(item)]
-    if _STALE_RUNTIME_REASON not in degraded_reasons:
-        degraded_reasons.append(_STALE_RUNTIME_REASON)
-    result["runtime_state"] = "BROKEN"
-    result["degraded_reason"] = _STALE_RUNTIME_REASON
-    result["degraded_reasons"] = degraded_reasons
-
-    normalized_lanes = []
-    for lane in list(result.get("lanes") or []):
-        lane_copy = dict(lane) if isinstance(lane, dict) else {}
-        lane_state = str(lane_copy.get("state") or "")
-        if lane_state not in {"BROKEN", "OFF"}:
-            lane_copy["state"] = "BROKEN"
-        lane_copy["note"] = _STALE_RUNTIME_REASON
-        lane_copy["pid"] = None
-        lane_copy["attachable"] = False
-        normalized_lanes.append(lane_copy)
-    result["lanes"] = normalized_lanes
-    watcher = dict(result.get("watcher") or {})
-    watcher["alive"] = False
-    watcher["pid"] = None
-    result["watcher"] = watcher
-    return result
-
-
-def _mark_runtime_status_recent_ambiguous(status: dict[str, object]) -> dict[str, object]:
-    result = dict(status)
-    degraded_reasons = [str(item) for item in list(result.get("degraded_reasons") or []) if str(item)]
-    if _AMBIGUOUS_RUNTIME_REASON not in degraded_reasons:
-        degraded_reasons.append(_AMBIGUOUS_RUNTIME_REASON)
-    result["runtime_state"] = "DEGRADED"
-    result["degraded_reason"] = _AMBIGUOUS_RUNTIME_REASON
-    result["degraded_reasons"] = degraded_reasons
-    return result
-
-
-def _mark_runtime_status_undated_ambiguous(status: dict[str, object]) -> dict[str, object]:
-    result = dict(status)
-    degraded_reasons = [str(item) for item in list(result.get("degraded_reasons") or []) if str(item)]
-    if _UNDATED_AMBIGUOUS_RUNTIME_REASON not in degraded_reasons:
-        degraded_reasons.append(_UNDATED_AMBIGUOUS_RUNTIME_REASON)
-    result["runtime_state"] = "DEGRADED"
-    result["degraded_reason"] = _UNDATED_AMBIGUOUS_RUNTIME_REASON
-    result["degraded_reasons"] = degraded_reasons
-    return result
 
 
 def tmux_alive(session: str = "") -> bool:
@@ -646,59 +444,17 @@ def read_runtime_status(project: Path) -> dict[str, object] | None:
     current_run = read_current_run(project)
     if not current_run:
         return None
-    data: dict[str, object] | None = None
     status_path_value = str(current_run.get("status_path") or "").strip()
     if status_path_value:
         status_path = project / status_path_value
         data = _read_json_file(status_path)
-    if data is None:
-        run_id = str(current_run.get("run_id") or "").strip()
-        if not run_id:
-            return None
-        status_path = project / ".pipeline" / "runs" / run_id / "status.json"
-        data = _read_json_file(status_path)
-    if data is None:
-        return None
-    runtime_state = str(data.get("runtime_state") or "STOPPED").upper()
-    supervisor_alive = _pid_is_alive(_supervisor_pid(project))
-    age_sec = _runtime_status_age_sec(data)
-    if runtime_state == "STOPPING" and not supervisor_alive:
-        return _mark_runtime_status_stale(data)
-    if runtime_state == "BROKEN":
-        if supervisor_alive:
+        if data is not None:
             return data
-        return _mark_runtime_status_stale(data)
-    if runtime_state == "STOPPED":
-        return data
-    if (
-        runtime_state in {"RUNNING", "DEGRADED"}
-        and not supervisor_alive
-        and (
-            _runtime_status_processes_quiescent(data)
-            or _runtime_status_fields_quiescent(data)
-        )
-    ):
-        return _mark_runtime_status_stale(data)
-    if (
-        runtime_state in {"RUNNING", "DEGRADED"}
-        and not supervisor_alive
-        and age_sec is not None
-        and age_sec <= _RUNTIME_STATUS_STALE_AFTER_SEC
-        and _runtime_status_ambiguous(data)
-    ):
-        return _mark_runtime_status_recent_ambiguous(data)
-    if (
-        runtime_state in {"RUNNING", "DEGRADED"}
-        and not supervisor_alive
-        and age_sec is None
-        and _runtime_status_ambiguous(data)
-    ):
-        return _mark_runtime_status_undated_ambiguous(data)
-    if age_sec is None or age_sec <= _RUNTIME_STATUS_STALE_AFTER_SEC:
-        return data
-    if supervisor_alive:
-        return data
-    return _mark_runtime_status_stale(data)
+    run_id = str(current_run.get("run_id") or "").strip()
+    if not run_id:
+        return None
+    status_path = project / ".pipeline" / "runs" / run_id / "status.json"
+    return _read_json_file(status_path)
 
 
 def read_runtime_event_tail(project: Path, *, max_lines: int = 14) -> list[dict[str, object]]:
@@ -714,6 +470,33 @@ def read_runtime_event_tail(project: Path, *, max_lines: int = 14) -> list[dict[
             return []
         events_path = project / ".pipeline" / "runs" / run_id / "events.jsonl"
     return [dict(item) for item in read_jsonl_tail(events_path, max_lines=max_lines)]
+
+
+def supervisor_alive(project: Path) -> tuple[bool, int | None]:
+    """Return whether the run supervisor PID is still live."""
+    pid_path = project / ".pipeline" / "supervisor.pid"
+    if IS_WINDOWS:
+        code, content = _run(["cat", _wsl_path_str(pid_path)], timeout=FILE_QUERY_TIMEOUT)
+        if code != 0 or not content.strip():
+            return False, None
+        try:
+            pid = int(content.strip().splitlines()[-1].strip())
+        except ValueError:
+            return False, None
+        code, _ = _run(["kill", "-0", str(pid)], timeout=2.0)
+        return code == 0, pid if code == 0 else None
+
+    if not pid_path.exists():
+        return False, None
+    try:
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return False, None
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False, None
+    return True, pid
 
 
 def runtime_state(project: Path) -> str:

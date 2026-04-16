@@ -2063,7 +2063,14 @@ class TransitionTurnTest(unittest.TestCase):
                 "dry_run": True,
             })
 
-            with mock.patch("watcher_core._capture_pane_text", return_value="❯ "):
+            with mock.patch(
+                "watcher_core._capture_pane_text",
+                return_value=(
+                    "❯ \n"
+                    "───────────────────────────────────────────────────────────────────────────────\n"
+                    "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt\n"
+                ),
+            ):
                 core._transition_turn(
                     watcher_core.WatcherTurnState.CODEX_VERIFY,
                     "work_needs_verify",

@@ -22,6 +22,7 @@
 - outside the shipped browser release gate, internal pipeline tooling now uses a supervisor-owned run-scoped runtime surface (`status.json`, `events.jsonl`, `receipts/`)
 - `controller.server`, `pipeline_gui`, and `pipeline-launcher.py` now read runtime status as thin clients instead of using direct pane/log/file-scan status inference
 - `tmux` remains available for attach/debug through `TmuxAdapter`, not as the upper-layer state authority
+- controller has dedicated Playwright smoke (`e2e/playwright.controller.config.mjs`, `make controller-test`) covering the `#storage-warn` toolbar chip, event-log storage warning when browser storage is blocked, agent-card `data-fatigue` observability, and deterministic `fatigued`/`coffee` state transitions via `window.setAgentFatigue` test hook; smoke port is configurable via `CONTROLLER_SMOKE_PORT` (default `8781`)
 
 ### Milestone 1: Local Document Loop
 - local file read

@@ -8,7 +8,7 @@
 - current reviewed-memory boundary: review queue (`검토 후보`), aggregate apply trigger (`검토 메모 적용 후보`), emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility are shipped
 - next phase target: broader structured correction memory and durable preference memory around the shipped `grounded brief`; cross-session memory remains later
 - long-term north star: teachable local personal agent with later approval-gated local action
-- operator tooling (`controller.server`, `pipeline_gui/`, `windows-launchers/`, `_data/`) remains outside the current release gate unless explicitly promoted
+- operator tooling (`controller.server`, `pipeline_gui/`, `windows-launchers/`, `_data/`) remains outside the current release gate unless explicitly promoted; controller has its own Playwright smoke (`e2e/playwright.controller.config.mjs`, `make controller-test`) covering toolbar chip, event-log storage warning, agent-card fatigue observability (`data-fatigue` attribute), and deterministic `fatigued`/`coffee` state transitions via `window.setAgentFatigue` test hook; smoke port is configurable via `CONTROLLER_SMOKE_PORT` (default `8781`); `ready`/`idle` agents roam open floor zones (desk-lounge gap, lounge area, entrance vicinity) with wide jitter instead of stacking on corridor waypoints
 
 ## Implemented
 

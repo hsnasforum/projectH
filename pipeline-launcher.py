@@ -31,6 +31,7 @@ from pipeline_gui.backend import (
     normalize_runtime_status,
     read_runtime_event_tail,
     read_runtime_status,
+    supervisor_alive,
 )
 from pipeline_gui.formatting import time_ago
 from pipeline_gui.platform import IS_WINDOWS, WSL_DISTRO, _hidden_subprocess_kwargs, _wsl_path_str
@@ -145,10 +146,41 @@ def _runtime_cli_base(project: Path) -> list[str]:
     return ["python3", "-m", "pipeline_runtime.cli"]
 
 
+def _runtime_has_live_surfaces(runtime_status: dict[str, object], *, project: Path) -> bool:
+    watcher = dict(runtime_status.get("watcher") or {})
+    lanes = list(runtime_status.get("lanes") or [])
+    sup_alive, _sup_pid = supervisor_alive(project)
+    attachable_lanes = any(
+        bool(lane.get("attachable")) or str(lane.get("state") or "") in {"READY", "WORKING", "BOOTING"}
+        for lane in lanes
+        if isinstance(lane, dict)
+    )
+    return sup_alive or bool(watcher.get("alive")) or attachable_lanes
+
+
 def _runtime_already_active(project: Path) -> bool:
     runtime_status = normalize_runtime_status(read_runtime_status(project))
     runtime_state = str(runtime_status.get("runtime_state") or "STOPPED")
-    return runtime_state not in {"STOPPED", "BROKEN"}
+    if runtime_state == "STOPPED":
+        return False
+    if runtime_state == "BROKEN":
+        return _runtime_has_live_surfaces(runtime_status, project=project)
+    return _runtime_has_live_surfaces(runtime_status, project=project)
+
+
+def _wait_for_runtime_stopped(project: Path, *, timeout_sec: float = 20.0) -> bool:
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        runtime_status = normalize_runtime_status(read_runtime_status(project))
+        runtime_state = str(runtime_status.get("runtime_state") or "STOPPED")
+        if runtime_state == "STOPPED" and not _runtime_has_live_surfaces(runtime_status, project=project):
+            return True
+        if not runtime_status:
+            sup_alive, _ = supervisor_alive(project)
+            if not sup_alive:
+                return True
+        time.sleep(0.25)
+    return False
 
 
 def _spawn_runtime_cli(project: Path, args: list[str], *, action: str) -> None:
@@ -213,6 +245,8 @@ def pipeline_stop(project: Path, session: str = "") -> str:
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip() or f"exit={result.returncode}"
         return f"중지 실패: {detail.splitlines()[-1]}"
+    if not _wait_for_runtime_stopped(project):
+        return "중지 요청은 완료됐지만 STOPPED 상태 확인에 실패했습니다"
     return "중지 완료"
 
 
@@ -223,20 +257,26 @@ def pipeline_restart(project: Path, session: str = "") -> str:
     if not bool(controls.get("launch_allowed")):
         detail = join_resolver_messages(resolved) or "Active profile launch is blocked."
         return f"실행 차단: {detail}"
-    pipeline_stop(project, resolved_session)
-    time.sleep(2)
-    pipeline_start(project, resolved_session)
+    stop_message = pipeline_stop(project, resolved_session)
+    if stop_message != "중지 완료":
+        return f"재시작 중지 단계 실패: {stop_message}"
+    start_message = pipeline_start(project, resolved_session)
+    if start_message != "시작 요청됨":
+        return f"재시작 시작 단계 실패: {start_message}"
     return "재시작 요청됨"
 
 
-def runtime_attach(project: Path, session: str) -> None:
+def runtime_attach(project: Path, session: str) -> str:
     """curses를 일시 해제하고 runtime CLI 경유 attach 실행."""
     resolved_session = session or resolved_session_name(project)
-    subprocess.run(
+    result = subprocess.run(
         _runtime_cli_base(project) + ["attach", "--project-root", str(project), "--session", resolved_session],
         cwd=None if IS_WINDOWS else str(project),
         check=False,
     )
+    if result.returncode == 0:
+        return "runtime attach에서 돌아왔습니다."
+    return f"runtime attach 실패 (exit={result.returncode})"
 
 
 def wait_for_pipeline_ready(project: Path, session: str, timeout_sec: float = _START_READY_TIMEOUT_SEC) -> tuple[bool, str]:
@@ -326,9 +366,11 @@ def _runtime_view(project: Path) -> dict[str, object]:
     }
 
 
-def pane_snapshots(project: Path, _session: str) -> list[AgentSnapshot]:
+def pane_snapshots(runtime_view: dict[str, object]) -> list[AgentSnapshot]:
     summaries: list[AgentSnapshot] = []
-    for lane in list((_runtime_view(project).get("lanes") or [])):
+    for lane in list(runtime_view.get("lanes") or []):
+        if not isinstance(lane, dict):
+            continue
         name = str(lane.get("name") or "")
         state = str(lane.get("state") or "OFF")
         status_note = str(lane.get("note") or "")
@@ -342,8 +384,7 @@ def pane_snapshots(project: Path, _session: str) -> list[AgentSnapshot]:
     return summaries
 
 
-def focused_lane_details(project: Path, agent_index: int) -> list[str]:
-    runtime_view = _runtime_view(project)
+def focused_lane_details(project: Path, runtime_view: dict[str, object], agent_index: int) -> list[str]:
     lane_name = runtime_lane_name_map(project).get(agent_index, "")
     implement_owner = str(resolve_project_runtime_adapter(project).get("role_owners", {}).get("implement") or "Claude")
     lane = next(
@@ -386,8 +427,8 @@ def focused_lane_details(project: Path, agent_index: int) -> list[str]:
     return lines
 
 
-def build_snapshot(project: Path, session: str) -> list[str]:
-    runtime_view = _runtime_view(project)
+def build_snapshot(project: Path, session: str, runtime_view: dict[str, object] | None = None) -> list[str]:
+    runtime_view = runtime_view or _runtime_view(project)
     runtime_status = str(runtime_view.get("runtime_state") or "STOPPED")
     watcher_ok = bool(runtime_view.get("watcher_alive"))
     watcher_pid = runtime_view.get("watcher_pid")
@@ -431,7 +472,7 @@ def build_snapshot(project: Path, session: str) -> list[str]:
         lines.extend([f"  {line}" for line in log_lines])
     else:
         lines.append("  (이벤트 없음)")
-    pane_lines = pane_snapshots(project, session)
+    pane_lines = pane_snapshots(runtime_view)
     if pane_lines:
         lines.extend([
             "",
@@ -518,9 +559,9 @@ def run_line_mode(project: Path) -> None:
             message = f"RESTART: {status if ok else status}"
             continue
         if cmd == "a":
-            if str(_runtime_view(project).get("runtime_state") or "STOPPED") != "STOPPED":
-                runtime_attach(project, session)
-                message = "ATTACH: runtime attach에서 돌아왔습니다."
+            current_view = _runtime_view(project)
+            if str(current_view.get("runtime_state") or "STOPPED") != "STOPPED":
+                message = f"ATTACH: {runtime_attach(project, session)}"
             else:
                 message = "ATTACH: runtime이 중지 상태입니다. 먼저 start 하세요."
             continue
@@ -540,6 +581,7 @@ def draw(
     message: str,
     pending_state: str = "",
     focused_agent: int | None = None,
+    runtime_view: dict[str, object] | None = None,
 ) -> None:
     stdscr.erase()
     h, w = stdscr.getmaxyx()
@@ -562,7 +604,7 @@ def draw(
     WHITE = curses.color_pair(5)
 
     row = 0
-    runtime_view = _runtime_view(project)
+    runtime_view = runtime_view or _runtime_view(project)
 
     # 헤더
     title = " Pipeline Launcher "
@@ -702,7 +744,7 @@ def draw(
         row += 1
 
     # agent 상태
-    snapshots = pane_snapshots(project, session)
+    snapshots = pane_snapshots(runtime_view)
     if snapshots and row < h - 5:
         safe_addstr(stdscr, row, 0, f"├{border}┤", CYAN)
         row += 1
@@ -768,7 +810,7 @@ def draw(
             content_width = 10
 
         available_rows = h - row - 3  # 메시지 + 하단 테두리용 여유
-        details = focused_lane_details(project, focused_agent)
+        details = focused_lane_details(project, runtime_view, focused_agent)
         display = details[-available_rows:] if len(details) > available_rows else details
 
         for dline in display:
@@ -850,7 +892,7 @@ def main(stdscr: curses.window) -> None:
 
         # 포커스 모드에서는 더 빠른 폴링으로 실시간감 제공
         stdscr.timeout(500 if focused_agent is not None else 1000)
-        draw(stdscr, project, session, display_message, pending_state, focused_agent)
+        draw(stdscr, project, session, display_message, pending_state, focused_agent, runtime_view)
 
         key = stdscr.getch()
         if key == -1:
@@ -880,7 +922,7 @@ def main(stdscr: curses.window) -> None:
         elif ch == "r":
             message = "RESTART: 재시작 중..."
             message_expire = time.time() + 10
-            draw(stdscr, project, session, message, pending_state, focused_agent)
+            draw(stdscr, project, session, message, pending_state, focused_agent, runtime_view)
             msg = pipeline_restart(project, session)
             message = f"RESTART: {msg}"
             message_expire = time.time() + 5
@@ -892,17 +934,17 @@ def main(stdscr: curses.window) -> None:
                 pending_state = ""
                 pending_started_at = 0.0
         elif ch == "a":
-            if str(_runtime_view(project).get("runtime_state") or "STOPPED") != "STOPPED":
+            if str(runtime_view.get("runtime_state") or "STOPPED") != "STOPPED":
                 # curses를 잠시 내리고 runtime attach를 실행한 뒤 복귀합니다.
                 curses.endwin()
-                runtime_attach(project, session)
+                attach_message = runtime_attach(project, session)
                 stdscr = curses.initscr()
                 curses.curs_set(0)
                 stdscr.nodelay(True)
                 stdscr.timeout(1000)
                 curses.start_color()
-                message = "ATTACH: runtime attach에서 돌아왔습니다"
-                message_expire = time.time() + 5
+                message = f"ATTACH: {attach_message}"
+                message_expire = time.time() + 6
             else:
                 message = "ATTACH: 실행 중인 runtime이 없습니다. 먼저 Start하세요."
                 message_expire = time.time() + 3

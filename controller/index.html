@@ -111,6 +111,11 @@
   .agent-state-dot {
     width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
   }
+  .agent-fatigue {
+    font-size: 9px; color: #fbbf24; margin-top: 2px;
+    letter-spacing: .02em;
+  }
+  .agent-fatigue[data-fatigue="coffee"] { color: #34d399; }
 
   /* Info rows */
   .info-row {
@@ -171,7 +176,7 @@
   .log-modal-backdrop.open { display: flex; }
   .log-modal {
     background: #0c1018; border: 1px solid #1e2a40; border-radius: 14px;
-    width: min(1100px, 96vw); max-height: 84vh;
+    width: min(1360px, 98vw); max-height: 88vh;
     display: flex; flex-direction: column;
     box-shadow: 0 24px 72px rgba(0,0,0,0.65); overflow: hidden;
   }
@@ -208,13 +213,13 @@
   }
   .log-modal-info span { white-space: normal; }
   .log-modal-body {
-    flex: 1; overflow-y: auto; padding: 14px 16px;
+    flex: 1; overflow: auto; padding: 14px 16px;
     font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
     font-size: 11px; line-height: 1.65; color: #7a94a8;
-    white-space: pre-wrap; word-break: normal; overflow-wrap: anywhere;
+    white-space: pre; word-break: keep-all; overflow-wrap: normal;
     background: #080c14; min-height: 200px; width: 100%; min-width: 0;
   }
-  .log-modal-body::-webkit-scrollbar { width: 5px; }
+  .log-modal-body::-webkit-scrollbar { width: 5px; height: 5px; }
   .log-modal-body::-webkit-scrollbar-thumb { background: #1e2a40; border-radius: 999px; }
   .log-modal-body::-webkit-scrollbar-track { background: transparent; }
   .log-modal-body .log-loading { color: #3d5a78; font-style: italic; }
@@ -424,13 +429,25 @@ const LOCATIONS = {
 };
 
 const IDLE_ROAM_SPOTS = [
-  { anchor: NAV.aisle_top, jitterX: 18, jitterY: 12 },
-  { anchor: NAV.aisle_mid, jitterX: 18, jitterY: 12 },
-  { anchor: NAV.aisle_bot, jitterX: 18, jitterY: 12 },
-  { anchor: { x: 770, y: 300 }, jitterX: 26, jitterY: 16 }, // sofa front floor
-  { anchor: { x: 832, y: 318 }, jitterX: 18, jitterY: 14 }, // right lounge floor
-  { anchor: LOCATIONS.coffee, jitterX: 18, jitterY: 12 },
-  { anchor: LOCATIONS.server_room, jitterX: 26, jitterY: 22 },
+  // Corridor / aisle zone (wider jitter so agents don't stack on nav-points)
+  { anchor: NAV.aisle_top, jitterX: 36, jitterY: 24 },
+  { anchor: NAV.aisle_mid, jitterX: 36, jitterY: 24 },
+  { anchor: NAV.aisle_bot, jitterX: 36, jitterY: 24 },
+  // Open floor between desks and lounge
+  { anchor: { x: 580, y: 280 }, jitterX: 44, jitterY: 30 },
+  { anchor: { x: 600, y: 420 }, jitterX: 50, jitterY: 36 },
+  { anchor: { x: 560, y: 560 }, jitterX: 44, jitterY: 30 },
+  // Lounge area — wide roam zone
+  { anchor: { x: 720, y: 300 }, jitterX: 46, jitterY: 28 }, // sofa front floor
+  { anchor: { x: 820, y: 340 }, jitterX: 38, jitterY: 28 }, // right lounge floor
+  { anchor: { x: 760, y: 460 }, jitterX: 40, jitterY: 28 }, // near coffee lounge
+  // Coffee machine vicinity
+  { anchor: LOCATIONS.coffee, jitterX: 30, jitterY: 20 },
+  // Server room corridor mouth
+  { anchor: { x: 310, y: 366 }, jitterX: 30, jitterY: 24 },
+  // Lower open floor toward entrance
+  { anchor: { x: 680, y: 600 }, jitterX: 50, jitterY: 30 },
+  { anchor: { x: 820, y: 580 }, jitterX: 40, jitterY: 28 },
 ];
 
 // ═══════════════════════════════════════════════════════
@@ -464,6 +481,12 @@ class Agent {
     // idle behavior
     this._idleCooldown = 0;
 
+    // fatigue system
+    this.fatigue = 0;             // 0 ~ 100
+    this._fatigueSweatTimer = 0;  // sweat particle cooldown
+    this._coffeeTimer = 0;        // time spent at coffee machine
+    this._atCoffee = false;       // currently drinking coffee
+
     // GIF overlay <img> element (for animated GIF rendering)
     this._gifEl = document.createElement('img');
     this._gifEl.style.cssText = 'position:absolute;pointer-events:none;image-rendering:pixelated;z-index:10;display:none;';
@@ -472,6 +495,13 @@ class Agent {
   }
 
   get color() { return STATE_COLORS[this.state] || STATE_COLORS.off; }
+
+  /** Observable fatigue state for sidebar indicator */
+  get fatigueState() {
+    if (this._atCoffee) return 'coffee';
+    if (this.state === 'working' && this.fatigue >= 15) return 'fatigued';
+    return '';
+  }
 
   /** 말풍선 띄우기 */
   speak(text, duration = 3.5) {
@@ -508,6 +538,12 @@ class Agent {
 
   /** 상태에 따라 목적지를 정하고, 가구를 피하는 경로(배열)를 생성 */
   _pickIdleTarget() {
+    // Fatigued? Coffee first!
+    if (this.fatigue >= 15 && LOCATIONS.coffee) {
+      this.speak('커피 마시러...☕', 2.5);
+      const c = LOCATIONS.coffee;
+      return { x: c.x + (Math.random() - 0.5) * 10, y: c.y + (Math.random() - 0.5) * 10 };
+    }
     if (!IDLE_ROAM_SPOTS.length) return LOCATIONS.entrance;
     const pool = IDLE_ROAM_SPOTS.map((spot, index) => ({ spot, index }));
     for (let i = pool.length - 1; i > 0; i--) {
@@ -519,7 +555,7 @@ class Agent {
       const ay = spot.anchor.y;
       const dx = ax - this.x;
       const dy = ay - this.y;
-      if (Math.hypot(dx, dy) < 36) continue;
+      if (Math.hypot(dx, dy) < 60) continue;
       return {
         x: ax + (Math.random() - 0.5) * (spot.jitterX || 0),
         y: ay + (Math.random() - 0.5) * (spot.jitterY || 0),
@@ -592,7 +628,38 @@ class Agent {
   }
 
   update(dt) {
-    // ── Walk along waypoints at constant speed ──
+    // ── Fatigue system ──
+    const FATIGUE_THRESHOLD = 15; // seconds of work before tired
+    const fatigued = this.fatigue >= FATIGUE_THRESHOLD;
+
+    if (this.state === 'working') {
+      this.fatigue += dt; // 1 per second while working
+      this._atCoffee = false;
+    }
+
+    // Sweat particles when tired and working
+    if (fatigued && this.state === 'working') {
+      this._fatigueSweatTimer -= dt;
+      if (this._fatigueSweatTimer <= 0) {
+        this._fatigueSweatTimer = 1.2 + Math.random() * 0.8;
+        spawnParticle(this.name, '💦', { size: 12, lifetime: 1.0 });
+      }
+    }
+
+    // Coffee stop: wait 2 seconds, then reset fatigue
+    if (this._atCoffee) {
+      this._coffeeTimer += dt;
+      if (this._coffeeTimer >= 2.0) {
+        this.fatigue = 0;
+        this._atCoffee = false;
+        this._coffeeTimer = 0;
+        spawnParticle(this.name, '☕', { size: 16, lifetime: 1.5 });
+        this.speak('커피 충전 완료!', 2.0);
+      }
+    }
+
+    // ── Walk along waypoints ──
+    const speedMult = fatigued ? 0.6 : 1.0;
     if (this._waypoints.length > 0) {
       const wp = this._waypoints[0];
       const dx = wp.x - this.x;
@@ -601,13 +668,21 @@ class Agent {
 
       if (Math.abs(dx) > 2) this.facingRight = dx > 0;
 
-      const step = WALK_SPEED * dt;
+      const step = WALK_SPEED * speedMult * dt;
 
       if (dist <= step) {
         this.x = wp.x;
         this.y = wp.y;
         this._waypoints.shift();
-        if (this._waypoints.length === 0) this._atTarget = true;
+        if (this._waypoints.length === 0) {
+          this._atTarget = true;
+          // Check if arrived at coffee machine
+          const coffeeLoc = LOCATIONS.coffee;
+          if (coffeeLoc && Math.abs(this.x - coffeeLoc.x) < 40 && Math.abs(this.y - coffeeLoc.y) < 40) {
+            this._atCoffee = true;
+            this._coffeeTimer = 0;
+          }
+        }
       } else {
         this.x += (dx / dist) * step;
         this.y += (dy / dist) * step;
@@ -633,10 +708,10 @@ class Agent {
     }
 
     // ── Idle wandering ──
-    if (this._atTarget && (this.state === 'ready' || this.state === 'idle')) {
+    if (this._atTarget && !this._atCoffee && (this.state === 'ready' || this.state === 'idle')) {
       this._idleCooldown -= dt;
       if (this._idleCooldown <= 0) {
-        this._idleCooldown = 8 + Math.random() * 10;
+        this._idleCooldown = 4 + Math.random() * 8;
         this._pickTarget();
       }
     }
@@ -929,11 +1004,182 @@ const OfficeRenderer = {
 };
 
 // ═══════════════════════════════════════════════════════
+// MONITOR MATRIX EFFECT + HOLOGRAM
+// ═══════════════════════════════════════════════════════
+
+/** Monitor screen areas (virtual coords, mapped to desks) */
+const MONITOR_SCREENS = {
+  claude: { x: 440, y: 190, w: 56, h: 34 },
+  codex:  { x: 440, y: 320, w: 56, h: 34 },
+  gemini: { x: 440, y: 450, w: 56, h: 34 },
+};
+
+/** Matrix rain columns per monitor */
+const _matrixState = {};
+const MATRIX_CHARS = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789ABCDEF<>/{}[];=+-*';
+
+function _initMatrix(key, cols) {
+  _matrixState[key] = {
+    columns: Array.from({ length: cols }, () => ({
+      y: Math.random() * -20,
+      speed: 1.5 + Math.random() * 3,
+      chars: Array.from({ length: 8 }, () =>
+        MATRIX_CHARS[Math.floor(Math.random() * MATRIX_CHARS.length)]
+      ),
+    })),
+  };
+}
+
+const MonitorFX = {
+  /** Draw matrix code rain inside a monitor screen area */
+  drawMatrix(ctx, scale, key, dt) {
+    const scr = MONITOR_SCREENS[key];
+    if (!scr) return;
+    if (!_matrixState[key]) _initMatrix(key, 7);
+    const state = _matrixState[key];
+
+    const sx = scr.x * scale, sy = scr.y * scale;
+    const sw = scr.w * scale, sh = scr.h * scale;
+
+    ctx.save();
+
+    // Clip to monitor screen
+    ctx.beginPath();
+    ctx.rect(sx, sy, sw, sh);
+    ctx.clip();
+
+    // Dark screen background
+    ctx.fillStyle = 'rgba(0,8,4,0.85)';
+    ctx.fillRect(sx, sy, sw, sh);
+
+    // Matrix columns
+    const fontSize = 5 * scale;
+    ctx.font = `${fontSize}px monospace`;
+    ctx.textAlign = 'center';
+
+    const colW = sw / state.columns.length;
+    for (let c = 0; c < state.columns.length; c++) {
+      const col = state.columns[c];
+      col.y += col.speed * dt * 12;
+
+      for (let i = 0; i < col.chars.length; i++) {
+        const cy = sy + (col.y + i) * fontSize;
+        if (cy < sy - fontSize || cy > sy + sh + fontSize) continue;
+
+        const brightness = i === col.chars.length - 1 ? 1.0 : 0.3 + (i / col.chars.length) * 0.4;
+        const green = Math.floor(80 + brightness * 175);
+        ctx.fillStyle = i === col.chars.length - 1
+          ? `rgba(180,255,180,${brightness})`
+          : `rgba(0,${green},0,${brightness * 0.7})`;
+        ctx.fillText(col.chars[i], sx + c * colW + colW / 2, cy);
+      }
+
+      // Reset column when it scrolls past screen
+      if ((col.y) * fontSize > sh + fontSize * col.chars.length) {
+        col.y = -col.chars.length;
+        col.speed = 1.5 + Math.random() * 3;
+        // Randomize a few chars
+        for (let i = 0; i < col.chars.length; i++) {
+          if (Math.random() < 0.5) {
+            col.chars[i] = MATRIX_CHARS[Math.floor(Math.random() * MATRIX_CHARS.length)];
+          }
+        }
+      }
+    }
+
+    // Scanline overlay
+    ctx.fillStyle = 'rgba(0,0,0,0.06)';
+    for (let ly = sy; ly < sy + sh; ly += 2 * scale) {
+      ctx.fillRect(sx, ly, sw, 1);
+    }
+
+    // Screen edge glow
+    const edgeGrad = ctx.createLinearGradient(sx, sy, sx, sy + sh);
+    edgeGrad.addColorStop(0, 'rgba(0,255,80,0.08)');
+    edgeGrad.addColorStop(1, 'rgba(0,255,80,0)');
+    ctx.fillStyle = edgeGrad;
+    ctx.fillRect(sx, sy, sw, sh);
+
+    ctx.restore();
+  },
+
+  /** Draw hologram above working desk */
+  drawHologram(ctx, scale, key, text, time) {
+    const scr = MONITOR_SCREENS[key];
+    if (!scr) return;
+
+    const cx = (scr.x + scr.w / 2) * scale;
+    const baseY = (scr.y - 8) * scale;
+    const bob = Math.sin(time * 2) * 3 * scale;
+    const hy = baseY - 22 * scale + bob;
+
+    ctx.save();
+
+    // Hologram beam (narrow triangle from monitor to text)
+    const beamGrad = ctx.createLinearGradient(cx, baseY, cx, hy);
+    beamGrad.addColorStop(0, 'rgba(96,165,250,0.12)');
+    beamGrad.addColorStop(1, 'rgba(96,165,250,0.02)');
+    ctx.fillStyle = beamGrad;
+    ctx.beginPath();
+    ctx.moveTo(cx - 12 * scale, baseY);
+    ctx.lineTo(cx + 12 * scale, baseY);
+    ctx.lineTo(cx + 30 * scale, hy + 8 * scale);
+    ctx.lineTo(cx - 30 * scale, hy + 8 * scale);
+    ctx.closePath();
+    ctx.fill();
+
+    // Glowing text
+    const displayText = text.length > 18 ? '…' + text.slice(-17) : text;
+    ctx.font = `bold ${6 * scale}px 'Cascadia Code', 'Fira Code', monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Outer glow
+    ctx.fillStyle = `rgba(96,165,250,${0.15 + Math.sin(time * 3) * 0.05})`;
+    const tw = ctx.measureText(displayText).width;
+    ctx.beginPath();
+    ctx.roundRect(cx - tw / 2 - 6 * scale, hy - 6 * scale, tw + 12 * scale, 12 * scale, 3 * scale);
+    ctx.fill();
+
+    // Text with flicker
+    const flicker = 0.7 + Math.sin(time * 8) * 0.15;
+    ctx.fillStyle = `rgba(147,197,253,${flicker})`;
+    ctx.fillText(displayText, cx, hy);
+
+    // Horizontal scan line
+    const scanY = hy - 5 * scale + ((time * 20 * scale) % (12 * scale));
+    ctx.fillStyle = 'rgba(96,165,250,0.1)';
+    ctx.fillRect(cx - tw / 2 - 4 * scale, scanY, tw + 8 * scale, 1);
+
+    ctx.restore();
+  },
+};
+
+// ═══════════════════════════════════════════════════════
 // STATE & SETUP
 // ═══════════════════════════════════════════════════════
 const agents = new Map();
 const particles =[];
 let runtimeData = null;
+
+/** Test-only hook: inject fatigue state deterministically.
+ *  value: 'fatigued' | 'coffee' | '' (reset) */
+window.setAgentFatigue = function(name, value) {
+  const agent = agents.get(name);
+  if (!agent) return;
+  if (value === 'coffee') {
+    agent._atCoffee = true;
+    agent.fatigue = 0;
+  } else if (value === 'fatigued') {
+    agent._atCoffee = false;
+    agent.fatigue = 15;
+  } else {
+    agent._atCoffee = false;
+    agent.fatigue = 0;
+  }
+  // Re-render sidebar cards with current lanes
+  if (runtimeData && runtimeData.lanes) renderAgentCards(runtimeData.lanes);
+};
 const eventLog =[];
 const MAX_EVENTS = 40;
 const _prev = { runtimeState: null, controlStatus: null, watcherStatus: null, uncertainRuntime: null, laneStates: {} };
@@ -973,10 +1219,84 @@ canvas.addEventListener('mousemove', (e) => {
 });
 canvas.addEventListener('mouseleave', () => tooltip.style.display = 'none');
 
+// ── Clickable environment zones (virtual coords + bounding boxes) ──
+const CLICK_ZONES = [
+  {
+    id: 'coffee',
+    x: 770, y: 440, w: 70, h: 60,
+    action() {
+      SoundFX.blip();
+      // Steam particles rising from machine
+      for (let i = 0; i < 5; i++) {
+        const p = new Particle(
+          804 + (Math.random() - 0.5) * 20,
+          448,
+          ['☁️', '♨️', '💨'][Math.floor(Math.random() * 3)],
+          { size: 10 + Math.random() * 6, lifetime: 1.2 + Math.random() * 0.8 }
+        );
+        p.driftY = -(15 + Math.random() * 12);
+        p.driftX = (Math.random() - 0.5) * 8;
+        particles.push(p);
+      }
+    },
+  },
+  {
+    id: 'plant_br',
+    x: 840, y: 560, w: 50, h: 50,
+    action() {
+      SoundFX.blip();
+      const emojis = ['🌸', '💖', '🌷', '🌼', '✨'];
+      for (let i = 0; i < 4; i++) {
+        const p = new Particle(
+          865 + (Math.random() - 0.5) * 18,
+          570,
+          emojis[Math.floor(Math.random() * emojis.length)],
+          { size: 12 + Math.random() * 6, lifetime: 1.0 + Math.random() * 0.6 }
+        );
+        p.driftY = -(20 + Math.random() * 15);
+        p.driftX = (Math.random() - 0.5) * 18;
+        particles.push(p);
+      }
+    },
+  },
+  {
+    id: 'plant_tl',
+    x: 100, y: 580, w: 50, h: 50,
+    action() {
+      SoundFX.blip();
+      const emojis = ['🌿', '🍀', '💚', '🌱'];
+      for (let i = 0; i < 3; i++) {
+        const p = new Particle(
+          125 + (Math.random() - 0.5) * 14,
+          590,
+          emojis[Math.floor(Math.random() * emojis.length)],
+          { size: 11 + Math.random() * 5, lifetime: 0.9 + Math.random() * 0.5 }
+        );
+        p.driftY = -(18 + Math.random() * 10);
+        p.driftX = (Math.random() - 0.5) * 14;
+        particles.push(p);
+      }
+    },
+  },
+];
+
+function hitBox(mx, my, zone) {
+  return mx >= zone.x && mx <= zone.x + zone.w && my >= zone.y && my <= zone.y + zone.h;
+}
+
 canvas.addEventListener('click', (e) => {
   const rect = canvas.getBoundingClientRect();
   const mx = (e.clientX - rect.left) / scale, my = (e.clientY - rect.top) / scale;
-  for (const a of agents.values()) { if (a.hitTest(mx, my)) { openLogModal(a); break; } }
+
+  // 1. Agent click → log modal (priority)
+  for (const a of agents.values()) {
+    if (a.hitTest(mx, my)) { openLogModal(a); return; }
+  }
+
+  // 2. Environment easter eggs
+  for (const zone of CLICK_ZONES) {
+    if (hitBox(mx, my, zone)) { zone.action(); return; }
+  }
 });
 
 let _logRefreshInterval = null;
@@ -1173,6 +1493,157 @@ function emitDelivery(fromName, toName, label, opts = {}) {
   if (opts.eventMsg) pushEvent(opts.eventType || 'info', opts.eventMsg);
 }
 
+// ═══════════════════════════════════════════════════════
+// DELIVERY DRONE — flies in from off-screen with a package
+// ═══════════════════════════════════════════════════════
+const drones = [];
+
+class Drone {
+  /**
+   * @param {string} targetLane - agent name to deliver to
+   */
+  constructor(targetLane) {
+    const deskKey = `${targetLane.toLowerCase()}_desk`;
+    const desk = LOCATIONS[deskKey] || LOCATIONS.entrance;
+    this.targetName = targetLane;
+
+    // Spawn from above (off-screen) or from window area
+    this.x = desk.x + (Math.random() - 0.5) * 200;
+    this.y = -50;
+    this.tx = desk.x;
+    this.ty = desk.y - 30; // hover above desk
+
+    this.phase = 'arriving';  // arriving → hovering → departing → done
+    this.hoverTimer = 0;
+    this.alive = true;
+    this.propPhase = Math.random() * Math.PI * 2;
+
+    // Exit target (fly back off-screen)
+    this.exitX = desk.x + (Math.random() < 0.5 ? -300 : 300);
+    this.exitY = -80;
+  }
+
+  update(dt) {
+    this.propPhase += dt * 20;
+
+    switch (this.phase) {
+      case 'arriving': {
+        // Smooth approach (lerp toward desk)
+        this.x += (this.tx - this.x) * 2.5 * dt;
+        this.y += (this.ty - this.y) * 2.5 * dt;
+        const dist = Math.sqrt((this.tx - this.x) ** 2 + (this.ty - this.y) ** 2);
+        if (dist < 5) {
+          this.x = this.tx; this.y = this.ty;
+          this.phase = 'hovering';
+          this.hoverTimer = 0;
+        }
+        break;
+      }
+      case 'hovering': {
+        // Hover + drop package
+        this.y += Math.sin(this.propPhase * 0.3) * 0.3;
+        this.hoverTimer += dt;
+        if (this.hoverTimer >= 0.6) {
+          // Drop the package
+          spawnParticle(this.targetName, '📦', { size: 18, lifetime: 1.5 });
+          SoundFX.blip();
+          this.phase = 'departing';
+        }
+        break;
+      }
+      case 'departing': {
+        // Fly away
+        this.x += (this.exitX - this.x) * 3.0 * dt;
+        this.y += (this.exitY - this.y) * 3.0 * dt;
+        if (this.y < -60) {
+          this.alive = false;
+        }
+        break;
+      }
+    }
+  }
+
+  draw(ctx, scale) {
+    const sx = this.x * scale;
+    const sy = this.y * scale;
+    const sz = 6 * scale;
+
+    ctx.save();
+
+    // Propeller blur circle
+    const propAlpha = 0.2 + Math.sin(this.propPhase) * 0.1;
+    ctx.fillStyle = `rgba(150,200,255,${propAlpha})`;
+    ctx.beginPath();
+    ctx.ellipse(sx, sy - sz * 1.5, sz * 2.2, sz * 0.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Body (small dark quad)
+    ctx.fillStyle = '#2a3548';
+    ctx.beginPath();
+    ctx.roundRect(sx - sz, sy - sz, sz * 2, sz * 1.5, 2 * scale);
+    ctx.fill();
+
+    // LED lights
+    ctx.fillStyle = this.phase === 'hovering' ? '#34d399' : '#60a5fa';
+    ctx.beginPath();
+    ctx.arc(sx - sz * 0.5, sy - sz * 0.3, 1.5 * scale, 0, Math.PI * 2);
+    ctx.arc(sx + sz * 0.5, sy - sz * 0.3, 1.5 * scale, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Arms
+    ctx.strokeStyle = '#4a5c72';
+    ctx.lineWidth = 1.5 * scale;
+    ctx.beginPath();
+    ctx.moveTo(sx - sz * 1.8, sy - sz * 1.2);
+    ctx.lineTo(sx - sz * 0.3, sy - sz * 0.5);
+    ctx.moveTo(sx + sz * 1.8, sy - sz * 1.2);
+    ctx.lineTo(sx + sz * 0.3, sy - sz * 0.5);
+    ctx.stroke();
+
+    // Propeller discs
+    const propW = sz * 1.2;
+    ctx.fillStyle = `rgba(200,220,255,${0.3 + Math.sin(this.propPhase * 2) * 0.15})`;
+    ctx.beginPath();
+    ctx.ellipse(sx - sz * 1.8, sy - sz * 1.5, propW, sz * 0.25, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(sx + sz * 1.8, sy - sz * 1.5, propW, sz * 0.25, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Package dangling (while arriving/hovering)
+    if (this.phase !== 'departing') {
+      ctx.fillStyle = '#8B6914';
+      ctx.fillRect(sx - 3 * scale, sy + sz * 0.5, 6 * scale, 5 * scale);
+      ctx.strokeStyle = '#5a4510';
+      ctx.lineWidth = 0.5 * scale;
+      ctx.strokeRect(sx - 3 * scale, sy + sz * 0.5, 6 * scale, 5 * scale);
+      // String
+      ctx.strokeStyle = '#777';
+      ctx.lineWidth = 0.5 * scale;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy + sz * 0.1);
+      ctx.lineTo(sx, sy + sz * 0.5);
+      ctx.stroke();
+    }
+
+    // Shadow on ground
+    if (this.phase === 'hovering') {
+      ctx.fillStyle = 'rgba(0,0,0,0.12)';
+      ctx.beginPath();
+      ctx.ellipse(sx, (this.ty + 35) * scale, 10 * scale, 3 * scale, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+}
+
+/** Spawn a delivery drone to a specific agent desk */
+function spawnDrone(targetLane) {
+  if (_lowMotion) return;
+  drones.push(new Drone(targetLane));
+}
+
 function checkDeliveryTrigger(data) {
   const seq = (data.control || {}).active_control_seq;
   const artifacts = data.artifacts || {};
@@ -1354,12 +1825,13 @@ const Pet = {
       this._blinkTimer = this._isBlinking ? 0.1 : 2 + Math.random() * 4;
     }
 
-    // React to broken state
-    if (hasBroken && this.state !== 'alert') {
+    // React to broken/red-alert state
+    if ((hasBroken || _redAlert) && this.state !== 'alert') {
       this.state = 'alert';
-      this._timer = 3;
-      // Run to broken desk area
-      this.targetX = 500; this.targetY = 400;
+      this._timer = 5;
+      // Panic — pick a random spot to bolt toward
+      this.targetX = 200 + Math.random() * 600;
+      this.targetY = 250 + Math.random() * 350;
     }
 
     switch (this.state) {
@@ -1406,22 +1878,27 @@ const Pet = {
         }
         break;
 
-      case 'alert':
+      case 'alert': {
         this._timer -= dt;
-        // Pace back and forth
         const dx2 = this.targetX - this.x;
         const dy2 = this.targetY - this.y;
         const d2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+        // 1.5x speed during red alert (82 vs normal 55)
+        const alertSpd = (_redAlert ? 82 : 55) * dt;
         if (d2 > 3) {
           if (Math.abs(dx2) > 2) this.facingRight = dx2 > 0;
-          const spd = 55 * dt;
-          this.x += (dx2 / d2) * spd;
-          this.y += (dy2 / d2) * spd;
+          this.x += (dx2 / d2) * alertSpd;
+          this.y += (dy2 / d2) * alertSpd;
+        } else if (_redAlert || hasBroken) {
+          // Arrived — pick another panic destination
+          this.targetX = 150 + Math.random() * 700;
+          this.targetY = 220 + Math.random() * 400;
         }
-        if (this._timer <= 0 && !hasBroken) {
+        if (this._timer <= 0 && !hasBroken && !_redAlert) {
           this.state = 'idle'; this._timer = 2;
         }
         break;
+      }
     }
   },
 
@@ -1574,19 +2051,53 @@ const AmbientAudio = {
 // ═══════════════════════════════════════════════════════
 let _needsOperator = false;
 let _needsOperatorPhase = 0;
+let _redAlert = false;       // BROKEN or watcher dead
+let _redAlertPhase = 0;
+let _fireTimer = 0;
 
 function drawNeedsOperatorOverlay(ctx, cw, ch, dt) {
-  if (!_needsOperator) return;
+  if (!_needsOperator && !_redAlert) return;
+
+  // ═══ RED ALERT — BROKEN / watcher dead ═══
+  if (_redAlert) {
+    _redAlertPhase += dt * 4;
+    const siren = 0.06 + Math.sin(_redAlertPhase) * 0.06; // 0.00 ~ 0.12
+
+    ctx.save();
+    // Full-screen red wash
+    ctx.fillStyle = `rgba(255,0,0,${siren})`;
+    ctx.fillRect(0, 0, cw, ch);
+
+    // Heavy red border
+    const borderPulse = 0.5 + Math.sin(_redAlertPhase * 1.3) * 0.3;
+    ctx.strokeStyle = `rgba(239,30,30,${borderPulse})`;
+    ctx.lineWidth = 8;
+    ctx.strokeRect(4, 4, cw - 8, ch - 8);
+
+    // RED ALERT text
+    const textPulse = 0.6 + Math.sin(_redAlertPhase * 2) * 0.35;
+    ctx.globalAlpha = textPulse;
+    ctx.font = `bold ${22}px 'Noto Sans KR', sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ff4444';
+    ctx.fillText('🚨 RED ALERT', cw / 2, 28);
+    ctx.font = `bold ${12}px sans-serif`;
+    ctx.fillStyle = '#fca5a5';
+    ctx.fillText('PIPELINE BROKEN — 즉시 확인 필요', cw / 2, 52);
+
+    ctx.restore();
+    return; // Red alert supersedes needs_operator
+  }
+
+  // ═══ NEEDS OPERATOR (amber, existing) ═══
   _needsOperatorPhase += dt * 3;
   const pulse = 0.4 + Math.sin(_needsOperatorPhase) * 0.2;
 
-  // Red vignette border
   ctx.save();
   ctx.strokeStyle = `rgba(239,68,68,${pulse})`;
   ctx.lineWidth = 6;
   ctx.strokeRect(3, 3, cw - 6, ch - 6);
 
-  // Centered warning text
   const textAlpha = 0.5 + Math.sin(_needsOperatorPhase * 1.5) * 0.3;
   ctx.globalAlpha = textAlpha;
   ctx.font = `bold ${18}px 'Noto Sans KR', sans-serif`;
@@ -1597,6 +2108,39 @@ function drawNeedsOperatorOverlay(ctx, cw, ch, dt) {
   ctx.fillStyle = 'rgba(252,165,165,0.6)';
   ctx.fillText('needs_operator — 운영자 확인 필요', cw / 2, 52);
   ctx.restore();
+}
+
+/** Spawn fire/smoke particles from server rack during red alert */
+function spawnFireParticles(dt) {
+  if (!_redAlert) return;
+  _fireTimer += dt;
+  if (_fireTimer < 0.08) return; // throttle: ~12 particles/sec
+  _fireTimer = 0;
+
+  // Server rack position
+  const fx = LOCATIONS.server_room.x;
+  const fy = LOCATIONS.server_room.y;
+
+  // Fire particle (orange/red, rises fast)
+  particles.push(new Particle(
+    fx + (Math.random() - 0.5) * 30,
+    fy,
+    Math.random() < 0.5 ? '🔥' : '🟠',
+    { size: 10 + Math.random() * 8, lifetime: 0.8 + Math.random() * 0.6 }
+  ));
+
+  // Smoke particle (gray, rises slow, longer life)
+  if (Math.random() < 0.5) {
+    const smoke = new Particle(
+      fx + (Math.random() - 0.5) * 40,
+      fy - 10,
+      '🌫️',
+      { size: 12 + Math.random() * 6, lifetime: 1.8 + Math.random() * 1.2 }
+    );
+    smoke.driftY = -(12 + Math.random() * 8); // slower rise
+    smoke.driftX = (Math.random() - 0.5) * 20;
+    particles.push(smoke);
+  }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1647,6 +2191,7 @@ function toggleLowMotion() {
   if (_lowMotion) {
     particles.length = 0;
     deliveryPackets.length = 0;
+    drones.length = 0;
   }
 }
 
@@ -1666,6 +2211,12 @@ function loop(now) {
   const isDegraded = Boolean((rd.degraded_reasons || []).length || rd.degraded_reason);
   const hasBroken = [...agents.values()].some(a => a.state === 'broken' || a.state === 'dead');
   const workingCount = [...agents.values()].filter(a => a.state === 'working').length;
+  const watcherDead = rd.watcher && rd.watcher.alive === false && !INACTIVE_RUNTIME_STATES.has(rd.runtime_state);
+  const runtimeBroken = String(rd.runtime_state || '').toUpperCase() === 'BROKEN';
+  _redAlert = runtimeBroken || watcherDead;
+
+  // Fire/smoke particles during red alert
+  if (!_lowMotion) spawnFireParticles(dt);
 
   // Update systems
   for (const a of agents.values()) a.update(dt);
@@ -1678,6 +2229,10 @@ function loop(now) {
       deliveryPackets[i].update(dt);
       if (!deliveryPackets[i].alive) deliveryPackets.splice(i, 1);
     }
+    for (let i = drones.length - 1; i >= 0; i--) {
+      drones[i].update(dt);
+      if (!drones[i].alive) drones.splice(i, 1);
+    }
     Weather.update(dt, isDegraded);
     Pet.update(dt, hasBroken);
     processIdleChatter();
@@ -1687,6 +2242,17 @@ function loop(now) {
   // ── Render ──
   ctx.clearRect(0, 0, cw, ch);
   OfficeRenderer.drawRoom(ctx, cw, ch, scale);
+
+  // Monitor matrix + hologram (under agents, over background)
+  const latestWorkPath = ((rd.artifacts || {}).latest_work || {}).path || '';
+  const workFile = latestWorkPath ? basename(latestWorkPath) : '';
+  for (const [name, agent] of agents) {
+    const key = name.toLowerCase();
+    if (agent.state === 'working' && MONITOR_SCREENS[key]) {
+      MonitorFX.drawMatrix(ctx, scale, key, dt);
+      if (workFile) MonitorFX.drawHologram(ctx, scale, key, workFile, now / 1000);
+    }
+  }
 
   if (!_lowMotion) {
     // Weather tint + rain (under agents)
@@ -1710,6 +2276,8 @@ function loop(now) {
   if (!_lowMotion) {
     // Delivery packets
     for (const d of deliveryPackets) d.draw(ctx, scale);
+    // Drones (above agents)
+    for (const dr of drones) dr.draw(ctx, scale);
     // Particles on top
     for (const p of particles) p.draw(ctx, scale);
   }
@@ -1843,6 +2411,8 @@ function detectChanges(data) {
       const t = s === 'working' ? 'ok' : (s === 'broken' || s === 'dead') ? 'err' : 'info';
       pushEvent(t, `${n}: ${p} → ${s}`);
       spawnEventParticle(n, t);
+      // Drone delivery when agent starts working
+      if (s === 'working' && p !== 'working') spawnDrone(n);
     }
     _prev.laneStates[n] = s;
   }
@@ -1896,9 +2466,13 @@ function renderAgentCards(lanes) {
     const s = (lane.state || 'off').toLowerCase(), color = STATE_COLORS[s] || STATE_COLORS.off;
     const role = LANE_ROLES[(lane.name || '').toLowerCase()] || '', note = lane.note || lane.status_note || '';
     const initial = (lane.name || '?')[0].toUpperCase();
-    return `<div class="agent-card"><div class="agent-avatar" style="background:${color}">${esc(initial)}</div>
+    const agent = agents.get(lane.name || '');
+    const fatigue = agent ? agent.fatigueState : '';
+    const fatigueLabel = fatigue === 'coffee' ? '☕ 커피 충전 중' : fatigue === 'fatigued' ? '💦 피로 누적' : '';
+    return `<div class="agent-card" data-agent="${esc(lane.name || '')}" data-fatigue="${fatigue}"><div class="agent-avatar" style="background:${color}">${esc(initial)}</div>
       <div class="agent-info"><div class="agent-name">${esc(lane.name || '?')}</div><div class="agent-role">${esc(role)}</div>
-      ${note ? `<div class="agent-detail">${esc(truncate(note, 50))}</div>` : ''}</div>
+      ${note ? `<div class="agent-detail">${esc(truncate(note, 50))}</div>` : ''}
+      ${fatigueLabel ? `<div class="agent-fatigue" data-fatigue="${fatigue}">${fatigueLabel}</div>` : ''}</div>
       <div class="agent-state-dot" style="background:${color}" title="${esc(s)}"></div></div>`;
   }).join('');
 }
@@ -1974,7 +2548,7 @@ if (PrefStore.get('office_muted') === '1') {
 // Show toolbar storage-unavailable indicator if preference persistence is blocked
 if (!PrefStore.available) {
   const sw = document.getElementById('storage-warn');
-  if (sw) sw.style.display = '';
+  if (sw) sw.style.display = 'inline-block';
 }
 SpriteManager.init();
 setInterval(poll, POLL_MS);

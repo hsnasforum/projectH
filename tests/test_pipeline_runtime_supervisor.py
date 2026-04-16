@@ -465,10 +465,21 @@ class RuntimeSupervisorTest(unittest.TestCase):
             root = Path(tmp)
             _write_active_profile(root)
             supervisor = RuntimeSupervisor(root, start_runtime=False)
-            with mock.patch.object(
-                supervisor.adapter,
-                "lane_health",
-                return_value={"alive": True, "pid": 4242, "attachable": True, "pane_id": "%2"},
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    return_value={"alive": True, "pid": 4242, "attachable": True, "pane_id": "%2"},
+                ),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "capture_tail",
+                    side_effect=lambda lane_name, lines=80: (
+                        "• Working (22s • esc to interrupt)\n"
+                        if lane_name == "Codex"
+                        else ""
+                    ),
+                ),
             ):
                 lanes, _models = supervisor._build_lane_statuses(
                     wrapper_models={
@@ -489,6 +500,49 @@ class RuntimeSupervisorTest(unittest.TestCase):
             codex = next(lane for lane in lanes if lane["name"] == "Codex")
             self.assertEqual(codex["state"], "WORKING")
             self.assertEqual(codex["note"], "verifying")
+
+    def test_idle_verify_round_keeps_codex_ready_even_if_round_is_running(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    return_value={"alive": True, "pid": 4242, "attachable": True, "pane_id": "%2"},
+                ),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "capture_tail",
+                    side_effect=lambda lane_name, lines=80: (
+                        "› \n"
+                        "───────────────────────────────────────────────────────────────────────────────\n"
+                        "  ⏵⏵ bypass permissions on (shift+tab to cycle)\n"
+                        if lane_name == "Codex"
+                        else ""
+                    ),
+                ),
+            ):
+                lanes, _models = supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Codex": {
+                            "state": "READY",
+                            "note": "prompt_visible",
+                            "last_event_at": "2026-04-15T08:33:21.218699Z",
+                            "last_heartbeat_at": "2026-04-15T08:33:27.312433Z",
+                        }
+                    },
+                    active_lane="Codex",
+                    active_round={
+                        "job_id": "job-42",
+                        "state": "VERIFYING",
+                        "status": "VERIFY_RUNNING",
+                    },
+                )
+            codex = next(lane for lane in lanes if lane["name"] == "Codex")
+            self.assertEqual(codex["state"], "READY")
+            self.assertEqual(codex["note"], "prompt_visible")
 
     def test_active_implement_turn_keeps_claude_surface_working_even_if_wrapper_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -584,7 +638,13 @@ class RuntimeSupervisorTest(unittest.TestCase):
                 mock.patch.object(
                     supervisor.adapter,
                     "capture_tail",
-                    side_effect=lambda lane_name, lines=80: "❯ " if lane_name == "Claude" else "",
+                    side_effect=lambda lane_name, lines=80: (
+                        "❯ \n"
+                        "───────────────────────────────────────────────────────────────────────────────\n"
+                        "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt\n"
+                        if lane_name == "Claude"
+                        else ""
+                    ),
                 ),
             ):
                 lanes, _models = supervisor._build_lane_statuses(

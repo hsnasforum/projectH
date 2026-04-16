@@ -44,65 +44,6 @@ _AUTH_LOGIN_PATTERNS = (
     re.compile(r"api error:\s*401", re.IGNORECASE),
     re.compile(r'"type"\s*:\s*"authentication_error"', re.IGNORECASE),
 )
-_PANE_BUSY_MARKERS = (
-    "working (",
-    "working for ",
-    "• working",
-    "◦ working",
-    "waiting for background",
-    "background terminal",
-    "germinating",
-    "flumoxing",
-    "thinking",
-    "esc to interrupt",
-)
-
-
-def _line_looks_like_input_prompt(line: str) -> bool:
-    stripped = line.strip()
-    if not stripped:
-        return False
-    return (
-        stripped == ">"
-        or stripped == "›"
-        or stripped == "❯"
-        or stripped.startswith("> ")
-        or stripped.startswith("› ")
-        or stripped.startswith("❯ ")
-        or stripped.endswith("$")
-    )
-
-
-def _pane_tail_has_gemini_ready_prompt(text: str) -> bool:
-    recent_lines = [line.strip().lower() for line in text.splitlines() if line.strip()]
-    if not recent_lines:
-        return False
-    window = recent_lines[-12:]
-    has_type_your_message = any(line == "type your message" for line in window)
-    has_workspace_hint = any(line == "workspace" or line.startswith("workspace ") for line in window)
-    has_gemini_banner = any("gemini cli" in line for line in window)
-    return has_type_your_message and (has_workspace_hint or has_gemini_banner)
-
-
-def _pane_tail_has_busy_indicator(text: str) -> bool:
-    lower = text.lower()
-    return any(marker in lower for marker in _PANE_BUSY_MARKERS)
-
-
-def _pane_tail_has_input_cursor(text: str) -> bool:
-    lines = [line for line in text.strip().splitlines() if line.strip()]
-    if not lines:
-        return False
-    for line in reversed(lines[-12:]):
-        if _line_looks_like_input_prompt(line):
-            return True
-    return _pane_tail_has_gemini_ready_prompt(text)
-
-
-def _pane_tail_is_idle(text: str) -> bool:
-    if not text.strip():
-        return False
-    return _pane_tail_has_input_cursor(text) and not _pane_tail_has_busy_indicator(text)
 
 
 class RuntimeSupervisor:
@@ -510,38 +451,13 @@ class RuntimeSupervisor:
         if lane_name != active_lane:
             return False
         turn_state_name = str((turn_state or {}).get("state") or "")
-        if turn_state_name in {"CLAUDE_ACTIVE", "CODEX_FOLLOWUP"}:
+        if turn_state_name == "CODEX_FOLLOWUP":
             return True
         if not active_round:
             return False
         if not str((active_round or {}).get("job_id") or ""):
             return False
         return str((active_round or {}).get("state") or "") in {"VERIFY_PENDING", "VERIFYING"}
-
-    def _lane_has_live_implement_control(
-        self,
-        *,
-        lane_name: str,
-        control: dict[str, Any] | None,
-        duplicate_control: dict[str, Any] | None,
-    ) -> bool:
-        implement_owner = str(self.role_owners.get("implement") or "Claude")
-        if lane_name != implement_owner:
-            return False
-        if duplicate_control is not None:
-            return False
-        control = control or {}
-        if str(control.get("active_control_status") or "") != "implement":
-            return False
-        if int(control.get("active_control_seq") or -1) < 0:
-            return False
-        try:
-            tail_text = self.adapter.capture_tail(lane_name, lines=80)
-        except Exception:
-            return False
-        if not str(tail_text or "").strip():
-            return False
-        return not _pane_tail_is_idle(tail_text)
 
     def _detect_active_lane_failure_reason(
         self,
@@ -624,29 +540,19 @@ class RuntimeSupervisor:
                 note = failure_reason
             else:
                 model_state = str(model.get("state") or "")
-                implement_live = self._lane_has_live_implement_control(
-                    lane_name=lane_name,
-                    control=control,
-                    duplicate_control=duplicate_control,
-                )
                 if (
                     model_state in {"READY", "WORKING"}
-                    and (
-                        implement_live
-                        or self._lane_should_surface_working(
-                            lane_name=lane_name,
-                            active_lane=active_lane,
-                            active_round=active_round,
-                            turn_state=turn_state,
-                        )
+                    and self._lane_should_surface_working(
+                        lane_name=lane_name,
+                        active_lane=active_lane,
+                        active_round=active_round,
+                        turn_state=turn_state,
                     )
                 ):
                     state = "WORKING"
                     if note in {"", "prompt_visible"}:
                         turn_state_name = str((turn_state or {}).get("state") or "")
-                        if implement_live or turn_state_name == "CLAUDE_ACTIVE":
-                            note = str(control.get("active_control_status") or "").lower() or "implement"
-                        elif turn_state_name == "CODEX_FOLLOWUP":
+                        if turn_state_name == "CODEX_FOLLOWUP":
                             note = "followup"
                         else:
                             note = str((active_round or {}).get("state") or "").lower() or "active_round"
@@ -741,6 +647,8 @@ class RuntimeSupervisor:
         active_round: dict[str, Any] | None,
     ) -> str:
         lane_name = str(lane.get("name") or "")
+        if self._stop_requested or not self._runtime_started:
+            return ""
         if str(lane.get("state") or "") != "BROKEN":
             return ""
         failure_reason = str(lane_model.get("failure_reason") or lane.get("note") or "").strip()
@@ -789,7 +697,7 @@ class RuntimeSupervisor:
             control_slots if isinstance(control_slots, dict) else {"active": None, "stale": []},
         )
 
-    def _write_status(self, *, force_runtime_state: str | None = None) -> dict[str, Any]:
+    def _write_status(self) -> dict[str, Any]:
         turn_state = read_json(self.base_dir / "state" / "turn_state.json")
         control_slots = parse_control_slots(self.base_dir)
         active_control = dict(control_slots.get("active") or {})
@@ -839,6 +747,12 @@ class RuntimeSupervisor:
             duplicate_control=duplicate_control,
             stale_operator_control=stale_operator_control,
         )
+        self._write_task_hints(
+            active_lane=active_lane,
+            active_round=active_round,
+            control=control_block,
+            duplicate_control=duplicate_control,
+        )
         lanes, lane_models = self._build_lane_statuses(
             wrapper_models=wrapper_models,
             active_lane=active_lane,
@@ -848,6 +762,18 @@ class RuntimeSupervisor:
             duplicate_control=duplicate_control,
         )
         watcher = self._watcher_status()
+        session_alive = self.adapter.session_exists()
+        if not self._runtime_started and not session_alive and not watcher.get("alive"):
+            lanes = [
+                {
+                    **lane,
+                    "state": "OFF",
+                    "pid": None,
+                    "attachable": False,
+                    "note": "",
+                }
+                for lane in lanes
+            ]
         artifacts = self._build_artifacts()
         lane_configs = self.runtime_lane_configs or [
             {"name": lane, "enabled": lane in self.enabled_lanes}
@@ -868,7 +794,6 @@ class RuntimeSupervisor:
             )
             if reason:
                 degraded_reasons.append(reason)
-        session_alive = self.adapter.session_exists()
         enabled_lanes = [lane for lane in lanes if str(lane.get("state") or "") != "OFF"]
         if self._runtime_started and not self._stop_requested and not session_alive and configured_enabled_lanes:
             degraded_reasons.append("session_missing")
@@ -894,36 +819,6 @@ class RuntimeSupervisor:
             self.runtime_state = "STARTING"
         else:
             self.runtime_state = "STOPPED"
-
-        if force_runtime_state:
-            self.runtime_state = force_runtime_state
-
-        if self.runtime_state == "STOPPED" and force_runtime_state == "STOPPED":
-            control_block = {
-                "active_control_file": "",
-                "active_control_seq": -1,
-                "active_control_status": "none",
-                "active_control_updated_at": "",
-            }
-            active_round = None
-            active_lane = ""
-            watcher = {"alive": False, "pid": None}
-            normalized_lanes: list[dict[str, Any]] = []
-            for lane in lanes:
-                lane_copy = dict(lane)
-                lane_copy["state"] = "OFF"
-                lane_copy["pid"] = None
-                lane_copy["attachable"] = False
-                lane_copy["note"] = "stopped"
-                normalized_lanes.append(lane_copy)
-            lanes = normalized_lanes
-
-        self._write_task_hints(
-            active_lane=active_lane,
-            active_round=active_round,
-            control=control_block,
-            duplicate_control=duplicate_control,
-        )
 
         status = {
             "schema_version": 1,
@@ -1470,11 +1365,13 @@ class RuntimeSupervisor:
                 time.sleep(self.poll_interval)
         finally:
             self.runtime_state = "STOPPING"
-            self._write_status(force_runtime_state="STOPPING")
+            self._write_status()
             if self._runtime_started:
                 self._stop_runtime()
+            self._runtime_started = False
+            self._stop_requested = False
             self.runtime_state = "STOPPED"
-            final_status = self._write_status(force_runtime_state="STOPPED")
+            final_status = self._write_status()
             self._record_status_events(final_status)
             self._append_event("runtime_stopped", {"runtime_state": "STOPPED"})
             try:

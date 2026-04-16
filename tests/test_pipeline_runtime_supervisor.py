@@ -48,6 +48,35 @@ class RuntimeSupervisorTest(unittest.TestCase):
         self.assertEqual(args.legacy_mode, "baseline")
         self.assertTrue(args.no_attach)
 
+    def test_build_artifacts_uses_canonical_round_notes_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            work_readme = root / "work" / "README.md"
+            verify_readme = root / "verify" / "README.md"
+            work_note = root / "work" / "4" / "16" / "2026-04-16-real-round.md"
+            verify_note = root / "verify" / "4" / "16" / "2026-04-16-real-verify.md"
+            work_note.parent.mkdir(parents=True, exist_ok=True)
+            verify_note.parent.mkdir(parents=True, exist_ok=True)
+            work_readme.parent.mkdir(parents=True, exist_ok=True)
+            verify_readme.parent.mkdir(parents=True, exist_ok=True)
+            work_note.write_text("# work\n", encoding="utf-8")
+            verify_note.write_text("# verify\n", encoding="utf-8")
+            work_readme.write_text("# metadata\n", encoding="utf-8")
+            verify_readme.write_text("# metadata\n", encoding="utf-8")
+
+            os.utime(work_note, (100.0, 100.0))
+            os.utime(verify_note, (200.0, 200.0))
+            os.utime(work_readme, (300.0, 300.0))
+            os.utime(verify_readme, (400.0, 400.0))
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            artifacts = supervisor._build_artifacts()
+
+            self.assertEqual(artifacts["latest_work"]["path"], "4/16/2026-04-16-real-round.md")
+            self.assertEqual(artifacts["latest_verify"]["path"], "4/16/2026-04-16-real-verify.md")
+
     def test_write_status_emits_receipt_and_control_block(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -109,7 +138,25 @@ class RuntimeSupervisorTest(unittest.TestCase):
             verify_path.write_text("# verify\n", encoding="utf-8")
 
             supervisor = RuntimeSupervisor(root, start_runtime=False)
-            status = supervisor._write_status()
+            supervisor._runtime_started = True
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
 
             self.assertEqual(status["control"]["active_control_file"], ".pipeline/claude_handoff.md")
             self.assertEqual(status["control"]["active_control_seq"], 17)
@@ -161,6 +208,8 @@ class RuntimeSupervisorTest(unittest.TestCase):
 
             supervisor = RuntimeSupervisor(root, start_runtime=False)
             supervisor._runtime_started = True
+            supervisor.enabled_lanes = set()
+            supervisor.runtime_lane_configs = []
             with (
                 mock.patch.object(supervisor, "_watcher_status", return_value={"alive": False, "pid": None}),
                 mock.patch.object(supervisor.adapter, "session_exists", return_value=False),
@@ -169,8 +218,8 @@ class RuntimeSupervisorTest(unittest.TestCase):
                     "_build_lane_statuses",
                     return_value=(
                         [
-                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": "prompt_visible"},
-                            {"name": "Codex", "state": "WORKING", "attachable": True, "pid": 12, "note": "seq 17"},
+                            {"name": "Claude", "state": "OFF", "attachable": False, "pid": None, "note": "stopped"},
+                            {"name": "Codex", "state": "OFF", "attachable": False, "pid": None, "note": "stopped"},
                         ],
                         {"Claude": {}, "Codex": {}},
                     ),
@@ -178,7 +227,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
                 mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
                 mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
             ):
-                status = supervisor._write_status(force_runtime_state="STOPPED")
+                status = supervisor._write_status()
 
             self.assertEqual(status["runtime_state"], "STOPPED")
             self.assertEqual(status["control"]["active_control_status"], "none")
@@ -885,7 +934,12 @@ class RuntimeSupervisorTest(unittest.TestCase):
             state_dir = pipeline_dir / "state"
             state_dir.mkdir(parents=True, exist_ok=True)
             (pipeline_dir / "operator_request.md").write_text(
-                "STATUS: needs_operator\nCONTROL_SEQ: 142\n",
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 142\n"
+                "REASON_CODE: slice_ambiguity\n"
+                "OPERATOR_POLICY: gate_24h\n"
+                "DECISION_CLASS: operator_only\n"
+                "DECISION_REQUIRED: choose exact next slice\n",
                 encoding="utf-8",
             )
             (state_dir / "turn_state.json").write_text(
@@ -939,7 +993,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             codex_hint = json.loads(supervisor._task_hint_path("Codex").read_text(encoding="utf-8"))
             self.assertEqual(status["control"]["active_control_status"], "none")
             self.assertEqual(status["compat"]["turn_state"]["state"], "OPERATOR_WAIT")
-            self.assertEqual(status["autonomy"]["mode"], "pending_operator")
+            self.assertEqual(status["autonomy"]["mode"], "triage")
             self.assertEqual(next(lane for lane in status["lanes"] if lane["name"] == "Codex")["state"], "READY")
             self.assertFalse(codex_hint["active"])
             self.assertEqual(codex_hint["job_id"], "")
@@ -953,7 +1007,12 @@ class RuntimeSupervisorTest(unittest.TestCase):
             state_dir = pipeline_dir / "state"
             state_dir.mkdir(parents=True, exist_ok=True)
             (pipeline_dir / "operator_request.md").write_text(
-                "STATUS: needs_operator\nCONTROL_SEQ: 188\n\nReason:\n- slice_ambiguity\n",
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 188\n"
+                "REASON_CODE: slice_ambiguity\n"
+                "OPERATOR_POLICY: gate_24h\n"
+                "DECISION_CLASS: operator_only\n"
+                "DECISION_REQUIRED: choose exact next slice\n",
                 encoding="utf-8",
             )
 
@@ -992,6 +1051,8 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(status["compat"]["control_slots"]["active"]["status"], "needs_operator")
             self.assertEqual(status["autonomy"]["mode"], "triage")
             self.assertEqual(status["autonomy"]["block_reason"], "slice_ambiguity")
+            self.assertEqual(status["autonomy"]["reason_code"], "slice_ambiguity")
+            self.assertEqual(status["autonomy"]["operator_policy"], "gate_24h")
             self.assertTrue(status["autonomy"]["suppress_operator_until"])
             self.assertEqual(len(gated_events), 1)
             self.assertEqual(gated_events[0]["payload"]["reason"], "slice_ambiguity")
@@ -1004,7 +1065,12 @@ class RuntimeSupervisorTest(unittest.TestCase):
             state_dir = pipeline_dir / "state"
             state_dir.mkdir(parents=True, exist_ok=True)
             (pipeline_dir / "operator_request.md").write_text(
-                "STATUS: needs_operator\nCONTROL_SEQ: 189\n\nReason:\n- This is a truth-sync blocker.\n",
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 189\n"
+                "REASON_CODE: truth_sync_required\n"
+                "OPERATOR_POLICY: immediate_publish\n"
+                "DECISION_CLASS: operator_only\n"
+                "DECISION_REQUIRED: confirm truth sync\n",
                 encoding="utf-8",
             )
 
@@ -1035,6 +1101,46 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(status["control"]["active_control_seq"], 189)
             self.assertEqual(status["autonomy"]["mode"], "needs_operator")
             self.assertEqual(status["autonomy"]["block_reason"], "truth_sync_required")
+            self.assertEqual(status["autonomy"]["operator_policy"], "immediate_publish")
+
+    def test_write_status_missing_structured_operator_metadata_stays_fail_safe_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "operator_request.md").write_text(
+                "STATUS: needs_operator\nCONTROL_SEQ: 190\n\nReason:\n- slice_ambiguity\n",
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                            {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["control"]["active_control_status"], "needs_operator")
+            self.assertEqual(status["autonomy"]["mode"], "needs_operator")
+            self.assertEqual(status["autonomy"]["classification_source"], "metadata_missing_fallback")
 
     def test_write_status_surfaces_duplicate_handoff_as_ready_and_emits_duplicate_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1528,6 +1634,15 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertIn(str(root), command)
             self.assertIn("--lane Codex", command)
             self.assertIn("--run run-123", command)
+
+    def test_lane_vendor_command_uses_yolo_for_gemini(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            with mock.patch.object(supervisor, "_find_cli_bin", side_effect=lambda name: f"/usr/bin/{name}"):
+                command = supervisor._lane_vendor_command("Gemini")
+            self.assertEqual(command, 'exec "/usr/bin/gemini" --yolo')
 
     def test_lane_shell_command_carries_pythonpath_into_tmux_environment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

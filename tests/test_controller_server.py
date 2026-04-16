@@ -91,6 +91,7 @@ class ControllerServerLaunchGateTests(unittest.TestCase):
         self.assertIn("/api/runtime/stop", html)
         self.assertIn("/api/runtime/restart", html)
         self.assertIn("/api/runtime/capture-tail", html)
+        self.assertIn("/api/runtime/send-input", html)
         self.assertIn("const STATE_GIF_ASSETS = {", html)
         self.assertIn("/controller-assets/BOOTING.gif", html)
         self.assertIn("/controller-assets/WORKING.gif", html)
@@ -112,10 +113,13 @@ class ControllerServerLaunchGateTests(unittest.TestCase):
         self.assertIn("openLogModal(agent)", html)
         self.assertIn("log-modal", html)
         self.assertIn("log-modal-body", html)
-        self.assertIn("width: min(1100px, 96vw)", html)
+        self.assertIn("width: min(1360px, 98vw)", html)
         self.assertIn("width: 100%; min-width: 0;", html)
         self.assertIn("flex-wrap: wrap", html)
         self.assertIn("white-space: normal;", html)
+        self.assertIn("lm-input", html)
+        self.assertIn("sendModalInput()", html)
+        self.assertIn("log-modal-send-status", html)
         self.assertIn("renderRuntimeInfo(data, presentation)", html)
         self.assertIn("function getRuntimePresentation(data)", html)
         self.assertIn("supervisor_missing_recent_ambiguous", html)
@@ -141,8 +145,8 @@ class ControllerServerLaunchGateTests(unittest.TestCase):
         self.assertIn("entrance:     { x: 868, y: 664 }", html)
         self.assertIn("const IDLE_ROAM_SPOTS = [", html)
         self.assertIn("_pickIdleTarget()", html)
-        self.assertIn("x: 770, y: 300", html)
-        self.assertIn("x: 832, y: 318", html)
+        self.assertIn("x: 760, y: 360", html)
+        self.assertIn("x: 820, y: 320", html)
         self.assertIn("case 'ready':", html)
         self.assertIn("case 'idle':", html)
         self.assertIn("dest = this._pickIdleTarget();", html)
@@ -181,6 +185,7 @@ class ControllerServerLaunchGateTests(unittest.TestCase):
         self.assertNotIn('fetch("/api/state")', html)
         self.assertNotIn("apiPost('/api/start')", html)
         self.assertNotIn("/api/runtime/exec", html)
+        self.assertIn("/api/runtime/send-input", server_source)
         self.assertNotIn("/api/state", server_source)
         self.assertNotIn("/api/health", server_source)
         self.assertNotIn("/api/start", server_source)
@@ -208,6 +213,34 @@ class ControllerServerLaunchGateTests(unittest.TestCase):
             controller_server.SESSION_NAME,
             "Claude",
             lines=77,
+        )
+
+    def test_runtime_send_input_requires_lane(self) -> None:
+        data, status = controller_server.runtime_send_input(lane=None, text="1")
+        self.assertEqual(int(status), 400)
+        self.assertFalse(data["ok"])
+
+    def test_runtime_send_input_requires_text(self) -> None:
+        data, status = controller_server.runtime_send_input(lane="Claude", text="   ")
+        self.assertEqual(int(status), 400)
+        self.assertFalse(data["ok"])
+
+    def test_runtime_send_input_delegates_to_backend_helper(self) -> None:
+        with mock.patch.object(
+            controller_server,
+            "backend_runtime_send_input",
+            return_value=True,
+        ) as send_input:
+            data, status = controller_server.runtime_send_input(lane="Codex", text="1")
+        self.assertEqual(int(status), 200)
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["lane"], "Codex")
+        self.assertEqual(data["text"], "1")
+        send_input.assert_called_once_with(
+            controller_server.PROJECT_ROOT,
+            controller_server.SESSION_NAME,
+            "Codex",
+            text="1",
         )
 
     def test_resolve_controller_asset_returns_existing_png(self) -> None:

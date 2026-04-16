@@ -58,8 +58,8 @@
 - Claude는 보통 `.pipeline/claude_handoff.md`가 `STATUS: implement`일 때만 새 구현 `/work`를 남깁니다. 최신 control 파일이 `.pipeline/operator_request.md`라면 새 `/work` closeout을 억지로 만들지 않습니다.
 - Claude implement round는 bounded 파일 수정과 `/work` closeout에서 끝나는 편이 맞습니다. implement lane에서 commit, push, branch publish, PR 생성까지 같이 진행하지 않습니다.
 - 최신 control 파일이 `.pipeline/gemini_request.md` 또는 `.pipeline/gemini_advice.md`라면, 그 arbitration이 끝날 때까지 새 `/work` closeout을 억지로 만들지 않습니다.
-- active `STATUS: implement` handoff가 blocked라면 Claude는 새 `/work` closeout 대신 pane-local `STATUS: implement_blocked` sentinel로 Codex triage를 기다리는 편이 맞습니다.
-- `STATUS: needs_operator` stop request는 bare stop line 하나로 끝내지 않는 편이 맞습니다. 최소한 왜 멈췄는지와 operator가 다음에 무엇을 정해야 하는지는 `.pipeline/operator_request.md`에 남겨야, automation이 멈춘 이유를 나중에 다시 추적할 수 있습니다.
+- active `STATUS: implement` handoff가 blocked라면 Claude는 새 `/work` closeout 대신 pane-local `STATUS: implement_blocked` + `BLOCK_REASON_CODE` + `ESCALATION_CLASS` sentinel로 Codex triage를 기다리는 편이 맞습니다.
+- `STATUS: needs_operator` stop request는 bare stop line 하나로 끝내지 않는 편이 맞습니다. 최소한 `CONTROL_SEQ`, `REASON_CODE`, `OPERATOR_POLICY`, `DECISION_CLASS`, `DECISION_REQUIRED`, `BASED_ON_WORK`, `BASED_ON_VERIFY`와 함께 왜 멈췄는지, operator가 다음에 무엇을 정해야 하는지는 `.pipeline/operator_request.md`에 남겨야 automation이 멈춘 이유를 나중에 다시 추적할 수 있습니다.
 - Codex는 latest `/work`와 `/verify`가 한 family를 truthfully 닫았을 때 같은 family의 가장 작은 current-risk reduction을 먼저 자동 확정할 수 있습니다. 다음 슬라이스를 매번 operator가 직접 고를 필요는 없습니다.
 - 다만 Codex가 next-slice ambiguity, overlapping candidates, low-confidence prioritization 때문에 바로 확정하지 못한 경우에는 `.pipeline/operator_request.md`보다 `.pipeline/gemini_request.md`를 먼저 여는 편이 맞습니다.
 - 따라서 `.pipeline/operator_request.md`는 단순한 우선순위 망설임이 아니라 real operator-only decision, approval/truth-sync blocker, immediate safety stop, 또는 Gemini advice 이후에도 exact slice를 못 좁힌 경우를 의미하는 편이 맞습니다.

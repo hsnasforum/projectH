@@ -557,6 +557,15 @@ def runtime_capture_tail(project: Path, session: str = "", lane: str | None = No
     return adapter.capture_tail(lane, lines=lines)
 
 
+def runtime_send_input(project: Path, session: str = "", lane: str | None = None, *, text: str = "") -> bool:
+    lane_name = str(lane or "").strip()
+    payload = str(text or "")
+    if not lane_name or not payload.strip():
+        return False
+    adapter = TmuxAdapter(project, session or _session_name_for(project))
+    return adapter.send_input(lane_name, payload)
+
+
 _TURN_STATE_LABELS: dict[str, str] = {
     "IDLE": "대기",
     "CLAUDE_ACTIVE": "Claude 실행 중",

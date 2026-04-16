@@ -62,8 +62,8 @@
   - 멈춰야 하는 경우 `.pipeline/operator_request.md`에 `STATUS: needs_operator`
   를 남깁니다. persistent verification truth는 항상 `/verify`가 먼저입니다.
 - 따라서 pane 안 reasoning만 남기거나 next control slot만 먼저 갱신하는 것은 canonical verification closeout이 아닙니다. `/verify`를 먼저 남기거나 갱신한 뒤에만 다음 control slot을 쓰는 편이 맞습니다.
-- watcher가 Claude lane의 `STATUS: implement_blocked` sentinel을 감지한 경우에도, Codex는 그 blocked triage를 `.pipeline/claude_handoff.md` / `.pipeline/gemini_request.md` / `.pipeline/operator_request.md` 중 하나의 최신 valid control로 닫는 편이 맞습니다.
-- `STATUS: needs_operator`를 쓸 때는 bare stop line만 남기지 말고, 최소한 stop reason, 근거가 된 latest `/work`와 `/verify`, 그리고 operator가 다음에 무엇을 정해야 하는지를 같이 남깁니다.
+- watcher가 Claude lane의 `STATUS: implement_blocked` sentinel을 감지한 경우에도, Codex는 그 blocked triage를 `.pipeline/claude_handoff.md` / `.pipeline/gemini_request.md` / `.pipeline/operator_request.md` 중 하나의 최신 valid control로 닫는 편이 맞습니다. blocked sentinel 자체에는 `BLOCK_REASON_CODE`와 `ESCALATION_CLASS`를 함께 두는 편이 canonical입니다.
+- `STATUS: needs_operator`를 쓸 때는 bare stop line만 남기지 말고, 최소한 `CONTROL_SEQ`, `REASON_CODE`, `OPERATOR_POLICY`, `DECISION_CLASS`, `DECISION_REQUIRED`, `BASED_ON_WORK`, `BASED_ON_VERIFY`, stop reason, 근거가 된 latest `/work`와 `/verify`, 그리고 operator가 다음에 무엇을 정해야 하는지를 같이 남깁니다.
 - `/verify`의 1차 목적은 현재 truth를 정직하게 다시 맞추는 것입니다. 다음 슬라이스 제안은 가능하지만, 단순한 uncovered regression 채우기보다 현재 MVP 우선순위를 먼저 통과해야 합니다.
 - `/verify`의 1차 목적은 repo 전체 상태를 새로 재판정하는 것이 아니라, 최신 Claude 라운드가 truthful한지 확인하고 그 범위 안에서 다음 한 슬라이스를 좁게 제안하는 것입니다.
 - 다음 슬라이스를 제안할 때도 기존 shared path 재사용으로 중복 코드를 줄일 수 있는지 먼저 보고, 하나의 coherent slice로 닫을 수 있는데도 필요 이상으로 micro-slice로 쪼개지 않습니다.

@@ -25,11 +25,12 @@ from .schema import (
     atomic_write_json,
     append_jsonl,
     iso_utc,
-    latest_markdown,
+    latest_round_markdown,
     latest_receipt,
     load_job_states,
     parse_iso_utc,
     parse_control_slots,
+    read_control_meta,
     read_json,
     repo_relative,
 )
@@ -301,6 +302,13 @@ class RuntimeSupervisor:
         return {
             "mode": "normal",
             "block_reason": "",
+            "reason_code": "",
+            "operator_policy": "",
+            "decision_class": "",
+            "decision_required": "",
+            "based_on_work": "",
+            "based_on_verify": "",
+            "classification_source": "",
             "first_seen_at": "",
             "suppress_operator_until": "",
             "operator_eligible": False,
@@ -337,17 +345,22 @@ class RuntimeSupervisor:
         control_path = self._control_path(control)
         if control_path is None or not control_path.exists():
             return None
+        control_meta = read_control_meta(control_path)
         try:
             control_text = control_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return None
-        referenced_work_paths = sorted(
-            {
-                self._normalize_artifact_path(match.group(1))
-                for match in _WORK_PATH_RE.finditer(control_text)
-                if self._normalize_artifact_path(match.group(1))
-            }
-        )
+        based_on_work = self._normalize_artifact_path(control_meta.get("based_on_work"))
+        if based_on_work:
+            referenced_work_paths = [based_on_work]
+        else:
+            referenced_work_paths = sorted(
+                {
+                    self._normalize_artifact_path(match.group(1))
+                    for match in _WORK_PATH_RE.finditer(control_text)
+                    if self._normalize_artifact_path(match.group(1))
+                }
+            )
         reason = str((turn_state or {}).get("reason") or "")
         retriage_active = (
             str((turn_state or {}).get("state") or "") == "CODEX_FOLLOWUP"
@@ -400,6 +413,7 @@ class RuntimeSupervisor:
         control_path = self._control_path(control)
         if control_path is None or not control_path.exists():
             return None, autonomy
+        control_meta = read_control_meta(control_path)
 
         try:
             control_mtime = float(control.get("mtime") or control_path.stat().st_mtime)
@@ -408,6 +422,7 @@ class RuntimeSupervisor:
 
         decision = classify_operator_candidate(
             self._control_text(control),
+            control_meta=control_meta,
             control_path=str(control_path),
             control_seq=int(control.get("active_control_seq") or control.get("control_seq") or -1),
             control_mtime=control_mtime,
@@ -425,6 +440,13 @@ class RuntimeSupervisor:
         autonomy = {
             "mode": str(decision.get("mode") or "normal"),
             "block_reason": str(decision.get("block_reason") or ""),
+            "reason_code": str(decision.get("reason_code") or ""),
+            "operator_policy": str(decision.get("operator_policy") or ""),
+            "decision_class": str(decision.get("decision_class") or ""),
+            "decision_required": str(decision.get("decision_required") or ""),
+            "based_on_work": str(decision.get("based_on_work") or ""),
+            "based_on_verify": str(decision.get("based_on_verify") or ""),
+            "classification_source": str(decision.get("classification_source") or ""),
             "first_seen_at": str(decision.get("first_seen_at") or ""),
             "suppress_operator_until": str(decision.get("suppress_operator_until") or ""),
             "operator_eligible": bool(decision.get("operator_eligible")),
@@ -452,6 +474,10 @@ class RuntimeSupervisor:
             "control_file": str(control.get("active_control_file") or control.get("file") or ""),
             "control_seq": int(control.get("active_control_seq") or control.get("control_seq") or -1),
             "reason": str(decision.get("block_reason") or ""),
+            "reason_code": str(decision.get("reason_code") or ""),
+            "operator_policy": str(decision.get("operator_policy") or ""),
+            "decision_class": str(decision.get("decision_class") or ""),
+            "classification_source": str(decision.get("classification_source") or ""),
             "mode": str(decision.get("suppressed_mode") or ""),
             "routed_to": str(decision.get("routed_to") or ""),
             "suppress_operator_until": str(decision.get("suppress_operator_until") or ""),
@@ -536,8 +562,8 @@ class RuntimeSupervisor:
         }
 
     def _build_artifacts(self) -> dict[str, Any]:
-        work_rel, work_mtime = latest_markdown(self.project_root / "work")
-        verify_rel, verify_mtime = latest_markdown(self.project_root / "verify")
+        work_rel, work_mtime = latest_round_markdown(self.project_root / "work")
+        verify_rel, verify_mtime = latest_round_markdown(self.project_root / "verify")
         return {
             "latest_work": {"path": work_rel, "mtime": work_mtime},
             "latest_verify": {"path": verify_rel, "mtime": verify_mtime},
@@ -740,7 +766,7 @@ class RuntimeSupervisor:
 
     def _latest_verify_path(self) -> Path | None:
         verify_root = self.project_root / "verify"
-        best_rel, _best_mtime = latest_markdown(verify_root)
+        best_rel, _best_mtime = latest_round_markdown(verify_root)
         if best_rel == "—":
             return None
         return verify_root / best_rel
@@ -1030,6 +1056,15 @@ class RuntimeSupervisor:
         if desired_autonomy_state != persisted_autonomy:
             self._save_autonomy_state(desired_autonomy_state)
 
+        if self.runtime_state in {"STOPPING", "STOPPED", "BROKEN"}:
+            control_block = {
+                "active_control_file": "",
+                "active_control_seq": -1,
+                "active_control_status": "none",
+                "active_control_updated_at": "",
+            }
+            active_round = None
+
         status = {
             "schema_version": 1,
             "backend_type": "tmux",
@@ -1296,7 +1331,7 @@ class RuntimeSupervisor:
         if lane_name == "Codex":
             return f'exec "{self._find_cli_bin("codex")}" --ask-for-approval never --disable apps'
         if lane_name == "Gemini":
-            return f'exec "{self._find_cli_bin("gemini")}" --approval-mode auto_edit'
+            return f'exec "{self._find_cli_bin("gemini")}" --yolo'
         return "exec bash"
 
     def _lane_shell_command(self, lane_name: str) -> str:
@@ -1375,6 +1410,7 @@ class RuntimeSupervisor:
                 "- .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: {next_control_seq})\n"
                 "RULES:\n"
                 "- keep one exact next slice or one exact operator decision only\n"
+                "- if you write .pipeline/operator_request.md, keep STATUS/CONTROL_SEQ in the first 12 lines and also include REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, and BASED_ON_VERIFY near the top\n"
                 "- if the only blocker is next-slice ambiguity, overlapping candidates, or low-confidence prioritization, open .pipeline/gemini_request.md before .pipeline/operator_request.md\n"
                 "- use .pipeline/operator_request.md without Gemini only for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, or when Gemini is unavailable/already inconclusive\n"
                 "- if same-day same-family docs-only truth-sync already repeated 3+ times, do not choose another narrower docs-only micro-slice; choose one bounded docs bundle or escalate"
@@ -1398,7 +1434,9 @@ class RuntimeSupervisor:
                 "BLOCKED_SENTINEL:\n"
                 "STATUS: implement_blocked\n"
                 "BLOCK_REASON: <short_reason>\n"
-                "REQUEST: verify_triage\n"
+                "BLOCK_REASON_CODE: <reason_code>\n"
+                "REQUEST: codex_triage\n"
+                "ESCALATION_CLASS: codex_triage\n"
                 "HANDOFF: {active_handoff_path}\n"
                 "HANDOFF_SHA: {active_handoff_sha}\n"
                 "BLOCK_ID: {active_handoff_sha}:<short_reason>"
@@ -1446,6 +1484,7 @@ class RuntimeSupervisor:
                 "- .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: {next_control_seq})\n"
                 "RULES:\n"
                 "- write exactly one next control outcome\n"
+                "- if you write .pipeline/operator_request.md, keep STATUS/CONTROL_SEQ in the first 12 lines and also include REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, and BASED_ON_VERIFY near the top\n"
                 "- after Gemini advice, write .pipeline/operator_request.md only if the advice itself recommends a real operator decision or still leaves no truthful exact slice"
             ),
         }

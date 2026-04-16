@@ -21,7 +21,7 @@ from pathlib import Path
 
 from pipeline_gui.project import _session_name_for
 
-from .schema import read_json
+from .schema import atomic_write_json, iso_utc, read_json
 from .supervisor import RuntimeSupervisor
 from .tmux_adapter import TmuxAdapter
 from .wrapper_events import append_wrapper_event
@@ -167,6 +167,13 @@ def _kill_pid(pid: int) -> None:
         pass
 
 
+def _signal_pid(pid: int, sig: int) -> None:
+    try:
+        os.kill(pid, sig)
+    except OSError:
+        return
+
+
 def _wait_for_supervisors_exit(
     project_root: Path,
     session_name: str,
@@ -180,6 +187,113 @@ def _wait_for_supervisors_exit(
             return True
         time.sleep(0.25)
     return False
+
+
+def _current_status_path(project_root: Path) -> Path | None:
+    current_run = read_json(project_root / ".pipeline" / "current_run.json")
+    if not current_run:
+        return None
+    status_path_value = str(current_run.get("status_path") or "").strip()
+    if status_path_value:
+        return project_root / status_path_value
+    run_id = str(current_run.get("run_id") or "").strip()
+    if not run_id:
+        return None
+    return project_root / ".pipeline" / "runs" / run_id / "status.json"
+
+
+def _wait_for_stop_completion(
+    project_root: Path,
+    session_name: str,
+    *,
+    timeout: float = 30.0,
+) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        live_pids = _list_supervisor_pids(project_root, session_name)
+        status_path = _current_status_path(project_root)
+        status = read_json(status_path) if status_path else None
+        runtime_state = str((status or {}).get("runtime_state") or "")
+        if not live_pids and (not status or runtime_state == "STOPPED"):
+            return True
+        time.sleep(0.25)
+    return False
+
+
+def _pid_file_alive(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        pid = int(path.read_text(encoding="utf-8").strip())
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _orphan_runtime_needs_cleanup(project_root: Path, session_name: str) -> bool:
+    adapter = TmuxAdapter(project_root, session_name)
+    if adapter.session_exists():
+        return True
+    return any(
+        _pid_file_alive(project_root / relative)
+        for relative in (
+            Path(".pipeline/experimental.pid"),
+            Path(".pipeline/baseline.pid"),
+            Path(".pipeline/usage/collector.pid"),
+        )
+    )
+
+
+def _coerce_status_to_stopped(project_root: Path) -> None:
+    status_path = _current_status_path(project_root)
+    if status_path is None:
+        return
+    status = read_json(status_path)
+    if not status:
+        return
+    lanes = []
+    for lane in list(status.get("lanes") or []):
+        if not isinstance(lane, dict):
+            continue
+        lanes.append(
+            {
+                **lane,
+                "state": "OFF",
+                "pid": None,
+                "attachable": False,
+                "note": "stopped",
+            }
+        )
+    status["runtime_state"] = "STOPPED"
+    status["control"] = {
+        "active_control_file": "",
+        "active_control_seq": -1,
+        "active_control_status": "none",
+        "active_control_updated_at": "",
+    }
+    status["active_round"] = None
+    status["watcher"] = {"alive": False, "pid": None}
+    status["lanes"] = lanes
+    status["autonomy"] = {
+        "mode": "normal",
+        "block_reason": "",
+        "first_seen_at": "",
+        "suppress_operator_until": "",
+        "operator_eligible": False,
+        "same_fingerprint_retries": 0,
+        "last_self_heal_at": "",
+        "last_self_triage_at": "",
+    }
+    status["last_heartbeat_at"] = iso_utc()
+    status["updated_at"] = iso_utc()
+    atomic_write_json(status_path, status)
+
+
+def _cleanup_orphan_runtime(project_root: Path, session_name: str) -> None:
+    supervisor = RuntimeSupervisor(project_root, session_name=session_name, start_runtime=False)
+    supervisor._stop_runtime()
+    _coerce_status_to_stopped(project_root)
 
 
 def _reconcile_supervisors(
@@ -279,20 +393,36 @@ def _stop_supervisor(args: argparse.Namespace) -> int:
     if pid is not None:
         pids.add(pid)
     if not pids:
+        if _orphan_runtime_needs_cleanup(project_root, session_name):
+            _cleanup_orphan_runtime(project_root, session_name)
         try:
             _supervisor_pid_path(project_root).unlink()
         except FileNotFoundError:
             pass
         return 0
     for live_pid in sorted(pids):
+        _signal_pid(live_pid, signal.SIGTERM)
+    if _wait_for_stop_completion(project_root, session_name):
+        try:
+            _supervisor_pid_path(project_root).unlink()
+        except FileNotFoundError:
+            pass
+        return 0
+    remaining = set(_list_supervisor_pids(project_root, session_name))
+    live_pid = _supervisor_running(project_root)
+    if live_pid is not None:
+        remaining.add(live_pid)
+    for live_pid in sorted(remaining):
         _kill_pid(live_pid)
     if not _wait_for_supervisors_exit(project_root, session_name):
         return 1
+    if _orphan_runtime_needs_cleanup(project_root, session_name):
+        _cleanup_orphan_runtime(project_root, session_name)
     try:
         _supervisor_pid_path(project_root).unlink()
     except FileNotFoundError:
         pass
-    return 0
+    return 1
 
 
 def _restart_supervisor(args: argparse.Namespace) -> int:

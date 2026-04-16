@@ -27,7 +27,8 @@
 - `operator_request.md`
   - 작성자: Codex
   - 역할: operator만 읽는 정지 슬롯
-  - 형식: 현재 stage-3에서는 `STATUS: needs_operator` + `CONTROL_SEQ`
+  - 형식: 현재 stage-3에서는 `STATUS: needs_operator` + `CONTROL_SEQ` + `REASON_CODE` + `OPERATOR_POLICY` + `DECISION_CLASS` + `DECISION_REQUIRED` + `BASED_ON_WORK` + `BASED_ON_VERIFY`
+  - runtime/script가 이 파일을 machine-write해야 할 때는 `pipeline_runtime.control_writers.write_operator_request(...)`를 써서 필수 top header 누락을 막는 편이 맞음
 - `session_arbitration_draft.md`
   - 작성자: watcher
   - 역할: active Claude session의 live side question을 감지했고 Codex/Gemini가 idle이며 Claude가 idle이거나 같은 escalation text에 짧게 안정됐을 때만 남기는 non-canonical draft 슬롯
@@ -98,10 +99,12 @@
 - `.pipeline/session_arbitration_draft.md`는 `STATUS: draft_only`만 사용합니다.
 - `STATUS: implement_blocked`는 rolling control file status가 아니라, active Claude pane에서만 watcher가 읽는 machine-readable blocked sentinel입니다.
 - `STATUS: implement`이면 Codex가 다음 단일 슬라이스를 이미 확정한 상태입니다. Claude는 그 한 슬라이스만 구현합니다.
-- Claude가 그 슬라이스를 실행할 수 없으면 operator 선택지를 직접 열지 않고 `STATUS: implement_blocked` + `BLOCK_REASON` + `REQUEST: codex_triage` + `HANDOFF` + `HANDOFF_SHA` + `BLOCK_ID`를 pane에 남기고 멈추는 편이 맞습니다.
+- Claude가 그 슬라이스를 실행할 수 없으면 operator 선택지를 직접 열지 않고 `STATUS: implement_blocked` + `BLOCK_REASON` + `BLOCK_REASON_CODE` + `REQUEST: codex_triage` + `ESCALATION_CLASS: codex_triage` + `HANDOFF` + `HANDOFF_SHA` + `BLOCK_ID`를 pane에 남기고 멈추는 편이 맞습니다.
+- runtime/script smoke가 `implement_blocked` sentinel을 만들 때도 자유문장 출력 대신 `pipeline_runtime.control_writers.render_implement_blocked(...)`로 구조화 필드를 같이 렌더링하는 편이 맞습니다.
 - `STATUS: request_open`이면 Codex가 Gemini arbitration을 먼저 요청한 상태입니다. watcher는 Gemini를 먼저 부릅니다.
 - `STATUS: advice_ready`이면 Gemini가 recommendation을 남긴 상태입니다. watcher는 Codex follow-up을 먼저 부릅니다.
 - `STATUS: needs_operator` file이 생겼다고 해서 곧바로 current truth operator stop이 되는 것은 아닙니다. supervisor/watcher는 `safety_stop`, `approval_required`, `truth_sync_required`만 즉시 publish하고, 나머지는 최대 24시간 동안 gated candidate로 다룹니다.
+- supervisor/watcher는 operator stop publish/gate를 `OPERATOR_POLICY` 우선, `REASON_CODE` 다음, 설명 prose 마지막 참고 순서로 판정합니다. 구조화 metadata가 없거나 알 수 없으면 fail-safe로 즉시 publish하는 편이 맞습니다.
 - gate 중인 후보는 runtime `status.control=none`으로 내려가고, 대신 `status.autonomy.mode = recovery|triage|hibernate|pending_operator`와 `block_reason`, `suppress_operator_until`, `operator_eligible`로 surface됩니다. 이 동안 watcher는 Codex follow-up 또는 idle hibernate를 먼저 선택하고, 즉시 operator wait로 고정하지 않습니다.
 - gate window가 지나도 같은 fingerprint가 남아 있고 여전히 real operator-only decision이면 그때 `STATUS: needs_operator`가 current truth로 publish될 수 있습니다. Claude는 current truth가 아닌 gated stop 슬롯을 직접 따르지 않습니다.
 - `STATUS: needs_operator`는 bare stop line만 남기는 용도가 아닙니다. 이 상태를 쓸 때는 최소한 아래를 같이 적는 편이 canonical입니다.
@@ -173,13 +176,16 @@
 
 ```md
 STATUS: needs_operator
+CONTROL_SEQ: 184
+REASON_CODE: approval_required
+OPERATOR_POLICY: immediate_publish
+DECISION_CLASS: operator_only
+DECISION_REQUIRED: approve runtime auth refresh
+BASED_ON_WORK: work/<month>/<day>/<latest-work>.md
+BASED_ON_VERIFY: verify/<month>/<day>/<latest-verify>.md
 
 이유:
 - latest `/work`와 `/verify` 기준으로 다음 단일 슬라이스를 아직 truthful하게 확정하지 못했습니다.
-
-근거:
-- `work/<month>/<day>/<latest-work>.md`
-- `verify/<month>/<day>/<latest-verify>.md`
 
 operator 확인 필요:
 - 다음 단일 user-visible slice 또는 current-risk reduction slice 1개 확정

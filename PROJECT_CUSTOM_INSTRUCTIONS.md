@@ -102,17 +102,18 @@
 - `.pipeline/claude_handoff.md`는 `STATUS: implement`만 담는 실행 슬롯입니다.
 - `.pipeline/gemini_request.md`는 `STATUS: request_open`만 담는 arbitration 요청 슬롯입니다.
 - `.pipeline/gemini_advice.md`는 `STATUS: advice_ready`만 담는 advisory 슬롯입니다.
-- `.pipeline/operator_request.md`는 `STATUS: needs_operator`만 담는 stop 슬롯입니다.
+- `.pipeline/operator_request.md`는 `STATUS: needs_operator` stop 슬롯이며, pending일 때 `CONTROL_SEQ`, `REASON_CODE`, `OPERATOR_POLICY`, `DECISION_CLASS`, `DECISION_REQUIRED`, `BASED_ON_WORK`, `BASED_ON_VERIFY`를 함께 두는 편이 canonical입니다.
 - 위 canonical control slot은 pending일 때 `CONTROL_SEQ`도 함께 써서 newest-valid-control 판정을 `CONTROL_SEQ` 우선, `mtime` 보조로 맞춥니다.
 - `.pipeline/session_arbitration_draft.md`는 `STATUS: draft_only`만 담는 draft 슬롯이며, stop/go 실행 신호가 아닙니다.
 - `STATUS: implement`이면 Codex가 이미 다음 단일 슬라이스를 확정한 상태이고, Claude는 그 한 슬라이스만 구현합니다.
 - Claude 구현 라운드는 bounded 파일 수정과 canonical `/work` closeout에서 끝납니다. implement lane에서 commit, push, branch publish, PR 생성까지 진행하지 않습니다.
-- 그 handoff가 막혔으면 Claude는 operator 선택지를 새로 열지 말고, pane 출력에만 `STATUS: implement_blocked` + `BLOCK_REASON` + `REQUEST: codex_triage` + `HANDOFF` + `HANDOFF_SHA` + `BLOCK_ID`를 남긴 뒤 멈춥니다.
+- 그 handoff가 막혔으면 Claude는 operator 선택지를 새로 열지 말고, pane 출력에만 `STATUS: implement_blocked` + `BLOCK_REASON` + `BLOCK_REASON_CODE` + `REQUEST: codex_triage` + `ESCALATION_CLASS: codex_triage` + `HANDOFF` + `HANDOFF_SHA` + `BLOCK_ID`를 남긴 뒤 멈춥니다.
 - `STATUS: needs_operator`이면 Codex가 real operator-only decision 또는 blocker 때문에 아직 truthful하게 다음 단일 슬라이스를 확정하지 못한 상태이며, Claude는 새 구현을 시작하지 않고 대기합니다.
 - `STATUS: needs_operator`는 한 줄짜리 bare stop signal로 끝내지 않습니다. 최소한 아래를 같이 남깁니다.
   - 왜 지금 자동 진행을 멈추는지
   - 어떤 최신 `/work`와 `/verify`를 근거로 멈췄는지
   - operator가 무엇을 정하면 다시 구현 가능한 상태로 돌아갈 수 있는지
+- supervisor/watcher는 stop publish/gate 정책을 free-form prose가 아니라 `OPERATOR_POLICY` 우선, `REASON_CODE` 다음, 설명문은 마지막 참고 순서로 판정하는 편이 맞습니다.
 - 자동화 기준으로는 최신 control 파일과 `STATUS`가 stop/go 제어 신호입니다. 멈추고 싶으면 본문 설명을 조금 바꾸는 대신 stop 슬롯을 최신으로 갱신해야 합니다.
 - watcher는 "존재하는 아무 control 파일"이 아니라 `CONTROL_SEQ` 우선 / `mtime` 보조 기준의 최신 valid control만 active로 보고, 더 오래된 stale control file은 dispatch 판단에서 제외합니다.
 - `.pipeline/gpt_prompt.md`는 필요하면 scratch나 legacy 호환용으로 남길 수 있지만, canonical 흐름의 필수 단계는 아닙니다.
@@ -161,6 +162,7 @@
   - 마지막으로 internal cleanup
 - 다만 같은 날 same-family docs-only truth-sync가 이미 3회 이상 반복됐다면, Codex는 더 작은 docs-only micro-slice를 자동 생성하지 말고 남은 drift를 한 번에 닫는 bounded bundle이나 Gemini/operator escalation으로 전환하는 편이 맞습니다.
 - `STATUS: needs_operator`는 Gemini arbitration이 이미 끝났는데도 한 후보를 truthful하게 못 고르거나, approval-record / truth-sync 문제, real operator-only decision, immediate safety stop이 새 구현보다 먼저일 때만 사용합니다.
+- 구조화 metadata가 없거나 알 수 없으면 fail-safe로 즉시 publish하는 편이 맞고, 24시간 gate는 `REASON_CODE`/`OPERATOR_POLICY`가 분명한 stop slot에만 적용하는 편이 안전합니다.
 - 따라서 stop/go 실행 신호는 `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, `.pipeline/gemini_advice.md`, `.pipeline/operator_request.md`에서만 읽습니다. `.pipeline/codex_feedback.md`는 optional scratch로만 남길 수 있습니다.
 - 다만 `STATUS: needs_operator`로 멈출 때도, operator가 다음 결정을 내릴 수 있도록 최소한의 stop reason과 next decision context를 남겨야 합니다.
 

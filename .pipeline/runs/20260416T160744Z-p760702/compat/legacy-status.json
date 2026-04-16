@@ -25,9 +25,9 @@
   },
   "control": {
     "active_control_file": ".pipeline/claude_handoff.md",
-    "active_control_seq": 234,
+    "active_control_seq": 235,
     "active_control_status": "implement",
-    "active_control_updated_at": "2026-04-16T16:31:16.140469Z"
+    "active_control_updated_at": "2026-04-16T16:37:23.888735Z"
   },
   "lanes": [
     {
@@ -35,52 +35,52 @@
       "state": "READY",
       "pid": 760830,
       "attachable": true,
-      "last_event_at": "2026-04-16T16:35:21.985374Z",
-      "last_heartbeat_at": "2026-04-16T16:35:21.985374Z",
+      "last_event_at": "2026-04-16T16:37:32.938169Z",
+      "last_heartbeat_at": "2026-04-16T16:37:32.938169Z",
       "note": "prompt_visible"
     },
     {
       "name": "Codex",
-      "state": "WORKING",
+      "state": "READY",
       "pid": 760855,
       "attachable": true,
-      "last_event_at": "2026-04-16T16:35:21.661173Z",
-      "last_heartbeat_at": "2026-04-16T16:35:21.661173Z",
-      "note": "verifying"
+      "last_event_at": "2026-04-16T16:37:32.020464Z",
+      "last_heartbeat_at": "2026-04-16T16:37:32.020464Z",
+      "note": "prompt_visible"
     },
     {
       "name": "Gemini",
       "state": "READY",
       "pid": 760883,
       "attachable": true,
-      "last_event_at": "2026-04-16T16:35:20.826009Z",
-      "last_heartbeat_at": "2026-04-16T16:35:20.826009Z",
+      "last_event_at": "2026-04-16T16:37:31.958600Z",
+      "last_heartbeat_at": "2026-04-16T16:37:31.958600Z",
       "note": "prompt_visible"
     }
   ],
   "active_round": {
     "job_id": "20260417-2026-04-17-sqlite-browser-docume-9c7f554a",
     "round": 1,
-    "state": "VERIFYING",
+    "state": "CLOSED",
     "artifact_path": "/home/xpdlqj/code/projectH/work/4/17/2026-04-17-sqlite-browser-document-summary-search-parity.md",
-    "status": "VERIFY_RUNNING"
+    "status": "VERIFY_DONE"
   },
   "last_receipt": {
     "schema_version": 1,
-    "receipt_id": "20260417-2026-04-17-sqlite-browser-correc-4da7de91-r1",
+    "receipt_id": "20260417-2026-04-17-sqlite-browser-docume-9c7f554a-r1",
     "run_id": "20260416T160744Z-p760702",
-    "job_id": "20260417-2026-04-17-sqlite-browser-correc-4da7de91",
+    "job_id": "20260417-2026-04-17-sqlite-browser-docume-9c7f554a",
     "round": 1,
     "target_lane": "codex",
-    "artifact_path": "/home/xpdlqj/code/projectH/verify/4/17/2026-04-17-sqlite-browser-corrected-save-verdict-parity-verification.md",
-    "artifact_hash": "sha256:a337e590449d5e2ae0366ac0e1d6d2644c914e4e785810537dbf524f26bb17af",
-    "verify_manifest_path": "/home/xpdlqj/code/projectH/.pipeline/manifests/20260417-2026-04-17-sqlite-browser-correc-4da7de91/round-1.verify.json",
+    "artifact_path": "/home/xpdlqj/code/projectH/verify/4/17/2026-04-17-sqlite-browser-document-summary-search-parity-verification.md",
+    "artifact_hash": "sha256:4dbb5262dce20775b74774c5a6da3378a58701017ae931ac5a6a23914a115f0f",
+    "verify_manifest_path": "/home/xpdlqj/code/projectH/.pipeline/manifests/20260417-2026-04-17-sqlite-browser-docume-9c7f554a/round-1.verify.json",
     "verify_result": "passed_by_feedback",
-    "control_seq": 234,
-    "closed_at": "2026-04-16T16:31:17.966390Z",
+    "control_seq": 235,
+    "closed_at": "2026-04-16T16:37:24.816573Z",
     "emitted_by": "supervisor"
   },
-  "last_receipt_id": "20260417-2026-04-17-sqlite-browser-correc-4da7de91-r1",
+  "last_receipt_id": "20260417-2026-04-17-sqlite-browser-docume-9c7f554a-r1",
   "watcher": {
     "alive": true,
     "pid": 760957
@@ -91,8 +91,8 @@
       "mtime": 1776357291.6397097
     },
     "latest_verify": {
-      "path": "4/17/2026-04-17-sqlite-browser-corrected-save-verdict-parity-verification.md",
-      "mtime": 1776357076.0104125
+      "path": "4/17/2026-04-17-sqlite-browser-document-summary-search-parity-verification.md",
+      "mtime": 1776357443.7670581
     }
   },
   "compat": {
@@ -101,8 +101,8 @@
         "file": "claude_handoff.md",
         "status": "implement",
         "label": "Claude 실행",
-        "mtime": 1776357076.1404688,
-        "control_seq": 234
+        "mtime": 1776357443.8887348,
+        "control_seq": 235
       },
       "stale": [
         {
@@ -129,13 +129,13 @@
       ]
     },
     "turn_state": {
-      "state": "IDLE",
-      "entered_at": 1776357292.8202348,
-      "reason": "claude_activity_detected",
-      "active_control_file": "",
-      "active_control_seq": -1
+      "state": "CLAUDE_ACTIVE",
+      "entered_at": 1776357445.948739,
+      "reason": "verify_lease_released",
+      "active_control_file": "claude_handoff.md",
+      "active_control_seq": 235
     }
   },
-  "last_heartbeat_at": "2026-04-16T16:35:24.451432Z",
-  "updated_at": "2026-04-16T16:35:24.451447Z"
+  "last_heartbeat_at": "2026-04-16T16:37:36.713240Z",
+  "updated_at": "2026-04-16T16:37:36.713254Z"
 }

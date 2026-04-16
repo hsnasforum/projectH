@@ -336,3 +336,33 @@
 {"ts": "2026-04-16T16:35:11.644082Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
 {"ts": "2026-04-16T16:35:16.648800Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
 {"ts": "2026-04-16T16:35:21.661173Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:35:26.673172Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:35:31.688602Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:35:34.813945Z", "lane": "Codex", "event_type": "TASK_ACCEPTED", "source": "wrapper", "payload": {"pid": 761398, "job_id": "20260417-2026-04-17-sqlite-browser-docume-9c7f554a", "control_seq": 234, "attempt": 1}, "derived_from": "vendor_output"}
+{"ts": "2026-04-16T16:35:36.699704Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:35:41.721591Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:35:46.727111Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:35:51.729548Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:35:56.731730Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:36:01.755784Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:36:06.774343Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:36:11.787042Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:36:16.808063Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:36:21.814996Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:36:26.828026Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:36:31.858778Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:36:36.868526Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:36:41.890180Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:36:46.897729Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:36:51.908207Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:36:56.919910Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:37:01.922674Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:37:06.939589Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:37:11.960504Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:37:16.969106Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:37:21.978895Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:37:26.993660Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:37:28.744707Z", "lane": "Codex", "event_type": "TASK_DONE", "source": "wrapper", "payload": {"pid": 761398, "job_id": "20260417-2026-04-17-sqlite-browser-docume-9c7f554a", "control_seq": 234, "reason": "task_hint_cleared"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-16T16:37:28.744857Z", "lane": "Codex", "event_type": "READY", "source": "wrapper", "payload": {"pid": 761398, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-16T16:37:32.020464Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}
+{"ts": "2026-04-16T16:37:37.024400Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 761398}, "derived_from": "process_alive"}

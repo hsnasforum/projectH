@@ -14,22 +14,31 @@ from pipeline_runtime.supervisor import RuntimeSupervisor
 from pipeline_runtime.wrapper_events import append_wrapper_event, build_lane_read_models
 
 
-def _write_active_profile(root: Path) -> None:
+def _write_active_profile(
+    root: Path,
+    *,
+    selected_agents: list[str] | None = None,
+    implement: str = "Claude",
+    verify: str = "Codex",
+    advisory: str = "Gemini",
+    advisory_enabled: bool = True,
+) -> None:
     active_path = root / ".pipeline" / "config" / "agent_profile.json"
     active_path.parent.mkdir(parents=True, exist_ok=True)
+    selected = list(selected_agents or ["Claude", "Codex", "Gemini"])
     active_path.write_text(
         json.dumps(
             {
                 "schema_version": 1,
-                "selected_agents": ["Claude", "Codex", "Gemini"],
-                "role_bindings": {"implement": "Claude", "verify": "Codex", "advisory": "Gemini"},
+                "selected_agents": selected,
+                "role_bindings": {"implement": implement, "verify": verify, "advisory": advisory},
                 "role_options": {
-                    "advisory_enabled": True,
+                    "advisory_enabled": advisory_enabled,
                     "operator_stop_enabled": True,
-                    "session_arbitration_enabled": True,
+                    "session_arbitration_enabled": advisory_enabled,
                 },
                 "mode_flags": {
-                    "single_agent_mode": False,
+                    "single_agent_mode": len(selected) == 1,
                     "self_verify_allowed": False,
                     "self_advisory_allowed": False,
                 },
@@ -1927,6 +1936,31 @@ class RuntimeSupervisorTest(unittest.TestCase):
 
             self.assertEqual(active_lane, "")
 
+    def test_active_lane_for_runtime_keeps_canonical_claude_lane_under_nondefault_role_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(
+                root,
+                selected_agents=["Claude", "Codex", "Gemini"],
+                implement="Codex",
+                verify="Claude",
+                advisory="Gemini",
+                advisory_enabled=True,
+            )
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            active_lane = supervisor._active_lane_for_runtime(
+                {"state": "CLAUDE_ACTIVE"},
+                None,
+                control={
+                    "active_control_file": ".pipeline/claude_handoff.md",
+                    "active_control_seq": 201,
+                    "active_control_status": "implement",
+                },
+            )
+
+            self.assertEqual(active_lane, "Claude")
+
     def test_write_status_clears_codex_task_hint_during_operator_wait(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2540,6 +2574,31 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertIn("after Gemini advice", prompt)
             self.assertIn(".pipeline/operator_request.md", prompt)
             self.assertIn("no truthful exact slice", prompt)
+
+    def test_prompt_templates_use_canonical_prompt_owners_when_lanes_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(
+                root,
+                selected_agents=["Claude", "Codex", "Gemini"],
+                implement="Codex",
+                verify="Claude",
+                advisory="Gemini",
+                advisory_enabled=True,
+            )
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            implement_prompt = supervisor._prompt_templates()["implement"]
+            verify_prompt = supervisor._prompt_templates()["verify"]
+            followup_prompt = supervisor._prompt_templates()["followup"]
+
+            self.assertIn("OWNER: Claude", implement_prompt)
+            self.assertIn("- CLAUDE.md", implement_prompt)
+            self.assertNotIn("OWNER: Codex", implement_prompt)
+            self.assertIn("OWNER: Codex", verify_prompt)
+            self.assertIn("- AGENTS.md", verify_prompt)
+            self.assertIn("OWNER: Codex", followup_prompt)
+            self.assertIn("- AGENTS.md", followup_prompt)
 
     def test_session_loss_transitions_runtime_to_degraded(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

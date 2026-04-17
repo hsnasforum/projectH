@@ -354,8 +354,6 @@ class WatcherPromptAssembler:
         handoff = handoff_path or self.claude_handoff_path
         return {
             **self.build_runtime_prompt_context(),
-            "runtime_implement_owner": "Claude",
-            "runtime_implement_read_first_doc": "CLAUDE.md",
             "active_handoff_path": self._repo_relative(handoff),
             "active_handoff_sha": self._get_path_sha256(handoff),
         }

@@ -1539,7 +1539,7 @@ class ClaudeHandoffDispatchTest(unittest.TestCase):
 
 
 class RuntimePlanConsumptionTest(unittest.TestCase):
-    def test_implement_prompt_stays_canonical_under_nondefault_role_owners(self) -> None:
+    def test_prompt_contract_stays_canonical_under_nondefault_role_owners(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -1601,9 +1601,9 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
             self.assertNotIn(".pipeline/README.md", implement_prompt)
 
             self.assertIn("ROLE: verify", verify_prompt)
-            self.assertIn("OWNER: Claude", verify_prompt)
+            self.assertIn("OWNER: Codex", verify_prompt)
             self.assertNotIn("codex_verify", verify_prompt)
-            self.assertIn("CLAUDE.md", verify_prompt)
+            self.assertIn("AGENTS.md", verify_prompt)
             self.assertIn("GOAL:", verify_prompt)
             self.assertIn("leave or update `/verify` before any next control slot", verify_prompt)
             self.assertIn("same-day same-family docs-only truth-sync already repeated 3+ times", verify_prompt)
@@ -1619,9 +1619,9 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
             self.assertIn("pane-only answer is not completion", advisory_prompt)
 
             self.assertIn("ROLE: followup", followup_prompt)
-            self.assertIn("OWNER: Claude", followup_prompt)
+            self.assertIn("OWNER: Codex", followup_prompt)
             self.assertNotIn("codex_followup", followup_prompt)
-            self.assertIn("CLAUDE.md", followup_prompt)
+            self.assertIn("AGENTS.md", followup_prompt)
             self.assertIn("GOAL:", followup_prompt)
 
     def test_gemini_request_dispatch_allows_advisory_without_session_arbitration(self) -> None:
@@ -1805,7 +1805,58 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
             self.assertEqual(core.sm.verify_pane_target, "claude-pane")
             self.assertEqual(core.sm.verify_pane_type, "claude")
 
-    def test_implement_notify_routes_to_canonical_claude_pane(self) -> None:
+    def test_implement_notify_routes_to_canonical_claude_pane_when_claude_lane_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir = root / ".pipeline"
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(
+                root,
+                {
+                    "schema_version": 1,
+                    "selected_agents": ["Claude", "Codex", "Gemini"],
+                    "role_bindings": {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"},
+                    "role_options": {
+                        "advisory_enabled": True,
+                        "operator_stop_enabled": True,
+                        "session_arbitration_enabled": True,
+                    },
+                    "mode_flags": {
+                        "single_agent_mode": False,
+                        "self_verify_allowed": False,
+                        "self_advisory_allowed": False,
+                    },
+                },
+            )
+            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path.write_text("STATUS: implement\n", encoding="utf-8")
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "claude_pane_target": "claude-pane",
+                    "verify_pane_target": "codex-pane",
+                    "gemini_pane_target": "gemini-pane",
+                }
+            )
+
+            with mock.patch("watcher_core.tmux_send_keys", return_value=True) as send:
+                with mock.patch(
+                    "watcher_core._capture_pane_text",
+                    return_value="OpenAI Codex\n› Type your message\n",
+                ):
+                    core._notify_claude("test-runtime-implement", handoff_path)
+
+            args, kwargs = send.call_args
+            self.assertEqual(args[0], "claude-pane")
+            self.assertEqual(kwargs.get("pane_type"), "claude")
+
+    def test_implement_notify_falls_back_to_runtime_owner_when_claude_lane_is_absent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -1853,8 +1904,8 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
                     core._notify_claude("test-runtime-implement", handoff_path)
 
             args, kwargs = send.call_args
-            self.assertEqual(args[0], "claude-pane")
-            self.assertEqual(kwargs.get("pane_type"), "claude")
+            self.assertEqual(args[0], "codex-pane")
+            self.assertEqual(kwargs.get("pane_type"), "codex")
 
     def test_session_arbitration_disabled_skips_live_escalation_draft(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

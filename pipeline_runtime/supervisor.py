@@ -89,6 +89,7 @@ class RuntimeSupervisor:
         ] or list(RUNTIME_LANE_ORDER)
         self.started_at = time.time()
         self.role_owners = dict(self.runtime_adapter.get("role_owners") or {})
+        self.prompt_owners = dict(self.runtime_adapter.get("prompt_owners") or self.role_owners)
         self.runtime_state = "STARTING"
         self.degraded_reason = ""
         self.degraded_reasons: list[str] = []
@@ -500,9 +501,9 @@ class RuntimeSupervisor:
             last_receipt=last_receipt,
             duplicate_control=duplicate_control,
             stale_operator_control=stale_operator_control,
-            implement_owner=str(self.role_owners.get("implement") or "Claude"),
-            verify_owner=str(self.role_owners.get("verify") or "Codex"),
-            advisory_owner=str(self.role_owners.get("advisory") or "Gemini"),
+            implement_owner=self._prompt_owner("implement"),
+            verify_owner=self._prompt_owner("verify"),
+            advisory_owner=self._prompt_owner("advisory"),
         )
 
     def _build_active_round(
@@ -619,7 +620,7 @@ class RuntimeSupervisor:
             "reason": str(latest_job.get("lane_note") or "waiting_task_accept_after_dispatch"),
             "degraded_reason": degraded_reason,
             "action": "degraded" if degraded_reason == "dispatch_stall" else "requeue",
-            "lane": str(self.role_owners.get("verify") or "Codex"),
+            "lane": self._prompt_owner("verify"),
         }
 
     def _completion_stall_marker(
@@ -660,7 +661,7 @@ class RuntimeSupervisor:
             "reason": str(latest_job.get("lane_note") or "waiting_task_done_after_accept"),
             "degraded_reason": degraded_reason,
             "action": "degraded" if degraded_reason == "post_accept_completion_stall" else "requeue",
-            "lane": str(self.role_owners.get("verify") or "Codex"),
+            "lane": self._prompt_owner("verify"),
         }
 
     def _build_artifacts(self) -> dict[str, Any]:
@@ -689,8 +690,8 @@ class RuntimeSupervisor:
         active_dispatch_control_seq = int((active_round or {}).get("dispatch_control_seq") or -1)
         active_control_seq = int(control.get("active_control_seq") or -1)
         turn_state_name = str((turn_state or {}).get("state") or "")
-        implement_owner = str(self.role_owners.get("implement") or "Claude")
-        verify_owner = str(self.role_owners.get("verify") or "Codex")
+        implement_owner = self._prompt_owner("implement")
+        verify_owner = self._prompt_owner("verify")
         for lane_name in RUNTIME_LANE_ORDER:
             use_verify_round_hint = (
                 lane_name == verify_owner
@@ -790,7 +791,8 @@ class RuntimeSupervisor:
     ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
         lanes: list[dict[str, Any]] = []
         lane_models: dict[str, dict[str, Any]] = {}
-        implement_owner = str(self.role_owners.get("implement") or "Claude")
+        implement_owner = self._prompt_owner("implement")
+        verify_owner = self._prompt_owner("verify")
         control = control or {}
         lane_configs = self.runtime_lane_configs or [
             {"name": lane, "enabled": lane in self.enabled_lanes}
@@ -869,7 +871,7 @@ class RuntimeSupervisor:
                     state = "WORKING"
                     if lane_name == implement_owner and str(control.get("active_control_status") or "") == "implement":
                         note = "implement"
-                    elif lane_name == str(self.role_owners.get("verify") or "Codex"):
+                    elif lane_name == verify_owner:
                         round_state_note = str((active_round or {}).get("state") or "").strip().lower()
                         note = active_round_note or round_state_note or note or "working"
                     elif note in {"", "prompt_visible"}:
@@ -885,15 +887,15 @@ class RuntimeSupervisor:
                         note = "implement"
                 elif surface_working and tail_surface == "READY":
                     state = "READY"
-                    if lane_name == str(self.role_owners.get("verify") or "Codex") and active_round_note:
+                    if lane_name == verify_owner and active_round_note:
                         note = active_round_note
-                    elif lane_name == str(self.role_owners.get("verify") or "Codex"):
+                    elif lane_name == verify_owner:
                         note = str((active_round or {}).get("state") or "").lower() or "prompt_visible"
                     elif note in {"", "prompt_visible", "implement"}:
                         note = "prompt_visible"
                 elif surface_working:
                     state = "WORKING"
-                    if lane_name == str(self.role_owners.get("verify") or "Codex") and active_round_note:
+                    if lane_name == verify_owner and active_round_note:
                         note = active_round_note
                     elif note in {"", "prompt_visible"}:
                         turn_state_name = str((turn_state or {}).get("state") or "")
@@ -911,9 +913,9 @@ class RuntimeSupervisor:
                     elif note in {"", "prompt_visible"}:
                         if lane_name == implement_owner and str(control.get("active_control_status") or "") == "implement":
                             note = "implement"
-                        elif lane_name == str(self.role_owners.get("verify") or "Codex") and active_round_note:
+                        elif lane_name == verify_owner and active_round_note:
                             note = active_round_note
-                        elif lane_name == str(self.role_owners.get("verify") or "Codex") and active_round:
+                        elif lane_name == verify_owner and active_round:
                             note = str((active_round or {}).get("state") or "").lower() or "working"
                         else:
                             note = "working"
@@ -983,7 +985,7 @@ class RuntimeSupervisor:
                 job_state=job_state,
                 verify_artifact_path=verify_path,
                 control_seq=control_seq,
-                target_lane=str(self.role_owners.get("verify") or "Codex").lower(),
+                target_lane=self._prompt_owner("verify").lower(),
                 closed_at=iso_utc(
                     float(job_state.get("verify_completed_at") or job_state.get("updated_at") or time.time())
                 ),
@@ -1017,9 +1019,9 @@ class RuntimeSupervisor:
             return f"{lane_name.lower()}_{failure_reason}"
         accepted_task = dict(lane_model.get("accepted_task") or {})
         post_accept = bool(str(accepted_task.get("job_id") or ""))
-        implement_owner = str(self.role_owners.get("implement") or "Claude")
-        verify_owner = str(self.role_owners.get("verify") or "Codex")
-        advisory_owner = str(self.role_owners.get("advisory") or "Gemini")
+        implement_owner = self._prompt_owner("implement")
+        verify_owner = self._prompt_owner("verify")
+        advisory_owner = self._prompt_owner("advisory")
 
         if lane_name == implement_owner and post_accept:
             return f"{lane_name.lower()}_interrupted_post_accept"
@@ -1628,6 +1630,17 @@ class RuntimeSupervisor:
             "advisory": "Gemini",
         }[role_name]
 
+    def _prompt_owner(self, role_name: str) -> str:
+        return str(self.prompt_owners.get(role_name) or "").strip() or self._role_owner(role_name)
+
+    def _prompt_read_first_doc(self, role_name: str) -> str:
+        owner = self._prompt_owner(role_name)
+        if owner == "Claude":
+            return "CLAUDE.md"
+        if owner == "Gemini":
+            return "GEMINI.md"
+        return "AGENTS.md"
+
     def _role_read_first_doc(self, role_name: str) -> str:
         owner = self._role_owner(role_name)
         if owner == "Claude":
@@ -1640,7 +1653,7 @@ class RuntimeSupervisor:
         return {
             "verify": (
                 "ROLE: verify\n"
-                f"OWNER: {self._role_owner('verify')}\n"
+                f"OWNER: {self._prompt_owner('verify')}\n"
                 "WORK: {latest_work_path}\n"
                 "VERIFY: {latest_verify_path}\n"
                 "NEXT_CONTROL_SEQ: {next_control_seq}\n"
@@ -1651,7 +1664,7 @@ class RuntimeSupervisor:
                 "SCOPE_HINT:\n"
                 "{verify_scope_hint}\n"
                 "READ_FIRST:\n"
-                f"- {self._role_read_first_doc('verify')}\n"
+                f"- {self._prompt_read_first_doc('verify')}\n"
                 "- work/README.md\n"
                 "- verify/README.md\n"
                 "OUTPUTS:\n"
@@ -1668,14 +1681,14 @@ class RuntimeSupervisor:
             ),
             "implement": (
                 "ROLE: implement\n"
-                f"OWNER: {self._role_owner('implement')}\n"
+                f"OWNER: {self._prompt_owner('implement')}\n"
                 "HANDOFF: {active_handoff_path}\n"
                 "HANDOFF_SHA: {active_handoff_sha}\n"
                 "GOAL:\n"
                 "- implement only the exact slice in the handoff\n"
                 "- if finished, leave one `/work` closeout and stop\n"
                 "READ_FIRST:\n"
-                f"- {self._role_read_first_doc('implement')}\n"
+                f"- {self._prompt_read_first_doc('implement')}\n"
                 "- work/README.md\n"
                 "- {active_handoff_path}\n"
                 "RULES:\n"
@@ -1694,7 +1707,7 @@ class RuntimeSupervisor:
             ),
             "advisory": (
                 "ROLE: advisory\n"
-                f"OWNER: {self._role_owner('advisory')}\n"
+                f"OWNER: {self._prompt_owner('advisory')}\n"
                 "REQUEST: {gemini_request_mention}\n"
                 "WORK: {latest_work_mention}\n"
                 "VERIFY: {latest_verify_mention}\n"
@@ -1702,7 +1715,7 @@ class RuntimeSupervisor:
                 "GOAL:\n"
                 "- leave one advisory log and one `.pipeline/gemini_advice.md`\n"
                 "READ_FIRST:\n"
-                f"- @{self._role_read_first_doc('advisory')}\n"
+                f"- @{self._prompt_read_first_doc('advisory')}\n"
                 "- {gemini_request_mention}\n"
                 "- {latest_work_mention}\n"
                 "- {latest_verify_mention}\n"
@@ -1717,7 +1730,7 @@ class RuntimeSupervisor:
             ),
             "followup": (
                 "ROLE: followup\n"
-                f"OWNER: {self._role_owner('verify')}\n"
+                f"OWNER: {self._prompt_owner('verify')}\n"
                 "NEXT_CONTROL_SEQ: {next_control_seq}\n"
                 "REQUEST: .pipeline/gemini_request.md\n"
                 "ADVICE: .pipeline/gemini_advice.md\n"
@@ -1726,7 +1739,7 @@ class RuntimeSupervisor:
                 "GOAL:\n"
                 "- convert the advisory into exactly one next control outcome\n"
                 "READ_FIRST:\n"
-                f"- {self._role_read_first_doc('verify')}\n"
+                f"- {self._prompt_read_first_doc('verify')}\n"
                 "- verify/README.md\n"
                 "- .pipeline/gemini_request.md\n"
                 "- .pipeline/gemini_advice.md\n"

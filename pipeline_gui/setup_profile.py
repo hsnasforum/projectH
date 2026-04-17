@@ -430,6 +430,26 @@ def _support_level_for_profile(payload: dict[str, Any]) -> str:
     return "blocked"
 
 
+def _prompt_owners_for_runtime_plan(
+    *,
+    enabled_lanes: list[str],
+    role_owners: dict[str, Any],
+) -> dict[str, Any]:
+    enabled_set = {str(name).strip() for name in enabled_lanes if str(name).strip() in SETUP_AGENT_ORDER}
+    prompt_owners = {
+        "implement": role_owners.get("implement"),
+        "verify": role_owners.get("verify"),
+        "advisory": role_owners.get("advisory"),
+    }
+    if "Claude" in enabled_set:
+        prompt_owners["implement"] = "Claude"
+    if "Codex" in enabled_set:
+        prompt_owners["verify"] = "Codex"
+    if "Gemini" in enabled_set and role_owners.get("advisory"):
+        prompt_owners["advisory"] = "Gemini"
+    return prompt_owners
+
+
 def resolve_active_profile(payload: dict[str, Any] | None) -> dict[str, Any]:
     if payload is None:
         return {
@@ -487,13 +507,17 @@ def resolve_active_profile(payload: dict[str, Any] | None) -> dict[str, Any]:
         "verify": bindings.get("verify"),
         "advisory": bindings.get("advisory") if options.get("advisory_enabled") else None,
     }
+    prompt_owners = _prompt_owners_for_runtime_plan(
+        enabled_lanes=enabled_lanes,
+        role_owners=role_owners,
+    )
     messages: list[str] = []
     if support_level == "experimental":
         messages.append("Profile is experimental and requires extra operator attention.")
     effective_runtime_plan = {
         "enabled_lanes": enabled_lanes,
         "role_owners": role_owners,
-        "prompt_owners": dict(role_owners),
+        "prompt_owners": prompt_owners,
         "controls": dict(controls),
     }
     return {
@@ -512,10 +536,19 @@ def runtime_adapter_from_resolved(resolved: dict[str, Any]) -> dict[str, Any]:
     enabled_set = {str(name).strip() for name in raw_enabled_lanes if str(name).strip() in SETUP_AGENT_ORDER}
     enabled_lanes = [lane for lane in SETUP_AGENT_ORDER if lane in enabled_set]
     raw_role_owners = dict(effective_plan.get("role_owners") or {})
+    raw_prompt_owners = dict(effective_plan.get("prompt_owners") or {})
     role_owners = {
         "implement": str(raw_role_owners.get("implement") or "").strip() or None,
         "verify": str(raw_role_owners.get("verify") or "").strip() or None,
         "advisory": str(raw_role_owners.get("advisory") or "").strip() or None,
+    }
+    prompt_owners = {
+        "implement": str(raw_prompt_owners.get("implement") or "").strip() or role_owners["implement"],
+        "verify": str(raw_prompt_owners.get("verify") or "").strip() or role_owners["verify"],
+        "advisory": (
+            str(raw_prompt_owners.get("advisory") or "").strip()
+            or role_owners["advisory"]
+        ),
     }
     roles_by_lane: dict[str, list[str]] = {lane: [] for lane in SETUP_AGENT_ORDER}
     for role_name, owner in role_owners.items():
@@ -541,6 +574,7 @@ def runtime_adapter_from_resolved(resolved: dict[str, Any]) -> dict[str, Any]:
         "messages": [str(item).strip() for item in list(resolved.get("messages") or []) if str(item).strip()],
         "enabled_lanes": enabled_lanes,
         "role_owners": role_owners,
+        "prompt_owners": prompt_owners,
         "lane_configs": lane_configs,
     }
 

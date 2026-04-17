@@ -1,0 +1,50 @@
+{
+  "job_id": "20260416-2026-04-16-reviewed-memory-aggre-5a84d276",
+  "status": "VERIFY_RUNNING",
+  "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-reviewed-memory-aggregate-reload-smoke-docs-parity.md",
+  "schema_version": 1,
+  "artifact_hash": "bc2d0de375d9dfe3d62e77392842bcc40e6e771adb1dce7575cc77a83a8c8dff",
+  "artifact_size": 2072,
+  "artifact_mtime": 1776270650.7850044,
+  "stabilized_at": 1776270655.7438512,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 1776270670.33998,
+  "last_dispatch_slot": "slot_verify",
+  "last_failed_dispatch_at": 0.0,
+  "last_failed_dispatch_snapshot": "",
+  "dispatch_fail_count": 0,
+  "feedback_baseline_sig": "claude_handoff.md=1776270505625494718:3521:f520a213f8b3b0d9d06ef9087da0b001cd92b22e699a252b6b135086a9059df4|gemini_request.md=1776249910276975775:3229:cba61b2efcf8234d7bec159fe91148297bc8670e2d1741edfa664c61f988c261|operator_request.md=1776259872793409857:2028:99faa095e9aed7792861e34999a345ec114972b30bf82818640c0496dd7e7c2c",
+  "verify_feedback_baseline_sig": "4f9c0878402f987f4513f38df97cd9aae3398602a38a2c76033769087d08ef2f",
+  "verify_receipt_baseline_path": "verify/4/16/2026-04-16-controller-office-reset-base-verification.md",
+  "verify_receipt_baseline_mtime": 1776270505.6254947,
+  "verify_manifest_path": "",
+  "verify_completed_at": 0.0,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "",
+  "created_at": 1776270652.9263618,
+  "updated_at": 1776270670.402695,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1776270652.9267614,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1776270655.7438538,
+      "reason": "artifact stabilized"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "VERIFY_RUNNING",
+      "at": 1776270670.402695,
+      "reason": "dispatched to slot_verify"
+    }
+  ],
+  "last_pane_snapshot": "confirm-\n           result in web-\n           smoke.spec.mjs\n    Read\ngemini_request.md,\n\noperator_request.md\n\n──────────────────────────\n\n• 검증 판정은 나왔습니다.\n  최신 /work는 이번에는\n  truthful로 보이며, 다음\n  슬라이스는 active-effect\n  상태의 hard reload\n  continuity로 고정하겠습\n  니다.\n\n• Working (2m 44s • esc t…\n\n\n› Use /skills to list ava\n\n  gpt-5.4 xhigh fast · ~/…\n",
+  "last_activity_at": 1776270833.089945
+}

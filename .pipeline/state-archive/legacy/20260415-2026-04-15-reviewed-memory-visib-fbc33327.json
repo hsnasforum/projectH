@@ -1,0 +1,50 @@
+{
+  "job_id": "20260415-2026-04-15-reviewed-memory-visib-fbc33327",
+  "status": "VERIFY_RUNNING",
+  "artifact_path": "/home/xpdlqj/code/projectH/work/4/15/2026-04-15-reviewed-memory-visible-transition-result-active-effect-lifecycle-parity-bundle.md",
+  "schema_version": 1,
+  "artifact_hash": "4ad24d8c1c304ad477ebc9976520be06f7b63bf3dcba6e46dda83d1c9d974fd0",
+  "artifact_size": 4117,
+  "artifact_mtime": 1776246554.388901,
+  "stabilized_at": 1776246559.973607,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 1776246568.3703897,
+  "last_dispatch_slot": "slot_verify",
+  "last_failed_dispatch_at": 0.0,
+  "last_failed_dispatch_snapshot": "",
+  "dispatch_fail_count": 0,
+  "feedback_baseline_sig": "claude_handoff.md=1776246253865385302:5029:b7b42ca688f6bd7ec8c6b1b54c2fc69ad8f7090aa6e1ecb4213b0e32027ce8e6|gemini_request.md=1776240155196708968:2696:a4d344fb4bf5998b4f057e71bd63992b4dc0f4c3de202d15dfa08e5165d6919d|operator_request.md=1775887891128241529:2076:b3f4d517529cb70fc74306981cb486b297916cc49076d6138d778f15faf5a1f9",
+  "verify_feedback_baseline_sig": "fae0f570494e3ab39868a34262bc18fb1fcb40550e019fcc68602e25ba6945d2",
+  "verify_receipt_baseline_path": "verify/4/15/2026-04-15-reviewed-memory-local-effect-chain-lifecycle-parity-bundle-verification.md",
+  "verify_receipt_baseline_mtime": 1776246253.8653853,
+  "verify_manifest_path": "",
+  "verify_completed_at": 0.0,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "",
+  "created_at": 1776246555.6194375,
+  "updated_at": 1776246568.4301302,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1776246555.6200721,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1776246559.973612,
+      "reason": "artifact stabilized"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "VERIFY_RUNNING",
+      "at": 1776246568.4301302,
+      "reason": "dispatched to slot_verify"
+    }
+  ],
+  "last_pane_snapshot": "      메모로 남긴다\n    □ CONTROL_SEQ 142의 다\n      음 control outcome\n      하나만 기록한다\n\n─ Worked for 1m 45s ──────\n\n• 이제 persistent truth\n  를 /verify에 먼저 남기\n  고, 그다음 control slot\n  하나만 갱신하겠습니다.\n  이번엔 같은 family의 다\n  음 자동 슬라이스가 겹치\n  거나 completeness 성격으\n  로만 남아서,\n  needs_operator로 멈추는\n  쪽이 더 정직합니다.\n\n• Working (6m 32s • esc t…\n\n\n› Explain this codebase\n\n  gpt-5.4 xhigh fast · ~/…\n",
+  "last_activity_at": 1776246923.5542336
+}

@@ -209,7 +209,7 @@ watcher, wrapper, Codex/Gemini lane은 completion fact만 보고한다.
 vendor UI 문자열을 여러 레이어가 재해석하면 readiness와 recovery가 계속 흔들린다.
 
 ### 결정
-wrapper 최소 이벤트는 `READY`, `HEARTBEAT`, `TASK_ACCEPTED`, `TASK_DONE`, `BROKEN`으로 고정한다.  
+wrapper 최소 이벤트는 `READY`, `HEARTBEAT`, `DISPATCH_SEEN`, `TASK_ACCEPTED`, `TASK_DONE`, `BROKEN`으로 고정한다.
 Claude는 post-accept blind replay를 금지하고, Codex/Gemini는 bounded auto-retry를 허용한다.
 
 ### 이유

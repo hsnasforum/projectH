@@ -1,0 +1,44 @@
+{
+  "job_id": "20260416-2026-04-16-office-view-dead-code-4b247d90",
+  "status": "VERIFY_PENDING",
+  "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-office-view-dead-code-strip.md",
+  "schema_version": 1,
+  "artifact_hash": "7ca7dcb68bad5f6b69d9330f7a2dc4273037a6482cab3173929b36244dba39cd",
+  "artifact_size": 1731,
+  "artifact_mtime": 1776267351.9328213,
+  "stabilized_at": 1776267356.7429402,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 0.0,
+  "last_dispatch_slot": "",
+  "last_failed_dispatch_at": 0.0,
+  "last_failed_dispatch_snapshot": "",
+  "dispatch_fail_count": 0,
+  "feedback_baseline_sig": "",
+  "verify_feedback_baseline_sig": "",
+  "verify_receipt_baseline_path": "",
+  "verify_receipt_baseline_mtime": 0.0,
+  "verify_manifest_path": "",
+  "verify_completed_at": 0.0,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "",
+  "created_at": 1776267352.6604395,
+  "updated_at": 1776267356.7429428,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1776267352.6607974,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1776267356.7429428,
+      "reason": "artifact stabilized"
+    }
+  ],
+  "last_pane_snapshot": "",
+  "last_activity_at": 0.0
+}

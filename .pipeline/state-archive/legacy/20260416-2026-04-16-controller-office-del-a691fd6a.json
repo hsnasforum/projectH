@@ -1,0 +1,50 @@
+{
+  "job_id": "20260416-2026-04-16-controller-office-del-a691fd6a",
+  "status": "VERIFY_RUNNING",
+  "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-controller-office-delivery-polish.md",
+  "schema_version": 1,
+  "artifact_hash": "70d3da42da1a6e20389357958d236cb7f8956f10b5b7a8fb25f021802167b1de",
+  "artifact_size": 4472,
+  "artifact_mtime": 1776317375.134006,
+  "stabilized_at": 1776317380.8947294,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 1776317396.3507333,
+  "last_dispatch_slot": "slot_verify",
+  "last_failed_dispatch_at": 0.0,
+  "last_failed_dispatch_snapshot": "",
+  "dispatch_fail_count": 0,
+  "feedback_baseline_sig": "claude_handoff.md=1776316694078403456:4049:2534b9a72bc0fe0fad4ed746ca9110b8bc6a3db99d054dab98a8d5d54e54472e|gemini_request.md=1776249910276975775:3229:cba61b2efcf8234d7bec159fe91148297bc8670e2d1741edfa664c61f988c261|operator_request.md=1776316334653083173:1506:0353b442580aaab336eaac3083706e1d4f90ad372258e68caf6d8eda03bb8e78",
+  "verify_feedback_baseline_sig": "f114a9c54f31cb4bd5c299e760dda431b039c35edf416ae46cac208762851bdd",
+  "verify_receipt_baseline_path": "verify/4/16/2026-04-16-controller-background-preload-readiness-hardening-verification.md",
+  "verify_receipt_baseline_mtime": 1776316694.0784035,
+  "verify_manifest_path": "",
+  "verify_completed_at": 0.0,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "",
+  "created_at": 1776317376.3025124,
+  "updated_at": 1776317396.413667,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1776317376.3032966,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1776317380.8947349,
+      "reason": "artifact stabilized"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "VERIFY_RUNNING",
+      "at": 1776317396.413667,
+      "reason": "dispatched to slot_verify"
+    }
+  ],
+  "last_pane_snapshot": "        _work.mtime`, `artifacts.latest_verify.mtime`는 읽지 않습니다. 그런데 l\n        ive runtime payload에는 이미 `mtime`가 포함되어 있고, 이번 round처럼 ve\n        rify note를 같은 경로에 update-in-place 하면 path는 그대로인 채 `mtime`\n        만 바뀔 수 있습니다.\n    18 +- 실제 live runtime status도 이 blind spot을 보여 줍니다. `status.artif\n        acts.latest_work.path`는 `4/16/2026-04-16-controller-office-delivery-po\n        lish.md`, `status.artifacts.latest_verify.path`는 여전히 `4/16/2026-04-\n        16-controller-background-preload-readiness-hardening-verification.md`인\n        데, 이 verify file path는 이번 round에서 같은 경로로 갱신되고 있습니다.\n         따라서 현재 구현 그대로면 `Verify updated` 연출은 path 변화가 없어서\n        다시 뜨지 않습니다.\n    19 +- `controller/index.html`, runtime docs 2건, `tests/test_controller_ser\n        ver.py`는 같은 날 Office View/runtime 관련 다른 round 변경도 함께 누적\n        된 파일입니다. 이번 검증은 delivery polish 관련 hunk와 그 주변 contract\n        가 실제로 존재함을 확인한 것이며, 파일 전체 diff를 전부 이 `/work` 한\n        건으로 재귀속한 것은 아닙니다.\n    20 +\n    21 +## 검증\n    22 +- `python3 -m unittest -v tests.test_controller_server.ControllerServer\n        LaunchGateTests.test_controller_html_polls_runtime_api_only`\n    23 +  - 결과: `Ran 1 test in 0.001s`, `OK`\n    24 +- `git diff --check -- controller/index.html tests/test_controller_serv\n        er.py docs/projectH_pipeline_runtime_docs/03_기술설계_명세서.md docs/pr\n        ojectH_pipeline_runtime_docs/05_운영_RUNBOOK.md`\n    25 +  - 결과: 출력 없음\n    26 +- `tmp=$(mktemp --suffix=.js); trap 'rm -f \"$tmp\"' EXIT; sed -n '/<scri\n        pt>/,/<\\\\/script>/p' controller/index.html | sed '1d;$d' > \"$tmp\"; node\n         --check \"$tmp\"`\n    27 +  - 결과: 오류 없음\n    28 +- `rg -n \"emitDelivery\\\\(|speakAgent\\\\(|playDeliverySound\\\\(|checkDeliv\n        eryTrigger\\\\(|Work delivered →|Verify updated →|Receipt issued →|Ambien\n        tAudio\\\\._start\\\\(|LOCATIONS\\\\.sofa_2|last_receipt|latest_work|latest_v\n        erify\" controller/index.html tests/test_controller_server.py docs/proje\n        ctH_pipeline_runtime_docs/03_기술설계_명세서.md docs/projectH_pipeline_\n        runtime_docs/05_운영_RUNBOOK.md`\n    29 +  - 결과: delivery helper/이벤트 토큰과 docs 문구는 존재했고, `LOCATION\n        S.sofa_2` / `AmbientAudio._start()` 금지 토큰은 HTML 기준 남아 있지 않\n        음을 확인했습니다.\n    30 +- `rg -n \"latest_verify|latest_work|last_receipt|artifacts\" pipeline_ru\n        ntime controller app tests docs/projectH_pipeline_runtime_docs/03_기술\n        설계_명세서.md docs/projectH_pipeline_runtime_docs/05_운영_RUNBOOK.md`\n    31 +  - 결과: runtime payload builder는 `latest_work` / `latest_verify`에 `\n        path`와 `mtime`를 함께 넣고 있었고, browser 쪽 `checkDeliveryTrigger()`\n        는 현재 path만 읽는 상태임을 확인했습니다.\n    32 +- `python3 - <<'PY' ... .pipeline/current_run.json / status.json / arti\n        facts 확인 ... PY`\n    33 +  - 결과: current run은 `20260416T045735Z-p31079`, `runtime_state=RUNNI\n        NG`, `active_control_file=.pipeline/claude_handoff.md`, `active_control\n        _status=implement`, `active_control_seq=176`, `latest_work=4/16/2026-04\n        -16-controller-office-delivery-polish.md`, `latest_verify=4/16/2026-04-\n        16-controller-background-preload-readiness-hardening-verification.md`였\n        습니다.\n    34 +\n    35 +## 남은 리스크\n    36 +- 현재 delivery trigger는 `path` 변화만 기준으로 work/verify handoff를\n        감지하므로, 같은 경로를 update-in-place 하는 `/work` 또는 `/verify` 갱\n        신은 Office View에서 시각적으로 누락될 수 있습니다.\n    37 +- 이번 verification 라운드에서는 manual controller/browser smoke를 실행\n        하지 않았습니다. 따라서 particle density, pet path, mute UX가 실제 view\n        port에서 과하지 않은지는 여전히 다음 별도 확인이 필요합니다.\n    38 +- current live runtime은 아직 `CONTROL_SEQ: 176` implement handoff를 가\n        리키고 있습니다. 이번 seq 177 handoff가 열리면 newest-valid-control 기\n        준으로 새 control이 우선해야 합니다.\n\n───────────────────────────────────────────────────────────────────────────────\n\n• Working (2m 21s • esc to interrupt)\n\n\n› Find and fix a bug in @filename\n\n  gpt-5.4 xhigh fast · ~/code/projectH\n",
+  "last_activity_at": 1776317539.9019358
+}

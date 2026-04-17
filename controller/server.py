@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import re
 import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -116,6 +117,21 @@ def _runtime_status_or_placeholder() -> dict:
     }
 
 
+def _normalize_capture_tail_text(text: str) -> str:
+    normalized = str(text or "")
+    normalized = re.sub(
+        r"([^\n])(\[Pasted Content \d+ chars\])",
+        r"\1\n\2",
+        normalized,
+    )
+    normalized = re.sub(
+        r"(\[Pasted Content \d+ chars\])(?=\[Pasted Content \d+ chars\])",
+        r"\1\n",
+        normalized,
+    )
+    return normalized
+
+
 def get_runtime_status() -> tuple[dict, HTTPStatus]:
     status = normalize_runtime_status(read_runtime_status(PROJECT_ROOT))
     if not status:
@@ -169,7 +185,7 @@ def runtime_capture_tail(lane: str | None = None, *, lines: int = 120) -> tuple[
         "ok": True,
         "lane": lane_name,
         "lines": int(lines),
-        "text": text,
+        "text": _normalize_capture_tail_text(text),
     }, HTTPStatus.OK
 
 

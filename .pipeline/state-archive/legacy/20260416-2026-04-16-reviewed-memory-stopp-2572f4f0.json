@@ -1,0 +1,50 @@
+{
+  "job_id": "20260416-2026-04-16-reviewed-memory-stopp-2572f4f0",
+  "status": "VERIFY_RUNNING",
+  "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-reviewed-memory-stopped-state-reload-continuity-browser-smoke.md",
+  "schema_version": 1,
+  "artifact_hash": "8245bc5db650e835f2106d101bb18b6aa2398c8ea8b797adb796033f3b1abe04",
+  "artifact_size": 2409,
+  "artifact_mtime": 1776271777.0339036,
+  "stabilized_at": 1776271781.8563716,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 1776271796.3985577,
+  "last_dispatch_slot": "slot_verify",
+  "last_failed_dispatch_at": 0.0,
+  "last_failed_dispatch_snapshot": "",
+  "dispatch_fail_count": 0,
+  "feedback_baseline_sig": "claude_handoff.md=1776271604797138163:4049:2bb831e95e8e7d43b7e86b2aac154bfb37514a4811b4bd846cfecbab441b2d05|gemini_request.md=1776249910276975775:3229:cba61b2efcf8234d7bec159fe91148297bc8670e2d1741edfa664c61f988c261|operator_request.md=1776259872793409857:2028:99faa095e9aed7792861e34999a345ec114972b30bf82818640c0496dd7e7c2c",
+  "verify_feedback_baseline_sig": "4c0b2cd03b2803b4212464a75199e6ebd41dc07eb9fe4c459dea3e247cc0a662",
+  "verify_receipt_baseline_path": "verify/4/16/2026-04-16-controller-office-reset-base-verification.md",
+  "verify_receipt_baseline_mtime": 1776271604.7971382,
+  "verify_manifest_path": "",
+  "verify_completed_at": 0.0,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "",
+  "created_at": 1776271778.9680476,
+  "updated_at": 1776271796.4496458,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1776271778.9683945,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1776271781.8563766,
+      "reason": "artifact stabilized"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "VERIFY_RUNNING",
+      "at": 1776271796.4496458,
+      "reason": "dispatched to slot_verify"
+    }
+  ],
+  "last_pane_snapshot": "\n• Waited for background\nterminal · npx playwright\ntest tests/web-\nsmoke.spec.mjs -g \"same-\nsession recurrence\naggregate는 separate\nblocked trigger surface로\n렌더링됩니다\"\n--reporter=line\n\n• 진행 시간상 이번에도 1분\n  안팎이면 끝날 가능성이\n  큽니다. 아직 실패 신호는\n  없어서 그대로 대기하겠습\n  니다.\n\n• Waiting for background …\n  └ npx playwright test…\n\n\n› Use /skills to list ava\n\n  gpt-5.4 xhigh fast · ~/…\n\n",
+  "last_activity_at": 1776271878.8955708
+}

@@ -101,6 +101,24 @@ class WrapperEmitterTest(unittest.TestCase):
             self.assertTrue(wrapper_log.exists())
             self.assertIn('"event_type": "READY"', wrapper_log.read_text(encoding="utf-8"))
 
+    def test_codex_queue_prompt_emits_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sent: list[bytes] = []
+            emitter = _WrapperEmitter(
+                wrapper_dir=Path(tmp),
+                lane_name="Codex",
+                task_hint_dir=None,
+                child_pid=456,
+                send_child_bytes=sent.append,
+            )
+
+            emitter.feed("tab to queue message\n55% context left\n")
+
+            self.assertEqual(sent, [])
+            wrapper_log = Path(tmp) / "codex.jsonl"
+            self.assertTrue(wrapper_log.exists())
+            self.assertIn('"event_type": "READY"', wrapper_log.read_text(encoding="utf-8"))
+
     def test_task_accept_waits_for_settle_before_done(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -128,9 +146,13 @@ class WrapperEmitterTest(unittest.TestCase):
             )
 
             emitter.feed("Claude Code\n❯\n", now=0.0)
+            wrapper_log = root / "claude.jsonl"
+            log_text = wrapper_log.read_text(encoding="utf-8")
+            self.assertIn('"event_type": "DISPATCH_SEEN"', log_text)
+            self.assertIn('"dispatch_id": "dispatch-42"', log_text)
+
             emitter.feed("● Now let me inspect the file.\n❯\n", now=1.0)
 
-            wrapper_log = root / "claude.jsonl"
             log_text = wrapper_log.read_text(encoding="utf-8")
             self.assertIn('"event_type": "TASK_ACCEPTED"', log_text)
             self.assertIn('"dispatch_id": "dispatch-42"', log_text)
@@ -163,7 +185,110 @@ class WrapperEmitterTest(unittest.TestCase):
             emitter.tick(now=9.0)
             log_text = wrapper_log.read_text(encoding="utf-8")
             self.assertIn('"event_type": "TASK_DONE"', log_text)
+            self.assertIn('"dispatch_id": "dispatch-42"', log_text)
             self.assertGreaterEqual(log_text.count('"event_type": "READY"'), 2)
+
+    def test_dispatch_seen_emits_before_accept_without_activity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            task_hint_dir.mkdir(parents=True, exist_ok=True)
+            (task_hint_dir / "claude.json").write_text(
+                json.dumps(
+                    {
+                        "lane": "Claude",
+                        "active": True,
+                        "job_id": "job-99",
+                        "dispatch_id": "dispatch-99",
+                        "control_seq": 211,
+                        "attempt": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            emitter = _WrapperEmitter(
+                wrapper_dir=root,
+                lane_name="Claude",
+                task_hint_dir=task_hint_dir,
+                child_pid=790,
+                send_child_bytes=lambda _data: None,
+            )
+
+            emitter.feed("Claude Code\n❯\n", now=0.0)
+
+            wrapper_log = root / "claude.jsonl"
+            log_text = wrapper_log.read_text(encoding="utf-8")
+            self.assertIn('"event_type": "DISPATCH_SEEN"', log_text)
+            self.assertNotIn('"event_type": "TASK_ACCEPTED"', log_text)
+
+    def test_active_task_hint_with_invalid_control_seq_emits_bridge_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            task_hint_dir.mkdir(parents=True, exist_ok=True)
+            (task_hint_dir / "claude.json").write_text(
+                json.dumps(
+                    {
+                        "lane": "Claude",
+                        "active": True,
+                        "job_id": "job-invalid-seq",
+                        "dispatch_id": "dispatch-invalid-seq",
+                        "control_seq": -1,
+                        "attempt": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            emitter = _WrapperEmitter(
+                wrapper_dir=root,
+                lane_name="Claude",
+                task_hint_dir=task_hint_dir,
+                child_pid=791,
+                send_child_bytes=lambda _data: None,
+            )
+
+            emitter.feed("Claude Code\n❯\n", now=0.0)
+
+            wrapper_log = root / "claude.jsonl"
+            log_text = wrapper_log.read_text(encoding="utf-8")
+            self.assertIn('"event_type": "BRIDGE_DIAGNOSTIC"', log_text)
+            self.assertIn('"code": "active_task_hint_metadata_invalid"', log_text)
+            self.assertNotIn('"event_type": "DISPATCH_SEEN"', log_text)
+
+    def test_active_task_hint_with_non_numeric_control_seq_emits_bridge_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            task_hint_dir.mkdir(parents=True, exist_ok=True)
+            (task_hint_dir / "claude.json").write_text(
+                json.dumps(
+                    {
+                        "lane": "Claude",
+                        "active": True,
+                        "job_id": "job-invalid-seq-text",
+                        "dispatch_id": "dispatch-invalid-seq-text",
+                        "control_seq": "none",
+                        "attempt": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            emitter = _WrapperEmitter(
+                wrapper_dir=root,
+                lane_name="Claude",
+                task_hint_dir=task_hint_dir,
+                child_pid=792,
+                send_child_bytes=lambda _data: None,
+            )
+
+            emitter.feed("Claude Code\n❯\n", now=0.0)
+
+            wrapper_log = root / "claude.jsonl"
+            log_text = wrapper_log.read_text(encoding="utf-8")
+            self.assertIn('"event_type": "BRIDGE_DIAGNOSTIC"', log_text)
+            self.assertIn('"code": "active_task_hint_metadata_invalid"', log_text)
+            self.assertIn('"detail": "control_seq_missing_for_active_dispatch"', log_text)
+            self.assertNotIn('"event_type": "DISPATCH_SEEN"', log_text)
 
     def test_duplicate_handoff_task_hint_closure_emits_reason_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -177,6 +302,7 @@ class WrapperEmitterTest(unittest.TestCase):
                         "lane": "Claude",
                         "active": True,
                         "job_id": "job-42",
+                        "dispatch_id": "dispatch-154",
                         "control_seq": 154,
                         "attempt": 1,
                         "inactive_reason": "",
@@ -219,6 +345,7 @@ class WrapperEmitterTest(unittest.TestCase):
             ]
             task_done = [event for event in events if event.get("event_type") == "TASK_DONE"]
             self.assertEqual(len(task_done), 1)
+            self.assertEqual(task_done[0]["payload"]["dispatch_id"], "dispatch-154")
             self.assertEqual(task_done[0]["payload"]["reason"], "duplicate_handoff")
 
 

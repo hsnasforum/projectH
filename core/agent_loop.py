@@ -6462,6 +6462,29 @@ class AgentLoop:
         response.web_search_record_path = record_path or None
         if stored_origin and stored_origin.get("answer_mode") and response.response_origin is None:
             response.response_origin = dict(stored_origin)
+        # Web-search entity-card / latest-update reloads fall through to
+        # ``_respond_with_active_context`` for follow-up questions. The mock
+        # conversation-mode answer drops the normalized web-search summary
+        # (``확인된 사실 [교차 확인]:`` etc.), which breaks the shipped reload
+        # contract where the stored cross-verified card stays visible even
+        # through natural-reload follow-up chains. Prepend the normalized
+        # stored summary so the follow-up answer keeps the web-search entity
+        # card / latest-update surface instead of being rewritten into a
+        # document-mode mock reply. The stored summary itself already
+        # excludes noisy single-source claims, so this preserves the
+        # noisy-exclusion + provenance contract without changing any storage
+        # shape or serializer semantics.
+        normalized_summary = (summary_text or "").strip()
+        if (
+            normalized_summary
+            and active_context.get("kind") == "web_search"
+            and stored_answer_mode in (AnswerMode.ENTITY_CARD, AnswerMode.LATEST_UPDATE)
+        ):
+            existing_text = (response.text or "").strip()
+            if normalized_summary not in existing_text:
+                response.text = (
+                    f"{normalized_summary}\n\n{existing_text}" if existing_text else normalized_summary
+                )
         return response
 
     def _looks_like_underspecified_next_step_request(self, user_request: str) -> bool:

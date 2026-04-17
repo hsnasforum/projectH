@@ -1,0 +1,50 @@
+{
+  "job_id": "20260416-2026-04-16-controller-idle-roam--b033497f",
+  "status": "VERIFY_RUNNING",
+  "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-controller-idle-roam-anti-stacking-history-deterministic-smoke.md",
+  "schema_version": 1,
+  "artifact_hash": "004385b778680b250088f2938b32dfd85670569d1e5c107bb378ce2f2835d6a5",
+  "artifact_size": 3354,
+  "artifact_mtime": 1776337381.6538072,
+  "stabilized_at": 1776337386.8297179,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 1776337393.6823206,
+  "last_dispatch_slot": "slot_verify",
+  "last_failed_dispatch_at": 0.0,
+  "last_failed_dispatch_snapshot": "",
+  "dispatch_fail_count": 0,
+  "feedback_baseline_sig": "claude_handoff.md=1776337150321270010:2942:a57ea613f2511a81236ee3d2d2518690ad2c42b5c42f32cabb8dbe077142423c|gemini_request.md=1776329953753880649:3109:1c59b6cd6ed825bc23a20fbf9b2bf7e64a9a274339392ab2bfaa810589beb32b|operator_request.md=1776335532126328291:1810:a5b491d37ff9de09961129c620398cd561cd8fa9529828c447dfcb568201e836",
+  "verify_feedback_baseline_sig": "15b83c011d48cf810b7211d74a18338494e496248a166e44676dc902a582deb8",
+  "verify_receipt_baseline_path": "verify/4/16/2026-04-16-controller-idle-roam-deterministic-smoke-verification.md",
+  "verify_receipt_baseline_mtime": 1776337150.2052922,
+  "verify_manifest_path": "",
+  "verify_completed_at": 0.0,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "",
+  "created_at": 1776337382.5032852,
+  "updated_at": 1776337393.736382,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1776337382.503635,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1776337386.829721,
+      "reason": "artifact stabilized"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "VERIFY_RUNNING",
+      "at": 1776337393.736382,
+      "reason": "dispatched to slot_verify"
+    }
+  ],
+  "last_pane_snapshot": "  └  M README.md\n     M controller/index.html\n    … +2 lines (ctrl + t to view transcript)\n     M docs/TASK_BACKLOG.md\n     M e2e/tests/controller-smoke.spec.mjs\n\n• Explored\n  └ Search testAntiStacking|testHistoryPenalty|_lastRoamIdx|anti-stacking|history penalty|proximity avoidance|_roamHistory in index.html\n\n• Ran git diff -- controller/index.html e2e/tests/controller-smoke.spec.mjs README.md docs/ACCEPTANCE_CRITERIA.md docs/MILESTONES.md docs/\n  │ TASK_BACKLOG.md\n  └ diff --git a/README.md b/README.md\n    index 8a4a4cb..d2947c0 100644\n    … +276 lines (ctrl + t to view transcript)\n    +  });\n     });\n\n───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\n• 실제 재검증을 돌립니다. controller 전용 smoke와 whitespace/diff hygiene까지만 확인하고, 그 결과를 기준으로 다음 슬라이스를 정하겠습니다.\n\n• Ran git diff --check -- controller/index.html e2e/tests/controller-smoke.spec.mjs README.md docs/ACCEPTANCE_CRITERIA.md docs/\n  │ MILESTONES.md docs/TASK_BACKLOG.md\n  └ (no output)\n\n• Ran make controller-test\n  └ [WebServer] hostname: Operation not permitted\n\n    … +18 lines (ctrl + t to view transcript)\n\n    make: *** [Makefile:16: controller-test] Error 1\n\n───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\n• make controller-test가 아직 돌고 있습니다. 끝나는 동안 다음 슬라이스 후보를 좁히기 위해 roam 관련 남은 계약도 같이 훑어보겠습니다.\n\n• Waited for background terminal\n\n• Explored\n  └ Read index.html, claude_handoff.md, NEXT_STEPS.md\n\n───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\n• make controller-test가 현재 환경에서 다시 막혔습니다. 이게 일시적 flake인지 확인하려고 최소 소켓 probe 하나만 더 돌려서, 실제 truth-sync\n  blocker인지 분리하겠습니다.\n\n• Explored\n  └ Search window.testAntiStacking|window.testHistoryPenalty|idle roam avoids proximity to other idle agents|idle roam deprioritizes\nrecently\n           visited spots in index.html\n\n• Ran python3 - <<'PY'\n  │ import socket\n  │ s = socket.socket()\n  │ … +6 lines\n  └ Traceback (most recent call last):\n      File \"<stdin>\", line 2, in <module>\n      File \"/usr/lib/python3.12/socket.py\", line 233, in __init__\n        _socket.socket.__init__(self, family, type, proto, fileno)\n    PermissionError: [Errno 1] Operation not permitted\n\n───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\n• 결론은 거의 정해졌습니다. 코드/문서 표면은 /work 주장과 맞지만, 이번 라운드에 필요한 make controller-test 재실행이 로컬 소켓 권한 차단으\n  로 막혀 있어 seq 200은 operator stop으로 닫는 편이 truthful합니다.\n\n• Working (1m 38s • esc to interrupt)\n\n\n› Implement {feature}\n\n  gpt-5.4 xhigh fast · ~/code/projectH\n",
+  "last_activity_at": 1776337491.195676
+}

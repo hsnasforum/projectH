@@ -62,7 +62,7 @@ _TASK_DONE_SETTLE_SEC = 1.5
 
 _READY_MARKERS = {
     "Claude": ("❯", "claude code", "bypass permissions"),
-    "Codex": ("›", "openai codex"),
+    "Codex": ("›", "openai codex", "tab to queue message", "context left"),
     "Gemini": ("type your message", "gemini cli", "workspace"),
 }
 _CODEX_UPDATE_SKIP_MARKERS = (
@@ -486,8 +486,11 @@ class _WrapperEmitter:
         self.recent_lines: list[str] = []
         self.ready_emitted = False
         self.busy_state = False
+        self.seen_key = ""
+        self.seen_payload: dict[str, object] | None = None
         self.accepted_key = ""
         self.accepted_payload: dict[str, object] | None = None
+        self.bridge_diagnostic_key = ""
         self._auto_actions_sent: set[str] = set()
         self._last_activity_at = 0.0
         self._task_inactive_since = 0.0
@@ -530,6 +533,7 @@ class _WrapperEmitter:
         payload = {
             "job_id": str(self.accepted_payload.get("job_id") or ""),
             "control_seq": int(self.accepted_payload.get("control_seq") or -1),
+            "dispatch_id": str(self.accepted_payload.get("dispatch_id") or ""),
         }
         if reason:
             payload["reason"] = reason
@@ -538,6 +542,8 @@ class _WrapperEmitter:
             payload,
             derived_from="vendor_output",
         )
+        self.seen_key = ""
+        self.seen_payload = None
         self.accepted_key = ""
         self.accepted_payload = None
         self._task_inactive_since = 0.0
@@ -547,6 +553,30 @@ class _WrapperEmitter:
             self.append("READY", {"reason": "prompt_visible"}, derived_from="vendor_output")
         self.ready_emitted = True
         self.busy_state = False
+
+    def _emit_bridge_diagnostic(
+        self,
+        task_key: str,
+        *,
+        job_id: str,
+        dispatch_id: str,
+        control_seq: int,
+        code: str,
+        detail: str = "",
+    ) -> None:
+        diagnostic_key = f"{task_key}|{code}|{control_seq}"
+        if self.bridge_diagnostic_key == diagnostic_key:
+            return
+        payload: dict[str, object] = {
+            "job_id": job_id,
+            "dispatch_id": dispatch_id,
+            "control_seq": control_seq,
+            "code": code,
+        }
+        if detail:
+            payload["detail"] = detail
+        self.append("BRIDGE_DIAGNOSTIC", payload, derived_from="task_hint")
+        self.bridge_diagnostic_key = diagnostic_key
 
     def _evaluate(self, new_lines: list[str], *, now: float | None = None) -> None:
         if not self.recent_lines:
@@ -560,11 +590,37 @@ class _WrapperEmitter:
         task_hint = _load_task_hint(self.task_hint_dir, self.lane_name)
         job_id = str(task_hint.get("job_id") or "")
         dispatch_id = str(task_hint.get("dispatch_id") or "")
-        control_seq = int(task_hint.get("control_seq") or -1)
+        raw_control_seq = task_hint.get("control_seq")
+        try:
+            control_seq = int(raw_control_seq if raw_control_seq is not None else -1)
+        except (TypeError, ValueError):
+            control_seq = -1
         attempt = int(task_hint.get("attempt") or 0)
         inactive_reason = str(task_hint.get("inactive_reason") or "")
-        task_active = bool(task_hint.get("active")) and bool(job_id) and control_seq >= 0
-        task_key = f"{job_id}|{control_seq}" if task_active else ""
+        task_claimed_active = bool(task_hint.get("active")) and bool(job_id) and bool(dispatch_id)
+        task_key = f"{job_id}|{dispatch_id}" if task_claimed_active else ""
+        if task_claimed_active and control_seq < 0:
+            self._emit_bridge_diagnostic(
+                task_key,
+                job_id=job_id,
+                dispatch_id=dispatch_id,
+                control_seq=control_seq,
+                code="active_task_hint_metadata_invalid",
+                detail="control_seq_missing_for_active_dispatch",
+            )
+        else:
+            self.bridge_diagnostic_key = ""
+        task_active = task_claimed_active and control_seq >= 0
+
+        if task_active and self.seen_key != task_key:
+            self.seen_key = task_key
+            self.seen_payload = {
+                "job_id": job_id,
+                "dispatch_id": dispatch_id,
+                "control_seq": control_seq,
+                "attempt": attempt,
+            }
+            self.append("DISPATCH_SEEN", dict(self.seen_payload), derived_from="task_hint")
 
         if activity_detected and task_active:
             if self.accepted_key != task_key:
@@ -596,6 +652,10 @@ class _WrapperEmitter:
                 self._emit_task_done(inactive_reason or "task_hint_cleared")
                 self._emit_ready()
             return
+
+        if not task_active:
+            self.seen_key = ""
+            self.seen_payload = None
 
         if ready_detected or (_text_is_ready(self.lane_name, text) and not activity_detected):
             self._emit_ready()

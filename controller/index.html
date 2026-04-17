@@ -341,7 +341,9 @@
 // ═══════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════
-const POLL_MS    = 2000;
+const POLL_MS    = 1000;
+const ACTION_REPOLL_MS = 300;
+const LOG_REFRESH_MS = 1000;
 const VIRTUAL_W  = 1000;
 const VIRTUAL_H  = 700;
 const WALK_SPEED = 120; // 걷기 속도 (픽셀/초)
@@ -1544,8 +1546,10 @@ canvas.addEventListener('click', (e) => {
 });
 
 let _logRefreshInterval = null;
+let _logRefreshInFlight = false;
 let _modalLaneName = '';
 let _modalSendInFlight = false;
+let _pollInFlight = false;
 
 function setLogSendStatus(message, tone = '') {
   const el = document.getElementById('lm-send-status');
@@ -1598,10 +1602,12 @@ async function openLogModal(agent) {
   _logRefreshInterval = setInterval(() => {
     if (!modal.classList.contains('open')) { clearInterval(_logRefreshInterval); return; }
     _fetchTail(agent.name, body);
-  }, 3000);
+  }, LOG_REFRESH_MS);
 }
 
 async function _fetchTail(laneName, bodyEl) {
+  if (_logRefreshInFlight) return;
+  _logRefreshInFlight = true;
   try {
     const res = await fetch(`/api/runtime/capture-tail?lane=${encodeURIComponent(laneName)}&lines=100`);
     const data = await res.json();
@@ -1611,6 +1617,7 @@ async function _fetchTail(laneName, bodyEl) {
       if (wasAtBottom) bodyEl.scrollTop = bodyEl.scrollHeight;
     } else { bodyEl.innerHTML = `<span class="log-loading">(${esc(laneName)} — 활성 로그 없음)</span>`; }
   } catch (e) { bodyEl.innerHTML = `<span class="log-loading">(로그 조회 실패: ${esc(e.message)})</span>`; }
+  finally { _logRefreshInFlight = false; }
 }
 
 function closeLogModal(e) {
@@ -1625,6 +1632,7 @@ function closeLogModal(e) {
   }
   setLogSendStatus('');
   syncModalInputState();
+  _logRefreshInFlight = false;
   if (_logRefreshInterval) { clearInterval(_logRefreshInterval); _logRefreshInterval = null; }
 }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLogModal(); });
@@ -2736,6 +2744,8 @@ function detectChanges(data) {
 }
 
 async function poll() {
+  if (_pollInFlight) return;
+  _pollInFlight = true;
   try {
     const res  = await fetch('/api/runtime/status');
     const data = await res.json();
@@ -2773,6 +2783,7 @@ async function poll() {
     document.getElementById('status-badge').textContent = 'API Error';
     document.getElementById('status-badge').className = 'badge broken';
   }
+  finally { _pollInFlight = false; }
 }
 
 // Sidebar Renderers
@@ -2847,7 +2858,7 @@ async function apiPost(path) {
       pushEvent('ok', path.split('/').pop() + ' 완료');
       if (path.includes('start')) SoundFX.success(); else if (path.includes('stop')) SoundFX.warn(); else SoundFX.blip();
     }
-    setTimeout(poll, 1200);
+    setTimeout(poll, ACTION_REPOLL_MS);
   } catch (e) { pushEvent('err', '요청 실패: ' + e.message); SoundFX.error(); }
 }
 

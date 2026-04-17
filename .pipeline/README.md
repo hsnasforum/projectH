@@ -79,12 +79,25 @@
 - watcher는 control slot 변경만으로 Codex verification round를 닫지 않습니다. 현재 라운드 시작 이후의 `/verify` receipt가 실제로 갱신된 것이 확인될 때만 feedback-only completion을 인정합니다.
 - Codex verification round가 idle timeout에 걸렸는데 current-round `/verify` receipt나 next control output이 아직 incomplete하면, watcher는 그 라운드를 terminal done으로 닫지 않고 `VERIFY_PENDING`으로 되돌려 backoff 후 자동 재시도를 거치게 하는 편이 맞습니다.
 - Codex verification pane이 busy indicator 없이 idle prompt로 빨리 돌아왔는데 current-round `/verify` receipt나 next control output이 아직 incomplete하면, watcher는 5분 full timeout까지 붙들지 말고 short idle window 뒤 `VERIFY_PENDING`으로 되돌려 재시도하는 편이 맞습니다.
-- 새 verify dispatch에는 `dispatch_id`와 `accept_deadline`이 같이 붙고, watcher는 current run의 wrapper `TASK_ACCEPTED`를 그 dispatch와 직접 연결해 보는 편이 맞습니다.
-- `TASK_ACCEPTED`가 deadline 안에 오지 않았을 때만 `dispatch_stall_detected`를 여는 편이 맞고, prompt가 잠깐 idle처럼 보인다는 이유만으로 pre-accept stall을 바로 확정하지 않는 편이 맞습니다.
-- 같은 fingerprint에서 위 상황이 한 번 더 반복되면 watcher는 이를 `dispatch_stall` incident로 승격하고, lane note를 `waiting_task_accept_after_dispatch`로 남긴 채 추가 자동 재큐잉 없이 degraded surface로 넘기는 편이 맞습니다.
-- launcher recent log에는 이 incident가 `dispatch_stall_detected` 이벤트로 그대로 보여야 하며, controller/index.html은 새 전용 액션 없이 기존 degraded reason / lane note / recent event만 읽는 편이 맞습니다.
+- 새 verify dispatch에는 `dispatch_id`와 `accept_deadline`이 같이 붙고, wrapper는 active task hint를 실제로 읽은 순간 `DISPATCH_SEEN`, 실제 작업 수락 신호가 보일 때 `TASK_ACCEPTED`를 emit하는 편이 맞습니다.
+- verify/followup round는 `status.control=none`이어도 `active_round.dispatch_control_seq`, `job_id`, `dispatch_id`를 가진 round-scoped task hint로 Codex dispatch를 계속 이어가는 편이 맞습니다. supervisor는 active control slot이 없다는 이유만으로 Codex hint를 inactive로 내리면 안 됩니다.
+- watcher는 current run의 wrapper `DISPATCH_SEEN`, `TASK_ACCEPTED`, `TASK_DONE`를 그 dispatch와 직접 연결해 보며, prompt가 잠깐 idle처럼 보인다는 이유만으로 pre-accept stall이나 post-accept completion을 바로 확정하지 않는 편이 맞습니다.
+- `TASK_DONE`은 최소 `job_id`, `control_seq`, `dispatch_id`를 함께 내보내는 선행 완료 신호입니다. stale old `TASK_DONE`가 새 verify dispatch를 닫지 않도록 watcher는 current `dispatch_id`와 일치하는 경우에만 이를 유효하게 봅니다.
+- wrapper는 verify hint가 active인데 `control_seq` metadata가 비정상이면 event를 조용히 생략하지 않고 `BRIDGE_DIAGNOSTIC(code=active_task_hint_metadata_invalid)`를 남기는 편이 맞습니다. silent no-event가 다시 false `dispatch_stall`로 숨으면 안 됩니다.
+- Codex verify round close는 `TASK_ACCEPTED -> TASK_DONE -> current-round /verify receipt + next control -> receipt close` 순서로만 허용합니다. matching `TASK_DONE`가 없으면 `/verify`와 next control이 먼저 바뀌어도 close authority가 열리지 않습니다.
+- `DISPATCH_SEEN`조차 deadline 안에 오지 않으면 lane note를 `waiting_dispatch_seen_after_dispatch`로 두고, `DISPATCH_SEEN`은 왔지만 `TASK_ACCEPTED`가 deadline 안에 오지 않았을 때만 `waiting_task_accept_after_dispatch`로 보는 편이 맞습니다.
+- `TASK_ACCEPTED`는 왔지만 `TASK_DONE`이 verify done deadline 안에 오지 않으면 lane note를 `waiting_task_done_after_accept`로 두고, `TASK_DONE` 뒤에도 receipt/control close가 안 오면 `waiting_receipt_close_after_task_done`로 남기는 편이 맞습니다.
+- 같은 fingerprint에서 위 상황이 한 번 더 반복되면 watcher는 이를 `dispatch_stall` incident로 승격하고, 해당 machine note를 유지한 채 추가 자동 재큐잉 없이 degraded surface로 넘기는 편이 맞습니다.
+- 같은 fingerprint에서 post-accept completion wait가 한 번 더 반복되면 watcher는 이를 `post_accept_completion_stall` incident로 승격하고, supervisor events에는 `completion_stall_detected`, degraded reason에는 `post_accept_completion_stall`을 남기는 편이 맞습니다.
+- launcher recent log에는 `dispatch_stall_detected`와 `completion_stall_detected`가 그대로 보여야 하며, controller/index.html은 새 전용 액션 없이 기존 degraded reason / lane note / recent event만 읽는 편이 맞습니다.
+- runtime이 `STOPPED`로 내려가거나 `active_round.artifact_path`가 더 새 round로 바뀌면 old `dispatch_stall`, old operator/autonomy gate, 이전 `/work` 기반 degraded reason은 current truth에서 같이 지워지는 편이 맞습니다. sidebar/runtime surface가 예전 stale gate를 현재 round와 섞어 보이면 안 됩니다.
 - startup/rolling dispatch 직전에는 prompt 입력줄에 남아 있는 미전송 텍스트를 먼저 비운 뒤 새 prompt를 paste하는 편이 맞습니다. 그래야 stray draft input이 다음 control prompt를 오염시키지 않습니다.
 - stale control slot을 수동 정리해야 할 때는 `.pipeline/archive-stale-control-slots.sh`를 쓰고, newest control file은 archive하지 않는 편이 맞습니다.
+- shared `.pipeline/state/`에는 `turn_state.json`, `autonomy_state.json`, 그리고 blocker resolution에 아직 필요한 `VERIFY_DONE` 기록만 오래 남길 수 있습니다. 이전 run의 `VERIFY_PENDING` / `VERIFY_RUNNING` 같은 non-terminal job state는 watcher startup에서 `.pipeline/runs/<old_run_id>/state-archive/` 또는 `.pipeline/state-archive/legacy/`로 옮겨 현재 run surface와 섞이지 않게 하는 편이 맞습니다.
+- supervisor-managed runtime에서는 watcher job state도 supervisor가 만든 current `run_id`를 그대로 써야 합니다. watcher가 자기 PID 기반 별도 `run_id`를 만들면 Codex/Claude job state가 current run status surface에서 빠져 stale `READY`/`prompt_visible`처럼 보일 수 있습니다.
+- lane `READY/WORKING` 표시는 wrapper event를 primary truth로 쓰되, attachable lane의 pane tail 하단 prompt/activity marker로 stale surface를 한 번 더 보정하는 편이 맞습니다. 그래야 finished Claude/Codex pane이 `WORKING`으로 남거나, 실제로 다시 움직이는 pane이 오래된 `READY` 그대로 보이는 drift를 줄일 수 있습니다.
+- metadata-only `/work` closeout(`## 변경 파일 - 없음` 또는 work/verify/.pipeline 경로만 기록)도 latest canonical round note라면 Claude round 종료 신호로는 인정하는 편이 맞습니다. watcher는 이런 closeout으로 `CLAUDE_ACTIVE`를 풀고 Codex verify artifact로 넘길 수 있어야 하며, 단지 dispatch prompt content를 좁히기 위해서만 metadata-only filtering을 유지합니다.
+- latest `/work` verify 필요 판정은 generic latest same-day `/verify` mtime 하나만으로 닫지 않는 편이 맞습니다. watcher는 current run `VERIFY_DONE` state나 verify note 안의 `work/...md` 참조를 보고 latest `/work`와 실제로 연결된 matching `/verify`가 있는지 먼저 확인하고, `verify/<month>/<day>/` day-folder 바로 아래 note도 canonical same-day verify로 인정해야 합니다. unrelated newer `/verify`가 있어도 latest `/work` 자체가 아직 매칭 verify 없이 남아 있으면 Codex verify를 계속 우선해야 합니다. `REASON_CODE: newer_unverified_work_present` + `OPERATOR_POLICY: stop_until_truth_sync`도 이런 recovery family로 보고 즉시 operator stop이 아니라 Codex verify 우선 경계로 다루는 편이 맞습니다.
 
 ## handoff 작성 원칙
 
@@ -114,6 +127,8 @@
 - launcher와 runtime soak/smoke gate도 operator candidate status에서 `classification_source`가 `operator_policy` 또는 `reason_code`가 아니면 `classification_fallback_detected`로 즉시 실패시키는 편이 맞습니다. 즉 fallback metadata는 화면 경고가 아니라 운영 게이트 실패로 다룹니다.
 - gate 중인 후보는 runtime `status.control=none`으로 내려가고, 대신 `status.autonomy.mode = recovery|triage|hibernate|pending_operator`와 `block_reason`, `suppress_operator_until`, `operator_eligible`로 surface됩니다. 이 동안 watcher는 Codex follow-up 또는 idle hibernate를 먼저 선택하고, 즉시 operator wait로 고정하지 않습니다.
 - gate window가 지나도 같은 fingerprint가 남아 있고 여전히 real operator-only decision이면 그때 `STATUS: needs_operator`가 current truth로 publish될 수 있습니다. Claude는 current truth가 아닌 gated stop 슬롯을 직접 따르지 않습니다.
+- runtime long soak는 baseline evidence로 유지하되, 기본 검증 메뉴는 아닙니다. 현재 기본 검증은 launcher live stability gate, incident replay, 실제 작업 세션이며, 6h/24h long soak는 supervisor/watcher/tmux adapter/wrapper event 계약 대변경, control/receipt/state writer 계약 변경, adoption 직전 최종 gate 같은 예외 상황에서만 다시 실행하는 편이 맞습니다.
+- 현재 launcher live stability gate는 `handoff_dispatch -> TASK_ACCEPTED -> TASK_DONE -> receipt_close` chain continuity, READY/WORKING 오표시 0회, 불필요한 `needs_operator` 0회, `classification_fallback_detected` 0회, stop/restart 후 stale `RUNNING/STOPPING` 0회, orphan watcher/session 0회, dispatch/completion/receipt close incident의 named event surface, 반복 incident의 replay 고정 여부를 기준으로 봅니다.
 - `STATUS: needs_operator`는 bare stop line만 남기는 용도가 아닙니다. 이 상태를 쓸 때는 최소한 아래를 같이 적는 편이 canonical입니다.
   - stop reason
   - 근거가 된 latest `/work`와 latest `/verify`
@@ -157,7 +172,7 @@
 10. watcher의 책임은 파일 변경 감지와 올바른 pane 전달까지입니다. 전송 후 Claude 또는 Codex or Gemini pane이 바쁘거나 interrupted 상태여서 처리가 안 되는 경우는 watcher contract 문제가 아니라 세션 상태 문제입니다.
 11. Codex가 다음 슬라이스를 고를 때는, 같은 family 안의 작은 current-risk reduction을 먼저 닫고 그다음 새 quality axis로 넘어가는 편이 기본값입니다.
 12. startup dispatch는 pane이 실제로 입력을 받을 준비가 됐는지 먼저 확인한 뒤 보내는 편이 맞습니다. 그 뒤에는 짧은 readiness 확인과 watcher retry에 맡기는 쪽이 기본값입니다.
-13. startup 또는 rolling dispatch에서 최신 canonical `/work`가 latest same-day `/verify`보다 새로우면, fresher `claude_handoff.md`가 남아 있어도 Codex verification이 Claude 구현보다 우선입니다.
+13. startup 또는 rolling dispatch에서 최신 canonical `/work`가 아직 matching `/verify` 없이 남아 있으면, unrelated same-day `/verify`가 더 늦게 찍혀 있어도 fresher `claude_handoff.md`보다 Codex verification이 우선입니다.
 14. launcher가 `tmux attach`에서 빠져나와도 자동 진행이 이어져야 하므로, watcher는 launcher shell background보다 tmux session 내부의 별도 hidden watcher window에서 유지하는 편이 더 안전합니다.
 15. active Claude implement round가 이미 진행 중이면, newer `claude_handoff.md`가 생겨도 watcher는 mid-round re-dispatch를 하지 않고 현재 라운드 exit 뒤에만 반영합니다.
 

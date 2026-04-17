@@ -1,0 +1,13 @@
+{"ts": "2026-04-17T06:21:36.524196Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1576423}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T06:21:41.768051Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1576423}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T06:21:43.227309Z", "lane": "Gemini", "event_type": "READY", "source": "wrapper", "payload": {"pid": 1576423, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-17T06:21:46.799423Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1576423}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T06:21:51.866713Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1576423}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T06:21:56.929598Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1576423}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T06:22:02.016448Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1576423}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T06:22:07.048268Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1576423}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T06:22:12.153770Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1576423}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T06:22:17.183921Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1576423}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T06:22:22.263056Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1576423}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T06:22:27.324005Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1576423}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T06:22:32.350049Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1576423}, "derived_from": "process_alive"}

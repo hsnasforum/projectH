@@ -1,0 +1,62 @@
+{
+  "job_id": "20260416-2026-04-16-controller-smoke-reru-2321f1dc",
+  "status": "VERIFY_RUNNING",
+  "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-controller-smoke-rerun-hardening.md",
+  "schema_version": 1,
+  "artifact_hash": "b5d5ff300186584524982c8b38d045424e01b91d913d55f3bffbd781dcac4a9b",
+  "artifact_size": 2194,
+  "artifact_mtime": 1776327640.2919545,
+  "stabilized_at": 1776327645.7984307,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 1776327988.175886,
+  "last_dispatch_slot": "slot_verify",
+  "last_failed_dispatch_at": 0.0,
+  "last_failed_dispatch_snapshot": "",
+  "dispatch_fail_count": 0,
+  "feedback_baseline_sig": "claude_handoff.md=1776327506009469017:2710:1ab10ec9409ef76a916cb5b043a1a97ef7ce5dafc559ebf795f1ee7dc4c8dd84|gemini_request.md=1776327348850512764:3542:ea36b6df104121cca9df651dd4c875c9b9380ae13dfcdbafdfab76badeb88d58|operator_request.md=1776316334653083173:1506:0353b442580aaab336eaac3083706e1d4f90ad372258e68caf6d8eda03bb8e78",
+  "verify_feedback_baseline_sig": "bc36e868d6007ffab1f8a2ee1f0b298cac122a3ae8c6dcd780797238696260a9",
+  "verify_receipt_baseline_path": "verify/4/16/2026-04-16-controller-background-preload-readiness-hardening-verification.md",
+  "verify_receipt_baseline_mtime": 1776327348.705431,
+  "verify_manifest_path": "",
+  "verify_completed_at": 0.0,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "",
+  "created_at": 1776327642.2013958,
+  "updated_at": 1776327988.2351408,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1776327642.201731,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1776327645.7984345,
+      "reason": "artifact stabilized"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "VERIFY_RUNNING",
+      "at": 1776327652.6528983,
+      "reason": "dispatched to slot_verify"
+    },
+    {
+      "from": "VERIFY_RUNNING",
+      "to": "VERIFY_PENDING",
+      "at": 1776327954.1666355,
+      "reason": "idle timeout with incomplete outputs after 300s idle, 302s total"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "VERIFY_RUNNING",
+      "at": 1776327988.2351408,
+      "reason": "dispatched to slot_verify"
+    }
+  ],
+  "last_pane_snapshot": "• Waited for background terminal\n\n───────────────────────────────────────────────────────────────────────────────\n\n• 병렬 rerun에서는 sandbox가 controller server 기동을 막았습니다. 이게 포트 충\n  돌이 아니라 환경 제약인지 확인하려고, 같은 명령을 단독으로 한 번만 다시 돌려\n  보겠습니다.\n\n• Ran make controller-test\n  └ [WebServer] hostname: Operation not permitted\n\n    … +18 lines (ctrl + t to view transcript)\n\n    make: *** [Makefile:16: controller-test] Error 1\n\n• Waited for background terminal\n\n───────────────────────────────────────────────────────────────────────────────\n\n• 실제 smoke rerun은 현재 sandbox에서 서버 socket 생성 단계에서 막히고 있습니\n  다. 그래서 남은 검증은 정적으로 더 좁혀서, controller-test target과\n  CONTROLLER_SMOKE_PORT wiring 자체는 코드상 맞는지 확인하겠습니다.\n\n• Ran make -n controller-test\n  └ cd e2e && npx playwright test -c playwright.controller.config.mjs\n    --reporter=line\n\n• Ran python3 - <<'PY'\n  │ import socket\n  │ try:\n  │ … +5 lines\n  └ PermissionError: [Errno 1] Operation not permitted\n\n• Ran CONTROLLER_SMOKE_PORT=8782 node --input-type=module -e 'import(\"./e2e/\n  │ playwright.controller.config.mjs\").then(({default: cfg}) =>\n  │ { console.log(cfg.use.baseURL); console.log(cfg.webServer.command);\n  │ … +1 lines\n  └ http://127.0.0.1:8782\n    bash -lc 'cd /home/xpdlqj/code/projectH && CONTROLLER_PORT=8782 python3 -m\n    controller.server'\n    http://127.0.0.1:8782/api/runtime/status\n\n• Ran node --input-type=module -e 'import(\"./e2e/\n  │ playwright.controller.config.mjs\").then(({default: cfg}) =>\n  │ { console.log(cfg.use.baseURL); console.log(cfg.webServer.command);\n  │ … +1 lines\n  └ http://127.0.0.1:8781\n    bash -lc 'cd /home/xpdlqj/code/projectH && CONTROLLER_PORT=8781 python3 -m\n    controller.server'\n    http://127.0.0.1:8781/api/runtime/status\n\n───────────────────────────────────────────────────────────────────────────────\n\n• latest /work의 코드·문서 변경은 확인됐지만, smoke rerun 자체는 현재 sandbox에\n  서 재현이 막히고 있습니다. 그래서 /verify에는 그 점을 명확히 남기고, control\n  은 우선순위 문제가 아니라 truth-sync 정지로 처리하는 쪽이 더 맞습니다.\n\n• Explored\n  └ Read operator_request.md, claude_handoff.md\n\n───────────────────────────────────────────────────────────────────────────────\n\n• 이제 /verify를 최신 truth로 교체하고, control은 needs_operator 한 건으로 닫겠\n  습니다. 이유는 우선순위가 아니라 current sandbox에서 controller smoke 재실행\n  자체를 확인할 수 없는 truth-sync 정지이기 때문입니다.\n\n• Working (3m 31s • esc to interrupt)\n\n\n› Run /review on my current changes\n\n  gpt-5.4 xhigh fast · ~/code/projectH\n",
+  "last_activity_at": 1776328202.1546056
+}

@@ -129,6 +129,7 @@
       busyTimer: null,
       busyStartedAt: 0,
       currentRequestId: null,
+      currentRequestPromise: null,
       currentRequestSessionId: "",
       cancelRequested: false,
       selectedBrowserFile: null,
@@ -794,28 +795,56 @@
     }
 
     async function sendRequest(extraPayload, progressMode = "follow_up") {
+      // Sequence back-to-back sendRequest callers: if a previous call is
+      // still streaming, wait for its promise to settle before starting
+      // the next one. Programmatic callers (e.g. Playwright via
+      // page.evaluate that awaits sendRequest) previously silently
+      // no-op-ed here when state.isBusy was true from a just-started
+      // request, which masked real step-by-step test coverage and made
+      // natural-reload follow-up sequencing non-deterministic across
+      // backends. UI double-submit protection is still handled at the
+      // trigger-button level via setBusyControls disabling the buttons
+      // while state.isBusy is true, so real users cannot queue extra
+      // requests by clicking; this change only affects callers that
+      // reach sendRequest while another request is already in flight.
+      while (state.currentRequestPromise) {
+        try { await state.currentRequestPromise; } catch (_) {}
+      }
+      // Safety: if state.isBusy is still set via some other path that
+      // does not expose a currentRequestPromise (e.g. approval/correction
+      // flows gated separately), keep the legacy no-op behavior.
       if (state.isBusy) return null;
-      try {
-        startProgress(progressMode, currentProvider(), currentModel());
-        showElement(responseCopyTextButton, false);
-        renderResponseOrigin(null);
-        const data = await submitStreamPayload({
-          ...buildSharedRequestSettings(),
-          ...extraPayload,
-        });
-        if (data?.cancelled) {
-          renderNotice(data.message || "요청을 취소했습니다.");
+      const pending = (async () => {
+        try {
+          startProgress(progressMode, currentProvider(), currentModel());
+          showElement(responseCopyTextButton, false);
+          renderResponseOrigin(null);
+          const data = await submitStreamPayload({
+            ...buildSharedRequestSettings(),
+            ...extraPayload,
+          });
+          if (data?.cancelled) {
+            renderNotice(data.message || "요청을 취소했습니다.");
+            await fetchSessions();
+            return data;
+          }
+          renderResult(data);
           await fetchSessions();
           return data;
+        } catch (error) {
+          renderError(error);
+          throw error;
+        } finally {
+          stopProgress();
         }
-        renderResult(data);
-        await fetchSessions();
-        return data;
-      } catch (error) {
-        renderError(error);
-        throw error;
+      })();
+      state.currentRequestPromise = pending;
+      try {
+        return await pending;
       } finally {
-        stopProgress();
+        if (state.currentRequestPromise === pending) {
+          state.currentRequestPromise = null;
+        }
       }
     }
 

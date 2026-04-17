@@ -27049,6 +27049,225 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
             self.assertIn("https://blog.example.com/crimson-desert", source_paths)
 
+    def test_handle_chat_sqlite_backend_entity_card_noisy_single_source_natural_reload_follow_up_keeps_stored_summary(self) -> None:
+        """sqlite backend parity: pre-seeded noisy entity-card record + click
+        reload + natural-language reload + follow-up question must return a
+        response text that preserves the stored cross-verified summary
+        (``확인된 사실 [교차 확인]:``), keeps ``response_origin`` on the stored
+        web-search entity-card contract, excludes noisy single-source claims
+        from the response text, and keeps ``blog.example.com`` provenance on
+        the active_context source paths. This locks the sqlite-only drift
+        surfaced by the corresponding Playwright browser scenario at source
+        without changing storage shape or serializer semantics."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            db_path = str(tmp_path / "test.db")
+            web_search_history_dir = str(tmp_path / "web-search")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=web_search_history_dir,
+                model_provider="mock",
+            )
+            session_id = "sqlite-entity-noisy-nat-reload-followup-session"
+            store = WebSearchStore(base_dir=web_search_history_dir)
+            save_result = store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {"title": "붉은사막 - 나무위키", "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."},
+                    {"title": "붉은사막 - 위키백과", "url": "https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."},
+                    {"title": "붉은사막 출시일 정보", "url": "https://blog.example.com/crimson-desert", "snippet": "붉은사막 출시일은 2025년 12월로 예정되어 있다."},
+                ],
+                summary_text=(
+                    "웹 검색 요약: 붉은사막\n\n"
+                    "확인된 사실:\n"
+                    "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다. [교차 확인]"
+                ),
+                pages=[
+                    {"url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", "title": "붉은사막 - 나무위키", "text": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."},
+                    {"url": "https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", "title": "붉은사막 - 위키백과", "text": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."},
+                    {"url": "https://blog.example.com/crimson-desert", "title": "붉은사막 출시일 정보", "text": "붉은사막 출시일은 2025년 12월로 예정되어 있다."},
+                ],
+                response_origin={
+                    "provider": "web",
+                    "badge": "WEB",
+                    "label": "웹 검색",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 다중 출처 합의",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "장르", "status": "strong", "status_label": "교차 확인", "value": "오픈월드 액션 어드벤처 게임", "support_count": 2, "candidate_count": 2, "source_role": "encyclopedia"},
+                ],
+                claim_coverage_progress_summary="교차 확인 1건.",
+            )
+            record_id = save_result["record_id"]
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool([]),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # Step 1: click reload via record id (same as `.history-item-actions button.secondary` click).
+            click_reload = service.handle_chat({
+                "session_id": session_id,
+                "provider": "mock",
+                "web_search_permission": "enabled",
+                "load_web_search_record_id": record_id,
+            })
+            self.assertTrue(click_reload["ok"])
+
+            # Step 2: natural-language reload (no record id).
+            natural_reload = service.handle_chat({
+                "session_id": session_id,
+                "user_text": "방금 검색한 결과 다시 보여줘",
+                "provider": "mock",
+                "web_search_permission": "enabled",
+            })
+            self.assertTrue(natural_reload["ok"])
+            self.assertEqual(natural_reload["response"]["actions_taken"], ["load_web_search_record"])
+
+            # Step 3: reload-follow-up question that falls through to
+            # _respond_with_active_context. The fix prepends the stored
+            # cross-verified summary so the entity-card contract is not
+            # replaced by a document-mode mock reply.
+            follow_up = service.handle_chat({
+                "session_id": session_id,
+                "user_text": "이 검색 결과 요약해줘",
+                "provider": "mock",
+                "web_search_permission": "enabled",
+                "load_web_search_record_id": record_id,
+            })
+            self.assertTrue(follow_up["ok"])
+            origin = follow_up["response"]["response_origin"]
+            self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["answer_mode"], "entity_card")
+            self.assertEqual(origin["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(origin["source_roles"], ["백과 기반"])
+            response_text = follow_up["response"]["text"]
+            self.assertIn("확인된 사실 [교차 확인]:", response_text)
+            self.assertNotIn("출시일", response_text)
+            self.assertNotIn("2025", response_text)
+            self.assertNotIn("blog.example.com", response_text)
+            source_paths = follow_up["session"]["active_context"]["source_paths"]
+            self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            self.assertIn("https://blog.example.com/crimson-desert", source_paths)
+
+    def test_handle_chat_sqlite_backend_entity_card_noisy_single_source_natural_reload_second_follow_up_keeps_stored_summary(self) -> None:
+        """sqlite backend parity for the natural-language reload second
+        follow-up. Mirrors the first-follow-up regression but adds one more
+        `load_web_search_record_id + user_text` follow-up turn. The stored
+        summary, response_origin, noisy exclusion, and provenance/source-path
+        continuity must all stay stable across the whole chain on sqlite."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            db_path = str(tmp_path / "test.db")
+            web_search_history_dir = str(tmp_path / "web-search")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(tmp_path / "corrections"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=web_search_history_dir,
+                model_provider="mock",
+            )
+            session_id = "sqlite-entity-noisy-nat-reload-second-followup-session"
+            store = WebSearchStore(base_dir=web_search_history_dir)
+            save_result = store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {"title": "붉은사막 - 나무위키", "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."},
+                    {"title": "붉은사막 - 위키백과", "url": "https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."},
+                    {"title": "붉은사막 출시일 정보", "url": "https://blog.example.com/crimson-desert", "snippet": "붉은사막 출시일은 2025년 12월로 예정되어 있다."},
+                ],
+                summary_text=(
+                    "웹 검색 요약: 붉은사막\n\n"
+                    "확인된 사실:\n"
+                    "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다. [교차 확인]"
+                ),
+                pages=[
+                    {"url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", "title": "붉은사막 - 나무위키", "text": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."},
+                    {"url": "https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", "title": "붉은사막 - 위키백과", "text": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다."},
+                    {"url": "https://blog.example.com/crimson-desert", "title": "붉은사막 출시일 정보", "text": "붉은사막 출시일은 2025년 12월로 예정되어 있다."},
+                ],
+                response_origin={
+                    "provider": "web",
+                    "badge": "WEB",
+                    "label": "웹 검색",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 다중 출처 합의",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {"slot": "장르", "status": "strong", "status_label": "교차 확인", "value": "오픈월드 액션 어드벤처 게임", "support_count": 2, "candidate_count": 2, "source_role": "encyclopedia"},
+                ],
+                claim_coverage_progress_summary="교차 확인 1건.",
+            )
+            record_id = save_result["record_id"]
+
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool([]),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            # Steps 1-3 mirror the first-follow-up test; step 4 adds one more
+            # follow-up turn to cover the second-follow-up Playwright scenario.
+            service.handle_chat({
+                "session_id": session_id,
+                "provider": "mock",
+                "web_search_permission": "enabled",
+                "load_web_search_record_id": record_id,
+            })
+            service.handle_chat({
+                "session_id": session_id,
+                "user_text": "방금 검색한 결과 다시 보여줘",
+                "provider": "mock",
+                "web_search_permission": "enabled",
+            })
+            service.handle_chat({
+                "session_id": session_id,
+                "user_text": "이 검색 결과 요약해줘",
+                "provider": "mock",
+                "web_search_permission": "enabled",
+                "load_web_search_record_id": record_id,
+            })
+
+            second_follow_up = service.handle_chat({
+                "session_id": session_id,
+                "user_text": "더 자세히 알려줘",
+                "provider": "mock",
+                "web_search_permission": "enabled",
+                "load_web_search_record_id": record_id,
+            })
+            self.assertTrue(second_follow_up["ok"])
+            origin = second_follow_up["response"]["response_origin"]
+            self.assertEqual(origin["badge"], "WEB")
+            self.assertEqual(origin["answer_mode"], "entity_card")
+            self.assertEqual(origin["verification_label"], "설명형 다중 출처 합의")
+            self.assertEqual(origin["source_roles"], ["백과 기반"])
+            response_text = second_follow_up["response"]["text"]
+            self.assertIn("확인된 사실 [교차 확인]:", response_text)
+            self.assertNotIn("출시일", response_text)
+            self.assertNotIn("2025", response_text)
+            self.assertNotIn("blog.example.com", response_text)
+            source_paths = second_follow_up["session"]["active_context"]["source_paths"]
+            self.assertIn("https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            self.assertIn("https://ko.wikipedia.org/wiki/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89", source_paths)
+            self.assertIn("https://blog.example.com/crimson-desert", source_paths)
+
 
 if __name__ == "__main__":
     unittest.main()

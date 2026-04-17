@@ -1,0 +1,50 @@
+{
+  "job_id": "20260415-2026-04-15-browser-smoke-root-do-debc4ef6",
+  "status": "VERIFY_RUNNING",
+  "artifact_path": "/home/xpdlqj/code/projectH/work/4/15/2026-04-15-browser-smoke-root-doc-markdown-container-helper-direct-coverage-bundle.md",
+  "schema_version": 1,
+  "artifact_hash": "72a92975d54953c1cc7beec36fe82eaed141804b34cf8172690b3b5cad3036a1",
+  "artifact_size": 4669,
+  "artifact_mtime": 1776239948.287094,
+  "stabilized_at": 1776239953.3814101,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 1776239961.7545786,
+  "last_dispatch_slot": "slot_verify",
+  "last_failed_dispatch_at": 0.0,
+  "last_failed_dispatch_snapshot": "",
+  "dispatch_fail_count": 0,
+  "feedback_baseline_sig": "claude_handoff.md=1776239854786287430:3144:57f908846194c3558c05e5b0dbf4ad7cee9363d91181f2ee6c87dedf09742a4b|gemini_request.md=1775745395049083266:2060:6070d5e63950c69bf0fd22ca3c1612dac3c63ec59e7c19583e94ce67d5c1908b|operator_request.md=1775887891128241529:2076:b3f4d517529cb70fc74306981cb486b297916cc49076d6138d778f15faf5a1f9",
+  "verify_feedback_baseline_sig": "76f03d60b93806fc1e3b188760cea2178630babfd2492712f5d529504c0cd6fd",
+  "verify_receipt_baseline_path": "verify/4/15/2026-04-15-browser-smoke-root-doc-pair-markdown-container-edge-case-bundle-verification.md",
+  "verify_receipt_baseline_mtime": 1776239854.7862875,
+  "verify_manifest_path": "",
+  "verify_completed_at": 0.0,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "",
+  "created_at": 1776239950.4338,
+  "updated_at": 1776239961.8153737,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1776239950.4343631,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1776239953.3814137,
+      "reason": "artifact stabilized"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "VERIFY_RUNNING",
+      "at": 1776239961.8153737,
+      "reason": "dispatched to slot_verify"
+    }
+  ],
+  "last_pane_snapshot": "gemini_request.md,\n\noperator_request.md,\n         gemini_advice.md\n\n──────────────────────────\n\n• implement로 바로 넘기기\n  엔 근거가 얇아서, 이번에\n  는 Gemini arbitration을\n  여는 쪽이 더 맞습니다.\n  direct-coverage family는\n  닫혔고, 남은 같은 family\n  후속은 shipped contract\n  보다 matcher\n  completeness 성격이 강합\n  니다.\n\n• Working (3m 35s • esc t…\n\n\n› Use /skills to list ava\n\n  gpt-5.4 xhigh fast · ~/…\n",
+  "last_activity_at": 1776240155.0008702
+}

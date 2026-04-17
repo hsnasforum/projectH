@@ -1,18 +1,18 @@
 {
   "active": {
-    "file": "operator_request.md",
-    "status": "needs_operator",
-    "label": "operator 대기",
-    "mtime": 1776360013.201801,
-    "control_seq": 243
+    "file": "claude_handoff.md",
+    "status": "implement",
+    "label": "Claude 실행",
+    "mtime": 1776391624.0485847,
+    "control_seq": 246
   },
   "stale": [
     {
-      "file": "claude_handoff.md",
-      "status": "implement",
-      "label": "Claude 실행",
-      "mtime": 1776359541.3781292,
-      "control_seq": 242
+      "file": "operator_request.md",
+      "status": "needs_operator",
+      "label": "operator 대기",
+      "mtime": 1776360013.201801,
+      "control_seq": 243
     },
     {
       "file": "gemini_advice.md",

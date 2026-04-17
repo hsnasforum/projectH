@@ -25,6 +25,7 @@ _GATED_REASON_CODES = {
     "session_rollover": {"mode": "triage", "routed_to": "codex_followup"},
     "continue_vs_switch": {"mode": "triage", "routed_to": "codex_followup"},
     "slice_ambiguity": {"mode": "triage", "routed_to": "codex_followup"},
+    "newer_unverified_work_present": {"mode": "recovery", "routed_to": "codex_followup"},
     "auth_login_required": {"mode": "recovery", "routed_to": "codex_followup"},
     "provider_outage": {"mode": "triage", "routed_to": "codex_followup"},
     "receipt_repair": {"mode": "recovery", "routed_to": "codex_followup"},
@@ -75,6 +76,15 @@ _REASON_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "next-slice ambiguity",
             "overlapping candidates",
             "low-confidence prioritization",
+        ),
+    ),
+    (
+        "newer_unverified_work_present",
+        (
+            "newer_unverified_work_present",
+            "newer unverified work present",
+            "verify latest work first",
+            "latest /work",
         ),
     ),
     (
@@ -135,6 +145,7 @@ def normalize_operator_policy(value: object) -> str:
         "gate": "gate_24h",
         "gate24h": "gate_24h",
         "gate_24": "gate_24h",
+        "stop_until_truth_sync": "gate_24h",
         "internal": "internal_only",
         "suppress": "internal_only",
         "suppress_internal": "internal_only",

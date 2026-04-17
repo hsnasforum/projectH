@@ -1,0 +1,50 @@
+{
+  "job_id": "20260416-2026-04-16-controller-log-modal--40b4b2ff",
+  "status": "VERIFY_RUNNING",
+  "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-controller-log-modal-pane-width-fix.md",
+  "schema_version": 1,
+  "artifact_hash": "7cc45b4e8b19de9893db374a3006d5711d68bc7c48a798eaff7709dc718f9642",
+  "artifact_size": 3260,
+  "artifact_mtime": 1776273123.5244513,
+  "stabilized_at": 1776273128.2955945,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 1776273142.7127504,
+  "last_dispatch_slot": "slot_verify",
+  "last_failed_dispatch_at": 0.0,
+  "last_failed_dispatch_snapshot": "",
+  "dispatch_fail_count": 0,
+  "feedback_baseline_sig": "claude_handoff.md=1776272855169598303:4262:2b180a15a54c75259c26ab5b49c4d82ca080d358fa991af5454685751e9277ce|gemini_request.md=1776249910276975775:3229:cba61b2efcf8234d7bec159fe91148297bc8670e2d1741edfa664c61f988c261|operator_request.md=1776259872793409857:2028:99faa095e9aed7792861e34999a345ec114972b30bf82818640c0496dd7e7c2c",
+  "verify_feedback_baseline_sig": "b29094419508221b406e160d9b32fdd3e48a4ccda8740a2dfbffe9c100eb6f05",
+  "verify_receipt_baseline_path": "verify/4/16/2026-04-16-controller-office-reset-base-verification.md",
+  "verify_receipt_baseline_mtime": 1776272822.423584,
+  "verify_manifest_path": "",
+  "verify_completed_at": 0.0,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "",
+  "created_at": 1776273125.4982085,
+  "updated_at": 1776273142.7654626,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1776273125.498597,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1776273128.2955987,
+      "reason": "artifact stabilized"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "VERIFY_RUNNING",
+      "at": 1776273142.7654626,
+      "reason": "dispatched to slot_verify"
+    }
+  ],
+  "last_pane_snapshot": "projecth-\n         plan-doc.md,\n         NEXT_STEPS.md\n    Search controller|\noffice|\n           log modal|tmux|\n           pane|runtime in\n           MILESTONES.md\n    Read tmux_adapter.py,\n         index.html,\n\ntest_tmux_adapter.py,\n\ntest_controller_serve\n         r.py\n\n──────────────────────────\n\n• Working (54s • esc to i…\n\n\n› Summarize recent commit\n\n  gpt-5.4 xhigh fast · ~/…\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+  "last_activity_at": 1776273196.17152
+}

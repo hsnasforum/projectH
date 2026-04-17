@@ -2302,7 +2302,12 @@ class WatcherCore:
         return self._get_path_mtime(latest_verify) >= self._get_path_mtime(work_path)
 
     # ------------------------------------------------------------------
-    def _get_latest_unverified_work_path(self, *, include_metadata_only: bool) -> Optional[Path]:
+    def _get_latest_unverified_work_path(
+        self,
+        *,
+        include_metadata_only: bool,
+        newer_than_mtime: float = 0.0,
+    ) -> Optional[Path]:
         if not self.watch_dir.exists():
             return None
         verified_work_paths = self._verified_work_paths()
@@ -2317,12 +2322,26 @@ class WatcherCore:
                 mt = md.stat().st_mtime
             except OSError:
                 continue
+            if newer_than_mtime > 0.0 and mt < newer_than_mtime:
+                continue
             candidates.append((mt, md))
         for _, md in sorted(candidates, key=lambda item: item[0], reverse=True):
             if self._work_has_matching_verify(md, verified_work_paths=verified_work_paths):
                 continue
             return md
         return None
+
+    # ------------------------------------------------------------------
+    def _handoff_verify_blocker_exists(self, handoff_mtime: float) -> bool:
+        if handoff_mtime <= 0.0:
+            return self._latest_work_needs_verify_broad()
+        return (
+            self._get_latest_unverified_work_path(
+                include_metadata_only=True,
+                newer_than_mtime=handoff_mtime,
+            )
+            is not None
+        )
 
     # ------------------------------------------------------------------
     def _latest_work_needs_verify(self) -> bool:
@@ -2371,13 +2390,15 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _resolve_turn(self) -> str:
         """Resolve which agent should act next."""
+        handoff_active = self._is_active_control(self.claude_handoff_path, "implement")
+        handoff_mtime = self._get_path_mtime(self.claude_handoff_path) if handoff_active else 0.0
         return resolve_watcher_turn(
             WatcherTurnInputs(
                 operator_request_active=self._is_active_control(self.operator_request_path, "needs_operator"),
                 gemini_request_active=self._is_active_control(self.gemini_request_path, "request_open"),
                 gemini_advice_active=self._is_active_control(self.gemini_advice_path, "advice_ready"),
-                claude_handoff_active=self._is_active_control(self.claude_handoff_path, "implement"),
-                latest_work_needs_verify=self._latest_work_needs_verify_broad(),
+                claude_handoff_active=handoff_active,
+                latest_work_needs_verify=self._handoff_verify_blocker_exists(handoff_mtime),
                 claude_handoff_verify_active=self._claude_handoff_verify_active(),
                 idle_release_cooldown_active=self._is_idle_release_cooldown_active(),
                 operator_recovery_marker=self._operator_control_recovery_marker(),
@@ -2670,7 +2691,7 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _claude_handoff_dispatch_state(self, handoff_mtime: float) -> dict[str, bool]:
         operator_blocked = self._operator_blocks_handoff(handoff_mtime)
-        pending_verify = self._latest_work_needs_verify()
+        pending_verify = self._handoff_verify_blocker_exists(handoff_mtime)
         verify_active = self._claude_handoff_verify_active()
         return {
             "operator_blocked": operator_blocked,

@@ -1890,6 +1890,37 @@ class TurnResolutionTest(unittest.TestCase):
             turn = core._resolve_turn()
             self.assertEqual(turn, "claude")
 
+    def test_older_unverified_work_does_not_block_newer_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            work_note = watch_dir / "4" / "10" / "2026-04-10-older-unverified-work.md"
+            _write_work_note(work_note, ["controller/server.py"])
+            old_mtime = time.time() - 60.0
+            os.utime(work_note, (old_mtime, old_mtime))
+
+            handoff = base_dir / "claude_handoff.md"
+            handoff.write_text("STATUS: implement\nCONTROL_SEQ: 17\n", encoding="utf-8")
+
+            core = watcher_core.WatcherCore({
+                "watch_dir": str(watch_dir),
+                "base_dir": str(base_dir),
+                "repo_root": str(root),
+                "dry_run": True,
+            })
+
+            turn = core._resolve_turn()
+            dispatch_state = core._claude_handoff_dispatch_state(handoff.stat().st_mtime)
+
+            self.assertEqual(turn, "claude")
+            self.assertFalse(dispatch_state["pending_verify"])
+            self.assertTrue(dispatch_state["dispatchable"])
+
     def test_idle_fallback_when_nothing_pending(self) -> None:
         """When no control signals and no work, state is IDLE."""
         with tempfile.TemporaryDirectory() as tmp:

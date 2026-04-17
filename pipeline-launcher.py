@@ -31,6 +31,9 @@ from pipeline_gui.backend import (
     normalize_runtime_status,
     read_runtime_event_tail,
     read_runtime_status,
+    runtime_status_has_live_surfaces,
+    runtime_status_is_active,
+    runtime_status_is_stopped,
     supervisor_alive,
 )
 from pipeline_gui.formatting import time_ago
@@ -148,37 +151,20 @@ def _runtime_cli_base(project: Path) -> list[str]:
     return ["python3", "-m", "pipeline_runtime.cli"]
 
 
-def _runtime_has_live_surfaces(runtime_status: dict[str, object], *, project: Path) -> bool:
-    watcher = dict(runtime_status.get("watcher") or {})
-    lanes = list(runtime_status.get("lanes") or [])
-    sup_alive, _sup_pid = supervisor_alive(project)
-    attachable_lanes = any(
-        bool(lane.get("attachable")) or str(lane.get("state") or "") in {"READY", "WORKING", "BOOTING"}
-        for lane in lanes
-        if isinstance(lane, dict)
-    )
-    return sup_alive or bool(watcher.get("alive")) or attachable_lanes
-
-
 def _runtime_already_active(project: Path) -> bool:
     runtime_status = normalize_runtime_status(read_runtime_status(project))
-    runtime_state = str(runtime_status.get("runtime_state") or "STOPPED")
-    if runtime_state == "STOPPED":
-        return False
-    if runtime_state == "BROKEN":
-        return _runtime_has_live_surfaces(runtime_status, project=project)
-    return _runtime_has_live_surfaces(runtime_status, project=project)
+    sup_alive, _sup_pid = supervisor_alive(project)
+    return runtime_status_is_active(runtime_status, supervisor_is_alive=sup_alive)
 
 
 def _wait_for_runtime_stopped(project: Path, *, timeout_sec: float = 20.0) -> bool:
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
         runtime_status = normalize_runtime_status(read_runtime_status(project))
-        runtime_state = str(runtime_status.get("runtime_state") or "STOPPED")
-        if runtime_state == "STOPPED" and not _runtime_has_live_surfaces(runtime_status, project=project):
+        sup_alive, _ = supervisor_alive(project)
+        if runtime_status_is_stopped(runtime_status, supervisor_is_alive=sup_alive):
             return True
         if not runtime_status:
-            sup_alive, _ = supervisor_alive(project)
             if not sup_alive:
                 return True
         time.sleep(0.25)
@@ -310,6 +296,15 @@ def runtime_lane_name_map(project: Path) -> dict[int, str]:
     return lane_names
 
 
+def _runtime_role_owners(project: Path) -> dict[str, str]:
+    owners = dict(resolve_project_runtime_adapter(project).get("role_owners") or {})
+    return {
+        "implement": str(owners.get("implement") or "Claude"),
+        "verify": str(owners.get("verify") or "Codex"),
+        "advisory": str(owners.get("advisory") or "Gemini"),
+    }
+
+
 def _runtime_view(project: Path) -> dict[str, object]:
     status = normalize_runtime_status(read_runtime_status(project))
     if isinstance(status, dict):
@@ -381,6 +376,27 @@ def _runtime_view(project: Path) -> dict[str, object]:
             reason = str(payload.get("reason") or "")
             lane = str(payload.get("lane") or "")
             subject = " ".join(part for part in [lane, action, reason] if part)
+        elif event_type == "lane_input_deferred":
+            lane = str(payload.get("lane") or "")
+            reason = str(payload.get("reason") or "")
+            defer_reason = str(payload.get("defer_reason") or "")
+            file_label = Path(str(payload.get("control_file") or "")).name
+            seq = payload.get("control_seq")
+            try:
+                seq_label = f"seq={int(seq)}" if seq is not None and int(seq) >= 0 else ""
+            except (TypeError, ValueError):
+                seq_label = ""
+            subject = " ".join(
+                part
+                for part in [
+                    lane,
+                    reason,
+                    defer_reason,
+                    seq_label,
+                    file_label,
+                ]
+                if part
+            )
         elif event_type == "runtime_started":
             subject = str(payload.get("runtime_state") or "")
         else:
@@ -414,8 +430,10 @@ def _runtime_view(project: Path) -> dict[str, object]:
     }
 
 
-def pane_snapshots(runtime_view: dict[str, object]) -> list[AgentSnapshot]:
+def pane_snapshots(project: Path, runtime_view: dict[str, object]) -> list[AgentSnapshot]:
     summaries: list[AgentSnapshot] = []
+    active_round = dict(runtime_view.get("active_round") or {})
+    verify_owner = _runtime_role_owners(project).get("verify", "Codex")
     for lane in list(runtime_view.get("lanes") or []):
         if not isinstance(lane, dict):
             continue
@@ -428,13 +446,26 @@ def pane_snapshots(runtime_view: dict[str, object]) -> list[AgentSnapshot]:
         last_event_at = str(lane.get("last_event_at") or "")
         if last_event_at:
             detail_parts.append(f"event={last_event_at}")
+        if name == verify_owner and active_round:
+            round_state = str(active_round.get("state") or "")
+            job_id = str(active_round.get("job_id") or "")
+            dispatch_id = str(active_round.get("dispatch_id") or "")
+            if round_state:
+                detail_parts.append(f"round={round_state}")
+            if job_id:
+                detail_parts.append(f"job={job_id}")
+            if dispatch_id:
+                detail_parts.append(f"dispatch={dispatch_id}")
         summaries.append(AgentSnapshot(name, state, status_note, " · ".join(detail_parts)))
     return summaries
 
 
 def focused_lane_details(project: Path, runtime_view: dict[str, object], agent_index: int) -> list[str]:
     lane_name = runtime_lane_name_map(project).get(agent_index, "")
-    implement_owner = str(resolve_project_runtime_adapter(project).get("role_owners", {}).get("implement") or "Claude")
+    role_owners = _runtime_role_owners(project)
+    implement_owner = role_owners.get("implement", "Claude")
+    verify_owner = role_owners.get("verify", "Codex")
+    active_round = dict(runtime_view.get("active_round") or {})
     lane = next(
         (dict(item) for item in list(runtime_view.get("lanes") or []) if str(item.get("name") or "") == lane_name),
         {},
@@ -455,6 +486,22 @@ def focused_lane_details(project: Path, runtime_view: dict[str, object], agent_i
         lines.append(f"heartbeat={lane['last_heartbeat_at']}")
     if lane.get("last_event_at"):
         lines.append(f"event={lane['last_event_at']}")
+    if lane_name == verify_owner and active_round:
+        if active_round.get("job_id"):
+            lines.append(f"round_job={active_round['job_id']}")
+        if active_round.get("state"):
+            lines.append(f"round_state={active_round['state']}")
+        if active_round.get("dispatch_id"):
+            lines.append(f"dispatch_id={active_round['dispatch_id']}")
+        if active_round.get("completion_stage"):
+            lines.append(f"completion_stage={active_round['completion_stage']}")
+        if active_round.get("note"):
+            lines.append(f"round_note={active_round['note']}")
+    last_receipt_id = str(runtime_view.get("last_receipt_id") or "")
+    if last_receipt_id:
+        lines.append(f"last_receipt_id={last_receipt_id}")
+    elif lane_name == verify_owner and str(active_round.get("state") or "") == "RECEIPT_PENDING":
+        lines.append("receipt=pending_close")
 
     lane_events: list[str] = []
     for event in list(runtime_view.get("events") or []):
@@ -486,6 +533,11 @@ def build_snapshot(project: Path, session: str, runtime_view: dict[str, object] 
     verify_mtime = float(runtime_view.get("verify_mtime") or 0.0)
     log_lines = list(runtime_view.get("event_lines") or [])
     active_round = dict(runtime_view.get("active_round") or {})
+    active_round_state = str(active_round.get("state") or "IDLE")
+    active_round_job_id = str(active_round.get("job_id") or "")
+    active_round_dispatch_id = str(active_round.get("dispatch_id") or "")
+    active_round_note = str(active_round.get("note") or "")
+    active_round_completion_stage = str(active_round.get("completion_stage") or "")
     control_file = str(runtime_view.get("control_file") or "")
     control_seq = int(runtime_view.get("control_seq") or -1)
     control_status = str(runtime_view.get("control_status") or "none")
@@ -493,6 +545,7 @@ def build_snapshot(project: Path, session: str, runtime_view: dict[str, object] 
     autonomy_reason = str(runtime_view.get("autonomy_reason") or "")
     degraded_reason = str(runtime_view.get("degraded_reason") or "")
     degraded_reasons = [str(item) for item in list(runtime_view.get("degraded_reasons") or []) if str(item)]
+    last_receipt_id = str(runtime_view.get("last_receipt_id") or "")
 
     lines = [
         "Pipeline Launcher",
@@ -506,10 +559,19 @@ def build_snapshot(project: Path, session: str, runtime_view: dict[str, object] 
         "",
         f"Control: {_control_summary(control_file, control_seq, control_status)}",
         f"Autonomy: {autonomy_mode}" + (f" / {autonomy_reason}" if autonomy_reason else ""),
-        f"Round  : {active_round.get('state') or 'IDLE'}" + (
-            f" / {active_round.get('job_id')}" if active_round.get("job_id") else ""
+        "Round  : " + " / ".join(
+            part
+            for part in [active_round_state, active_round_job_id, active_round_dispatch_id]
+            if part
         ),
     ]
+    if active_round_note or active_round_completion_stage:
+        note_bits = [part for part in [active_round_note, active_round_completion_stage] if part]
+        lines.append(f"Round note: {' / '.join(note_bits)}")
+    if last_receipt_id:
+        lines.append(f"Receipt: {last_receipt_id}")
+    elif active_round_state == "RECEIPT_PENDING":
+        lines.append("Receipt: pending close")
     if degraded_reasons:
         lines.extend(["", "Degraded:"])
         lines.extend([f"  - {reason}" for reason in degraded_reasons])
@@ -523,7 +585,7 @@ def build_snapshot(project: Path, session: str, runtime_view: dict[str, object] 
         lines.extend([f"  {line}" for line in log_lines])
     else:
         lines.append("  (이벤트 없음)")
-    pane_lines = pane_snapshots(runtime_view)
+    pane_lines = pane_snapshots(project, runtime_view)
     if pane_lines:
         lines.extend([
             "",
@@ -805,7 +867,7 @@ def draw(
         row += 1
 
     # agent 상태
-    snapshots = pane_snapshots(runtime_view)
+    snapshots = pane_snapshots(project, runtime_view)
     if snapshots and row < h - 5:
         safe_addstr(stdscr, row, 0, f"├{border}┤", CYAN)
         row += 1
@@ -925,12 +987,19 @@ def main(stdscr: curses.window) -> None:
 
         runtime_view = _runtime_view(project)
         current_runtime_state = str(runtime_view.get("runtime_state") or "STOPPED")
-        ready_lanes = [
-            lane
-            for lane in list(runtime_view.get("lanes") or [])
-            if bool(lane.get("attachable")) and str(lane.get("state") or "") in {"READY", "WORKING"}
-        ]
-        if current_runtime_state in {"RUNNING", "DEGRADED"} and ready_lanes:
+        if (
+            current_runtime_state in {"RUNNING", "DEGRADED"}
+            and runtime_status_has_live_surfaces(
+                {
+                    "runtime_state": current_runtime_state,
+                    "watcher": {
+                        "alive": bool(runtime_view.get("watcher_alive")),
+                        "pid": runtime_view.get("watcher_pid"),
+                    },
+                    "lanes": list(runtime_view.get("lanes") or []),
+                }
+            )
+        ):
             if message.startswith("START failed:"):
                 message = ""
             pending_state = ""

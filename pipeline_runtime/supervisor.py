@@ -51,8 +51,11 @@ _BUSY_TAIL_MARKERS = (
     "working for ",
     "• working",
     "◦ working",
+    "waiting for background",
+    "background terminal",
     "inferring",
     "thinking with ",
+    "discombobulating",
 )
 _READY_TAIL_MARKERS = {
     "Claude": ("❯", "claude code", "bypass permissions"),
@@ -586,6 +589,23 @@ class RuntimeSupervisor:
             "degraded_reason": str(latest_job.get("degraded_reason") or ""),
         }
 
+    def _suppress_active_round_for_turn(
+        self,
+        *,
+        turn_state: dict[str, Any] | None,
+        active_round: dict[str, Any] | None,
+    ) -> bool:
+        if not active_round:
+            return False
+        round_state = str((active_round or {}).get("state") or "")
+        if round_state not in {"VERIFY_PENDING", "VERIFYING", "RECEIPT_PENDING"}:
+            return False
+        turn_state_name = str((turn_state or {}).get("state") or "")
+        if turn_state_name in {"CODEX_FOLLOWUP", "GEMINI_ADVISORY", "OPERATOR_WAIT"}:
+            return True
+        turn_reason = str((turn_state or {}).get("reason") or "")
+        return turn_state_name == "IDLE" and turn_reason == "operator_request_gated_hibernate"
+
     def _job_matches_active_round(
         self,
         job_state: dict[str, Any],
@@ -696,6 +716,7 @@ class RuntimeSupervisor:
         *,
         active_lane: str,
         active_round: dict[str, Any] | None,
+        turn_state: dict[str, Any] | None,
         control: dict[str, Any],
         duplicate_control: dict[str, Any] | None = None,
     ) -> None:
@@ -704,20 +725,24 @@ class RuntimeSupervisor:
         active_dispatch_id = str((active_round or {}).get("dispatch_id") or "")
         active_dispatch_control_seq = int((active_round or {}).get("dispatch_control_seq") or -1)
         active_control_seq = int(control.get("active_control_seq") or -1)
+        turn_state_name = str((turn_state or {}).get("state") or "")
         implement_owner = str(self.role_owners.get("implement") or "Claude")
         verify_owner = str(self.role_owners.get("verify") or "Codex")
         for lane_name in RUNTIME_LANE_ORDER:
+            use_verify_round_hint = (
+                lane_name == verify_owner
+                and lane_name == active_lane
+                and bool(active_job_id)
+                and bool(active_dispatch_id)
+                and turn_state_name not in {"CODEX_FOLLOWUP", "GEMINI_ADVISORY", "OPERATOR_WAIT"}
+            )
             active = lane_name == active_lane and (
-                (
-                    lane_name == verify_owner
-                    and bool(active_job_id)
-                    and bool(active_dispatch_id)
-                )
+                use_verify_round_hint
                 or active_control_seq >= 0
             )
             hint_control_seq = (
                 active_dispatch_control_seq
-                if active and lane_name == verify_owner and bool(active_dispatch_id)
+                if use_verify_round_hint
                 else active_control_seq
             )
             inactive_reason = ""
@@ -729,8 +754,8 @@ class RuntimeSupervisor:
             payload = {
                 "lane": lane_name,
                 "active": active,
-                "job_id": active_job_id if active else "",
-                "dispatch_id": active_dispatch_id if active else "",
+                "job_id": active_job_id if use_verify_round_hint else "",
+                "dispatch_id": active_dispatch_id if use_verify_round_hint else "",
                 "control_seq": hint_control_seq if active else -1,
                 "attempt": self._lane_restart_counts.get(lane_name, 0) + 1,
                 "inactive_reason": inactive_reason,
@@ -799,7 +824,7 @@ class RuntimeSupervisor:
             return ""
         trailing_lines = lines[-12:]
         ready_markers = tuple(marker.lower() for marker in _READY_TAIL_MARKERS.get(lane_name, ()))
-        if any(any(marker in line for marker in _BUSY_TAIL_MARKERS) for line in trailing_lines):
+        if self._tail_has_busy_indicator(text):
             return "WORKING"
         if any(any(marker in line for marker in ready_markers) for line in trailing_lines):
             return "READY"
@@ -830,6 +855,8 @@ class RuntimeSupervisor:
             enabled = bool(lane_cfg.get("enabled", lane_name in self.enabled_lanes))
             model = dict(wrapper_models.get(lane_name) or {})
             lane_models[lane_name] = model
+            accepted_task = dict(model.get("accepted_task") or {})
+            has_accepted_task = bool(str(accepted_task.get("job_id") or ""))
             health = self.adapter.lane_health(lane_name) if enabled else {
                 "alive": False,
                 "pid": None,
@@ -890,7 +917,16 @@ class RuntimeSupervisor:
                     except Exception:
                         tail_text = ""
                     tail_surface = self._tail_surface_state(lane_name, tail_text)
-                if (
+                if has_accepted_task:
+                    state = "WORKING"
+                    if lane_name == implement_owner and str(control.get("active_control_status") or "") == "implement":
+                        note = "implement"
+                    elif lane_name == str(self.role_owners.get("verify") or "Codex"):
+                        round_state_note = str((active_round or {}).get("state") or "").strip().lower()
+                        note = active_round_note or round_state_note or note or "working"
+                    elif note in {"", "prompt_visible"}:
+                        note = "working"
+                elif (
                     duplicate_control is None
                     and lane_name == implement_owner
                     and str(control.get("active_control_status") or "") == "implement"
@@ -1150,13 +1186,19 @@ class RuntimeSupervisor:
         self._write_task_hints(
             active_lane=active_lane,
             active_round=active_round,
+            turn_state=turn_state if isinstance(turn_state, dict) else None,
             control=control_block,
             duplicate_control=duplicate_control,
         )
+        suppress_active_round = self._suppress_active_round_for_turn(
+            turn_state=turn_state if isinstance(turn_state, dict) else None,
+            active_round=active_round,
+        )
+        surfaced_active_round = None if suppress_active_round else active_round
         lanes, lane_models = self._build_lane_statuses(
             wrapper_models=wrapper_models,
             active_lane=active_lane,
-            active_round=active_round,
+            active_round=surfaced_active_round,
             turn_state=turn_state if isinstance(turn_state, dict) else None,
             control=control_block,
             duplicate_control=duplicate_control,
@@ -1193,7 +1235,9 @@ class RuntimeSupervisor:
 
         degraded_reasons = [item for item in [self._launch_failed_reason, receipt_degraded] if item]
         for job_state in job_states:
-            if active_round and not self._job_matches_active_round(job_state, active_round):
+            if suppress_active_round:
+                continue
+            if surfaced_active_round and not self._job_matches_active_round(job_state, surfaced_active_round):
                 continue
             reason = str(job_state.get("degraded_reason") or "").strip()
             if reason:
@@ -1242,7 +1286,7 @@ class RuntimeSupervisor:
             and duplicate_control is None
             and stale_operator_control is None
             and operator_gate is None
-            and (not active_round or str((active_round or {}).get("state") or "") == "CLOSED")
+            and (not surfaced_active_round or str((surfaced_active_round or {}).get("state") or "") == "CLOSED")
             and all(str(lane.get("state") or "") in {"READY", "OFF"} for lane in lanes)
         )
         if stale_operator_control is not None:
@@ -1260,7 +1304,7 @@ class RuntimeSupervisor:
                 "last_self_triage_at": str(persisted_autonomy.get("last_self_triage_at") or iso_utc()),
             }
         autonomy_based_on_work = self._normalize_artifact_path(autonomy.get("based_on_work"))
-        active_round_artifact = self._normalize_artifact_path((active_round or {}).get("artifact_path"))
+        active_round_artifact = self._normalize_artifact_path((surfaced_active_round or {}).get("artifact_path"))
         if (
             autonomy_based_on_work
             and active_round_artifact
@@ -1281,10 +1325,17 @@ class RuntimeSupervisor:
                 "active_control_status": "none",
                 "active_control_updated_at": "",
             }
-            active_round = None
-        dispatch_stall_marker = self._dispatch_stall_marker(job_states, active_round=active_round)
+            surfaced_active_round = None
+            self._write_task_hints(
+                active_lane="",
+                active_round=None,
+                turn_state=turn_state if isinstance(turn_state, dict) else None,
+                control=control_block,
+                duplicate_control=duplicate_control,
+            )
+        dispatch_stall_marker = self._dispatch_stall_marker(job_states, active_round=surfaced_active_round)
         self._current_dispatch_stall_marker = dispatch_stall_marker
-        completion_stall_marker = self._completion_stall_marker(job_states, active_round=active_round)
+        completion_stall_marker = self._completion_stall_marker(job_states, active_round=surfaced_active_round)
         self._current_completion_stall_marker = completion_stall_marker
 
         status = {
@@ -1298,7 +1349,7 @@ class RuntimeSupervisor:
             "autonomy": autonomy,
             "control": control_block,
             "lanes": lanes,
-            "active_round": active_round,
+            "active_round": surfaced_active_round,
             "last_receipt": last_receipt,
             "last_receipt_id": str((last_receipt or {}).get("receipt_id") or ""),
             "watcher": watcher,

@@ -87,6 +87,8 @@ launcher live stability gate는 아래를 현재 통과 기준으로 둡니다.
 - orphan watcher/session이 없을 것
 - dispatch/completion/receipt close incident가 named event로 surface될 것
 - 반복된 실전 incident가 replay test로 고정되어 재발 시 즉시 드러날 것
+- thin client drift triage는 runtime `status.json` / `events.jsonl` 기준으로만 하고, pane/log/file scan은 current truth 재판정이 아니라 mismatch evidence로만 사용할 것
+- current `accepted_task`가 살아 있는 lane은 tail prompt가 보여도 `READY`로 내리지 말고 `WORKING`으로 유지할 것. verify lane이 이미 `TASK_DONE` 뒤 receipt close만 기다리는 경우는 launcher snapshot에 `active_round.state`, `dispatch_id`, `completion_stage`, `Receipt: pending close`로 그대로 드러나야 합니다.
 
 synthetic soak는 아래처럼 채택용 보조 게이트로만 남깁니다.
 
@@ -194,14 +196,20 @@ synthetic soak는 아래처럼 채택용 보조 게이트로만 남깁니다.
 - 이런 상황에서 `dispatch_backoff_same_snapshot`만 반복되고 새 dispatch가 다시 일어나지 않으면 stale retry loop로 보고 watcher retry state를 먼저 점검합니다.
 - 새 verify dispatch는 `dispatch_id`, `dispatched_at`, `accept_deadline_at`을 기준으로 wrapper `DISPATCH_SEEN`, `TASK_ACCEPTED`, `TASK_DONE`를 직접 연결해서 보는 편이 맞습니다.
 - verify lane은 `control=none`이어도 `active_round.dispatch_control_seq`, `job_id`, `dispatch_id`를 가진 round-scoped Codex task hint로 dispatch를 이어갈 수 있습니다. `active_control_seq < 0`만 보고 hint를 inactive로 내려 false `dispatch_stall`을 만들면 안 됩니다.
+- 다만 `CODEX_FOLLOWUP` / `GEMINI_ADVISORY` turn에서는 stale verify `job_id`/`dispatch_id`/`dispatch_control_seq`를 current hint나 status에 남기면 안 됩니다. 이 구간의 active truth는 current control seq이며, 예전 verify round는 current runtime surface에서 비워야 합니다.
+- wrapper `TASK_DONE`는 task hint clear를 기다리지 않고, accepted된 same dispatch가 prompt-visible + no-busy 상태로 짧게 settle되면 직접 emit될 수 있어야 합니다.
 - verify lane이 busy indicator 없이 idle prompt로 먼저 돌아왔더라도 `DISPATCH_SEEN`/`TASK_ACCEPTED` deadline이 아직 남아 있으면 pre-accept stall로 확정하지 않습니다. 늦게 오는 seen/accept를 기다리는 구간과 post-accept idle retry를 분리하는 편이 맞습니다.
 - verify lane은 `TASK_ACCEPTED -> TASK_DONE -> current-round /verify receipt + next control -> receipt close` 순서로만 닫는 편이 맞습니다. matching `TASK_DONE` 없이 `/verify`나 control output만 먼저 바뀌면 success close가 아니라 completion wait로 유지합니다.
 - wrapper가 active verify hint를 읽었는데 `control_seq` metadata가 누락되었거나 비정상이면 `DISPATCH_SEEN`을 조용히 빼먹지 말고 `BRIDGE_DIAGNOSTIC(code=active_task_hint_metadata_invalid)`를 남겨 write-side 누락을 바로 드러내는 편이 맞습니다.
 - verify lane이 busy indicator 없이 idle prompt로 먼저 돌아왔는데 `TASK_ACCEPTED` 이후에도 `TASK_DONE`이 done deadline 안에 안 오면 `waiting_task_done_after_accept`으로 보고, `TASK_DONE` 뒤에도 current-round `/verify` receipt나 next control output이 still incomplete하면 `waiting_receipt_close_after_task_done`으로 두는 편이 맞습니다.
+- 다만 pane이 `Waiting for background terminal` 같은 explicit busy wait를 계속 보여주는 동안에는 post-accept stall이 아니라 active wait로 유지하고 done deadline을 연장하는 편이 맞습니다.
 - `DISPATCH_SEEN` 없이 deadline을 넘기면 lane note는 `waiting_dispatch_seen_after_dispatch`, `DISPATCH_SEEN` 뒤에도 `TASK_ACCEPTED` 없이 deadline을 넘기면 lane note는 `waiting_task_accept_after_dispatch`로 남기는 편이 맞습니다.
 - 같은 fingerprint에서 이 pre-accept stall이나 short idle retry가 한 번 더 반복되면 runtime은 이를 `dispatch_stall` incident로 승격하고, 추가 자동 재큐잉 대신 `degraded_reason=dispatch_stall`과 해당 lane note를 남기는 편이 맞습니다.
 - 같은 fingerprint에서 post-accept completion wait가 한 번 더 반복되면 runtime은 이를 `post_accept_completion_stall` incident로 승격하고, 추가 자동 재큐잉 대신 `degraded_reason=post_accept_completion_stall`과 lane note(`waiting_task_done_after_accept` 또는 `waiting_receipt_close_after_task_done`)를 남기는 편이 맞습니다.
 - 이 incident는 supervisor events에 `dispatch_stall_detected` 또는 `completion_stall_detected`로 기록되고 launcher recent log에도 그대로 보여야 합니다. long soak를 다시 기본 게이트로 돌리기보다, live launcher session에서 이 이벤트가 0회인지와 실제 재발 replay가 막히는지를 우선 확인합니다.
+- follow-up/advisory/operator/blocked-triage notify가 lane busy 때문에 바로 못 들어가면 watcher는 silent retry 대신 `lane_input_deferred`를 남기고 prompt-ready가 확인될 때까지 pending defer로 유지해야 합니다. launcher recent log는 이 named event를 그대로 보여줘 queued paste contamination과 normal dispatch를 구분해야 합니다.
+- 다만 pending defer가 남아 있는 동안 active control이 더 높은 seq handoff나 다른 family로 바뀌면, 그 예전 pending prompt는 flush하지 말고 drop해야 합니다. 그렇지 않으면 Claude handoff 직전 stale Codex prompt가 뒤늦게 paste되어 wrong-lane contamination처럼 보일 수 있습니다.
+- readiness triage에서 pane busy 여부는 최근 visible tail만 기준으로 보고, 오래된 scrollback의 `Working (...)` 줄은 현재 busy truth로 쓰지 않습니다. 그렇지 않으면 실제로는 prompt-ready인 Claude/Codex pane이 계속 defer 상태로 남을 수 있습니다.
 - runtime이 `STOPPED`로 내려가거나 active round가 더 새 `/work`로 넘어가면 old `dispatch_stall`, old operator/autonomy gate, 이전 round artifact를 가리키는 degraded reason은 current truth에서 같이 비워야 합니다.
 - 재dispatch 전 pane prompt 입력줄에 남은 미전송 draft text를 먼저 비워서, stray input이 새 verify/control prompt와 이어 붙지 않게 유지해야 합니다.
 

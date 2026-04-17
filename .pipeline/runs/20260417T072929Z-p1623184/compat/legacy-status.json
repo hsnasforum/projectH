@@ -3,7 +3,7 @@
   "backend_type": "tmux",
   "run_id": "20260417T072929Z-p1623184",
   "current_run_id": "20260417T072929Z-p1623184",
-  "runtime_state": "RUNNING",
+  "runtime_state": "STOPPED",
   "degraded_reason": "",
   "degraded_reasons": [],
   "autonomy": {
@@ -32,50 +32,38 @@
   "lanes": [
     {
       "name": "Claude",
-      "state": "READY",
-      "pid": 1623294,
-      "attachable": true,
-      "last_event_at": "2026-04-17T07:31:51.531760Z",
-      "last_heartbeat_at": "2026-04-17T07:31:51.531760Z",
-      "note": "prompt_visible"
+      "state": "OFF",
+      "pid": null,
+      "attachable": false,
+      "last_event_at": "2026-04-17T08:06:32.646405Z",
+      "last_heartbeat_at": "2026-04-17T08:06:32.646405Z",
+      "note": ""
     },
     {
       "name": "Codex",
-      "state": "WORKING",
-      "pid": 1623325,
-      "attachable": true,
-      "last_event_at": "2026-04-17T07:31:50.606800Z",
-      "last_heartbeat_at": "2026-04-17T07:31:50.606800Z",
-      "note": "seq 259"
+      "state": "OFF",
+      "pid": null,
+      "attachable": false,
+      "last_event_at": "2026-04-17T08:06:30.509555Z",
+      "last_heartbeat_at": "2026-04-17T08:06:30.509555Z",
+      "note": ""
     },
     {
       "name": "Gemini",
-      "state": "READY",
-      "pid": 1623360,
-      "attachable": true,
-      "last_event_at": "2026-04-17T07:31:51.580152Z",
-      "last_heartbeat_at": "2026-04-17T07:31:51.580152Z",
-      "note": "prompt_visible"
+      "state": "OFF",
+      "pid": null,
+      "attachable": false,
+      "last_event_at": "2026-04-17T08:06:32.387459Z",
+      "last_heartbeat_at": "2026-04-17T08:06:32.387459Z",
+      "note": ""
     }
   ],
-  "active_round": {
-    "job_id": "20260417-2026-04-16-reviewed-memory-aggre-bf2eb8b3",
-    "round": 1,
-    "state": "VERIFYING",
-    "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-reviewed-memory-aggregate-reload-smoke-split.md",
-    "status": "VERIFY_RUNNING",
-    "dispatch_id": "f0a6173d10e46964ed669746fbdefccbd21eff54",
-    "dispatch_control_seq": 259,
-    "dispatch_stage": "",
-    "completion_stage": "task_done_pending",
-    "note": "",
-    "degraded_reason": ""
-  },
+  "active_round": null,
   "last_receipt": null,
   "last_receipt_id": "",
   "watcher": {
-    "alive": true,
-    "pid": 1623430
+    "alive": false,
+    "pid": null
   },
   "artifacts": {
     "latest_work": {
@@ -83,8 +71,8 @@
       "mtime": 1776404967.6855881
     },
     "latest_verify": {
-      "path": "4/17/2026-04-17-sqlite-browser-history-card-actual-search-strong-plus-missing-exact-title-parity-verification.md",
-      "mtime": 1776408017.5435023
+      "path": "4/16/2026-04-16-reviewed-memory-aggregate-reload-smoke-split-verification.md",
+      "mtime": 1776411440.9491208
     }
   },
   "compat": {
@@ -93,8 +81,8 @@
         "file": "operator_request.md",
         "status": "needs_operator",
         "label": "operator 대기",
-        "mtime": 1776408036.6031275,
-        "control_seq": 258
+        "mtime": 1776411472.159894,
+        "control_seq": 259
       },
       "stale": [
         {
@@ -121,13 +109,13 @@
       ]
     },
     "turn_state": {
-      "state": "CODEX_VERIFY",
-      "entered_at": 1776410978.9161935,
-      "reason": "startup_turn_codex",
+      "state": "CODEX_FOLLOWUP",
+      "entered_at": 1776411472.4408007,
+      "reason": "operator_request_gated",
       "active_control_file": "",
-      "active_control_seq": -1
+      "active_control_seq": 259
     }
   },
-  "last_heartbeat_at": "2026-04-17T07:31:54.807450Z",
-  "updated_at": "2026-04-17T07:31:54.807455Z"
+  "last_heartbeat_at": "2026-04-17T08:06:35.394882Z",
+  "updated_at": "2026-04-17T08:06:35.394903Z"
 }

@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "backend_type": "tmux",
+  "run_id": "20260417T095014Z-p1784999",
+  "current_run_id": "20260417T095014Z-p1784999",
+  "runtime_state": "RUNNING",
+  "degraded_reason": "",
+  "degraded_reasons": [],
+  "autonomy": {
+    "mode": "normal",
+    "block_reason": "",
+    "reason_code": "",
+    "operator_policy": "",
+    "decision_class": "",
+    "decision_required": "",
+    "based_on_work": "",
+    "based_on_verify": "",
+    "classification_source": "",
+    "first_seen_at": "",
+    "suppress_operator_until": "",
+    "operator_eligible": false,
+    "same_fingerprint_retries": 0,
+    "last_self_heal_at": "",
+    "last_self_triage_at": ""
+  },
+  "control": {
+    "active_control_file": ".pipeline/claude_handoff.md",
+    "active_control_seq": 274,
+    "active_control_status": "implement",
+    "active_control_updated_at": "2026-04-17T09:54:28.138412Z"
+  },
+  "lanes": [
+    {
+      "name": "Claude",
+      "state": "READY",
+      "pid": 1785142,
+      "attachable": true,
+      "last_event_at": "2026-04-17T09:54:43.493248Z",
+      "last_heartbeat_at": "2026-04-17T09:54:43.493248Z",
+      "note": "prompt_visible"
+    },
+    {
+      "name": "Codex",
+      "state": "WORKING",
+      "pid": 1785168,
+      "attachable": true,
+      "last_event_at": "2026-04-17T09:54:41.647895Z",
+      "last_heartbeat_at": "2026-04-17T09:54:41.647895Z",
+      "note": "verifying"
+    },
+    {
+      "name": "Gemini",
+      "state": "READY",
+      "pid": 1785192,
+      "attachable": true,
+      "last_event_at": "2026-04-17T09:54:43.680870Z",
+      "last_heartbeat_at": "2026-04-17T09:54:43.680870Z",
+      "note": "prompt_visible"
+    }
+  ],
+  "active_round": {
+    "job_id": "20260417-2026-04-16-controller-background-4dd41842",
+    "round": 1,
+    "state": "VERIFYING",
+    "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-controller-background-preload-readiness-hardening.md",
+    "status": "VERIFY_RUNNING",
+    "dispatch_id": "a6c13814b492b2ad657bad3776f667c5e2cbaf75",
+    "dispatch_control_seq": 274,
+    "dispatch_stage": "",
+    "completion_stage": "receipt_close_pending",
+    "note": "",
+    "degraded_reason": ""
+  },
+  "last_receipt": null,
+  "last_receipt_id": "",
+  "watcher": {
+    "alive": true,
+    "pid": 1785260
+  },
+  "artifacts": {
+    "latest_work": {
+      "path": "4/17/2026-04-17-sqlite-browser-history-card-noisy-single-source-strong-plus-missing-click-reload-exact-title-parity.md",
+      "mtime": 1776404967.6855881
+    },
+    "latest_verify": {
+      "path": "4/17/2026-04-17-controller-background-preload-readiness-hardening-retro-verification.md",
+      "mtime": 1776419668.0050864
+    }
+  },
+  "compat": {
+    "control_slots": {
+      "active": {
+        "file": "claude_handoff.md",
+        "status": "implement",
+        "label": "Claude 실행",
+        "mtime": 1776419668.138412,
+        "control_seq": 274
+      },
+      "stale": [
+        {
+          "file": "gemini_advice.md",
+          "status": "advice_ready",
+          "label": "Codex follow-up",
+          "mtime": 1776417042.5908327,
+          "control_seq": 272
+        },
+        {
+          "file": "gemini_request.md",
+          "status": "request_open",
+          "label": "Gemini 실행",
+          "mtime": 1776416978.981953,
+          "control_seq": 271
+        },
+        {
+          "file": "operator_request.md",
+          "status": "needs_operator",
+          "label": "operator 대기",
+          "mtime": 1776416681.7700763,
+          "control_seq": 270
+        }
+      ]
+    },
+    "turn_state": {
+      "state": "CODEX_VERIFY",
+      "entered_at": 1776419424.155106,
+      "reason": "startup_turn_codex",
+      "active_control_file": "",
+      "active_control_seq": -1
+    }
+  },
+  "last_heartbeat_at": "2026-04-17T09:54:44.197748Z",
+  "updated_at": "2026-04-17T09:54:44.197765Z"
+}

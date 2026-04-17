@@ -386,6 +386,76 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(status["active_round"]["job_id"], "job-verify-258")
             self.assertEqual(status["active_round"]["dispatch_control_seq"], 258)
 
+    def test_write_status_clears_stale_verify_round_from_codex_followup_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "gemini_advice.md").write_text(
+                "STATUS: advice_ready\nCONTROL_SEQ: 262\n\nRecommendation:\n- continue with next slice\n",
+                encoding="utf-8",
+            )
+            (state_dir / "turn_state.json").write_text(
+                json.dumps(
+                    {
+                        "state": "CODEX_FOLLOWUP",
+                        "entered_at": 1.0,
+                        "reason": "gemini_advice_updated",
+                        "active_control_file": "gemini_advice.md",
+                        "active_control_seq": 262,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "job-stale-verify.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-stale-verify",
+                        "status": "VERIFY_RUNNING",
+                        "artifact_path": "work/4/16/stale.md",
+                        "artifact_hash": "artifact-stale",
+                        "round": 1,
+                        "updated_at": 100.0,
+                        "dispatch_id": "dispatch-stale",
+                        "dispatch_control_seq": 260,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                            {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            codex_hint = json.loads(supervisor._task_hint_path("Codex").read_text(encoding="utf-8"))
+            self.assertEqual(status["control"]["active_control_status"], "advice_ready")
+            self.assertEqual(status["control"]["active_control_seq"], 262)
+            self.assertIsNone(status["active_round"])
+            self.assertTrue(codex_hint["active"])
+            self.assertEqual(codex_hint["job_id"], "")
+            self.assertEqual(codex_hint["dispatch_id"], "")
+            self.assertEqual(codex_hint["control_seq"], 262)
+
     def test_write_status_clears_stale_autonomy_when_active_round_targets_newer_work(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1230,7 +1300,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(codex["state"], "READY")
             self.assertEqual(codex["note"], "verifying")
 
-    def test_prompt_visible_verify_pending_downgrades_codex_from_working_to_ready(self) -> None:
+    def test_prompt_visible_verify_pending_keeps_codex_working_while_task_is_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write_active_profile(root)
@@ -1271,7 +1341,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
                     turn_state={"state": "IDLE"},
                 )
             codex = next(lane for lane in lanes if lane["name"] == "Codex")
-            self.assertEqual(codex["state"], "READY")
+            self.assertEqual(codex["state"], "WORKING")
             self.assertEqual(codex["note"], "verify_pending")
 
     def test_dispatch_stall_active_round_surfaces_machine_note_on_codex_lane(self) -> None:
@@ -1535,6 +1605,50 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(claude["note"], "prompt_visible")
             self.assertEqual(codex["state"], "WORKING")
             self.assertEqual(codex["note"], "verifying")
+
+    def test_verify_lane_background_terminal_wait_surfaces_working(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    return_value={"alive": True, "pid": 31337, "attachable": True, "pane_id": "%2"},
+                ),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "capture_tail",
+                    return_value=(
+                        "Waiting for background terminal (3m 33s) · 1 background terminal running /ps to view /stop to close\n"
+                        "› Type your message\n"
+                    ),
+                ),
+            ):
+                lanes, _models = supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Codex": {
+                            "state": "READY",
+                            "note": "prompt_visible",
+                            "last_event_at": "2026-04-17T07:33:00.805605Z",
+                            "last_heartbeat_at": "2026-04-17T07:33:00.805605Z",
+                        },
+                    },
+                    active_lane="Codex",
+                    active_round={
+                        "job_id": "job-42",
+                        "state": "VERIFYING",
+                        "status": "VERIFY_RUNNING",
+                        "note": "waiting_task_done_after_accept",
+                    },
+                    turn_state={"state": "CODEX_VERIFY", "reason": "verify_running"},
+                    control={"active_control_status": "none", "active_control_seq": -1},
+                )
+
+            codex = next(lane for lane in lanes if lane["name"] == "Codex")
+            self.assertEqual(codex["state"], "WORKING")
+            self.assertEqual(codex["note"], "waiting_task_done_after_accept")
 
     def test_active_lane_auth_failure_marks_lane_broken(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1843,10 +1957,124 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(status["control"]["active_control_status"], "none")
             self.assertEqual(status["compat"]["turn_state"]["state"], "OPERATOR_WAIT")
             self.assertEqual(status["autonomy"]["mode"], "triage")
+            self.assertIsNone(status["active_round"])
             self.assertEqual(next(lane for lane in status["lanes"] if lane["name"] == "Codex")["state"], "READY")
             self.assertFalse(codex_hint["active"])
             self.assertEqual(codex_hint["job_id"], "")
             self.assertEqual(codex_hint["control_seq"], -1)
+
+    def test_write_status_clears_verify_task_hint_when_runtime_is_stopped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (state_dir / "turn_state.json").write_text(
+                json.dumps(
+                    {
+                        "state": "IDLE",
+                        "entered_at": 1.0,
+                        "reason": "test_setup",
+                        "active_control_file": "",
+                        "active_control_seq": -1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "job-42.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-42",
+                        "status": "VERIFY_RUNNING",
+                        "artifact_path": "work/4/17/work-note.md",
+                        "round": 1,
+                        "dispatch_id": "dispatch-42",
+                        "dispatch_control_seq": 264,
+                        "updated_at": 100.0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = False
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": False, "pid": None}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=False),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            codex_hint = json.loads(supervisor._task_hint_path("Codex").read_text(encoding="utf-8"))
+            self.assertEqual(status["runtime_state"], "STOPPED")
+            self.assertIsNone(status["active_round"])
+            self.assertFalse(codex_hint["active"])
+            self.assertEqual(codex_hint["job_id"], "")
+            self.assertEqual(codex_hint["dispatch_id"], "")
+            self.assertEqual(codex_hint["control_seq"], -1)
+
+    def test_write_status_suppresses_stale_verify_round_during_operator_gated_hibernate_idle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (state_dir / "turn_state.json").write_text(
+                json.dumps(
+                    {
+                        "state": "IDLE",
+                        "entered_at": 1.0,
+                        "reason": "operator_request_gated_hibernate",
+                        "active_control_file": "",
+                        "active_control_seq": -1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "job-77.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-77",
+                        "status": "VERIFY_RUNNING",
+                        "artifact_path": "work/4/17/work-note.md",
+                        "round": 1,
+                        "updated_at": 100.0,
+                        "dispatch_id": "dispatch-77",
+                        "dispatch_control_seq": 266,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12},
+                            {"name": "Gemini", "state": "OFF", "attachable": False, "pid": None},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["runtime_state"], "RUNNING")
+            self.assertIsNone(status["active_round"])
 
     def test_write_status_gates_slice_ambiguity_operator_stop_for_24h(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

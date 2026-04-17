@@ -1,4 +1,4 @@
-# 2026-04-16 sqlite reviewed-memory reload continuity parity verification
+# 2026-04-16 reviewed-memory aggregate reload smoke split verification
 
 ## 변경 파일
 - 없음
@@ -7,47 +7,36 @@
 - `round-handoff`
 
 ## 변경 이유
-- 최신 `/work`인 `work/4/16/2026-04-16-sqlite-reviewed-memory-reload-continuity-parity.md`는, 직전 sqlite reviewed-memory lifecycle parity 위에 남아 있던 persisted reload continuity를 sqlite backend에서도 verification-backed으로 닫았다고 주장합니다.
-- 이번 verification 라운드는 그 주장이 현재 tree와 실제 rerun 결과에 맞는지 확인하고, reviewed-memory를 다시 넓히지 않으면서 남아 있는 sqlite user-visible parity gap 한 슬라이스를 자동 확정하는 것이 목적입니다.
+- 최신 `/work`인 `work/4/16/2026-04-16-reviewed-memory-aggregate-reload-smoke-split.md`는 reviewed-memory aggregate reload continuity browser smoke를 helper 기반 2개 lifecycle 시나리오로 분할해 timeout 압박과 flake 위험을 낮췄다고 주장합니다.
+- 이번 verification 라운드는 그 핵심 구현, docs 미변경 판단, 그리고 적어 둔 focused rerun 결과가 현재 tree에서도 그대로 truth인지 다시 확인하는 목적입니다.
 
 ## 핵심 변경
-- 최신 `/work`의 핵심 구현 주장은 현재 tree와 일치합니다.
-  - `tests/test_web_app.py`에는 `test_recurrence_aggregate_reload_continuity_with_sqlite_backend`가 추가되어 있습니다.
-  - 이 테스트는 `storage_backend='sqlite'`에서 first grounded-brief correction/save/confirm/review accept, second grounded-brief correction, aggregate emit 이후 각 단계마다 `service.get_session_payload(session_id)`를 다시 호출해 SQLite re-read + serializer 경로를 직접 통과시킵니다.
-  - 같은 테스트는 emit 후 `reviewed_memory_transition_record.record_stage = emitted_record_only_not_applied`, apply 후 `applied_pending_result`, confirm 후 `applied_with_result` + `apply_result.result_stage = effect_active` + `reviewed_memory_active_effects` 1건, stop 후 active effect 제거, reverse 후 `record_stage = reversed` + `result_stage = effect_reversed`, conflict-visibility 후 `reviewed_memory_conflict_visibility_record.record_stage = conflict_visibility_checked`를 검증합니다.
-- 최신 `/work`의 “추가 구현 변경 없음” 설명도 현재 tree와 충돌하지 않습니다.
-  - 현재 dirty tree에는 same-day earlier sqlite helper parity hunk(`storage/sqlite_store.py`)와 unrelated watcher hunks(`watcher_core.py`, `tests/test_watcher_core.py`)가 함께 남아 있지만, 이번 `/work`에서 새로 확인되는 hunk는 `tests/test_web_app.py`의 sqlite reload continuity regression뿐입니다.
-  - 따라서 현재 repo truth는 “이전 sqlite helper parity + candidate/reviewed-memory parity tests 위에 reload continuity regression 하나가 더 올라간 상태”로 보는 편이 맞습니다.
-- 최신 `/work`가 적은 focused rerun 검증도 현재 그대로 통과했습니다.
-  - `python3 -m unittest -v tests.test_web_app.WebAppServiceTest.test_get_session_payload_works_with_sqlite_backend`
-  - `python3 -m unittest -v tests.test_web_app.WebAppServiceTest.test_recurrence_aggregate_stop_reverse_conflict_with_sqlite_backend`
-  - `python3 -m unittest -v tests.test_web_app.WebAppServiceTest.test_recurrence_aggregate_reload_continuity_with_sqlite_backend`
-  - `python3 -m py_compile storage/sqlite_store.py app/handlers/aggregate.py app/serializers.py app/web.py`
-  - `git diff --check -- tests/test_web_app.py storage/sqlite_store.py app/handlers/aggregate.py app/serializers.py app/web.py`
-- 따라서 최신 `/work`는 현재 tree 기준으로 truthful합니다.
-  - sqlite backend에서는 reviewed-memory service-level lifecycle뿐 아니라 persisted reload continuity까지 `get_session_payload()` 기준으로 verification-backed으로 닫혔습니다.
+- `/work`의 핵심 구현 주장은 현재 tree와 일치합니다.
+  - `e2e/tests/web-smoke.spec.mjs`에는 `advanceAggregateToActiveEffect(page)` helper가 존재합니다.
+  - 같은 파일에는 `same-session recurrence aggregate는 emitted-apply-confirm lifecycle으로 활성화됩니다`와 `same-session recurrence aggregate는 stop-reverse-conflict lifecycle으로 정리됩니다` 두 시나리오가 각각 `testInfo.setTimeout(150_000)`으로 존재합니다.
+  - 따라서 overlong reload continuity smoke를 helper + 2개 lifecycle 시나리오로 쪼갰다는 `/work`의 구현 설명 자체는 현재 tree 기준으로 맞습니다.
+- 다만 `/work`의 focused rerun 문구는 현재 tree 기준으로는 더 이상 그대로 재현되지 않습니다.
+  - `/work`가 적은 `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "same-session recurrence aggregate" --reporter=line`는 현재 tree에서 2개가 아니라 5개 title을 잡습니다.
+  - 실제 rerun 결과도 `2 passed (1.9m)`가 아니라 `5 passed (3.7m)`였습니다.
+  - 현재 same-family title에는 split된 두 lifecycle 외에도 `stale candidate retires before apply start`, `active lifecycle survives supporting correction supersession`, `recorded basis label survives supporting correction supersession`가 포함되어 있어 broad `-g` 패턴이 더 이상 split 2건만을 가리키지 않습니다.
+- docs 미변경 판단은 현재 contract 관점에서는 유지 가능합니다.
+  - 현재 `README.md`, `docs/ACCEPTANCE_CRITERIA.md`, `docs/MILESTONES.md`, `docs/TASK_BACKLOG.md`는 lifecycle coverage와 shipped contract를 설명하고 있으며, 이번 split 때문에 새로 생긴 docs/implementation mismatch는 확인되지 않았습니다.
+  - 다만 현재 tree에는 later same-day sqlite/history-card docs 작업이 이미 섞여 있으므로, `/work`의 "docs 미변경" 문장을 당시 clean snapshot 그대로 재현하는 검수는 아닙니다.
+- 따라서 최신 `/work`는 핵심 구현 설명은 truthful하지만, 적어 둔 broad rerun 결과는 current tree 기준으로 stale합니다. closeout 전체를 그대로 current truth로 재사용할 수는 없습니다.
 
 ## 검증
-- `git status --short`
-  - 결과: 이번 `/work` 관련 dirty tree에는 `tests/test_web_app.py`, same-day earlier sqlite helper parity hunk가 남아 있는 `storage/sqlite_store.py`, unrelated watcher hunks, 현재 `/verify`, rolling `.pipeline` runtime 파일, same-day `/work` notes가 함께 존재
-- `git diff --unified=3 -- tests/test_web_app.py`
-  - 결과: same-day earlier sqlite tests 위에 새 `test_recurrence_aggregate_reload_continuity_with_sqlite_backend`가 추가된 것 확인
-- `rg -n "test_recurrence_aggregate_reload_continuity_with_sqlite_backend|get_session_payload\\(|reviewed_memory_transition_record|reviewed_memory_conflict_visibility_record|effect_active|effect_reversed|emitted_record_only_not_applied|applied_pending_result|applied_with_result" tests/test_web_app.py app/web.py app/serializers.py storage/sqlite_store.py`
-  - 결과: 새 sqlite reload continuity regression 이름과 emit/apply/confirm/stop/reverse/conflict reload assertions, `get_session_payload()` entrypoint 존재 확인
-- `python3 -m unittest -v tests.test_web_app.WebAppServiceTest.test_get_session_payload_works_with_sqlite_backend`
-  - 결과: `Ran 1 test` / `OK`
-- `python3 -m unittest -v tests.test_web_app.WebAppServiceTest.test_recurrence_aggregate_stop_reverse_conflict_with_sqlite_backend`
-  - 결과: `Ran 1 test` / `OK`
-- `python3 -m unittest -v tests.test_web_app.WebAppServiceTest.test_recurrence_aggregate_reload_continuity_with_sqlite_backend`
-  - 결과: `Ran 1 test` / `OK`
-- `python3 -m py_compile storage/sqlite_store.py app/handlers/aggregate.py app/serializers.py app/web.py`
-  - 결과: 통과
-- `git diff --check -- tests/test_web_app.py storage/sqlite_store.py app/handlers/aggregate.py app/serializers.py app/web.py`
+- `rg -n "advanceAggregateToActiveEffect|same-session recurrence aggregate는 emitted-apply-confirm lifecycle으로 활성화됩니다|same-session recurrence aggregate는 stop-reverse-conflict lifecycle으로 정리됩니다|setTimeout\\(150_000\\)" e2e/tests/web-smoke.spec.mjs`
+  - 결과: helper 1건, split된 두 lifecycle title, 각 150s timeout 존재 확인
+- `rg -n "same-session recurrence aggregate|hard page reload continuity|Playwright smoke covers 125 core browser scenarios" README.md docs/ACCEPTANCE_CRITERIA.md docs/MILESTONES.md docs/TASK_BACKLOG.md`
+  - 결과: current contract docs는 reviewed-memory lifecycle continuity를 설명하고 있으며, 이번 split로 인해 새로 드러난 docs mismatch는 확인되지 않음
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "same-session recurrence aggregate" --reporter=line`
+  - 결과: `5 passed (3.7m)`
+- `git diff --check -- e2e/tests/web-smoke.spec.mjs README.md docs/ACCEPTANCE_CRITERIA.md docs/MILESTONES.md docs/TASK_BACKLOG.md`
   - 결과: 출력 없음
-- full `python3 -m unittest -v`, full Playwright suite, sqlite-specific browser reload smoke는 미실행
-  - 이유: 이번 verification round의 범위는 최신 `/work`가 claim한 sqlite reviewed-memory reload continuity와 그 직접 prerequisite만 다시 확인하는 것으로 충분했습니다.
+- full `make e2e-test`, sqlite browser smoke, exact two-title rerun은 미실행
+  - 이유: 이번 verification round의 목적은 `/work`가 적어 둔 broad smoke split claim과 그 rerun 문구를 current tree 기준으로 재대조하는 것이며, broad pattern rerun 1회로도 현재 mismatch가 충분히 드러났습니다.
 
 ## 남은 리스크
-- sqlite backend에서 reviewed-memory lifecycle + reload continuity는 service-level 기준으로 닫혔지만, browser/page reload contract는 아직 sqlite-specific proof가 없습니다. 다만 이번 라운드에서 browser helper나 shipped browser flow 자체는 건드리지 않았으므로 우선순위는 service-level parity보다 낮습니다.
-- 현재 `storage/sqlite_store.py`는 `record_rejected_content_verdict_for_message`, `record_content_reason_note_for_message`를 `SessionStore`에서 재사용하도록 바인딩해 두었지만, 이에 대한 sqlite-specific regression은 아직 없습니다.
-- 따라서 다음 exact slice는 reviewed-memory를 다시 넓히기보다, user-visible feedback trace 경로인 sqlite `submit_content_verdict` + `submit_content_reason_note` parity를 한 번에 확인하는 bounded service-level bundle로 고르는 편이 맞습니다.
+- split 자체는 유지되지만, `same-session recurrence aggregate`라는 broad title prefix는 이제 5개 scenario를 함께 잡으므로 split 2건만을 빠르게 재확인하는 proxy로는 더 이상 안정적이지 않습니다.
+- 따라서 이후 same-family browser triage가 이 split 2건만 다시 보고 싶다면 exact title `-g` 두 개를 쓰거나, 공통 prefix를 더 좁게 만드는 bounded test-title 정리가 필요합니다.
+- 다만 현재 live automation 관점의 우선 blocker는 이 4/16 round가 아니라, `work/4/17/2026-04-17-sqlite-browser-history-card-noisy-single-source-strong-plus-missing-click-reload-exact-title-parity.md`가 아직 `/verify` 없이 남아 있는 truth-sync 상태입니다.

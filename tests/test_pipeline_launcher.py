@@ -143,7 +143,7 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                 return_value=mock.Mock(returncode=0),
             ) as run_attach:
                 runtime_view = pipeline_launcher._runtime_view(project)
-                snapshots = pipeline_launcher.pane_snapshots(runtime_view)
+                snapshots = pipeline_launcher.pane_snapshots(project, runtime_view)
                 details = pipeline_launcher.focused_lane_details(project, runtime_view, 0)
                 pipeline_launcher.runtime_attach(project, session)
 
@@ -191,7 +191,7 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                 ],
             ):
                 runtime_view = pipeline_launcher._runtime_view(project)
-                snapshots = pipeline_launcher.pane_snapshots(runtime_view)
+                snapshots = pipeline_launcher.pane_snapshots(project, runtime_view)
                 details = pipeline_launcher.focused_lane_details(project, runtime_view, 0)
 
             self.assertEqual([(snap.label, snap.status, snap.status_note) for snap in snapshots], [("Claude", "READY", "waiting_next_control")])
@@ -227,6 +227,46 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
 
             self.assertTrue(any("Control: operator_request.md · needs_operator · seq 155" in line for line in lines))
             self.assertTrue(any("control_changed needs_operator seq=155 operator_request.md" in line for line in lines))
+
+    def test_build_snapshot_surfaces_verify_receipt_pending_context(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-receipt-pending-") as tmp:
+            project = Path(tmp).resolve()
+            session = _session_name_for(project)
+
+            with mock.patch.object(
+                pipeline_launcher,
+                "_runtime_view",
+                return_value={
+                    "runtime_state": "DEGRADED",
+                    "watcher_alive": True,
+                    "watcher_pid": 2020,
+                    "work_name": "2026-04-17-sqlite-browser.md",
+                    "work_mtime": 0.0,
+                    "verify_name": "2026-04-17-sqlite-browser-verification.md",
+                    "verify_mtime": 0.0,
+                    "control_file": "",
+                    "control_seq": -1,
+                    "control_status": "none",
+                    "active_round": {
+                        "state": "RECEIPT_PENDING",
+                        "job_id": "job-verify-42",
+                        "dispatch_id": "dispatch-verify-42",
+                        "note": "waiting_receipt_close_after_task_done",
+                        "completion_stage": "receipt_close_pending",
+                    },
+                    "last_receipt_id": "",
+                    "degraded_reason": "post_accept_completion_stall",
+                    "degraded_reasons": ["post_accept_completion_stall"],
+                    "lanes": [{"name": "Codex", "state": "READY", "attachable": True, "note": "waiting_receipt_close_after_task_done"}],
+                    "event_lines": ["completion_stall_detected Codex task_done_missing"],
+                    "events": [],
+                },
+            ):
+                lines = pipeline_launcher.build_snapshot(project, session)
+
+            self.assertTrue(any("Round  : RECEIPT_PENDING / job-verify-42 / dispatch-verify-42" in line for line in lines))
+            self.assertTrue(any("Round note: waiting_receipt_close_after_task_done / receipt_close_pending" in line for line in lines))
+            self.assertTrue(any("Receipt: pending close" in line for line in lines))
 
     def test_runtime_view_tolerates_non_mapping_status_payload(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-status-shape-") as tmp:
@@ -375,6 +415,119 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                 )
             )
 
+    def test_runtime_view_surfaces_lane_input_deferred_event_lines(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-lane-input-deferred-") as tmp:
+            project = Path(tmp).resolve()
+
+            with mock.patch.object(
+                pipeline_launcher,
+                "read_runtime_status",
+                return_value={
+                    "runtime_state": "RUNNING",
+                    "lanes": [{"name": "Codex", "state": "READY", "note": "prompt_visible"}],
+                    "watcher": {"alive": True, "pid": 1234},
+                    "control": {"active_control_status": "advice_ready"},
+                    "autonomy": {"mode": "normal"},
+                },
+            ), mock.patch.object(
+                pipeline_launcher,
+                "read_runtime_event_tail",
+                return_value=[
+                    {
+                        "event_type": "lane_input_deferred",
+                        "payload": {
+                            "lane": "Codex",
+                            "reason": "gemini_advice_updated",
+                            "defer_reason": "lane_busy",
+                            "control_file": "gemini_advice.md",
+                            "control_seq": 265,
+                        },
+                    }
+                ],
+            ):
+                runtime_view = pipeline_launcher._runtime_view(project)
+
+            self.assertTrue(
+                any(
+                    "lane_input_deferred Codex gemini_advice_updated lane_busy seq=265 gemini_advice.md" in line
+                    for line in runtime_view["event_lines"]
+                )
+            )
+
+    def test_focused_lane_details_include_lane_input_deferred_event(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-lane-detail-deferred-") as tmp:
+            project = Path(tmp).resolve()
+
+            runtime_view = {
+                "lanes": [
+                    {
+                        "name": "Codex",
+                        "state": "READY",
+                        "attachable": True,
+                        "pid": 222,
+                        "note": "prompt_visible",
+                        "last_event_at": "2026-04-17T08:17:39Z",
+                    }
+                ],
+                "events": [
+                    {
+                        "event_type": "lane_input_deferred",
+                        "payload": {
+                            "lane": "Codex",
+                            "reason": "gemini_advice_updated",
+                            "defer_reason": "lane_busy",
+                        },
+                    }
+                ],
+            }
+
+            with mock.patch.object(
+                pipeline_launcher,
+                "runtime_lane_name_map",
+                return_value={0: "Codex"},
+            ), mock.patch.object(
+                pipeline_launcher,
+                "resolve_project_runtime_adapter",
+                return_value={"role_owners": {"implement": "Claude"}},
+            ):
+                details = pipeline_launcher.focused_lane_details(project, runtime_view, 0)
+
+            self.assertIn("name=Codex", details)
+            self.assertTrue(any("lane_input_deferred gemini_advice_updated" in line for line in details))
+
+    def test_pane_snapshots_include_verify_round_context_for_codex(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-pane-round-context-") as tmp:
+            project = Path(tmp).resolve()
+            runtime_view = {
+                "lanes": [
+                    {
+                        "name": "Codex",
+                        "state": "READY",
+                        "attachable": True,
+                        "pid": 222,
+                        "note": "waiting_receipt_close_after_task_done",
+                        "last_event_at": "2026-04-17T08:17:39Z",
+                    }
+                ],
+                "active_round": {
+                    "state": "RECEIPT_PENDING",
+                    "job_id": "job-verify-77",
+                    "dispatch_id": "dispatch-verify-77",
+                },
+            }
+
+            with mock.patch.object(
+                pipeline_launcher,
+                "resolve_project_runtime_adapter",
+                return_value={"role_owners": {"verify": "Codex"}},
+            ):
+                snapshots = pipeline_launcher.pane_snapshots(project, runtime_view)
+
+            self.assertEqual(len(snapshots), 1)
+            self.assertIn("round=RECEIPT_PENDING", snapshots[0].detail)
+            self.assertIn("job=job-verify-77", snapshots[0].detail)
+            self.assertIn("dispatch=dispatch-verify-77", snapshots[0].detail)
+
     def test_runtime_view_marks_operator_classification_fallback_as_broken_gate(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-operator-gate-") as tmp:
             project = Path(tmp).resolve()
@@ -465,7 +618,7 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                 },
             ):
                 runtime_view = pipeline_launcher._runtime_view(project)
-                snapshots = pipeline_launcher.pane_snapshots(runtime_view)
+                snapshots = pipeline_launcher.pane_snapshots(project, runtime_view)
 
             self.assertEqual(
                 [(snap.label, snap.status) for snap in snapshots],

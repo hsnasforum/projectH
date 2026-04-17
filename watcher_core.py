@@ -684,9 +684,12 @@ def _pane_text_has_gemini_ready_prompt(text: str) -> bool:
 
 def _pane_text_has_busy_indicator(text: str) -> bool:
     """Check if pane text contains any sign that the agent is still working."""
-    # Case-insensitive search across entire visible pane text.
-    # These patterns mean the agent has NOT finished yet.
-    lower = text.lower()
+    recent_lines = [line.strip().lower() for line in text.splitlines() if line.strip()]
+    if not recent_lines:
+        return False
+    # Only trust the recent visible tail. Old "Working" lines left in scrollback
+    # should not block a new dispatch once the current prompt is back.
+    lower = "\n".join(recent_lines[-18:])
     busy_patterns = [
         "working (",        # ◦ Working (36s • esc to interrupt)
         "working for ",     # Worked for 1m 25s (transition text)
@@ -2059,6 +2062,19 @@ class StateMachine:
                 return job
 
             if waiting_for_done:
+                if still_busy:
+                    refreshed = False
+                    if now_value - (job.last_activity_at or 0.0) >= 5.0:
+                        job.last_activity_at = now_value
+                        refreshed = True
+                    extended_done_deadline = now_value + self.verify_done_deadline_sec
+                    if extended_done_deadline > (job.done_deadline_at + 1.0):
+                        job.done_deadline_at = extended_done_deadline
+                        refreshed = True
+                    if refreshed:
+                        job.last_pane_snapshot = current_pane
+                        job.save(self.state_dir)
+                    return job
                 if (
                     job.done_deadline_at > 0.0
                     and now_value >= job.done_deadline_at
@@ -2486,6 +2502,11 @@ class WatcherCore:
         self._turn_active_control_file: str = ""
         self._turn_active_control_seq: int = -1
         self._turn_state_path: Path = self.state_dir / "turn_state.json"
+        self._pending_lane_notifications: dict[str, dict[str, object]] = {}
+        self._lane_input_defer_cooldown_sec: float = float(
+            config.get("lane_input_defer_cooldown_sec", 5.0)
+        )
+        self._last_lane_input_defer_at: dict[str, float] = {}
         self._runtime_export_enabled: bool = os.environ.get("PIPELINE_RUNTIME_DISABLE_EXPORTER", "").strip().lower() not in {
             "1",
             "true",
@@ -3810,6 +3831,206 @@ class WatcherCore:
         return elapsed < self.claude_active_idle_timeout_sec
 
     # ------------------------------------------------------------------
+    def _lane_prompt_readiness(self, target: str) -> tuple[bool, str]:
+        try:
+            snapshot = _capture_pane_text(target)
+        except Exception:
+            return False, "pane_capture_failed"
+        if _pane_text_is_idle(snapshot):
+            return True, ""
+        if not snapshot.strip():
+            return False, "pane_blank"
+        if _pane_text_has_busy_indicator(snapshot):
+            return False, "lane_busy"
+        if _pane_text_has_input_cursor(snapshot):
+            return False, "prompt_not_stable"
+        return False, "prompt_not_visible"
+
+    # ------------------------------------------------------------------
+    def _emit_lane_input_deferred(
+        self,
+        *,
+        key: str,
+        lane: str,
+        path: Path,
+        reason: str,
+        defer_reason: str,
+        control_seq: int,
+        notify_kind: str,
+    ) -> None:
+        now = time.time()
+        if now - self._last_lane_input_defer_at.get(key, 0.0) < self._lane_input_defer_cooldown_sec:
+            return
+        self._last_lane_input_defer_at[key] = now
+        payload = {
+            "lane": lane,
+            "reason": reason,
+            "defer_reason": defer_reason,
+            "control_file": str(path.name),
+            "control_seq": control_seq,
+            "notify_kind": notify_kind,
+        }
+        self._log_raw(
+            "lane_input_deferred",
+            str(path),
+            "turn_signal",
+            payload,
+        )
+        self._append_runtime_event("lane_input_deferred", payload)
+
+    # ------------------------------------------------------------------
+    def _dispatch_runtime_notification(
+        self,
+        *,
+        pending_key: str,
+        notify_kind: str,
+        lane_role: str,
+        reason: str,
+        prompt: str,
+        prompt_path: Path,
+        target: str,
+        pane_type: str,
+        control_seq: int = -1,
+        expected_status: str = "",
+        expected_control_path: str = "",
+        expected_control_seq: int = -1,
+        require_active_control: bool = False,
+        from_pending: bool = False,
+    ) -> bool:
+        ready, defer_reason = self._lane_prompt_readiness(target)
+        if not ready:
+            self._pending_lane_notifications[pending_key] = {
+                "notify_kind": notify_kind,
+                "lane_role": lane_role,
+                "reason": reason,
+                "prompt": prompt,
+                "prompt_path": str(prompt_path),
+                "target": target,
+                "pane_type": pane_type,
+                "control_seq": control_seq,
+                "expected_status": expected_status,
+                "expected_control_path": expected_control_path,
+                "expected_control_seq": expected_control_seq,
+                "require_active_control": require_active_control,
+                "sig": self._get_path_sig(prompt_path),
+            }
+            self._emit_lane_input_deferred(
+                key=pending_key,
+                lane=self._role_owner(lane_role) or lane_role,
+                path=prompt_path,
+                reason=reason,
+                defer_reason=defer_reason,
+                control_seq=control_seq,
+                notify_kind=notify_kind,
+            )
+            return False
+
+        ok = tmux_send_keys(target, prompt, self.dry_run, pane_type=pane_type)
+        if ok:
+            self._pending_lane_notifications.pop(pending_key, None)
+            self._last_lane_input_defer_at.pop(pending_key, None)
+            return True
+        if not from_pending:
+            self._pending_lane_notifications[pending_key] = {
+                "notify_kind": notify_kind,
+                "lane_role": lane_role,
+                "reason": reason,
+                "prompt": prompt,
+                "prompt_path": str(prompt_path),
+                "target": target,
+                "pane_type": pane_type,
+                "control_seq": control_seq,
+                "expected_status": expected_status,
+                "expected_control_path": expected_control_path,
+                "expected_control_seq": expected_control_seq,
+                "require_active_control": require_active_control,
+                "sig": self._get_path_sig(prompt_path),
+            }
+        self._emit_lane_input_deferred(
+            key=pending_key,
+            lane=self._role_owner(lane_role) or lane_role,
+            path=prompt_path,
+            reason=reason,
+            defer_reason="dispatch_window_blocked",
+            control_seq=control_seq,
+            notify_kind=notify_kind,
+        )
+        return False
+
+    # ------------------------------------------------------------------
+    def _pending_notification_matches_control(
+        self,
+        pending: dict[str, object],
+        active_control: Optional[ControlSignal],
+    ) -> bool:
+        expected_control_path = str(pending.get("expected_control_path") or "").strip()
+        expected_status = str(pending.get("expected_status") or "").strip()
+        expected_control_seq = int(pending.get("expected_control_seq") or -1)
+        if not expected_control_path and not expected_status and expected_control_seq < 0:
+            return True
+        if active_control is None:
+            return False
+        if expected_control_path and active_control.path.name != expected_control_path:
+            return False
+        if expected_status and active_control.status != expected_status:
+            return False
+        if expected_control_seq >= 0 and active_control.control_seq != expected_control_seq:
+            return False
+        return True
+
+    # ------------------------------------------------------------------
+    def _flush_pending_lane_notifications(self) -> None:
+        if not self._pending_lane_notifications:
+            return
+        active_control = self._get_active_control_signal()
+        for pending_key, pending in list(self._pending_lane_notifications.items()):
+            prompt_path = Path(str(pending.get("prompt_path") or ""))
+            if not prompt_path:
+                self._pending_lane_notifications.pop(pending_key, None)
+                continue
+            expected_sig = str(pending.get("sig") or "")
+            if expected_sig and self._get_path_sig(prompt_path) != expected_sig:
+                self._pending_lane_notifications.pop(pending_key, None)
+                self._last_lane_input_defer_at.pop(pending_key, None)
+                continue
+            expected_status = str(pending.get("expected_status") or "")
+            require_active_control = bool(pending.get("require_active_control"))
+            if not self._pending_notification_matches_control(pending, active_control):
+                self._pending_lane_notifications.pop(pending_key, None)
+                self._last_lane_input_defer_at.pop(pending_key, None)
+                self._log_raw(
+                    "lane_input_deferred_dropped",
+                    str(prompt_path),
+                    "turn_signal",
+                    {
+                        "notify_kind": str(pending.get("notify_kind") or ""),
+                        "reason": "control_mismatch",
+                        "active_control": active_control.kind if active_control else "none",
+                    },
+                )
+                continue
+            if require_active_control and expected_status and not self._is_active_control(prompt_path, expected_status):
+                self._pending_lane_notifications.pop(pending_key, None)
+                self._last_lane_input_defer_at.pop(pending_key, None)
+                continue
+            self._dispatch_runtime_notification(
+                pending_key=pending_key,
+                notify_kind=str(pending.get("notify_kind") or ""),
+                lane_role=str(pending.get("lane_role") or ""),
+                reason=str(pending.get("reason") or ""),
+                prompt=str(pending.get("prompt") or ""),
+                prompt_path=prompt_path,
+                target=str(pending.get("target") or ""),
+                pane_type=str(pending.get("pane_type") or "codex"),
+                control_seq=int(pending.get("control_seq") or -1),
+                expected_status=expected_status,
+                expected_control_path=str(pending.get("expected_control_path") or ""),
+                expected_control_seq=int(pending.get("expected_control_seq") or -1),
+                require_active_control=require_active_control,
+                from_pending=True,
+            )
+
+    # ------------------------------------------------------------------
     def _notify_claude(self, reason: str, handoff_path: Optional[Path] = None) -> None:
         """Claude pane에 다음 작업 프롬프트 전송."""
         target = self._role_pane_target("implement")
@@ -3825,7 +4046,21 @@ class WatcherCore:
             {"reason": reason},
         )
         prompt = self._format_implement_prompt(handoff_path)
-        tmux_send_keys(target, prompt, self.dry_run, pane_type=pane_type)
+        self._dispatch_runtime_notification(
+            pending_key="claude_handoff",
+            notify_kind="claude_handoff",
+            lane_role="implement",
+            reason=reason,
+            prompt=prompt,
+            prompt_path=handoff_path or self.claude_handoff_path,
+            target=target,
+            pane_type=pane_type,
+            control_seq=self._read_control_seq_from_path(handoff_path or self.claude_handoff_path),
+            expected_status="implement",
+            expected_control_path=str((handoff_path or self.claude_handoff_path).name),
+            expected_control_seq=self._read_control_seq_from_path(handoff_path or self.claude_handoff_path),
+            require_active_control=True,
+        )
 
     # ------------------------------------------------------------------
     def _notify_gemini(self, reason: str) -> None:
@@ -3858,7 +4093,21 @@ class WatcherCore:
             {"reason": reason},
         )
         prompt = self._format_runtime_prompt(self.advisory_prompt)
-        tmux_send_keys(target, prompt, self.dry_run, pane_type=pane_type)
+        self._dispatch_runtime_notification(
+            pending_key="gemini_request",
+            notify_kind="gemini_request",
+            lane_role="advisory",
+            reason=reason,
+            prompt=prompt,
+            prompt_path=self.gemini_request_path,
+            target=target,
+            pane_type=pane_type,
+            control_seq=self._read_control_seq_from_path(self.gemini_request_path),
+            expected_status="request_open",
+            expected_control_path=str(self.gemini_request_path.name),
+            expected_control_seq=self._read_control_seq_from_path(self.gemini_request_path),
+            require_active_control=True,
+        )
 
     # ------------------------------------------------------------------
     def _notify_codex_followup(self, reason: str) -> None:
@@ -3876,7 +4125,21 @@ class WatcherCore:
             {"reason": reason},
         )
         prompt = self._format_runtime_prompt(self.followup_prompt)
-        tmux_send_keys(target, prompt, self.dry_run, pane_type=pane_type)
+        self._dispatch_runtime_notification(
+            pending_key="gemini_advice_followup",
+            notify_kind="gemini_advice_followup",
+            lane_role="verify",
+            reason=reason,
+            prompt=prompt,
+            prompt_path=self.gemini_advice_path,
+            target=target,
+            pane_type=pane_type,
+            control_seq=self._read_control_seq_from_path(self.gemini_advice_path),
+            expected_status="advice_ready",
+            expected_control_path=str(self.gemini_advice_path.name),
+            expected_control_seq=self._read_control_seq_from_path(self.gemini_advice_path),
+            require_active_control=True,
+        )
 
     # ------------------------------------------------------------------
     def _format_control_recovery_prompt(self, marker: dict[str, object]) -> str:
@@ -3916,7 +4179,20 @@ class WatcherCore:
             {"reason": reason, **marker},
         )
         prompt = self._format_control_recovery_prompt(marker)
-        tmux_send_keys(target, prompt, self.dry_run, pane_type=pane_type)
+        self._dispatch_runtime_notification(
+            pending_key="codex_control_recovery",
+            notify_kind="codex_control_recovery",
+            lane_role="verify",
+            reason=reason,
+            prompt=prompt,
+            prompt_path=self.operator_request_path,
+            target=target,
+            pane_type=pane_type,
+            control_seq=int(marker.get("control_seq") or -1),
+            expected_control_path=str(self.operator_request_path.name),
+            expected_control_seq=int(marker.get("control_seq") or -1),
+            expected_status="needs_operator",
+        )
 
     # ------------------------------------------------------------------
     def _notify_codex_operator_retriage(self, reason: str, marker: dict[str, object]) -> None:
@@ -3933,7 +4209,20 @@ class WatcherCore:
             {"reason": reason, **marker},
         )
         prompt = self._format_operator_retriage_prompt(marker)
-        tmux_send_keys(target, prompt, self.dry_run, pane_type=pane_type)
+        self._dispatch_runtime_notification(
+            pending_key="codex_operator_retriage",
+            notify_kind="codex_operator_retriage",
+            lane_role="verify",
+            reason=reason,
+            prompt=prompt,
+            prompt_path=self.operator_request_path,
+            target=target,
+            pane_type=pane_type,
+            control_seq=int(marker.get("control_seq") or -1),
+            expected_control_path=str(self.operator_request_path.name),
+            expected_control_seq=int(marker.get("control_seq") or -1),
+            expected_status="needs_operator",
+        )
 
     # ------------------------------------------------------------------
     def _notify_codex_blocked_triage(self, signal: dict[str, object], reason: str) -> bool:
@@ -3942,21 +4231,6 @@ class WatcherCore:
         if not target:
             return False
         handoff_sha = self._get_path_sha256(self.claude_handoff_path)
-        codex_snapshot = _capture_pane_text(target)
-        if not _pane_text_is_idle(codex_snapshot):
-            self._log_raw(
-                "codex_blocked_triage_skipped",
-                str(self.claude_handoff_path),
-                "turn_signal",
-                {
-                    "reason": "codex_busy",
-                    "blocked_reason": signal.get("reason", "implement_blocked"),
-                    "blocked_reason_code": signal.get("reason_code", ""),
-                    "blocked_escalation_class": signal.get("escalation_class", "codex_triage"),
-                },
-            )
-            return False
-
         prompt = self._format_verify_triage_prompt(signal)
         self._log_raw(
             "codex_blocked_triage_notify",
@@ -3972,7 +4246,20 @@ class WatcherCore:
                 "handoff_sha": handoff_sha,
             },
         )
-        ok = tmux_send_keys(target, prompt, self.dry_run, pane_type=pane_type)
+        ok = self._dispatch_runtime_notification(
+            pending_key="codex_blocked_triage",
+            notify_kind="codex_blocked_triage",
+            lane_role="verify",
+            reason=reason,
+            prompt=prompt,
+            prompt_path=self.claude_handoff_path,
+            target=target,
+            pane_type=pane_type,
+            control_seq=self._read_control_seq_from_path(self.claude_handoff_path),
+            expected_control_path=str(self.claude_handoff_path.name),
+            expected_control_seq=self._read_control_seq_from_path(self.claude_handoff_path),
+            expected_status="implement",
+        )
         if ok:
             self._last_claude_blocked_fingerprint = str(signal.get("fingerprint", ""))
             self._clear_session_arbitration_draft("claude_blocked_triage")
@@ -4027,6 +4314,7 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _check_pipeline_signal_updates(self) -> None:
         """handoff/operator 슬롯 시그니처를 확인하고 Claude 라우팅을 결정한다."""
+        self._flush_pending_lane_notifications()
         active_control = self._get_active_control_signal()
 
         operator_sig = self._get_path_sig(self.operator_request_path)

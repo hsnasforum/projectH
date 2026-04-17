@@ -1,0 +1,32 @@
+{
+  "active": {
+    "file": "gemini_advice.md",
+    "status": "advice_ready",
+    "label": "Codex follow-up",
+    "mtime": 1776417042.5908327,
+    "control_seq": 272
+  },
+  "stale": [
+    {
+      "file": "gemini_request.md",
+      "status": "request_open",
+      "label": "Gemini 실행",
+      "mtime": 1776416978.981953,
+      "control_seq": 271
+    },
+    {
+      "file": "operator_request.md",
+      "status": "needs_operator",
+      "label": "operator 대기",
+      "mtime": 1776416681.7700763,
+      "control_seq": 270
+    },
+    {
+      "file": "claude_handoff.md",
+      "status": "implement",
+      "label": "Claude 실행",
+      "mtime": 1776403537.3503993,
+      "control_seq": 255
+    }
+  ]
+}

@@ -297,5 +297,42 @@ class ControllerServerLaunchGateTests(unittest.TestCase):
         self.assertIsNone(content_type)
 
 
+class ControllerAssetResolutionTests(unittest.TestCase):
+    def test_resolve_css_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            css_dir = root / "css"
+            css_dir.mkdir(parents=True, exist_ok=True)
+            css_file = css_dir / "office.css"
+            css_file.write_text("body { margin: 0; }", encoding="utf-8")
+            with mock.patch.object(controller_server, "CONTROLLER_DIR", root):
+                path, content_type = controller_server._resolve_controller_asset("css/office.css")
+        self.assertEqual(path, css_file)
+        self.assertEqual(content_type, "text/css")
+
+    def test_resolve_js_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            js_dir = root / "js"
+            js_dir.mkdir(parents=True, exist_ok=True)
+            js_file = js_dir / "config.js"
+            js_file.write_text("const x = 1;", encoding="utf-8")
+            with mock.patch.object(controller_server, "CONTROLLER_DIR", root):
+                path, content_type = controller_server._resolve_controller_asset("js/config.js")
+        self.assertEqual(path, js_file)
+        self.assertIn("javascript", content_type)
+
+    def test_resolve_rejects_path_traversal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "assets").mkdir(parents=True, exist_ok=True)
+            (root / "css").mkdir(parents=True, exist_ok=True)
+            (root / "js").mkdir(parents=True, exist_ok=True)
+            with mock.patch.object(controller_server, "CONTROLLER_DIR", root):
+                path, content_type = controller_server._resolve_controller_asset("../server.py")
+        self.assertIsNone(path)
+        self.assertIsNone(content_type)
+
+
 if __name__ == "__main__":
     unittest.main()

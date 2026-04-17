@@ -55,11 +55,19 @@ SESSION_NAME = _session_name_for(PROJECT_ROOT)
 
 
 def _resolve_controller_asset(rel_path: str) -> tuple[Path | None, str | None]:
-    asset_root = (CONTROLLER_DIR / "assets").resolve()
     requested = str(rel_path or "").strip().lstrip("/")
     if not requested:
         return None, None
-    candidate = (asset_root / requested).resolve()
+    if requested.startswith("css/"):
+        asset_root = (CONTROLLER_DIR / "css").resolve()
+        local = requested[len("css/"):]
+    elif requested.startswith("js/"):
+        asset_root = (CONTROLLER_DIR / "js").resolve()
+        local = requested[len("js/"):]
+    else:
+        asset_root = (CONTROLLER_DIR / "assets").resolve()
+        local = requested
+    candidate = (asset_root / local).resolve()
     try:
         candidate.relative_to(asset_root)
     except ValueError:

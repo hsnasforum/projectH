@@ -63,6 +63,14 @@ function clampToZone(px, py, zoneKey) {
 
 // ── Particles (shared) ──
 export const particles = [];
+let _agentLowMotion = false;
+export const FLOATING_CODE_SNIPPETS = [
+  'git commit -m "..."',
+  'npm run build',
+  'def main():',
+  'Analyzing...',
+  'Resolving dependencies...',
+];
 
 export class Particle {
   constructor(vx, vy, text, opts = {}) {
@@ -88,6 +96,44 @@ export class Particle {
   }
 }
 
+class FloatingCodeParticle {
+  constructor(vx, vy, text) {
+    this.vx = vx + (Math.random() - 0.5) * 8;
+    this.vy = vy;
+    this.text = text;
+    this.lifetime = 1.8;
+    this.maxLife = this.lifetime;
+    this.baseSize = 11 + Math.random() * 2;
+    this.riseSpeed = 30 + Math.random() * 8;
+    this.driftSpeed = (Math.random() - 0.5) * 10;
+    this.alive = true;
+  }
+
+  update(dt) {
+    this.vy -= this.riseSpeed * dt;
+    this.vx += (this.driftSpeed + Math.sin((this.maxLife - this.lifetime) * 4) * 4) * dt;
+    this.lifetime -= dt;
+    if (this.lifetime <= 0) this.alive = false;
+  }
+
+  draw(ctx, scale) {
+    const alpha = Math.max(0, this.lifetime / this.maxLife);
+    const shrink = 0.72 + alpha * 0.28;
+    const sx = this.vx * scale;
+    const sy = this.vy * scale;
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.85;
+    ctx.font = `${this.baseSize * shrink * scale}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowBlur = 10 * scale;
+    ctx.shadowColor = 'rgba(52,211,153,0.45)';
+    ctx.fillStyle = '#34d399';
+    ctx.fillText(this.text, sx, sy);
+    ctx.restore();
+  }
+}
+
 function truncate(s, n) { return s.length > n ? s.slice(0, n) + '\u2026' : s; }
 
 // ── Agent Map (shared) ──
@@ -97,6 +143,26 @@ export function spawnParticle(agentName, text, opts) {
   const agent = agents.get(agentName);
   if (!agent) return;
   particles.push(new Particle(agent.x, agent.y, text, opts));
+}
+
+export function setAgentLowMotion(v) {
+  _agentLowMotion = Boolean(v);
+  if (_agentLowMotion) particles.length = 0;
+}
+
+function pickFloatingCodeSnippet(agent) {
+  if (typeof agent.codeSnippetProvider === 'function') {
+    const provided = agent.codeSnippetProvider(agent);
+    if (typeof provided === 'string' && provided.trim()) return provided.trim();
+  }
+  return FLOATING_CODE_SNIPPETS[Math.floor(Math.random() * FLOATING_CODE_SNIPPETS.length)];
+}
+
+function spawnFloatingCodeParticle(agent) {
+  const zone = agent._homeZone ? ZONE_MAP[agent._homeZone] : null;
+  const anchorX = zone ? zone.x + zone.w * 0.56 : agent.x;
+  const anchorY = zone ? zone.y + zone.h * 0.54 : agent.y;
+  particles.push(new FloatingCodeParticle(anchorX, anchorY, pickFloatingCodeSnippet(agent)));
 }
 
 export function spawnStateParticle(agentName, newState) {
@@ -119,6 +185,13 @@ export class Agent {
     this.bubble = { text: '', timer: 0 };
     this._idleCooldown = 0; this._glanceCooldown = 0; this._staleTimer = 0;
     this.fatigue = 0; this._fatigueSweatTimer = 0; this._coffeeTimer = 0; this._atCoffee = false;
+    // Workload (paper stack visualization)
+    this.workLoad = 0;
+    this.workingTimer = 0;
+    this._floatingCodeTimer = 0.35 + Math.random() * 0.2;
+    this.codeSnippetProvider = null;
+    // Party state
+    this._partying = false; this._partyTimer = 0; this._partyFireworkTimer = 0;
     // Delivery walk state
     this._delivering = false; this._deliveryIcon = '';
     // GIF overlay
@@ -133,6 +206,10 @@ export class Agent {
     if (this._atCoffee) return 'coffee';
     if (this.state === 'working' && this.fatigue >= 15) return 'fatigued';
     return '';
+  }
+
+  isBottleneck() {
+    return this.state === 'working' && this.workingTimer > 30;
   }
 
   speak(text, duration = 3.5) { if (text) this.bubble = { text: truncate(text, 25), timer: duration }; }
@@ -206,6 +283,35 @@ export class Agent {
   }
 
   update(dt) {
+    // Party mode
+    if (this._partying) {
+      this._partyTimer -= dt;
+      this._partyFireworkTimer -= dt;
+      if (this._partyFireworkTimer <= 0) {
+        this._partyFireworkTimer = 0.6 + Math.random() * 0.4;
+        const emojis = ['\u{1F389}', '\u{1F38A}', '\u2728', '\u{1F386}', '\u{1F973}'];
+        if (!_agentLowMotion) {
+          spawnParticle(this.name, emojis[Math.floor(Math.random() * emojis.length)], { size: 14 + Math.random() * 6, lifetime: 1.2 });
+        }
+      }
+      if (this._partyTimer <= 0) { this._partying = false; }
+    }
+
+    // Workload accumulation
+    if (this.state === 'working') {
+      this.workLoad += dt;
+      this.workingTimer += dt;
+      this._floatingCodeTimer -= dt;
+      if (!_agentLowMotion && this._floatingCodeTimer <= 0) {
+        this._floatingCodeTimer = 0.5;
+        spawnFloatingCodeParticle(this);
+      }
+    } else {
+      this.workLoad = 0;
+      this.workingTimer = 0;
+      this._floatingCodeTimer = 0.35 + Math.random() * 0.25;
+    }
+
     // Fatigue
     const fatigued = this.fatigue >= 15;
     if (this.state === 'working') { this.fatigue += dt; this._atCoffee = false; }
@@ -260,7 +366,8 @@ export class Agent {
 
   draw(ctx, scale) {
     const sx = this.x * scale, sy = this.y * scale;
-    const bob = Math.sin(this.bobPhase) * (this.state === 'working' ? 1.5 : 2.5) * scale;
+    const partyBounce = this._partying ? -Math.abs(Math.sin(this.bobPhase * 3)) * 12 * scale : 0;
+    const bob = Math.sin(this.bobPhase) * (this.state === 'working' ? 1.5 : 2.5) * scale + partyBounce;
     const walk = this._atTarget ? 0 : Math.sin(this.movePhase) * 2 * scale;
     const gifSrc = STATE_GIF_ASSETS[this.state] || STATE_GIF_ASSETS.ready || '';
     const hasGif = Boolean(gifSrc);
@@ -316,6 +423,143 @@ export class Agent {
     ctx.fillStyle = this.color + '33'; ctx.beginPath(); ctx.roundRect(pillX, pillY, pillW, pillH, 3 * scale); ctx.fill();
     ctx.fillStyle = this.color; ctx.textBaseline = 'middle'; ctx.fillText(stateText, sx, pillY + pillH / 2);
 
+    if (this.isBottleneck()) {
+      const crush = Math.abs(Math.sin(performance.now() / 140)) * 4 * scale;
+      const iconY = headY - 14 * scale + crush;
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.font = `${18 * scale}px sans-serif`;
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.fillText('\u23F3', sx + 1 * scale, iconY + 1 * scale);
+      ctx.shadowBlur = 12 * scale;
+      ctx.shadowColor = 'rgba(249,115,22,0.45)';
+      ctx.fillStyle = 'rgba(249,115,22,0.98)';
+      ctx.fillText('\u23F3', sx, iconY);
+      ctx.restore();
+    }
+
+    // Hologram light cone (working state only)
+    if (this.state === 'working') {
+      const t = performance.now() / 1000;
+      const coneBaseW = 22 * scale;   // half-width at feet
+      const coneTopW = 6 * scale;     // half-width at head
+      const feetY = sy + 8 * scale;   // just below agent feet
+      const topY = headY - 10 * scale; // above agent head
+      const coneH = feetY - topY;
+
+      ctx.save();
+
+      // Cone gradient (bottom opaque → top transparent)
+      const grad = ctx.createLinearGradient(sx, feetY, sx, topY);
+      grad.addColorStop(0, this.color.replace(')', ',0.12)').replace('rgb', 'rgba'));
+      grad.addColorStop(0.5, this.color.replace(')', ',0.06)').replace('rgb', 'rgba'));
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      // Use hex-to-rgba fallback for hex colors
+      const cAlpha = (a) => {
+        if (this.color.startsWith('#')) {
+          const r = parseInt(this.color.slice(1,3),16), g = parseInt(this.color.slice(3,5),16), b = parseInt(this.color.slice(5,7),16);
+          return `rgba(${r},${g},${b},${a})`;
+        }
+        return `rgba(200,220,255,${a})`;
+      };
+      const cGrad = ctx.createLinearGradient(sx, feetY, sx, topY);
+      cGrad.addColorStop(0, cAlpha(0.10));
+      cGrad.addColorStop(0.4, cAlpha(0.05));
+      cGrad.addColorStop(1, 'rgba(255,255,255,0)');
+
+      // Draw cone shape (trapezoid)
+      ctx.fillStyle = cGrad;
+      ctx.beginPath();
+      ctx.moveTo(sx - coneBaseW, feetY);
+      ctx.lineTo(sx + coneBaseW, feetY);
+      ctx.lineTo(sx + coneTopW, topY);
+      ctx.lineTo(sx - coneTopW, topY);
+      ctx.closePath();
+      ctx.fill();
+
+      // Edge lines (subtle)
+      ctx.strokeStyle = cAlpha(0.08);
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(sx - coneBaseW, feetY); ctx.lineTo(sx - coneTopW, topY);
+      ctx.moveTo(sx + coneBaseW, feetY); ctx.lineTo(sx + coneTopW, topY);
+      ctx.stroke();
+
+      // Scrolling hex/binary data inside the cone
+      ctx.clip(); // clip to cone shape
+      const hexChars = '0123456789ABCDEF';
+      const dataFontSz = 4.5 * scale;
+      ctx.font = `${dataFontSz}px monospace`;
+      ctx.textAlign = 'center';
+      const colCount = 5;
+      const colSpacing = (coneBaseW * 2) / (colCount + 1);
+      for (let c = 0; c < colCount; c++) {
+        const seed = c * 11.7 + 3.1;
+        const speed = 2.0 + (seed % 2.5);
+        const colX = sx - coneBaseW + colSpacing * (c + 1);
+        // Narrow toward top: interpolate x toward center
+        const rowCount = 8;
+        for (let r = 0; r < rowCount; r++) {
+          const frac = r / rowCount; // 0=bottom, 1=top
+          const rowY = feetY - frac * coneH;
+          const scrollOffset = (t * speed * 30 + seed * 20) % (coneH + 40 * scale);
+          const finalY = feetY - ((frac * coneH + scrollOffset) % (coneH + 20 * scale));
+          if (finalY < topY || finalY > feetY) continue;
+          // Lerp x toward center as we go up
+          const progress = (feetY - finalY) / coneH;
+          const lerpX = sx + (colX - sx) * (1 - progress * 0.7);
+          const alpha = (1 - progress) * 0.25;
+          ctx.fillStyle = cAlpha(alpha);
+          // Alternate binary and hex
+          const charIdx = Math.floor(seed * 7 + r * 3 + t * 4) % hexChars.length;
+          const txt = r % 2 === 0 ? hexChars[charIdx] : ((Math.floor(t * 5 + r + seed) % 2) ? '1' : '0');
+          ctx.fillText(txt, lerpX, finalY);
+        }
+      }
+
+      ctx.restore();
+    }
+
+    // Paper stack (workLoad visualization) — drawn on desk surface in home zone
+    if (this.workLoad > 0 && this._homeZone) {
+      const z = ZONE_MAP[this._homeZone];
+      // Desk position: slightly offset from zone center
+      const deskX = (z.x + z.w * 0.72) * scale;
+      const deskBaseY = (z.y + z.h * 0.55) * scale;
+      const paperCount = Math.min(Math.floor(this.workLoad / 3), 12); // 1 paper per 3s, max 12
+      const paperW = 14 * scale, paperH = 3 * scale, gap = 2.5 * scale;
+      const stackHeight = paperCount * (paperH + gap);
+      // Wobble when stack is tall (>6 papers)
+      const wobble = paperCount > 6
+        ? Math.sin(this.bobPhase * 1.5) * (paperCount - 6) * 0.4 * scale
+        : 0;
+      ctx.save();
+      for (let i = 0; i < paperCount; i++) {
+        const py = deskBaseY - i * (paperH + gap);
+        // Each paper gets slightly more wobble toward the top
+        const paperWobble = wobble * (i / paperCount);
+        const px = deskX + paperWobble;
+        // Slight random rotation for realism
+        const angle = (i % 3 - 1) * 0.06 + (paperCount > 8 ? Math.sin(this.bobPhase * 2 + i) * 0.04 : 0);
+        ctx.save();
+        ctx.translate(px + paperW / 2, py + paperH / 2);
+        ctx.rotate(angle);
+        // Paper shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.2)';
+        ctx.fillRect(-paperW / 2 + 1, -paperH / 2 + 1, paperW, paperH);
+        // Paper body
+        const brightness = 0.85 + (i / paperCount) * 0.15;
+        ctx.fillStyle = `rgba(${Math.floor(230 * brightness)},${Math.floor(235 * brightness)},${Math.floor(240 * brightness)},0.92)`;
+        ctx.fillRect(-paperW / 2, -paperH / 2, paperW, paperH);
+        // Tiny text lines on paper
+        ctx.fillStyle = 'rgba(80,100,120,0.3)';
+        ctx.fillRect(-paperW / 2 + 2 * scale, -paperH / 2 + 0.8 * scale, paperW * 0.6, 0.6 * scale);
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+
     // Delivery icon (transit speech bubble)
     if (this._delivering && this._deliveryIcon) {
       ctx.font = `${14 * scale}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
@@ -337,6 +581,13 @@ export class Agent {
       ctx.fillText(this.bubble.text, bx, by - boxH / 2 + 1 * scale);
       ctx.restore();
     }
+  }
+
+  startParty(duration = 5) {
+    this._partying = true;
+    this._partyTimer = duration;
+    this._partyFireworkTimer = 0; // fire immediately
+    this.speak('\u{1F389} \uD30C\uD2F0!', 2.5);
   }
 
   hitTest(vx, vy) { const dx = vx - this.x, dy = vy - this.y; return Math.sqrt(dx * dx + dy * dy) < 20; }

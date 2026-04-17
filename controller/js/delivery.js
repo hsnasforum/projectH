@@ -7,13 +7,31 @@ import { PipelineState } from './state.js';
 export const deliveryPackets = [];
 export const drones = [];
 export const archiveCubeFlights = [];
+export const circuitPulses = [];
+export const receiptPaperQueue = [];
 
 const archiveCubeLandings = [];
 const archiveFlightTokens = new Map();
 
+export const CIRCUIT_ROUTE_IDS = {
+  implementVerify: 'implement_verify',
+  verifyAdvisory: 'verify_advisory',
+  implementReceipt: 'implement_receipt',
+  verifyArchive: 'verify_archive',
+  advisoryIncident: 'advisory_incident',
+  receiptArchive: 'receipt_archive',
+  archiveIncident: 'archive_incident',
+};
+
 function basename(p) { return String(p || '').split('/').filter(Boolean).pop() || '\u2014'; }
 
 function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+function formatReceiptTime(raw) {
+  const value = raw ? new Date(raw) : new Date();
+  const ts = Number.isNaN(value.getTime()) ? new Date() : value;
+  return ts.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
 
 function hexToRgb(hex, fallback = [129, 140, 248]) {
   const raw = String(hex || '').trim().replace('#', '');
@@ -29,6 +47,18 @@ function rgba(rgb, alpha) {
 
 function easeOutCubic(t) {
   return 1 - Math.pow(1 - clamp(t, 0, 1), 3);
+}
+
+function queueCircuitPulse(routeId, options = {}) {
+  circuitPulses.push({
+    routeId,
+    reverse: Boolean(options.reverse),
+    color: options.color || '#60a5fa',
+    progress: 0,
+    speed: options.speed || 1.9,
+    trail: options.trail || 0.24,
+    alive: true,
+  });
 }
 
 // ── Packet (low-importance events) ──
@@ -251,6 +281,30 @@ function buildArchiveToken() {
   return `${controlSeq}:${verifyPath || 'archive'}`;
 }
 
+function buildReceiptPaper(receiptId) {
+  const data = PipelineState.data || {};
+  const receipt = data.last_receipt || {};
+  const result = String(receipt.verify_result || receipt.result || receipt.status || 'pending').trim() || 'pending';
+  const receiptTime = formatReceiptTime(
+    receipt.closed_at || receipt.created_at || receipt.updated_at || receipt.receipt_written_at || Date.now()
+  );
+  const verifyBase = basename(((data.artifacts || {}).latest_verify || {}).path || '');
+  const normalizedId = String(receiptId || receipt.receipt_id || '\u2014').trim() || '\u2014';
+  return {
+    id: normalizedId,
+    result,
+    timeLabel: receiptTime,
+    source: verifyBase,
+    issuedAt: performance.now(),
+    lines: [
+      `ID     ${normalizedId}`,
+      `RESULT ${result.toUpperCase()}`,
+      `TIME   ${receiptTime}`,
+      `SRC    ${verifyBase}`,
+    ],
+  };
+}
+
 function queueArchiveCube(reason) {
   const token = buildArchiveToken();
   if (!token || token.endsWith(':')) return;
@@ -267,8 +321,16 @@ function queueArchiveCube(reason) {
   }));
 }
 
+function queueReceiptPaper(receiptId) {
+  receiptPaperQueue.push(buildReceiptPaper(receiptId));
+}
+
 export function drainArchiveCubeLandings() {
   return archiveCubeLandings.splice(0);
+}
+
+export function drainReceiptPaperQueue() {
+  return receiptPaperQueue.splice(0);
 }
 
 export function completeArchiveFlightsImmediately() {
@@ -291,19 +353,23 @@ export function initDeliverySystem() {
           const status = trigger.status;
           if (status === 'implement') {
             deliveryPackets.push(new DeliveryPacket('codex_desk', 'claude_desk', '\u{1F4CB}'));
+            queueCircuitPulse(CIRCUIT_ROUTE_IDS.implementVerify, { reverse: true, color: '#60a5fa' });
             speakAgent('Claude', '\uBC1B\uC558\uC2B5\uB2C8\uB2E4', 2.5);
             PipelineState.pushEvent('info', `Implement handoff \u2192 Claude (seq ${trigger.seq})`);
           } else if (status === 'needs_operator') {
             const owner = agents.get('Claude');
             if (owner) { owner.walkToZone('incident_zone', '\u26A0\uFE0F'); }
+            queueCircuitPulse(CIRCUIT_ROUTE_IDS.advisoryIncident, { color: '#ef4444' });
             PipelineState.pushEvent('warn', `Operator review requested (seq ${trigger.seq})`);
             SoundFX.warn();
           } else if (status === 'advice_ready') {
             const gemini = agents.get('Gemini');
             if (gemini) { gemini.walkToZone('codex_desk', '\u{1F4DD}'); }
+            queueCircuitPulse(CIRCUIT_ROUTE_IDS.verifyAdvisory, { reverse: true, color: '#fbbf24' });
             PipelineState.pushEvent('info', `Advice ready \u2192 Codex`);
           } else {
             deliveryPackets.push(new DeliveryPacket('claude_desk', 'codex_desk', '\u{1F4E6}'));
+            queueCircuitPulse(CIRCUIT_ROUTE_IDS.implementVerify, { color: '#34d399' });
             PipelineState.pushEvent('info', `Control changed \u2192 ${status || 'none'} (seq ${trigger.seq})`);
           }
           break;
@@ -311,6 +377,7 @@ export function initDeliverySystem() {
         case 'work': {
           const claude = agents.get('Claude');
           if (claude) { claude.walkToZone('archive_shelf', '\u{1F4C1}'); }
+          queueCircuitPulse(CIRCUIT_ROUTE_IDS.implementVerify, { color: '#34d399' });
           PipelineState.pushEvent('ok', `Work delivered \u2192 ${basename(trigger.path)}`);
           SoundFX.success();
           break;
@@ -318,6 +385,7 @@ export function initDeliverySystem() {
         case 'verify': {
           const codex = agents.get('Codex');
           if (codex) { codex.walkToZone('archive_shelf', '\u2705'); }
+          queueCircuitPulse(CIRCUIT_ROUTE_IDS.verifyArchive, { color: '#7dd3fc' });
           PipelineState.pushEvent('info', `Verify updated \u2192 ${basename(trigger.path)}`);
           break;
         }
@@ -325,6 +393,9 @@ export function initDeliverySystem() {
           const codex2 = agents.get('Codex');
           if (codex2) { codex2.walkToZone('receipt_board', '\u{1F9FE}'); }
           PipelineState.pushEvent('ok', `Receipt issued \u2192 ${trigger.id}`);
+          queueCircuitPulse(CIRCUIT_ROUTE_IDS.implementReceipt, { color: '#a78bfa' });
+          queueCircuitPulse(CIRCUIT_ROUTE_IDS.receiptArchive, { color: '#a78bfa', reverse: false });
+          queueReceiptPaper(trigger.id);
           queueArchiveCube('receipt');
           SoundFX.success();
           break;
@@ -337,6 +408,7 @@ export function initDeliverySystem() {
     if (type !== 'roundComplete') return;
     const nextState = String(detail?.to || '').toUpperCase();
     if (nextState === 'DONE' || nextState === 'CLOSED') {
+      queueCircuitPulse(CIRCUIT_ROUTE_IDS.verifyArchive, { color: '#7dd3fc' });
       queueArchiveCube('round_complete');
     }
   });

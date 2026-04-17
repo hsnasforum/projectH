@@ -39,6 +39,8 @@ Gemini는 projectH 3-agent 운영에서 **제3 조율자**입니다.
 
 Gemini prompt에서 파일 경로가 주어질 때는, 가능하면 `@path` 형식의 명시적 file mention을 우선 사용해 실제 읽기 대상을 분명히 잡습니다.
 
+Claude Code 쪽 세부 실행 규칙은 `.claude/rules/`로 더 잘게 분리될 수 있지만, Gemini는 그 규칙 파일을 canonical advisory slot이나 stop/go 신호로 해석하지 않습니다. Gemini의 canonical 입력은 여전히 `GEMINI.md`, `AGENTS.md`, `.pipeline/gemini_request.md`, 그리고 relevant `/work` / `/verify`입니다.
+
 현재 canonical single-Codex 흐름에서 Gemini가 실제로 움직이는 기준은 아래와 같습니다.
 - `.pipeline/gemini_request.md`는 `STATUS: request_open`과 `CONTROL_SEQ`가 있을 때 pending arbitration 요청으로 봅니다.
 - `.pipeline/gemini_advice.md`는 advisory를 남길 때 `STATUS: advice_ready`와 `CONTROL_SEQ`를 사용합니다.

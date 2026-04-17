@@ -497,13 +497,14 @@ class RuntimeSupervisorTest(unittest.TestCase):
                 wrapper_dir,
                 "Codex",
                 "TASK_ACCEPTED",
-                {"job_id": "job-42", "control_seq": 19, "attempt": 1},
+                {"job_id": "job-42", "dispatch_id": "dispatch-42", "control_seq": 19, "attempt": 1},
                 source="wrapper",
                 derived_from="vendor_output",
             )
             models = build_lane_read_models(wrapper_dir, heartbeat_timeout_sec=3600.0, now_ts=1.0)
             self.assertEqual(models["Codex"]["state"], "WORKING")
             self.assertEqual(models["Codex"]["accepted_task"]["job_id"], "job-42")
+            self.assertEqual(models["Codex"]["accepted_task"]["dispatch_id"], "dispatch-42")
 
             stale_models = build_lane_read_models(wrapper_dir, heartbeat_timeout_sec=0.0, now_ts=9999999999.0)
             self.assertEqual(stale_models["Codex"]["state"], "BROKEN")

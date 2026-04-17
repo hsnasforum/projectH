@@ -1477,7 +1477,7 @@ These are placeholders for the next phase design target and its immediate follow
   - browser folder picker mixed scanned-PDF search-plus-summary → partial-failure notice + readable file preview exact fields(`1. notes.txt`, `mixed-search-folder/notes.txt` tooltip, `내용 일치`, `budget` snippet) + transcript preview exact fields 유지
   - history-card entity-card `다시 불러오기` click reload → 브라우저 composer(`#user-text` + `submit-request`)를 거친 plain follow-up(`이 결과 한 문장으로 요약해줘`) `/api/chat/stream` POST payload가 `load_web_search_record_id`를 전혀 포함하지 않고, follow-up 이후에도 `#claim-coverage-box` visible, `#claim-coverage-text`에 저장된 entity-card `장르` / `[단일 출처]` 슬롯, history-card `.meta` 정확히 `사실 검증 단일 출처 1 · 단일 출처 상태 1건.` 유지
   - history-card latest-update `다시 불러오기` click reload → 브라우저 composer(`#user-text` + `submit-request`)를 거친 plain follow-up(`이 결과 한 문장으로 요약해줘`) `/api/chat/stream` POST payload가 `load_web_search_record_id`를 전혀 포함하지 않고, follow-up 이후에도 `#claim-coverage-box` hidden, history-card `.meta` count `0` 유지
-- SQLite browser smoke (`e2e/playwright.sqlite.config.mjs`) covers the opt-in sqlite storage backend parity gate on port 8880 with an isolated sqlite DB, corrections dir, and web-search history dir per run; `LOCAL_AI_NOTES_DIR` stays at the repo default (`data/notes/`) so saved-note assertions mirror the JSON-default path. Current sqlite browser gate scenarios:
+- SQLite browser smoke (`e2e/playwright.sqlite.config.mjs`) covers the opt-in sqlite storage backend parity gate on port 8880 with an isolated sqlite DB and corrections dir per run; `LOCAL_AI_NOTES_DIR` and `LOCAL_AI_WEB_SEARCH_HISTORY_DIR` stay at the repo defaults (`data/notes/`, `data/web-search/`) so saved-note and pre-seeded web-search record scenarios mirror the JSON-default path. Current sqlite browser gate scenarios:
   - same-session recurrence aggregate emitted-apply-confirm lifecycle으로 활성화 (sqlite backend)
   - same-session recurrence aggregate stale candidate retires before apply start (sqlite backend)
   - same-session recurrence aggregate active lifecycle survives supporting correction supersession (sqlite backend)
@@ -1491,6 +1491,40 @@ These are placeholders for the next phase design target and its immediate follow
   - 브라우저 파일 선택 파일 요약 (sqlite backend)
   - 브라우저 폴더 선택 문서 검색 (sqlite backend)
   - 검색만 응답은 transcript preview cards 노출 + 본문 텍스트 숨김 (sqlite backend)
+  - 브라우저 파일 선택 scanned/image-only PDF OCR 미지원 안내 (sqlite backend)
+  - 브라우저 폴더 선택 scanned PDF + readable file 혼합 검색 count-only partial-failure notice (sqlite backend)
+  - 브라우저 폴더 선택 scanned PDF + readable file 혼합 검색+요약 partial-failure notice + readable file preview 유지 (sqlite backend)
+  - 브라우저 파일 선택 readable text-layer PDF 정상 요약 (sqlite backend)
+  - candidate confirmation path가 save support와 분리된 기록 + later correction으로 current state 제거 (sqlite backend)
+  - review-queue reject/defer가 accept와 동일한 quick-meta, transcript-meta, stale-clear 경로 (sqlite backend)
+  - review-queue reject-defer aggregate support visibility (sqlite backend)
+  - 저장 요청 후 승인 경로 재발급 (sqlite backend)
+  - 승인 후 실제 note 저장 (sqlite backend)
+  - 스트리밍 중 취소 버튼 동작 (sqlite backend)
+  - 일반 채팅 응답에 source-type label 미부착 (sqlite backend)
+  - claim-coverage panel status tag + 행동 힌트 렌더 (sqlite backend)
+  - claim-coverage panel 재조사 대상 슬롯 진행 상태 렌더 (sqlite backend)
+  - claim-coverage panel 재조사 후 보강 슬롯 표시 (sqlite backend)
+  - claim-coverage panel 재조사 후 약화 슬롯 표시 (sqlite backend)
+  - web-search history card header badges answer-mode + verification-strength + source-role trust 렌더 + `.meta` count/progress composition (sqlite backend)
+  - history-card latest-update noisy community source initial-render serialized zero-count empty-meta no-leak (sqlite backend)
+  - history-card entity-card noisy single-source initial-render strong-plus-missing count-summary meta (sqlite backend)
+  - history-card entity-card actual-search initial-render strong-plus-missing count-summary meta (sqlite backend)
+  - history-card entity-card dual-probe initial-render mixed count-summary meta (sqlite backend)
+  - history-card latest-update mixed-source initial-render serialized zero-count empty-meta no-leak (sqlite backend)
+  - history-card latest-update single-source initial-render serialized zero-count empty-meta no-leak (sqlite backend)
+  - history-card latest-update news-only initial-render serialized zero-count empty-meta no-leak (sqlite backend)
+  - history-card entity-card store-seeded actual-search initial-render serialized zero-count empty-meta no-leak (sqlite backend)
+  - history-card entity-card 다시 불러오기 클릭 후 WEB badge + 설명 카드 + 설명형 단일 출처 + 백과 기반 유지 (sqlite backend)
+  - history-card latest-update 다시 불러오기 후 WEB badge + 최신 확인 + 공식+기사 교차 확인 + 보조 기사 · 공식 기반 유지 (sqlite backend)
+  - history-card latest-update 다시 불러오기 후 noisy community source 본문/origin detail/context box 보조 커뮤니티/brunch 미노출 + 기사 교차 확인 + 보조 기사 + hankyung.com · mk.co.kr 유지 (sqlite backend)
+  - history-card entity-card 다시 불러오기 후 noisy single-source claim(출시일/2025/blog.example.com) 본문/origin detail 미노출 + 설명형 다중 출처 합의 + 백과 기반 + namu.wiki/ko.wikipedia.org/blog.example.com provenance 유지 (sqlite backend)
+  - history-card entity-card 다시 불러오기 후 actual-search source path(namu.wiki, ko.wikipedia.org) + WEB badge + 설명 카드 + 설명형 다중 출처 합의 + 백과 기반 유지 (sqlite backend)
+  - history-card entity-card 다시 불러오기 후 dual-probe source path(pearlabyss.com/200, pearlabyss.com/300) + WEB badge + 설명 카드 + 설명형 다중 출처 합의 + 공식 기반 · 백과 기반 유지 (sqlite backend)
+  - history-card latest-update 다시 불러오기 후 mixed-source source path(store.steampowered.com, yna.co.kr) + WEB badge + 최신 확인 + 공식+기사 교차 확인 + 보조 기사 · 공식 기반 유지 (sqlite backend)
+  - history-card latest-update single-source 다시 불러오기 후 source path(example.com/seoul-weather) + WEB badge + 최신 확인 + 단일 출처 참고 + 보조 출처 유지 (sqlite backend)
+  - history-card latest-update news-only 다시 불러오기 후 기사 source path(hankyung.com, mk.co.kr) + WEB badge + 최신 확인 + 기사 교차 확인 + 보조 기사 유지 (sqlite backend)
+  - history-card entity-card store-seeded actual-search 다시 불러오기 reload-only 단계 empty-meta no-leak (sqlite backend)
 
 ### In Progress
 - Improve regression fixtures for weak-slot reinvestigation and source consensus.

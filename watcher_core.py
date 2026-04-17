@@ -48,7 +48,8 @@ if _PROJECT_IMPORT_ROOT:
 
 from pipeline_gui.setup_profile import resolve_project_runtime_adapter
 from pipeline_runtime.operator_autonomy import classify_operator_candidate, normalize_reason_code
-from pipeline_runtime.schema import read_control_meta
+from pipeline_runtime.schema import read_control_meta, read_json
+from pipeline_runtime.wrapper_events import build_lane_read_models
 
 # jsonschema는 선택적 의존성 — 없으면 필수 필드 구조 검증만 수행
 try:
@@ -159,6 +160,10 @@ class JobState:
     dispatch_stall_fingerprint: str = ""
     dispatch_stall_count:  int   = 0
     dispatch_stall_detected_at: float = 0.0
+    dispatch_id:          str   = ""
+    accept_deadline_at:   float = 0.0
+    accepted_dispatch_id: str   = ""
+    accepted_at:          float = 0.0
     degraded_reason:       str   = ""
     lane_note:             str   = ""
     created_at:           float = field(default_factory=time.time)
@@ -1315,6 +1320,8 @@ class StateMachine:
 
     def __init__(
         self,
+        project_root:           Path,
+        verify_lane_name:       str,
         state_dir:              Path,
         stabilizer:             ArtifactStabilizer,
         lease:                  PaneLease,
@@ -1328,12 +1335,15 @@ class StateMachine:
         verify_receipt_builder: Optional[Callable[[JobState], tuple[str, float]]],
         verify_retry_backoff_sec: float,
         verify_incomplete_idle_retry_sec: float,
+        verify_accept_deadline_sec: float,
         runtime_started_at:     float,
         restart_recovery_grace_sec: float,
         completion_paths:       list[Path],
         error_log:              Path,
         dry_run:                bool = False,
     ) -> None:
+        self.project_root           = project_root
+        self.verify_lane_name       = verify_lane_name
         self.state_dir              = state_dir
         self.stabilizer             = stabilizer
         self.lease                  = lease
@@ -1347,6 +1357,7 @@ class StateMachine:
         self.verify_receipt_builder = verify_receipt_builder
         self.verify_retry_backoff_sec = verify_retry_backoff_sec
         self.verify_incomplete_idle_retry_sec = verify_incomplete_idle_retry_sec
+        self.verify_accept_deadline_sec = verify_accept_deadline_sec
         self.runtime_started_at     = runtime_started_at
         self.restart_recovery_grace_sec = restart_recovery_grace_sec
         self.completion_paths       = completion_paths
@@ -1371,6 +1382,10 @@ class StateMachine:
         job.dispatch_stall_fingerprint = ""
         job.dispatch_stall_count = 0
         job.dispatch_stall_detected_at = 0.0
+        job.dispatch_id = ""
+        job.accept_deadline_at = 0.0
+        job.accepted_dispatch_id = ""
+        job.accepted_at = 0.0
         job.degraded_reason = ""
         job.lane_note = ""
 
@@ -1378,6 +1393,65 @@ class StateMachine:
     def _clear_dispatch_stall_surface(self, job: JobState) -> None:
         job.degraded_reason = ""
         job.lane_note = ""
+
+    # ------------------------------------------------------------------
+    def _current_wrapper_events_dir(self) -> Optional[Path]:
+        current_run = read_json(self.project_root / ".pipeline" / "current_run.json")
+        if not isinstance(current_run, dict):
+            return None
+        events_path_value = str(current_run.get("events_path") or "").strip()
+        if events_path_value:
+            events_path = (self.project_root / events_path_value).resolve()
+            return events_path.parent / "wrapper-events"
+        run_id = str(current_run.get("run_id") or "").strip()
+        if not run_id:
+            return None
+        return self.project_root / ".pipeline" / "runs" / run_id / "wrapper-events"
+
+    # ------------------------------------------------------------------
+    def _verify_wrapper_model(self) -> dict[str, object]:
+        wrapper_dir = self._current_wrapper_events_dir()
+        if wrapper_dir is None or not wrapper_dir.exists():
+            return {}
+        models = build_lane_read_models(
+            wrapper_dir,
+            heartbeat_timeout_sec=max(60.0, self.verify_accept_deadline_sec * 2.0),
+            now_ts=time.time(),
+        )
+        return dict(models.get(self.verify_lane_name) or {})
+
+    # ------------------------------------------------------------------
+    def _mark_dispatch_accepted_if_seen(
+        self,
+        job: JobState,
+        *,
+        current_pane: str,
+    ) -> bool:
+        if not job.dispatch_id or job.accepted_dispatch_id == job.dispatch_id:
+            return False
+        lane_model = self._verify_wrapper_model()
+        accepted_task = dict(lane_model.get("accepted_task") or {})
+        if not accepted_task:
+            return False
+
+        accepted_dispatch_id = str(accepted_task.get("dispatch_id") or "")
+        matched = False
+        if accepted_dispatch_id:
+            matched = accepted_dispatch_id == job.dispatch_id
+        else:
+            matched = (
+                str(accepted_task.get("job_id") or "") == job.job_id
+                and float(lane_model.get("last_event_ts") or 0.0) >= (job.last_dispatch_at - 1.0)
+            )
+        if not matched:
+            return False
+
+        job.accepted_dispatch_id = job.dispatch_id
+        job.accepted_at = time.time()
+        job.last_activity_at = job.accepted_at
+        job.last_pane_snapshot = current_pane
+        job.save(self.state_dir)
+        return True
 
     # ------------------------------------------------------------------
     def _record_dispatch_stall(
@@ -1410,6 +1484,10 @@ class StateMachine:
         job.dispatch_fail_count += 1
         job.last_failed_dispatch_snapshot = "" if _pane_text_is_idle(current_pane) else current_pane
         job.last_dispatch_slot = ""
+        job.dispatch_id = ""
+        job.accept_deadline_at = 0.0
+        job.accepted_dispatch_id = ""
+        job.accepted_at = 0.0
         job.degraded_reason = "dispatch_stall"
         self.lease.release("slot_verify")
         job.transition(JobStatus.VERIFY_PENDING, reason)
@@ -1456,6 +1534,10 @@ class StateMachine:
         # pinned forever behind the exact same snapshot text.
         job.last_failed_dispatch_snapshot = "" if _pane_text_is_idle(current_pane) else current_pane
         job.last_dispatch_slot = ""
+        job.dispatch_id = ""
+        job.accept_deadline_at = 0.0
+        job.accepted_dispatch_id = ""
+        job.accepted_at = 0.0
         self.lease.release("slot_verify")
         job.transition(JobStatus.VERIFY_PENDING, reason)
         job.save(self.state_dir)
@@ -1556,6 +1638,20 @@ class StateMachine:
             job.last_failed_dispatch_at = 0.0
             job.last_failed_dispatch_snapshot = ""
             job.dispatch_fail_count = 0
+            job.dispatch_id = hashlib.sha1(
+                "|".join(
+                    [
+                        job.job_id,
+                        str(job.round),
+                        job.artifact_hash,
+                        slot,
+                        f"{job.last_dispatch_at:.6f}",
+                    ]
+                ).encode("utf-8")
+            ).hexdigest()
+            job.accept_deadline_at = job.last_dispatch_at + self.verify_accept_deadline_sec
+            job.accepted_dispatch_id = ""
+            job.accepted_at = 0.0
             if self.feedback_sig_builder is not None:
                 (
                     job.feedback_baseline_sig,
@@ -1581,6 +1677,10 @@ class StateMachine:
             job.last_failed_dispatch_at = time.time()
             job.dispatch_fail_count += 1
             job.last_failed_dispatch_snapshot = _capture_pane_text(self.verify_pane_target)
+            job.dispatch_id = ""
+            job.accept_deadline_at = 0.0
+            job.accepted_dispatch_id = ""
+            job.accepted_at = 0.0
             job.save(self.state_dir)
             self.lease.release(slot)
         return job
@@ -1664,23 +1764,32 @@ class StateMachine:
             still_busy = _pane_text_has_busy_indicator(current_pane)
             has_prompt = _pane_text_has_input_cursor(current_pane)
             codex_idle = has_prompt and not still_busy
-            elapsed_since_dispatch = time.time() - job.last_dispatch_at
+            now_value = time.time()
+            elapsed_since_dispatch = now_value - job.last_dispatch_at
             stale_dispatch_before_runtime = (
                 job.last_dispatch_at > 0.0
                 and job.last_dispatch_at < self.runtime_started_at
             )
-            # Idle alone is not enough; Codex must leave /verify + next control (or manifest).
-            if codex_idle and elapsed_since_dispatch > 15 and not (control_changed and verify_changed):
-                log.info(
-                    "codex idle observed but required outputs are incomplete: job=%s elapsed=%.0fs",
-                    job.job_id,
-                    elapsed_since_dispatch,
-                )
+
+            # Activity-based timeout: only timeout if pane output hasn't changed.
+            elapsed = now_value - job.last_dispatch_at
+            last_activity = job.last_activity_at or job.last_dispatch_at
+
+            if current_pane != job.last_pane_snapshot:
+                # Pane changed — task is still active, reset activity timer
+                job.last_pane_snapshot = current_pane
+                job.last_activity_at = now_value
+                job.save(self.state_dir)
+            dispatch_accepted = self._mark_dispatch_accepted_if_seen(job, current_pane=current_pane)
+            if dispatch_accepted:
+                last_activity = job.last_activity_at or now_value
+            waiting_for_accept = bool(job.dispatch_id) and job.accepted_dispatch_id != job.dispatch_id
             if (
                 stale_dispatch_before_runtime
                 and codex_idle
                 and elapsed_since_dispatch >= self.restart_recovery_grace_sec
                 and not outputs_complete
+                and waiting_for_accept
             ):
                 log.info(
                     "startup recovery: stale verify dispatch before watcher start and pane is idle: job=%s elapsed=%.0fs",
@@ -1691,6 +1800,10 @@ class StateMachine:
                 job.last_failed_dispatch_at = 0.0
                 job.last_failed_dispatch_snapshot = ""
                 job.last_dispatch_slot = ""
+                job.dispatch_id = ""
+                job.accept_deadline_at = 0.0
+                job.accepted_dispatch_id = ""
+                job.accepted_at = 0.0
                 self.lease.release("slot_verify")
                 job.transition(
                     JobStatus.VERIFY_PENDING,
@@ -1699,31 +1812,52 @@ class StateMachine:
                 job.save(self.state_dir)
                 return job
 
-            # Activity-based timeout: only timeout if pane output hasn't changed.
-            elapsed = time.time() - job.last_dispatch_at
-            last_activity = job.last_activity_at or job.last_dispatch_at
-
-            if current_pane != job.last_pane_snapshot:
-                # Pane changed — task is still active, reset activity timer
-                job.last_pane_snapshot = current_pane
-                job.last_activity_at = time.time()
-                job.save(self.state_dir)
-            else:
-                # Pane unchanged — check idle timeout (5 min idle = timeout)
-                idle_sec = time.time() - last_activity
-                if codex_idle and not outputs_complete and idle_sec > self.verify_incomplete_idle_retry_sec:
+            if waiting_for_accept and not outputs_complete:
+                if (
+                    job.accept_deadline_at > 0.0
+                    and now_value >= job.accept_deadline_at
+                ):
                     log.warning(
-                        "verify dispatch stall detected: job=%s idle=%.0fs total=%.0fs",
+                        "verify accept deadline exceeded: job=%s total=%.0fs deadline=%.0fs",
                         job.job_id,
-                        idle_sec,
                         elapsed,
+                        self.verify_accept_deadline_sec,
                     )
                     return self._record_dispatch_stall(
                         job,
                         current_pane=current_pane,
                         reason=(
-                            f"dispatch stall after {idle_sec:.0f}s idle, "
-                            f"{elapsed:.0f}s total while waiting_task_accept_after_dispatch"
+                            f"dispatch stall after {elapsed:.0f}s total with no TASK_ACCEPTED "
+                            f"before {self.verify_accept_deadline_sec:.0f}s deadline"
+                        ),
+                    )
+                return job
+
+            # Idle alone is not enough; Codex must leave /verify + next control (or manifest).
+            if codex_idle and elapsed_since_dispatch > 15 and not (control_changed and verify_changed):
+                log.info(
+                    "codex idle observed after TASK_ACCEPTED but required outputs are incomplete: job=%s elapsed=%.0fs accepted=%s",
+                    job.job_id,
+                    elapsed_since_dispatch,
+                    dispatch_accepted or bool(job.accepted_at),
+                )
+
+            if current_pane == job.last_pane_snapshot:
+                # Pane unchanged — check idle timeout (5 min idle = timeout)
+                idle_sec = now_value - last_activity
+                if codex_idle and not outputs_complete and idle_sec > self.verify_incomplete_idle_retry_sec:
+                    log.warning(
+                        "verify accepted task returned idle with incomplete outputs: job=%s idle=%.0fs total=%.0fs",
+                        job.job_id,
+                        idle_sec,
+                        elapsed,
+                    )
+                    return self._requeue_verify_pending(
+                        job,
+                        current_pane=current_pane,
+                        reason=(
+                            f"idle prompt with incomplete outputs after TASK_ACCEPTED for {idle_sec:.0f}s idle, "
+                            f"{elapsed:.0f}s total"
                         ),
                     )
                 if idle_sec > 300:
@@ -2123,6 +2257,8 @@ class WatcherCore:
         self.collector = ManifestCollector(self.manifests_dir, schema_path)
 
         self.sm = StateMachine(
+            project_root=self.repo_root,
+            verify_lane_name=self._role_owner("verify") or "Codex",
             state_dir=self.state_dir,
             stabilizer=self.stabilizer,
             lease=self.lease,
@@ -2165,6 +2301,9 @@ class WatcherCore:
             verify_retry_backoff_sec=float(config.get("verify_retry_backoff_sec", 20.0)),
             verify_incomplete_idle_retry_sec=float(
                 config.get("verify_incomplete_idle_retry_sec", 25.0)
+            ),
+            verify_accept_deadline_sec=float(
+                config.get("verify_accept_deadline_sec", 30.0)
             ),
             runtime_started_at=self.started_at,
             restart_recovery_grace_sec=float(config.get("restart_recovery_grace_sec", 15.0)),

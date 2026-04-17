@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "receipt_id": "20260417-2026-04-17-sqlite-browser-web-se-315a0781-r1",
+  "run_id": "20260416T160744Z-p760702",
+  "job_id": "20260417-2026-04-17-sqlite-browser-web-se-315a0781",
+  "round": 1,
+  "target_lane": "codex",
+  "artifact_path": "/home/xpdlqj/code/projectH/verify/4/17/2026-04-17-sqlite-browser-web-search-history-card-header-badges-parity-verification.md",
+  "artifact_hash": "sha256:417e96564893f17bc6f1adc75ff7e492f0ed1936c249b09edf90bfe299c35a91",
+  "verify_manifest_path": "/home/xpdlqj/code/projectH/.pipeline/manifests/20260417-2026-04-17-sqlite-browser-web-se-315a0781/round-1.verify.json",
+  "verify_result": "passed_by_feedback",
+  "control_seq": 241,
+  "closed_at": "2026-04-16T17:05:30.906552Z",
+  "emitted_by": "supervisor"
+}

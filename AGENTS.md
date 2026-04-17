@@ -160,6 +160,9 @@ Current source-of-truth docs live in the root `docs/` directory.
     - `round-handoff`
     - `security-gate`
     - `work-log-closeout`
+- `.claude/rules/`
+  - Claude Code path-scoped instruction files for heavier file-family guidance
+  - use these when detailed pipeline/browser/doc-sync rules should not bloat Claude startup memory
 
 ## Single Codex Pipeline Convention
 
@@ -494,6 +497,8 @@ Examples:
 - `.codex/config.toml`
 - `.codex/agents/*.toml`
 - `.claude/agents/*.md`
+- `CLAUDE.md`
+- `.claude/rules/*.md`
 - repo skill additions, removals, or role changes
 
 Update:

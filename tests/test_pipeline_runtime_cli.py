@@ -112,6 +112,7 @@ class WrapperEmitterTest(unittest.TestCase):
                         "lane": "Claude",
                         "active": True,
                         "job_id": "job-42",
+                        "dispatch_id": "dispatch-42",
                         "control_seq": 135,
                         "attempt": 1,
                     }
@@ -132,6 +133,7 @@ class WrapperEmitterTest(unittest.TestCase):
             wrapper_log = root / "claude.jsonl"
             log_text = wrapper_log.read_text(encoding="utf-8")
             self.assertIn('"event_type": "TASK_ACCEPTED"', log_text)
+            self.assertIn('"dispatch_id": "dispatch-42"', log_text)
             self.assertNotIn('"event_type": "TASK_DONE"', log_text)
 
             emitter.tick(now=2.0)

@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "receipt_id": "20260417-2026-04-17-sqlite-browser-core-c-16d1d4a4-r1",
+  "run_id": "20260416T160744Z-p760702",
+  "job_id": "20260417-2026-04-17-sqlite-browser-core-c-16d1d4a4",
+  "round": 1,
+  "target_lane": "codex",
+  "artifact_path": "/home/xpdlqj/code/projectH/verify/4/17/2026-04-17-sqlite-browser-core-chat-shell-parity-verification.md",
+  "artifact_hash": "sha256:b1f5381beebd376a20bf3edbbbbede05b0e238df53dbe655ecfb56e63a5358eb",
+  "verify_manifest_path": "/home/xpdlqj/code/projectH/.pipeline/manifests/20260417-2026-04-17-sqlite-browser-core-c-16d1d4a4/round-1.verify.json",
+  "verify_result": "passed_by_feedback",
+  "control_seq": 239,
+  "closed_at": "2026-04-16T16:56:50.386866Z",
+  "emitted_by": "supervisor"
+}

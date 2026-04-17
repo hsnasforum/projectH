@@ -143,6 +143,7 @@ def build_lane_read_models(
                     "job_id": str(payload.get("job_id") or ""),
                     "control_seq": int(payload.get("control_seq") or -1),
                     "attempt": int(payload.get("attempt") or 0),
+                    "dispatch_id": str(payload.get("dispatch_id") or ""),
                 }
                 model["note"] = (
                     f"seq {model['accepted_task']['control_seq']}"

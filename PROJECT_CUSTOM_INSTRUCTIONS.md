@@ -51,6 +51,7 @@
 - approval payload나 session schema가 바뀌면 `docs/ARCHITECTURE.md`도 같이 갱신합니다.
 - 테스트 시나리오가 바뀌면 `docs/MILESTONES.md`, `docs/TASK_BACKLOG.md`도 같이 맞춥니다.
 - 에이전트/스킬 설정이 바뀌면 `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `PROJECT_CUSTOM_INSTRUCTIONS.md`, `.codex/config.toml`, 대응되는 agent/skill 파일을 같이 맞춥니다.
+- Claude Code 전용 규칙이 길어지면 `CLAUDE.md`를 계속 비대하게 키우기보다 `.claude/rules/*.md` path-scoped 규칙으로 내리는 편이 맞습니다.
 - `/work` closeout 규칙이나 `/verify` verification 규칙이 바뀌면 `work/README.md`, `verify/README.md`도 같이 갱신합니다.
 - `.pipeline/gpt_prompt.md`, `.pipeline/codex_feedback.md` 같은 rolling handoff 슬롯 규칙이 바뀌면 `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `PROJECT_CUSTOM_INSTRUCTIONS.md`, `work/README.md`, `verify/README.md`, 필요 시 `.pipeline/README.md`도 같이 갱신합니다.
 - 장기 로드맵이나 단계 정의가 바뀌면 `plandoc/` 문서도 같이 맞춥니다.

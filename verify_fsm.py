@@ -965,4 +965,3 @@ class StateMachine:
         }
         with self.error_log.open("a") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
-

@@ -1,0 +1,44 @@
+{
+  "job_id": "20260416-2026-04-16-controller-office-vie-8204bb83",
+  "status": "VERIFY_PENDING",
+  "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-controller-office-view-projecth-plan-doc.md",
+  "schema_version": 1,
+  "artifact_hash": "41fa4987bd1a6b049a2af25cc70ece1f8b0a17101a795de93746d04c6467bab2",
+  "artifact_size": 3341,
+  "artifact_mtime": 1776270833.0912106,
+  "stabilized_at": 1776270838.1932561,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 0.0,
+  "last_dispatch_slot": "",
+  "last_failed_dispatch_at": 0.0,
+  "last_failed_dispatch_snapshot": "",
+  "dispatch_fail_count": 0,
+  "feedback_baseline_sig": "",
+  "verify_feedback_baseline_sig": "",
+  "verify_receipt_baseline_path": "",
+  "verify_receipt_baseline_mtime": 0.0,
+  "verify_manifest_path": "",
+  "verify_completed_at": 0.0,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "",
+  "created_at": 1776270834.3872817,
+  "updated_at": 1776270838.1932588,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1776270834.3876579,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1776270838.1932588,
+      "reason": "artifact stabilized"
+    }
+  ],
+  "last_pane_snapshot": "",
+  "last_activity_at": 0.0
+}

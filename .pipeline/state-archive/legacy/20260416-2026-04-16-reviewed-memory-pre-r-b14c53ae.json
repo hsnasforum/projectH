@@ -1,0 +1,44 @@
+{
+  "job_id": "20260416-2026-04-16-reviewed-memory-pre-r-b14c53ae",
+  "status": "VERIFY_PENDING",
+  "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-reviewed-memory-pre-result-transitional-reload-continuity-browser-smoke.md",
+  "schema_version": 1,
+  "artifact_hash": "6d32b3e64779ac7334c47d66ba613192852769bf9f39fd0a8ca0ecbf1ba3913c",
+  "artifact_size": 3239,
+  "artifact_mtime": 1776273196.0367112,
+  "stabilized_at": 1776273201.3034446,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 0.0,
+  "last_dispatch_slot": "",
+  "last_failed_dispatch_at": 0.0,
+  "last_failed_dispatch_snapshot": "",
+  "dispatch_fail_count": 0,
+  "feedback_baseline_sig": "",
+  "verify_feedback_baseline_sig": "",
+  "verify_receipt_baseline_path": "",
+  "verify_receipt_baseline_mtime": 0.0,
+  "verify_manifest_path": "",
+  "verify_completed_at": 0.0,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "",
+  "created_at": 1776273197.4382293,
+  "updated_at": 1776273201.303449,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1776273197.438588,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1776273201.303449,
+      "reason": "artifact stabilized"
+    }
+  ],
+  "last_pane_snapshot": "",
+  "last_activity_at": 0.0
+}

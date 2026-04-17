@@ -62,15 +62,33 @@
 - supervisor가 이미 죽었지만 watcher/tmux session 같은 orphan runtime이 남아 있으면, stop CLI는 orphan cleanup 뒤 `status.json`을 `STOPPED + inactive truth`로 보정합니다.
 - controller가 오래된 `STOPPING` run을 다시 읽더라도 supervisor PID가 이미 없으면 UI는 이를 `STOPPED`로 정규화하고 `Control=none`, `Round=IDLE`로 보여야 합니다. 이 reader 정규화는 graceful flush 실패에 대비한 fallback safety net입니다.
 
-## 3.5 채택 전 synthetic soak
-runtime 채택 게이트 전에는 real repo truth를 건드리지 않는 synthetic soak를 먼저 사용합니다.
+## 3.5 현재 검증 원칙
+runtime long soak는 baseline evidence로 유지하되, 기본 검증 메뉴는 아닙니다.
 
-권장 순서는 아래와 같습니다.
+현재 기본 검증은 아래 세 축입니다.
 
-1. short synthetic smoke 1회
-2. `fault-check` 1회
-3. synthetic 6h mini soak 1회
-4. synthetic 24h soak 1회
+1. launcher live stability gate
+2. incident replay
+3. 실제 작업 세션
+
+long soak 재실행은 아래 경우에만 수행합니다.
+
+1. supervisor / watcher / tmux adapter / wrapper event 계약을 크게 바꾼 경우
+2. control / receipt / state writer 계약을 바꾼 경우
+3. adoption 직전 최종 gate가 필요한 경우
+
+launcher live stability gate는 아래를 현재 통과 기준으로 둡니다.
+
+- `handoff_dispatch -> TASK_ACCEPTED -> TASK_DONE -> receipt_close` chain이 실작업에서 끊기지 않을 것
+- READY/WORKING 오표시가 없을 것
+- 불필요한 `needs_operator` 승격이 없을 것
+- `classification_fallback_detected`가 없을 것
+- stop/restart 후 stale `RUNNING/STOPPING`이 남지 않을 것
+- orphan watcher/session이 없을 것
+- dispatch/completion/receipt close incident가 named event로 surface될 것
+- 반복된 실전 incident가 replay test로 고정되어 재발 시 즉시 드러날 것
+
+synthetic soak는 아래처럼 채택용 보조 게이트로만 남깁니다.
 
 - short smoke:
   `python3 scripts/pipeline_runtime_gate.py --mode experimental synthetic-soak --duration-sec 30 --sample-interval-sec 1 --min-receipts 1 --report report/pipeline_runtime/verification/<date>-synthetic-soak-short.md`
@@ -83,7 +101,7 @@ runtime 채택 게이트 전에는 real repo truth를 건드리지 않는 synthe
 - operator metadata quick gate:
   `python3 scripts/pipeline_runtime_gate.py --project-root <project-root> --mode experimental check-operator-classification --report report/pipeline_runtime/verification/<date>-operator-classification-gate.md`
 
-이 경로의 기준:
+이 보조 게이트 경로의 기준:
 - temp workspace에서 supervisor + watcher + wrapper + receipt/control 전이를 실제로 밟습니다.
 - `fault-check`도 동일하게 synthetic workspace에서 실행하며, 실 repo truth를 직접 오염시키지 않습니다.
 - synthetic soak는 sample loop에 들어가기 전에 `fault-check`와 같은 readiness barrier를 먼저 통과해야 합니다. 기본 gate는 최대 45초 동안 `runtime_state ∈ {RUNNING, DEGRADED}`이면서 attachable lane 하나 이상이 `READY/WORKING`으로 올라오는지 기다립니다.
@@ -91,6 +109,7 @@ runtime 채택 게이트 전에는 real repo truth를 건드리지 않는 synthe
 - report에는 `receipt_count`, `duplicate_dispatch_count`, `control_mismatch_samples`, `control_mismatch_max_streak`, `orphan_session`를 함께 남깁니다.
 - report/check에는 `classification_gate_failures`와 `classification_fallback_detected` 여부도 함께 남깁니다.
 - `control_mismatch_samples`는 transition 시점에 1회 관측될 수 있으므로, 채택 판단은 persistent mismatch(`control_mismatch_max_streak > 1`) 기준으로 봅니다.
+- 현재 실전 로그는 장시간 샘플링보다 상태 전이 이벤트 위주로 남기는 편이 맞습니다. 최소 이벤트는 `handoff_dispatch`, `TASK_ACCEPTED`, `TASK_DONE`, `receipt_close`, `dispatch_stall_detected`, `completion_stall_detected`, `stale_cleanup`, `lane_broken`입니다.
 
 ## 4. 알림 및 모니터링
 
@@ -173,11 +192,17 @@ runtime 채택 게이트 전에는 real repo truth를 건드리지 않는 synthe
 
 - verify lane이 `VERIFY_RUNNING` idle timeout 뒤 `VERIFY_PENDING`으로 복귀했는데 pane이 이미 idle prompt인 경우, same-snapshot guard는 short backoff만 적용하고 이후 재dispatch를 허용해야 합니다.
 - 이런 상황에서 `dispatch_backoff_same_snapshot`만 반복되고 새 dispatch가 다시 일어나지 않으면 stale retry loop로 보고 watcher retry state를 먼저 점검합니다.
-- 새 verify dispatch는 `dispatch_id`, `dispatched_at`, `accept_deadline_at`을 기준으로 wrapper `TASK_ACCEPTED`와 직접 연결해서 보는 편이 맞습니다.
-- verify lane이 busy indicator 없이 idle prompt로 먼저 돌아왔더라도 `TASK_ACCEPTED` deadline이 아직 남아 있으면 pre-accept stall로 확정하지 않습니다. 늦게 오는 accept를 기다리는 구간과 post-accept idle retry를 분리하는 편이 맞습니다.
-- verify lane이 busy indicator 없이 idle prompt로 먼저 돌아왔는데 `TASK_ACCEPTED` 이후에도 current-round `/verify` receipt나 next control output이 still incomplete하면, 5분 full idle timeout까지 기다리기보다 short idle window 뒤 `VERIFY_PENDING`으로 되돌리는 편이 맞습니다.
-- 같은 fingerprint에서 이 short idle retry가 한 번 더 반복되면 runtime은 이를 `dispatch_stall` incident로 승격하고, 추가 자동 재큐잉 대신 `degraded_reason=dispatch_stall`과 lane note `waiting_task_accept_after_dispatch`를 남기는 편이 맞습니다.
-- 이 incident는 supervisor events에 `dispatch_stall_detected`로 기록되고 launcher recent log에도 그대로 보여야 합니다. long soak를 다시 기본 게이트로 돌리기보다, live launcher session에서 이 이벤트가 0회인지와 실제 재발 replay가 막히는지를 우선 확인합니다.
+- 새 verify dispatch는 `dispatch_id`, `dispatched_at`, `accept_deadline_at`을 기준으로 wrapper `DISPATCH_SEEN`, `TASK_ACCEPTED`, `TASK_DONE`를 직접 연결해서 보는 편이 맞습니다.
+- verify lane은 `control=none`이어도 `active_round.dispatch_control_seq`, `job_id`, `dispatch_id`를 가진 round-scoped Codex task hint로 dispatch를 이어갈 수 있습니다. `active_control_seq < 0`만 보고 hint를 inactive로 내려 false `dispatch_stall`을 만들면 안 됩니다.
+- verify lane이 busy indicator 없이 idle prompt로 먼저 돌아왔더라도 `DISPATCH_SEEN`/`TASK_ACCEPTED` deadline이 아직 남아 있으면 pre-accept stall로 확정하지 않습니다. 늦게 오는 seen/accept를 기다리는 구간과 post-accept idle retry를 분리하는 편이 맞습니다.
+- verify lane은 `TASK_ACCEPTED -> TASK_DONE -> current-round /verify receipt + next control -> receipt close` 순서로만 닫는 편이 맞습니다. matching `TASK_DONE` 없이 `/verify`나 control output만 먼저 바뀌면 success close가 아니라 completion wait로 유지합니다.
+- wrapper가 active verify hint를 읽었는데 `control_seq` metadata가 누락되었거나 비정상이면 `DISPATCH_SEEN`을 조용히 빼먹지 말고 `BRIDGE_DIAGNOSTIC(code=active_task_hint_metadata_invalid)`를 남겨 write-side 누락을 바로 드러내는 편이 맞습니다.
+- verify lane이 busy indicator 없이 idle prompt로 먼저 돌아왔는데 `TASK_ACCEPTED` 이후에도 `TASK_DONE`이 done deadline 안에 안 오면 `waiting_task_done_after_accept`으로 보고, `TASK_DONE` 뒤에도 current-round `/verify` receipt나 next control output이 still incomplete하면 `waiting_receipt_close_after_task_done`으로 두는 편이 맞습니다.
+- `DISPATCH_SEEN` 없이 deadline을 넘기면 lane note는 `waiting_dispatch_seen_after_dispatch`, `DISPATCH_SEEN` 뒤에도 `TASK_ACCEPTED` 없이 deadline을 넘기면 lane note는 `waiting_task_accept_after_dispatch`로 남기는 편이 맞습니다.
+- 같은 fingerprint에서 이 pre-accept stall이나 short idle retry가 한 번 더 반복되면 runtime은 이를 `dispatch_stall` incident로 승격하고, 추가 자동 재큐잉 대신 `degraded_reason=dispatch_stall`과 해당 lane note를 남기는 편이 맞습니다.
+- 같은 fingerprint에서 post-accept completion wait가 한 번 더 반복되면 runtime은 이를 `post_accept_completion_stall` incident로 승격하고, 추가 자동 재큐잉 대신 `degraded_reason=post_accept_completion_stall`과 lane note(`waiting_task_done_after_accept` 또는 `waiting_receipt_close_after_task_done`)를 남기는 편이 맞습니다.
+- 이 incident는 supervisor events에 `dispatch_stall_detected` 또는 `completion_stall_detected`로 기록되고 launcher recent log에도 그대로 보여야 합니다. long soak를 다시 기본 게이트로 돌리기보다, live launcher session에서 이 이벤트가 0회인지와 실제 재발 replay가 막히는지를 우선 확인합니다.
+- runtime이 `STOPPED`로 내려가거나 active round가 더 새 `/work`로 넘어가면 old `dispatch_stall`, old operator/autonomy gate, 이전 round artifact를 가리키는 degraded reason은 current truth에서 같이 비워야 합니다.
 - 재dispatch 전 pane prompt 입력줄에 남은 미전송 draft text를 먼저 비워서, stray input이 새 verify/control prompt와 이어 붙지 않게 유지해야 합니다.
 
 ## 6.5 corrupt state

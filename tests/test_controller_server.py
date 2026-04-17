@@ -113,6 +113,11 @@ class ControllerServerLaunchGateTests(unittest.TestCase):
         self.assertIn("openLogModal(agent)", html)
         self.assertIn("log-modal", html)
         self.assertIn("log-modal-body", html)
+        self.assertIn("const POLL_MS    = 1000;", html)
+        self.assertIn("const ACTION_REPOLL_MS = 300;", html)
+        self.assertIn("const LOG_REFRESH_MS = 1000;", html)
+        self.assertIn("let _pollInFlight = false;", html)
+        self.assertIn("let _logRefreshInFlight = false;", html)
         self.assertIn("width: min(1360px, 98vw)", html)
         self.assertIn("width: 100%; min-width: 0;", html)
         self.assertIn("flex-wrap: wrap", html)
@@ -213,6 +218,20 @@ class ControllerServerLaunchGateTests(unittest.TestCase):
             controller_server.SESSION_NAME,
             "Claude",
             lines=77,
+        )
+
+    def test_runtime_capture_tail_normalizes_adjacent_pasted_content_markers(self) -> None:
+        with mock.patch.object(
+            controller_server,
+            "backend_runtime_capture_tail",
+            return_value="line[Pasted Content 100 chars][Pasted Content 200 chars]",
+        ):
+            data, status = controller_server.runtime_capture_tail(lane="Codex", lines=40)
+
+        self.assertEqual(int(status), 200)
+        self.assertEqual(
+            data["text"],
+            "line\n[Pasted Content 100 chars]\n[Pasted Content 200 chars]",
         )
 
     def test_runtime_send_input_requires_lane(self) -> None:

@@ -252,6 +252,280 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(current_run["status_path"], ".pipeline/runs/20260415T010203Z-p123/status.json")
             self.assertEqual(current_run["events_path"], ".pipeline/runs/20260415T010203Z-p123/events.jsonl")
 
+    def test_write_status_clears_stale_degraded_reason_after_runtime_has_stopped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "claude_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: 18\n",
+                encoding="utf-8",
+            )
+            (state_dir / "turn_state.json").write_text(
+                json.dumps(
+                    {
+                        "state": "CODEX_VERIFY",
+                        "entered_at": 1.0,
+                        "active_control_file": ".pipeline/claude_handoff.md",
+                        "active_control_seq": 18,
+                        "verify_job_id": "job-stop-2",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "job-stop-2.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-stop-2",
+                        "status": "VERIFY_PENDING",
+                        "artifact_path": "work/4/17/work-note.md",
+                        "artifact_hash": "artifact-hash-stop-2",
+                        "round": 2,
+                        "updated_at": 120.0,
+                        "degraded_reason": "dispatch_stall",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = False
+            supervisor.enabled_lanes = set()
+            supervisor.runtime_lane_configs = []
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": False, "pid": None}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=False),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "OFF", "attachable": False, "pid": None, "note": "stopped"},
+                            {"name": "Codex", "state": "OFF", "attachable": False, "pid": None, "note": "stopped"},
+                        ],
+                        {"Claude": {}, "Codex": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["runtime_state"], "STOPPED")
+            self.assertEqual(status["degraded_reason"], "")
+            self.assertEqual(status["degraded_reasons"], [])
+            self.assertEqual(status["control"]["active_control_status"], "none")
+            self.assertIsNone(status["active_round"])
+
+    def test_write_status_activates_codex_task_hint_for_verify_round_without_control_slot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (state_dir / "turn_state.json").write_text(
+                json.dumps(
+                    {
+                        "state": "CODEX_VERIFY",
+                        "entered_at": 1.0,
+                        "active_control_file": "",
+                        "active_control_seq": -1,
+                        "verify_job_id": "job-verify-258",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "job-verify-258.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-verify-258",
+                        "status": "VERIFY_RUNNING",
+                        "artifact_path": "work/4/17/current.md",
+                        "artifact_hash": "artifact-hash-258",
+                        "round": 1,
+                        "updated_at": 100.0,
+                        "dispatch_id": "dispatch-258",
+                        "dispatch_control_seq": 258,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                            {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            codex_hint = json.loads(supervisor._task_hint_path("Codex").read_text(encoding="utf-8"))
+            claude_hint = json.loads(supervisor._task_hint_path("Claude").read_text(encoding="utf-8"))
+            self.assertTrue(codex_hint["active"])
+            self.assertEqual(codex_hint["job_id"], "job-verify-258")
+            self.assertEqual(codex_hint["dispatch_id"], "dispatch-258")
+            self.assertEqual(codex_hint["control_seq"], 258)
+            self.assertFalse(claude_hint["active"])
+            self.assertEqual(status["active_round"]["job_id"], "job-verify-258")
+            self.assertEqual(status["active_round"]["dispatch_control_seq"], 258)
+
+    def test_write_status_clears_stale_autonomy_when_active_round_targets_newer_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "operator_request.md").write_text(
+                "\n".join(
+                    [
+                        "STATUS: needs_operator",
+                        "CONTROL_SEQ: 33",
+                        "REASON_CODE: slice_ambiguity",
+                        "OPERATOR_POLICY: gate_24h",
+                        "DECISION_CLASS: operator_only",
+                        "DECISION_REQUIRED: choose exact next slice",
+                        "BASED_ON_WORK: work/4/17/older.md",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (state_dir / "turn_state.json").write_text(
+                json.dumps(
+                    {
+                        "state": "CODEX_VERIFY",
+                        "entered_at": 1.0,
+                        "active_control_file": ".pipeline/operator_request.md",
+                        "active_control_seq": 33,
+                        "verify_job_id": "job-newer-work",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "job-newer-work.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-newer-work",
+                        "status": "VERIFY_RUNNING",
+                        "artifact_path": "work/4/17/newer.md",
+                        "artifact_hash": "artifact-newer",
+                        "round": 1,
+                        "updated_at": 100.0,
+                        "dispatch_id": "dispatch-newer",
+                        "dispatch_control_seq": 44,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                            {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["active_round"]["artifact_path"], "work/4/17/newer.md")
+            self.assertEqual(status["autonomy"]["mode"], "normal")
+            self.assertEqual(status["autonomy"]["based_on_work"], "")
+            self.assertEqual(status["autonomy"]["reason_code"], "")
+
+    def test_write_status_ignores_dispatch_stall_from_non_active_round(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (state_dir / "job-old.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-old",
+                        "status": "VERIFY_PENDING",
+                        "artifact_path": "work/4/17/old.md",
+                        "artifact_hash": "old-hash",
+                        "round": 1,
+                        "updated_at": 100.0,
+                        "dispatch_stall_detected_at": 100.0,
+                        "dispatch_stall_fingerprint": "old-fingerprint",
+                        "dispatch_stall_count": 2,
+                        "dispatch_stall_stage": "dispatch_seen_missing",
+                        "degraded_reason": "dispatch_stall",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "job-new.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-new",
+                        "status": "VERIFY_RUNNING",
+                        "artifact_path": "work/4/17/new.md",
+                        "artifact_hash": "new-hash",
+                        "round": 2,
+                        "updated_at": 200.0,
+                        "dispatch_id": "dispatch-new",
+                        "dispatch_control_seq": 52,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [{"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""}],
+                        {"Codex": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["active_round"]["job_id"], "job-new")
+            self.assertEqual(status["degraded_reason"], "")
+            self.assertNotIn("dispatch_stall", list(status.get("degraded_reasons") or []))
+
     def test_manifest_mismatch_blocks_receipt_and_marks_degraded(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -496,6 +770,14 @@ class RuntimeSupervisorTest(unittest.TestCase):
             append_wrapper_event(
                 wrapper_dir,
                 "Codex",
+                "DISPATCH_SEEN",
+                {"job_id": "job-42", "dispatch_id": "dispatch-42", "control_seq": 19, "attempt": 1},
+                source="wrapper",
+                derived_from="task_hint",
+            )
+            append_wrapper_event(
+                wrapper_dir,
+                "Codex",
                 "TASK_ACCEPTED",
                 {"job_id": "job-42", "dispatch_id": "dispatch-42", "control_seq": 19, "attempt": 1},
                 source="wrapper",
@@ -503,12 +785,48 @@ class RuntimeSupervisorTest(unittest.TestCase):
             )
             models = build_lane_read_models(wrapper_dir, heartbeat_timeout_sec=3600.0, now_ts=1.0)
             self.assertEqual(models["Codex"]["state"], "WORKING")
+            self.assertEqual(models["Codex"]["seen_task"]["job_id"], "job-42")
             self.assertEqual(models["Codex"]["accepted_task"]["job_id"], "job-42")
             self.assertEqual(models["Codex"]["accepted_task"]["dispatch_id"], "dispatch-42")
 
             stale_models = build_lane_read_models(wrapper_dir, heartbeat_timeout_sec=0.0, now_ts=9999999999.0)
             self.assertEqual(stale_models["Codex"]["state"], "BROKEN")
             self.assertEqual(stale_models["Codex"]["note"], "heartbeat_timeout")
+
+    def test_build_lane_read_models_tracks_task_done_dispatch_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wrapper_dir = Path(tmp)
+            append_wrapper_event(
+                wrapper_dir,
+                "Codex",
+                "TASK_ACCEPTED",
+                {"job_id": "job-42", "dispatch_id": "dispatch-42", "control_seq": 19, "attempt": 1},
+                source="wrapper",
+                derived_from="vendor_output",
+            )
+            append_wrapper_event(
+                wrapper_dir,
+                "Codex",
+                "TASK_DONE",
+                {
+                    "job_id": "job-42",
+                    "dispatch_id": "dispatch-42",
+                    "control_seq": 19,
+                    "reason": "duplicate_handoff",
+                },
+                source="wrapper",
+                derived_from="vendor_output",
+            )
+
+            models = build_lane_read_models(wrapper_dir, heartbeat_timeout_sec=3600.0, now_ts=1.0)
+
+            self.assertEqual(models["Codex"]["state"], "READY")
+            self.assertIsNone(models["Codex"]["accepted_task"])
+            self.assertEqual(models["Codex"]["done_task"]["job_id"], "job-42")
+            self.assertEqual(models["Codex"]["done_task"]["dispatch_id"], "dispatch-42")
+            self.assertEqual(models["Codex"]["done_task"]["reason"], "duplicate_handoff")
+            self.assertTrue(models["Codex"]["done_at"])
+            self.assertEqual(models["Codex"]["note"], "waiting_next_control")
 
     def test_active_verify_round_keeps_codex_surface_working_even_if_wrapper_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -569,6 +887,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
                         "dispatch_stall_fingerprint": "stall-fingerprint-1",
                         "dispatch_stall_count": 2,
                         "dispatch_stall_detected_at": 210.0,
+                        "dispatch_stall_stage": "task_accept_missing",
                         "degraded_reason": "dispatch_stall",
                         "lane_note": "waiting_task_accept_after_dispatch",
                     }
@@ -644,11 +963,229 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertIn("dispatch_stall", list(status.get("degraded_reasons") or []))
             self.assertEqual(status["active_round"]["state"], "VERIFY_PENDING")
             self.assertEqual(status["active_round"]["note"], "waiting_task_accept_after_dispatch")
+            self.assertEqual(status["active_round"]["dispatch_stage"], "task_accept_missing")
             self.assertEqual(codex["state"], "READY")
             self.assertEqual(codex["note"], "waiting_task_accept_after_dispatch")
             self.assertEqual(len(stall_events), 1)
             self.assertEqual(stall_events[0]["payload"]["action"], "degraded")
             self.assertEqual(stall_events[0]["payload"]["lane"], "Codex")
+            self.assertEqual(stall_events[0]["payload"]["stage"], "task_accept_missing")
+
+    def test_write_status_ignores_old_legacy_dispatch_stall_from_previous_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            state_dir = root / ".pipeline" / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            stale_state = state_dir / "job-old-stall.json"
+            stale_state.write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-old-stall",
+                        "status": "VERIFY_PENDING",
+                        "artifact_path": "work/4/17/stale-work.md",
+                        "artifact_hash": "artifact-hash-old-stall",
+                        "round": 1,
+                        "updated_at": 100.0,
+                        "dispatch_stall_fingerprint": "legacy-stall",
+                        "dispatch_stall_count": 2,
+                        "dispatch_stall_detected_at": 110.0,
+                        "degraded_reason": "dispatch_stall",
+                        "lane_note": "waiting_task_accept_after_dispatch",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            old_ts = time.time() - 60.0
+            os.utime(stale_state, (old_ts, old_ts))
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": "prompt_visible"},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": "prompt_visible"},
+                            {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": "prompt_visible"},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["runtime_state"], "RUNNING")
+            self.assertEqual(status["degraded_reason"], "")
+            self.assertEqual(status["degraded_reasons"], [])
+
+    def test_write_status_keeps_current_run_dispatch_stall_even_when_state_file_is_old(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            state_dir = root / ".pipeline" / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            current_state = state_dir / "job-current-stall.json"
+            current_state.write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-current-stall",
+                        "run_id": supervisor.run_id,
+                        "status": "VERIFY_PENDING",
+                        "artifact_path": "work/4/17/current-work.md",
+                        "artifact_hash": "artifact-hash-current-stall",
+                        "round": 1,
+                        "updated_at": 100.0,
+                        "dispatch_stall_fingerprint": "current-stall",
+                        "dispatch_stall_count": 2,
+                        "dispatch_stall_detected_at": 110.0,
+                        "degraded_reason": "dispatch_stall",
+                        "lane_note": "waiting_task_accept_after_dispatch",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            old_ts = time.time() - 60.0
+            os.utime(current_state, (old_ts, old_ts))
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": "prompt_visible"},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": "prompt_visible"},
+                            {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": "prompt_visible"},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["runtime_state"], "DEGRADED")
+            self.assertEqual(status["degraded_reason"], "dispatch_stall")
+            self.assertIn("dispatch_stall", list(status.get("degraded_reasons") or []))
+
+    def test_write_status_surfaces_completion_stall_degraded_reason_and_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            state_dir = root / ".pipeline" / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (state_dir / "job-completion-stall.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-completion-stall",
+                        "status": "VERIFY_PENDING",
+                        "artifact_path": "work/4/17/work-note.md",
+                        "artifact_hash": "artifact-hash-completion-stall",
+                        "round": 4,
+                        "updated_at": 220.0,
+                        "dispatch_id": "dispatch-44",
+                        "accepted_dispatch_id": "dispatch-44",
+                        "done_dispatch_id": "",
+                        "completion_stall_fingerprint": "completion-fingerprint-1",
+                        "completion_stall_count": 2,
+                        "completion_stall_detected_at": 225.0,
+                        "completion_stall_stage": "task_done_missing",
+                        "degraded_reason": "post_accept_completion_stall",
+                        "lane_note": "waiting_task_done_after_accept",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    side_effect=lambda lane_name: {
+                        "name": lane_name,
+                        "alive": True,
+                        "pid": {"Claude": 11, "Codex": 12, "Gemini": 13}[lane_name],
+                        "attachable": True,
+                        "pane_id": "%2",
+                    },
+                ),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "capture_tail",
+                    side_effect=lambda lane_name, lines=80: (
+                        "› Use /skills to list available skills\n\n"
+                        "gpt-5.4 xhigh fast · ~/code/projectH\n"
+                        if lane_name == "Codex"
+                        else ""
+                    ),
+                ),
+                mock.patch(
+                    "pipeline_runtime.supervisor.build_lane_read_models",
+                    return_value={
+                        "Codex": {
+                            "state": "READY",
+                            "note": "prompt_visible",
+                            "last_event_at": "2026-04-17T03:30:00Z",
+                            "last_heartbeat_at": "2026-04-17T03:30:05Z",
+                        },
+                        "Claude": {
+                            "state": "READY",
+                            "note": "prompt_visible",
+                            "last_event_at": "2026-04-17T03:30:00Z",
+                            "last_heartbeat_at": "2026-04-17T03:30:05Z",
+                        },
+                        "Gemini": {
+                            "state": "READY",
+                            "note": "prompt_visible",
+                            "last_event_at": "2026-04-17T03:30:00Z",
+                            "last_heartbeat_at": "2026-04-17T03:30:05Z",
+                        },
+                    },
+                ),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+                supervisor._record_status_events(status)
+
+            codex = next(lane for lane in status["lanes"] if lane["name"] == "Codex")
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            stall_events = [event for event in events if event.get("event_type") == "completion_stall_detected"]
+
+            self.assertEqual(status["runtime_state"], "DEGRADED")
+            self.assertEqual(status["degraded_reason"], "post_accept_completion_stall")
+            self.assertIn("post_accept_completion_stall", list(status.get("degraded_reasons") or []))
+            self.assertEqual(status["active_round"]["state"], "VERIFY_PENDING")
+            self.assertEqual(status["active_round"]["note"], "waiting_task_done_after_accept")
+            self.assertEqual(status["active_round"]["completion_stage"], "task_done_missing")
+            self.assertEqual(codex["state"], "READY")
+            self.assertEqual(codex["note"], "waiting_task_done_after_accept")
+            self.assertEqual(len(stall_events), 1)
+            self.assertEqual(stall_events[0]["payload"]["action"], "degraded")
+            self.assertEqual(stall_events[0]["payload"]["lane"], "Codex")
+            self.assertEqual(stall_events[0]["payload"]["stage"], "task_done_missing")
 
     def test_idle_verify_round_keeps_codex_ready_even_if_round_is_running(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -799,6 +1336,89 @@ class RuntimeSupervisorTest(unittest.TestCase):
                             "note": "prompt_visible",
                             "last_event_at": "2026-04-16T07:02:45.265662Z",
                             "last_heartbeat_at": "2026-04-16T07:02:51.125129Z",
+                        }
+                    },
+                    active_lane="Claude",
+                    active_round=None,
+                    turn_state={"state": "CLAUDE_ACTIVE"},
+                    control={"active_control_status": "implement"},
+                )
+            claude = next(lane for lane in lanes if lane["name"] == "Claude")
+            self.assertEqual(claude["state"], "WORKING")
+            self.assertEqual(claude["note"], "implement")
+
+    def test_prompt_visible_implement_owner_downgrades_claude_from_working_to_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    return_value={"alive": True, "pid": 31337, "attachable": True, "pane_id": "%1"},
+                ),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "capture_tail",
+                    side_effect=lambda lane_name, lines=80: (
+                        "How is Claude doing this session? (optional)\n"
+                        "❯ \n"
+                        "  ⏵⏵ bypass permissions on (shift+tab to cycle)\n"
+                        if lane_name == "Claude"
+                        else ""
+                    ),
+                ),
+            ):
+                lanes, _models = supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Claude": {
+                            "state": "WORKING",
+                            "note": "implement",
+                            "last_event_at": "2026-04-17T08:00:00.000000Z",
+                            "last_heartbeat_at": "2026-04-17T08:00:01.000000Z",
+                        }
+                    },
+                    active_lane="Claude",
+                    active_round=None,
+                    turn_state={"state": "CLAUDE_ACTIVE"},
+                    control={"active_control_status": "implement"},
+                )
+            claude = next(lane for lane in lanes if lane["name"] == "Claude")
+            self.assertEqual(claude["state"], "READY")
+            self.assertEqual(claude["note"], "prompt_visible")
+
+    def test_busy_tail_wins_over_prompt_footer_for_active_claude_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    return_value={"alive": True, "pid": 31337, "attachable": True, "pane_id": "%1"},
+                ),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "capture_tail",
+                    side_effect=lambda lane_name, lines=80: (
+                        "● Bash(npx playwright test ...)\n"
+                        "* Discombobulating… (58s · ↓ 723 tokens · thinking with high effort)\n"
+                        "❯ \n"
+                        "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt\n"
+                        if lane_name == "Claude"
+                        else ""
+                    ),
+                ),
+            ):
+                lanes, _models = supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Claude": {
+                            "state": "READY",
+                            "note": "prompt_visible",
+                            "last_event_at": "2026-04-17T08:20:00.000000Z",
+                            "last_heartbeat_at": "2026-04-17T08:20:01.000000Z",
                         }
                     },
                     active_lane="Claude",
@@ -985,6 +1605,46 @@ class RuntimeSupervisorTest(unittest.TestCase):
             codex = next(lane for lane in lanes if lane["name"] == "Codex")
             self.assertEqual(codex["state"], "WORKING")
             self.assertEqual(codex["note"], "followup")
+
+    def test_codex_tail_activity_promotes_stale_ready_surface_to_working(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    return_value={"alive": True, "pid": 5252, "attachable": True, "pane_id": "%5"},
+                ),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "capture_tail",
+                    side_effect=lambda lane_name, lines=80: (
+                        "• Working (18s • esc to interrupt)\n"
+                        "tab to queue message\n"
+                        "55% context left\n"
+                        if lane_name == "Codex"
+                        else ""
+                    ),
+                ),
+            ):
+                lanes, _models = supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Codex": {
+                            "state": "READY",
+                            "note": "prompt_visible",
+                            "last_event_at": "2026-04-17T08:10:00.000000Z",
+                            "last_heartbeat_at": "2026-04-17T08:10:01.000000Z",
+                        }
+                    },
+                    active_lane="",
+                    active_round=None,
+                    turn_state={"state": "IDLE"},
+                )
+            codex = next(lane for lane in lanes if lane["name"] == "Codex")
+            self.assertEqual(codex["state"], "WORKING")
+            self.assertEqual(codex["note"], "working")
 
     def test_active_verify_round_falls_back_to_codex_when_turn_state_is_idle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1553,6 +2213,10 @@ class RuntimeSupervisorTest(unittest.TestCase):
             spawn_watcher.assert_called()
             self.assertIn(
                 "PIPELINE_RUNTIME_DISABLE_EXPORTER=1",
+                str(spawn_watcher.call_args.kwargs.get("shell_command") or ""),
+            )
+            self.assertIn(
+                f"PIPELINE_RUNTIME_RUN_ID={supervisor.run_id}",
                 str(spawn_watcher.call_args.kwargs.get("shell_command") or ""),
             )
             experimental_pid = root / ".pipeline" / "experimental.pid"

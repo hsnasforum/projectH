@@ -56,7 +56,7 @@ _BUSY_TAIL_MARKERS = (
 )
 _READY_TAIL_MARKERS = {
     "Claude": ("❯", "claude code", "bypass permissions"),
-    "Codex": ("›", "openai codex"),
+    "Codex": ("›", "openai codex", "tab to queue message", "context left"),
     "Gemini": ("type your message", "gemini cli", "workspace"),
 }
 
@@ -99,6 +99,7 @@ class RuntimeSupervisor:
             for name in list(self.runtime_adapter.get("enabled_lanes") or [])
             if str(name).strip()
         ] or list(RUNTIME_LANE_ORDER)
+        self.started_at = time.time()
         self.role_owners = dict(self.runtime_adapter.get("role_owners") or {})
         self.runtime_state = "STARTING"
         self.degraded_reason = ""
@@ -111,6 +112,7 @@ class RuntimeSupervisor:
         self._last_stale_operator_control_key = ""
         self._last_operator_gate_key = ""
         self._last_dispatch_stall_key = ""
+        self._last_completion_stall_key = ""
         self._last_autonomy_key = ""
         self._last_lane_states: dict[str, str] = {}
         self._last_degraded_reason = ""
@@ -121,6 +123,7 @@ class RuntimeSupervisor:
         self._current_stale_operator_control_marker: dict[str, Any] | None = None
         self._current_operator_gate_marker: dict[str, Any] | None = None
         self._current_dispatch_stall_marker: dict[str, Any] | None = None
+        self._current_completion_stall_marker: dict[str, Any] | None = None
         self._current_autonomy: dict[str, Any] | None = None
 
     def _make_run_id(self) -> str:
@@ -560,22 +563,54 @@ class RuntimeSupervisor:
             "VERIFY_RUNNING": "VERIFYING",
             "VERIFY_DONE": "CLOSED" if has_receipt else "RECEIPT_PENDING",
         }.get(status, status or "IDLE")
+        dispatch_id = str(latest_job.get("dispatch_id") or "")
+        accepted_dispatch_id = str(latest_job.get("accepted_dispatch_id") or "")
+        done_dispatch_id = str(latest_job.get("done_dispatch_id") or "")
+        completion_stage = str(latest_job.get("completion_stall_stage") or "")
+        if not completion_stage and dispatch_id:
+            if done_dispatch_id == dispatch_id:
+                completion_stage = "receipt_close_pending"
+            elif accepted_dispatch_id == dispatch_id:
+                completion_stage = "task_done_pending"
         return {
             "job_id": job_id,
             "round": round_number,
             "state": round_state,
             "artifact_path": str(latest_job.get("artifact_path") or ""),
             "status": status,
-            "dispatch_id": str(latest_job.get("dispatch_id") or ""),
+            "dispatch_id": dispatch_id,
+            "dispatch_control_seq": int(latest_job.get("dispatch_control_seq") or -1),
+            "dispatch_stage": str(latest_job.get("dispatch_stall_stage") or ""),
+            "completion_stage": completion_stage,
             "note": str(latest_job.get("lane_note") or ""),
             "degraded_reason": str(latest_job.get("degraded_reason") or ""),
         }
 
-    def _dispatch_stall_marker(self, job_states: list[dict[str, Any]]) -> dict[str, Any] | None:
+    def _job_matches_active_round(
+        self,
+        job_state: dict[str, Any],
+        active_round: dict[str, Any] | None,
+    ) -> bool:
+        if not active_round:
+            return False
+        return (
+            str(job_state.get("job_id") or "") == str(active_round.get("job_id") or "")
+            and int(job_state.get("round") or 0) == int(active_round.get("round") or 0)
+        )
+
+    def _dispatch_stall_marker(
+        self,
+        job_states: list[dict[str, Any]],
+        *,
+        active_round: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if not active_round:
+            return None
         candidates = [
             job
             for job in job_states
             if float(job.get("dispatch_stall_detected_at") or 0.0) > 0.0
+            and self._job_matches_active_round(job, active_round)
         ]
         if not candidates:
             return None
@@ -597,9 +632,51 @@ class RuntimeSupervisor:
             "fingerprint": str(latest_job.get("dispatch_stall_fingerprint") or ""),
             "attempt": int(latest_job.get("dispatch_stall_count") or 0),
             "detected_at": iso_utc(detected_at),
+            "stage": str(latest_job.get("dispatch_stall_stage") or ""),
             "reason": str(latest_job.get("lane_note") or "waiting_task_accept_after_dispatch"),
             "degraded_reason": degraded_reason,
             "action": "degraded" if degraded_reason == "dispatch_stall" else "requeue",
+            "lane": str(self.role_owners.get("verify") or "Codex"),
+        }
+
+    def _completion_stall_marker(
+        self,
+        job_states: list[dict[str, Any]],
+        *,
+        active_round: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if not active_round:
+            return None
+        candidates = [
+            job
+            for job in job_states
+            if float(job.get("completion_stall_detected_at") or 0.0) > 0.0
+            and self._job_matches_active_round(job, active_round)
+        ]
+        if not candidates:
+            return None
+        latest_job = max(
+            candidates,
+            key=lambda data: (
+                float(data.get("completion_stall_detected_at") or 0.0),
+                float(data.get("updated_at") or 0.0),
+                str(data.get("job_id") or ""),
+            ),
+        )
+        detected_at = float(latest_job.get("completion_stall_detected_at") or 0.0)
+        if detected_at <= 0.0:
+            return None
+        degraded_reason = str(latest_job.get("degraded_reason") or "")
+        return {
+            "job_id": str(latest_job.get("job_id") or ""),
+            "round": int(latest_job.get("round") or 0),
+            "fingerprint": str(latest_job.get("completion_stall_fingerprint") or ""),
+            "attempt": int(latest_job.get("completion_stall_count") or 0),
+            "detected_at": iso_utc(detected_at),
+            "stage": str(latest_job.get("completion_stall_stage") or ""),
+            "reason": str(latest_job.get("lane_note") or "waiting_task_done_after_accept"),
+            "degraded_reason": degraded_reason,
+            "action": "degraded" if degraded_reason == "post_accept_completion_stall" else "requeue",
             "lane": str(self.role_owners.get("verify") or "Codex"),
         }
 
@@ -625,10 +702,24 @@ class RuntimeSupervisor:
         self.task_hints_dir.mkdir(parents=True, exist_ok=True)
         active_job_id = str((active_round or {}).get("job_id") or "")
         active_dispatch_id = str((active_round or {}).get("dispatch_id") or "")
+        active_dispatch_control_seq = int((active_round or {}).get("dispatch_control_seq") or -1)
         active_control_seq = int(control.get("active_control_seq") or -1)
         implement_owner = str(self.role_owners.get("implement") or "Claude")
+        verify_owner = str(self.role_owners.get("verify") or "Codex")
         for lane_name in RUNTIME_LANE_ORDER:
-            active = lane_name == active_lane and active_control_seq >= 0
+            active = lane_name == active_lane and (
+                (
+                    lane_name == verify_owner
+                    and bool(active_job_id)
+                    and bool(active_dispatch_id)
+                )
+                or active_control_seq >= 0
+            )
+            hint_control_seq = (
+                active_dispatch_control_seq
+                if active and lane_name == verify_owner and bool(active_dispatch_id)
+                else active_control_seq
+            )
             inactive_reason = ""
             if not active:
                 if duplicate_control is not None and lane_name == implement_owner:
@@ -640,7 +731,7 @@ class RuntimeSupervisor:
                 "active": active,
                 "job_id": active_job_id if active else "",
                 "dispatch_id": active_dispatch_id if active else "",
-                "control_seq": active_control_seq if active else -1,
+                "control_seq": hint_control_seq if active else -1,
                 "attempt": self._lane_restart_counts.get(lane_name, 0) + 1,
                 "inactive_reason": inactive_reason,
                 "updated_at": iso_utc(),
@@ -702,6 +793,18 @@ class RuntimeSupervisor:
             return False
         return any(marker.lower() in lower for marker in _READY_TAIL_MARKERS.get(lane_name, ()))
 
+    def _tail_surface_state(self, lane_name: str, text: str) -> str:
+        lines = [line.strip().lower() for line in str(text or "").splitlines() if line.strip()]
+        if not lines:
+            return ""
+        trailing_lines = lines[-12:]
+        ready_markers = tuple(marker.lower() for marker in _READY_TAIL_MARKERS.get(lane_name, ()))
+        if any(any(marker in line for marker in _BUSY_TAIL_MARKERS) for line in trailing_lines):
+            return "WORKING"
+        if any(any(marker in line for marker in ready_markers) for line in trailing_lines):
+            return "READY"
+        return ""
+
     def _build_lane_statuses(
         self,
         *,
@@ -761,8 +864,8 @@ class RuntimeSupervisor:
             else:
                 model_state = str(model.get("state") or "")
                 active_round_note = str((active_round or {}).get("note") or "")
-                implement_busy = False
-                active_lane_tail = ""
+                tail_text = ""
+                tail_surface = ""
                 surface_working = (
                     model_state in {"READY", "WORKING"}
                     and self._lane_should_surface_working(
@@ -772,34 +875,37 @@ class RuntimeSupervisor:
                         turn_state=turn_state,
                     )
                 )
+                should_capture_tail = bool(health.get("attachable")) and (
+                    model_state in {"READY", "WORKING"}
+                    or lane_name == active_lane
+                    or (
+                        duplicate_control is None
+                        and lane_name == implement_owner
+                        and str(control.get("active_control_status") or "") == "implement"
+                    )
+                )
+                if should_capture_tail:
+                    try:
+                        tail_text = self.adapter.capture_tail(lane_name, lines=80)
+                    except Exception:
+                        tail_text = ""
+                    tail_surface = self._tail_surface_state(lane_name, tail_text)
                 if (
                     duplicate_control is None
                     and lane_name == implement_owner
                     and str(control.get("active_control_status") or "") == "implement"
-                    and model_state in {"READY", "WORKING"}
+                    and tail_surface == "WORKING"
                 ):
-                    try:
-                        implement_busy = self._tail_has_busy_indicator(
-                            self.adapter.capture_tail(lane_name, lines=80)
-                        )
-                    except Exception:
-                        implement_busy = False
-                elif surface_working and lane_name == active_lane:
-                    try:
-                        active_lane_tail = self.adapter.capture_tail(lane_name, lines=80)
-                    except Exception:
-                        active_lane_tail = ""
-                if implement_busy:
                     state = "WORKING"
                     if note in {"", "prompt_visible"}:
                         note = "implement"
-                elif surface_working and self._tail_has_ready_indicator(lane_name, active_lane_tail) and not self._tail_has_busy_indicator(active_lane_tail):
+                elif surface_working and tail_surface == "READY":
                     state = "READY"
                     if lane_name == str(self.role_owners.get("verify") or "Codex") and active_round_note:
                         note = active_round_note
                     elif lane_name == str(self.role_owners.get("verify") or "Codex"):
                         note = str((active_round or {}).get("state") or "").lower() or "prompt_visible"
-                    elif note in {"", "prompt_visible"}:
+                    elif note in {"", "prompt_visible", "implement"}:
                         note = "prompt_visible"
                 elif surface_working:
                     state = "WORKING"
@@ -813,6 +919,20 @@ class RuntimeSupervisor:
                             note = "followup"
                         else:
                             note = str((active_round or {}).get("state") or "").lower() or "active_round"
+                elif model_state in {"READY", "WORKING"} and tail_surface and tail_surface != model_state:
+                    state = tail_surface
+                    if tail_surface == "READY":
+                        if note in {"", "prompt_visible"} or model_state == "WORKING":
+                            note = "prompt_visible"
+                    elif note in {"", "prompt_visible"}:
+                        if lane_name == implement_owner and str(control.get("active_control_status") or "") == "implement":
+                            note = "implement"
+                        elif lane_name == str(self.role_owners.get("verify") or "Codex") and active_round_note:
+                            note = active_round_note
+                        elif lane_name == str(self.role_owners.get("verify") or "Codex") and active_round:
+                            note = str((active_round or {}).get("state") or "").lower() or "working"
+                        else:
+                            note = "working"
                 elif model_state in {"READY", "WORKING", "BROKEN"}:
                     state = model_state
                 elif model_state == "BOOTING" or not model_state:
@@ -958,7 +1078,11 @@ class RuntimeSupervisor:
         turn_state = read_json(self.base_dir / "state" / "turn_state.json")
         control_slots = parse_control_slots(self.base_dir)
         active_control = dict(control_slots.get("active") or {})
-        job_states = load_job_states(self.base_dir / "state")
+        job_states = load_job_states(
+            self.base_dir / "state",
+            run_id=self.run_id,
+            legacy_not_before=self.started_at - 5.0,
+        )
         wrapper_models = build_lane_read_models(self.wrapper_events_dir)
         active_round_preview = self._build_active_round(job_states, latest_receipt(self.receipts_dir))
         stale_operator_control = self._stale_operator_control_marker(active_control, job_states, turn_state)
@@ -980,8 +1104,6 @@ class RuntimeSupervisor:
             active_control=effective_control or None,
         )
         active_round = self._build_active_round(job_states, last_receipt)
-        dispatch_stall_marker = self._dispatch_stall_marker(job_states)
-        self._current_dispatch_stall_marker = dispatch_stall_marker
         if stale_operator_control is not None or operator_gate is not None:
             control_block = {
                 "active_control_file": "",
@@ -1062,9 +1184,17 @@ class RuntimeSupervisor:
             for lane_cfg in lane_configs
             if bool(lane_cfg.get("enabled", str(lane_cfg.get("name") or "") in self.enabled_lanes))
         ]
+        runtime_inactive = (
+            not self._runtime_started
+            and not session_alive
+            and not watcher.get("alive")
+            and all(str(lane.get("state") or "") == "OFF" for lane in lanes)
+        )
 
         degraded_reasons = [item for item in [self._launch_failed_reason, receipt_degraded] if item]
         for job_state in job_states:
+            if active_round and not self._job_matches_active_round(job_state, active_round):
+                continue
             reason = str(job_state.get("degraded_reason") or "").strip()
             if reason:
                 degraded_reasons.append(reason)
@@ -1079,6 +1209,8 @@ class RuntimeSupervisor:
         enabled_lanes = [lane for lane in lanes if str(lane.get("state") or "") != "OFF"]
         if self._runtime_started and not self._stop_requested and not session_alive and configured_enabled_lanes:
             degraded_reasons.append("session_missing")
+        if runtime_inactive and not self._launch_failed_reason:
+            degraded_reasons = []
         self.degraded_reasons = list(dict.fromkeys(item for item in degraded_reasons if item))
         self.degraded_reason = self.degraded_reasons[0] if self.degraded_reasons else ""
 
@@ -1091,6 +1223,8 @@ class RuntimeSupervisor:
             self.runtime_state = "STOPPING"
         elif self._launch_failed_reason:
             self.runtime_state = "BROKEN"
+        elif runtime_inactive:
+            self.runtime_state = "STOPPED"
         elif self.degraded_reason:
             self.runtime_state = "DEGRADED"
         elif not session_alive and not watcher.get("alive") and self._runtime_started:
@@ -1125,6 +1259,16 @@ class RuntimeSupervisor:
                 "block_reason": "idle_stable",
                 "last_self_triage_at": str(persisted_autonomy.get("last_self_triage_at") or iso_utc()),
             }
+        autonomy_based_on_work = self._normalize_artifact_path(autonomy.get("based_on_work"))
+        active_round_artifact = self._normalize_artifact_path((active_round or {}).get("artifact_path"))
+        if (
+            autonomy_based_on_work
+            and active_round_artifact
+            and autonomy_based_on_work != active_round_artifact
+        ):
+            autonomy = self._default_autonomy_block()
+        if self.runtime_state in {"STOPPING", "STOPPED"}:
+            autonomy = self._default_autonomy_block()
         self._current_autonomy = autonomy
         desired_autonomy_state = {"fingerprint": str((operator_gate or {}).get("fingerprint") or ""), **autonomy}
         if desired_autonomy_state != persisted_autonomy:
@@ -1138,6 +1282,10 @@ class RuntimeSupervisor:
                 "active_control_updated_at": "",
             }
             active_round = None
+        dispatch_stall_marker = self._dispatch_stall_marker(job_states, active_round=active_round)
+        self._current_dispatch_stall_marker = dispatch_stall_marker
+        completion_stall_marker = self._completion_stall_marker(job_states, active_round=active_round)
+        self._current_completion_stall_marker = completion_stall_marker
 
         status = {
             "schema_version": 1,
@@ -1277,6 +1425,21 @@ class RuntimeSupervisor:
             self._last_dispatch_stall_key = dispatch_stall_key
             if dispatch_stall:
                 self._append_event("dispatch_stall_detected", dispatch_stall)
+
+        completion_stall = dict(self._current_completion_stall_marker or {})
+        completion_stall_key = "|".join(
+            [
+                str(completion_stall.get("job_id") or ""),
+                str(completion_stall.get("round") or ""),
+                str(completion_stall.get("fingerprint") or ""),
+                str(completion_stall.get("attempt") or ""),
+                str(completion_stall.get("action") or ""),
+            ]
+        )
+        if completion_stall_key != self._last_completion_stall_key:
+            self._last_completion_stall_key = completion_stall_key
+            if completion_stall:
+                self._append_event("completion_stall_detected", completion_stall)
 
         current_degraded = str(status.get("degraded_reason") or "")
         if current_degraded != self._last_degraded_reason:
@@ -1659,6 +1822,7 @@ class RuntimeSupervisor:
         watcher_args = [
             "env",
             f"PROJECT_ROOT={self.project_root}",
+            f"PIPELINE_RUNTIME_RUN_ID={self.run_id}",
             "PIPELINE_RUNTIME_DISABLE_EXPORTER=1",
             f"PYTHONPATH={py_path}",
             sys.executable,

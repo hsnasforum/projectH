@@ -1305,6 +1305,52 @@ class TestRuntimeStatusRead(unittest.TestCase):
         self.assertEqual(normalize_runtime_status(None), {})
         self.assertEqual(normalize_runtime_status({"runtime_state": "RUNNING"}), {"runtime_state": "RUNNING"})
 
+    def test_normalize_runtime_status_converts_inactive_degraded_snapshot_to_stopped(self) -> None:
+        result = normalize_runtime_status(
+            {
+                "runtime_state": "DEGRADED",
+                "degraded_reason": "dispatch_stall",
+                "degraded_reasons": ["dispatch_stall"],
+                "control": {
+                    "active_control_file": ".pipeline/claude_handoff.md",
+                    "active_control_seq": 252,
+                    "active_control_status": "implement",
+                    "active_control_updated_at": "2026-04-17T03:52:41Z",
+                },
+                "active_round": {
+                    "job_id": "job-1",
+                    "round": 1,
+                    "state": "CLOSED",
+                },
+                "watcher": {
+                    "alive": False,
+                    "pid": None,
+                },
+                "lanes": [
+                    {
+                        "name": "Claude",
+                        "state": "OFF",
+                        "attachable": False,
+                        "pid": None,
+                        "note": "stopped",
+                    },
+                    {
+                        "name": "Codex",
+                        "state": "OFF",
+                        "attachable": False,
+                        "pid": None,
+                        "note": "stopped",
+                    },
+                ],
+            }
+        )
+
+        self.assertEqual(result["runtime_state"], "STOPPED")
+        self.assertEqual(result["degraded_reason"], "")
+        self.assertEqual(result["degraded_reasons"], [])
+        self.assertEqual(result["control"]["active_control_status"], "none")
+        self.assertIsNone(result["active_round"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -376,6 +376,11 @@ def _runtime_view(project: Path) -> dict[str, object]:
             reason = str(payload.get("reason") or "")
             lane = str(payload.get("lane") or "")
             subject = " ".join(part for part in [lane, action, reason] if part)
+        elif event_type == "completion_stall_detected":
+            action = str(payload.get("action") or "")
+            reason = str(payload.get("reason") or "")
+            lane = str(payload.get("lane") or "")
+            subject = " ".join(part for part in [lane, action, reason] if part)
         elif event_type == "runtime_started":
             subject = str(payload.get("runtime_state") or "")
         else:

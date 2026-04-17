@@ -1,0 +1,44 @@
+{
+  "job_id": "20260416-2026-04-16-controller-state-gif--58895e32",
+  "status": "VERIFY_PENDING",
+  "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-controller-state-gif-priority-sync.md",
+  "schema_version": 1,
+  "artifact_hash": "cc691975b15f06c54de68d33a1e47dbcede9444993b6355a2ae82c5632115fae",
+  "artifact_size": 2947,
+  "artifact_mtime": 1776273992.7534018,
+  "stabilized_at": 1776273997.8013232,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 0.0,
+  "last_dispatch_slot": "",
+  "last_failed_dispatch_at": 0.0,
+  "last_failed_dispatch_snapshot": "",
+  "dispatch_fail_count": 0,
+  "feedback_baseline_sig": "",
+  "verify_feedback_baseline_sig": "",
+  "verify_receipt_baseline_path": "",
+  "verify_receipt_baseline_mtime": 0.0,
+  "verify_manifest_path": "",
+  "verify_completed_at": 0.0,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "",
+  "created_at": 1776273993.9430935,
+  "updated_at": 1776273997.801327,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1776273993.9435105,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1776273997.801327,
+      "reason": "artifact stabilized"
+    }
+  ],
+  "last_pane_snapshot": "",
+  "last_activity_at": 0.0
+}

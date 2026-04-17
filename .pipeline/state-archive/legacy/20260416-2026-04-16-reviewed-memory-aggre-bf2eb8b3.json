@@ -1,0 +1,50 @@
+{
+  "job_id": "20260416-2026-04-16-reviewed-memory-aggre-bf2eb8b3",
+  "status": "VERIFY_RUNNING",
+  "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-reviewed-memory-aggregate-reload-smoke-split.md",
+  "schema_version": 1,
+  "artifact_hash": "3f57751157ccf5dc79ba77a60854a4eff7fd89a3ddb456548ac8b6234d70a609",
+  "artifact_size": 2224,
+  "artifact_mtime": 1776340275.1073937,
+  "stabilized_at": 1776340280.4260576,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 1776340288.7405336,
+  "last_dispatch_slot": "slot_verify",
+  "last_failed_dispatch_at": 0.0,
+  "last_failed_dispatch_snapshot": "",
+  "dispatch_fail_count": 0,
+  "feedback_baseline_sig": "claude_handoff.md=1776339779057605083:3613:1b2434dfb48976d0f8b9234789077f5ff772a965c4798ab1152a256496373832|gemini_request.md=1776329953753880649:3109:1c59b6cd6ed825bc23a20fbf9b2bf7e64a9a274339392ab2bfaa810589beb32b|operator_request.md=1776337491896923626:2049:df3370642357adf9bee9b3bbfa35cc479006f95ce1b9030df863ef3c85b8a651",
+  "verify_feedback_baseline_sig": "d4639222b5bbe1c992def7a06016dde7fc7e8622217632cf15c213de856a762f",
+  "verify_receipt_baseline_path": "verify/4/16/2026-04-16-controller-idle-roam-anti-stacking-history-socket-blocked-verification.md",
+  "verify_receipt_baseline_mtime": 1776337491.7734616,
+  "verify_manifest_path": "",
+  "verify_completed_at": 0.0,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "",
+  "created_at": 1776340276.0873597,
+  "updated_at": 1776340288.7969463,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1776340276.0879283,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1776340280.426063,
+      "reason": "artifact stabilized"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "VERIFY_RUNNING",
+      "at": 1776340288.7969463,
+      "reason": "dispatched to slot_verify"
+    }
+  ],
+  "last_pane_snapshot": "    … +137 lines (ctrl + t to view transcript)\n    - Or explicitly accept static-only verification for seq 200 `controller-idle-roam-anti-stacking-history-deterministic-smoke`, allowing\n    Codex to continue with next-slice selection without a successful `make controller-test` rerun.\n\n─ Worked for 2m 19s ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\n• 검증은 통과했습니다. 다만 /work가 적은 대로 정말 docs 미변경이 맞는지 확인하려고, root docs 안의 smoke inventory/count 서술이 이 분할로\n  흔들리지 않는지도 한 번 더 대조하겠습니다.\n\n• Explored\n  └ Search 125 core browser scenarios|125|same-session recurrence aggregate|reviewed-memory aggregate in README.md\n    Search test\\( in web-smoke.spec.mjs\n    Search Current Gates|125 core browser scenarios|document-level browser coverage inventory count in ACCEPTANCE_CRITERIA.md\n    List 16\n    Search reviewed-memory|review-queue\n\n• Ran for f in verify/4/16/*reviewed-memory* verify/4/16/*review-queue*; do [ -f \"$f\" ] && { printf 'FILE %s\\n' \"$f\"; sed -n '1,220p'\n  │ \"$f\"; }; done\n  └ (no output)\n\n───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\n• 관련 same-family /work가 오늘 여러 개 있었는데, 다음 슬라이스를 억지로 비틀지 않으려면 방금 닫힌 reload-continuity 축이 어디까지 왔는지\n  한 번 더 보고 가야 합니다. 최근 reviewed-memory closeout 몇 개만 이어서 읽고, 같은 family 안의 남은 current-risk가 있는지 확인하겠습니다.\n\n• Explored\n  └ Read 2026-04-16-reviewed-memory-reload-continuity-browser-smoke.md, 2026-04-16-reviewed-memory-active-effect-reload-continuity-browser-\n         smoke.md, 2026-04-16-reviewed-memory-pre-result-transitional-reload-continuity-browser-smoke.md, 2026-04-16-reviewed-memory-\nstopped-\n         state-reload-continuity-browser-smoke.md, 2026-04-16-reviewed-memory-aggregate-reload-smoke-docs-parity.md, 2026-04-16-reviewed-\n         memory-reversal-state-reload-continuity-browser-smoke.md\n    Search 검토 메모|reviewed_memory|review queue|review_queue|recurrence_aggregate|검토 후보 in TASK_BACKLOG.md\n\n• Ran rg -n \"TODO|FIXME|reviewed_memory|aggregate-trigger|검토 메모 적용 후보\" app static core storage tests e2e 2>/dev/null | sed -n\n  │ '1,240p'\n  └ tests/test_smoke.py:5870:                    \"promotion_eligibility\": \"blocked_pending_reviewed_memory_boundary\",\n    tests/test_smoke.py:5871:                    \"reviewed_memory_boundary\": \"not_open\",\n    … +238 lines (ctrl + t to view transcript)\n    aggregate_with_fake_fact_source_instance[\"reviewed_memory_local_effect_presence_fact_source_instance\"] = {\n    tests/test_smoke.py:7427:                    \"first_same_session_reviewed_memory_local_effect_presence_fact_source_instance_v1\"\n\n• Explored\n  └ Read 2026-04-16-reviewed-memory-stored-review-support-sanitize.md, 2026-04-16-stored-review-support-regression-truth.md,\nTASK_BACKLOG.md,\n         NEXT_STEPS.md\n    Search stale|aggregate.*clear|recurrence_aggregate|review_queue_items|reviewed-but-not-applied|검토 메모 적용 후보|stale-clear in app\n    Search 검토 후보|검토 메모 적용 후보 in web-smoke.spec.mjs\n    Read web-smoke.spec.mjs\n    Search stale in test_web_app.py\n    Search recurrence_aggregate.*stale|stale.*aggregate|aggregate.*stale|stale-clear.*aggregate|candidate_recurrence_key.*clear|\n           clear.*recurrence_aggregate in test_web_app.py\n\n─ Worked for 1m 14s ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\n• 다음 슬라이스는 무작정 새 축으로 넘어가기보다, 같은 reviewed-memory family 안에서 실제 사용자 혼선을 줄이는 쪽이 더 맞는지 보고 있습니다.\n  특히 검토 후보에는 stale-clear가 있는데 검토 메모 적용 후보 쪽은 같은 보호막이 보이지 않아, aggregate 카드가 오래 남는 리스크가 있는지 구\n  현 쪽도 잠깐 확인하겠습니다.\n\n• Explored\n  └ Search recurrence_aggregate_candidates|candidate_recurrence_key|review_queue_items|candidate_review_record|supporting_review_refs in\ncore\n    Read serializers.py, aggregate.py\n    Search def _build_recurrence_aggregate_candidates in serializers.py\n    Read serializers.py\n    Read serializers.py\n\n• Working (7m 11s • esc to interrupt)\n\n\n› Run /review on my current changes\n\n  gpt-5.4 xhigh fast · ~/code/projectH\n",
+  "last_activity_at": 1776340718.7290323
+}

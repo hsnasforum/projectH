@@ -1,0 +1,56 @@
+{
+  "job_id": "20260416-2026-04-16-controller-office-vie-fdcd149e",
+  "status": "VERIFY_PENDING",
+  "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-controller-office-view-idea-directives.md",
+  "schema_version": 1,
+  "artifact_hash": "800a84ce23b00dc5fd1ee773cea11a6c2a09d8cae7a56ebbd250902e5ef4b65b",
+  "artifact_size": 3986,
+  "artifact_mtime": 1776316183.5968525,
+  "stabilized_at": 1776316188.764076,
+  "round": 2,
+  "retry_budget": 3,
+  "last_dispatch_at": 0.0,
+  "last_dispatch_slot": "",
+  "last_failed_dispatch_at": 0.0,
+  "last_failed_dispatch_snapshot": "",
+  "dispatch_fail_count": 0,
+  "feedback_baseline_sig": "",
+  "verify_feedback_baseline_sig": "",
+  "verify_receipt_baseline_path": "",
+  "verify_receipt_baseline_mtime": 0.0,
+  "verify_manifest_path": "",
+  "verify_completed_at": 0.0,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "",
+  "created_at": 1776316155.4059055,
+  "updated_at": 1776316188.7640789,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1776316155.4063027,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1776316159.4998019,
+      "reason": "artifact stabilized"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "STABILIZING",
+      "at": 1776316184.6777976,
+      "reason": "content changed before verify dispatch, round=2"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1776316188.7640789,
+      "reason": "artifact stabilized"
+    }
+  ],
+  "last_pane_snapshot": "",
+  "last_activity_at": 0.0
+}

@@ -34,6 +34,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field, asdict
 from enum import Enum
@@ -93,6 +94,10 @@ ROUND_NOTE_SECTION_RE = re.compile(r"^##\s+(.+?)\s*$")
 ROUND_NOTE_PATH_RE = re.compile(r"(?<!@)(?:\./)?([A-Za-z0-9_.\-/]+?\.[A-Za-z0-9]+)")
 ROUND_NOTE_METADATA_ONLY_PREFIXES = ("work/", "verify/", "report/", ".pipeline/", "pipeline/")
 WORK_PATH_RE = re.compile(r"(work/\d+/\d+/[^\s`]+\.md)")
+_DISPATCH_LOCKS_GUARD = threading.Lock()
+_DISPATCH_LOCKS: dict[str, threading.Lock] = {}
+_DISPATCH_LOCK_TIMEOUT_SEC = 30.0
+_SHARED_STATE_SPECIAL_FILES = {"turn_state.json", "autonomy_state.json"}
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +140,7 @@ class JobState:
     job_id:               str
     status:               JobStatus
     artifact_path:        str
+    run_id:              str   = ""
     schema_version:       int   = SCHEMA_VERSION
     artifact_hash:        str   = ""
     artifact_size:        int   = 0
@@ -161,9 +167,20 @@ class JobState:
     dispatch_stall_count:  int   = 0
     dispatch_stall_detected_at: float = 0.0
     dispatch_id:          str   = ""
+    dispatch_control_seq: int   = -1
+    seen_dispatch_id:     str   = ""
+    seen_at:              float = 0.0
     accept_deadline_at:   float = 0.0
     accepted_dispatch_id: str   = ""
     accepted_at:          float = 0.0
+    done_dispatch_id:     str   = ""
+    done_at:              float = 0.0
+    done_deadline_at:     float = 0.0
+    dispatch_stall_stage: str   = ""
+    completion_stall_fingerprint: str = ""
+    completion_stall_count: int = 0
+    completion_stall_detected_at: float = 0.0
+    completion_stall_stage: str = ""
     degraded_reason:       str   = ""
     lane_note:             str   = ""
     created_at:           float = field(default_factory=time.time)
@@ -217,11 +234,12 @@ class JobState:
 
     # ------------------------------------------------------------------
     @classmethod
-    def from_artifact(cls, job_id: str, artifact_path: str) -> "JobState":
+    def from_artifact(cls, job_id: str, artifact_path: str, *, run_id: str = "") -> "JobState":
         return cls(
             job_id=job_id,
             status=JobStatus.NEW_ARTIFACT,
             artifact_path=artifact_path,
+            run_id=run_id,
         )
 
 
@@ -1205,6 +1223,15 @@ def _clear_prompt_input_line(pane_target: str) -> None:
     time.sleep(0.1)
 
 
+def _dispatch_lock_for(pane_target: str) -> threading.Lock:
+    with _DISPATCH_LOCKS_GUARD:
+        lock = _DISPATCH_LOCKS.get(pane_target)
+        if lock is None:
+            lock = threading.Lock()
+            _DISPATCH_LOCKS[pane_target] = lock
+        return lock
+
+
 def tmux_send_keys(
     pane_target: str,
     command: str,
@@ -1220,6 +1247,14 @@ def tmux_send_keys(
     log.info("send-keys target=%s pane_type=%s dry_run=%s", pane_target, pane_type, dry_run)
     if dry_run:
         return True
+    dispatch_lock = _dispatch_lock_for(pane_target)
+    if not dispatch_lock.acquire(timeout=_DISPATCH_LOCK_TIMEOUT_SEC):
+        log.warning(
+            "send-keys skipped: pane dispatch busy target=%s pane_type=%s",
+            pane_target,
+            pane_type,
+        )
+        return False
     try:
         if not _wait_for_dispatch_window(pane_target, pane_type):
             return False
@@ -1234,6 +1269,8 @@ def tmux_send_keys(
     except subprocess.CalledProcessError as e:
         log.error("send-keys failed: %s", e.stderr.decode().strip())
         return False
+    finally:
+        dispatch_lock.release()
 
 
 def _dispatch_codex(pane_target: str, command: str) -> bool:
@@ -1336,6 +1373,7 @@ class StateMachine:
         verify_retry_backoff_sec: float,
         verify_incomplete_idle_retry_sec: float,
         verify_accept_deadline_sec: float,
+        verify_done_deadline_sec: float,
         runtime_started_at:     float,
         restart_recovery_grace_sec: float,
         completion_paths:       list[Path],
@@ -1358,6 +1396,7 @@ class StateMachine:
         self.verify_retry_backoff_sec = verify_retry_backoff_sec
         self.verify_incomplete_idle_retry_sec = verify_incomplete_idle_retry_sec
         self.verify_accept_deadline_sec = verify_accept_deadline_sec
+        self.verify_done_deadline_sec = verify_done_deadline_sec
         self.runtime_started_at     = runtime_started_at
         self.restart_recovery_grace_sec = restart_recovery_grace_sec
         self.completion_paths       = completion_paths
@@ -1365,7 +1404,7 @@ class StateMachine:
         self.dry_run                = dry_run
 
     # ------------------------------------------------------------------
-    def _dispatch_stall_fingerprint(self, job: JobState) -> str:
+    def _dispatch_stall_fingerprint(self, job: JobState, stage: str = "") -> str:
         source = "|".join(
             [
                 job.job_id,
@@ -1373,9 +1412,37 @@ class StateMachine:
                 job.artifact_hash,
                 job.last_dispatch_slot or "slot_verify",
                 job.verify_receipt_baseline_path,
+                stage or "task_accept_missing",
             ]
         )
         return hashlib.sha1(source.encode("utf-8")).hexdigest()
+
+    # ------------------------------------------------------------------
+    def _completion_stall_fingerprint(self, job: JobState, stage: str = "") -> str:
+        source = "|".join(
+            [
+                job.job_id,
+                str(job.round),
+                job.artifact_hash,
+                job.last_dispatch_slot or "slot_verify",
+                job.verify_receipt_baseline_path,
+                stage or "task_done_missing",
+            ]
+        )
+        return hashlib.sha1(source.encode("utf-8")).hexdigest()
+
+    # ------------------------------------------------------------------
+    def _clear_done_tracking(self, job: JobState) -> None:
+        job.done_dispatch_id = ""
+        job.done_at = 0.0
+        job.done_deadline_at = 0.0
+
+    # ------------------------------------------------------------------
+    def _clear_completion_stall_state(self, job: JobState) -> None:
+        job.completion_stall_fingerprint = ""
+        job.completion_stall_count = 0
+        job.completion_stall_detected_at = 0.0
+        job.completion_stall_stage = ""
 
     # ------------------------------------------------------------------
     def _clear_dispatch_stall_state(self, job: JobState) -> None:
@@ -1383,9 +1450,15 @@ class StateMachine:
         job.dispatch_stall_count = 0
         job.dispatch_stall_detected_at = 0.0
         job.dispatch_id = ""
+        job.dispatch_control_seq = -1
+        job.seen_dispatch_id = ""
+        job.seen_at = 0.0
         job.accept_deadline_at = 0.0
         job.accepted_dispatch_id = ""
         job.accepted_at = 0.0
+        self._clear_done_tracking(job)
+        job.dispatch_stall_stage = ""
+        self._clear_completion_stall_state(job)
         job.degraded_reason = ""
         job.lane_note = ""
 
@@ -1393,6 +1466,8 @@ class StateMachine:
     def _clear_dispatch_stall_surface(self, job: JobState) -> None:
         job.degraded_reason = ""
         job.lane_note = ""
+        job.dispatch_stall_stage = ""
+        job.completion_stall_stage = ""
 
     # ------------------------------------------------------------------
     def _current_wrapper_events_dir(self) -> Optional[Path]:
@@ -1421,15 +1496,50 @@ class StateMachine:
         return dict(models.get(self.verify_lane_name) or {})
 
     # ------------------------------------------------------------------
+    def _mark_dispatch_seen_if_seen(
+        self,
+        job: JobState,
+        *,
+        current_pane: str,
+        lane_model: dict[str, object] | None = None,
+    ) -> bool:
+        if not job.dispatch_id or job.seen_dispatch_id == job.dispatch_id:
+            return False
+        lane_model = dict(lane_model or self._verify_wrapper_model())
+        seen_task = dict(lane_model.get("seen_task") or {})
+        if not seen_task:
+            return False
+
+        seen_dispatch_id = str(seen_task.get("dispatch_id") or "")
+        matched = False
+        if seen_dispatch_id:
+            matched = seen_dispatch_id == job.dispatch_id
+        else:
+            matched = (
+                str(seen_task.get("job_id") or "") == job.job_id
+                and float(lane_model.get("last_event_ts") or 0.0) >= (job.last_dispatch_at - 1.0)
+            )
+        if not matched:
+            return False
+
+        job.seen_dispatch_id = job.dispatch_id
+        job.seen_at = time.time()
+        job.last_activity_at = job.seen_at
+        job.last_pane_snapshot = current_pane
+        job.save(self.state_dir)
+        return True
+
+    # ------------------------------------------------------------------
     def _mark_dispatch_accepted_if_seen(
         self,
         job: JobState,
         *,
         current_pane: str,
+        lane_model: dict[str, object] | None = None,
     ) -> bool:
         if not job.dispatch_id or job.accepted_dispatch_id == job.dispatch_id:
             return False
-        lane_model = self._verify_wrapper_model()
+        lane_model = dict(lane_model or self._verify_wrapper_model())
         accepted_task = dict(lane_model.get("accepted_task") or {})
         if not accepted_task:
             return False
@@ -1448,7 +1558,35 @@ class StateMachine:
 
         job.accepted_dispatch_id = job.dispatch_id
         job.accepted_at = time.time()
+        job.done_deadline_at = job.accepted_at + self.verify_done_deadline_sec
         job.last_activity_at = job.accepted_at
+        job.last_pane_snapshot = current_pane
+        job.save(self.state_dir)
+        return True
+
+    # ------------------------------------------------------------------
+    def _mark_task_done_if_seen(
+        self,
+        job: JobState,
+        *,
+        current_pane: str,
+        lane_model: dict[str, object] | None = None,
+    ) -> bool:
+        if not job.dispatch_id or job.done_dispatch_id == job.dispatch_id:
+            return False
+        lane_model = dict(lane_model or self._verify_wrapper_model())
+        done_task = dict(lane_model.get("done_task") or {})
+        if not done_task:
+            return False
+
+        done_dispatch_id = str(done_task.get("dispatch_id") or "")
+        if not done_dispatch_id or done_dispatch_id != job.dispatch_id:
+            return False
+
+        done_ts = float(lane_model.get("done_ts") or 0.0)
+        job.done_dispatch_id = job.dispatch_id
+        job.done_at = done_ts if done_ts > 0.0 else time.time()
+        job.last_activity_at = job.done_at
         job.last_pane_snapshot = current_pane
         job.save(self.state_dir)
         return True
@@ -1460,8 +1598,10 @@ class StateMachine:
         *,
         current_pane: str,
         reason: str,
+        stage: str,
+        lane_note: str,
     ) -> JobState:
-        fingerprint = self._dispatch_stall_fingerprint(job)
+        fingerprint = self._dispatch_stall_fingerprint(job, stage)
         now = time.time()
         same_fingerprint = fingerprint == job.dispatch_stall_fingerprint
         attempt = job.dispatch_stall_count + 1 if same_fingerprint else 1
@@ -1469,7 +1609,8 @@ class StateMachine:
         job.dispatch_stall_fingerprint = fingerprint
         job.dispatch_stall_count = attempt
         job.dispatch_stall_detected_at = now
-        job.lane_note = "waiting_task_accept_after_dispatch"
+        job.dispatch_stall_stage = stage
+        job.lane_note = lane_note
 
         if attempt <= 1:
             job.degraded_reason = ""
@@ -1485,10 +1626,59 @@ class StateMachine:
         job.last_failed_dispatch_snapshot = "" if _pane_text_is_idle(current_pane) else current_pane
         job.last_dispatch_slot = ""
         job.dispatch_id = ""
+        job.seen_dispatch_id = ""
+        job.seen_at = 0.0
         job.accept_deadline_at = 0.0
         job.accepted_dispatch_id = ""
         job.accepted_at = 0.0
         job.degraded_reason = "dispatch_stall"
+        self.lease.release("slot_verify")
+        job.transition(JobStatus.VERIFY_PENDING, reason)
+        job.save(self.state_dir)
+        return job
+
+    # ------------------------------------------------------------------
+    def _record_completion_stall(
+        self,
+        job: JobState,
+        *,
+        current_pane: str,
+        reason: str,
+        stage: str,
+        lane_note: str,
+    ) -> JobState:
+        fingerprint = self._completion_stall_fingerprint(job, stage)
+        now = time.time()
+        same_fingerprint = fingerprint == job.completion_stall_fingerprint
+        attempt = job.completion_stall_count + 1 if same_fingerprint else 1
+
+        job.completion_stall_fingerprint = fingerprint
+        job.completion_stall_count = attempt
+        job.completion_stall_detected_at = now
+        job.completion_stall_stage = stage
+        job.lane_note = lane_note
+
+        if attempt <= 1:
+            job.degraded_reason = ""
+            return self._requeue_verify_pending(
+                job,
+                current_pane=current_pane,
+                reason=reason,
+            )
+
+        self.dedupe.forget(job.job_id, job.round, job.artifact_hash, "slot_verify")
+        job.last_failed_dispatch_at = now
+        job.dispatch_fail_count += 1
+        job.last_failed_dispatch_snapshot = "" if _pane_text_is_idle(current_pane) else current_pane
+        job.last_dispatch_slot = ""
+        job.dispatch_id = ""
+        job.seen_dispatch_id = ""
+        job.seen_at = 0.0
+        job.accept_deadline_at = 0.0
+        job.accepted_dispatch_id = ""
+        job.accepted_at = 0.0
+        self._clear_done_tracking(job)
+        job.degraded_reason = "post_accept_completion_stall"
         self.lease.release("slot_verify")
         job.transition(JobStatus.VERIFY_PENDING, reason)
         job.save(self.state_dir)
@@ -1535,9 +1725,12 @@ class StateMachine:
         job.last_failed_dispatch_snapshot = "" if _pane_text_is_idle(current_pane) else current_pane
         job.last_dispatch_slot = ""
         job.dispatch_id = ""
+        job.seen_dispatch_id = ""
+        job.seen_at = 0.0
         job.accept_deadline_at = 0.0
         job.accepted_dispatch_id = ""
         job.accepted_at = 0.0
+        self._clear_done_tracking(job)
         self.lease.release("slot_verify")
         job.transition(JobStatus.VERIFY_PENDING, reason)
         job.save(self.state_dir)
@@ -1578,9 +1771,15 @@ class StateMachine:
     def _handle_verify_pending(self, job: JobState) -> JobState:
         slot = "slot_verify"
 
-        if job.degraded_reason == "dispatch_stall":
+        if job.degraded_reason in {"dispatch_stall", "post_accept_completion_stall"}:
             self.dedupe.mark_suppressed(
-                job.job_id, job.round, job.artifact_hash, slot, "dispatch_stall_degraded"
+                job.job_id,
+                job.round,
+                job.artifact_hash,
+                slot,
+                "dispatch_stall_degraded"
+                if job.degraded_reason == "dispatch_stall"
+                else "completion_stall_degraded",
             )
             return job
 
@@ -1619,6 +1818,11 @@ class StateMachine:
         }
         if self.verify_context_builder:
             prompt_context.update(self.verify_context_builder(job))
+        if job.dispatch_control_seq < 0:
+            try:
+                job.dispatch_control_seq = int(prompt_context.get("next_control_seq") or -1)
+            except (TypeError, ValueError):
+                job.dispatch_control_seq = -1
 
         prompt = _normalize_prompt_text(self.verify_prompt_template.format(**prompt_context))
         ok = tmux_send_keys(
@@ -1649,9 +1853,13 @@ class StateMachine:
                     ]
                 ).encode("utf-8")
             ).hexdigest()
+            job.seen_dispatch_id = ""
+            job.seen_at = 0.0
             job.accept_deadline_at = job.last_dispatch_at + self.verify_accept_deadline_sec
             job.accepted_dispatch_id = ""
             job.accepted_at = 0.0
+            self._clear_done_tracking(job)
+            job.dispatch_stall_stage = ""
             if self.feedback_sig_builder is not None:
                 (
                     job.feedback_baseline_sig,
@@ -1678,9 +1886,12 @@ class StateMachine:
             job.dispatch_fail_count += 1
             job.last_failed_dispatch_snapshot = _capture_pane_text(self.verify_pane_target)
             job.dispatch_id = ""
+            job.seen_dispatch_id = ""
+            job.seen_at = 0.0
             job.accept_deadline_at = 0.0
             job.accepted_dispatch_id = ""
             job.accepted_at = 0.0
+            self._clear_done_tracking(job)
             job.save(self.state_dir)
             self.lease.release(slot)
         return job
@@ -1725,39 +1936,6 @@ class StateMachine:
             )
             outputs_complete = control_changed and verify_changed and verify_receipt_present
 
-            if outputs_complete:
-                # current-round /verify receipt와 next control이 둘 다 달라졌으면 Codex 완료로 간주
-                log.info(
-                    "current-round verify receipt + control changed after dispatch: job=%s, treating as verify done",
-                    job.job_id,
-                )
-                manifest_path = self._write_feedback_manifest(job, verify_receipt_path)
-                if manifest_path is None:
-                    return job
-                job.verify_result = "passed_by_feedback"
-                job.verify_manifest_path = str(manifest_path)
-                job.verify_completed_at = time.time()
-                job.validation_score = 1.0
-                job.blocker_count = 0
-                self._clear_dispatch_stall_state(job)
-                self.lease.release("slot_verify")
-                job.transition(JobStatus.VERIFY_DONE,
-                               "current-round verify receipt + control changed after dispatch")
-                job.save(self.state_dir)
-                return job
-            if control_changed and verify_changed and not verify_receipt_present:
-                log.info(
-                    "control + /verify tree changed but current-round /verify receipt is still missing: job=%s receipt=%s baseline=%s",
-                    job.job_id,
-                    verify_receipt_path or "none",
-                    job.verify_receipt_baseline_path or "none",
-                )
-            if control_changed and not verify_changed:
-                log.info(
-                    "control slot changed but /verify not updated yet: job=%s",
-                    job.job_id,
-                )
-
             # Check if Codex finished: pane must show an input prompt AND
             # have no active working/waiting indicators anywhere in visible text.
             current_pane = _capture_pane_text(self.verify_pane_target)
@@ -1780,10 +1958,39 @@ class StateMachine:
                 job.last_pane_snapshot = current_pane
                 job.last_activity_at = now_value
                 job.save(self.state_dir)
-            dispatch_accepted = self._mark_dispatch_accepted_if_seen(job, current_pane=current_pane)
+            lane_model = self._verify_wrapper_model() if job.dispatch_id else {}
+            dispatch_seen = self._mark_dispatch_seen_if_seen(
+                job,
+                current_pane=current_pane,
+                lane_model=lane_model,
+            )
+            dispatch_accepted = self._mark_dispatch_accepted_if_seen(
+                job,
+                current_pane=current_pane,
+                lane_model=lane_model,
+            )
+            task_done = self._mark_task_done_if_seen(
+                job,
+                current_pane=current_pane,
+                lane_model=lane_model,
+            )
+            if dispatch_seen and not dispatch_accepted:
+                last_activity = job.last_activity_at or now_value
             if dispatch_accepted:
                 last_activity = job.last_activity_at or now_value
+            if task_done:
+                last_activity = job.last_activity_at or now_value
             waiting_for_accept = bool(job.dispatch_id) and job.accepted_dispatch_id != job.dispatch_id
+            waiting_for_done = (
+                bool(job.dispatch_id)
+                and job.accepted_dispatch_id == job.dispatch_id
+                and job.done_dispatch_id != job.dispatch_id
+            )
+            waiting_for_receipt_close = (
+                bool(job.dispatch_id)
+                and job.done_dispatch_id == job.dispatch_id
+                and not outputs_complete
+            )
             if (
                 stale_dispatch_before_runtime
                 and codex_idle
@@ -1801,9 +2008,12 @@ class StateMachine:
                 job.last_failed_dispatch_snapshot = ""
                 job.last_dispatch_slot = ""
                 job.dispatch_id = ""
+                job.seen_dispatch_id = ""
+                job.seen_at = 0.0
                 job.accept_deadline_at = 0.0
                 job.accepted_dispatch_id = ""
                 job.accepted_at = 0.0
+                self._clear_done_tracking(job)
                 self.lease.release("slot_verify")
                 job.transition(
                     JobStatus.VERIFY_PENDING,
@@ -1823,67 +2033,127 @@ class StateMachine:
                         elapsed,
                         self.verify_accept_deadline_sec,
                     )
+                    seen_dispatch = job.seen_dispatch_id == job.dispatch_id
+                    stall_stage = "task_accept_missing" if seen_dispatch else "dispatch_seen_missing"
+                    stall_note = (
+                        "waiting_task_accept_after_dispatch"
+                        if seen_dispatch
+                        else "waiting_dispatch_seen_after_dispatch"
+                    )
+                    stall_reason = (
+                        f"dispatch stall after {elapsed:.0f}s total with no TASK_ACCEPTED "
+                        f"after DISPATCH_SEEN before {self.verify_accept_deadline_sec:.0f}s deadline"
+                        if seen_dispatch
+                        else (
+                            f"dispatch stall after {elapsed:.0f}s total with no DISPATCH_SEEN "
+                            f"before {self.verify_accept_deadline_sec:.0f}s deadline"
+                        )
+                    )
                     return self._record_dispatch_stall(
                         job,
                         current_pane=current_pane,
-                        reason=(
-                            f"dispatch stall after {elapsed:.0f}s total with no TASK_ACCEPTED "
-                            f"before {self.verify_accept_deadline_sec:.0f}s deadline"
-                        ),
+                        reason=stall_reason,
+                        stage=stall_stage,
+                        lane_note=stall_note,
                     )
                 return job
+
+            if waiting_for_done:
+                if (
+                    job.done_deadline_at > 0.0
+                    and now_value >= job.done_deadline_at
+                ):
+                    log.warning(
+                        "verify done deadline exceeded: job=%s total=%.0fs deadline=%.0fs",
+                        job.job_id,
+                        elapsed,
+                        self.verify_done_deadline_sec,
+                    )
+                    return self._record_completion_stall(
+                        job,
+                        current_pane=current_pane,
+                        reason=(
+                            f"completion stall after {elapsed:.0f}s total with no TASK_DONE "
+                            f"after TASK_ACCEPTED before {self.verify_done_deadline_sec:.0f}s deadline"
+                        ),
+                        stage="task_done_missing",
+                        lane_note="waiting_task_done_after_accept",
+                    )
+                if outputs_complete:
+                    log.info(
+                        "current-round verify/control/receipt changed before TASK_DONE, keeping verify open: job=%s",
+                        job.job_id,
+                    )
+                if codex_idle and elapsed_since_dispatch > 15:
+                    log.info(
+                        "codex idle observed after TASK_ACCEPTED but TASK_DONE is still missing: job=%s elapsed=%.0fs",
+                        job.job_id,
+                        elapsed_since_dispatch,
+                    )
+                return job
+
+            if outputs_complete:
+                # current-round /verify receipt와 next control이 둘 다 달라졌고 matching TASK_DONE까지 확인됨
+                log.info(
+                    "current-round verify receipt + control changed after TASK_DONE: job=%s, treating as verify done",
+                    job.job_id,
+                )
+                manifest_path = self._write_feedback_manifest(job, verify_receipt_path)
+                if manifest_path is None:
+                    return job
+                job.verify_result = "passed_by_feedback"
+                job.verify_manifest_path = str(manifest_path)
+                job.verify_completed_at = time.time()
+                job.validation_score = 1.0
+                job.blocker_count = 0
+                self._clear_dispatch_stall_state(job)
+                self.lease.release("slot_verify")
+                job.transition(JobStatus.VERIFY_DONE,
+                               "current-round verify receipt + control changed after TASK_DONE")
+                job.save(self.state_dir)
+                return job
+            if control_changed and verify_changed and not verify_receipt_present:
+                log.info(
+                    "control + /verify tree changed but current-round /verify receipt is still missing after TASK_DONE: job=%s receipt=%s baseline=%s",
+                    job.job_id,
+                    verify_receipt_path or "none",
+                    job.verify_receipt_baseline_path or "none",
+                )
+            if control_changed and not verify_changed:
+                log.info(
+                    "control slot changed but /verify not updated yet after TASK_DONE: job=%s",
+                    job.job_id,
+                )
 
             # Idle alone is not enough; Codex must leave /verify + next control (or manifest).
             if codex_idle and elapsed_since_dispatch > 15 and not (control_changed and verify_changed):
                 log.info(
-                    "codex idle observed after TASK_ACCEPTED but required outputs are incomplete: job=%s elapsed=%.0fs accepted=%s",
+                    "codex idle observed after TASK_DONE but required close outputs are incomplete: job=%s elapsed=%.0fs done=%s",
                     job.job_id,
                     elapsed_since_dispatch,
-                    dispatch_accepted or bool(job.accepted_at),
+                    task_done or bool(job.done_at),
                 )
 
-            if current_pane == job.last_pane_snapshot:
+            if waiting_for_receipt_close and current_pane == job.last_pane_snapshot:
                 # Pane unchanged — check idle timeout (5 min idle = timeout)
                 idle_sec = now_value - last_activity
-                if codex_idle and not outputs_complete and idle_sec > self.verify_incomplete_idle_retry_sec:
+                if codex_idle and idle_sec > self.verify_incomplete_idle_retry_sec:
                     log.warning(
-                        "verify accepted task returned idle with incomplete outputs: job=%s idle=%.0fs total=%.0fs",
+                        "verify task done but close outputs are incomplete: job=%s idle=%.0fs total=%.0fs",
                         job.job_id,
                         idle_sec,
                         elapsed,
                     )
-                    return self._requeue_verify_pending(
+                    return self._record_completion_stall(
                         job,
                         current_pane=current_pane,
                         reason=(
-                            f"idle prompt with incomplete outputs after TASK_ACCEPTED for {idle_sec:.0f}s idle, "
-                            f"{elapsed:.0f}s total"
+                            f"completion stall after TASK_DONE with missing receipt/control close for "
+                            f"{idle_sec:.0f}s idle, {elapsed:.0f}s total"
                         ),
+                        stage="receipt_close_missing",
+                        lane_note="waiting_receipt_close_after_task_done",
                     )
-                if idle_sec > 300:
-                    if not outputs_complete:
-                        log.warning(
-                            "verify idle timeout with incomplete outputs: job=%s idle=%.0fs total=%.0fs → retry pending",
-                            job.job_id, idle_sec, elapsed,
-                        )
-                        return self._requeue_verify_pending(
-                            job,
-                            current_pane=current_pane,
-                            reason=(
-                                f"idle timeout with incomplete outputs after {idle_sec:.0f}s idle, "
-                                f"{elapsed:.0f}s total"
-                            ),
-                        )
-                    log.warning("verify idle timeout: job=%s idle=%.0fs total=%.0fs",
-                                job.job_id, idle_sec, elapsed)
-                    job.verify_result = "timeout"
-                    job.verify_completed_at = time.time()
-                    self._clear_dispatch_stall_state(job)
-                    self.lease.release("slot_verify")
-                    job.transition(JobStatus.VERIFY_DONE,
-                                   f"idle timeout after {idle_sec:.0f}s idle, {elapsed:.0f}s total")
-                    job.save(self.state_dir)
-                    return job
 
             return job  # 아직 대기
 
@@ -1961,6 +2231,7 @@ class WatcherCore:
         self.verify_dir    = self.artifact_root / "verify"
         self.report_gemini_dir = self.artifact_root / "report" / "gemini"
         self.state_dir     = base / "state"
+        self.state_archive_dir = base / "state-archive"
         self.lock_dir      = base / "locks"
         self.manifests_dir = base / "manifests"
 
@@ -1971,6 +2242,9 @@ class WatcherCore:
         self.poll_interval = config.get("poll_interval", 1.0)
         self.dry_run       = config.get("dry_run", False)
         self.startup_grace_sec = float(config.get("startup_grace_sec", 8.0))
+        self.state_cleanup_legacy_grace_sec = float(
+            config.get("state_cleanup_legacy_grace_sec", 300.0)
+        )
         self.session_arbitration_settle_sec = float(config.get("session_arbitration_settle_sec", 5.0))
         self.session_arbitration_cooldown_sec = float(config.get("session_arbitration_cooldown_sec", 300.0))
         self.implement_blocked_settle_sec = float(config.get("implement_blocked_settle_sec", 5.0))
@@ -2218,7 +2492,7 @@ class WatcherCore:
             "yes",
             "on",
         }
-        self.run_id: str = self._make_run_id()
+        self.run_id: str = self._resolve_run_id()
         self.run_dir: Path = self.base_dir / "runs" / self.run_id
         self.run_status_path: Path = self.run_dir / "status.json"
         self.run_events_path: Path = self.run_dir / "events.jsonl"
@@ -2226,6 +2500,7 @@ class WatcherCore:
         self._runtime_event_seq: int = 0
         if self._runtime_export_enabled:
             self.run_dir.mkdir(parents=True, exist_ok=True)
+        self._archive_stale_job_states()
 
         # Claude idle timeout tracking
         self.claude_active_idle_timeout_sec: float = float(
@@ -2305,6 +2580,9 @@ class WatcherCore:
             verify_accept_deadline_sec=float(
                 config.get("verify_accept_deadline_sec", 30.0)
             ),
+            verify_done_deadline_sec=float(
+                config.get("verify_done_deadline_sec", 45.0)
+            ),
             runtime_started_at=self.started_at,
             restart_recovery_grace_sec=float(config.get("restart_recovery_grace_sec", 15.0)),
             completion_paths=self.completion_paths,
@@ -2377,6 +2655,76 @@ class WatcherCore:
     def _make_run_id(self) -> str:
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         return f"{stamp}-p{os.getpid()}"
+
+    # ------------------------------------------------------------------
+    def _resolve_run_id(self) -> str:
+        runtime_run_id = str(os.environ.get("PIPELINE_RUNTIME_RUN_ID") or "").strip()
+        if runtime_run_id:
+            return runtime_run_id
+        return self._make_run_id()
+
+    # ------------------------------------------------------------------
+    def _job_state_archive_dir(self, source_run_id: str = "") -> Path:
+        if source_run_id:
+            return self.base_dir / "runs" / source_run_id / "state-archive"
+        return self.state_archive_dir / "legacy"
+
+    # ------------------------------------------------------------------
+    def _archive_job_state_file(self, path: Path, *, source_run_id: str = "", reason: str) -> None:
+        archive_dir = self._job_state_archive_dir(source_run_id)
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        target = archive_dir / path.name
+        if target.exists():
+            target = archive_dir / f"{path.stem}-{int(time.time())}{path.suffix}"
+        try:
+            path.replace(target)
+        except OSError as exc:
+            log.warning("failed to archive stale job state: %s (%s)", path, exc)
+            return
+        log.info("archived stale job state: %s -> %s (%s)", path, target, reason)
+
+    # ------------------------------------------------------------------
+    def _archive_stale_job_states(self) -> None:
+        if not self.state_dir.exists():
+            return
+        terminal_values = {status.value for status in TERMINAL_STATES}
+        archived = 0
+        legacy_cutoff = self.started_at - self.state_cleanup_legacy_grace_sec
+        for path in sorted(self.state_dir.glob("*.json")):
+            if path.name in _SHARED_STATE_SPECIAL_FILES:
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            status = str(data.get("status") or "").strip()
+            if status in terminal_values:
+                continue
+            state_run_id = str(data.get("run_id") or "").strip()
+            if state_run_id:
+                if state_run_id == self.run_id:
+                    continue
+                self._archive_job_state_file(
+                    path,
+                    source_run_id=state_run_id,
+                    reason="previous_run_nonterminal",
+                )
+                archived += 1
+                continue
+            try:
+                state_mtime = path.stat().st_mtime
+            except OSError:
+                state_mtime = 0.0
+            updated_at = float(data.get("updated_at") or 0.0)
+            if max(state_mtime, updated_at) >= legacy_cutoff:
+                continue
+            self._archive_job_state_file(
+                path,
+                reason="legacy_nonterminal_before_startup",
+            )
+            archived += 1
+        if archived:
+            log.info("archived %d stale job state files before startup", archived)
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -2840,7 +3188,17 @@ class WatcherCore:
             rel = path.relative_to(root)
         except ValueError:
             return False
-        if len(rel.parts) < 3:
+        min_depth = 3
+        for base in (self.watch_dir, self.verify_dir):
+            try:
+                base_rel = root.relative_to(base)
+            except ValueError:
+                continue
+            # top-level work/verify roots expect month/day/file (=3),
+            # but same-day subdirs like verify/4/17 only need the file itself.
+            min_depth = max(1, 3 - len(base_rel.parts))
+            break
+        if len(rel.parts) < min_depth:
             return False
         return bool(ROUND_NOTE_NAME_RE.match(path.name))
 
@@ -2884,6 +3242,50 @@ class WatcherCore:
         return self._find_latest_md(self.verify_dir)
 
     # ------------------------------------------------------------------
+    def _note_referenced_work_paths(self, note_path: Optional[Path]) -> set[str]:
+        if note_path is None or not note_path.exists():
+            return set()
+        try:
+            text = note_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return set()
+        return {
+            normalized
+            for normalized in (
+                self._normalize_artifact_path(match.group(1))
+                for match in WORK_PATH_RE.finditer(text)
+            )
+            if normalized
+        }
+
+    # ------------------------------------------------------------------
+    def _get_latest_same_day_verify_path_for_work(self, work_path: Optional[Path]) -> Optional[Path]:
+        if work_path is None:
+            return None
+        normalized_work = self._normalize_artifact_path(work_path)
+        if not normalized_work:
+            return None
+
+        verify_dir = self._get_same_day_verify_dir(work_path)
+        latest_path: Optional[Path] = None
+        latest_mtime = 0.0
+        if not verify_dir.exists():
+            return None
+        for md in verify_dir.rglob("*.md"):
+            if not self._is_canonical_round_note(verify_dir, md):
+                continue
+            if normalized_work not in self._note_referenced_work_paths(md):
+                continue
+            try:
+                mt = md.stat().st_mtime
+            except OSError:
+                continue
+            if mt >= latest_mtime:
+                latest_path = md
+                latest_mtime = mt
+        return latest_path
+
+    # ------------------------------------------------------------------
     def _get_same_day_verify_dir(self, work_path: Optional[Path]) -> Path:
         if work_path is None:
             return self.verify_dir
@@ -2906,7 +3308,10 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _build_verify_receipt_state(self, job: JobState) -> tuple[str, float]:
         work_path = Path(job.artifact_path)
-        latest_verify = self._get_latest_same_day_verify_path(work_path)
+        latest_verify = (
+            self._get_latest_same_day_verify_path_for_work(work_path)
+            or self._get_latest_same_day_verify_path(work_path)
+        )
         if latest_verify is None:
             return "", 0.0
         return self._repo_relative(latest_verify), self._get_path_mtime(latest_verify)
@@ -2923,7 +3328,10 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _build_runtime_prompt_context(self, work_path: Optional[Path] = None) -> dict[str, str]:
         latest_work = work_path or self._get_latest_work_path()
-        latest_verify = self._get_latest_same_day_verify_path(latest_work)
+        latest_verify = (
+            self._get_latest_same_day_verify_path_for_work(latest_work)
+            or self._get_latest_same_day_verify_path(latest_work)
+        )
         gemini_report_hint = self._infer_gemini_report_hint(latest_work)
         gemini_report_path = self.report_gemini_dir / gemini_report_hint
         active_control = self._get_active_control_signal()
@@ -3141,6 +3549,25 @@ class WatcherCore:
         return snapshot
 
     # ------------------------------------------------------------------
+    def _get_work_tree_snapshot_broad(self) -> dict[str, str]:
+        """work/ 전체 canonical round-note 스냅샷 반환 (metadata-only 포함)."""
+        snapshot: dict[str, str] = {}
+        if not self.watch_dir.exists():
+            return snapshot
+        for md in self.watch_dir.rglob("*.md"):
+            if not self._is_canonical_round_note(self.watch_dir, md):
+                continue
+            sig = compute_file_sig(md)
+            if not sig:
+                continue
+            try:
+                rel = str(md.relative_to(self.watch_dir))
+            except ValueError:
+                rel = str(md)
+            snapshot[rel] = sig
+        return snapshot
+
+    # ------------------------------------------------------------------
     def _get_latest_work_mtime(self) -> float:
         """work/ 내 최신 .md 파일의 mtime 반환. 없으면 0.0."""
         latest = 0.0
@@ -3156,19 +3583,55 @@ class WatcherCore:
         return latest
 
     # ------------------------------------------------------------------
+    def _work_has_matching_verify(
+        self,
+        work_path: Optional[Path],
+        *,
+        verified_work_paths: Optional[set[str]] = None,
+    ) -> bool:
+        if work_path is None:
+            return False
+        normalized_work = self._normalize_artifact_path(work_path)
+        if not normalized_work:
+            return False
+        verified_paths = verified_work_paths if verified_work_paths is not None else self._verified_work_paths()
+        if normalized_work in verified_paths:
+            return True
+        latest_verify = self._get_latest_same_day_verify_path_for_work(work_path)
+        if latest_verify is None:
+            return False
+        return self._get_path_mtime(latest_verify) >= self._get_path_mtime(work_path)
+
+    # ------------------------------------------------------------------
+    def _get_latest_unverified_work_path(self, *, include_metadata_only: bool) -> Optional[Path]:
+        if not self.watch_dir.exists():
+            return None
+        verified_work_paths = self._verified_work_paths()
+        candidates: list[tuple[float, Path]] = []
+        for md in self.watch_dir.rglob("*.md"):
+            if include_metadata_only:
+                if not self._is_canonical_round_note(self.watch_dir, md):
+                    continue
+            elif not self._is_dispatchable_work_note(md):
+                continue
+            try:
+                mt = md.stat().st_mtime
+            except OSError:
+                continue
+            candidates.append((mt, md))
+        for _, md in sorted(candidates, key=lambda item: item[0], reverse=True):
+            if self._work_has_matching_verify(md, verified_work_paths=verified_work_paths):
+                continue
+            return md
+        return None
+
+    # ------------------------------------------------------------------
     def _latest_work_needs_verify(self) -> bool:
         """
         최신 canonical /work가 same-day 최신 /verify보다 앞서 있으면 True.
         handoff 파일 mtime보다 product truth를 우선해 Codex가 먼저 따라붙어야 하는지 판단한다.
         """
-        latest_work = self._get_latest_work_path()
-        if latest_work is None:
-            return False
-
-        latest_verify = self._get_latest_same_day_verify_path(latest_work)
-        work_mtime = self._get_path_mtime(latest_work)
-        verify_mtime = self._get_path_mtime(latest_verify) if latest_verify else 0.0
-        return work_mtime > verify_mtime
+        return self._get_latest_unverified_work_path(include_metadata_only=False) is not None
 
     # ------------------------------------------------------------------
     def _find_latest_md_broad(self, root: Path) -> Optional[Path]:
@@ -3196,13 +3659,15 @@ class WatcherCore:
         For verify-needed judgment, all canonical round notes count.
         Metadata-only filtering is only for dispatch prompt content.
         """
-        latest_work = self._find_latest_md_broad(self.watch_dir)
-        if latest_work is None:
-            return False
-        latest_verify = self._get_latest_same_day_verify_path(latest_work)
-        work_mtime = self._get_path_mtime(latest_work)
-        verify_mtime = self._get_path_mtime(latest_verify) if latest_verify else 0.0
-        return work_mtime > verify_mtime
+        return self._get_latest_unverified_work_path(include_metadata_only=True) is not None
+
+    # ------------------------------------------------------------------
+    def _get_latest_verify_candidate_path(self) -> Optional[Path]:
+        """Latest work note that should drive Codex verify, including metadata-only closeouts."""
+        latest_unverified_broad = self._get_latest_unverified_work_path(include_metadata_only=True)
+        if latest_unverified_broad is not None:
+            return latest_unverified_broad
+        return self._get_latest_unverified_work_path(include_metadata_only=False)
 
     # ------------------------------------------------------------------
     def _resolve_turn(self) -> str:
@@ -3278,7 +3743,7 @@ class WatcherCore:
             return
 
         # Check for progress: work snapshot changed
-        current_snapshot = self._get_work_tree_snapshot()
+        current_snapshot = self._get_work_tree_snapshot_broad()
         if current_snapshot != self._work_baseline_snapshot:
             self._last_progress_at = now
             return
@@ -3555,7 +4020,7 @@ class WatcherCore:
                 active_control_file="claude_handoff.md",
                 active_control_seq=seq,
             )
-            self._work_baseline_snapshot = self._get_work_tree_snapshot()
+            self._work_baseline_snapshot = self._get_work_tree_snapshot_broad()
             self._clear_claude_blocked_state("claude_handoff_pending_release")
             self._notify_claude("verify_lease_released", handoff_path)
 
@@ -3735,7 +4200,7 @@ class WatcherCore:
                     active_control_file="claude_handoff.md",
                     active_control_seq=handoff_seq,
                 )
-                self._work_baseline_snapshot = self._get_work_tree_snapshot()
+                self._work_baseline_snapshot = self._get_work_tree_snapshot_broad()
                 self._notify_claude("claude_handoff_updated", self.claude_handoff_path)
             else:
                 if (
@@ -4080,7 +4545,7 @@ class WatcherCore:
             log.info("initial turn: %s", turn)
             self._log_raw("initial_turn", "", "startup", {"turn": turn})
             if turn == "claude":
-                self._work_baseline_snapshot = self._get_work_tree_snapshot()
+                self._work_baseline_snapshot = self._get_work_tree_snapshot_broad()
                 self._transition_turn(
                     WatcherTurnState.CLAUDE_ACTIVE,
                     "startup_turn_claude",
@@ -4166,7 +4631,7 @@ class WatcherCore:
             if self._current_turn_state != WatcherTurnState.CLAUDE_ACTIVE:
                 return  # idle timeout fired
             # work/ 전체 스냅샷이 달라졌는지 확인
-            current_snapshot = self._get_work_tree_snapshot()
+            current_snapshot = self._get_work_tree_snapshot_broad()
             if current_snapshot == self._work_baseline_snapshot:
                 return  # Claude가 아직 작업 안 함 → Codex dispatch 하지 않음
             # Claude가 새 파일을 썼거나 기존 파일 내용을 바꿨으므로 대기 해제
@@ -4178,12 +4643,7 @@ class WatcherCore:
 
         # --- work/ 디렉터리 감시 (Claude → Codex 방향) ---
         # baseline과 동일하게 가장 최신 파일 1개만 처리
-        all_mds = sorted(
-            (p for p in self.watch_dir.rglob("*.md") if self._is_dispatchable_work_note(p)),
-            key=lambda p: p.stat().st_mtime if p.exists() else 0,
-            reverse=True,
-        )
-        latest = all_mds[0] if all_mds else None
+        latest = self._get_latest_verify_candidate_path()
         artifacts_to_process = [latest] if latest else []
         for artifact in artifacts_to_process:
             job_id = make_job_id(self.watch_dir, artifact)
@@ -4191,9 +4651,26 @@ class WatcherCore:
 
             if job is None:
                 self._log_raw("artifact_seen", str(artifact), job_id)
-                job = JobState.from_artifact(job_id, str(artifact))
+                job = JobState.from_artifact(job_id, str(artifact), run_id=self.run_id)
                 job.save(self.state_dir)
                 log.info("new job: %s  path=%s", job_id, artifact)
+            elif not job.run_id:
+                job.run_id = self.run_id
+                job.save(self.state_dir)
+            elif job.run_id != self.run_id:
+                previous_run_id = job.run_id
+                self._log_raw(
+                    "artifact_reseen_new_run",
+                    str(artifact),
+                    job_id,
+                    {
+                        "previous_run_id": previous_run_id,
+                        "current_run_id": self.run_id,
+                    },
+                )
+                job = JobState.from_artifact(job_id, str(artifact), run_id=self.run_id)
+                job.save(self.state_dir)
+                log.info("job reset for new run: %s previous_run=%s", job_id, previous_run_id)
 
             current_hash: Optional[str] = None
             if job.status in TERMINAL_STATES or job.status == JobStatus.VERIFY_PENDING:

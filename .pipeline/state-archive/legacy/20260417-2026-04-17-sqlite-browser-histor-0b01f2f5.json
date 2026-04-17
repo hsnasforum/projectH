@@ -1,0 +1,77 @@
+{
+  "job_id": "20260417-2026-04-17-sqlite-browser-histor-0b01f2f5",
+  "status": "VERIFY_PENDING",
+  "artifact_path": "/home/xpdlqj/code/projectH/work/4/17/2026-04-17-sqlite-browser-history-card-click-reload-followup-parity.md",
+  "schema_version": 1,
+  "artifact_hash": "68685350593ab677a4993e70ac7e05ee6887c487b881ac5caa561502528c9973",
+  "artifact_size": 10111,
+  "artifact_mtime": 1776390305.54434,
+  "stabilized_at": 1776390310.999076,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 1776390381.4401913,
+  "last_dispatch_slot": "",
+  "last_failed_dispatch_at": 1776390411.8345957,
+  "last_failed_dispatch_snapshot": "  - re-check the changed markdown docs against current code/docs truth first\n  - prefer `git diff --check` and direct file comparison; do not widen into unit or Playwright reruns unless the work note itself claims\n  code/test/runtime changes\n  - if truthful, keep `/verify` concise and move directly to one exact next slice\n  READ_FIRST:\n  - AGENTS.md\n  - work/README.md\n  - verify/README.md\n  OUTPUTS:\n  - /verify note first\n  - .pipeline/claude_handoff.md (STATUS: implement, CONTROL_SEQ: 245)\n  - .pipeline/gemini_request.md (STATUS: request_open, CONTROL_SEQ: 245)\n  - .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: 245)\n  RULES:\n  - keep one exact next slice or one exact operator decision only\n  - if you write .pipeline/operator_request.md, keep STATUS/CONTROL_SEQ in the first 12 lines and also include REASON_CODE,\n  OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, and BASED_ON_VERIFY near the top\n  - if the only blocker is next-slice ambiguity, overlapping candidates, or low-confidence prioritization, open .pipeline/\n  gemini_request.md before .pipeline/operator_request.md\n  - use .pipeline/operator_request.md without Gemini only for a real operator-only decision, approval/truth-sync blocker, immediate safety\n  stop, or when Gemini is unavailable/already inconclusive\n  - if same-day same-family docs-only truth-sync already repeated 3+ times, do not choose another narrower docs-only micro-slice; choose\n  one bounded docs bundle or escalateROLE: verify\n  OWNER: Codex\n  WORK: work/4/17/2026-04-17-sqlite-browser-history-card-click-reload-followup-parity.md\n  VERIFY: verify/4/17/2026-04-17-sqlite-browser-history-card-reload-core-parity-verification.md\n  NEXT_CONTROL_SEQ: 245\n  GOAL:\n  - verify the latest `/work` truthfully\n  - leave or update `/verify` before any next control slot\n  - then write exactly one next control outcome\n  SCOPE_HINT:\n  - docs-only truth-sync round detected from `## 변경 파일`\n  - re-check the changed markdown docs against current code/docs truth first\n  - prefer `git diff --check` and direct file comparison; do not widen into unit or Playwright reruns unless the work note itself claims\n  code/test/runtime changes\n  - if truthful, keep `/verify` concise and move directly to one exact next slice\n  READ_FIRST:\n  - AGENTS.md\n  - work/README.md\n  - verify/README.md\n  OUTPUTS:\n  - /verify note first\n  - .pipeline/claude_handoff.md (STATUS: implement, CONTROL_SEQ: 245)\n  - .pipeline/gemini_request.md (STATUS: request_open, CONTROL_SEQ: 245)\n  - .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: 245)\n  RULES:\n  - keep one exact next slice or one exact operator decision only\n  - if you write .pipeline/operator_request.md, keep STATUS/CONTROL_SEQ in the first 12 lines and also include REASON_CODE,\n  OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, and BASED_ON_VERIFY near the top\n  - if the only blocker is next-slice ambiguity, overlapping candidates, or low-confidence prioritization, open .pipeline/\n  gemini_request.md before .pipeline/operator_request.md\n  - use .pipeline/operator_request.md without Gemini only for a real operator-only decision, approval/truth-sync blocker, immediate safety\n  stop, or when Gemini is unavailable/already inconclusive\n  - if same-day same-family docs-only truth-sync already repeated 3+ times, do not choose another narrower docs-only micro-slice; choose\n  one bounded docs bundle or escalate\n\n\n• round-handoff 흐름으로 처리하겠습니다. 최신 /work와 직전 /verify를 먼저 읽고, docs-only 주장인지 확인한 뒤 현재 트리와 직접 대조해서 새 /\n  verify를 남기고 seq 245 control 하나만 쓰겠습니다.\n\n• Explored\n  └ Read SKILL.md (round-handoff skill), AGENTS.md, README.md, 2026-04-17-sqlite-browser-history-card-click-reload-followup-parity.md,\n2026-04-\n         17-sqlite-browser-history-card-reload-core-parity-verification.md\n\n• Working (33s • esc to interrupt)\n\n\n› Improve documentation in @filename\n\n  gpt-5.4 xhigh fast · ~/code/projectH\n",
+  "dispatch_fail_count": 1,
+  "feedback_baseline_sig": "claude_handoff.md=1776389946075006924:6419:b30831cd7dfb3a4699be5d804335c5c402732c60186f843321c9d79fbda357b0|gemini_request.md=1776346071106916033:3998:97c61aa4441f3bd7861e3ea3c367fb77d6b21b828ef49389c706e0ed5466e7fa|operator_request.md=1776360013201800957:2450:314dd6538adee4611240a29063a39b2a8412c27b60d4f8679b693b4349389243",
+  "verify_feedback_baseline_sig": "44c7e07cd7619fa414a0461723aac79195b312e43e6fdf0763acca544856f95b",
+  "verify_receipt_baseline_path": "verify/4/17/2026-04-17-sqlite-browser-history-card-reload-core-parity-verification.md",
+  "verify_receipt_baseline_mtime": 1776360001.5225554,
+  "verify_manifest_path": "",
+  "verify_completed_at": 0.0,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "",
+  "dispatch_stall_fingerprint": "9d1298ed6ed48495fd5dce66fb5948f3621094a6",
+  "dispatch_stall_count": 2,
+  "dispatch_stall_detected_at": 1776390411.8345957,
+  "dispatch_id": "",
+  "accept_deadline_at": 0.0,
+  "accepted_dispatch_id": "",
+  "accepted_at": 0.0,
+  "degraded_reason": "dispatch_stall",
+  "lane_note": "waiting_task_accept_after_dispatch",
+  "created_at": 1776390307.4188967,
+  "updated_at": 1776390411.8348215,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1776390307.4193509,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1776390310.99908,
+      "reason": "artifact stabilized"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "VERIFY_RUNNING",
+      "at": 1776390316.3302288,
+      "reason": "dispatched to slot_verify"
+    },
+    {
+      "from": "VERIFY_RUNNING",
+      "to": "VERIFY_PENDING",
+      "at": 1776390347.1906,
+      "reason": "dispatch stall after 31s total with no TASK_ACCEPTED before 30s deadline"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "VERIFY_RUNNING",
+      "at": 1776390381.5480509,
+      "reason": "dispatched to slot_verify"
+    },
+    {
+      "from": "VERIFY_RUNNING",
+      "to": "VERIFY_PENDING",
+      "at": 1776390411.8348215,
+      "reason": "dispatch stall after 30s total with no TASK_ACCEPTED before 30s deadline"
+    }
+  ],
+  "last_pane_snapshot": "  - re-check the changed markdown docs against current code/docs truth first\n  - prefer `git diff --check` and direct file comparison; do not widen into unit or Playwright reruns unless the work note itself claims\n  code/test/runtime changes\n  - if truthful, keep `/verify` concise and move directly to one exact next slice\n  READ_FIRST:\n  - AGENTS.md\n  - work/README.md\n  - verify/README.md\n  OUTPUTS:\n  - /verify note first\n  - .pipeline/claude_handoff.md (STATUS: implement, CONTROL_SEQ: 245)\n  - .pipeline/gemini_request.md (STATUS: request_open, CONTROL_SEQ: 245)\n  - .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: 245)\n  RULES:\n  - keep one exact next slice or one exact operator decision only\n  - if you write .pipeline/operator_request.md, keep STATUS/CONTROL_SEQ in the first 12 lines and also include REASON_CODE,\n  OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, and BASED_ON_VERIFY near the top\n  - if the only blocker is next-slice ambiguity, overlapping candidates, or low-confidence prioritization, open .pipeline/\n  gemini_request.md before .pipeline/operator_request.md\n  - use .pipeline/operator_request.md without Gemini only for a real operator-only decision, approval/truth-sync blocker, immediate safety\n  stop, or when Gemini is unavailable/already inconclusive\n  - if same-day same-family docs-only truth-sync already repeated 3+ times, do not choose another narrower docs-only micro-slice; choose\n  one bounded docs bundle or escalateROLE: verify\n  OWNER: Codex\n  WORK: work/4/17/2026-04-17-sqlite-browser-history-card-click-reload-followup-parity.md\n  VERIFY: verify/4/17/2026-04-17-sqlite-browser-history-card-reload-core-parity-verification.md\n  NEXT_CONTROL_SEQ: 245\n  GOAL:\n  - verify the latest `/work` truthfully\n  - leave or update `/verify` before any next control slot\n  - then write exactly one next control outcome\n  SCOPE_HINT:\n  - docs-only truth-sync round detected from `## 변경 파일`\n  - re-check the changed markdown docs against current code/docs truth first\n  - prefer `git diff --check` and direct file comparison; do not widen into unit or Playwright reruns unless the work note itself claims\n  code/test/runtime changes\n  - if truthful, keep `/verify` concise and move directly to one exact next slice\n  READ_FIRST:\n  - AGENTS.md\n  - work/README.md\n  - verify/README.md\n  OUTPUTS:\n  - /verify note first\n  - .pipeline/claude_handoff.md (STATUS: implement, CONTROL_SEQ: 245)\n  - .pipeline/gemini_request.md (STATUS: request_open, CONTROL_SEQ: 245)\n  - .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: 245)\n  RULES:\n  - keep one exact next slice or one exact operator decision only\n  - if you write .pipeline/operator_request.md, keep STATUS/CONTROL_SEQ in the first 12 lines and also include REASON_CODE,\n  OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, and BASED_ON_VERIFY near the top\n  - if the only blocker is next-slice ambiguity, overlapping candidates, or low-confidence prioritization, open .pipeline/\n  gemini_request.md before .pipeline/operator_request.md\n  - use .pipeline/operator_request.md without Gemini only for a real operator-only decision, approval/truth-sync blocker, immediate safety\n  stop, or when Gemini is unavailable/already inconclusive\n  - if same-day same-family docs-only truth-sync already repeated 3+ times, do not choose another narrower docs-only micro-slice; choose\n  one bounded docs bundle or escalate\n\n\n• round-handoff 흐름으로 처리하겠습니다. 최신 /work와 직전 /verify를 먼저 읽고, docs-only 주장인지 확인한 뒤 현재 트리와 직접 대조해서 새 /\n  verify를 남기고 seq 245 control 하나만 쓰겠습니다.\n\n• Explored\n  └ Read SKILL.md (round-handoff skill), AGENTS.md, README.md, 2026-04-17-sqlite-browser-history-card-click-reload-followup-parity.md,\n2026-04-\n         17-sqlite-browser-history-card-reload-core-parity-verification.md\n\n• Working (33s • esc to interrupt)\n\n\n› Improve documentation in @filename\n\n  gpt-5.4 xhigh fast · ~/code/projectH\n",
+  "last_activity_at": 1776390411.8322117
+}

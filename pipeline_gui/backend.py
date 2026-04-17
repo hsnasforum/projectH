@@ -71,7 +71,51 @@ def _read_json_file(path: Path) -> dict[str, object] | None:
 def normalize_runtime_status(value: object | None) -> dict[str, object]:
     """Coerce runtime status payloads to a dict for UI callers."""
     if isinstance(value, dict):
-        return value
+        status = json.loads(json.dumps(value))
+        runtime_state = str(status.get("runtime_state") or "")
+        watcher = dict(status.get("watcher") or {})
+        lanes = [dict(item) for item in list(status.get("lanes") or []) if isinstance(item, dict)]
+        active_round = status.get("active_round")
+        has_quiescent_evidence = isinstance(status.get("watcher"), dict) or isinstance(status.get("lanes"), list)
+        lanes_are_inactive = all(
+            str(lane.get("state") or "") == "OFF"
+            and not bool(lane.get("attachable"))
+            and lane.get("pid") in {None, ""}
+            for lane in lanes
+        )
+        round_is_closed = (
+            active_round is None
+            or str((active_round or {}).get("state") or "") in {"", "CLOSED"}
+        )
+        if (
+            has_quiescent_evidence
+            and runtime_state in {"RUNNING", "DEGRADED", "STARTING", "STOPPING"}
+            and not watcher.get("alive")
+            and watcher.get("pid") in {None, ""}
+            and lanes_are_inactive
+            and round_is_closed
+        ):
+            status["runtime_state"] = "STOPPED"
+            status["degraded_reason"] = ""
+            status["degraded_reasons"] = []
+            status["control"] = {
+                "active_control_file": "",
+                "active_control_seq": -1,
+                "active_control_status": "none",
+                "active_control_updated_at": "",
+            }
+            status["active_round"] = None
+            status["watcher"] = {"alive": False, "pid": None}
+            status["lanes"] = [
+                {
+                    **lane,
+                    "state": "OFF",
+                    "attachable": False,
+                    "pid": None,
+                }
+                for lane in lanes
+            ]
+        return status
     return {}
 
 

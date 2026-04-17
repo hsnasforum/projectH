@@ -227,7 +227,12 @@ def parse_control_slots(pipeline_dir: Path) -> dict[str, Any]:
     return {"active": entries[0], "stale": entries[1:]}
 
 
-def load_job_states(state_dir: Path) -> list[dict[str, Any]]:
+def load_job_states(
+    state_dir: Path,
+    *,
+    run_id: str | None = None,
+    legacy_not_before: float = 0.0,
+) -> list[dict[str, Any]]:
     job_states: list[dict[str, Any]] = []
     if not state_dir.exists():
         return job_states
@@ -237,6 +242,19 @@ def load_job_states(state_dir: Path) -> list[dict[str, Any]]:
         data = read_json(path)
         if not data:
             continue
+        state_run_id = str(data.get("run_id") or "").strip()
+        if run_id:
+            if state_run_id:
+                if state_run_id != run_id:
+                    continue
+            else:
+                try:
+                    state_mtime = path.stat().st_mtime
+                except OSError:
+                    state_mtime = 0.0
+                updated_at = float(data.get("updated_at") or 0.0)
+                if max(state_mtime, updated_at) < legacy_not_before:
+                    continue
         data.setdefault("_path", str(path))
         job_states.append(data)
     return job_states

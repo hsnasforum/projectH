@@ -1,0 +1,50 @@
+{
+  "job_id": "20260416-2026-04-16-tmux-scaffold-manual--19867444",
+  "status": "VERIFY_RUNNING",
+  "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-tmux-scaffold-manual-width-pin.md",
+  "schema_version": 1,
+  "artifact_hash": "48e2c7604e1258daa1b792d40659968cebc92dc0da9aaad59d03d251fdf397fa",
+  "artifact_size": 2974,
+  "artifact_mtime": 1776273835.764829,
+  "stabilized_at": 1776273841.0844052,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 1776273847.8689668,
+  "last_dispatch_slot": "slot_verify",
+  "last_failed_dispatch_at": 0.0,
+  "last_failed_dispatch_snapshot": "",
+  "dispatch_fail_count": 0,
+  "feedback_baseline_sig": "claude_handoff.md=1776273337317148751:2984:4903eea06b8d47a650804b0aaf4c07f7c40b565464f54ba4e96d8b34eb95ec49|gemini_request.md=1776249910276975775:3229:cba61b2efcf8234d7bec159fe91148297bc8670e2d1741edfa664c61f988c261|operator_request.md=1776259872793409857:2028:99faa095e9aed7792861e34999a345ec114972b30bf82818640c0496dd7e7c2c",
+  "verify_feedback_baseline_sig": "fb83cccb4aa99b442d00083ab2e1b8bf129d57d30cc07996e750830071a787a2",
+  "verify_receipt_baseline_path": "verify/4/16/2026-04-16-controller-office-reset-base-verification.md",
+  "verify_receipt_baseline_mtime": 1776273323.7025964,
+  "verify_manifest_path": "",
+  "verify_completed_at": 0.0,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "",
+  "created_at": 1776273836.9006684,
+  "updated_at": 1776273847.9198399,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1776273836.901063,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1776273841.08441,
+      "reason": "artifact stabilized"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "VERIFY_RUNNING",
+      "at": 1776273847.9198399,
+      "reason": "dispatched to slot_verify"
+    }
+  ],
+  "last_pane_snapshot": "\n• Ran man tmux | col -b | sed -n '1756,1788p'\n  └          set -w window-style bg=red\n             set -pt:.0 window-style bg=blue\n    … +35 lines (ctrl + t to view transcript)\n               depends    on the option and may be a number, a string, or a\n    flag\n\n• Ran man tmux | col -b | sed -n '2478,2494p'\n  └\n           window-status-style style\n    … +13 lines (ctrl + t to view transcript)\n               If this option is set, searches will wrap around the end of the\n               pane contents.  The default is on.\n\n• Ran man tmux | col -b | sed -n '1518,1536p'\n  └            -T trims all lines below the current cursor position and\n    moves\n    … +19 lines (ctrl + t to view transcript)\n    given,\n               the command used when the pane was created or last respawned is\n\n• Ran man tmux | col -b | sed -n '2480,2488p'\n  └            Set status line style for a single window.  For how to  specify\n               style, see the “STYLES” section.\n    … +7 lines (ctrl + t to view transcript)\n               resized    automatically.    With latest, tmux uses the size of\n    the\n\n• Ran man tmux | col -b | rg -n \"not resized|resized automatically\"\n  └ 2104:           are not resized and retain the limit at    the  point  they\n    were\n\n• Ran man tmux | col -b | rg -n \"default-size\" | sed -n '1,40p'\n  └ 692:           initial    size comes from the global default-size option;\n    -x and\n    … +3 lines (ctrl + t to view transcript)\n    2487:           new window is set from the default-size option and windows\n    are\n\n• Ran man tmux | col -b | sed -n '2056,2066p'\n  └            or /bin/sh.  This option should be configured when tmux is used\n               as a login shell.\n    … +8 lines (ctrl + t to view transcript)\n           destroy-unattached [off | on | keep-last | keep-group]\n               If  on, destroy the session after the last client has detached.\n\n───────────────────────────────────────────────────────────────────────────────\n\n• 주장 확인은 끝났고, 이제 최소 재실행 검증을 돌리겠습니다. 범위가 TmuxAdapter\n  한 파일과 그 회귀 테스트라서 브라우저나 전체 suite까지 넓히지는 않겠습니다.\n\n• Ran python3 -m py_compile pipeline_runtime/tmux_adapter.py tests/\n  │ test_tmux_adapter.py\n  └ (no output)\n\n• Ran git diff --check -- pipeline_runtime/tmux_adapter.py tests/\n  │ test_tmux_adapter.py\n  └ (no output)\n\n• Ran python3 -m unittest -v tests.test_tmux_adapter\n  └ (no output)\n\n• Explored\n  └ List 16\n\n• Working (2m 26s • esc to interrupt)\n\n\n› Improve documentation in @filename\n\n  gpt-5.4 xhigh fast · ~/code/projectH\n",
+  "last_activity_at": 1776273992.5982373
+}

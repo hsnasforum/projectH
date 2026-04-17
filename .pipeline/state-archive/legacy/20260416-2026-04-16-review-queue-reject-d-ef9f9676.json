@@ -1,0 +1,50 @@
+{
+  "job_id": "20260416-2026-04-16-review-queue-reject-d-ef9f9676",
+  "status": "VERIFY_RUNNING",
+  "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-review-queue-reject-defer-architecture-docs-parity.md",
+  "schema_version": 1,
+  "artifact_hash": "1d8f449171d78f707c1fcfdc548d27dfbb4cc9d00fc2473ea746abdfff20ea16",
+  "artifact_size": 1864,
+  "artifact_mtime": 1776267198.672676,
+  "stabilized_at": 1776267204.1692579,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 1776267218.5776846,
+  "last_dispatch_slot": "slot_verify",
+  "last_failed_dispatch_at": 0.0,
+  "last_failed_dispatch_snapshot": "",
+  "dispatch_fail_count": 0,
+  "feedback_baseline_sig": "claude_handoff.md=1776267073692676368:3553:f5db9f4dea0b8c969886c4003c1fc8df33a7770750cb757ea8fa9b70e1822bd7|gemini_request.md=1776249910276975775:3229:cba61b2efcf8234d7bec159fe91148297bc8670e2d1741edfa664c61f988c261|operator_request.md=1776259872793409857:2028:99faa095e9aed7792861e34999a345ec114972b30bf82818640c0496dd7e7c2c",
+  "verify_feedback_baseline_sig": "c30e1377deceb6ab3f0d3760a6e8354b9aeb8c835ddac3f5b62758a4e619159a",
+  "verify_receipt_baseline_path": "verify/4/16/2026-04-16-controller-office-reset-base-verification.md",
+  "verify_receipt_baseline_mtime": 1776267157.4286737,
+  "verify_manifest_path": "",
+  "verify_completed_at": 0.0,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "",
+  "created_at": 1776267199.7278137,
+  "updated_at": 1776267218.6908495,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1776267199.72816,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1776267204.1692603,
+      "reason": "artifact stabilized"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "VERIFY_RUNNING",
+      "at": 1776267218.6908495,
+      "reason": "dispatched to slot_verify"
+    }
+  ],
+  "last_pane_snapshot": "in\n           ARCHITECTURE.md\n\n• Ran git diff --check --\n  │ docs/ARCHITECTURE.md\n  │ work/4/16\n  └ (no output)\n\n──────────────────────────\n\n• 검증 정리는 이제 남깁니\n  다. 이번 라운드는 /work\n  의 수정 자체는 살리되,\n  closeout이 과장한 부분과\n  남은 drift 위치를 /\n  verify에서 명시적으로 바\n  로잡는 형태가 맞습니다.\n\n• Working (2m 14s • esc t…\n\n\n› Use /skills to list ava\n\n  gpt-5.4 xhigh fast · ~/…\n",
+  "last_activity_at": 1776267351.3084915
+}

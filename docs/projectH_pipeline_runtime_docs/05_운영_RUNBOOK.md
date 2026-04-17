@@ -213,6 +213,7 @@ synthetic soak는 아래처럼 채택용 보조 게이트로만 남깁니다.
 - 이때 queue/defer/flush/drop 처리는 `watcher_dispatch.py`가 single implementation이 되는 편이 맞습니다. `watcher_core.py`가 notify family마다 별도 send branch를 다시 들고 있으면 같은 busy-lane contamination replay가 반복됩니다.
 - verify round 전이와 incident 승격은 `verify_fsm.py` single implementation으로 유지하는 편이 맞습니다. 운영 triage는 watcher core loop보다 FSM state/receipt-close chain 기준으로 읽어야 재시도와 실제 멈춤을 구분하기 쉽습니다.
 - turn drift triage도 `turn_arbitration.py` single implementation을 기준으로 읽는 편이 맞습니다. watcher와 supervisor가 각자 `RECEIPT_PENDING`, follow-up, operator gate를 다시 해석하기 시작하면 READY/WORKING drift와 stale verify surface가 다시 생기기 쉽습니다.
+- prompt drift triage도 `watcher_prompt_assembly.py` single implementation을 기준으로 읽는 편이 맞습니다. `_notify_*`가 core loop 안에서 다시 multi-line prompt 본문을 조립하기 시작하면 dispatch queue/FSM/arbitration을 분리해도 wrong prompt payload drift가 다시 생기기 쉽습니다.
 - 다만 pending defer가 남아 있는 동안 active control이 더 높은 seq handoff나 다른 family로 바뀌면, 그 예전 pending prompt는 flush하지 말고 drop해야 합니다. 그렇지 않으면 Claude handoff 직전 stale Codex prompt가 뒤늦게 paste되어 wrong-lane contamination처럼 보일 수 있습니다.
 - readiness triage에서 pane busy 여부는 최근 visible tail만 기준으로 보고, 오래된 scrollback의 `Working (...)` 줄은 현재 busy truth로 쓰지 않습니다. 그렇지 않으면 실제로는 prompt-ready인 Claude/Codex pane이 계속 defer 상태로 남을 수 있습니다.
 - runtime이 `STOPPED`로 내려가거나 active round가 더 새 `/work`로 넘어가면 old `dispatch_stall`, old operator/autonomy gate, 이전 round artifact를 가리키는 degraded reason은 current truth에서 같이 비워야 합니다.

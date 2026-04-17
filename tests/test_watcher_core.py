@@ -1433,10 +1433,12 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
             )
             job = watcher_core.JobState.from_artifact("job-role-neutral", str(work_note))
 
-            implement_prompt = core._format_implement_prompt(handoff_path)
-            verify_prompt = core.sm.verify_prompt_template.format(**core._build_verify_prompt_context(job))
-            advisory_prompt = core._format_runtime_prompt(core.advisory_prompt)
-            followup_prompt = core._format_runtime_prompt(core.followup_prompt)
+            implement_prompt = core.prompt_assembler.format_implement_prompt(handoff_path)
+            verify_prompt = core.sm.verify_prompt_template.format(
+                **core.prompt_assembler.build_verify_prompt_context(job.artifact_path)
+            )
+            advisory_prompt = core.prompt_assembler.format_runtime_prompt(core.advisory_prompt)
+            followup_prompt = core.prompt_assembler.format_runtime_prompt(core.followup_prompt)
 
             self.assertIn("ROLE: implement", implement_prompt)
             self.assertIn("OWNER: Codex", implement_prompt)
@@ -1789,7 +1791,7 @@ class VerifyPromptScopeHintTest(unittest.TestCase):
             )
             job = watcher_core.JobState.from_artifact("job-docs", str(work_note))
 
-            context = core._build_verify_prompt_context(job)
+            context = core.prompt_assembler.build_verify_prompt_context(job.artifact_path)
 
             self.assertEqual(context["verify_scope_label"], "docs_only")
             self.assertIn("docs-only truth-sync round", context["verify_scope_hint"])
@@ -1823,7 +1825,7 @@ class VerifyPromptScopeHintTest(unittest.TestCase):
             )
             job = watcher_core.JobState.from_artifact("job-mixed", str(work_note))
 
-            context = core._build_verify_prompt_context(job)
+            context = core.prompt_assembler.build_verify_prompt_context(job.artifact_path)
 
             self.assertEqual(context["verify_scope_label"], "standard")
             self.assertIn("standard verification round", context["verify_scope_hint"])

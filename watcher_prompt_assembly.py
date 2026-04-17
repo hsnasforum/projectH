@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
@@ -206,6 +207,19 @@ DEFAULT_VERIFY_PROMPT_TEMPLATE = (
 )
 
 
+@dataclass(frozen=True)
+class PromptDispatchSpec:
+    pending_key: str
+    notify_kind: str
+    prompt: str
+    prompt_path: Path
+    control_seq: int = -1
+    expected_status: str = ""
+    expected_control_path: str = ""
+    expected_control_seq: int = -1
+    require_active_control: bool = False
+
+
 class WatcherPromptAssembler:
     def __init__(
         self,
@@ -230,6 +244,7 @@ class WatcherPromptAssembler:
         infer_gemini_report_hint: Callable[[Optional[Path]], str],
         get_active_control_signal: Callable[[], Any],
         get_next_control_seq: Callable[[], int],
+        read_control_seq_from_path: Callable[[Path], int],
         role_owner: Callable[[str], str | None],
         role_read_first_doc: Callable[[str], str],
         path_mention: Callable[[Optional[Path]], str],
@@ -257,6 +272,7 @@ class WatcherPromptAssembler:
         self._infer_gemini_report_hint = infer_gemini_report_hint
         self._get_active_control_signal = get_active_control_signal
         self._get_next_control_seq = get_next_control_seq
+        self._read_control_seq_from_path = read_control_seq_from_path
         self._role_owner = role_owner
         self._role_read_first_doc = role_read_first_doc
         self._path_mention = path_mention
@@ -379,3 +395,85 @@ class WatcherPromptAssembler:
             "operator_wait_age_sec": str(marker.get("operator_wait_age_sec") or "0"),
         }
         return self._normalize_prompt_text(self.operator_retriage_prompt.format(**context))
+
+    def build_claude_dispatch_spec(self, handoff_path: Optional[Path] = None) -> PromptDispatchSpec:
+        prompt_path = handoff_path or self.claude_handoff_path
+        control_seq = self._read_control_seq_from_path(prompt_path)
+        return PromptDispatchSpec(
+            pending_key="claude_handoff",
+            notify_kind="claude_handoff",
+            prompt=self.format_implement_prompt(handoff_path),
+            prompt_path=prompt_path,
+            control_seq=control_seq,
+            expected_status="implement",
+            expected_control_path=str(prompt_path.name),
+            expected_control_seq=control_seq,
+            require_active_control=True,
+        )
+
+    def build_gemini_dispatch_spec(self) -> PromptDispatchSpec:
+        control_seq = self._read_control_seq_from_path(self.gemini_request_path)
+        return PromptDispatchSpec(
+            pending_key="gemini_request",
+            notify_kind="gemini_request",
+            prompt=self.format_runtime_prompt(self.advisory_prompt),
+            prompt_path=self.gemini_request_path,
+            control_seq=control_seq,
+            expected_status="request_open",
+            expected_control_path=str(self.gemini_request_path.name),
+            expected_control_seq=control_seq,
+            require_active_control=True,
+        )
+
+    def build_codex_followup_dispatch_spec(self) -> PromptDispatchSpec:
+        control_seq = self._read_control_seq_from_path(self.gemini_advice_path)
+        return PromptDispatchSpec(
+            pending_key="gemini_advice_followup",
+            notify_kind="gemini_advice_followup",
+            prompt=self.format_runtime_prompt(self.followup_prompt),
+            prompt_path=self.gemini_advice_path,
+            control_seq=control_seq,
+            expected_status="advice_ready",
+            expected_control_path=str(self.gemini_advice_path.name),
+            expected_control_seq=control_seq,
+            require_active_control=True,
+        )
+
+    def build_control_recovery_dispatch_spec(self, marker: Mapping[str, object]) -> PromptDispatchSpec:
+        control_seq = int(marker.get("control_seq") or -1)
+        return PromptDispatchSpec(
+            pending_key="codex_control_recovery",
+            notify_kind="codex_control_recovery",
+            prompt=self.format_control_recovery_prompt(marker),
+            prompt_path=self.operator_request_path,
+            control_seq=control_seq,
+            expected_control_path=str(self.operator_request_path.name),
+            expected_control_seq=control_seq,
+            expected_status="needs_operator",
+        )
+
+    def build_operator_retriage_dispatch_spec(self, marker: Mapping[str, object]) -> PromptDispatchSpec:
+        control_seq = int(marker.get("control_seq") or -1)
+        return PromptDispatchSpec(
+            pending_key="codex_operator_retriage",
+            notify_kind="codex_operator_retriage",
+            prompt=self.format_operator_retriage_prompt(marker),
+            prompt_path=self.operator_request_path,
+            control_seq=control_seq,
+            expected_control_path=str(self.operator_request_path.name),
+            expected_control_seq=control_seq,
+            expected_status="needs_operator",
+        )
+
+    def build_blocked_triage_dispatch_spec(self, signal: Mapping[str, object]) -> PromptDispatchSpec:
+        control_seq = self._read_control_seq_from_path(self.claude_handoff_path)
+        return PromptDispatchSpec(
+            pending_key="codex_blocked_triage",
+            notify_kind="codex_blocked_triage",
+            prompt=self.format_verify_triage_prompt(signal),
+            prompt_path=self.claude_handoff_path,
+            control_seq=control_seq,
+            expected_control_path=str(self.claude_handoff_path.name),
+            expected_control_seq=control_seq,
+            expected_status="implement",
+        )

@@ -81,6 +81,7 @@ from watcher_prompt_assembly import (
     DEFAULT_OPERATOR_RETRIAGE_PROMPT,
     DEFAULT_VERIFY_PROMPT_TEMPLATE,
     DEFAULT_VERIFY_TRIAGE_PROMPT,
+    PromptDispatchSpec,
     WatcherPromptAssembler,
 )
 
@@ -1334,6 +1335,7 @@ class WatcherCore:
             infer_gemini_report_hint=self._infer_gemini_report_hint,
             get_active_control_signal=self._get_active_control_signal,
             get_next_control_seq=self._get_next_control_seq,
+            read_control_seq_from_path=self._read_control_seq_from_path,
             role_owner=self._role_owner,
             role_read_first_doc=self._role_read_first_doc,
             path_mention=self._path_mention,
@@ -1356,7 +1358,7 @@ class WatcherCore:
                 "verify_prompt_template",
                 DEFAULT_VERIFY_PROMPT_TEMPLATE,
             ),
-            verify_context_builder=self._build_verify_prompt_context,
+            verify_context_builder=lambda job: self.prompt_assembler.build_verify_prompt_context(job.artifact_path),
             feedback_sig_builder=self._build_verify_feedback_sigs,
             verify_receipt_builder=self._build_verify_receipt_state,
             verify_retry_backoff_sec=float(config.get("verify_retry_backoff_sec", 20.0)),
@@ -2123,10 +2125,6 @@ class WatcherCore:
         return f"{date_prefix}-<slug>.md"
 
     # ------------------------------------------------------------------
-    def _build_runtime_prompt_context(self, work_path: Optional[Path] = None) -> dict[str, str]:
-        return self.prompt_assembler.build_runtime_prompt_context(work_path)
-
-    # ------------------------------------------------------------------
     def _extract_changed_file_paths_from_round_note(self, work_path: Optional[Path]) -> list[str]:
         if work_path is None or not work_path.exists():
             return []
@@ -2156,29 +2154,6 @@ class WatcherCore:
         return collected
 
     # ------------------------------------------------------------------
-    def _verify_scope_hint_for_work(self, work_path: Optional[Path]) -> tuple[str, str]:
-        return self.prompt_assembler.verify_scope_hint_for_work(work_path)
-
-    # ------------------------------------------------------------------
-    def _build_verify_prompt_context(self, job: JobState) -> dict[str, str]:
-        return self.prompt_assembler.build_verify_prompt_context(job.artifact_path)
-
-    # ------------------------------------------------------------------
-    def _format_runtime_prompt(self, template: str, work_path: Optional[Path] = None) -> str:
-        return self.prompt_assembler.format_runtime_prompt(template, work_path)
-
-    # ------------------------------------------------------------------
-    def _build_implement_prompt_context(self, handoff_path: Optional[Path] = None) -> dict[str, str]:
-        return self.prompt_assembler.build_implement_prompt_context(handoff_path)
-
-    # ------------------------------------------------------------------
-    def _format_implement_prompt(self, handoff_path: Optional[Path] = None) -> str:
-        return self.prompt_assembler.format_implement_prompt(handoff_path)
-
-    # ------------------------------------------------------------------
-    def _format_verify_triage_prompt(self, signal: dict[str, object]) -> str:
-        return self.prompt_assembler.format_verify_triage_prompt(signal)
-
     # ------------------------------------------------------------------
     def _read_status_from_path(self, path: Path) -> Optional[str]:
         """지정 파일의 첫 STATUS: 줄을 읽어 값을 반환."""
@@ -2512,24 +2487,12 @@ class WatcherCore:
             "turn_signal",
             {"reason": reason},
         )
-        prompt_path = handoff_path or self.claude_handoff_path
-        control_seq = self._read_control_seq_from_path(prompt_path)
-        self.dispatch_queue.dispatch(
-            DispatchIntent(
-                pending_key="claude_handoff",
-                notify_kind="claude_handoff",
-                lane_role="implement",
-                reason=reason,
-                prompt=self._format_implement_prompt(handoff_path),
-                prompt_path=prompt_path,
-                target=target,
-                pane_type=pane_type,
-                control_seq=control_seq,
-                expected_status="implement",
-                expected_control_path=str(prompt_path.name),
-                expected_control_seq=control_seq,
-                require_active_control=True,
-            )
+        self._dispatch_prompt_spec(
+            spec=self.prompt_assembler.build_claude_dispatch_spec(handoff_path),
+            lane_role="implement",
+            reason=reason,
+            target=target,
+            pane_type=pane_type,
         )
 
     # ------------------------------------------------------------------
@@ -2562,23 +2525,12 @@ class WatcherCore:
             "turn_signal",
             {"reason": reason},
         )
-        control_seq = self._read_control_seq_from_path(self.gemini_request_path)
-        self.dispatch_queue.dispatch(
-            DispatchIntent(
-                pending_key="gemini_request",
-                notify_kind="gemini_request",
-                lane_role="advisory",
-                reason=reason,
-                prompt=self._format_runtime_prompt(self.advisory_prompt),
-                prompt_path=self.gemini_request_path,
-                target=target,
-                pane_type=pane_type,
-                control_seq=control_seq,
-                expected_status="request_open",
-                expected_control_path=str(self.gemini_request_path.name),
-                expected_control_seq=control_seq,
-                require_active_control=True,
-            )
+        self._dispatch_prompt_spec(
+            spec=self.prompt_assembler.build_gemini_dispatch_spec(),
+            lane_role="advisory",
+            reason=reason,
+            target=target,
+            pane_type=pane_type,
         )
 
     # ------------------------------------------------------------------
@@ -2596,32 +2548,41 @@ class WatcherCore:
             "turn_signal",
             {"reason": reason},
         )
-        control_seq = self._read_control_seq_from_path(self.gemini_advice_path)
-        self.dispatch_queue.dispatch(
-            DispatchIntent(
-                pending_key="gemini_advice_followup",
-                notify_kind="gemini_advice_followup",
-                lane_role="verify",
-                reason=reason,
-                prompt=self._format_runtime_prompt(self.followup_prompt),
-                prompt_path=self.gemini_advice_path,
-                target=target,
-                pane_type=pane_type,
-                control_seq=control_seq,
-                expected_status="advice_ready",
-                expected_control_path=str(self.gemini_advice_path.name),
-                expected_control_seq=control_seq,
-                require_active_control=True,
-            )
+        self._dispatch_prompt_spec(
+            spec=self.prompt_assembler.build_codex_followup_dispatch_spec(),
+            lane_role="verify",
+            reason=reason,
+            target=target,
+            pane_type=pane_type,
         )
 
     # ------------------------------------------------------------------
-    def _format_control_recovery_prompt(self, marker: dict[str, object]) -> str:
-        return self.prompt_assembler.format_control_recovery_prompt(marker)
-
-    # ------------------------------------------------------------------
-    def _format_operator_retriage_prompt(self, marker: dict[str, object]) -> str:
-        return self.prompt_assembler.format_operator_retriage_prompt(marker)
+    def _dispatch_prompt_spec(
+        self,
+        *,
+        spec: PromptDispatchSpec,
+        lane_role: str,
+        reason: str,
+        target: str,
+        pane_type: str,
+    ) -> bool:
+        return self.dispatch_queue.dispatch(
+            DispatchIntent(
+                pending_key=spec.pending_key,
+                notify_kind=spec.notify_kind,
+                lane_role=lane_role,
+                reason=reason,
+                prompt=spec.prompt,
+                prompt_path=spec.prompt_path,
+                target=target,
+                pane_type=pane_type,
+                control_seq=spec.control_seq,
+                expected_status=spec.expected_status,
+                expected_control_path=spec.expected_control_path,
+                expected_control_seq=spec.expected_control_seq,
+                require_active_control=spec.require_active_control,
+            )
+        )
 
     # ------------------------------------------------------------------
     def _notify_codex_control_recovery(self, reason: str, marker: dict[str, object]) -> None:
@@ -2638,22 +2599,12 @@ class WatcherCore:
             "turn_signal",
             {"reason": reason, **marker},
         )
-        control_seq = int(marker.get("control_seq") or -1)
-        self.dispatch_queue.dispatch(
-            DispatchIntent(
-                pending_key="codex_control_recovery",
-                notify_kind="codex_control_recovery",
-                lane_role="verify",
-                reason=reason,
-                prompt=self._format_control_recovery_prompt(marker),
-                prompt_path=self.operator_request_path,
-                target=target,
-                pane_type=pane_type,
-                control_seq=control_seq,
-                expected_control_path=str(self.operator_request_path.name),
-                expected_control_seq=control_seq,
-                expected_status="needs_operator",
-            )
+        self._dispatch_prompt_spec(
+            spec=self.prompt_assembler.build_control_recovery_dispatch_spec(marker),
+            lane_role="verify",
+            reason=reason,
+            target=target,
+            pane_type=pane_type,
         )
 
     # ------------------------------------------------------------------
@@ -2670,22 +2621,12 @@ class WatcherCore:
             "turn_signal",
             {"reason": reason, **marker},
         )
-        control_seq = int(marker.get("control_seq") or -1)
-        self.dispatch_queue.dispatch(
-            DispatchIntent(
-                pending_key="codex_operator_retriage",
-                notify_kind="codex_operator_retriage",
-                lane_role="verify",
-                reason=reason,
-                prompt=self._format_operator_retriage_prompt(marker),
-                prompt_path=self.operator_request_path,
-                target=target,
-                pane_type=pane_type,
-                control_seq=control_seq,
-                expected_control_path=str(self.operator_request_path.name),
-                expected_control_seq=control_seq,
-                expected_status="needs_operator",
-            )
+        self._dispatch_prompt_spec(
+            spec=self.prompt_assembler.build_operator_retriage_dispatch_spec(marker),
+            lane_role="verify",
+            reason=reason,
+            target=target,
+            pane_type=pane_type,
         )
 
     # ------------------------------------------------------------------
@@ -2695,7 +2636,7 @@ class WatcherCore:
         if not target:
             return False
         handoff_sha = self._get_path_sha256(self.claude_handoff_path)
-        prompt = self._format_verify_triage_prompt(signal)
+        spec = self.prompt_assembler.build_blocked_triage_dispatch_spec(signal)
         self._log_raw(
             "codex_blocked_triage_notify",
             str(self.claude_handoff_path),
@@ -2710,22 +2651,12 @@ class WatcherCore:
                 "handoff_sha": handoff_sha,
             },
         )
-        control_seq = self._read_control_seq_from_path(self.claude_handoff_path)
-        ok = self.dispatch_queue.dispatch(
-            DispatchIntent(
-                pending_key="codex_blocked_triage",
-                notify_kind="codex_blocked_triage",
-                lane_role="verify",
-                reason=reason,
-                prompt=prompt,
-                prompt_path=self.claude_handoff_path,
-                target=target,
-                pane_type=pane_type,
-                control_seq=control_seq,
-                expected_control_path=str(self.claude_handoff_path.name),
-                expected_control_seq=control_seq,
-                expected_status="implement",
-            )
+        ok = self._dispatch_prompt_spec(
+            spec=spec,
+            lane_role="verify",
+            reason=reason,
+            target=target,
+            pane_type=pane_type,
         )
         if ok:
             self._last_claude_blocked_fingerprint = str(signal.get("fingerprint", ""))
@@ -2999,7 +2930,7 @@ class WatcherCore:
         if now < self._session_arbitration_cooldowns.get(fingerprint, 0.0):
             return False
 
-        context = self._build_runtime_prompt_context()
+        context = self.prompt_assembler.build_runtime_prompt_context()
         reasons = signal["reasons"]
         excerpt_lines = signal["excerpt_lines"]
         reason_lines = "\n".join(f"- {reason}" for reason in reasons)

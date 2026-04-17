@@ -88,6 +88,10 @@ class PipelineGuiSetupProfileTest(unittest.TestCase):
             {"implement": "Claude", "verify": "Codex", "advisory": "Gemini"},
         )
         self.assertEqual(
+            adapter["prompt_owners"],
+            {"implement": "Claude", "verify": "Codex", "advisory": "Gemini"},
+        )
+        self.assertEqual(
             [lane["name"] for lane in adapter["lane_configs"]],
             ["Claude", "Codex", "Gemini"],
         )
@@ -130,6 +134,10 @@ class PipelineGuiSetupProfileTest(unittest.TestCase):
             adapter["role_owners"],
             {"implement": "Codex", "verify": "Codex", "advisory": None},
         )
+        self.assertEqual(
+            adapter["prompt_owners"],
+            {"implement": "Codex", "verify": "Codex", "advisory": None},
+        )
         lane_map = {lane["name"]: lane for lane in adapter["lane_configs"]}
         self.assertFalse(lane_map["Claude"]["enabled"])
         self.assertTrue(lane_map["Codex"]["enabled"])
@@ -137,6 +145,27 @@ class PipelineGuiSetupProfileTest(unittest.TestCase):
         self.assertEqual(lane_map["Codex"]["roles"], ["implement", "verify"])
         self.assertFalse(adapter["controls"]["advisory_enabled"])
         self.assertFalse(adapter["controls"]["session_arbitration_enabled"])
+
+    def test_runtime_adapter_keeps_canonical_prompt_owners_when_lanes_exist(self) -> None:
+        adapter = runtime_adapter_from_resolved(
+            resolve_active_profile(
+                _profile(
+                    selected_agents=["Claude", "Codex", "Gemini"],
+                    implement="Codex",
+                    verify="Claude",
+                    advisory="Gemini",
+                    advisory_enabled=True,
+                )
+            )
+        )
+        self.assertEqual(
+            adapter["role_owners"],
+            {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"},
+        )
+        self.assertEqual(
+            adapter["prompt_owners"],
+            {"implement": "Claude", "verify": "Codex", "advisory": "Gemini"},
+        )
 
     def test_resolve_active_profile_blocks_invalid_same_agent_without_self_verify(self) -> None:
         resolved = resolve_active_profile(

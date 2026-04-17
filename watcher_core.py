@@ -1174,6 +1174,7 @@ class WatcherCore:
         self.runtime_adapter = resolve_project_runtime_adapter(self.repo_root)
         self.runtime_controls = dict(self.runtime_adapter.get("controls") or {})
         self.runtime_role_owners = dict(self.runtime_adapter.get("role_owners") or {})
+        self.runtime_prompt_owners = dict(self.runtime_adapter.get("prompt_owners") or self.runtime_role_owners)
         self.runtime_lane_configs = list(self.runtime_adapter.get("lane_configs") or [])
 
         # rolling handoff 슬롯
@@ -1308,7 +1309,7 @@ class WatcherCore:
                 target, prompt, self.dry_run, pane_type=pane_type
             ),
             get_path_sig=self._get_path_sig,
-            role_owner=self._role_owner,
+            role_owner=self._prompt_owner,
             log_raw=self._log_raw,
             append_runtime_event=self._append_runtime_event,
             get_active_control_signal=self._get_active_control_signal,
@@ -1336,8 +1337,8 @@ class WatcherCore:
             get_active_control_signal=self._get_active_control_signal,
             get_next_control_seq=self._get_next_control_seq,
             read_control_seq_from_path=self._read_control_seq_from_path,
-            role_owner=self._role_owner,
-            role_read_first_doc=self._role_read_first_doc,
+            role_owner=self._prompt_owner,
+            role_read_first_doc=self._prompt_read_first_doc,
             path_mention=self._path_mention,
             repo_relative=self._repo_relative,
             get_path_sha256=self._get_path_sha256,
@@ -1346,14 +1347,14 @@ class WatcherCore:
 
         self.sm = StateMachine(
             project_root=self.repo_root,
-            verify_lane_name=self._role_owner("verify") or "Codex",
+            verify_lane_name=self._prompt_owner("verify") or "Codex",
             state_dir=self.state_dir,
             stabilizer=self.stabilizer,
             lease=self.lease,
             dedupe=self.dedupe,
             collector=self.collector,
-            verify_pane_target=self._role_pane_target("verify") or config.get("verify_pane_target", _def_codex),
-            verify_pane_type=self._role_pane_type("verify"),
+            verify_pane_target=self._prompt_pane_target("verify") or config.get("verify_pane_target", _def_codex),
+            verify_pane_type=self._prompt_pane_type("verify"),
             verify_prompt_template=config.get(
                 "verify_prompt_template",
                 DEFAULT_VERIFY_PROMPT_TEMPLATE,
@@ -1414,8 +1415,22 @@ class WatcherCore:
         return owner or None
 
     # ------------------------------------------------------------------
+    def _prompt_owner(self, role_name: str) -> Optional[str]:
+        owner = str(self.runtime_prompt_owners.get(role_name) or "").strip()
+        return owner or self._role_owner(role_name)
+
+    # ------------------------------------------------------------------
     def _role_read_first_doc(self, role_name: str) -> str:
         owner = self._role_owner(role_name) or ""
+        if owner == "Claude":
+            return "CLAUDE.md"
+        if owner == "Gemini":
+            return "GEMINI.md"
+        return "AGENTS.md"
+
+    # ------------------------------------------------------------------
+    def _prompt_read_first_doc(self, role_name: str) -> str:
+        owner = self._prompt_owner(role_name) or ""
         if owner == "Claude":
             return "CLAUDE.md"
         if owner == "Gemini":
@@ -1430,21 +1445,28 @@ class WatcherCore:
         return str(self.agent_pane_targets.get(owner) or "")
 
     # ------------------------------------------------------------------
+    def _prompt_pane_target(self, role_name: str) -> str:
+        owner = self._prompt_owner(role_name)
+        if not owner:
+            return ""
+        return str(self.agent_pane_targets.get(owner) or "")
+
+    # ------------------------------------------------------------------
     def _role_pane_type(self, role_name: str) -> str:
         lane = self._lane_config(self._role_owner(role_name))
         pane_type = str((lane or {}).get("pane_type") or "").strip()
         return pane_type or "claude"
 
     # ------------------------------------------------------------------
-    def _claude_slot_target(self) -> str:
-        return str(self.claude_pane_target or "")
+    def _prompt_pane_type(self, role_name: str) -> str:
+        lane = self._lane_config(self._prompt_owner(role_name))
+        pane_type = str((lane or {}).get("pane_type") or "").strip()
+        return pane_type or "claude"
 
     # ------------------------------------------------------------------
     def _dispatch_target_for_spec(self, spec: PromptDispatchSpec) -> tuple[str, str, str]:
-        if spec.notify_kind == "claude_handoff":
-            return self._claude_slot_target(), "claude", "Claude"
-        owner = self._role_owner(spec.lane_role) or ""
-        return self._role_pane_target(spec.lane_role), self._role_pane_type(spec.lane_role), owner
+        owner = self._prompt_owner(spec.lane_role) or ""
+        return self._prompt_pane_target(spec.lane_role), self._prompt_pane_type(spec.lane_role), owner
 
     # ------------------------------------------------------------------
     def _advisory_enabled(self) -> bool:
@@ -1576,11 +1598,11 @@ class WatcherCore:
     def _active_lane_name_for_turn(self, turn_state: Optional[WatcherTurnState] = None) -> str:
         state = turn_state or self._current_turn_state
         if state == WatcherTurnState.CLAUDE_ACTIVE:
-            return "Claude"
+            return self._prompt_owner("implement") or "Claude"
         if state in (WatcherTurnState.CODEX_VERIFY, WatcherTurnState.CODEX_FOLLOWUP):
-            return self._role_owner("verify") or ""
+            return self._prompt_owner("verify") or ""
         if state == WatcherTurnState.GEMINI_ADVISORY:
-            return self._role_owner("advisory") or ""
+            return self._prompt_owner("advisory") or ""
         return ""
 
     # ------------------------------------------------------------------
@@ -1589,7 +1611,7 @@ class WatcherCore:
             return False
         if active_control.status != "implement" or active_control.control_seq < 0:
             return False
-        implement_target = self._claude_slot_target()
+        implement_target = self._prompt_pane_target("implement")
         if not implement_target:
             return False
         pane_text = _capture_pane_text(implement_target)
@@ -1602,7 +1624,7 @@ class WatcherCore:
         lane_statuses: list[dict[str, object]] = []
         active_lane = self._active_lane_name_for_turn()
         active_control = self._get_active_control_signal()
-        implement_lane = "Claude"
+        implement_lane = self._prompt_owner("implement") or "Claude"
         implement_live = self._implement_control_should_surface_working(active_control)
         seen_names: set[str] = set()
         lane_configs = self.runtime_lane_configs or [
@@ -2423,7 +2445,7 @@ class WatcherCore:
         if self._current_turn_state != WatcherTurnState.CLAUDE_ACTIVE:
             return
 
-        target = self._claude_slot_target()
+        target = self._prompt_pane_target("implement")
         if not target:
             return
 
@@ -2471,7 +2493,7 @@ class WatcherCore:
         operator_sig = self._get_path_sig(self.operator_request_path)
         if not operator_sig or operator_sig == self._last_operator_retriage_sig:
             return
-        target = self._role_pane_target("verify")
+        target = self._prompt_pane_target("verify")
         if not target:
             return
         codex_snapshot = _capture_pane_text(target)
@@ -2569,7 +2591,7 @@ class WatcherCore:
                 {"reason": "runtime_advisory_disabled"},
             )
             return
-        if not self._role_pane_target("advisory"):
+        if not self._prompt_pane_target("advisory"):
             log.info("notify_gemini skipped: no advisory owner target")
             self._log_raw(
                 "gemini_notify_skipped",
@@ -2953,7 +2975,7 @@ class WatcherCore:
             self._clear_claude_blocked_state("handoff_inactive")
             return False
 
-        implement_target = self._claude_slot_target()
+        implement_target = self._prompt_pane_target("implement")
         if not implement_target:
             self._clear_claude_blocked_state("implement_target_missing")
             return False
@@ -3018,9 +3040,9 @@ class WatcherCore:
     def _claude_session_arbitration_ready(self, pane_snapshots: dict[str, str]) -> bool:
         if not self._session_arbitration_enabled():
             return False
-        implement_target = self._claude_slot_target()
-        verify_target = self._role_pane_target("verify")
-        advisory_target = self._role_pane_target("advisory")
+        implement_target = self._prompt_pane_target("implement")
+        verify_target = self._prompt_pane_target("verify")
+        advisory_target = self._prompt_pane_target("advisory")
         if not implement_target or not verify_target or not advisory_target:
             return False
         if _is_pane_dead(implement_target):
@@ -3058,9 +3080,9 @@ class WatcherCore:
             return
 
         pane_snapshots = {
-            "claude": _capture_pane_text(self._claude_slot_target()),
-            "codex": _capture_pane_text(self._role_pane_target("verify")),
-            "gemini": _capture_pane_text(self._role_pane_target("advisory")),
+            "claude": _capture_pane_text(self._prompt_pane_target("implement")),
+            "codex": _capture_pane_text(self._prompt_pane_target("verify")),
+            "gemini": _capture_pane_text(self._prompt_pane_target("advisory")),
         }
         signal = _extract_live_session_escalation(pane_snapshots["claude"])
         if signal is None:
@@ -3107,8 +3129,8 @@ class WatcherCore:
             "startup_grace=%.1fs  jsonschema=%s  implement_pane=%s  verify_pane=%s  enabled_lanes=%s",
             self.watch_dir, self.dry_run, self.poll_interval,
             self.startup_grace_sec, _JSONSCHEMA_AVAILABLE,
-            self._claude_slot_target(),
-            self._role_pane_target("verify"),
+            self._prompt_pane_target("implement"),
+            self._prompt_pane_target("verify"),
             ",".join(self.runtime_adapter.get("enabled_lanes") or []),
         )
         last_report_at = time.time()

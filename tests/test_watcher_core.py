@@ -1539,7 +1539,7 @@ class ClaudeHandoffDispatchTest(unittest.TestCase):
 
 
 class RuntimePlanConsumptionTest(unittest.TestCase):
-    def test_role_neutral_prompt_contract_survives_nondefault_role_owners(self) -> None:
+    def test_implement_prompt_stays_canonical_under_nondefault_role_owners(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -1590,10 +1590,10 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
             followup_prompt = core.prompt_assembler.format_runtime_prompt(core.followup_prompt)
 
             self.assertIn("ROLE: implement", implement_prompt)
-            self.assertIn("OWNER: Codex", implement_prompt)
+            self.assertIn("OWNER: Claude", implement_prompt)
             self.assertNotIn("claude_implement", implement_prompt)
-            self.assertNotIn("CLAUDE.md", implement_prompt)
-            self.assertIn("AGENTS.md", implement_prompt)
+            self.assertIn("CLAUDE.md", implement_prompt)
+            self.assertNotIn("OWNER: Codex", implement_prompt)
             self.assertIn("work/README.md", implement_prompt)
             self.assertIn("GOAL:", implement_prompt)
             self.assertIn("leave one `/work` closeout and stop", implement_prompt)
@@ -1805,7 +1805,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
             self.assertEqual(core.sm.verify_pane_target, "claude-pane")
             self.assertEqual(core.sm.verify_pane_type, "claude")
 
-    def test_implement_notify_routes_to_runtime_owner_pane(self) -> None:
+    def test_implement_notify_routes_to_canonical_claude_pane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -1853,8 +1853,8 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
                     core._notify_claude("test-runtime-implement", handoff_path)
 
             args, kwargs = send.call_args
-            self.assertEqual(args[0], "codex-pane")
-            self.assertEqual(kwargs.get("pane_type"), "codex")
+            self.assertEqual(args[0], "claude-pane")
+            self.assertEqual(kwargs.get("pane_type"), "claude")
 
     def test_session_arbitration_disabled_skips_live_escalation_draft(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

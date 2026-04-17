@@ -1436,6 +1436,17 @@ class WatcherCore:
         return pane_type or "claude"
 
     # ------------------------------------------------------------------
+    def _claude_slot_target(self) -> str:
+        return str(self.claude_pane_target or "")
+
+    # ------------------------------------------------------------------
+    def _dispatch_target_for_spec(self, spec: PromptDispatchSpec) -> tuple[str, str, str]:
+        if spec.notify_kind == "claude_handoff":
+            return self._claude_slot_target(), "claude", "Claude"
+        owner = self._role_owner(spec.lane_role) or ""
+        return self._role_pane_target(spec.lane_role), self._role_pane_type(spec.lane_role), owner
+
+    # ------------------------------------------------------------------
     def _advisory_enabled(self) -> bool:
         return bool(self.runtime_controls.get("advisory_enabled")) and bool(self._role_owner("advisory"))
 
@@ -1565,7 +1576,7 @@ class WatcherCore:
     def _active_lane_name_for_turn(self, turn_state: Optional[WatcherTurnState] = None) -> str:
         state = turn_state or self._current_turn_state
         if state == WatcherTurnState.CLAUDE_ACTIVE:
-            return self._role_owner("implement") or ""
+            return "Claude"
         if state in (WatcherTurnState.CODEX_VERIFY, WatcherTurnState.CODEX_FOLLOWUP):
             return self._role_owner("verify") or ""
         if state == WatcherTurnState.GEMINI_ADVISORY:
@@ -1578,7 +1589,7 @@ class WatcherCore:
             return False
         if active_control.status != "implement" or active_control.control_seq < 0:
             return False
-        implement_target = self._role_pane_target("implement")
+        implement_target = self._claude_slot_target()
         if not implement_target:
             return False
         pane_text = _capture_pane_text(implement_target)
@@ -1591,7 +1602,7 @@ class WatcherCore:
         lane_statuses: list[dict[str, object]] = []
         active_lane = self._active_lane_name_for_turn()
         active_control = self._get_active_control_signal()
-        implement_lane = self._role_owner("implement") or ""
+        implement_lane = "Claude"
         implement_live = self._implement_control_should_surface_working(active_control)
         seen_names: set[str] = set()
         lane_configs = self.runtime_lane_configs or [
@@ -2412,7 +2423,7 @@ class WatcherCore:
         if self._current_turn_state != WatcherTurnState.CLAUDE_ACTIVE:
             return
 
-        target = self._role_pane_target("implement")
+        target = self._claude_slot_target()
         if not target:
             return
 
@@ -2501,8 +2512,7 @@ class WatcherCore:
         reason: str,
         missing_target_level: int = logging.WARNING,
     ) -> bool:
-        target = self._role_pane_target(spec.lane_role)
-        pane_type = self._role_pane_type(spec.lane_role)
+        target, pane_type, owner = self._dispatch_target_for_spec(spec)
         if not target:
             log_method = log.info if missing_target_level <= logging.INFO else log.warning
             log_method("%s skipped: no %s owner target", spec.notify_label, spec.lane_role)
@@ -2512,7 +2522,7 @@ class WatcherCore:
             spec.notify_label,
             reason,
             target,
-            self._role_owner(spec.lane_role),
+            owner,
         )
         if spec.raw_event:
             self._log_raw(
@@ -2943,7 +2953,7 @@ class WatcherCore:
             self._clear_claude_blocked_state("handoff_inactive")
             return False
 
-        implement_target = self._role_pane_target("implement")
+        implement_target = self._claude_slot_target()
         if not implement_target:
             self._clear_claude_blocked_state("implement_target_missing")
             return False
@@ -3008,7 +3018,7 @@ class WatcherCore:
     def _claude_session_arbitration_ready(self, pane_snapshots: dict[str, str]) -> bool:
         if not self._session_arbitration_enabled():
             return False
-        implement_target = self._role_pane_target("implement")
+        implement_target = self._claude_slot_target()
         verify_target = self._role_pane_target("verify")
         advisory_target = self._role_pane_target("advisory")
         if not implement_target or not verify_target or not advisory_target:
@@ -3048,7 +3058,7 @@ class WatcherCore:
             return
 
         pane_snapshots = {
-            "claude": _capture_pane_text(self._role_pane_target("implement")),
+            "claude": _capture_pane_text(self._claude_slot_target()),
             "codex": _capture_pane_text(self._role_pane_target("verify")),
             "gemini": _capture_pane_text(self._role_pane_target("advisory")),
         }
@@ -3097,7 +3107,7 @@ class WatcherCore:
             "startup_grace=%.1fs  jsonschema=%s  implement_pane=%s  verify_pane=%s  enabled_lanes=%s",
             self.watch_dir, self.dry_run, self.poll_interval,
             self.startup_grace_sec, _JSONSCHEMA_AVAILABLE,
-            self._role_pane_target("implement"),
+            self._claude_slot_target(),
             self._role_pane_target("verify"),
             ",".join(self.runtime_adapter.get("enabled_lanes") or []),
         )

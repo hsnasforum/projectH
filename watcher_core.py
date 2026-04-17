@@ -48,6 +48,16 @@ if _PROJECT_IMPORT_ROOT:
         sys.path.insert(0, project_import_path)
 
 from pipeline_gui.setup_profile import resolve_project_runtime_adapter
+from pipeline_runtime.lane_surface import (
+    capture_pane_text as _shared_capture_pane_text,
+    pane_text_has_busy_indicator as _shared_pane_text_has_busy_indicator,
+    pane_text_has_codex_activity as _shared_pane_text_has_codex_activity,
+    pane_text_has_gemini_activity as _shared_pane_text_has_gemini_activity,
+    pane_text_has_input_cursor as _shared_pane_text_has_input_cursor,
+    pane_text_has_working_indicator as _shared_pane_text_has_working_indicator,
+    pane_text_is_idle as _shared_pane_text_is_idle,
+    wait_for_pane_settle as _shared_wait_for_pane_settle,
+)
 from pipeline_runtime.operator_autonomy import classify_operator_candidate, normalize_reason_code
 from pipeline_runtime.schema import read_control_meta, read_json
 from pipeline_runtime.wrapper_events import build_lane_read_models
@@ -613,16 +623,7 @@ class ManifestCollector:
 # tmux 전송 헬퍼
 # ---------------------------------------------------------------------------
 def _capture_pane_text(pane_target: str) -> str:
-    try:
-        result = subprocess.run(
-            ["tmux", "capture-pane", "-pt", pane_target],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        return result.stdout
-    except subprocess.CalledProcessError:
-        return ""
+    return _shared_capture_pane_text(pane_target)
 
 
 def wait_for_pane_settle(
@@ -636,19 +637,12 @@ def wait_for_pane_settle(
     fresh CLI lane에서 startup 로그나 MCP 초기화 출력이 계속 나오는 동안
     첫 handoff를 보내면 텍스트만 남고 submit이 누락될 수 있다.
     """
-    deadline = time.time() + timeout_sec
-    last_snapshot = None
-    last_change_at = time.time()
-
-    while time.time() < deadline:
-        snapshot = _capture_pane_text(pane_target)
-        if snapshot != last_snapshot:
-            last_snapshot = snapshot
-            last_change_at = time.time()
-        elif time.time() - last_change_at >= quiet_sec:
-            return True
-        time.sleep(poll_sec)
-    return False
+    return _shared_wait_for_pane_settle(
+        pane_target,
+        timeout_sec=timeout_sec,
+        quiet_sec=quiet_sec,
+        poll_sec=poll_sec,
+    )
 
 
 def _line_looks_like_input_prompt(line: str) -> bool:
@@ -683,37 +677,11 @@ def _pane_text_has_gemini_ready_prompt(text: str) -> bool:
 
 
 def _pane_text_has_busy_indicator(text: str) -> bool:
-    """Check if pane text contains any sign that the agent is still working."""
-    recent_lines = [line.strip().lower() for line in text.splitlines() if line.strip()]
-    if not recent_lines:
-        return False
-    # Only trust the recent visible tail. Old "Working" lines left in scrollback
-    # should not block a new dispatch once the current prompt is back.
-    lower = "\n".join(recent_lines[-18:])
-    busy_patterns = [
-        "working (",        # ◦ Working (36s • esc to interrupt)
-        "working for ",     # Worked for 1m 25s (transition text)
-        "• working",        # • Working ...
-        "◦ working",        # ◦ Working ...
-        "waiting for background",   # Waiting for background terminal
-        "background terminal",      # background terminal (active)
-        "germinating",      # Codex startup indicator
-        "flumoxing",        # Claude thinking indicator
-    ]
-    for pattern in busy_patterns:
-        if pattern in lower:
-            return True
-    return False
+    return _shared_pane_text_has_busy_indicator(text)
 
 
 def _pane_text_has_input_cursor(text: str) -> bool:
-    lines = [l for l in text.strip().splitlines() if l.strip()]
-    if not lines:
-        return False
-    for line in reversed(lines[-12:]):
-        if _line_looks_like_input_prompt(line):
-            return True
-    return _pane_text_has_gemini_ready_prompt(text)
+    return _shared_pane_text_has_input_cursor(text)
 
 
 def _pane_has_input_cursor(pane_target: str) -> bool:
@@ -725,30 +693,22 @@ def _pane_has_input_cursor(pane_target: str) -> bool:
 def _pane_has_working_indicator(pane_target: str) -> bool:
     """Check whether the recent pane output shows Codex has started working."""
     text = _capture_pane_text(pane_target)
-    return "• Working" in text
+    return _shared_pane_text_has_working_indicator(text)
 
 
 def _pane_text_is_idle(text: str) -> bool:
     """Treat a pane as idle only when a prompt is visible and no busy signal remains."""
-    if not text.strip():
-        return False
-    return _pane_text_has_input_cursor(text) and not _pane_text_has_busy_indicator(text)
+    return _shared_pane_text_is_idle(text)
 
 
 def _pane_text_has_codex_activity(text: str) -> bool:
     """Detect Codex response activity even when the input prompt remains visible."""
-    return "\n• " in text or text.lstrip().startswith("• ")
+    return _shared_pane_text_has_codex_activity(text)
 
 
 def _pane_text_has_gemini_activity(text: str) -> bool:
     """Detect Gemini response/tool activity even when the input prompt remains visible."""
-    return (
-        "\n✦ " in text
-        or text.lstrip().startswith("✦ ")
-        or "ReadFile" in text
-        or "WriteFile" in text
-        or "ReadManyFiles" in text
-    )
+    return _shared_pane_text_has_gemini_activity(text)
 
 
 _LIVE_SESSION_ESCALATION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (

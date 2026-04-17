@@ -21,15 +21,17 @@ from pathlib import Path
 
 from pipeline_gui.project import _session_name_for
 
+from .lane_surface import BUSY_MARKERS as _BASE_BUSY_MARKERS
+from .lane_surface import READY_MARKERS as _READY_MARKERS
+from .lane_surface import lines_match_markers as _shared_lines_match_markers
+from .lane_surface import text_is_ready as _shared_text_is_ready
+from .lane_surface import text_matches_markers as _shared_text_matches_markers
 from .schema import atomic_write_json, iso_utc, read_json
 from .supervisor import RuntimeSupervisor
 from .tmux_adapter import TmuxAdapter
 from .wrapper_events import append_wrapper_event
 
-_BUSY_MARKERS = (
-    "working (",
-    "background terminal",
-    "waiting for background",
+_BUSY_MARKERS = _BASE_BUSY_MARKERS + (
     "cascading",
     "lollygagging",
     "hashing",
@@ -59,11 +61,6 @@ _ACTIVITY_MARKERS = _BUSY_MARKERS + (
 
 _TASK_DONE_SETTLE_SEC = 1.5
 
-_READY_MARKERS = {
-    "Claude": ("❯", "claude code", "bypass permissions"),
-    "Codex": ("›", "openai codex", "tab to queue message", "context left"),
-    "Gemini": ("type your message", "gemini cli", "workspace"),
-}
 _CODEX_UPDATE_SKIP_MARKERS = (
     "update available",
     "@openai/codex",
@@ -467,28 +464,19 @@ def _load_task_hint(task_hint_dir: Path | None, lane_name: str) -> dict[str, obj
 
 
 def _text_is_busy(text: str) -> bool:
-    lower = text.lower()
-    return any(marker in lower for marker in _BUSY_MARKERS)
+    return _shared_text_matches_markers(text, _BUSY_MARKERS)
 
 
 def _text_is_ready(lane_name: str, text: str) -> bool:
-    markers = _READY_MARKERS.get(lane_name, ())
-    lower = text.lower()
-    return any(marker.lower() in lower for marker in markers)
+    return _shared_text_is_ready(lane_name, text)
 
 
 def _lines_match_markers(lines: list[str], markers: tuple[str, ...]) -> bool:
-    if not lines:
-        return False
-    lowered = "\n".join(lines).lower()
-    return any(marker.lower() in lowered for marker in markers)
+    return _shared_lines_match_markers(lines, markers)
 
 
 def _text_matches_markers(text: str, markers: tuple[str, ...]) -> bool:
-    lower = str(text or "").lower()
-    if not lower.strip():
-        return False
-    return any(marker.lower() in lower for marker in markers)
+    return _shared_text_matches_markers(text, markers)
 
 
 class _WrapperEmitter:

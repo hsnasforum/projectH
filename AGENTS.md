@@ -269,6 +269,23 @@ Current source-of-truth docs live in the root `docs/` directory.
   - a real operator-only decision or immediate safety stop is required now, or
   - Gemini arbitration is unavailable or already completed and two or more candidates still remain genuinely tied after the order above.
 
+## Recursive Improvement Rules
+
+- In runtime / launcher / watcher / supervisor work, "recursive improvement" means each fix should make the next fix smaller, more local, and easier to verify.
+- Do not treat recursive improvement as repeated patch layering. If the same incident family recurs, prefer tightening the owning boundary or shared helper over appending another file-local special case.
+- First classify whether a problem is:
+  - an existing named incident family, or
+  - a genuinely new incident family.
+- For an existing family, extend the owning module, contract, or replay test instead of creating parallel heuristics in higher layers.
+- For a new family, add:
+  - a named incident or machine note,
+  - a focused replay test,
+  - a truthful runtime surface,
+  before considering broader soak or UI polish.
+- Keep thin clients thin. `pipeline-launcher.py`, `controller.server`, and browser/controller consumers should not gain extra truth inference just to hide runtime drift.
+- Long soak remains baseline evidence, not the default proof for runtime-edge fixes. Prefer launcher live stability gate plus incident replay unless the runtime contract itself changed materially.
+- A good recursive-improvement change should reduce future diff surface, reduce duplicated logic, or move logic toward a clearer owner. If it only adds another exception branch, treat that as a temporary stopgap and leave a cleanup path.
+
 ## Reviewed-Memory Planning Boundary
 
 - Reviewed-memory remains in scope, but planning should proceed from the user-visible loop outward, not from internal contract completeness inward.

@@ -18,6 +18,7 @@ from pipeline_gui.platform import resolve_project_runtime_file
 from pipeline_gui.project import _session_name_for
 from pipeline_gui.setup_profile import resolve_project_runtime_adapter
 
+from .lane_surface import tail_has_busy_indicator, tail_has_ready_indicator, tail_surface_state
 from .operator_autonomy import classify_operator_candidate
 from .receipts import build_receipt, receipt_path, validate_manifest, write_receipt
 from .schema import (
@@ -46,23 +47,6 @@ _AUTH_LOGIN_PATTERNS = (
     re.compile(r"api error:\s*401", re.IGNORECASE),
     re.compile(r'"type"\s*:\s*"authentication_error"', re.IGNORECASE),
 )
-_BUSY_TAIL_MARKERS = (
-    "working (",
-    "working for ",
-    "• working",
-    "◦ working",
-    "waiting for background",
-    "background terminal",
-    "inferring",
-    "thinking with ",
-    "discombobulating",
-)
-_READY_TAIL_MARKERS = {
-    "Claude": ("❯", "claude code", "bypass permissions"),
-    "Codex": ("›", "openai codex", "tab to queue message", "context left"),
-    "Gemini": ("type your message", "gemini cli", "workspace"),
-}
-
 
 class RuntimeSupervisor:
     def __init__(
@@ -807,28 +791,13 @@ class RuntimeSupervisor:
         return ""
 
     def _tail_has_busy_indicator(self, text: str) -> bool:
-        lower = str(text or "").lower()
-        if not lower.strip():
-            return False
-        return any(marker in lower for marker in _BUSY_TAIL_MARKERS)
+        return tail_has_busy_indicator(text)
 
     def _tail_has_ready_indicator(self, lane_name: str, text: str) -> bool:
-        lower = str(text or "").lower()
-        if not lower.strip():
-            return False
-        return any(marker.lower() in lower for marker in _READY_TAIL_MARKERS.get(lane_name, ()))
+        return tail_has_ready_indicator(lane_name, text)
 
     def _tail_surface_state(self, lane_name: str, text: str) -> str:
-        lines = [line.strip().lower() for line in str(text or "").splitlines() if line.strip()]
-        if not lines:
-            return ""
-        trailing_lines = lines[-12:]
-        ready_markers = tuple(marker.lower() for marker in _READY_TAIL_MARKERS.get(lane_name, ()))
-        if self._tail_has_busy_indicator(text):
-            return "WORKING"
-        if any(any(marker in line for marker in ready_markers) for line in trailing_lines):
-            return "READY"
-        return ""
+        return tail_surface_state(lane_name, text)
 
     def _build_lane_statuses(
         self,

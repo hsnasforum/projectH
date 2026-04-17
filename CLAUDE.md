@@ -42,6 +42,15 @@
 - Do not widen scope from the current document-first MVP into generic web chatbot or autonomous tool-operation behavior.
 - If docs and implementation disagree, make docs match implementation or mark the gap as `TODO` / `OPEN QUESTION`.
 
+## Recursive Improvement
+
+- 런타임/런처/워처 문제를 고칠 때 재귀개선은 "같은 종류의 다음 수정 범위를 더 작게 만드는 것"을 뜻합니다.
+- 같은 incident family가 다시 나왔으면 조건문을 하나 더 얹기보다, 그 incident의 owner인 boundary/helper/module을 먼저 고칩니다.
+- 새 incident family면 먼저 named incident, focused replay test, truthful runtime surface를 추가하고 그 다음 구현을 좁힙니다.
+- `pipeline-launcher.py`나 controller/browser 쪽에 추가 추론을 얹어 runtime drift를 가리려 하지 않습니다. thin client는 계속 runtime truth를 읽는 쪽에 둡니다.
+- long soak 재실행은 기본 증명이 아닙니다. runtime contract 자체를 크게 바꾼 경우가 아니면 launcher live stability gate + incident replay를 우선합니다.
+- 수정이 끝났을 때 "다음 같은 버그가 나와도 어디를 고쳐야 하는지 더 분명해졌는가"를 기준으로 결과를 점검합니다.
+
 ## Verification Rules
 
 - Run the narrowest relevant check first.

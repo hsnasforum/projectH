@@ -26,7 +26,7 @@
   - 현재 트리에는 later same-day controller/runtime 후속 변경이 이미 더 섞여 있으므로, 이번 결론은 "`background preload readiness hardening` slice의 핵심 주장은 아직 truthful하다"는 뜻으로만 읽어야 합니다.
   - live automation 관점의 다음 쟁점은 controller가 아니라 sqlite browser same-family truth-sync입니다.
   - `verify/4/17/2026-04-17-sqlite-browser-history-card-noisy-single-source-strong-plus-missing-click-reload-exact-title-parity-verification.md`까지는 이미 존재하지만, `work/4/17/2026-04-17-sqlite-browser-history-card-natural-reload-chain-parity.md`는 여전히 matching `/verify`가 없습니다.
-  - 따라서 seq 274 control은 controller family를 더 파지 않고, 이미 seq 272 Gemini advice로 좁혀진 natural-reload-chain retro-closeout bundle을 그대로 유지하는 편이 가장 truthfully 맞습니다.
+  - 따라서 seq 275 control은 controller family를 더 파지 않고, 이미 seq 272 Gemini advice로 좁혀진 natural-reload-chain retro-closeout bundle을 그대로 유지하는 편이 가장 truthfully 맞습니다.
 
 ## 검증
 - `rg -n "BACKGROUND_ASSET_CANDIDATES|_pendingBackgroundSignals|function _loadBackgroundAsset\\(|_bgImg\\.onload|_bgImg\\.onerror|_bgImg\\.complete|naturalWidth|_bgLoadError|_emitBackgroundSignal\\(|<span class=\\"info-label\\">Scene</span>|root'|fallback'|asset_error'|loading'" controller/index.html`
@@ -38,7 +38,7 @@
 - `nl -ba tests/test_controller_server.py | sed -n '88,118p'`
   - 결과: `test_controller_html_polls_runtime_api_only`가 background asset fallback, preload readiness, `_emitBackgroundSignal(`, `Scene` surface를 정적 HTML 계약으로 검사함을 확인했습니다.
 - `python3 -m unittest -v tests.test_controller_server.ControllerServerLaunchGateTests.test_controller_html_polls_runtime_api_only`
-  - 결과: `Ran 1 test in 0.003s`, `OK`
+  - 결과: `Ran 1 test in 0.004s`, `OK`
 - `tmp=$(mktemp --suffix=.js); trap 'rm -f "$tmp"' EXIT; awk '/<script>/{flag=1; next} /<\\/script>/{flag=0} flag' controller/index.html > "$tmp"; node --check "$tmp"`
   - 결과: 출력 없음
 - `git diff --check -- controller/index.html tests/test_controller_server.py`

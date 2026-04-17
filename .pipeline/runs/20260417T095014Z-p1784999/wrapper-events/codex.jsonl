@@ -57,3 +57,37 @@
 {"ts": "2026-04-17T09:54:31.615207Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
 {"ts": "2026-04-17T09:54:36.618306Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
 {"ts": "2026-04-17T09:54:41.647895Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:54:46.676268Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:54:51.690646Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:54:56.734694Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:55:01.946392Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:55:06.968955Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:55:12.067292Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:55:17.146434Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:55:22.264432Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:55:27.296084Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:55:32.381349Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:55:37.612882Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:55:42.650218Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:55:47.662651Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:55:49.678781Z", "lane": "Codex", "event_type": "DISPATCH_SEEN", "source": "wrapper", "payload": {"pid": 1785719, "job_id": "20260417-2026-04-16-controller-background-4dd41842", "dispatch_id": "178693eed1570f0d4489ab44fcf06d65f53d36e7", "control_seq": 274, "attempt": 1}, "derived_from": "task_hint"}
+{"ts": "2026-04-17T09:55:52.691041Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:55:57.714803Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:56:02.738726Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:56:07.767782Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:56:12.783798Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:56:14.599721Z", "lane": "Codex", "event_type": "TASK_ACCEPTED", "source": "wrapper", "payload": {"pid": 1785719, "job_id": "20260417-2026-04-16-controller-background-4dd41842", "dispatch_id": "178693eed1570f0d4489ab44fcf06d65f53d36e7", "control_seq": 274, "attempt": 1}, "derived_from": "vendor_output"}
+{"ts": "2026-04-17T09:56:16.107502Z", "lane": "Codex", "event_type": "TASK_DONE", "source": "wrapper", "payload": {"pid": 1785719, "job_id": "20260417-2026-04-16-controller-background-4dd41842", "control_seq": 274, "dispatch_id": "178693eed1570f0d4489ab44fcf06d65f53d36e7"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-17T09:56:16.107680Z", "lane": "Codex", "event_type": "READY", "source": "wrapper", "payload": {"pid": 1785719, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
+{"ts": "2026-04-17T09:56:17.798013Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:56:22.820029Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:56:27.833023Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:56:32.854436Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:56:37.880366Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:56:42.906505Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:56:47.917998Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:56:52.919291Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:56:57.984314Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:57:03.153677Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:57:08.263771Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}
+{"ts": "2026-04-17T09:57:13.358379Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1785719}, "derived_from": "process_alive"}

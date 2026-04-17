@@ -3,7 +3,7 @@
   "backend_type": "tmux",
   "run_id": "20260417T095014Z-p1784999",
   "current_run_id": "20260417T095014Z-p1784999",
-  "runtime_state": "RUNNING",
+  "runtime_state": "STOPPED",
   "degraded_reason": "",
   "degraded_reasons": [],
   "autonomy": {
@@ -24,58 +24,46 @@
     "last_self_triage_at": ""
   },
   "control": {
-    "active_control_file": ".pipeline/claude_handoff.md",
-    "active_control_seq": 274,
-    "active_control_status": "implement",
-    "active_control_updated_at": "2026-04-17T09:54:28.138412Z"
+    "active_control_file": "",
+    "active_control_seq": -1,
+    "active_control_status": "none",
+    "active_control_updated_at": ""
   },
   "lanes": [
     {
       "name": "Claude",
-      "state": "READY",
-      "pid": 1785142,
-      "attachable": true,
-      "last_event_at": "2026-04-17T09:54:43.493248Z",
-      "last_heartbeat_at": "2026-04-17T09:54:43.493248Z",
-      "note": "prompt_visible"
+      "state": "OFF",
+      "pid": null,
+      "attachable": false,
+      "last_event_at": "2026-04-17T09:57:15.954252Z",
+      "last_heartbeat_at": "2026-04-17T09:57:15.954252Z",
+      "note": ""
     },
     {
       "name": "Codex",
-      "state": "WORKING",
-      "pid": 1785168,
-      "attachable": true,
-      "last_event_at": "2026-04-17T09:54:41.647895Z",
-      "last_heartbeat_at": "2026-04-17T09:54:41.647895Z",
-      "note": "verifying"
+      "state": "OFF",
+      "pid": null,
+      "attachable": false,
+      "last_event_at": "2026-04-17T09:57:13.358379Z",
+      "last_heartbeat_at": "2026-04-17T09:57:13.358379Z",
+      "note": ""
     },
     {
       "name": "Gemini",
-      "state": "READY",
-      "pid": 1785192,
-      "attachable": true,
-      "last_event_at": "2026-04-17T09:54:43.680870Z",
-      "last_heartbeat_at": "2026-04-17T09:54:43.680870Z",
-      "note": "prompt_visible"
+      "state": "OFF",
+      "pid": null,
+      "attachable": false,
+      "last_event_at": "2026-04-17T09:57:15.201278Z",
+      "last_heartbeat_at": "2026-04-17T09:57:15.201278Z",
+      "note": ""
     }
   ],
-  "active_round": {
-    "job_id": "20260417-2026-04-16-controller-background-4dd41842",
-    "round": 1,
-    "state": "VERIFYING",
-    "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-controller-background-preload-readiness-hardening.md",
-    "status": "VERIFY_RUNNING",
-    "dispatch_id": "a6c13814b492b2ad657bad3776f667c5e2cbaf75",
-    "dispatch_control_seq": 274,
-    "dispatch_stage": "",
-    "completion_stage": "receipt_close_pending",
-    "note": "",
-    "degraded_reason": ""
-  },
+  "active_round": null,
   "last_receipt": null,
   "last_receipt_id": "",
   "watcher": {
-    "alive": true,
-    "pid": 1785260
+    "alive": false,
+    "pid": null
   },
   "artifacts": {
     "latest_work": {
@@ -84,7 +72,7 @@
     },
     "latest_verify": {
       "path": "4/17/2026-04-17-controller-background-preload-readiness-hardening-retro-verification.md",
-      "mtime": 1776419668.0050864
+      "mtime": 1776419805.735408
     }
   },
   "compat": {
@@ -93,8 +81,8 @@
         "file": "claude_handoff.md",
         "status": "implement",
         "label": "Claude 실행",
-        "mtime": 1776419668.138412,
-        "control_seq": 274
+        "mtime": 1776419805.867408,
+        "control_seq": 275
       },
       "stale": [
         {
@@ -128,6 +116,6 @@
       "active_control_seq": -1
     }
   },
-  "last_heartbeat_at": "2026-04-17T09:54:44.197748Z",
-  "updated_at": "2026-04-17T09:54:44.197765Z"
+  "last_heartbeat_at": "2026-04-17T09:57:18.512025Z",
+  "updated_at": "2026-04-17T09:57:18.512037Z"
 }

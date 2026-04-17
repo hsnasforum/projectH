@@ -96,3 +96,15 @@ Gemini는 이 순서로도 Codex가 못 고른 경우에만 개입합니다.
 - 같은 날 same-family docs-only truth-sync가 이미 3회 이상 반복된 상태라면, Gemini는 또 다른 더 작은 docs-only micro-slice보다 남은 drift를 한 번에 닫는 bounded bundle이나 escalation을 더 우선 추천하는 편이 맞습니다.
 - advice는 advisory only입니다. canonical execution slot은 여전히 Codex가 씁니다.
 - active Claude session side-question arbitration에서는 Codex가 `.pipeline/claude_handoff.md`를 session boundary 전까지 유지하고, Gemini advice를 짧은 lane reply로만 전달하는 편이 canonical입니다.
+
+## 재귀개선 기준
+
+- Gemini가 runtime/launcher/watchers 쪽 slice를 권고할 때 재귀개선은 "이번 수정이 다음 수정 범위를 더 작게 만드는가"로 판단합니다.
+- 같은 incident family가 반복될 때는 새 exception branch를 더 붙이기보다 owning boundary, shared helper, replay gate를 강화하는 쪽을 우선 권고합니다.
+- 새 incident family라면 먼저 named incident, focused replay test, truthful runtime surface를 제안하고 long soak 재실행은 예외 상황에만 권합니다.
+- thin client에 새 truth inference를 얹어 drift를 가리는 권고는 피합니다. launcher/controller는 runtime surface만 읽는 방향을 유지합니다.
+- recommendation은 가능하면 아래 형태를 우선합니다:
+  - incident family 이름
+  - owning boundary
+  - replay 또는 live gate
+  - 가장 작은 coherent slice

@@ -2494,104 +2494,38 @@ class WatcherCore:
         return elapsed < self.claude_active_idle_timeout_sec
 
     # ------------------------------------------------------------------
-    def _notify_claude(self, reason: str, handoff_path: Optional[Path] = None) -> None:
-        """Claude pane에 다음 작업 프롬프트 전송."""
-        target = self._role_pane_target("implement")
-        pane_type = self._role_pane_type("implement")
-        if not target:
-            log.warning("notify_claude skipped: no implement owner target")
-            return
-        log.info("notify_claude: reason=%s target=%s owner=%s", reason, target, self._role_owner("implement"))
-        self._log_raw(
-            "claude_notify",
-            str(handoff_path or self.claude_handoff_path),
-            "turn_signal",
-            {"reason": reason},
-        )
-        self._dispatch_prompt_spec(
-            spec=self.prompt_assembler.build_claude_dispatch_spec(handoff_path),
-            lane_role="implement",
-            reason=reason,
-            target=target,
-            pane_type=pane_type,
-        )
-
-    # ------------------------------------------------------------------
-    def _notify_gemini(self, reason: str) -> None:
-        """Gemini pane에 arbitration 프롬프트 전송."""
-        if not self._advisory_enabled():
-            log.info("notify_gemini skipped: advisory disabled")
-            self._log_raw(
-                "gemini_notify_skipped",
-                str(self.gemini_request_path),
-                "turn_signal",
-                {"reason": "runtime_advisory_disabled"},
-            )
-            return
-        target = self._role_pane_target("advisory")
-        pane_type = self._role_pane_type("advisory")
-        if not target:
-            log.info("notify_gemini skipped: no advisory owner target")
-            self._log_raw(
-                "gemini_notify_skipped",
-                str(self.gemini_request_path),
-                "turn_signal",
-                {"reason": "missing_advisory_target"},
-            )
-            return
-        log.info("notify_gemini: reason=%s target=%s owner=%s", reason, target, self._role_owner("advisory"))
-        self._log_raw(
-            "gemini_notify",
-            str(self.gemini_request_path),
-            "turn_signal",
-            {"reason": reason},
-        )
-        self._dispatch_prompt_spec(
-            spec=self.prompt_assembler.build_gemini_dispatch_spec(),
-            lane_role="advisory",
-            reason=reason,
-            target=target,
-            pane_type=pane_type,
-        )
-
-    # ------------------------------------------------------------------
-    def _notify_codex_followup(self, reason: str) -> None:
-        """Gemini advice 이후 Codex가 최종 결론을 쓰도록 재호출."""
-        target = self._role_pane_target("verify")
-        pane_type = self._role_pane_type("verify")
-        if not target:
-            log.warning("notify_codex_followup skipped: no verify owner target")
-            return
-        log.info("notify_codex_followup: reason=%s target=%s owner=%s", reason, target, self._role_owner("verify"))
-        self._log_raw(
-            "codex_followup_notify",
-            str(self.gemini_advice_path),
-            "turn_signal",
-            {"reason": reason},
-        )
-        self._dispatch_prompt_spec(
-            spec=self.prompt_assembler.build_codex_followup_dispatch_spec(),
-            lane_role="verify",
-            reason=reason,
-            target=target,
-            pane_type=pane_type,
-        )
-
-    # ------------------------------------------------------------------
-    def _dispatch_prompt_spec(
+    def _dispatch_notify_spec(
         self,
         *,
         spec: PromptDispatchSpec,
-        lane_role: str,
         reason: str,
-        target: str,
-        pane_type: str,
+        missing_target_level: int = logging.WARNING,
     ) -> bool:
+        target = self._role_pane_target(spec.lane_role)
+        pane_type = self._role_pane_type(spec.lane_role)
+        if not target:
+            log_method = log.info if missing_target_level <= logging.INFO else log.warning
+            log_method("%s skipped: no %s owner target", spec.notify_label, spec.lane_role)
+            return False
+        log.info(
+            "%s: reason=%s target=%s owner=%s",
+            spec.notify_label,
+            reason,
+            target,
+            self._role_owner(spec.lane_role),
+        )
+        if spec.raw_event:
+            self._log_raw(
+                spec.raw_event,
+                str(spec.prompt_path),
+                "turn_signal",
+                dict(spec.raw_payload),
+            )
         return self.dispatch_queue.dispatch(
             DispatchIntent(
                 pending_key=spec.pending_key,
                 notify_kind=spec.notify_kind,
-                lane_role=lane_role,
+                lane_role=spec.lane_role,
                 reason=reason,
                 prompt=spec.prompt,
                 prompt_path=spec.prompt_path,
@@ -2606,78 +2540,68 @@ class WatcherCore:
         )
 
     # ------------------------------------------------------------------
+    def _notify_claude(self, reason: str, handoff_path: Optional[Path] = None) -> None:
+        """Claude pane에 다음 작업 프롬프트 전송."""
+        self._dispatch_notify_spec(
+            spec=self.prompt_assembler.build_claude_dispatch_spec(reason, handoff_path),
+            reason=reason,
+        )
+
+    # ------------------------------------------------------------------
+    def _notify_gemini(self, reason: str) -> None:
+        """Gemini pane에 arbitration 프롬프트 전송."""
+        if not self._advisory_enabled():
+            log.info("notify_gemini skipped: advisory disabled")
+            self._log_raw(
+                "gemini_notify_skipped",
+                str(self.gemini_request_path),
+                "turn_signal",
+                {"reason": "runtime_advisory_disabled"},
+            )
+            return
+        if not self._role_pane_target("advisory"):
+            log.info("notify_gemini skipped: no advisory owner target")
+            self._log_raw(
+                "gemini_notify_skipped",
+                str(self.gemini_request_path),
+                "turn_signal",
+                {"reason": "missing_advisory_target"},
+            )
+            return
+        self._dispatch_notify_spec(
+            spec=self.prompt_assembler.build_gemini_dispatch_spec(reason),
+            reason=reason,
+            missing_target_level=logging.INFO,
+        )
+
+    # ------------------------------------------------------------------
+    def _notify_codex_followup(self, reason: str) -> None:
+        """Gemini advice 이후 Codex가 최종 결론을 쓰도록 재호출."""
+        self._dispatch_notify_spec(
+            spec=self.prompt_assembler.build_codex_followup_dispatch_spec(reason),
+            reason=reason,
+        )
+
+    # ------------------------------------------------------------------
     def _notify_codex_control_recovery(self, reason: str, marker: dict[str, object]) -> None:
         """stale operator stop 해소 뒤 Codex가 다음 control을 재결정하도록 호출."""
-        target = self._role_pane_target("verify")
-        pane_type = self._role_pane_type("verify")
-        if not target:
-            log.warning("notify_codex_control_recovery skipped: no verify owner target")
-            return
-        log.info("notify_codex_control_recovery: reason=%s target=%s owner=%s", reason, target, self._role_owner("verify"))
-        self._log_raw(
-            "codex_control_recovery_notify",
-            str(self.operator_request_path),
-            "turn_signal",
-            {"reason": reason, **marker},
-        )
-        self._dispatch_prompt_spec(
-            spec=self.prompt_assembler.build_control_recovery_dispatch_spec(marker),
-            lane_role="verify",
+        self._dispatch_notify_spec(
+            spec=self.prompt_assembler.build_control_recovery_dispatch_spec(marker, reason),
             reason=reason,
-            target=target,
-            pane_type=pane_type,
         )
 
     # ------------------------------------------------------------------
     def _notify_codex_operator_retriage(self, reason: str, marker: dict[str, object]) -> None:
-        target = self._role_pane_target("verify")
-        pane_type = self._role_pane_type("verify")
-        if not target:
-            log.warning("notify_codex_operator_retriage skipped: no verify owner target")
-            return
-        log.info("notify_codex_operator_retriage: reason=%s target=%s owner=%s", reason, target, self._role_owner("verify"))
-        self._log_raw(
-            "codex_operator_retriage_notify",
-            str(self.operator_request_path),
-            "turn_signal",
-            {"reason": reason, **marker},
-        )
-        self._dispatch_prompt_spec(
-            spec=self.prompt_assembler.build_operator_retriage_dispatch_spec(marker),
-            lane_role="verify",
+        self._dispatch_notify_spec(
+            spec=self.prompt_assembler.build_operator_retriage_dispatch_spec(marker, reason),
             reason=reason,
-            target=target,
-            pane_type=pane_type,
         )
 
     # ------------------------------------------------------------------
     def _notify_codex_blocked_triage(self, signal: dict[str, object], reason: str) -> bool:
-        target = self._role_pane_target("verify")
-        pane_type = self._role_pane_type("verify")
-        if not target:
-            return False
-        handoff_sha = self._get_path_sha256(self.claude_handoff_path)
-        spec = self.prompt_assembler.build_blocked_triage_dispatch_spec(signal)
-        self._log_raw(
-            "codex_blocked_triage_notify",
-            str(self.claude_handoff_path),
-            "turn_signal",
-            {
-                "reason": reason,
-                "blocked_reason": signal.get("reason", "implement_blocked"),
-                "blocked_reason_code": signal.get("reason_code", ""),
-                "blocked_source": signal.get("source", "sentinel"),
-                "blocked_escalation_class": signal.get("escalation_class", "codex_triage"),
-                "blocked_fingerprint": signal.get("fingerprint", ""),
-                "handoff_sha": handoff_sha,
-            },
-        )
-        ok = self._dispatch_prompt_spec(
-            spec=spec,
-            lane_role="verify",
+        ok = self._dispatch_notify_spec(
+            spec=self.prompt_assembler.build_blocked_triage_dispatch_spec(signal, reason),
             reason=reason,
-            target=target,
-            pane_type=pane_type,
         )
         if ok:
             self._last_claude_blocked_fingerprint = str(signal.get("fingerprint", ""))
@@ -2951,30 +2875,8 @@ class WatcherCore:
         if now < self._session_arbitration_cooldowns.get(fingerprint, 0.0):
             return False
 
-        context = self.prompt_assembler.build_runtime_prompt_context()
         reasons = signal["reasons"]
-        excerpt_lines = signal["excerpt_lines"]
-        reason_lines = "\n".join(f"- {reason}" for reason in reasons)
-        excerpt_block = "\n".join(f"> {line}" for line in excerpt_lines) or "> (없음)"
-        body = (
-            "STATUS: draft_only\n\n"
-            "역할:\n"
-            "- watcher가 active Claude session의 live side question 신호를 감지해 남긴 non-canonical draft\n"
-            "- 이 파일은 자동 실행 슬롯이 아니며 watcher와 Claude/Gemini는 이 파일만으로 dispatch하지 않음\n"
-            "- Codex가 보고 short lane reply로 끝낼지, `.pipeline/gemini_request.md`로 승격할지 결정해야 함\n\n"
-            "감지 이유:\n"
-            f"{reason_lines}\n\n"
-            "현재 round-start contract:\n"
-            f"- `.pipeline/claude_handoff.md`: {context['claude_handoff_path']}\n"
-            f"- latest `/work`: {context['latest_work_path']}\n"
-            f"- latest `/verify`: {context['latest_verify_path']}\n\n"
-            "관찰 excerpt:\n"
-            f"{excerpt_block}\n\n"
-            "Codex next step:\n"
-            "- active session을 mid-session handoff rewrite 없이 처리할지 먼저 판단\n"
-            "- 필요하면 Gemini arbitration request를 사람이 검토 가능한 canonical 슬롯으로만 승격\n"
-            "- 그렇지 않으면 Claude에게 short lane reply만 전달\n"
-        )
+        body = self.prompt_assembler.format_session_arbitration_draft(signal)
         self.session_arbitration_draft_path.write_text(body)
         self._last_session_arbitration_fingerprint = fingerprint
         self._last_session_arbitration_draft_sig = self._get_path_sig(self.session_arbitration_draft_path)

@@ -1,7 +1,0 @@
-{"ts": "2026-04-17T01:17:42.114187Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1237326}, "derived_from": "process_alive"}
-{"ts": "2026-04-17T01:17:44.986655Z", "lane": "Codex", "event_type": "READY", "source": "wrapper", "payload": {"pid": 1237326, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
-{"ts": "2026-04-17T01:17:47.287610Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1237326}, "derived_from": "process_alive"}
-{"ts": "2026-04-17T01:17:52.349124Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1237326}, "derived_from": "process_alive"}
-{"ts": "2026-04-17T01:17:57.378912Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1237326}, "derived_from": "process_alive"}
-{"ts": "2026-04-17T01:18:02.397553Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1237326}, "derived_from": "process_alive"}
-{"ts": "2026-04-17T01:18:07.429648Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 1237326}, "derived_from": "process_alive"}

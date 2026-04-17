@@ -1,2 +1,0 @@
-{"ts": "2026-04-10T19:37:33.688892Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 457990}, "derived_from": "process_alive"}
-{"ts": "2026-04-10T19:37:38.911216Z", "lane": "Gemini", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 457990}, "derived_from": "process_alive"}

@@ -1,1 +1,0 @@
-{"seq": 1, "ts": "2026-04-17T06:18:56.364766Z", "run_id": "20260417T061856Z-p1572182", "event_type": "runtime_started", "source": "watcher-exporter", "payload": {"runtime_state": "RUNNING", "turn_state": "IDLE"}}

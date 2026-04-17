@@ -48,6 +48,8 @@ build/
 .pipeline/locks/
 .pipeline/manifests/
 .pipeline/*.pid
+.pipeline/current_run.json
+.pipeline/runs/
 .pipeline/gui-runtime/
 .pipeline/live-arb-smoke-*/
 .pipeline/archive/

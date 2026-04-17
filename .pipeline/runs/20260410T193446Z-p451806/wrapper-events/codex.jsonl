@@ -1,4 +1,0 @@
-{"ts": "2026-04-10T19:34:47.079522Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 452488}, "derived_from": "process_alive"}
-{"ts": "2026-04-10T19:34:47.080978Z", "lane": "Codex", "event_type": "BROKEN", "source": "wrapper", "payload": {"pid": 452488, "reason": "exit:-15"}, "derived_from": "process_exit"}
-{"ts": "2026-04-10T19:34:49.244742Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 452739}, "derived_from": "process_alive"}
-{"ts": "2026-04-10T19:34:50.305127Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 453118}, "derived_from": "process_alive"}

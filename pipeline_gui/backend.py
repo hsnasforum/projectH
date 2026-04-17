@@ -119,6 +119,47 @@ def normalize_runtime_status(value: object | None) -> dict[str, object]:
     return {}
 
 
+def runtime_status_has_live_surfaces(status: dict[str, object] | None) -> bool:
+    if not isinstance(status, dict):
+        return False
+    watcher = dict(status.get("watcher") or {})
+    if bool(watcher.get("alive")):
+        return True
+    for lane in list(status.get("lanes") or []):
+        if not isinstance(lane, dict):
+            continue
+        if bool(lane.get("attachable")):
+            return True
+        if str(lane.get("state") or "") in {"READY", "WORKING", "BOOTING"}:
+            return True
+    return False
+
+
+def runtime_status_is_active(
+    status: dict[str, object] | None,
+    *,
+    supervisor_is_alive: bool = False,
+) -> bool:
+    if supervisor_is_alive:
+        return True
+    if not isinstance(status, dict) or not status:
+        return False
+    runtime_state = str(status.get("runtime_state") or "STOPPED")
+    if runtime_state == "STOPPED":
+        return False
+    if runtime_state == "BROKEN":
+        return runtime_status_has_live_surfaces(status)
+    return runtime_status_has_live_surfaces(status) or runtime_state in {"STARTING", "RUNNING", "DEGRADED", "STOPPING"}
+
+
+def runtime_status_is_stopped(
+    status: dict[str, object] | None,
+    *,
+    supervisor_is_alive: bool = False,
+) -> bool:
+    return not runtime_status_is_active(status, supervisor_is_alive=supervisor_is_alive)
+
+
 def tmux_alive(session: str = "") -> bool:
     return legacy_backend_debug.tmux_alive(session, run=_run)
 
@@ -551,7 +592,8 @@ def runtime_state(project: Path) -> str:
 
 
 def runtime_active(project: Path) -> bool:
-    return runtime_state(project) not in {"STOPPED", "BROKEN"}
+    status = normalize_runtime_status(read_runtime_status(project))
+    return runtime_status_is_active(status)
 
 
 def runtime_attach(project: Path, session: str = "", lane: str | None = None) -> int:

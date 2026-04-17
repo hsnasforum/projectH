@@ -30,7 +30,6 @@ _BUSY_MARKERS = (
     "working (",
     "background terminal",
     "waiting for background",
-    "waited for background",
     "cascading",
     "lollygagging",
     "hashing",
@@ -266,6 +265,8 @@ def _coerce_status_to_stopped(project_root: Path) -> None:
             }
         )
     status["runtime_state"] = "STOPPED"
+    status["degraded_reason"] = ""
+    status["degraded_reasons"] = []
     status["control"] = {
         "active_control_file": "",
         "active_control_seq": -1,
@@ -288,6 +289,22 @@ def _coerce_status_to_stopped(project_root: Path) -> None:
     status["last_heartbeat_at"] = iso_utc()
     status["updated_at"] = iso_utc()
     atomic_write_json(status_path, status)
+    task_hints_dir = status_path.parent / "task-hints"
+    if task_hints_dir.exists():
+        for hint_path in task_hints_dir.glob("*.json"):
+            atomic_write_json(
+                hint_path,
+                {
+                    "lane": hint_path.stem.capitalize(),
+                    "active": False,
+                    "job_id": "",
+                    "dispatch_id": "",
+                    "control_seq": -1,
+                    "attempt": 0,
+                    "inactive_reason": "runtime_stopped",
+                    "updated_at": iso_utc(),
+                },
+            )
 
 
 def _cleanup_orphan_runtime(project_root: Path, session_name: str) -> None:
@@ -467,6 +484,13 @@ def _lines_match_markers(lines: list[str], markers: tuple[str, ...]) -> bool:
     return any(marker.lower() in lowered for marker in markers)
 
 
+def _text_matches_markers(text: str, markers: tuple[str, ...]) -> bool:
+    lower = str(text or "").lower()
+    if not lower.strip():
+        return False
+    return any(marker.lower() in lower for marker in markers)
+
+
 class _WrapperEmitter:
     def __init__(
         self,
@@ -490,6 +514,7 @@ class _WrapperEmitter:
         self.seen_payload: dict[str, object] | None = None
         self.accepted_key = ""
         self.accepted_payload: dict[str, object] | None = None
+        self.done_key = ""
         self.bridge_diagnostic_key = ""
         self._auto_actions_sent: set[str] = set()
         self._last_activity_at = 0.0
@@ -530,6 +555,7 @@ class _WrapperEmitter:
     def _emit_task_done(self, reason: str = "") -> None:
         if not self.accepted_key or not self.accepted_payload:
             return
+        completed_key = self.accepted_key
         payload = {
             "job_id": str(self.accepted_payload.get("job_id") or ""),
             "control_seq": int(self.accepted_payload.get("control_seq") or -1),
@@ -542,7 +568,8 @@ class _WrapperEmitter:
             payload,
             derived_from="vendor_output",
         )
-        self.seen_key = ""
+        self.done_key = completed_key
+        self.seen_key = completed_key
         self.seen_payload = None
         self.accepted_key = ""
         self.accepted_payload = None
@@ -599,6 +626,10 @@ class _WrapperEmitter:
         inactive_reason = str(task_hint.get("inactive_reason") or "")
         task_claimed_active = bool(task_hint.get("active")) and bool(job_id) and bool(dispatch_id)
         task_key = f"{job_id}|{dispatch_id}" if task_claimed_active else ""
+        if not task_claimed_active:
+            self.done_key = ""
+        elif self.done_key and task_key != self.done_key:
+            self.done_key = ""
         if task_claimed_active and control_seq < 0:
             self._emit_bridge_diagnostic(
                 task_key,
@@ -611,8 +642,11 @@ class _WrapperEmitter:
         else:
             self.bridge_diagnostic_key = ""
         task_active = task_claimed_active and control_seq >= 0
+        task_done_for_current_key = bool(task_key) and self.done_key == task_key
+        prompt_visible = ready_detected or _text_is_ready(self.lane_name, text)
+        busy_visible = _text_matches_markers(text, _BUSY_MARKERS)
 
-        if task_active and self.seen_key != task_key:
+        if task_active and not task_done_for_current_key and self.seen_key != task_key:
             self.seen_key = task_key
             self.seen_payload = {
                 "job_id": job_id,
@@ -622,7 +656,7 @@ class _WrapperEmitter:
             }
             self.append("DISPATCH_SEEN", dict(self.seen_payload), derived_from="task_hint")
 
-        if activity_detected and task_active:
+        if activity_detected and task_active and not task_done_for_current_key:
             if self.accepted_key != task_key:
                 self.accepted_key = task_key
                 self.accepted_payload = {
@@ -638,13 +672,27 @@ class _WrapperEmitter:
 
         if self.accepted_key and self.accepted_payload:
             current_task_still_active = task_active and task_key == self.accepted_key
+            if current_task_still_active and not busy_visible and prompt_visible:
+                if not self._task_inactive_since:
+                    self._task_inactive_since = now_value
+                if (
+                    self._task_inactive_since
+                    and (now_value - self._last_activity_at) >= _TASK_DONE_SETTLE_SEC
+                    and (now_value - self._task_inactive_since) >= _TASK_DONE_SETTLE_SEC
+                ):
+                    self._emit_task_done()
+                    self._emit_ready()
+                return
             if current_task_still_active:
                 self._task_inactive_since = 0.0
+                if activity_detected or busy_visible:
+                    self._last_activity_at = now_value
+                    self.busy_state = True
                 return
             if not self._task_inactive_since:
                 self._task_inactive_since = now_value
             if (
-                (ready_detected or _text_is_ready(self.lane_name, text))
+                prompt_visible
                 and self._task_inactive_since
                 and (now_value - self._last_activity_at) >= _TASK_DONE_SETTLE_SEC
                 and (now_value - self._task_inactive_since) >= _TASK_DONE_SETTLE_SEC

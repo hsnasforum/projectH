@@ -164,29 +164,10 @@ class WrapperEmitterTest(unittest.TestCase):
 
             emitter.feed("❯\n", now=3.0)
             log_text = wrapper_log.read_text(encoding="utf-8")
-            self.assertNotIn('"event_type": "TASK_DONE"', log_text)
-
-            (task_hint_dir / "claude.json").write_text(
-                json.dumps(
-                    {
-                        "lane": "Claude",
-                        "active": False,
-                        "job_id": "",
-                        "control_seq": -1,
-                        "attempt": 1,
-                    }
-                ),
-                encoding="utf-8",
-            )
-            emitter.feed("❯\n", now=7.0)
-            log_text = wrapper_log.read_text(encoding="utf-8")
-            self.assertNotIn('"event_type": "TASK_DONE"', log_text)
-
-            emitter.tick(now=9.0)
-            log_text = wrapper_log.read_text(encoding="utf-8")
             self.assertIn('"event_type": "TASK_DONE"', log_text)
             self.assertIn('"dispatch_id": "dispatch-42"', log_text)
             self.assertGreaterEqual(log_text.count('"event_type": "READY"'), 2)
+            self.assertEqual(log_text.count('"event_type": "DISPATCH_SEEN"'), 1)
 
     def test_dispatch_seen_emits_before_accept_without_activity(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -524,10 +505,28 @@ class SupervisorCliTest(unittest.TestCase):
                 encoding="utf-8",
             )
             status_path = run_dir / "status.json"
+            task_hint_dir = run_dir / "task-hints"
+            task_hint_dir.mkdir(parents=True, exist_ok=True)
+            (task_hint_dir / "claude.json").write_text(
+                json.dumps(
+                    {
+                        "lane": "Claude",
+                        "active": True,
+                        "job_id": "job-1",
+                        "dispatch_id": "dispatch-1",
+                        "control_seq": 197,
+                        "attempt": 2,
+                        "inactive_reason": "",
+                    }
+                ),
+                encoding="utf-8",
+            )
             status_path.write_text(
                 json.dumps(
                     {
                         "runtime_state": "STOPPING",
+                        "degraded_reason": "dispatch_stall",
+                        "degraded_reasons": ["dispatch_stall", "session_missing"],
                         "control": {
                             "active_control_file": ".pipeline/operator_request.md",
                             "active_control_seq": 197,
@@ -548,10 +547,18 @@ class SupervisorCliTest(unittest.TestCase):
             runtime_cli._coerce_status_to_stopped(project_root)
 
             repaired = json.loads(status_path.read_text(encoding="utf-8"))
+            repaired_hint = json.loads((task_hint_dir / "claude.json").read_text(encoding="utf-8"))
             self.assertEqual(repaired["runtime_state"], "STOPPED")
+            self.assertEqual(repaired["degraded_reason"], "")
+            self.assertEqual(repaired["degraded_reasons"], [])
             self.assertEqual(repaired["control"]["active_control_status"], "none")
             self.assertIsNone(repaired["active_round"])
             self.assertEqual(repaired["watcher"], {"alive": False, "pid": None})
             self.assertEqual(repaired["autonomy"]["mode"], "normal")
             self.assertEqual(repaired["lanes"][0]["state"], "OFF")
             self.assertEqual(repaired["lanes"][0]["pid"], None)
+            self.assertFalse(repaired_hint["active"])
+            self.assertEqual(repaired_hint["job_id"], "")
+            self.assertEqual(repaired_hint["dispatch_id"], "")
+            self.assertEqual(repaired_hint["control_seq"], -1)
+            self.assertEqual(repaired_hint["inactive_reason"], "runtime_stopped")

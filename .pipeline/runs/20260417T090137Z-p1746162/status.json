@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "backend_type": "tmux",
+  "run_id": "20260417T090137Z-p1746162",
+  "current_run_id": "20260417T090137Z-p1746162",
+  "runtime_state": "STOPPED",
+  "degraded_reason": "",
+  "degraded_reasons": [],
+  "autonomy": {
+    "mode": "normal",
+    "block_reason": "",
+    "reason_code": "",
+    "operator_policy": "",
+    "decision_class": "",
+    "decision_required": "",
+    "based_on_work": "",
+    "based_on_verify": "",
+    "classification_source": "",
+    "first_seen_at": "",
+    "suppress_operator_until": "",
+    "operator_eligible": false,
+    "same_fingerprint_retries": 0,
+    "last_self_heal_at": "",
+    "last_self_triage_at": ""
+  },
+  "control": {
+    "active_control_file": "",
+    "active_control_seq": -1,
+    "active_control_status": "none",
+    "active_control_updated_at": ""
+  },
+  "lanes": [
+    {
+      "name": "Claude",
+      "state": "OFF",
+      "pid": null,
+      "attachable": false,
+      "last_event_at": "2026-04-17T09:14:48.593011Z",
+      "last_heartbeat_at": "2026-04-17T09:14:48.593011Z",
+      "note": ""
+    },
+    {
+      "name": "Codex",
+      "state": "OFF",
+      "pid": null,
+      "attachable": false,
+      "last_event_at": "2026-04-17T09:14:47.922258Z",
+      "last_heartbeat_at": "2026-04-17T09:14:47.922258Z",
+      "note": ""
+    },
+    {
+      "name": "Gemini",
+      "state": "OFF",
+      "pid": null,
+      "attachable": false,
+      "last_event_at": "2026-04-17T09:14:48.106928Z",
+      "last_heartbeat_at": "2026-04-17T09:14:48.106928Z",
+      "note": ""
+    }
+  ],
+  "active_round": null,
+  "last_receipt": null,
+  "last_receipt_id": "",
+  "watcher": {
+    "alive": false,
+    "pid": null
+  },
+  "artifacts": {
+    "latest_work": {
+      "path": "4/17/2026-04-17-sqlite-browser-history-card-noisy-single-source-strong-plus-missing-click-reload-exact-title-parity.md",
+      "mtime": 1776404967.6855881
+    },
+    "latest_verify": {
+      "path": "4/17/2026-04-17-controller-background-preload-readiness-hardening-retro-verification.md",
+      "mtime": 1776416992.9820478
+    }
+  },
+  "compat": {
+    "control_slots": {
+      "active": {
+        "file": "gemini_advice.md",
+        "status": "advice_ready",
+        "label": "Codex follow-up",
+        "mtime": 1776417042.5908327,
+        "control_seq": 272
+      },
+      "stale": [
+        {
+          "file": "gemini_request.md",
+          "status": "request_open",
+          "label": "Gemini 실행",
+          "mtime": 1776416978.981953,
+          "control_seq": 271
+        },
+        {
+          "file": "operator_request.md",
+          "status": "needs_operator",
+          "label": "operator 대기",
+          "mtime": 1776416681.7700763,
+          "control_seq": 270
+        },
+        {
+          "file": "claude_handoff.md",
+          "status": "implement",
+          "label": "Claude 실행",
+          "mtime": 1776403537.3503993,
+          "control_seq": 255
+        }
+      ]
+    },
+    "turn_state": {
+      "state": "CODEX_FOLLOWUP",
+      "entered_at": 1776417043.1625912,
+      "reason": "gemini_advice_updated",
+      "active_control_file": "gemini_advice.md",
+      "active_control_seq": 272
+    }
+  },
+  "last_heartbeat_at": "2026-04-17T09:33:33.130341Z",
+  "updated_at": "2026-04-17T09:33:33.130353Z"
+}

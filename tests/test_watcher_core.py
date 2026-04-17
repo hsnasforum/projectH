@@ -556,6 +556,21 @@ class PanePromptDetectionTest(unittest.TestCase):
 
         self.assertFalse(watcher_core._pane_text_has_input_cursor(text))
 
+    def test_old_busy_scrollback_does_not_block_current_ready_prompt(self) -> None:
+        text = "\n".join(
+            [
+                "• Working (22s • esc to interrupt)",
+                *[f"older output line {idx}" for idx in range(24)],
+                "How is Claude doing this session? (optional)",
+                "❯ ",
+                "  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+            ]
+        )
+
+        self.assertTrue(watcher_core._pane_text_has_input_cursor(text))
+        self.assertFalse(watcher_core._pane_text_has_busy_indicator(text))
+        self.assertTrue(watcher_core._pane_text_is_idle(text))
+
 
 class LiveSessionEscalationTest(unittest.TestCase):
     def test_extract_live_session_escalation_detects_expected_reasons(self) -> None:
@@ -793,7 +808,7 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
             }
             with mock.patch("watcher_core._capture_pane_text", side_effect=lambda target: pane_texts[target]), \
                  mock.patch("watcher_core._is_pane_dead", return_value=False):
-                with mock.patch.object(core, "_get_work_tree_snapshot", side_effect=[{}, {}, {"work.md": "changed"}, {"work.md": "changed"}]):
+                with mock.patch.object(core, "_get_work_tree_snapshot_broad", side_effect=[{}, {}, {"work.md": "changed"}, {"work.md": "changed"}]):
                     core._poll()
                     self.assertTrue((base_dir / "session_arbitration_draft.md").exists())
                     core._poll()
@@ -1299,18 +1314,9 @@ class ClaudeHandoffDispatchTest(unittest.TestCase):
             root = Path(tmp)
             watch_dir = root / "work" / "4" / "8"
             watch_dir.mkdir(parents=True, exist_ok=True)
-            verify_dir = root / "verify" / "4" / "8"
-            verify_dir.mkdir(parents=True, exist_ok=True)
             base_dir = root / ".pipeline"
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
-
-            work_note = watch_dir / "2026-04-08-sample-work.md"
-            verify_note = verify_dir / "2026-04-08-sample-verify.md"
-            work_note.write_text("## 변경 파일\n- 없음\n")
-            verify_note.write_text("## 변경 파일\n- 없음\n")
-            os.utime(work_note, (10.0, 10.0))
-            os.utime(verify_note, (20.0, 20.0))
 
             core = watcher_core.WatcherCore(
                 {
@@ -1345,18 +1351,9 @@ class ClaudeHandoffDispatchTest(unittest.TestCase):
             root = Path(tmp)
             watch_dir = root / "work" / "4" / "8"
             watch_dir.mkdir(parents=True, exist_ok=True)
-            verify_dir = root / "verify" / "4" / "8"
-            verify_dir.mkdir(parents=True, exist_ok=True)
             base_dir = root / ".pipeline"
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
-
-            work_note = watch_dir / "2026-04-08-sample-work.md"
-            verify_note = verify_dir / "2026-04-08-sample-verify.md"
-            work_note.write_text("## 변경 파일\n- 없음\n")
-            verify_note.write_text("## 변경 파일\n- 없음\n")
-            os.utime(work_note, (10.0, 10.0))
-            os.utime(verify_note, (20.0, 20.0))
 
             core = watcher_core.WatcherCore(
                 {
@@ -1518,7 +1515,11 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
             core._last_gemini_request_sig = ""
 
             with mock.patch("watcher_core.tmux_send_keys", return_value=True) as send:
-                core._check_pipeline_signal_updates()
+                with mock.patch(
+                    "watcher_core._capture_pane_text",
+                    return_value="Gemini CLI v0.38.0\nType your message\nworkspace\n",
+                ):
+                    core._check_pipeline_signal_updates()
 
             args, kwargs = send.call_args
             self.assertEqual(args[0], "gemini-pane")
@@ -1694,7 +1695,11 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
             )
 
             with mock.patch("watcher_core.tmux_send_keys", return_value=True) as send:
-                core._notify_claude("test-runtime-implement", handoff_path)
+                with mock.patch(
+                    "watcher_core._capture_pane_text",
+                    return_value="OpenAI Codex\n› Type your message\n",
+                ):
+                    core._notify_claude("test-runtime-implement", handoff_path)
 
             args, kwargs = send.call_args
             self.assertEqual(args[0], "codex-pane")
@@ -2868,6 +2873,274 @@ class TransitionTurnTest(unittest.TestCase):
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IDLE)
 
 
+class BusyLaneNotificationDeferTest(unittest.TestCase):
+    def test_gemini_advice_followup_defers_until_codex_prompt_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            (base_dir / "gemini_advice.md").write_text(
+                "STATUS: advice_ready\nCONTROL_SEQ: 18\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                }
+            )
+            core._last_gemini_advice_sig = ""
+
+            with (
+                mock.patch("watcher_core._capture_pane_text", return_value="• Working (18s • esc to interrupt)\n"),
+                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+            ):
+                core._check_pipeline_signal_updates()
+
+            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CODEX_FOLLOWUP)
+            self.assertIn("gemini_advice_followup", core._pending_lane_notifications)
+            send_prompt.assert_not_called()
+            events = [
+                json.loads(line)
+                for line in core.run_events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(any(event.get("event_type") == "lane_input_deferred" for event in events))
+
+            with (
+                mock.patch(
+                    "watcher_core._capture_pane_text",
+                    return_value="› \n tab to queue message\n55% context left\n",
+                ),
+                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+            ):
+                core._check_pipeline_signal_updates()
+
+            send_prompt.assert_called_once()
+            self.assertNotIn("gemini_advice_followup", core._pending_lane_notifications)
+
+    def test_claude_handoff_notify_defers_until_prompt_is_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            (base_dir / "claude_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: 19\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "claude_pane_target": "claude-pane",
+                }
+            )
+            core._last_claude_handoff_sig = ""
+
+            with (
+                mock.patch("watcher_core._capture_pane_text", return_value="Discombobulating... (22s)\n"),
+                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+            ):
+                core._check_pipeline_signal_updates()
+
+            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CLAUDE_ACTIVE)
+            self.assertIn("claude_handoff", core._pending_lane_notifications)
+            send_prompt.assert_not_called()
+
+            with (
+                mock.patch(
+                    "watcher_core._capture_pane_text",
+                    return_value="How is Claude doing this session? (optional)\n❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n",
+                ),
+                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+            ):
+                core._check_pipeline_signal_updates()
+
+            send_prompt.assert_called_once()
+            self.assertNotIn("claude_handoff", core._pending_lane_notifications)
+
+    def test_claude_handoff_dispatches_when_busy_marker_is_only_old_scrollback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            (base_dir / "claude_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: 19\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "claude_pane_target": "claude-pane",
+                }
+            )
+            core._last_claude_handoff_sig = ""
+            pane_text = "\n".join(
+                [
+                    "• Working (22s • esc to interrupt)",
+                    *[f"older output line {idx}" for idx in range(24)],
+                    "How is Claude doing this session? (optional)",
+                    "❯ ",
+                    "  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+                ]
+            )
+
+            with (
+                mock.patch("watcher_core._capture_pane_text", return_value=pane_text),
+                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+            ):
+                core._check_pipeline_signal_updates()
+
+            send_prompt.assert_called_once()
+            self.assertEqual(send_prompt.call_args.args[0], "claude-pane")
+            self.assertNotIn("claude_handoff", core._pending_lane_notifications)
+
+    def test_blocked_triage_defers_until_codex_prompt_is_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            (base_dir / "claude_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: 20\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                }
+            )
+
+            signal = {
+                "reason": "handoff_already_completed",
+                "reason_code": "already_implemented",
+                "escalation_class": "codex_triage",
+                "fingerprint": "block-123",
+                "source": "sentinel",
+            }
+
+            with (
+                mock.patch("watcher_core._capture_pane_text", return_value="• Working (22s • esc to interrupt)\n"),
+                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+            ):
+                ok = core._notify_codex_blocked_triage(signal, "claude_implement_blocked")
+
+            self.assertFalse(ok)
+            self.assertIn("codex_blocked_triage", core._pending_lane_notifications)
+            send_prompt.assert_not_called()
+            events = [
+                json.loads(line)
+                for line in core.run_events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(any(event.get("event_type") == "lane_input_deferred" for event in events))
+
+            with (
+                mock.patch(
+                    "watcher_core._capture_pane_text",
+                    return_value="› \n tab to queue message\n55% context left\n",
+                ),
+                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+            ):
+                core._flush_pending_lane_notifications()
+
+            send_prompt.assert_called_once()
+            self.assertNotIn("codex_blocked_triage", core._pending_lane_notifications)
+
+    def test_stale_codex_pending_notification_is_dropped_before_claude_handoff_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            operator_request = base_dir / "operator_request.md"
+            operator_request.write_text(
+                "STATUS: needs_operator\nCONTROL_SEQ: 20\nREASON_CODE: slice_ambiguity\n",
+                encoding="utf-8",
+            )
+            handoff = base_dir / "claude_handoff.md"
+            handoff.write_text(
+                "STATUS: implement\nCONTROL_SEQ: 21\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "claude_pane_target": "claude-pane",
+                    "verify_pane_target": "codex-pane",
+                }
+            )
+            core._last_operator_request_sig = core._get_path_sig(operator_request)
+            core._last_claude_handoff_sig = ""
+            core._pending_lane_notifications["codex_operator_retriage"] = {
+                "notify_kind": "codex_operator_retriage",
+                "lane_role": "verify",
+                "reason": "operator_wait_idle_retriage",
+                "prompt": "stale codex retriage",
+                "prompt_path": str(operator_request),
+                "target": "codex-pane",
+                "pane_type": "codex",
+                "control_seq": 20,
+                "expected_status": "needs_operator",
+                "expected_control_path": "operator_request.md",
+                "expected_control_seq": 20,
+                "require_active_control": False,
+                "sig": core._get_path_sig(operator_request),
+            }
+
+            with (
+                mock.patch(
+                    "watcher_core._capture_pane_text",
+                    return_value="How is Claude doing this session? (optional)\n❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n",
+                ),
+                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+            ):
+                core._check_pipeline_signal_updates()
+
+            send_prompt.assert_called_once()
+            self.assertEqual(send_prompt.call_args.args[0], "claude-pane")
+            self.assertNotIn("codex_operator_retriage", core._pending_lane_notifications)
+            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CLAUDE_ACTIVE)
+
+
 class VerifyCompletionContractTest(unittest.TestCase):
     def test_control_slot_change_without_verify_note_keeps_verify_running(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3403,6 +3676,61 @@ class VerifyCompletionContractTest(unittest.TestCase):
             self.assertEqual(job.completion_stall_stage, "task_done_missing")
             self.assertEqual(job.degraded_reason, "post_accept_completion_stall")
             self.assertEqual(job.lane_note, "waiting_task_done_after_accept")
+
+    def test_background_terminal_wait_does_not_trigger_task_done_stall(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            work_day = watch_dir / "4" / "10"
+            work_day.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            work_note = work_day / "2026-04-10-slice.md"
+            _write_work_note(work_note, ["tests/test_web_app.py"])
+            job = watcher_core.JobState.from_artifact("job-verify-background-wait", str(work_note))
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                    "verify_done_deadline_sec": 45.0,
+                }
+            )
+
+            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+                job = core.sm._handle_verify_pending(job)
+
+            original_deadline = time.time() - 1
+            job.accepted_dispatch_id = job.dispatch_id
+            job.accepted_at = time.time() - 60
+            job.done_deadline_at = original_deadline
+            job.last_activity_at = time.time() - 60
+            job.last_dispatch_at = time.time() - 60
+            job.last_pane_snapshot = (
+                "Waiting for background terminal (3m 33s) · 1 background terminal running /ps to view /stop to close\n"
+                "› Type your message\n"
+            )
+            core.sm.runtime_started_at = time.time() - 120
+
+            current_pane = (
+                "Waiting for background terminal (3m 38s) · 1 background terminal running /ps to view /stop to close\n"
+                "› Type your message\n"
+            )
+            with mock.patch("watcher_core._capture_pane_text", return_value=current_pane), \
+                 mock.patch("watcher_core._pane_text_has_busy_indicator", return_value=True), \
+                 mock.patch("watcher_core._pane_text_has_input_cursor", return_value=True):
+                job = core.sm._handle_verify_running(job)
+
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.completion_stall_count, 0)
+            self.assertEqual(job.degraded_reason, "")
+            self.assertGreater(job.done_deadline_at, original_deadline)
+            self.assertGreater(job.last_activity_at, time.time() - 10)
 
     def test_task_done_without_receipt_close_uses_post_done_machine_note(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

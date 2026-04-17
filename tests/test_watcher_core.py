@@ -3107,6 +3107,112 @@ class TransitionTurnTest(unittest.TestCase):
 
 
 class BusyLaneNotificationDeferTest(unittest.TestCase):
+    def test_gemini_request_idle_retry_redispatches_when_advice_is_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            request_path = base_dir / "gemini_request.md"
+            advice_path = base_dir / "gemini_advice.md"
+            request_path.write_text("STATUS: request_open\nCONTROL_SEQ: 18\n", encoding="utf-8")
+            advice_path.write_text("STATUS: advice_ready\nCONTROL_SEQ: 17\n", encoding="utf-8")
+            old = time.time() - 10.0
+            os.utime(request_path, (old, old))
+            os.utime(advice_path, (old, old))
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "gemini_pane_target": "gemini-pane",
+                    "gemini_advisory_retry_sec": 5.0,
+                }
+            )
+            core._initial_turn_checked = True
+            core._last_gemini_request_sig = core._get_path_sig(request_path)
+            core._last_gemini_advice_sig = core._get_path_sig(advice_path)
+            core._transition_turn(
+                watcher_core.WatcherTurnState.GEMINI_ADVISORY,
+                "test_setup_gemini",
+                active_control_file="gemini_request.md",
+                active_control_seq=18,
+            )
+            core._turn_entered_at = time.time() - 10.0
+
+            with (
+                mock.patch(
+                    "watcher_core._capture_pane_text",
+                    return_value="› \n tab to queue message\n55% context left\n",
+                ),
+                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+            ):
+                core._poll()
+
+            send_prompt.assert_called_once()
+            args, kwargs = send_prompt.call_args
+            self.assertEqual(args[0], "gemini-pane")
+            self.assertEqual(kwargs.get("pane_type"), "gemini")
+            events = [
+                json.loads(line)
+                for line in core.run_events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(any(event.get("event_type") == "gemini_advisory_retry" for event in events))
+
+    def test_gemini_request_idle_retry_skips_when_current_advice_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            request_path = base_dir / "gemini_request.md"
+            advice_path = base_dir / "gemini_advice.md"
+            request_path.write_text("STATUS: request_open\nCONTROL_SEQ: 18\n", encoding="utf-8")
+            advice_path.write_text("STATUS: advice_ready\nCONTROL_SEQ: 18\n", encoding="utf-8")
+            old = time.time() - 10.0
+            os.utime(advice_path, (old, old))
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "gemini_pane_target": "gemini-pane",
+                    "gemini_advisory_retry_sec": 5.0,
+                }
+            )
+            core._initial_turn_checked = True
+            core._last_gemini_request_sig = core._get_path_sig(request_path)
+            core._last_gemini_advice_sig = core._get_path_sig(advice_path)
+            core._transition_turn(
+                watcher_core.WatcherTurnState.GEMINI_ADVISORY,
+                "test_setup_gemini",
+                active_control_file="gemini_request.md",
+                active_control_seq=18,
+            )
+            core._turn_entered_at = time.time() - 10.0
+
+            with (
+                mock.patch(
+                    "watcher_core._capture_pane_text",
+                    return_value="› \n tab to queue message\n55% context left\n",
+                ),
+                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+            ):
+                core._poll()
+
+            send_prompt.assert_not_called()
+
     def test_gemini_advice_followup_defers_until_codex_prompt_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

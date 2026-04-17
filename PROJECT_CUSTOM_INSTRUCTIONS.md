@@ -67,6 +67,15 @@
 - 구현이나 제안 전에 기존 shared helper, query, formatter, prompt가 있는지 먼저 보고, 같은 책임의 near-copy 코드를 새로 늘리지 않습니다.
 - 작업은 필요 이상으로 잘게 쪼개지 않습니다. 같은 파일과 같은 검증 경로를 공유하는 변경은 review 가능한 범위 안에서 하나의 의미 있는 슬라이스로 묶습니다.
 
+## 5-1. 재귀개선 원칙
+- 재귀개선은 같은 버그를 계속 땜질하는 뜻이 아니라, 비슷한 다음 버그가 더 작은 범위에서 닫히게 만드는 원칙입니다.
+- 런처/워처/슈퍼바이저/런타임 경계 문제는 먼저 `existing incident family`인지 `new incident family`인지 분류합니다.
+- 같은 incident family가 다시 나오면, 조건문을 덧붙이기보다 그 incident의 owning boundary, shared helper, state machine을 먼저 고칩니다.
+- 새 incident family라면 먼저 named incident, focused replay test, truthful runtime surface를 만들고 그다음 구현을 좁힙니다.
+- `pipeline-launcher.py`, controller, browser 같은 thin client에 truth inference를 더 얹어 runtime drift를 숨기지 않습니다. current truth는 계속 runtime surface에서 읽는 쪽을 유지합니다.
+- long soak는 baseline evidence이며, 기본 검증은 launcher live stability gate + incident replay + 실제 작업 세션으로 둡니다. runtime contract를 크게 바꾼 경우가 아니면 장시간 soak 재실행을 기본 제안으로 올리지 않습니다.
+- 수정이 끝났을 때는 "같은 계열 문제가 다시 와도 어디를 고쳐야 하는지 더 분명해졌는가"를 결과 기준으로 다시 확인합니다.
+
 ## 6. `/work` / `/verify` 작업기록 규칙
 - 의미 있는 구현/운영 작업이 끝나면 `work/<월>/<일>/YYYY-MM-DD-<slug>.md` 형식으로 closeout 메모를 남깁니다.
 - 의미 있는 검증 재실행 / truth 재대조 / 다음 라운드 handoff 작업이 끝나면 `verify/<월>/<일>/YYYY-MM-DD-<slug>.md` 형식으로 verification 메모를 남깁니다.

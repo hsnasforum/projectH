@@ -89,6 +89,8 @@ launcher live stability gate는 아래를 현재 통과 기준으로 둡니다.
 - 반복된 실전 incident가 replay test로 고정되어 재발 시 즉시 드러날 것
 - thin client drift triage는 runtime `status.json` / `events.jsonl` 기준으로만 하고, pane/log/file scan은 current truth 재판정이 아니라 mismatch evidence로만 사용할 것
 - current `accepted_task`가 살아 있는 lane은 tail prompt가 보여도 `READY`로 내리지 말고 `WORKING`으로 유지할 것. verify lane이 이미 `TASK_DONE` 뒤 receipt close만 기다리는 경우는 launcher snapshot에 `active_round.state`, `dispatch_id`, `completion_stage`, `Receipt: pending close`로 그대로 드러나야 합니다.
+- pane busy/ready marker는 `pipeline_runtime/lane_surface.py` shared helper/profile을 single source로 유지할 것. watcher, supervisor, cli wrapper가 각자 marker 확장을 따로 들고 있으면 READY/WORKING drift triage가 다시 흔들립니다.
+- `RECEIPT_PENDING` round가 있다고 해서 current turn이 이미 follow-up/advisory/idle로 넘어간 상태까지 Codex active lane을 계속 유지하지는 않을 것. receipt close 대기는 `active_round`/lane note로 surface하고, active lane은 current turn/control 우선으로 본다.
 
 synthetic soak는 아래처럼 채택용 보조 게이트로만 남깁니다.
 

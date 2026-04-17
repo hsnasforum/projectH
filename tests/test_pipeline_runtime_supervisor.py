@@ -1815,6 +1815,44 @@ class RuntimeSupervisorTest(unittest.TestCase):
 
             self.assertEqual(active_lane, "Codex")
 
+    def test_receipt_pending_does_not_keep_codex_active_lane_when_turn_is_idle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            active_lane = supervisor._active_lane_for_runtime(
+                {"state": "IDLE"},
+                {
+                    "job_id": "job-42",
+                    "state": "RECEIPT_PENDING",
+                    "status": "VERIFY_DONE",
+                    "completion_stage": "receipt_close_pending",
+                },
+                control={},
+            )
+
+            self.assertEqual(active_lane, "")
+
+    def test_receipt_pending_keeps_codex_active_lane_during_codex_followup_turn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            active_lane = supervisor._active_lane_for_runtime(
+                {"state": "CODEX_FOLLOWUP"},
+                {
+                    "job_id": "job-42",
+                    "state": "RECEIPT_PENDING",
+                    "status": "VERIFY_DONE",
+                    "completion_stage": "receipt_close_pending",
+                },
+                control={},
+            )
+
+            self.assertEqual(active_lane, "Codex")
+
     def test_write_status_suppresses_operator_stop_during_idle_retriage_followup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -21,25 +21,17 @@ from pathlib import Path
 
 from pipeline_gui.project import _session_name_for
 
+from .lane_surface import READY_MARKERS as _READY_MARKERS
+from .lane_surface import busy_markers_for_lane
+from .lane_surface import lines_match_markers as _shared_lines_match_markers
+from .lane_surface import text_is_ready as _shared_text_is_ready
+from .lane_surface import text_matches_markers as _shared_text_matches_markers
 from .schema import atomic_write_json, iso_utc, read_json
 from .supervisor import RuntimeSupervisor
 from .tmux_adapter import TmuxAdapter
 from .wrapper_events import append_wrapper_event
 
-_BUSY_MARKERS = (
-    "working (",
-    "background terminal",
-    "waiting for background",
-    "cascading",
-    "lollygagging",
-    "hashing",
-    "leavering",
-    "without interrupting claude's current work",
-    "thinking",
-    "esc to cancel",
-)
-
-_ACTIVITY_MARKERS = _BUSY_MARKERS + (
+_ACTIVITY_MARKERS = (
     "now let me",
     "searching for",
     "searched for",
@@ -59,11 +51,6 @@ _ACTIVITY_MARKERS = _BUSY_MARKERS + (
 
 _TASK_DONE_SETTLE_SEC = 1.5
 
-_READY_MARKERS = {
-    "Claude": ("❯", "claude code", "bypass permissions"),
-    "Codex": ("›", "openai codex", "tab to queue message", "context left"),
-    "Gemini": ("type your message", "gemini cli", "workspace"),
-}
 _CODEX_UPDATE_SKIP_MARKERS = (
     "update available",
     "@openai/codex",
@@ -466,29 +453,20 @@ def _load_task_hint(task_hint_dir: Path | None, lane_name: str) -> dict[str, obj
     return data if isinstance(data, dict) else {}
 
 
-def _text_is_busy(text: str) -> bool:
-    lower = text.lower()
-    return any(marker in lower for marker in _BUSY_MARKERS)
+def _text_is_busy(text: str, lane_name: str = "") -> bool:
+    return _shared_text_matches_markers(text, busy_markers_for_lane(lane_name))
 
 
 def _text_is_ready(lane_name: str, text: str) -> bool:
-    markers = _READY_MARKERS.get(lane_name, ())
-    lower = text.lower()
-    return any(marker.lower() in lower for marker in markers)
+    return _shared_text_is_ready(lane_name, text)
 
 
 def _lines_match_markers(lines: list[str], markers: tuple[str, ...]) -> bool:
-    if not lines:
-        return False
-    lowered = "\n".join(lines).lower()
-    return any(marker.lower() in lowered for marker in markers)
+    return _shared_lines_match_markers(lines, markers)
 
 
 def _text_matches_markers(text: str, markers: tuple[str, ...]) -> bool:
-    lower = str(text or "").lower()
-    if not lower.strip():
-        return False
-    return any(marker.lower() in lower for marker in markers)
+    return _shared_text_matches_markers(text, markers)
 
 
 class _WrapperEmitter:
@@ -612,7 +590,8 @@ class _WrapperEmitter:
         text = "\n".join(self.recent_lines[-40:])
         if self._maybe_auto_dismiss_blocking_prompt(text):
             return
-        activity_detected = _lines_match_markers(new_lines, _ACTIVITY_MARKERS)
+        lane_busy_markers = busy_markers_for_lane(self.lane_name)
+        activity_detected = _lines_match_markers(new_lines, lane_busy_markers + _ACTIVITY_MARKERS)
         ready_detected = _lines_match_markers(new_lines, _READY_MARKERS.get(self.lane_name, ()))
         task_hint = _load_task_hint(self.task_hint_dir, self.lane_name)
         job_id = str(task_hint.get("job_id") or "")
@@ -644,7 +623,7 @@ class _WrapperEmitter:
         task_active = task_claimed_active and control_seq >= 0
         task_done_for_current_key = bool(task_key) and self.done_key == task_key
         prompt_visible = ready_detected or _text_is_ready(self.lane_name, text)
-        busy_visible = _text_matches_markers(text, _BUSY_MARKERS)
+        busy_visible = _text_matches_markers(text, lane_busy_markers)
 
         if task_active and not task_done_for_current_key and self.seen_key != task_key:
             self.seen_key = task_key

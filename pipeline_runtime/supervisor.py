@@ -516,8 +516,14 @@ class RuntimeSupervisor:
             return ""
 
         round_state = str((active_round or {}).get("state") or "")
-        if round_state in {"VERIFY_PENDING", "VERIFYING", "RECEIPT_PENDING"}:
+        if round_state in {"VERIFY_PENDING", "VERIFYING"}:
             return str(self.role_owners.get("verify") or "Codex")
+        if round_state == "RECEIPT_PENDING":
+            if state in {"CODEX_VERIFY", "CODEX_FOLLOWUP"}:
+                return str(self.role_owners.get("verify") or "Codex")
+            completion_stage = str((active_round or {}).get("completion_stage") or "")
+            if completion_stage == "receipt_close_pending":
+                return ""
         return ""
 
     def _build_active_round(

@@ -1,6 +1,6 @@
 {
-  "run_id": "20260417T095014Z-p1784999",
-  "status_path": ".pipeline/runs/20260417T095014Z-p1784999/status.json",
-  "events_path": ".pipeline/runs/20260417T095014Z-p1784999/events.jsonl",
-  "updated_at": "2026-04-17T09:57:18.513083Z"
+  "run_id": "20260417T102014Z-p1802732",
+  "status_path": ".pipeline/runs/20260417T102014Z-p1802732/status.json",
+  "events_path": ".pipeline/runs/20260417T102014Z-p1802732/events.jsonl",
+  "updated_at": "2026-04-17T10:26:32.708429Z"
 }

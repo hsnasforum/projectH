@@ -3,7 +3,7 @@ from __future__ import annotations
 import subprocess
 import time
 
-BUSY_MARKERS = (
+_BASE_BUSY_MARKERS = (
     "working (",
     "working for ",
     "• working",
@@ -17,11 +17,54 @@ BUSY_MARKERS = (
     "flumoxing",
 )
 
-READY_MARKERS = {
-    "Claude": ("❯", "claude code", "bypass permissions"),
-    "Codex": ("›", "openai codex", "tab to queue message", "context left"),
-    "Gemini": ("type your message", "gemini cli", "workspace"),
+LANE_SURFACE_PROFILES = {
+    "Claude": {
+        "ready_markers": ("❯", "claude code", "bypass permissions"),
+        "busy_markers": _BASE_BUSY_MARKERS + (
+            "thinking",
+            "without interrupting claude's current work",
+        ),
+    },
+    "Codex": {
+        "ready_markers": ("›", "openai codex", "tab to queue message", "context left"),
+        "busy_markers": _BASE_BUSY_MARKERS + (
+            "cascading",
+            "lollygagging",
+            "hashing",
+            "leavering",
+            "thinking",
+            "esc to cancel",
+        ),
+    },
+    "Gemini": {
+        "ready_markers": ("type your message", "gemini cli", "workspace"),
+        "busy_markers": _BASE_BUSY_MARKERS + (
+            "thinking",
+            "esc to cancel",
+        ),
+    },
 }
+
+READY_MARKERS = {
+    lane_name: tuple(profile.get("ready_markers") or ())
+    for lane_name, profile in LANE_SURFACE_PROFILES.items()
+}
+BUSY_MARKERS = tuple(
+    dict.fromkeys(
+        marker
+        for profile in LANE_SURFACE_PROFILES.values()
+        for marker in tuple(profile.get("busy_markers") or ())
+    )
+)
+
+
+def busy_markers_for_lane(lane_name: str | None) -> tuple[str, ...]:
+    if not lane_name:
+        return BUSY_MARKERS
+    profile = LANE_SURFACE_PROFILES.get(str(lane_name or ""))
+    if not profile:
+        return BUSY_MARKERS
+    return tuple(profile.get("busy_markers") or ())
 
 
 def capture_pane_text(pane_target: str) -> str:
@@ -92,11 +135,11 @@ def pane_text_has_gemini_ready_prompt(text: str) -> bool:
     return has_type_your_message and (has_workspace_hint or has_gemini_banner)
 
 
-def pane_text_has_busy_indicator(text: str) -> bool:
+def pane_text_has_busy_indicator(text: str, lane_name: str | None = None) -> bool:
     lower = "\n".join(_recent_nonempty_lines(text, limit=18))
     if not lower.strip():
         return False
-    return any(marker in lower for marker in BUSY_MARKERS)
+    return any(marker in lower for marker in busy_markers_for_lane(lane_name))
 
 
 def pane_text_has_input_cursor(text: str) -> bool:
@@ -113,10 +156,10 @@ def pane_text_has_working_indicator(text: str) -> bool:
     return "• Working" in str(text or "")
 
 
-def pane_text_is_idle(text: str) -> bool:
+def pane_text_is_idle(text: str, lane_name: str | None = None) -> bool:
     if not str(text or "").strip():
         return False
-    return pane_text_has_input_cursor(text) and not pane_text_has_busy_indicator(text)
+    return pane_text_has_input_cursor(text) and not pane_text_has_busy_indicator(text, lane_name)
 
 
 def pane_text_has_codex_activity(text: str) -> bool:
@@ -157,8 +200,8 @@ def text_matches_markers(text: str, markers: tuple[str, ...]) -> bool:
     return any(marker.lower() in lower for marker in markers)
 
 
-def tail_has_busy_indicator(text: str) -> bool:
-    return pane_text_has_busy_indicator(text)
+def tail_has_busy_indicator(text: str, lane_name: str | None = None) -> bool:
+    return pane_text_has_busy_indicator(text, lane_name)
 
 
 def tail_has_ready_indicator(lane_name: str, text: str) -> bool:
@@ -170,7 +213,7 @@ def tail_surface_state(lane_name: str, text: str) -> str:
     if not trailing_lines:
         return ""
     ready_markers = tuple(marker.lower() for marker in READY_MARKERS.get(str(lane_name or ""), ()))
-    if tail_has_busy_indicator(text):
+    if tail_has_busy_indicator(text, lane_name):
         return "WORKING"
     if any(any(marker in line for marker in ready_markers) for line in trailing_lines):
         return "READY"

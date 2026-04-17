@@ -21,8 +21,8 @@ from pathlib import Path
 
 from pipeline_gui.project import _session_name_for
 
-from .lane_surface import BUSY_MARKERS as _BASE_BUSY_MARKERS
 from .lane_surface import READY_MARKERS as _READY_MARKERS
+from .lane_surface import busy_markers_for_lane
 from .lane_surface import lines_match_markers as _shared_lines_match_markers
 from .lane_surface import text_is_ready as _shared_text_is_ready
 from .lane_surface import text_matches_markers as _shared_text_matches_markers
@@ -31,17 +31,7 @@ from .supervisor import RuntimeSupervisor
 from .tmux_adapter import TmuxAdapter
 from .wrapper_events import append_wrapper_event
 
-_BUSY_MARKERS = _BASE_BUSY_MARKERS + (
-    "cascading",
-    "lollygagging",
-    "hashing",
-    "leavering",
-    "without interrupting claude's current work",
-    "thinking",
-    "esc to cancel",
-)
-
-_ACTIVITY_MARKERS = _BUSY_MARKERS + (
+_ACTIVITY_MARKERS = (
     "now let me",
     "searching for",
     "searched for",
@@ -463,8 +453,8 @@ def _load_task_hint(task_hint_dir: Path | None, lane_name: str) -> dict[str, obj
     return data if isinstance(data, dict) else {}
 
 
-def _text_is_busy(text: str) -> bool:
-    return _shared_text_matches_markers(text, _BUSY_MARKERS)
+def _text_is_busy(text: str, lane_name: str = "") -> bool:
+    return _shared_text_matches_markers(text, busy_markers_for_lane(lane_name))
 
 
 def _text_is_ready(lane_name: str, text: str) -> bool:
@@ -600,7 +590,8 @@ class _WrapperEmitter:
         text = "\n".join(self.recent_lines[-40:])
         if self._maybe_auto_dismiss_blocking_prompt(text):
             return
-        activity_detected = _lines_match_markers(new_lines, _ACTIVITY_MARKERS)
+        lane_busy_markers = busy_markers_for_lane(self.lane_name)
+        activity_detected = _lines_match_markers(new_lines, lane_busy_markers + _ACTIVITY_MARKERS)
         ready_detected = _lines_match_markers(new_lines, _READY_MARKERS.get(self.lane_name, ()))
         task_hint = _load_task_hint(self.task_hint_dir, self.lane_name)
         job_id = str(task_hint.get("job_id") or "")
@@ -632,7 +623,7 @@ class _WrapperEmitter:
         task_active = task_claimed_active and control_seq >= 0
         task_done_for_current_key = bool(task_key) and self.done_key == task_key
         prompt_visible = ready_detected or _text_is_ready(self.lane_name, text)
-        busy_visible = _text_matches_markers(text, _BUSY_MARKERS)
+        busy_visible = _text_matches_markers(text, lane_busy_markers)
 
         if task_active and not task_done_for_current_key and self.seen_key != task_key:
             self.seen_key = task_key

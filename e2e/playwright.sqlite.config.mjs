@@ -11,8 +11,10 @@ const sqliteDbPath = path.join(tmpBase, "test.db");
 // NOTES_DIR stays at the repo default (`data/notes/`) so document-loop
 // save/correction/verdict smoke scenarios that assert on saved-note file
 // contents behave the same as the JSON-default Playwright path.
+// WEB_SEARCH_HISTORY_DIR likewise stays at the repo default (`data/web-search/`)
+// so history-card reload scenarios that pre-seed a record on disk can be
+// found by the server, mirroring the JSON-default Playwright path.
 const correctionsDir = path.join(tmpBase, "corrections");
-const webSearchDir = path.join(tmpBase, "web-search");
 
 export default defineConfig({
   testDir: path.join(repoRoot, "e2e", "tests"),
@@ -39,7 +41,6 @@ export default defineConfig({
       + `LOCAL_AI_STORAGE_BACKEND=sqlite `
       + `LOCAL_AI_SQLITE_DB_PATH=${sqliteDbPath} `
       + `LOCAL_AI_CORRECTIONS_DIR=${correctionsDir} `
-      + `LOCAL_AI_WEB_SEARCH_HISTORY_DIR=${webSearchDir} `
       + `python3 -m app.web --host 127.0.0.1 --port 8880'`
     ),
     url: "http://127.0.0.1:8880",

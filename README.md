@@ -283,8 +283,42 @@ Current sqlite browser smoke gate scenarios:
 11. `브라우저 파일 선택으로도 파일 요약이 됩니다`
 12. `브라우저 폴더 선택으로도 문서 검색이 됩니다`
 13. `검색만 응답은 transcript에서 preview cards만 보이고 본문 텍스트는 숨겨집니다`
+14. `브라우저 파일 선택으로 scanned/image-only PDF를 선택하면 OCR 미지원 안내가 표시됩니다`
+15. `브라우저 폴더 선택으로 scanned PDF + readable file이 섞인 폴더를 검색하면 count-only partial-failure notice가 표시됩니다`
+16. `브라우저 폴더 선택으로 scanned PDF + readable file이 섞인 폴더를 검색+요약하면 partial-failure notice와 함께 readable file preview가 유지됩니다`
+17. `브라우저 파일 선택으로 readable text-layer PDF를 선택하면 정상 요약이 됩니다`
+18. `candidate confirmation path는 save support와 분리되어 기록되고 later correction으로 current state에서 사라집니다`
+19. `review-queue reject/defer는 accept와 동일한 quick-meta, transcript-meta, stale-clear 경로를 따릅니다`
+20. `review-queue reject-defer aggregate support visibility`
+21. `저장 요청 후 승인 경로를 다시 발급할 수 있습니다`
+22. `승인 후 실제 note가 저장됩니다`
+23. `스트리밍 중 취소 버튼이 동작합니다`
+24. `일반 채팅 응답에는 source-type label이 붙지 않습니다`
+25. `claim-coverage panel은 status tag와 행동 힌트를 올바르게 렌더링합니다`
+26. `claim-coverage panel은 재조사 대상 슬롯의 진행 상태를 명확히 렌더링합니다`
+27. `claim-coverage panel은 재조사 후 보강된 슬롯을 명확히 표시합니다`
+28. `claim-coverage panel은 재조사 후 약해진 슬롯을 명확히 표시합니다`
+29. `web-search history card header badges는 answer-mode, verification-strength, source-role trust를 올바르게 렌더링합니다`
+30. `history-card latest-update noisy community source initial-render 단계에서 serialized zero-count empty-meta no-leak contract가 유지됩니다`
+31. `history-card entity-card noisy single-source initial-render 단계에서 strong-plus-missing count-summary meta contract가 유지됩니다`
+32. `history-card entity-card actual-search initial-render 단계에서 strong-plus-missing count-summary meta contract가 유지됩니다`
+33. `history-card entity-card dual-probe initial-render 단계에서 mixed count-summary meta contract가 유지됩니다`
+34. `history-card latest-update mixed-source initial-render 단계에서 serialized zero-count empty-meta no-leak contract가 유지됩니다`
+35. `history-card latest-update single-source initial-render 단계에서 serialized zero-count empty-meta no-leak contract가 유지됩니다`
+36. `history-card latest-update news-only initial-render 단계에서 serialized zero-count empty-meta no-leak contract가 유지됩니다`
+37. `history-card entity-card store-seeded actual-search initial-render 단계에서 serialized zero-count empty-meta no-leak contract가 유지됩니다`
+38. `history-card entity-card 다시 불러오기 클릭 후 WEB badge, 설명 카드, 설명형 단일 출처, 백과 기반이 유지됩니다`
+39. `history-card latest-update 다시 불러오기 후 WEB badge, 최신 확인, 공식+기사 교차 확인, 보조 기사 · 공식 기반이 유지됩니다`
+40. `history-card latest-update 다시 불러오기 후 noisy community source가 본문, origin detail, context box에 보조 커뮤니티/brunch 미노출 + 기사 교차 확인, 보조 기사, hankyung.com · mk.co.kr 유지됩니다`
+41. `history-card entity-card 다시 불러오기 후 noisy single-source claim(출시일/2025/blog.example.com)이 본문과 origin detail에 미노출되고 설명형 다중 출처 합의, 백과 기반, namu.wiki/ko.wikipedia.org/blog.example.com provenance가 유지됩니다`
+42. `history-card entity-card 다시 불러오기 후 actual-search source path(namu.wiki, ko.wikipedia.org) + WEB badge, 설명 카드, 설명형 다중 출처 합의, 백과 기반이 유지됩니다`
+43. `history-card entity-card 다시 불러오기 후 dual-probe source path(pearlabyss.com/200, pearlabyss.com/300) + WEB badge, 설명 카드, 설명형 다중 출처 합의, 공식 기반 · 백과 기반이 유지됩니다`
+44. `history-card latest-update 다시 불러오기 후 mixed-source source path(store.steampowered.com, yna.co.kr) + WEB badge, 최신 확인, 공식+기사 교차 확인, 보조 기사 · 공식 기반이 유지됩니다`
+45. `history-card latest-update single-source 다시 불러오기 후 source path(example.com/seoul-weather) + WEB badge, 최신 확인, 단일 출처 참고, 보조 출처가 유지됩니다`
+46. `history-card latest-update news-only 다시 불러오기 후 기사 source path(hankyung.com, mk.co.kr) + WEB badge, 최신 확인, 기사 교차 확인, 보조 기사가 유지됩니다`
+47. `history-card entity-card store-seeded actual-search 다시 불러오기 reload-only 단계에서 empty-meta no-leak contract가 유지됩니다`
 
-Note: The sqlite browser config keeps `LOCAL_AI_NOTES_DIR` at the repo default (`data/notes/`) so saved-note assertions in the document-loop scenarios work identically to the JSON-default path. The sqlite DB, corrections dir, and web-search history dir remain isolated per run.
+Note: The sqlite browser config keeps `LOCAL_AI_NOTES_DIR` and `LOCAL_AI_WEB_SEARCH_HISTORY_DIR` at the repo defaults (`data/notes/`, `data/web-search/`) so saved-note and pre-seeded web-search record scenarios behave identically to the JSON-default path. The sqlite DB and corrections dir remain isolated per run.
 
 ### Controller Smoke (separate from app.web)
 

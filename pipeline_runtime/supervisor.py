@@ -566,6 +566,7 @@ class RuntimeSupervisor:
             "state": round_state,
             "artifact_path": str(latest_job.get("artifact_path") or ""),
             "status": status,
+            "dispatch_id": str(latest_job.get("dispatch_id") or ""),
             "note": str(latest_job.get("lane_note") or ""),
             "degraded_reason": str(latest_job.get("degraded_reason") or ""),
         }
@@ -623,6 +624,7 @@ class RuntimeSupervisor:
     ) -> None:
         self.task_hints_dir.mkdir(parents=True, exist_ok=True)
         active_job_id = str((active_round or {}).get("job_id") or "")
+        active_dispatch_id = str((active_round or {}).get("dispatch_id") or "")
         active_control_seq = int(control.get("active_control_seq") or -1)
         implement_owner = str(self.role_owners.get("implement") or "Claude")
         for lane_name in RUNTIME_LANE_ORDER:
@@ -637,6 +639,7 @@ class RuntimeSupervisor:
                 "lane": lane_name,
                 "active": active,
                 "job_id": active_job_id if active else "",
+                "dispatch_id": active_dispatch_id if active else "",
                 "control_seq": active_control_seq if active else -1,
                 "attempt": self._lane_restart_counts.get(lane_name, 0) + 1,
                 "inactive_reason": inactive_reason,

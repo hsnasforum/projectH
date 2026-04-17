@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 import watcher_core
+from pipeline_runtime.wrapper_events import append_wrapper_event
 
 
 def _write_active_profile(root: Path, payload: dict | None = None) -> None:
@@ -2601,6 +2602,8 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             job.last_activity_at = time.time() - 30
             job.last_dispatch_at = time.time() - 35
+            job.accepted_dispatch_id = job.dispatch_id
+            job.accepted_at = time.time() - 30
             job.last_pane_snapshot = "› prompt"
             core.sm.runtime_started_at = time.time() - 120
 
@@ -2612,10 +2615,10 @@ class VerifyCompletionContractTest(unittest.TestCase):
             self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
             self.assertGreater(job.last_failed_dispatch_at, 0.0)
             self.assertEqual(job.last_failed_dispatch_snapshot, "")
-            self.assertEqual(job.dispatch_stall_count, 1)
+            self.assertEqual(job.dispatch_stall_count, 0)
             self.assertEqual(job.degraded_reason, "")
-            self.assertEqual(job.lane_note, "waiting_task_accept_after_dispatch")
-            self.assertIn("dispatch stall", job.history[-1]["reason"])
+            self.assertEqual(job.lane_note, "")
+            self.assertIn("TASK_ACCEPTED", job.history[-1]["reason"])
 
     def test_repeated_dispatch_stall_marks_job_degraded_after_one_requeue(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2648,6 +2651,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
             first_dispatch_at = time.time() - 35
             job.last_activity_at = time.time() - 30
             job.last_dispatch_at = first_dispatch_at
+            job.accept_deadline_at = time.time() - 1
             job.last_pane_snapshot = "› prompt"
             core.sm.runtime_started_at = time.time() - 120
 
@@ -2670,6 +2674,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             job.last_activity_at = time.time() - 30
             job.last_dispatch_at = time.time() - 35
+            job.accept_deadline_at = time.time() - 1
             job.last_pane_snapshot = "› prompt"
 
             with mock.patch("watcher_core._capture_pane_text", return_value="› prompt"), \
@@ -2688,6 +2693,104 @@ class VerifyCompletionContractTest(unittest.TestCase):
             self.assertIs(same_job, job)
             self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
             send_keys.assert_not_called()
+
+    def test_delayed_task_accepted_does_not_false_stall_before_accept_deadline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            work_day = watch_dir / "4" / "10"
+            work_day.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            run_dir = base_dir / "runs" / "run-1"
+            wrapper_dir = run_dir / "wrapper-events"
+            wrapper_dir.mkdir(parents=True, exist_ok=True)
+            (base_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "run-1",
+                        "events_path": ".pipeline/runs/run-1/events.jsonl",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            work_note = work_day / "2026-04-10-slice.md"
+            _write_work_note(work_note, ["tests/test_web_app.py"])
+            job = watcher_core.JobState.from_artifact("job-verify-delayed-accept", str(work_note))
+
+            with mock.patch.dict(os.environ, {"PIPELINE_RUNTIME_DISABLE_EXPORTER": "1"}):
+                core = watcher_core.WatcherCore(
+                    {
+                        "watch_dir": str(watch_dir),
+                        "base_dir": str(base_dir),
+                        "repo_root": str(root),
+                        "dry_run": True,
+                        "verify_pane_target": "codex-pane",
+                        "verify_incomplete_idle_retry_sec": 20.0,
+                        "verify_accept_deadline_sec": 30.0,
+                    }
+                )
+
+            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+                job = core.sm._handle_verify_pending(job)
+
+            append_wrapper_event(
+                wrapper_dir,
+                "Codex",
+                "READY",
+                {"reason": "prompt_visible"},
+                source="wrapper",
+                derived_from="vendor_output",
+            )
+            append_wrapper_event(
+                wrapper_dir,
+                "Codex",
+                "HEARTBEAT",
+                {},
+                source="wrapper",
+                derived_from="process_alive",
+            )
+
+            job.last_activity_at = time.time() - 25
+            job.last_dispatch_at = time.time() - 25
+            job.accept_deadline_at = time.time() + 5
+            job.last_pane_snapshot = "› prompt"
+            core.sm.runtime_started_at = time.time() - 120
+
+            with mock.patch("watcher_core._capture_pane_text", return_value="› prompt"), \
+                 mock.patch("watcher_core._pane_text_has_busy_indicator", return_value=False), \
+                 mock.patch("watcher_core._pane_text_has_input_cursor", return_value=True):
+                job = core.sm._handle_verify_running(job)
+
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.degraded_reason, "")
+            self.assertEqual(job.accepted_dispatch_id, "")
+
+            append_wrapper_event(
+                wrapper_dir,
+                "Codex",
+                "TASK_ACCEPTED",
+                {
+                    "job_id": job.job_id,
+                    "dispatch_id": job.dispatch_id,
+                    "control_seq": 19,
+                    "attempt": 1,
+                },
+                source="wrapper",
+                derived_from="vendor_output",
+            )
+
+            with mock.patch("watcher_core._capture_pane_text", return_value="› prompt"), \
+                 mock.patch("watcher_core._pane_text_has_busy_indicator", return_value=False), \
+                 mock.patch("watcher_core._pane_text_has_input_cursor", return_value=True):
+                job = core.sm._handle_verify_running(job)
+
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.accepted_dispatch_id, job.dispatch_id)
+            self.assertEqual(job.degraded_reason, "")
 
     def test_verify_running_startup_recovery_requeues_stale_idle_dispatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

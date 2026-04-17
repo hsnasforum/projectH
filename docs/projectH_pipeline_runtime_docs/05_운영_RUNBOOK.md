@@ -173,7 +173,9 @@ runtime 채택 게이트 전에는 real repo truth를 건드리지 않는 synthe
 
 - verify lane이 `VERIFY_RUNNING` idle timeout 뒤 `VERIFY_PENDING`으로 복귀했는데 pane이 이미 idle prompt인 경우, same-snapshot guard는 short backoff만 적용하고 이후 재dispatch를 허용해야 합니다.
 - 이런 상황에서 `dispatch_backoff_same_snapshot`만 반복되고 새 dispatch가 다시 일어나지 않으면 stale retry loop로 보고 watcher retry state를 먼저 점검합니다.
-- verify lane이 busy indicator 없이 idle prompt로 먼저 돌아왔는데 current-round `/verify` receipt나 next control output이 still incomplete하면, 5분 full idle timeout까지 기다리기보다 short idle window 뒤 `VERIFY_PENDING`으로 되돌리는 편이 맞습니다.
+- 새 verify dispatch는 `dispatch_id`, `dispatched_at`, `accept_deadline_at`을 기준으로 wrapper `TASK_ACCEPTED`와 직접 연결해서 보는 편이 맞습니다.
+- verify lane이 busy indicator 없이 idle prompt로 먼저 돌아왔더라도 `TASK_ACCEPTED` deadline이 아직 남아 있으면 pre-accept stall로 확정하지 않습니다. 늦게 오는 accept를 기다리는 구간과 post-accept idle retry를 분리하는 편이 맞습니다.
+- verify lane이 busy indicator 없이 idle prompt로 먼저 돌아왔는데 `TASK_ACCEPTED` 이후에도 current-round `/verify` receipt나 next control output이 still incomplete하면, 5분 full idle timeout까지 기다리기보다 short idle window 뒤 `VERIFY_PENDING`으로 되돌리는 편이 맞습니다.
 - 같은 fingerprint에서 이 short idle retry가 한 번 더 반복되면 runtime은 이를 `dispatch_stall` incident로 승격하고, 추가 자동 재큐잉 대신 `degraded_reason=dispatch_stall`과 lane note `waiting_task_accept_after_dispatch`를 남기는 편이 맞습니다.
 - 이 incident는 supervisor events에 `dispatch_stall_detected`로 기록되고 launcher recent log에도 그대로 보여야 합니다. long soak를 다시 기본 게이트로 돌리기보다, live launcher session에서 이 이벤트가 0회인지와 실제 재발 replay가 막히는지를 우선 확인합니다.
 - 재dispatch 전 pane prompt 입력줄에 남은 미전송 draft text를 먼저 비워서, stray input이 새 verify/control prompt와 이어 붙지 않게 유지해야 합니다.

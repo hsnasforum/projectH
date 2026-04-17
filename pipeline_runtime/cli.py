@@ -559,6 +559,7 @@ class _WrapperEmitter:
         ready_detected = _lines_match_markers(new_lines, _READY_MARKERS.get(self.lane_name, ()))
         task_hint = _load_task_hint(self.task_hint_dir, self.lane_name)
         job_id = str(task_hint.get("job_id") or "")
+        dispatch_id = str(task_hint.get("dispatch_id") or "")
         control_seq = int(task_hint.get("control_seq") or -1)
         attempt = int(task_hint.get("attempt") or 0)
         inactive_reason = str(task_hint.get("inactive_reason") or "")
@@ -570,6 +571,7 @@ class _WrapperEmitter:
                 self.accepted_key = task_key
                 self.accepted_payload = {
                     "job_id": job_id,
+                    "dispatch_id": dispatch_id,
                     "control_seq": control_seq,
                     "attempt": attempt,
                 }

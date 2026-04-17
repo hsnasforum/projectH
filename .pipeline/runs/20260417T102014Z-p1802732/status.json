@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "backend_type": "tmux",
-  "run_id": "20260417T095014Z-p1784999",
-  "current_run_id": "20260417T095014Z-p1784999",
+  "run_id": "20260417T102014Z-p1802732",
+  "current_run_id": "20260417T102014Z-p1802732",
   "runtime_state": "STOPPED",
   "degraded_reason": "",
   "degraded_reasons": [],
@@ -35,8 +35,8 @@
       "state": "OFF",
       "pid": null,
       "attachable": false,
-      "last_event_at": "2026-04-17T09:57:15.954252Z",
-      "last_heartbeat_at": "2026-04-17T09:57:15.954252Z",
+      "last_event_at": "2026-04-17T10:26:31.266098Z",
+      "last_heartbeat_at": "2026-04-17T10:26:31.266098Z",
       "note": ""
     },
     {
@@ -44,8 +44,8 @@
       "state": "OFF",
       "pid": null,
       "attachable": false,
-      "last_event_at": "2026-04-17T09:57:13.358379Z",
-      "last_heartbeat_at": "2026-04-17T09:57:13.358379Z",
+      "last_event_at": "2026-04-17T10:26:28.353295Z",
+      "last_heartbeat_at": "2026-04-17T10:26:28.353295Z",
       "note": ""
     },
     {
@@ -53,8 +53,8 @@
       "state": "OFF",
       "pid": null,
       "attachable": false,
-      "last_event_at": "2026-04-17T09:57:15.201278Z",
-      "last_heartbeat_at": "2026-04-17T09:57:15.201278Z",
+      "last_event_at": "2026-04-17T10:26:29.293511Z",
+      "last_heartbeat_at": "2026-04-17T10:26:29.293511Z",
       "note": ""
     }
   ],
@@ -72,7 +72,7 @@
     },
     "latest_verify": {
       "path": "4/17/2026-04-17-controller-background-preload-readiness-hardening-retro-verification.md",
-      "mtime": 1776419805.735408
+      "mtime": 1776421406.5027487
     }
   },
   "compat": {
@@ -81,8 +81,8 @@
         "file": "claude_handoff.md",
         "status": "implement",
         "label": "Claude 실행",
-        "mtime": 1776419805.867408,
-        "control_seq": 275
+        "mtime": 1776421406.6293213,
+        "control_seq": 276
       },
       "stale": [
         {
@@ -110,12 +110,12 @@
     },
     "turn_state": {
       "state": "CODEX_VERIFY",
-      "entered_at": 1776419424.155106,
+      "entered_at": 1776421222.9917767,
       "reason": "startup_turn_codex",
       "active_control_file": "",
       "active_control_seq": -1
     }
   },
-  "last_heartbeat_at": "2026-04-17T09:57:18.512025Z",
-  "updated_at": "2026-04-17T09:57:18.512037Z"
+  "last_heartbeat_at": "2026-04-17T10:26:32.707806Z",
+  "updated_at": "2026-04-17T10:26:32.707813Z"
 }

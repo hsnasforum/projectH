@@ -1,0 +1,83 @@
+{
+  "job_id": "20260417-2026-04-16-controller-background-4dd41842",
+  "status": "VERIFY_RUNNING",
+  "artifact_path": "/home/xpdlqj/code/projectH/work/4/16/2026-04-16-controller-background-preload-readiness-hardening.md",
+  "run_id": "20260417T095014Z-p1784999",
+  "schema_version": 1,
+  "artifact_hash": "01e3196f6927f9421092aa3231b6197487e3913e4dd1d78dc4c5ab672c4eced6",
+  "artifact_size": 3758,
+  "artifact_mtime": 1776314837.9032829,
+  "stabilized_at": 1776419428.3561566,
+  "round": 1,
+  "retry_budget": 3,
+  "last_dispatch_at": 1776419748.9883208,
+  "last_dispatch_slot": "slot_verify",
+  "last_failed_dispatch_at": 0.0,
+  "last_failed_dispatch_snapshot": "",
+  "dispatch_fail_count": 0,
+  "feedback_baseline_sig": "claude_handoff.md=1776419668138412038:3995:d6785e16baf14b2e7fa988fb702d44b8933db230bafa3f471844f30d49e0455f|gemini_request.md=1776416978981952848:6146:69c327ad7f94222ca3775cce25f95a7eba65d0425726e14a5c9dcf34753a35e1|operator_request.md=1776416681770076343:2514:8949ab0f5f649cde4f9b2a1565e100de00ac00c33519bdcd1885a2eff012c24a",
+  "verify_feedback_baseline_sig": "b721b00a0cdce34884c01876e5a6d50fdec0a720fc59e62597adaa03eaa6188c",
+  "verify_receipt_baseline_path": "verify/4/16/2026-04-16-reviewed-memory-aggregate-reload-smoke-split-verification.md",
+  "verify_receipt_baseline_mtime": 1776411440.9491208,
+  "verify_manifest_path": "",
+  "verify_completed_at": 0.0,
+  "validation_score": -1.0,
+  "blocker_count": -1,
+  "verify_result": "",
+  "dispatch_stall_fingerprint": "",
+  "dispatch_stall_count": 0,
+  "dispatch_stall_detected_at": 0.0,
+  "dispatch_id": "178693eed1570f0d4489ab44fcf06d65f53d36e7",
+  "dispatch_control_seq": 274,
+  "seen_dispatch_id": "178693eed1570f0d4489ab44fcf06d65f53d36e7",
+  "seen_at": 1776419750.1884012,
+  "accept_deadline_at": 1776419778.9883208,
+  "accepted_dispatch_id": "178693eed1570f0d4489ab44fcf06d65f53d36e7",
+  "accepted_at": 1776419775.463321,
+  "done_dispatch_id": "178693eed1570f0d4489ab44fcf06d65f53d36e7",
+  "done_at": 1776419776.107502,
+  "done_deadline_at": 1776419820.463321,
+  "dispatch_stall_stage": "",
+  "completion_stall_fingerprint": "e25ecb43f594298cd227b786b436c460cdc7e502",
+  "completion_stall_count": 1,
+  "completion_stall_detected_at": 1776419722.7503424,
+  "completion_stall_stage": "",
+  "degraded_reason": "",
+  "lane_note": "",
+  "created_at": 1776419425.5611768,
+  "updated_at": 1776419748.9963043,
+  "history": [
+    {
+      "from": "NEW_ARTIFACT",
+      "to": "STABILIZING",
+      "at": 1776419425.5616615,
+      "reason": "new artifact detected"
+    },
+    {
+      "from": "STABILIZING",
+      "to": "VERIFY_PENDING",
+      "at": 1776419428.356161,
+      "reason": "artifact stabilized"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "VERIFY_RUNNING",
+      "at": 1776419435.28056,
+      "reason": "dispatched to slot_verify"
+    },
+    {
+      "from": "VERIFY_RUNNING",
+      "to": "VERIFY_PENDING",
+      "at": 1776419722.7507017,
+      "reason": "completion stall after TASK_DONE with missing receipt/control close for 25s idle, 287s total"
+    },
+    {
+      "from": "VERIFY_PENDING",
+      "to": "VERIFY_RUNNING",
+      "at": 1776419748.9963043,
+      "reason": "dispatched to slot_verify"
+    }
+  ],
+  "last_pane_snapshot": "\n• note를 누적 사실과 섞지 않으려면, 지금 round에서 재확인한 범위를 조금 더 채워 두는 편이 낫겠습니다. line-level 확인과 docs grep도 다시 한\n  번 찍고 나서 /verify 문구를 seq 275 기준으로 정리하겠습니다.\n\n• Explored\n  └ Read index.html, test_controller_server.py\n    Search controller|Scene|background fallback|internal/operator tooling|controller has its own Playwright smoke in README.md\n\n───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\n• 검증 결과는 변함없어서, /verify에는 seq 번호와 이번 재실행 결과만 정확히 덮어 적겠습니다. next control도 같은 slice를 유지하되\n  CONTROL_SEQ: 275로만 올리겠습니다.\n\n• Edited 2 files (+4 -4)\n  └ .pipeline/claude_handoff.md (+2 -2)\n     1  STATUS: implement\n     2 -CONTROL_SEQ: 274\n     2 +CONTROL_SEQ: 275\n     3\n       ⋮\n    55  - leave one new `/work` note only after this bounded natural-reload-chain bundle is complete\n    56 -- in that `/work`, say that seq 274 follows Gemini advice seq 272, whether docs changed or were already aligned as-is, and whether\n        the existing unverified natural-reload-chain note was effectively superseded by this round\n    56 +- in that `/work`, say that seq 275 follows Gemini advice seq 272, whether docs changed or were already aligned as-is, and whether\n        the existing unverified natural-reload-chain note was effectively superseded by this round\n    57  - respond to the user in Korean honorifics\n\n  └ verify/4/17/2026-04-17-controller-background-preload-readiness-hardening-retro-verification.md (+2 -2)\n    28    - `verify/4/17/2026-04-17-sqlite-browser-history-card-noisy-single-source-strong-plus-missing-click-reload-exact-title-parity-ver\n        ification.md`까지는 이미 존재하지만, `work/4/17/2026-04-17-sqlite-browser-history-card-natural-reload-chain-parity.md`는 여전히 mat\n        ching `/verify`가 없습니다.\n    29 -  - 따라서 seq 274 control은 controller family를 더 파지 않고, 이미 seq 272 Gemini advice로 좁혀진 natural-reload-chain retro-close\n        out bundle을 그대로 유지하는 편이 가장 truthfully 맞습니다.\n    29 +  - 따라서 seq 275 control은 controller family를 더 파지 않고, 이미 seq 272 Gemini advice로 좁혀진 natural-reload-chain retro-close\n        out bundle을 그대로 유지하는 편이 가장 truthfully 맞습니다.\n    30\n       ⋮\n    40  - `python3 -m unittest -v tests.test_controller_server.ControllerServerLaunchGateTests.test_controller_html_polls_runtime_api_only`\n    41 -  - 결과: `Ran 1 test in 0.003s`, `OK`\n    41 +  - 결과: `Ran 1 test in 0.004s`, `OK`\n    42  - `tmp=$(mktemp --suffix=.js); trap 'rm -f \"$tmp\"' EXIT; awk '/<script>/{flag=1; next} /<\\\\/script>/{flag=0} flag' controller/index\n        .html > \"$tmp\"; node --check \"$tmp\"`\n\n• Explored\n  └ Read claude_handoff.md, 2026-04-17-controller-background-preload-readiness-hardening-retro-verification.md\n\n• Ran git status --short verify/4/17/2026-04-17-controller-background-preload-readiness-hardening-retro-verification.md .pipeline/\n  │ claude_handoff.md\n  └  M verify/4/17/2026-04-17-controller-background-preload-readiness-hardening-retro-verification.md\n\n───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\n• 지정하신 work/4/16/2026-04-16-controller-background-preload-readiness-hardening.md는 이번 seq 275 round에서도 truthful하다고 다시 확인했\n  습니다. /verify는 verify/4/17/2026-04-17-controller-background-preload-readiness-hardening-retro-verification.md로 갱신했고, 다음 control\n  은 .pipeline/claude_handoff.md에 STATUS: implement, CONTROL_SEQ: 275로 하나만 남겼습니다.\n\n  핵심은 그대로입니다. controller/index.html:1092에 background preload fallback/readiness/signal 경로가 유지되고, controller/\n  index.html:2811에 Scene 상태 surface가 남아 있으며, tests/test_controller_server.py:86가 그 정적 계약을 계속 잠그고 있습니다. 다음 exact\n  slice는 변함없이 sqlite-browser-history-card-natural-reload-chain-retro-closeout으로 유지했습니다.\n\n  검증:\n\n  - python3 -m unittest -v tests.test_controller_server.ControllerServerLaunchGateTests.test_controller_html_polls_runtime_api_only -> OK\n  - extracted controller script node --check -> clean\n  - git diff --check -- controller/index.html tests/test_controller_server.py -> clean\n  - line-level 코드 확인, controller/runtime docs grep, pending natural-reload-chain verify 부재 재확인\n  - make controller-test, manual Office View smoke는 이번 archival verify 범위 밖이라 미실행했습니다.\n\n\n› Improve documentation in @filename\n\n  gpt-5.4 xhigh fast · ~/code/projectH\n",
+  "last_activity_at": 1776419822.2622933
+}

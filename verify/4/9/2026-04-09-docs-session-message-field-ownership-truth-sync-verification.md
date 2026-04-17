@@ -8,43 +8,55 @@
 - `round-handoff`
 
 ## 변경 이유
-- 지정된 `/work`가 `docs/PRODUCT_SPEC.md` / `docs/ACCEPTANCE_CRITERIA.md`의 session message field ownership drift를 실제로 어디까지 닫았는지 다시 확인하고, `/verify`를 먼저 갱신한 뒤 `CONTROL_SEQ: 277`의 단일 다음 제어를 확정할 필요가 있었습니다.
-- 현재 저장소에는 같은 날의 후속 bundle `work/4/9/2026-04-09-docs-save-content-source-message-id-ownership-truth-sync.md`와 그 `/verify`가 이미 존재하므로, 대상 `/work` 자체의 판정과 그 직후 필요한 다음 슬라이스를 분리해서 기록합니다.
+- 최신 `/work` `work/4/9/2026-04-09-docs-session-message-field-ownership-truth-sync.md`가 직전 verification note가 고정한 current session message field ownership drift를 실제로 닫았는지 다시 확인하고, 같은 docs family 안에서 남은 다음 단일 truth-sync 슬라이스를 좁힐 필요가 있었습니다.
+- 같은 날짜의 기존 verification note `verify/4/9/2026-04-09-docs-product-spec-test-lock-suite-split-truth-sync-verification.md`를 먼저 읽은 뒤, 그 후속 `/work`가 실제 handoff scope를 끝까지 닫았는지 재검수했습니다.
 
 ## 핵심 변경
-- 대상 `/work`는 부분적으로만 truthful합니다.
-  - `original_response_snapshot`, `corrected_text`, `corrected_outcome`, `content_reason_record`를 grounded-brief source message ownership으로 좁힌 점과 `approval_reason_record`를 reject/reissue approval trace ownership으로 분리한 점은 현재 코드/문서 truth와 맞습니다.
-  - 하지만 closeout의 `세션 메시지 필드 소유권 진실 동기화 완료`는 과합니다. `save_content_source`와 `source_message_id`는 save/approval trace messages뿐 아니라 direct approved save 뒤의 grounded-brief source message에도 나타납니다.
-- 현재 코드/테스트 근거:
-  - `storage/session_store.py:644-650`은 grounded-brief source message에 `source_message_id`를 채웁니다.
-  - `tests/test_smoke.py:3376-3378`, `tests/test_smoke.py:3472-3474`, `tests/test_smoke.py:5049-5050`은 session message surface에서 source message / saved message가 `source_message_id`, `save_content_source`를 가진다고 확인합니다.
-  - `tests/test_web_app.py:813-837`도 corrected-save approval/saved message 경로에서 같은 ownership을 확인합니다.
-- 현재 문서는 같은 날 후속 bundle 덕분에 이 잔여 drift를 이미 닫았습니다 (`docs/PRODUCT_SPEC.md:280-286`, `docs/ACCEPTANCE_CRITERIA.md:106-109`). 따라서 이 `/work`의 truthful 판정은 여전히 "부분 완료"이고, `seq 277`의 정확한 다음 제어는 그 잔여 두 필드를 묶어 닫는 bounded docs bundle이어야 합니다.
-- 다음 제어는 `.pipeline/claude_handoff.md`에 `Docs PRODUCT_SPEC ACCEPTANCE_CRITERIA session message save_content_source source_message_id ownership truth sync`로 고정했습니다.
-  - 같은 날 same-family docs-only truth-sync가 이미 3회 이상 반복됐으므로, 또 다른 더 작은 micro-slice 대신 `save_content_source` + `source_message_id`를 두 문서에서 함께 닫는 한 번의 bundle이 맞습니다.
+- 최신 `/work`는 부분적으로 truthful합니다.
+  - `docs/PRODUCT_SPEC.md:256-266,279`와 `docs/PRODUCT_SPEC.md:283`가 `original_response_snapshot`, `corrected_text`, `corrected_outcome`, `content_reason_record`를 original grounded-brief source message ownership으로 정리한 부분은 실제 구현과 맞습니다.
+  - `docs/ACCEPTANCE_CRITERIA.md:100-101`이 `corrected_text`, `corrected_outcome`, `content_reason_record`를 source-message-only로, `approval_reason_record`를 reject/reissue approval trace message ownership으로 정리한 부분도 맞습니다.
+- 하지만 `save_content_source`와 `source_message_id` ownership은 아직 과도하게 좁습니다.
+  - `docs/PRODUCT_SPEC.md:277`은 `save_content_source`를 save/approval trace messages only처럼 적고, `docs/PRODUCT_SPEC.md:280`은 `source_message_id`를 save/approval trace messages linking-back field처럼 적습니다.
+  - `docs/PRODUCT_SPEC.md:283`도 `approval_reason_record`, `save_content_source`, `source_message_id`를 모두 reject/reissue/save system responses에만 사는 approval-linked trace fields처럼 묶습니다.
+  - `docs/ACCEPTANCE_CRITERIA.md:103` 역시 `save_content_source`, `source_message_id`를 save/approval trace messages ownership으로만 적습니다.
+- 실제 구현과 테스트는 이보다 넓습니다.
+  - grounded-brief source message도 `source_message_id`를 가집니다 (`storage/session_store.py:644-650`).
+  - direct approved source-message save path에서는 source message가 `save_content_source`와 `source_message_id`를 같이 가집니다 (`tests/test_web_app.py:6247-6262`, `tests/test_smoke.py:4409-4423`, `tests/test_smoke.py:7638-7656`).
+  - 따라서 최신 `/work` closeout의 “세션 메시지 필드 소유권 진실 동기화 완료”는 아직 과합니다.
+- 다음 Claude 슬라이스는 `.pipeline/claude_handoff.md`에 `Docs PRODUCT_SPEC ACCEPTANCE_CRITERIA session message save_content_source source_message_id ownership truth sync`로 고정했습니다.
 
 ## 검증
 - `sed -n '1,260p' AGENTS.md`
-- `sed -n '1,240p' work/README.md`
-- `sed -n '1,240p' verify/README.md`
-- `sed -n '1,260p' work/4/9/2026-04-09-docs-session-message-field-ownership-truth-sync.md`
-- `sed -n '1,260p' verify/4/9/2026-04-09-docs-session-message-field-ownership-truth-sync-verification.md`
-- `sed -n '1,220p' work/4/9/2026-04-09-docs-save-content-source-message-id-ownership-truth-sync.md`
-- `sed -n '1,240p' verify/4/9/2026-04-09-docs-save-content-source-message-id-ownership-truth-sync-verification.md`
-- `ls -1 work/4/9`
-- `ls -1 verify/4/9`
+- `sed -n '1,220p' work/README.md`
+- `sed -n '1,220p' verify/README.md`
+- `sed -n '1,220p' .pipeline/README.md`
+- `sed -n '1,220p' .agents/skills/round-handoff/SKILL.md`
+- `sed -n '1,240p' work/4/9/2026-04-09-docs-session-message-field-ownership-truth-sync.md`
+- `sed -n '1,240p' verify/4/9/2026-04-09-docs-product-spec-test-lock-suite-split-truth-sync-verification.md`
+- `sed -n '1,220p' docs/NEXT_STEPS.md`
+- `sed -n '1,220p' docs/MILESTONES.md`
+- `sed -n '1,220p' docs/TASK_BACKLOG.md`
 - `nl -ba docs/PRODUCT_SPEC.md | sed -n '247,290p'`
-- `nl -ba docs/ACCEPTANCE_CRITERIA.md | sed -n '92,110p'`
-- `nl -ba app/serializers.py | sed -n '96,135p'`
+- `nl -ba docs/ACCEPTANCE_CRITERIA.md | sed -n '92,108p'`
+- `nl -ba core/agent_loop.py | sed -n '7336,7388p'`
+- `nl -ba app/serializers.py | sed -n '96,131p'`
 - `nl -ba storage/session_store.py | sed -n '628,700p'`
-- `nl -ba core/agent_loop.py | sed -n '7336,7387p'`
-- `rg -n "save_content_source|source_message_id" tests/test_web_app.py tests/test_smoke.py -S`
-- `nl -ba tests/test_web_app.py | sed -n '770,782p'`
-- `nl -ba tests/test_web_app.py | sed -n '804,840p'`
-- `nl -ba tests/test_smoke.py | sed -n '3344,3490p'`
-- `nl -ba tests/test_smoke.py | sed -n '5036,5065p'`
+- `nl -ba tests/test_web_app.py | sed -n '6187,6200p'`
+- `nl -ba tests/test_web_app.py | sed -n '6391,6420p'`
+- `nl -ba tests/test_web_app.py | sed -n '4442,4448p'`
+- `nl -ba tests/test_smoke.py | sed -n '4645,4665p'`
+- `git diff -- docs/PRODUCT_SPEC.md docs/ACCEPTANCE_CRITERIA.md`
 - `git diff --check`
+- `rg -n "source_message_id\\\"\\]|source_message_id\\\"\\)|\\[\\\"source_message_id\\\"\\].*message|message\\[\\\"source_message_id\\\"\\]" tests/test_web_app.py tests/test_smoke.py -S`
+- `nl -ba tests/test_web_app.py | sed -n '6243,6265p'`
+- `nl -ba tests/test_smoke.py | sed -n '2741,2752p'`
+- `rg -n "source_message_id.*original grounded-brief|owned by save/approval trace messages|source_message_id.*source message" docs/PRODUCT_SPEC.md docs/ACCEPTANCE_CRITERIA.md docs/ARCHITECTURE.md -S`
+- `rg -n "session\\[\\\"messages\\\"\\]\\[-1\\]\\[\\\"save_content_source\\\"\\]|source_message\\[\\\"save_content_source\\\"\\]|saved_messages\\[-1\\]\\[\\\"save_content_source\\\"\\]|save_content_source.*source message" tests/test_web_app.py tests/test_smoke.py docs/PRODUCT_SPEC.md docs/ACCEPTANCE_CRITERIA.md docs/ARCHITECTURE.md -S`
+- `nl -ba tests/test_smoke.py | sed -n '4407,4423p'`
+- `nl -ba tests/test_smoke.py | sed -n '7638,7656p'`
+- `rg -n "owned by save/approval trace messages|live on reject/reissue/save system responses|save/approval trace messages linking back to the source message|approval-linked trace fields" docs/PRODUCT_SPEC.md docs/ACCEPTANCE_CRITERIA.md docs/ARCHITECTURE.md -S`
+- `sed -n '1,240p' .pipeline/claude_handoff.md`
 
 ## 남은 리스크
-- 이번 검수는 docs/code truth 대조와 `git diff --check`만 재실행했습니다. unit test와 Playwright는 다시 돌리지 않았습니다.
-- 현재 저장소가 이미 후속 same-family bundle까지 포함하고 있어 2026-04-09 당시의 정확한 중간 문구 상태를 그대로 재현하지는 못합니다. 대신 대상 `/work`, 후속 `/work`·`/verify`, 현재 코드/문서의 교집합으로 truthful 판정을 남겼습니다.
+- 이번 라운드는 docs/code truth 대조와 `git diff --check`만 다시 확인했습니다. Python unit test와 Playwright는 재실행하지 않았습니다.
+- current session message ownership wording은 거의 닫혔지만 `save_content_source`와 `source_message_id`를 source message에도 존재할 수 있다는 점까지 반영해야 family를 truthfully 닫을 수 있습니다.

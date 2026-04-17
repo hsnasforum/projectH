@@ -60,6 +60,7 @@ from pipeline_runtime.lane_surface import (
 )
 from pipeline_runtime.operator_autonomy import classify_operator_candidate, normalize_reason_code
 from pipeline_runtime.schema import read_control_meta, read_json
+from pipeline_runtime.turn_arbitration import WatcherTurnInputs, resolve_watcher_turn
 from pipeline_runtime.wrapper_events import build_lane_read_models
 from verify_fsm import (
     JobState,
@@ -2607,56 +2608,20 @@ class WatcherCore:
 
     # ------------------------------------------------------------------
     def _resolve_turn(self) -> str:
-        """Resolve which agent should act next.
-
-        Returns one of: "operator", "gemini", "codex_followup", "codex", "claude", "idle".
-        This is a pure query — it does not trigger transitions or side effects.
-        Used by both initial turn and rolling turn decisions.
-        """
-        operator_recovery = self._operator_control_recovery_marker()
-        operator_gate = self._operator_gate_marker()
-
-        # 1. operator_request active → operator
-        if (
-            self._is_active_control(self.operator_request_path, "needs_operator")
-            and operator_recovery is None
-            and operator_gate is None
-        ):
-            return "operator"
-
-        # 2. gemini_request active → gemini
-        if self._is_active_control(self.gemini_request_path, "request_open"):
-            return "gemini"
-
-        # 3. gemini_advice active → codex_followup
-        if self._is_active_control(self.gemini_advice_path, "advice_ready"):
-            return "codex_followup"
-
-        # 4. handoff active + implement, but verify_pending or verify_active → codex first
-        handoff_active = self._is_active_control(self.claude_handoff_path, "implement")
-        verify_pending = self._latest_work_needs_verify_broad()
-        verify_active = self._claude_handoff_verify_active()
-        if handoff_active and (verify_pending or verify_active):
-            return "codex"
-
-        # 5. work needs verify (no handoff) → codex
-        if verify_pending:
-            return "codex"
-
-        # 6. handoff active and dispatchable → claude (unless cooldown)
-        if handoff_active and not self._is_idle_release_cooldown_active():
-            return "claude"
-
-        # 6.5. stale operator stop cleared → codex follow-up
-        if operator_recovery is not None:
-            return "codex_followup"
-
-        # 6.6. gated operator candidate → Codex follow-up or quiet hibernate
-        if operator_gate is not None and str(operator_gate.get("routed_to") or "") != "hibernate":
-            return "codex_followup"
-
-        # 7. fallback
-        return "idle"
+        """Resolve which agent should act next."""
+        return resolve_watcher_turn(
+            WatcherTurnInputs(
+                operator_request_active=self._is_active_control(self.operator_request_path, "needs_operator"),
+                gemini_request_active=self._is_active_control(self.gemini_request_path, "request_open"),
+                gemini_advice_active=self._is_active_control(self.gemini_advice_path, "advice_ready"),
+                claude_handoff_active=self._is_active_control(self.claude_handoff_path, "implement"),
+                latest_work_needs_verify=self._latest_work_needs_verify_broad(),
+                claude_handoff_verify_active=self._claude_handoff_verify_active(),
+                idle_release_cooldown_active=self._is_idle_release_cooldown_active(),
+                operator_recovery_marker=self._operator_control_recovery_marker(),
+                operator_gate_marker=self._operator_gate_marker(),
+            )
+        )
 
     # ------------------------------------------------------------------
     def _check_claude_idle_timeout(self) -> None:

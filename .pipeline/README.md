@@ -100,6 +100,7 @@
 - watcher는 busy transcript, background wait, prompt-not-ready lane에 follow-up/advisory/operator/blocked-triage prompt를 곧바로 paste하지 않고 pending defer로 남기는 편이 맞습니다. 이때 runtime events에는 `lane_input_deferred`를 남겨 queued paste contamination과 normal dispatch를 구분해야 합니다.
 - 이 queue/defer/flush/drop 경계는 `watcher_core.py` 안의 ad-hoc send branch로 흩어두기보다 `watcher_dispatch.py`에서 전담하는 편이 맞습니다. watcher core는 prompt 조립과 dispatch intent 생성까지만 맡고, 실제 paste/defer/drop/flush는 shared dispatch queue가 처리해야 drift replay가 고정됩니다.
 - 같은 이유로 verify 상태기계도 `watcher_core.py`에 계속 눌러담기보다 `verify_fsm.py`가 `TASK_ACCEPTED -> TASK_DONE -> receipt close` 전이와 deadline/incident 승격을 전담하고, watcher core는 artifact/control/pane 사실 수집과 orchestrator shell 역할에 집중하는 편이 맞습니다.
+- 다음 분리 축은 turn/control arbitration입니다. `turn_arbitration.py`가 watcher의 next-turn 결정과 supervisor의 active-lane/active-round suppression 우선순위를 공용으로 들고, `watcher_core.py`와 supervisor는 marker 계산 결과만 넘겨 current truth를 다시 각자 해석하지 않는 편이 맞습니다.
 - pending defer는 같은 control family/current control이 아직 살아 있을 때만 유지하는 편이 맞습니다. 더 높은 `CONTROL_SEQ` handoff가 열리거나 active control이 다른 family로 넘어가면 예전 Codex/Gemini/Claude pending prompt는 flush하지 말고 폐기해야 합니다.
 - lane readiness의 busy 판정은 pane 전체 scrollback이 아니라 최근 visible tail 기준으로 보는 편이 맞습니다. 예전 `Working (...)` 줄이 위에 남아 있다는 이유만으로 현재 prompt-visible Claude/Codex pane을 계속 busy로 취급하면 안 됩니다.
 - stale control slot을 수동 정리해야 할 때는 `.pipeline/archive-stale-control-slots.sh`를 쓰고, newest control file은 archive하지 않는 편이 맞습니다.

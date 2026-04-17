@@ -36,6 +36,7 @@ from .schema import (
     repo_relative,
 )
 from .tmux_adapter import TmuxAdapter
+from .turn_arbitration import active_lane_for_runtime, suppress_active_round_for_turn
 from .wrapper_events import append_wrapper_event, build_lane_read_models
 
 _DEFAULT_TOKEN_SINCE_DAYS = 7
@@ -492,39 +493,17 @@ class RuntimeSupervisor:
         duplicate_control: dict[str, Any] | None = None,
         stale_operator_control: dict[str, Any] | None = None,
     ) -> str:
-        if not turn_state:
-            state = ""
-        else:
-            state = str(turn_state.get("state") or "")
-        control = control or {}
-        control_status = str(control.get("active_control_status") or "")
-        control_seq = int(control.get("active_control_seq") or -1)
-        last_receipt_seq = int((last_receipt or {}).get("control_seq") or -1)
-        if (
-            state == "CLAUDE_ACTIVE"
-            and control_status == "implement"
-            and control_seq >= 0
-            and duplicate_control is None
-            and control_seq > last_receipt_seq
-        ):
-            return str(self.role_owners.get("implement") or "Claude")
-        if state in {"CODEX_VERIFY", "CODEX_FOLLOWUP"}:
-            return str(self.role_owners.get("verify") or "Codex")
-        if state == "GEMINI_ADVISORY":
-            return str(self.role_owners.get("advisory") or "Gemini")
-        if state == "OPERATOR_WAIT" and stale_operator_control is None:
-            return ""
-
-        round_state = str((active_round or {}).get("state") or "")
-        if round_state in {"VERIFY_PENDING", "VERIFYING"}:
-            return str(self.role_owners.get("verify") or "Codex")
-        if round_state == "RECEIPT_PENDING":
-            if state in {"CODEX_VERIFY", "CODEX_FOLLOWUP"}:
-                return str(self.role_owners.get("verify") or "Codex")
-            completion_stage = str((active_round or {}).get("completion_stage") or "")
-            if completion_stage == "receipt_close_pending":
-                return ""
-        return ""
+        return active_lane_for_runtime(
+            turn_state,
+            active_round,
+            control=control,
+            last_receipt=last_receipt,
+            duplicate_control=duplicate_control,
+            stale_operator_control=stale_operator_control,
+            implement_owner=str(self.role_owners.get("implement") or "Claude"),
+            verify_owner=str(self.role_owners.get("verify") or "Codex"),
+            advisory_owner=str(self.role_owners.get("advisory") or "Gemini"),
+        )
 
     def _build_active_round(
         self,
@@ -585,16 +564,10 @@ class RuntimeSupervisor:
         turn_state: dict[str, Any] | None,
         active_round: dict[str, Any] | None,
     ) -> bool:
-        if not active_round:
-            return False
-        round_state = str((active_round or {}).get("state") or "")
-        if round_state not in {"VERIFY_PENDING", "VERIFYING", "RECEIPT_PENDING"}:
-            return False
-        turn_state_name = str((turn_state or {}).get("state") or "")
-        if turn_state_name in {"CODEX_FOLLOWUP", "GEMINI_ADVISORY", "OPERATOR_WAIT"}:
-            return True
-        turn_reason = str((turn_state or {}).get("reason") or "")
-        return turn_state_name == "IDLE" and turn_reason == "operator_request_gated_hibernate"
+        return suppress_active_round_for_turn(
+            turn_state=turn_state,
+            active_round=active_round,
+        )
 
     def _job_matches_active_round(
         self,

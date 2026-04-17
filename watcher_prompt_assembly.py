@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
@@ -211,8 +211,12 @@ DEFAULT_VERIFY_PROMPT_TEMPLATE = (
 class PromptDispatchSpec:
     pending_key: str
     notify_kind: str
+    lane_role: str
     prompt: str
     prompt_path: Path
+    notify_label: str = ""
+    raw_event: str = ""
+    raw_payload: dict[str, object] = field(default_factory=dict)
     control_seq: int = -1
     expected_status: str = ""
     expected_control_path: str = ""
@@ -396,14 +400,48 @@ class WatcherPromptAssembler:
         }
         return self._normalize_prompt_text(self.operator_retriage_prompt.format(**context))
 
-    def build_claude_dispatch_spec(self, handoff_path: Optional[Path] = None) -> PromptDispatchSpec:
+    def format_session_arbitration_draft(self, signal: Mapping[str, object]) -> str:
+        context = self.build_runtime_prompt_context()
+        reasons = [str(reason) for reason in signal.get("reasons", [])]
+        excerpt_lines = [str(line) for line in signal.get("excerpt_lines", [])]
+        reason_lines = "\n".join(f"- {reason}" for reason in reasons) or "- (없음)"
+        excerpt_block = "\n".join(f"> {line}" for line in excerpt_lines) or "> (없음)"
+        return (
+            "STATUS: draft_only\n\n"
+            "역할:\n"
+            "- watcher가 active Claude session의 live side question 신호를 감지해 남긴 non-canonical draft\n"
+            "- 이 파일은 자동 실행 슬롯이 아니며 watcher와 Claude/Gemini는 이 파일만으로 dispatch하지 않음\n"
+            "- Codex가 보고 short lane reply로 끝낼지, `.pipeline/gemini_request.md`로 승격할지 결정해야 함\n\n"
+            "감지 이유:\n"
+            f"{reason_lines}\n\n"
+            "현재 round-start contract:\n"
+            f"- `.pipeline/claude_handoff.md`: {context['claude_handoff_path']}\n"
+            f"- latest `/work`: {context['latest_work_path']}\n"
+            f"- latest `/verify`: {context['latest_verify_path']}\n\n"
+            "관찰 excerpt:\n"
+            f"{excerpt_block}\n\n"
+            "Codex next step:\n"
+            "- active session을 mid-session handoff rewrite 없이 처리할지 먼저 판단\n"
+            "- 필요하면 Gemini arbitration request를 사람이 검토 가능한 canonical 슬롯으로만 승격\n"
+            "- 그렇지 않으면 Claude에게 short lane reply만 전달\n"
+        )
+
+    def build_claude_dispatch_spec(
+        self,
+        reason: str,
+        handoff_path: Optional[Path] = None,
+    ) -> PromptDispatchSpec:
         prompt_path = handoff_path or self.claude_handoff_path
         control_seq = self._read_control_seq_from_path(prompt_path)
         return PromptDispatchSpec(
             pending_key="claude_handoff",
             notify_kind="claude_handoff",
+            lane_role="implement",
             prompt=self.format_implement_prompt(handoff_path),
             prompt_path=prompt_path,
+            notify_label="notify_claude",
+            raw_event="claude_notify",
+            raw_payload={"reason": reason},
             control_seq=control_seq,
             expected_status="implement",
             expected_control_path=str(prompt_path.name),
@@ -411,13 +449,17 @@ class WatcherPromptAssembler:
             require_active_control=True,
         )
 
-    def build_gemini_dispatch_spec(self) -> PromptDispatchSpec:
+    def build_gemini_dispatch_spec(self, reason: str) -> PromptDispatchSpec:
         control_seq = self._read_control_seq_from_path(self.gemini_request_path)
         return PromptDispatchSpec(
             pending_key="gemini_request",
             notify_kind="gemini_request",
+            lane_role="advisory",
             prompt=self.format_runtime_prompt(self.advisory_prompt),
             prompt_path=self.gemini_request_path,
+            notify_label="notify_gemini",
+            raw_event="gemini_notify",
+            raw_payload={"reason": reason},
             control_seq=control_seq,
             expected_status="request_open",
             expected_control_path=str(self.gemini_request_path.name),
@@ -425,13 +467,17 @@ class WatcherPromptAssembler:
             require_active_control=True,
         )
 
-    def build_codex_followup_dispatch_spec(self) -> PromptDispatchSpec:
+    def build_codex_followup_dispatch_spec(self, reason: str) -> PromptDispatchSpec:
         control_seq = self._read_control_seq_from_path(self.gemini_advice_path)
         return PromptDispatchSpec(
             pending_key="gemini_advice_followup",
             notify_kind="gemini_advice_followup",
+            lane_role="verify",
             prompt=self.format_runtime_prompt(self.followup_prompt),
             prompt_path=self.gemini_advice_path,
+            notify_label="notify_codex_followup",
+            raw_event="codex_followup_notify",
+            raw_payload={"reason": reason},
             control_seq=control_seq,
             expected_status="advice_ready",
             expected_control_path=str(self.gemini_advice_path.name),
@@ -439,39 +485,72 @@ class WatcherPromptAssembler:
             require_active_control=True,
         )
 
-    def build_control_recovery_dispatch_spec(self, marker: Mapping[str, object]) -> PromptDispatchSpec:
+    def build_control_recovery_dispatch_spec(
+        self,
+        marker: Mapping[str, object],
+        reason: str,
+    ) -> PromptDispatchSpec:
         control_seq = int(marker.get("control_seq") or -1)
         return PromptDispatchSpec(
             pending_key="codex_control_recovery",
             notify_kind="codex_control_recovery",
+            lane_role="verify",
             prompt=self.format_control_recovery_prompt(marker),
             prompt_path=self.operator_request_path,
+            notify_label="notify_codex_control_recovery",
+            raw_event="codex_control_recovery_notify",
+            raw_payload={"reason": reason, **marker},
             control_seq=control_seq,
             expected_control_path=str(self.operator_request_path.name),
             expected_control_seq=control_seq,
             expected_status="needs_operator",
         )
 
-    def build_operator_retriage_dispatch_spec(self, marker: Mapping[str, object]) -> PromptDispatchSpec:
+    def build_operator_retriage_dispatch_spec(
+        self,
+        marker: Mapping[str, object],
+        reason: str,
+    ) -> PromptDispatchSpec:
         control_seq = int(marker.get("control_seq") or -1)
         return PromptDispatchSpec(
             pending_key="codex_operator_retriage",
             notify_kind="codex_operator_retriage",
+            lane_role="verify",
             prompt=self.format_operator_retriage_prompt(marker),
             prompt_path=self.operator_request_path,
+            notify_label="notify_codex_operator_retriage",
+            raw_event="codex_operator_retriage_notify",
+            raw_payload={"reason": reason, **marker},
             control_seq=control_seq,
             expected_control_path=str(self.operator_request_path.name),
             expected_control_seq=control_seq,
             expected_status="needs_operator",
         )
 
-    def build_blocked_triage_dispatch_spec(self, signal: Mapping[str, object]) -> PromptDispatchSpec:
+    def build_blocked_triage_dispatch_spec(
+        self,
+        signal: Mapping[str, object],
+        reason: str,
+    ) -> PromptDispatchSpec:
         control_seq = self._read_control_seq_from_path(self.claude_handoff_path)
+        handoff_sha = self._get_path_sha256(self.claude_handoff_path)
         return PromptDispatchSpec(
             pending_key="codex_blocked_triage",
             notify_kind="codex_blocked_triage",
+            lane_role="verify",
             prompt=self.format_verify_triage_prompt(signal),
             prompt_path=self.claude_handoff_path,
+            notify_label="notify_codex_blocked_triage",
+            raw_event="codex_blocked_triage_notify",
+            raw_payload={
+                "reason": reason,
+                "blocked_reason": str(signal.get("reason", "implement_blocked")),
+                "blocked_reason_code": str(signal.get("reason_code", "")),
+                "blocked_source": str(signal.get("source", "sentinel")),
+                "blocked_escalation_class": str(signal.get("escalation_class", "codex_triage")),
+                "blocked_fingerprint": str(signal.get("fingerprint", "")),
+                "handoff_sha": handoff_sha,
+            },
             control_seq=control_seq,
             expected_control_path=str(self.claude_handoff_path.name),
             expected_control_seq=control_seq,

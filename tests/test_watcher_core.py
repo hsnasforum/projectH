@@ -902,6 +902,114 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
             self.assertFalse((base_dir / "session_arbitration_draft.md").exists())
 
 
+class WatcherPromptAssemblyTest(unittest.TestCase):
+    def test_claude_dispatch_spec_carries_notify_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+            handoff = base_dir / "claude_handoff.md"
+            handoff.write_text("STATUS: implement\nCONTROL_SEQ: 41\n", encoding="utf-8")
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+
+            spec = core.prompt_assembler.build_claude_dispatch_spec("startup_turn_claude")
+
+            self.assertEqual(spec.lane_role, "implement")
+            self.assertEqual(spec.notify_label, "notify_claude")
+            self.assertEqual(spec.raw_event, "claude_notify")
+            self.assertEqual(spec.raw_payload, {"reason": "startup_turn_claude"})
+            self.assertEqual(spec.expected_status, "implement")
+            self.assertEqual(spec.control_seq, 41)
+
+    def test_blocked_triage_spec_carries_raw_event_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+            handoff = base_dir / "claude_handoff.md"
+            handoff.write_text("STATUS: implement\nCONTROL_SEQ: 52\n", encoding="utf-8")
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+            signal = {
+                "reason": "handoff_already_completed",
+                "reason_code": "already_implemented",
+                "escalation_class": "codex_triage",
+                "fingerprint": "block-123",
+                "source": "sentinel",
+            }
+
+            spec = core.prompt_assembler.build_blocked_triage_dispatch_spec(signal, "claude_implement_blocked")
+
+            self.assertEqual(spec.lane_role, "verify")
+            self.assertEqual(spec.notify_label, "notify_codex_blocked_triage")
+            self.assertEqual(spec.raw_event, "codex_blocked_triage_notify")
+            self.assertEqual(spec.raw_payload["reason"], "claude_implement_blocked")
+            self.assertEqual(spec.raw_payload["blocked_reason"], "handoff_already_completed")
+            self.assertEqual(spec.raw_payload["blocked_reason_code"], "already_implemented")
+            self.assertEqual(spec.raw_payload["blocked_escalation_class"], "codex_triage")
+            self.assertEqual(spec.raw_payload["blocked_fingerprint"], "block-123")
+            self.assertTrue(spec.raw_payload["handoff_sha"])
+
+    def test_session_arbitration_draft_format_moves_body_to_assembler(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work" / "4" / "17"
+            base_dir = root / ".pipeline"
+            verify_dir = root / "verify" / "4" / "17"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            verify_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+            (base_dir / "claude_handoff.md").write_text("STATUS: implement\nCONTROL_SEQ: 61\n", encoding="utf-8")
+            _write_work_note(watch_dir / "2026-04-17-sample-work.md", ["app/sample.py"])
+            _write_verify_note(verify_dir / "2026-04-17-sample-verify.md", ["app/sample.py"])
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(root / "work"),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+            signal = {
+                "reasons": ["context_exhaustion", "continue_vs_switch"],
+                "excerpt_lines": ["context window is full", "continue or switch?"],
+                "fingerprint": "draft-1",
+            }
+
+            body = core.prompt_assembler.format_session_arbitration_draft(signal)
+
+            self.assertIn("STATUS: draft_only", body)
+            self.assertIn("non-canonical draft", body)
+            self.assertIn("context_exhaustion", body)
+            self.assertIn("continue_vs_switch", body)
+            self.assertIn(".pipeline/claude_handoff.md", body)
+            self.assertIn("latest `/work`", body)
+            self.assertIn("latest `/verify`", body)
+
+
 class ClaudeImplementBlockedTest(unittest.TestCase):
     def test_extract_implement_blocked_tolerates_wrapped_handoff_fields(self) -> None:
         signal = watcher_core._extract_claude_implement_blocked_signal(

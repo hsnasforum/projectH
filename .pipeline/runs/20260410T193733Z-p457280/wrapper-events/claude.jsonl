@@ -1,4 +1,0 @@
-{"ts": "2026-04-10T19:37:33.641741Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 457967}, "derived_from": "process_alive"}
-{"ts": "2026-04-10T19:37:33.645877Z", "lane": "Claude", "event_type": "BROKEN", "source": "wrapper", "payload": {"pid": 457967, "reason": "exit:-15"}, "derived_from": "process_exit"}
-{"ts": "2026-04-10T19:37:35.778254Z", "lane": "Claude", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 458251}, "derived_from": "process_alive"}
-{"ts": "2026-04-10T19:37:37.407037Z", "lane": "Claude", "event_type": "READY", "source": "wrapper", "payload": {"pid": 458251, "reason": "prompt_visible"}, "derived_from": "vendor_output"}

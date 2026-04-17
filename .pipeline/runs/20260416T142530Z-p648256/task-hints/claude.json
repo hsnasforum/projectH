@@ -1,9 +1,0 @@
-{
-  "lane": "Claude",
-  "active": false,
-  "job_id": "",
-  "control_seq": -1,
-  "attempt": 1,
-  "inactive_reason": "task_hint_cleared",
-  "updated_at": "2026-04-16T14:50:59.167439Z"
-}

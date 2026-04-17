@@ -1,9 +1,0 @@
-{"ts": "2026-04-15T08:59:21.609510Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2731229}, "derived_from": "process_alive"}
-{"ts": "2026-04-15T08:59:25.422053Z", "lane": "Codex", "event_type": "READY", "source": "wrapper", "payload": {"pid": 2731229, "reason": "prompt_visible"}, "derived_from": "vendor_output"}
-{"ts": "2026-04-15T08:59:26.691178Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2731229}, "derived_from": "process_alive"}
-{"ts": "2026-04-15T08:59:31.749133Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2731229}, "derived_from": "process_alive"}
-{"ts": "2026-04-15T08:59:36.781888Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2731229}, "derived_from": "process_alive"}
-{"ts": "2026-04-15T08:59:41.796750Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2731229}, "derived_from": "process_alive"}
-{"ts": "2026-04-15T08:59:42.069999Z", "lane": "Codex", "event_type": "TASK_ACCEPTED", "source": "wrapper", "payload": {"pid": 2731229, "job_id": "20260415-2026-04-15-reviewed-memory-bound-2cea9f50", "control_seq": 136, "attempt": 1}, "derived_from": "vendor_output"}
-{"ts": "2026-04-15T08:59:46.828847Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2731229}, "derived_from": "process_alive"}
-{"ts": "2026-04-15T08:59:51.860411Z", "lane": "Codex", "event_type": "HEARTBEAT", "source": "wrapper", "payload": {"pid": 2731229}, "derived_from": "process_alive"}

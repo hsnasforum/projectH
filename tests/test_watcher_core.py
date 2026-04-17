@@ -2906,7 +2906,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                 core._check_pipeline_signal_updates()
 
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CODEX_FOLLOWUP)
-            self.assertIn("gemini_advice_followup", core._pending_lane_notifications)
+            self.assertIn("gemini_advice_followup", core.dispatch_queue.pending_notifications)
             send_prompt.assert_not_called()
             events = [
                 json.loads(line)
@@ -2925,7 +2925,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                 core._check_pipeline_signal_updates()
 
             send_prompt.assert_called_once()
-            self.assertNotIn("gemini_advice_followup", core._pending_lane_notifications)
+            self.assertNotIn("gemini_advice_followup", core.dispatch_queue.pending_notifications)
 
     def test_claude_handoff_notify_defers_until_prompt_is_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2959,7 +2959,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                 core._check_pipeline_signal_updates()
 
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CLAUDE_ACTIVE)
-            self.assertIn("claude_handoff", core._pending_lane_notifications)
+            self.assertIn("claude_handoff", core.dispatch_queue.pending_notifications)
             send_prompt.assert_not_called()
 
             with (
@@ -2972,7 +2972,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                 core._check_pipeline_signal_updates()
 
             send_prompt.assert_called_once()
-            self.assertNotIn("claude_handoff", core._pending_lane_notifications)
+            self.assertNotIn("claude_handoff", core.dispatch_queue.pending_notifications)
 
     def test_claude_handoff_dispatches_when_busy_marker_is_only_old_scrollback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3016,7 +3016,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
 
             send_prompt.assert_called_once()
             self.assertEqual(send_prompt.call_args.args[0], "claude-pane")
-            self.assertNotIn("claude_handoff", core._pending_lane_notifications)
+            self.assertNotIn("claude_handoff", core.dispatch_queue.pending_notifications)
 
     def test_blocked_triage_defers_until_codex_prompt_is_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3057,7 +3057,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                 ok = core._notify_codex_blocked_triage(signal, "claude_implement_blocked")
 
             self.assertFalse(ok)
-            self.assertIn("codex_blocked_triage", core._pending_lane_notifications)
+            self.assertIn("codex_blocked_triage", core.dispatch_queue.pending_notifications)
             send_prompt.assert_not_called()
             events = [
                 json.loads(line)
@@ -3073,10 +3073,10 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                 ),
                 mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
             ):
-                core._flush_pending_lane_notifications()
+                core.dispatch_queue.flush_pending()
 
             send_prompt.assert_called_once()
-            self.assertNotIn("codex_blocked_triage", core._pending_lane_notifications)
+            self.assertNotIn("codex_blocked_triage", core.dispatch_queue.pending_notifications)
 
     def test_stale_codex_pending_notification_is_dropped_before_claude_handoff_dispatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3110,7 +3110,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             )
             core._last_operator_request_sig = core._get_path_sig(operator_request)
             core._last_claude_handoff_sig = ""
-            core._pending_lane_notifications["codex_operator_retriage"] = {
+            core.dispatch_queue.pending_notifications["codex_operator_retriage"] = {
                 "notify_kind": "codex_operator_retriage",
                 "lane_role": "verify",
                 "reason": "operator_wait_idle_retriage",
@@ -3137,7 +3137,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
 
             send_prompt.assert_called_once()
             self.assertEqual(send_prompt.call_args.args[0], "claude-pane")
-            self.assertNotIn("codex_operator_retriage", core._pending_lane_notifications)
+            self.assertNotIn("codex_operator_retriage", core.dispatch_queue.pending_notifications)
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CLAUDE_ACTIVE)
 
 

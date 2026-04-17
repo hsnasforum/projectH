@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -9,6 +10,23 @@ from pipeline_runtime.lane_surface import (
     pane_text_has_input_cursor,
     pane_text_is_idle,
 )
+
+
+@dataclass(frozen=True)
+class DispatchIntent:
+    pending_key: str
+    notify_kind: str
+    lane_role: str
+    reason: str
+    prompt: str
+    prompt_path: Path
+    target: str
+    pane_type: str
+    control_seq: int = -1
+    expected_status: str = ""
+    expected_control_path: str = ""
+    expected_control_seq: int = -1
+    require_active_control: bool = False
 
 
 class WatcherDispatchQueue:
@@ -78,82 +96,75 @@ class WatcherDispatchQueue:
         self._log_raw("lane_input_deferred", str(path), "turn_signal", payload)
         self._append_runtime_event("lane_input_deferred", payload)
 
-    def dispatch_runtime_notification(
+    def _pending_record(self, intent: DispatchIntent) -> dict[str, object]:
+        return {
+            "notify_kind": intent.notify_kind,
+            "lane_role": intent.lane_role,
+            "reason": intent.reason,
+            "prompt": intent.prompt,
+            "prompt_path": str(intent.prompt_path),
+            "target": intent.target,
+            "pane_type": intent.pane_type,
+            "control_seq": intent.control_seq,
+            "expected_status": intent.expected_status,
+            "expected_control_path": intent.expected_control_path,
+            "expected_control_seq": intent.expected_control_seq,
+            "require_active_control": intent.require_active_control,
+            "sig": self._get_path_sig(intent.prompt_path),
+        }
+
+    def _intent_from_pending(
         self,
-        *,
         pending_key: str,
-        notify_kind: str,
-        lane_role: str,
-        reason: str,
-        prompt: str,
-        prompt_path: Path,
-        target: str,
-        pane_type: str,
-        control_seq: int = -1,
-        expected_status: str = "",
-        expected_control_path: str = "",
-        expected_control_seq: int = -1,
-        require_active_control: bool = False,
-        from_pending: bool = False,
-    ) -> bool:
-        ready, defer_reason = self.lane_prompt_readiness(target)
+        pending: dict[str, object],
+    ) -> DispatchIntent:
+        return DispatchIntent(
+            pending_key=pending_key,
+            notify_kind=str(pending.get("notify_kind") or ""),
+            lane_role=str(pending.get("lane_role") or ""),
+            reason=str(pending.get("reason") or ""),
+            prompt=str(pending.get("prompt") or ""),
+            prompt_path=Path(str(pending.get("prompt_path") or "")),
+            target=str(pending.get("target") or ""),
+            pane_type=str(pending.get("pane_type") or "codex"),
+            control_seq=int(pending.get("control_seq") or -1),
+            expected_status=str(pending.get("expected_status") or ""),
+            expected_control_path=str(pending.get("expected_control_path") or ""),
+            expected_control_seq=int(pending.get("expected_control_seq") or -1),
+            require_active_control=bool(pending.get("require_active_control")),
+        )
+
+    def dispatch(self, intent: DispatchIntent, *, from_pending: bool = False) -> bool:
+        ready, defer_reason = self.lane_prompt_readiness(intent.target)
         if not ready:
-            self.pending_notifications[pending_key] = {
-                "notify_kind": notify_kind,
-                "lane_role": lane_role,
-                "reason": reason,
-                "prompt": prompt,
-                "prompt_path": str(prompt_path),
-                "target": target,
-                "pane_type": pane_type,
-                "control_seq": control_seq,
-                "expected_status": expected_status,
-                "expected_control_path": expected_control_path,
-                "expected_control_seq": expected_control_seq,
-                "require_active_control": require_active_control,
-                "sig": self._get_path_sig(prompt_path),
-            }
+            self.pending_notifications[intent.pending_key] = self._pending_record(intent)
             self.emit_lane_input_deferred(
-                key=pending_key,
-                lane=self._role_owner(lane_role) or lane_role,
-                path=prompt_path,
-                reason=reason,
+                key=intent.pending_key,
+                lane=self._role_owner(intent.lane_role) or intent.lane_role,
+                path=intent.prompt_path,
+                reason=intent.reason,
                 defer_reason=defer_reason,
-                control_seq=control_seq,
-                notify_kind=notify_kind,
+                control_seq=intent.control_seq,
+                notify_kind=intent.notify_kind,
             )
             return False
 
-        ok = self._send_keys(target, prompt, pane_type)
+        ok = self._send_keys(intent.target, intent.prompt, intent.pane_type)
         if ok:
-            self.pending_notifications.pop(pending_key, None)
-            self.last_lane_input_defer_at.pop(pending_key, None)
+            self.pending_notifications.pop(intent.pending_key, None)
+            self.last_lane_input_defer_at.pop(intent.pending_key, None)
             return True
 
         if not from_pending:
-            self.pending_notifications[pending_key] = {
-                "notify_kind": notify_kind,
-                "lane_role": lane_role,
-                "reason": reason,
-                "prompt": prompt,
-                "prompt_path": str(prompt_path),
-                "target": target,
-                "pane_type": pane_type,
-                "control_seq": control_seq,
-                "expected_status": expected_status,
-                "expected_control_path": expected_control_path,
-                "expected_control_seq": expected_control_seq,
-                "require_active_control": require_active_control,
-                "sig": self._get_path_sig(prompt_path),
-            }
+            self.pending_notifications[intent.pending_key] = self._pending_record(intent)
         self.emit_lane_input_deferred(
-            key=pending_key,
-            lane=self._role_owner(lane_role) or lane_role,
-            path=prompt_path,
-            reason=reason,
+            key=intent.pending_key,
+            lane=self._role_owner(intent.lane_role) or intent.lane_role,
+            path=intent.prompt_path,
+            reason=intent.reason,
             defer_reason="dispatch_window_blocked",
-            control_seq=control_seq,
-            notify_kind=notify_kind,
+            control_seq=intent.control_seq,
+            notify_kind=intent.notify_kind,
         )
         return False
 
@@ -177,7 +188,7 @@ class WatcherDispatchQueue:
             return False
         return True
 
-    def flush_pending_lane_notifications(self) -> None:
+    def flush_pending(self) -> None:
         if not self.pending_notifications:
             return
         active_control = self._get_active_control_signal()
@@ -211,19 +222,4 @@ class WatcherDispatchQueue:
                 self.pending_notifications.pop(pending_key, None)
                 self.last_lane_input_defer_at.pop(pending_key, None)
                 continue
-            self.dispatch_runtime_notification(
-                pending_key=pending_key,
-                notify_kind=str(pending.get("notify_kind") or ""),
-                lane_role=str(pending.get("lane_role") or ""),
-                reason=str(pending.get("reason") or ""),
-                prompt=str(pending.get("prompt") or ""),
-                prompt_path=prompt_path,
-                target=str(pending.get("target") or ""),
-                pane_type=str(pending.get("pane_type") or "codex"),
-                control_seq=int(pending.get("control_seq") or -1),
-                expected_status=expected_status,
-                expected_control_path=str(pending.get("expected_control_path") or ""),
-                expected_control_seq=int(pending.get("expected_control_seq") or -1),
-                require_active_control=require_active_control,
-                from_pending=True,
-            )
+            self.dispatch(self._intent_from_pending(pending_key, pending), from_pending=True)

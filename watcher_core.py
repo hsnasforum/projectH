@@ -61,7 +61,7 @@ from pipeline_runtime.lane_surface import (
 from pipeline_runtime.operator_autonomy import classify_operator_candidate, normalize_reason_code
 from pipeline_runtime.schema import read_control_meta, read_json
 from pipeline_runtime.wrapper_events import build_lane_read_models
-from watcher_dispatch import WatcherDispatchQueue
+from watcher_dispatch import DispatchIntent, WatcherDispatchQueue
 
 # jsonschema는 선택적 의존성 — 없으면 필수 필드 구조 검증만 수행
 try:
@@ -2523,8 +2523,6 @@ class WatcherCore:
             get_active_control_signal=self._get_active_control_signal,
             is_active_control=self._is_active_control,
         )
-        self._pending_lane_notifications = self.dispatch_queue.pending_notifications
-        self._last_lane_input_defer_at = self.dispatch_queue.last_lane_input_defer_at
 
         self.sm = StateMachine(
             project_root=self.repo_root,
@@ -3805,80 +3803,6 @@ class WatcherCore:
         return elapsed < self.claude_active_idle_timeout_sec
 
     # ------------------------------------------------------------------
-    def _lane_prompt_readiness(self, target: str) -> tuple[bool, str]:
-        return self.dispatch_queue.lane_prompt_readiness(target)
-
-    # ------------------------------------------------------------------
-    def _emit_lane_input_deferred(
-        self,
-        *,
-        key: str,
-        lane: str,
-        path: Path,
-        reason: str,
-        defer_reason: str,
-        control_seq: int,
-        notify_kind: str,
-    ) -> None:
-        self.dispatch_queue.emit_lane_input_deferred(
-            key=key,
-            lane=lane,
-            path=path,
-            reason=reason,
-            defer_reason=defer_reason,
-            control_seq=control_seq,
-            notify_kind=notify_kind,
-        )
-
-    # ------------------------------------------------------------------
-    def _dispatch_runtime_notification(
-        self,
-        *,
-        pending_key: str,
-        notify_kind: str,
-        lane_role: str,
-        reason: str,
-        prompt: str,
-        prompt_path: Path,
-        target: str,
-        pane_type: str,
-        control_seq: int = -1,
-        expected_status: str = "",
-        expected_control_path: str = "",
-        expected_control_seq: int = -1,
-        require_active_control: bool = False,
-        from_pending: bool = False,
-    ) -> bool:
-        return self.dispatch_queue.dispatch_runtime_notification(
-            pending_key=pending_key,
-            notify_kind=notify_kind,
-            lane_role=lane_role,
-            reason=reason,
-            prompt=prompt,
-            prompt_path=prompt_path,
-            target=target,
-            pane_type=pane_type,
-            control_seq=control_seq,
-            expected_status=expected_status,
-            expected_control_path=expected_control_path,
-            expected_control_seq=expected_control_seq,
-            require_active_control=require_active_control,
-            from_pending=from_pending,
-        )
-
-    # ------------------------------------------------------------------
-    def _pending_notification_matches_control(
-        self,
-        pending: dict[str, object],
-        active_control: Optional[ControlSignal],
-    ) -> bool:
-        return self.dispatch_queue.pending_notification_matches_control(pending, active_control)
-
-    # ------------------------------------------------------------------
-    def _flush_pending_lane_notifications(self) -> None:
-        self.dispatch_queue.flush_pending_lane_notifications()
-
-    # ------------------------------------------------------------------
     def _notify_claude(self, reason: str, handoff_path: Optional[Path] = None) -> None:
         """Claude pane에 다음 작업 프롬프트 전송."""
         target = self._role_pane_target("implement")
@@ -3893,21 +3817,24 @@ class WatcherCore:
             "turn_signal",
             {"reason": reason},
         )
-        prompt = self._format_implement_prompt(handoff_path)
-        self._dispatch_runtime_notification(
-            pending_key="claude_handoff",
-            notify_kind="claude_handoff",
-            lane_role="implement",
-            reason=reason,
-            prompt=prompt,
-            prompt_path=handoff_path or self.claude_handoff_path,
-            target=target,
-            pane_type=pane_type,
-            control_seq=self._read_control_seq_from_path(handoff_path or self.claude_handoff_path),
-            expected_status="implement",
-            expected_control_path=str((handoff_path or self.claude_handoff_path).name),
-            expected_control_seq=self._read_control_seq_from_path(handoff_path or self.claude_handoff_path),
-            require_active_control=True,
+        prompt_path = handoff_path or self.claude_handoff_path
+        control_seq = self._read_control_seq_from_path(prompt_path)
+        self.dispatch_queue.dispatch(
+            DispatchIntent(
+                pending_key="claude_handoff",
+                notify_kind="claude_handoff",
+                lane_role="implement",
+                reason=reason,
+                prompt=self._format_implement_prompt(handoff_path),
+                prompt_path=prompt_path,
+                target=target,
+                pane_type=pane_type,
+                control_seq=control_seq,
+                expected_status="implement",
+                expected_control_path=str(prompt_path.name),
+                expected_control_seq=control_seq,
+                require_active_control=True,
+            )
         )
 
     # ------------------------------------------------------------------
@@ -3940,21 +3867,23 @@ class WatcherCore:
             "turn_signal",
             {"reason": reason},
         )
-        prompt = self._format_runtime_prompt(self.advisory_prompt)
-        self._dispatch_runtime_notification(
-            pending_key="gemini_request",
-            notify_kind="gemini_request",
-            lane_role="advisory",
-            reason=reason,
-            prompt=prompt,
-            prompt_path=self.gemini_request_path,
-            target=target,
-            pane_type=pane_type,
-            control_seq=self._read_control_seq_from_path(self.gemini_request_path),
-            expected_status="request_open",
-            expected_control_path=str(self.gemini_request_path.name),
-            expected_control_seq=self._read_control_seq_from_path(self.gemini_request_path),
-            require_active_control=True,
+        control_seq = self._read_control_seq_from_path(self.gemini_request_path)
+        self.dispatch_queue.dispatch(
+            DispatchIntent(
+                pending_key="gemini_request",
+                notify_kind="gemini_request",
+                lane_role="advisory",
+                reason=reason,
+                prompt=self._format_runtime_prompt(self.advisory_prompt),
+                prompt_path=self.gemini_request_path,
+                target=target,
+                pane_type=pane_type,
+                control_seq=control_seq,
+                expected_status="request_open",
+                expected_control_path=str(self.gemini_request_path.name),
+                expected_control_seq=control_seq,
+                require_active_control=True,
+            )
         )
 
     # ------------------------------------------------------------------
@@ -3972,21 +3901,23 @@ class WatcherCore:
             "turn_signal",
             {"reason": reason},
         )
-        prompt = self._format_runtime_prompt(self.followup_prompt)
-        self._dispatch_runtime_notification(
-            pending_key="gemini_advice_followup",
-            notify_kind="gemini_advice_followup",
-            lane_role="verify",
-            reason=reason,
-            prompt=prompt,
-            prompt_path=self.gemini_advice_path,
-            target=target,
-            pane_type=pane_type,
-            control_seq=self._read_control_seq_from_path(self.gemini_advice_path),
-            expected_status="advice_ready",
-            expected_control_path=str(self.gemini_advice_path.name),
-            expected_control_seq=self._read_control_seq_from_path(self.gemini_advice_path),
-            require_active_control=True,
+        control_seq = self._read_control_seq_from_path(self.gemini_advice_path)
+        self.dispatch_queue.dispatch(
+            DispatchIntent(
+                pending_key="gemini_advice_followup",
+                notify_kind="gemini_advice_followup",
+                lane_role="verify",
+                reason=reason,
+                prompt=self._format_runtime_prompt(self.followup_prompt),
+                prompt_path=self.gemini_advice_path,
+                target=target,
+                pane_type=pane_type,
+                control_seq=control_seq,
+                expected_status="advice_ready",
+                expected_control_path=str(self.gemini_advice_path.name),
+                expected_control_seq=control_seq,
+                require_active_control=True,
+            )
         )
 
     # ------------------------------------------------------------------
@@ -4026,20 +3957,22 @@ class WatcherCore:
             "turn_signal",
             {"reason": reason, **marker},
         )
-        prompt = self._format_control_recovery_prompt(marker)
-        self._dispatch_runtime_notification(
-            pending_key="codex_control_recovery",
-            notify_kind="codex_control_recovery",
-            lane_role="verify",
-            reason=reason,
-            prompt=prompt,
-            prompt_path=self.operator_request_path,
-            target=target,
-            pane_type=pane_type,
-            control_seq=int(marker.get("control_seq") or -1),
-            expected_control_path=str(self.operator_request_path.name),
-            expected_control_seq=int(marker.get("control_seq") or -1),
-            expected_status="needs_operator",
+        control_seq = int(marker.get("control_seq") or -1)
+        self.dispatch_queue.dispatch(
+            DispatchIntent(
+                pending_key="codex_control_recovery",
+                notify_kind="codex_control_recovery",
+                lane_role="verify",
+                reason=reason,
+                prompt=self._format_control_recovery_prompt(marker),
+                prompt_path=self.operator_request_path,
+                target=target,
+                pane_type=pane_type,
+                control_seq=control_seq,
+                expected_control_path=str(self.operator_request_path.name),
+                expected_control_seq=control_seq,
+                expected_status="needs_operator",
+            )
         )
 
     # ------------------------------------------------------------------
@@ -4056,20 +3989,22 @@ class WatcherCore:
             "turn_signal",
             {"reason": reason, **marker},
         )
-        prompt = self._format_operator_retriage_prompt(marker)
-        self._dispatch_runtime_notification(
-            pending_key="codex_operator_retriage",
-            notify_kind="codex_operator_retriage",
-            lane_role="verify",
-            reason=reason,
-            prompt=prompt,
-            prompt_path=self.operator_request_path,
-            target=target,
-            pane_type=pane_type,
-            control_seq=int(marker.get("control_seq") or -1),
-            expected_control_path=str(self.operator_request_path.name),
-            expected_control_seq=int(marker.get("control_seq") or -1),
-            expected_status="needs_operator",
+        control_seq = int(marker.get("control_seq") or -1)
+        self.dispatch_queue.dispatch(
+            DispatchIntent(
+                pending_key="codex_operator_retriage",
+                notify_kind="codex_operator_retriage",
+                lane_role="verify",
+                reason=reason,
+                prompt=self._format_operator_retriage_prompt(marker),
+                prompt_path=self.operator_request_path,
+                target=target,
+                pane_type=pane_type,
+                control_seq=control_seq,
+                expected_control_path=str(self.operator_request_path.name),
+                expected_control_seq=control_seq,
+                expected_status="needs_operator",
+            )
         )
 
     # ------------------------------------------------------------------
@@ -4094,19 +4029,22 @@ class WatcherCore:
                 "handoff_sha": handoff_sha,
             },
         )
-        ok = self._dispatch_runtime_notification(
-            pending_key="codex_blocked_triage",
-            notify_kind="codex_blocked_triage",
-            lane_role="verify",
-            reason=reason,
-            prompt=prompt,
-            prompt_path=self.claude_handoff_path,
-            target=target,
-            pane_type=pane_type,
-            control_seq=self._read_control_seq_from_path(self.claude_handoff_path),
-            expected_control_path=str(self.claude_handoff_path.name),
-            expected_control_seq=self._read_control_seq_from_path(self.claude_handoff_path),
-            expected_status="implement",
+        control_seq = self._read_control_seq_from_path(self.claude_handoff_path)
+        ok = self.dispatch_queue.dispatch(
+            DispatchIntent(
+                pending_key="codex_blocked_triage",
+                notify_kind="codex_blocked_triage",
+                lane_role="verify",
+                reason=reason,
+                prompt=prompt,
+                prompt_path=self.claude_handoff_path,
+                target=target,
+                pane_type=pane_type,
+                control_seq=control_seq,
+                expected_control_path=str(self.claude_handoff_path.name),
+                expected_control_seq=control_seq,
+                expected_status="implement",
+            )
         )
         if ok:
             self._last_claude_blocked_fingerprint = str(signal.get("fingerprint", ""))
@@ -4162,7 +4100,7 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _check_pipeline_signal_updates(self) -> None:
         """handoff/operator 슬롯 시그니처를 확인하고 Claude 라우팅을 결정한다."""
-        self._flush_pending_lane_notifications()
+        self.dispatch_queue.flush_pending()
         active_control = self._get_active_control_signal()
 
         operator_sig = self._get_path_sig(self.operator_request_path)

@@ -71,6 +71,7 @@
 - persistent truth는 항상 아래에 남깁니다.
   - 구현 truth: `/work`
   - 검증 truth: `/verify`
+- `.pipeline/current_run.json`과 `.pipeline/runs/<run_id>/...`는 runtime authority/generated state 산출물이라 local start/stop 중 다시 생기는 것이 정상입니다. 경로 자체는 canonical로 유지하되, source diff와 섞이지 않도록 Git-generated artifact로 취급하는 편이 맞습니다.
 - `/work`, `/verify`, `report/` 같은 persistent 기록은 기본적으로 한국어로 남깁니다.
 - `.pipeline` execution/control 슬롯은 기본적으로 concise English-led instructions를 유지합니다.
 - 파일 경로, 테스트 이름, selector, field name 같은 literal identifier는 기록 언어와 무관하게 원문 그대로 둡니다.

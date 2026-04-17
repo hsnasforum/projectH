@@ -28,6 +28,12 @@
 - 최근 3개 run의 degraded reason 확인
 - backend health 사전 체크
 
+운영 메모:
+
+- `.pipeline/current_run.json`과 `.pipeline/runs/<run_id>/...`는 runtime authority가 쓰는 generated state 경로입니다.
+- local `start` / `stop` / `restart` 중 이 파일들이 다시 생기는 것은 정상이며, source code 변경이나 drift로 취급하면 안 됩니다.
+- Git 관점에서는 generated artifact로 관리하고, current truth 판정은 계속 그 안의 runtime payload로만 봅니다.
+
 ## 3.2 시작
 1. launcher에서 start 요청
 2. status가 `STARTING`인지 확인

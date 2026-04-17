@@ -1258,6 +1258,11 @@ class WatcherCore:
         self._lane_input_defer_cooldown_sec: float = float(
             config.get("lane_input_defer_cooldown_sec", 5.0)
         )
+        self.gemini_advisory_retry_sec: float = float(
+            config.get("gemini_advisory_retry_sec", 30.0)
+        )
+        self._last_gemini_advisory_retry_sig: str = ""
+        self._last_gemini_advisory_retry_at: float = 0.0
         self._runtime_export_enabled: bool = os.environ.get("PIPELINE_RUNTIME_DISABLE_EXPORTER", "").strip().lower() not in {
             "1",
             "true",
@@ -2255,6 +2260,71 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _get_pending_gemini_advice_mtime(self) -> float:
         return self._get_gemini_advice_mtime()
+
+    # ------------------------------------------------------------------
+    def _gemini_advice_is_current_for_request(self, request_seq: int) -> bool:
+        if self._read_status_from_path(self.gemini_advice_path) != "advice_ready":
+            return False
+        advice_seq = self._read_control_seq_from_path(self.gemini_advice_path)
+        if advice_seq < 0:
+            return False
+        if request_seq < 0:
+            return True
+        return advice_seq >= request_seq
+
+    # ------------------------------------------------------------------
+    def _retry_gemini_advisory_if_idle(self) -> None:
+        if self._current_turn_state != WatcherTurnState.GEMINI_ADVISORY:
+            return
+        if not self._advisory_enabled():
+            return
+        if self._get_pending_operator_mtime() > 0.0:
+            return
+        if not self._is_active_control(self.gemini_request_path, "request_open"):
+            return
+
+        request_sig = self._get_path_sig(self.gemini_request_path)
+        if not request_sig:
+            return
+        request_seq = self._read_control_seq_from_path(self.gemini_request_path)
+        if request_seq >= 0 and request_seq < self._turn_active_control_seq:
+            return
+        if self._gemini_advice_is_current_for_request(request_seq):
+            return
+
+        now = time.time()
+        if request_sig == self._last_gemini_advisory_retry_sig:
+            if now - self._last_gemini_advisory_retry_at < self.gemini_advisory_retry_sec:
+                return
+        else:
+            request_started_at = max(self._turn_entered_at, self._get_path_mtime(self.gemini_request_path))
+            if now - request_started_at < self.gemini_advisory_retry_sec:
+                return
+
+        target = self._prompt_pane_target("advisory")
+        if not target:
+            return
+        ready, _ = self.dispatch_queue.lane_prompt_readiness(target)
+        if not ready:
+            return
+
+        payload = {
+            "reason": "gemini_advisory_idle_retry",
+            "control_file": str(self.gemini_request_path.name),
+            "control_seq": request_seq,
+            "turn_state": self._current_turn_state.value,
+            "target": target,
+        }
+        self._log_raw(
+            "gemini_advisory_retry",
+            str(self.gemini_request_path),
+            "turn_signal",
+            payload,
+        )
+        self._append_runtime_event("gemini_advisory_retry", payload)
+        self._last_gemini_advisory_retry_sig = request_sig
+        self._last_gemini_advisory_retry_at = now
+        self._notify_gemini("gemini_advisory_idle_retry")
 
     # ------------------------------------------------------------------
     def _operator_blocks_handoff(self, handoff_mtime: float) -> bool:
@@ -3260,6 +3330,7 @@ class WatcherCore:
 
         # --- Gemini arbitration이 pending이면 다른 자동 진행을 잠시 멈춤 ---
         if self._get_pending_gemini_request_mtime() > 0.0 or self._get_pending_gemini_advice_mtime() > 0.0:
+            self._retry_gemini_advisory_if_idle()
             self._clear_session_arbitration_draft("canonical_gemini_pending")
             return
 

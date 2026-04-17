@@ -1009,6 +1009,47 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
             self.assertIn("latest `/work`", body)
             self.assertIn("latest `/verify`", body)
 
+    def test_notify_codex_followup_wrapper_uses_dispatch_helper_with_assembler_spec(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+            (base_dir / "gemini_advice.md").write_text(
+                "STATUS: advice_ready\nCONTROL_SEQ: 77\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+
+            with mock.patch.object(core, "_dispatch_notify_spec", return_value=True) as dispatch_notify:
+                core._notify_codex_followup("gemini_advice_ready")
+
+            dispatch_notify.assert_called_once()
+            kwargs = dispatch_notify.call_args.kwargs
+            spec = kwargs["spec"]
+            self.assertEqual(kwargs["reason"], "gemini_advice_ready")
+            self.assertEqual(spec.lane_role, "verify")
+            self.assertEqual(spec.notify_kind, "gemini_advice_followup")
+            self.assertEqual(spec.pending_key, "gemini_advice_followup")
+            self.assertEqual(spec.notify_label, "notify_codex_followup")
+            self.assertEqual(spec.raw_event, "codex_followup_notify")
+            self.assertEqual(spec.raw_payload, {"reason": "gemini_advice_ready"})
+            self.assertEqual(spec.control_seq, 77)
+            self.assertEqual(spec.expected_status, "advice_ready")
+            self.assertEqual(spec.expected_control_path, "gemini_advice.md")
+            self.assertEqual(spec.expected_control_seq, 77)
+            self.assertTrue(spec.require_active_control)
+
 
 class ClaudeImplementBlockedTest(unittest.TestCase):
     def test_extract_implement_blocked_tolerates_wrapped_handoff_fields(self) -> None:

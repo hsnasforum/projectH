@@ -26,11 +26,13 @@ from .schema import (
     atomic_write_json,
     append_jsonl,
     iso_utc,
+    latest_verify_note_for_work,
     latest_round_markdown,
     latest_receipt,
     load_job_states,
     parse_iso_utc,
     parse_control_slots,
+    process_starttime_fingerprint,
     read_control_meta,
     read_json,
     repo_relative,
@@ -48,6 +50,11 @@ _AUTH_LOGIN_PATTERNS = (
     re.compile(r"api error:\s*401", re.IGNORECASE),
     re.compile(r'"type"\s*:\s*"authentication_error"', re.IGNORECASE),
 )
+# Lane failure reasons that cannot be cleared by a bounded restart attempt.
+# Wrapper-surfaced exit/heartbeat/pane notes (e.g. ``exit:-15``, ``pane_dead``,
+# ``heartbeat_timeout``) are recoverable pre-accept breakage and must consume
+# retry budget instead of short-circuiting as terminal.
+_TERMINAL_LANE_FAILURE_REASONS = frozenset({_AUTH_LOGIN_REASON})
 
 class RuntimeSupervisor:
     def __init__(
@@ -65,7 +72,7 @@ class RuntimeSupervisor:
         self.session_name = session_name or _session_name_for(self.project_root)
         self.mode = mode
         self.poll_interval = poll_interval
-        self.run_id = run_id or self._make_run_id()
+        self.run_id = run_id or self._inherited_run_id_from_live_watcher() or self._make_run_id()
         self.run_dir = self.base_dir / "runs" / self.run_id
         self.logs_dir = self.run_dir / "logs"
         self.receipts_dir = self.run_dir / "receipts"
@@ -119,6 +126,80 @@ class RuntimeSupervisor:
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         return f"{stamp}-p{os.getpid()}"
 
+    def _inherited_run_id_from_live_watcher(self) -> str:
+        # supervisor restart 시 watcher가 그대로 살아있는 동안에는 watcher가 들고 있는
+        # current run_id를 그대로 이어받아야 canonical `runs/<run_id>/status.json`이
+        # watcher 쪽 current-run job state(예: startup-replayed VERIFY_PENDING)와 같은
+        # 라인을 계속 비추게 된다. 다만 stale `current_run.json`이 다른 live watcher와
+        # 섞여 잘못된 run을 이어받지 않도록, pointer가 직접 기록한 owner pid와 현재
+        # `experimental.pid`가 같고, 같은 process instance 임을 증명하는 watcher
+        # fingerprint(`/proc/<pid>/stat`의 starttime)까지 같을 때만 inheritance를
+        # 허용한다. owner pid나 fingerprint가 없거나, mismatched이거나, live pid가
+        # 죽었으면 fresh `_make_run_id()`가 그대로 이긴다. fingerprint를 같이 보면
+        # 매우 짧은 시간 안에 같은 pid가 다른 process로 재사용되는 극단 케이스에서도
+        # 잘못된 run을 이어받지 않는다.
+        watcher_pid = self._live_experimental_watcher_pid()
+        if watcher_pid <= 0:
+            return ""
+        live_fingerprint = self._watcher_process_fingerprint(watcher_pid)
+        if not live_fingerprint:
+            return ""
+        current_run = read_json(self.base_dir / "current_run.json")
+        if not isinstance(current_run, dict):
+            return ""
+        candidate = str(current_run.get("run_id") or "").strip()
+        if not candidate:
+            return ""
+        pointer_owner_pid = self._coerce_pid(current_run.get("watcher_pid"))
+        if pointer_owner_pid <= 0 or pointer_owner_pid != watcher_pid:
+            return ""
+        pointer_fingerprint = str(current_run.get("watcher_fingerprint") or "").strip()
+        if not pointer_fingerprint or pointer_fingerprint != live_fingerprint:
+            return ""
+        return candidate
+
+    @staticmethod
+    def _coerce_pid(value: Any) -> int:
+        if isinstance(value, bool):
+            return 0
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return 0
+            try:
+                return int(text)
+            except ValueError:
+                return 0
+        return 0
+
+    def _live_experimental_watcher_pid(self) -> int:
+        pid_path = self.base_dir / "experimental.pid"
+        if not pid_path.exists():
+            return 0
+        try:
+            pid = int(pid_path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return 0
+        if pid <= 0:
+            return 0
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return 0
+        return pid
+
+    @staticmethod
+    def _watcher_process_fingerprint(pid: int) -> str:
+        # supervisor와 watcher exporter가 같은 ownership contract를 공유하도록,
+        # process instance fingerprint 계산은 schema.process_starttime_fingerprint
+        # 한 helper로 모은다. supervisor 쪽 호출자가 늘어나도 owner-match 정의가
+        # drift 하지 않도록 계속 staticmethod 인터페이스로 노출만 유지한다.
+        return process_starttime_fingerprint(pid)
+
     def _find_cli_bin(self, name: str) -> str:
         candidate = shutil.which(name)
         if candidate:
@@ -171,12 +252,16 @@ class RuntimeSupervisor:
         self.pid_path.write_text(str(os.getpid()), encoding="utf-8")
 
     def _write_current_run_pointer(self) -> None:
+        watcher_pid = self._live_experimental_watcher_pid()
+        watcher_fingerprint = self._watcher_process_fingerprint(watcher_pid)
         atomic_write_json(
             self.current_run_path,
             {
                 "run_id": self.run_id,
                 "status_path": repo_relative(self.status_path, self.project_root),
                 "events_path": repo_relative(self.events_path, self.project_root),
+                "watcher_pid": watcher_pid,
+                "watcher_fingerprint": watcher_fingerprint,
                 "updated_at": iso_utc(),
             },
         )
@@ -513,9 +598,33 @@ class RuntimeSupervisor:
     ) -> dict[str, Any] | None:
         if not job_states:
             return None
+
+        # 동일 run 안에서도 실제 live verify 중인 job이나 receipt-close를 기다리는 job이
+        # `updated_at`/`last_activity_at` 비교에서 stale real job에게 밀리지 않도록,
+        # 먼저 liveness bucket 우선 순위를 보고 그 다음에 timestamp로 tie-break 합니다.
+        # bucket 2: VERIFY_PENDING / VERIFY_RUNNING (live verify round).
+        # bucket 1: VERIFY_DONE인데 matching receipt가 아직 없는 RECEIPT_PENDING round.
+        # bucket 0: 그 외 (CLOSED VERIFY_DONE, NEW_ARTIFACT, STABILIZING, unknown).
+        def _receipt_closes(data: dict[str, Any]) -> bool:
+            if not last_receipt:
+                return False
+            return (
+                str(last_receipt.get("job_id") or "") == str(data.get("job_id") or "")
+                and int(last_receipt.get("round") or -1) == int(data.get("round") or 0)
+            )
+
+        def _liveness_rank(data: dict[str, Any]) -> int:
+            status = str(data.get("status") or "")
+            if status in {"VERIFY_PENDING", "VERIFY_RUNNING"}:
+                return 2
+            if status == "VERIFY_DONE" and not _receipt_closes(data):
+                return 1
+            return 0
+
         latest_job = max(
             job_states,
             key=lambda data: (
+                _liveness_rank(data),
                 float(data.get("updated_at") or 0.0),
                 float(data.get("last_activity_at") or 0.0),
                 str(data.get("job_id") or ""),
@@ -666,7 +775,20 @@ class RuntimeSupervisor:
 
     def _build_artifacts(self) -> dict[str, Any]:
         work_rel, work_mtime = latest_round_markdown(self.project_root / "work")
-        verify_rel, verify_mtime = latest_round_markdown(self.project_root / "verify")
+        verify_rel = "—"
+        verify_mtime = 0.0
+        if work_rel != "—":
+            work_path = self.project_root / "work" / work_rel
+            verify_path = self._matching_verify_path_for_work(work_path)
+            if verify_path is not None:
+                verify_rel = repo_relative(verify_path, self.project_root / "verify")
+                try:
+                    verify_mtime = verify_path.stat().st_mtime
+                except OSError:
+                    verify_rel = "—"
+                    verify_mtime = 0.0
+        else:
+            verify_rel, verify_mtime = latest_round_markdown(self.project_root / "verify")
         return {
             "latest_work": {"path": work_rel, "mtime": work_mtime},
             "latest_verify": {"path": verify_rel, "mtime": verify_mtime},
@@ -938,12 +1060,25 @@ class RuntimeSupervisor:
             )
         return lanes, lane_models
 
-    def _latest_verify_path(self) -> Path | None:
-        verify_root = self.project_root / "verify"
-        best_rel, _best_mtime = latest_round_markdown(verify_root)
-        if best_rel == "—":
+    def _resolve_repo_path(self, value: str | Path | None) -> Path | None:
+        text = str(value or "").strip()
+        if not text:
             return None
-        return verify_root / best_rel
+        path = Path(text)
+        if path.is_absolute():
+            return path
+        return self.project_root / path
+
+    def _matching_verify_path_for_work(self, work_value: str | Path | None) -> Path | None:
+        work_path = self._resolve_repo_path(work_value)
+        if work_path is None:
+            return None
+        return latest_verify_note_for_work(
+            self.project_root / "work",
+            self.project_root / "verify",
+            work_path,
+            repo_root=self.project_root,
+        )
 
     def _reconcile_receipts(
         self,
@@ -975,7 +1110,7 @@ class RuntimeSupervisor:
             if not valid:
                 degraded_reason = f"receipt_manifest:{job_id}:{reason}"
                 continue
-            verify_path = self._latest_verify_path()
+            verify_path = self._matching_verify_path_for_work(job_state.get("artifact_path"))
             if verify_path is None or not verify_path.exists():
                 degraded_reason = f"receipt_verify_missing:{job_id}"
                 continue
@@ -1010,12 +1145,12 @@ class RuntimeSupervisor:
         active_round: dict[str, Any] | None,
     ) -> str:
         lane_name = str(lane.get("name") or "")
-        if self._stop_requested or not self._runtime_started:
+        if self._stop_requested:
             return ""
         if str(lane.get("state") or "") != "BROKEN":
             return ""
         failure_reason = str(lane_model.get("failure_reason") or lane.get("note") or "").strip()
-        if failure_reason:
+        if failure_reason in _TERMINAL_LANE_FAILURE_REASONS:
             return f"{lane_name.lower()}_{failure_reason}"
         accepted_task = dict(lane_model.get("accepted_task") or {})
         post_accept = bool(str(accepted_task.get("job_id") or ""))
@@ -1183,7 +1318,8 @@ class RuntimeSupervisor:
             and all(str(lane.get("state") or "") == "OFF" for lane in lanes)
         )
 
-        degraded_reasons = [item for item in [self._launch_failed_reason, receipt_degraded] if item]
+        active_breakage_reasons = [item for item in [receipt_degraded] if item]
+        job_state_reasons: list[str] = []
         for job_state in job_states:
             if suppress_active_round:
                 continue
@@ -1191,7 +1327,8 @@ class RuntimeSupervisor:
                 continue
             reason = str(job_state.get("degraded_reason") or "").strip()
             if reason:
-                degraded_reasons.append(reason)
+                job_state_reasons.append(reason)
+        lane_recover_reasons: list[str] = []
         for lane in lanes:
             reason = self._maybe_recover_lane(
                 lane,
@@ -1199,12 +1336,28 @@ class RuntimeSupervisor:
                 active_round=active_round,
             )
             if reason:
-                degraded_reasons.append(reason)
+                lane_recover_reasons.append(reason)
+        active_breakage_reasons.extend(lane_recover_reasons)
         enabled_lanes = [lane for lane in lanes if str(lane.get("state") or "") != "OFF"]
+        session_missing_reasons: list[str] = []
         if self._runtime_started and not self._stop_requested and not session_alive and configured_enabled_lanes:
-            degraded_reasons.append("session_missing")
+            session_missing_reasons.append("session_missing")
         if runtime_inactive and not self._launch_failed_reason:
-            degraded_reasons = []
+            # Clean inactive runtime clears stale job-state reasons but keeps active
+            # receipt / lane breakage visible so `runtime_state` does not drop to STOPPED
+            # while the current boundary is still broken.
+            degraded_reasons = list(active_breakage_reasons)
+        else:
+            # When the tmux session itself is gone, ``session_missing`` is the root
+            # cause and per-lane ``*_recovery_failed`` entries are secondary evidence;
+            # keep the representative reason on ``session_missing`` while preserving
+            # the lane failures as later entries in ``degraded_reasons``.
+            degraded_reasons = (
+                ([self._launch_failed_reason] if self._launch_failed_reason else [])
+                + session_missing_reasons
+                + active_breakage_reasons
+                + job_state_reasons
+            )
         self.degraded_reasons = list(dict.fromkeys(item for item in degraded_reasons if item))
         self.degraded_reason = self.degraded_reasons[0] if self.degraded_reasons else ""
 
@@ -1217,10 +1370,10 @@ class RuntimeSupervisor:
             self.runtime_state = "STOPPING"
         elif self._launch_failed_reason:
             self.runtime_state = "BROKEN"
-        elif runtime_inactive:
-            self.runtime_state = "STOPPED"
         elif self.degraded_reason:
             self.runtime_state = "DEGRADED"
+        elif runtime_inactive:
+            self.runtime_state = "STOPPED"
         elif not session_alive and not watcher.get("alive") and self._runtime_started:
             self.runtime_state = "STOPPED"
         elif watcher.get("alive") and enabled_lanes and len(ready_lanes) == len(enabled_lanes):
@@ -1275,7 +1428,15 @@ class RuntimeSupervisor:
                 "active_control_status": "none",
                 "active_control_updated_at": "",
             }
-            surfaced_active_round = None
+            # stopped runtime에서도 receipt-close를 기다리는 round는 launcher/controller가
+            # current truth로 계속 보이게 유지합니다. live verify(`VERIFY_PENDING` /
+            # `VERIFYING`) 같은 surface는 fail-safe 원칙에 따라 여전히 비우고, task hint도
+            # active verify가 되살아나지 않도록 항상 초기화합니다.
+            if (
+                surfaced_active_round is None
+                or str((surfaced_active_round or {}).get("state") or "") != "RECEIPT_PENDING"
+            ):
+                surfaced_active_round = None
             self._write_task_hints(
                 active_lane="",
                 active_round=None,
@@ -1917,6 +2078,9 @@ class RuntimeSupervisor:
                     break
                 time.sleep(self.poll_interval)
         finally:
+            # 정상 종료(SIGTERM/SIGINT)에서는 여기까지 도달하므로 supervisor.pid를 unlink한다.
+            # SIGKILL 같은 비정상 종료에서는 finally가 실행되지 않으므로 stale pid cleanup은
+            # watcher의 owner-death 판정 경계가 맡고, 이 경로에 추가 책임을 기대하지 않는다.
             self.runtime_state = "STOPPING"
             self._write_status()
             if self._runtime_started:

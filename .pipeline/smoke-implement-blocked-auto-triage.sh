@@ -4,6 +4,9 @@ set -euo pipefail
 PROJECT_ROOT="${1:-$(pwd)}"
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PIPELINE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+. "$PIPELINE_LIB_DIR/smoke-cleanup-lib.sh"
 SESSION="${PIPELINE_BLOCKED_SMOKE_SESSION:-ai-pipeline-blocked-smoke}"
 STARTUP_GRACE="${PIPELINE_BLOCKED_SMOKE_STARTUP_GRACE:-3}"
 TIMEOUT_SEC="${PIPELINE_BLOCKED_SMOKE_TIMEOUT:-60}"
@@ -94,26 +97,12 @@ wait_for_log_contains() {
 
 prune_old_smoke_dirs() {
     local keep_recent="$1"
-    local smoke_root
-    local -a dirs
-    local idx
 
-    if ! [[ "$keep_recent" =~ ^[0-9]+$ ]]; then
-        return 0
-    fi
-    if [ "$keep_recent" -le 0 ]; then
-        return 0
-    fi
-
-    smoke_root="$PROJECT_ROOT/.pipeline"
-    mapfile -t dirs < <(find "$smoke_root" -maxdepth 1 -mindepth 1 -type d -name 'live-blocked-smoke-*' -printf '%T@ %p\n' | sort -nr | awk '{print $2}')
-    if [ "${#dirs[@]}" -le "$keep_recent" ]; then
-        return 0
-    fi
-
-    for ((idx=keep_recent; idx<${#dirs[@]}; idx++)); do
-        rm -rf -- "${dirs[$idx]}"
-    done
+    # Delegate to the shared canonical caller in smoke-cleanup-lib.sh so the
+    # blocked-smoke auto-prune contract (protect_tracked=1 on
+    # `.pipeline/live-blocked-smoke-*`) is covered by focused regressions in
+    # tests/test_pipeline_smoke_cleanup.py without sourcing this tmux script.
+    prune_blocked_smoke_dirs "$PROJECT_ROOT" "$keep_recent"
 }
 
 cleanup() {

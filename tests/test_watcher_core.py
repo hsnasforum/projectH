@@ -218,10 +218,7 @@ class WorkNoteFilteringTest(unittest.TestCase):
             with mock.patch.object(core.sm, "step", wraps=core.sm.step) as advance:
                 core._poll()
 
-            job_jsons = [
-                p for p in (base_dir / "state").glob("*.json")
-                if p.name != "turn_state.json"
-            ]
+            job_jsons = list((base_dir / "state" / "jobs").glob("*.json"))
             self.assertTrue(any(job_jsons))
             self.assertGreaterEqual(advance.call_count, 1)
             state_payload = json.loads(job_jsons[0].read_text(encoding="utf-8"))
@@ -265,10 +262,7 @@ class WorkNoteFilteringTest(unittest.TestCase):
 
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IDLE)
             self.assertGreaterEqual(advance.call_count, 1)
-            job_jsons = [
-                p for p in (base_dir / "state").glob("*.json")
-                if p.name != "turn_state.json"
-            ]
+            job_jsons = list((base_dir / "state" / "jobs").glob("*.json"))
             self.assertTrue(any(job_jsons))
             state_payload = json.loads(job_jsons[0].read_text(encoding="utf-8"))
             self.assertEqual(state_payload["artifact_path"], str(meta_note))
@@ -343,6 +337,41 @@ class WorkNoteFilteringTest(unittest.TestCase):
 
             self.assertEqual(core._get_latest_same_day_verify_path_for_work(work_note), verify_note)
             self.assertTrue(core._work_has_matching_verify(work_note))
+
+    def test_same_day_verify_lookup_rejects_multiple_unrelated_verifies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            verify_dir = root / "verify"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            verify_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            work_note = watch_dir / "4" / "9" / "2026-04-09-latest-meta.md"
+            verify_a = verify_dir / "4" / "9" / "2026-04-09-a-verification.md"
+            verify_b = verify_dir / "4" / "9" / "2026-04-09-b-verification.md"
+            _write_work_note(work_note, ["work/4/9/2026-04-09-latest-meta.md"])
+            verify_a.parent.mkdir(parents=True, exist_ok=True)
+            verify_a.write_text("# verify a\n", encoding="utf-8")
+            verify_b.write_text("# verify b\n", encoding="utf-8")
+            now = time.time()
+            os.utime(work_note, (now - 20, now - 20))
+            os.utime(verify_a, (now - 10, now - 10))
+            os.utime(verify_b, (now, now))
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+
+            self.assertIsNone(core._get_latest_same_day_verify_path_for_work(work_note))
+            self.assertFalse(core._work_has_matching_verify(work_note))
 
     def test_latest_verify_candidate_skips_work_with_same_day_matching_verify(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1457,7 +1486,395 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             self.assertEqual(core._resolve_turn(), "claude")
 
 
+class PaneLeaseOwnerPidWiringTest(unittest.TestCase):
+    def test_watchercore_wires_owner_pid_path_even_when_supervisor_pid_missing(self) -> None:
+        # owner_pid_path는 watcher init 시점의 supervisor.pid 존재 여부와 무관하게 항상
+        # 동일 경로를 가리켜야 한다. 이전에는 init 시점에 파일이 없으면 None으로 영구 고정되어
+        # supervisor가 나중에 떠도/죽어도 stale lease가 TTL까지 안 풀렸다.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base_dir = root / ".pipeline"
+            base_dir.mkdir(parents=True, exist_ok=True)
+            self.assertFalse((base_dir / "supervisor.pid").exists())
+            _write_active_profile(root)
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(root / "work"),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "poll_interval": 0.1,
+                    "claude_pane_target": "claude-pane",
+                    "verify_pane_target": "codex-pane",
+                    "gemini_pane_target": "gemini-pane",
+                }
+            )
+
+            self.assertEqual(core.lease.owner_pid_path, base_dir / "supervisor.pid")
+
+    def test_owner_dead_returns_false_when_supervisor_pid_missing(self) -> None:
+        # supervisor.pid 파일 부재를 "owner dead"로 해석하면 standalone watcher 경로에서
+        # 매 check마다 lease가 즉시 clear되어 verify active detection이 영구적으로 False가
+        # 된다. 파일 부재는 "감시 대상 없음"으로 보수적으로 다룬다.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base_dir = root / ".pipeline"
+            lock_dir = base_dir / "locks"
+            base_dir.mkdir(parents=True, exist_ok=True)
+            lock_dir.mkdir(parents=True, exist_ok=True)
+
+            supervisor_pid = base_dir / "supervisor.pid"
+            self.assertFalse(supervisor_pid.exists())
+
+            lease = watcher_core.PaneLease(
+                lock_dir,
+                default_ttl=900,
+                dry_run=False,
+                owner_pid_path=supervisor_pid,
+            )
+            self.assertFalse(lease._owner_dead())
+
+            self.assertTrue(lease.acquire("slot_verify", "job-1", 1, "codex-pane", ttl=900))
+            # supervisor.pid가 없어도 lease는 계속 active로 남아야 한다.
+            self.assertTrue(lease.is_active("slot_verify"))
+            self.assertTrue((lock_dir / "slot_verify.lock").exists())
+
+    def test_owner_dead_returns_false_when_supervisor_pid_empty_or_invalid(self) -> None:
+        # supervisor가 pid 파일을 쓰는 중 부분적으로만 기록되거나 손상된 상태를 "dead"로
+        # 확정하면 실제로는 살아 있는 supervisor를 착각해 lease를 성급히 clear한다.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base_dir = root / ".pipeline"
+            lock_dir = base_dir / "locks"
+            base_dir.mkdir(parents=True, exist_ok=True)
+            lock_dir.mkdir(parents=True, exist_ok=True)
+
+            supervisor_pid = base_dir / "supervisor.pid"
+            lease = watcher_core.PaneLease(
+                lock_dir,
+                default_ttl=900,
+                dry_run=False,
+                owner_pid_path=supervisor_pid,
+            )
+
+            supervisor_pid.write_text("", encoding="utf-8")
+            self.assertFalse(lease._owner_dead())
+
+            supervisor_pid.write_text("not-a-pid\n", encoding="utf-8")
+            self.assertFalse(lease._owner_dead())
+
+            self.assertTrue(lease.acquire("slot_verify", "job-1", 1, "codex-pane", ttl=900))
+            self.assertTrue(lease.is_active("slot_verify"))
+
+    def test_owner_dead_returns_true_when_supervisor_pid_no_longer_exists_as_process(self) -> None:
+        # 정상 동작 경로: supervisor.pid가 있고 내용이 valid pid이지만 해당 process가
+        # 이미 사라진 경우에만 dead로 판정하고 lease를 clear한다.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base_dir = root / ".pipeline"
+            lock_dir = base_dir / "locks"
+            base_dir.mkdir(parents=True, exist_ok=True)
+            lock_dir.mkdir(parents=True, exist_ok=True)
+
+            supervisor_pid = base_dir / "supervisor.pid"
+            supervisor_pid.write_text("4242\n", encoding="utf-8")
+
+            lease = watcher_core.PaneLease(
+                lock_dir,
+                default_ttl=900,
+                dry_run=False,
+                owner_pid_path=supervisor_pid,
+            )
+            self.assertTrue(lease.acquire("slot_verify", "job-1", 1, "codex-pane", ttl=900))
+
+            with mock.patch("watcher_core.os.kill", side_effect=ProcessLookupError):
+                self.assertTrue(lease._owner_dead())
+                # is_active가 호출되면 dead owner로 감지해 stale lock을 즉시 clear해야 한다.
+                self.assertFalse(lease.is_active("slot_verify"))
+                self.assertFalse((lock_dir / "slot_verify.lock").exists())
+
+    def test_owner_pid_appearing_after_watcher_start_still_detects_dead_owner(self) -> None:
+        # watcher가 supervisor보다 먼저 뜨는 start-up race 시나리오: init 시점에
+        # supervisor.pid가 없어도 나중에 supervisor가 떠서 pid를 쓰고, 이후 비정상 종료해
+        # process가 사라지는 흐름에서 owner_dead 감지가 계속 유효해야 한다.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base_dir = root / ".pipeline"
+            lock_dir = base_dir / "locks"
+            base_dir.mkdir(parents=True, exist_ok=True)
+            lock_dir.mkdir(parents=True, exist_ok=True)
+
+            supervisor_pid = base_dir / "supervisor.pid"
+            self.assertFalse(supervisor_pid.exists())
+
+            lease = watcher_core.PaneLease(
+                lock_dir,
+                default_ttl=900,
+                dry_run=False,
+                owner_pid_path=supervisor_pid,
+            )
+            self.assertTrue(lease.acquire("slot_verify", "job-1", 1, "codex-pane", ttl=900))
+            self.assertTrue(lease.is_active("slot_verify"))
+
+            supervisor_pid.write_text("4242\n", encoding="utf-8")
+            with mock.patch("watcher_core.os.kill", side_effect=ProcessLookupError):
+                self.assertFalse(lease.is_active("slot_verify"))
+                self.assertFalse((lock_dir / "slot_verify.lock").exists())
+
+    def test_lease_persists_owner_pid_and_clears_after_owner_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base_dir = root / ".pipeline"
+            lock_dir = base_dir / "locks"
+            base_dir.mkdir(parents=True, exist_ok=True)
+            lock_dir.mkdir(parents=True, exist_ok=True)
+
+            supervisor_pid = base_dir / "supervisor.pid"
+            supervisor_pid.write_text("4242\n", encoding="utf-8")
+
+            lease = watcher_core.PaneLease(
+                lock_dir,
+                default_ttl=900,
+                dry_run=False,
+                owner_pid_path=supervisor_pid,
+            )
+            self.assertTrue(lease.acquire("slot_verify", "job-1", 1, "codex-pane", ttl=900))
+
+            lock_data = json.loads((lock_dir / "slot_verify.lock").read_text(encoding="utf-8"))
+            self.assertEqual(lock_data["owner_pid"], 4242)
+
+            supervisor_pid.write_text("7777\n", encoding="utf-8")
+
+            def _kill(pid: int, _sig: int) -> None:
+                if pid == 4242:
+                    raise ProcessLookupError
+                return None
+
+            with mock.patch("watcher_core.os.kill", side_effect=_kill):
+                self.assertFalse(lease.is_active("slot_verify"))
+                self.assertFalse((lock_dir / "slot_verify.lock").exists())
+
+    def test_legacy_lease_without_owner_pid_clears_when_supervisor_restarts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base_dir = root / ".pipeline"
+            lock_dir = base_dir / "locks"
+            base_dir.mkdir(parents=True, exist_ok=True)
+            lock_dir.mkdir(parents=True, exist_ok=True)
+
+            supervisor_pid = base_dir / "supervisor.pid"
+            supervisor_pid.write_text("7777\n", encoding="utf-8")
+            os.utime(supervisor_pid, (200.0, 200.0))
+
+            legacy_lock = lock_dir / "slot_verify.lock"
+            legacy_lock.write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-legacy",
+                        "round": 1,
+                        "started_at": 100.0,
+                        "lease_ttl_sec": 900,
+                        "pane_target": "codex-pane",
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+            lease = watcher_core.PaneLease(
+                lock_dir,
+                default_ttl=900,
+                dry_run=False,
+                owner_pid_path=supervisor_pid,
+            )
+
+            with mock.patch("watcher_core.os.kill", return_value=None):
+                self.assertFalse(lease.is_active("slot_verify"))
+                self.assertFalse(legacy_lock.exists())
+
+
+class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
+    def test_flush_pending_rechecks_active_control_for_each_pending(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prompt_path = root / ".pipeline" / "operator_request.md"
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("STATUS: needs_operator\n", encoding="utf-8")
+
+            def get_path_sig(path: Path) -> str:
+                if not path.exists():
+                    return ""
+                return path.read_text(encoding="utf-8")
+
+            active_controls = [
+                watcher_core.ControlSignal(
+                    kind="operator",
+                    path=prompt_path,
+                    status="needs_operator",
+                    mtime=10.0,
+                    sig="sig-10",
+                    control_seq=10,
+                ),
+                watcher_core.ControlSignal(
+                    kind="operator",
+                    path=prompt_path,
+                    status="needs_operator",
+                    mtime=11.0,
+                    sig="sig-11",
+                    control_seq=11,
+                ),
+            ]
+            send_prompt = mock.Mock(return_value=True)
+            log_raw = mock.Mock()
+            append_runtime_event = mock.Mock()
+            queue = watcher_core.WatcherDispatchQueue(
+                lane_input_defer_cooldown_sec=0.0,
+                capture_pane_text=mock.Mock(return_value="› \n tab to queue message\n55% context left\n"),
+                send_keys=send_prompt,
+                get_path_sig=get_path_sig,
+                role_owner=lambda role: role,
+                log_raw=log_raw,
+                append_runtime_event=append_runtime_event,
+                get_active_control_signal=mock.Mock(side_effect=active_controls),
+                is_active_control=mock.Mock(return_value=True),
+            )
+            queue.pending_notifications = {
+                "pending-10": {
+                    "notify_kind": "notify_pending_10",
+                    "lane_role": "verify",
+                    "reason": "operator_wait_idle_retriage",
+                    "prompt": "prompt 10",
+                    "prompt_path": str(prompt_path),
+                    "target": "codex-pane",
+                    "pane_type": "codex",
+                    "control_seq": 10,
+                    "expected_status": "needs_operator",
+                    "expected_control_path": "operator_request.md",
+                    "expected_control_seq": 10,
+                    "require_active_control": False,
+                    "sig": "",
+                },
+                "pending-11": {
+                    "notify_kind": "notify_pending_11",
+                    "lane_role": "verify",
+                    "reason": "operator_wait_idle_retriage",
+                    "prompt": "prompt 11",
+                    "prompt_path": str(prompt_path),
+                    "target": "codex-pane",
+                    "pane_type": "codex",
+                    "control_seq": 11,
+                    "expected_status": "needs_operator",
+                    "expected_control_path": "operator_request.md",
+                    "expected_control_seq": 11,
+                    "require_active_control": False,
+                    "sig": "",
+                },
+            }
+
+            queue.flush_pending()
+
+            self.assertEqual(send_prompt.call_count, 2)
+            self.assertEqual(queue.pending_notifications, {})
+            log_raw.assert_not_called()
+            append_runtime_event.assert_not_called()
+
+    def test_flush_pending_logs_structured_control_seq_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prompt_path = root / ".pipeline" / "operator_request.md"
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("STATUS: needs_operator\n", encoding="utf-8")
+
+            active_control = watcher_core.ControlSignal(
+                kind="operator",
+                path=prompt_path,
+                status="needs_operator",
+                mtime=21.0,
+                sig="sig-21",
+                control_seq=21,
+            )
+            send_prompt = mock.Mock(return_value=True)
+            log_raw = mock.Mock()
+            append_runtime_event = mock.Mock()
+            queue = watcher_core.WatcherDispatchQueue(
+                lane_input_defer_cooldown_sec=0.0,
+                capture_pane_text=mock.Mock(return_value="› \n tab to queue message\n55% context left\n"),
+                send_keys=send_prompt,
+                get_path_sig=lambda path: path.read_text(encoding="utf-8") if path.exists() else "",
+                role_owner=lambda role: role,
+                log_raw=log_raw,
+                append_runtime_event=append_runtime_event,
+                get_active_control_signal=mock.Mock(return_value=active_control),
+                is_active_control=mock.Mock(return_value=True),
+            )
+            queue.pending_notifications = {
+                "pending-20": {
+                    "notify_kind": "codex_operator_retriage",
+                    "lane_role": "verify",
+                    "reason": "operator_wait_idle_retriage",
+                    "prompt": "prompt 20",
+                    "prompt_path": str(prompt_path),
+                    "target": "codex-pane",
+                    "pane_type": "codex",
+                    "control_seq": 20,
+                    "expected_status": "needs_operator",
+                    "expected_control_path": "operator_request.md",
+                    "expected_control_seq": 20,
+                    "require_active_control": False,
+                    "sig": "",
+                }
+            }
+
+            queue.flush_pending()
+
+            send_prompt.assert_not_called()
+            self.assertEqual(queue.pending_notifications, {})
+            log_raw.assert_called_once()
+            event, path, job_id, payload = log_raw.call_args.args
+            self.assertEqual(event, "lane_input_deferred_dropped")
+            self.assertEqual(path, str(prompt_path))
+            self.assertEqual(job_id, "turn_signal")
+            self.assertEqual(payload["notify_kind"], "codex_operator_retriage")
+            self.assertEqual(payload["reason"], "control_mismatch")
+            self.assertEqual(payload["reason_code"], "control_seq_drift")
+            self.assertEqual(payload["expected_control_seq"], 20)
+            self.assertEqual(payload["active_control_seq"], 21)
+            self.assertEqual(payload["expected_prompt_path"], str(prompt_path))
+            self.assertEqual(payload["active_prompt_path"], str(prompt_path))
+            self.assertEqual(payload["expected_status"], "needs_operator")
+            self.assertEqual(payload["active_status"], "needs_operator")
+            self.assertEqual(payload["active_control"], "operator")
+            append_runtime_event.assert_called_once_with("lane_input_deferred_dropped", payload)
+
+
 class ClaudeHandoffDispatchTest(unittest.TestCase):
+    def test_verify_lease_is_reclaimed_when_supervisor_pid_is_dead(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base_dir = root / ".pipeline"
+            lock_dir = base_dir / "locks"
+            base_dir.mkdir(parents=True, exist_ok=True)
+            lock_dir.mkdir(parents=True, exist_ok=True)
+
+            supervisor_pid = base_dir / "supervisor.pid"
+            supervisor_pid.write_text("4242\n", encoding="utf-8")
+
+            lease = watcher_core.PaneLease(
+                lock_dir,
+                default_ttl=900,
+                dry_run=False,
+                owner_pid_path=supervisor_pid,
+            )
+            self.assertTrue(lease.acquire("slot_verify", "job-1", 1, "codex-pane", ttl=900))
+            self.assertTrue((lock_dir / "slot_verify.lock").exists())
+
+            with mock.patch("watcher_core.os.kill", side_effect=ProcessLookupError):
+                self.assertFalse(lease.is_active("slot_verify"))
+                self.assertFalse((lock_dir / "slot_verify.lock").exists())
+                self.assertTrue(lease.acquire("slot_verify", "job-2", 2, "codex-pane", ttl=900))
+
     def test_handoff_update_waits_until_verify_lease_released(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1494,6 +1911,108 @@ class ClaudeHandoffDispatchTest(unittest.TestCase):
                 core._check_pipeline_signal_updates()
                 notify.assert_called_once()
                 self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CLAUDE_ACTIVE)
+
+    def test_handoff_update_releases_when_supervisor_pid_is_dead(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work" / "4" / "8"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir = root / ".pipeline"
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+            (base_dir / "supervisor.pid").write_text("4242\n", encoding="utf-8")
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(root / "work"),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "poll_interval": 0.1,
+                    "claude_pane_target": "claude-pane",
+                    "verify_pane_target": "codex-pane",
+                    "gemini_pane_target": "gemini-pane",
+                }
+            )
+
+            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path.write_text("STATUS: implement\nCONTROL_SEQ: 10\n")
+            core.lease.acquire("slot_verify", "job-1", 1, "codex-pane", ttl=900)
+
+            with (
+                mock.patch("watcher_core.os.kill", side_effect=ProcessLookupError),
+                mock.patch.object(core, "_notify_claude") as notify,
+            ):
+                core._check_pipeline_signal_updates()
+                notify.assert_called_once()
+                self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CLAUDE_ACTIVE)
+                self.assertFalse((base_dir / "locks" / "slot_verify.lock").exists())
+
+    def test_running_verify_job_finishes_before_older_unverified_work_is_discovered(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            old_work = watch_dir / "4" / "9" / "2026-04-09-stale.md"
+            current_work = watch_dir / "4" / "18" / "2026-04-18-current.md"
+            _write_work_note(old_work, ["docs/OLD.md"])
+            _write_work_note(current_work, ["README.md"])
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "poll_interval": 0.1,
+                    "claude_pane_target": "claude-pane",
+                    "verify_pane_target": "codex-pane",
+                    "gemini_pane_target": "gemini-pane",
+                }
+            )
+            core.started_at = time.time() - core.startup_grace_sec - 1.0
+            core._initial_turn_checked = True
+            core._transition_turn(watcher_core.WatcherTurnState.IDLE, "test_setup")
+
+            job = watcher_core.JobState.from_artifact("job-current", str(current_work))
+            job.run_id = core.run_id
+            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+                job = core.sm._handle_verify_pending(job)
+
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            core.lease.acquire("slot_verify", job.job_id, job.round, "codex-pane", ttl=900)
+
+            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path.write_text("STATUS: implement\nCONTROL_SEQ: 292\n", encoding="utf-8")
+            verify_note = root / "verify" / "4" / "18" / "2026-04-18-current-verification.md"
+            _write_verify_note_for_work(verify_note, "work/4/18/2026-04-18-current.md")
+
+            job.accepted_dispatch_id = job.dispatch_id
+            job.accepted_at = time.time() - 5.0
+            job.done_dispatch_id = job.dispatch_id
+            job.done_at = time.time() - 1.0
+            job.done_deadline_at = time.time() + 30.0
+            job.save(core.state_dir)
+
+            stale_job_id = watcher_core.make_job_id(watch_dir, old_work)
+
+            with (
+                mock.patch("watcher_core._capture_pane_text", return_value="$ "),
+                mock.patch("watcher_core._pane_text_has_busy_indicator", return_value=False),
+                mock.patch("watcher_core._pane_text_has_input_cursor", return_value=True),
+            ):
+                core._poll()
+
+            current_job = watcher_core.JobState.load(core.state_dir, job.job_id)
+            self.assertIsNotNone(current_job)
+            assert current_job is not None
+            self.assertEqual(current_job.status, watcher_core.JobStatus.VERIFY_DONE)
+            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CLAUDE_ACTIVE)
+            self.assertFalse((core.state_dir / f"{stale_job_id}.json").exists())
 
     def test_handoff_update_releases_from_codex_followup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2941,6 +3460,87 @@ class ClaudeIdleTimeoutTest(unittest.TestCase):
 
 
 class TransitionTurnTest(unittest.TestCase):
+    def test_write_current_run_pointer_records_watcher_pid_and_fingerprint(self) -> None:
+        from pipeline_runtime import schema as schema_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            core = watcher_core.WatcherCore({
+                "watch_dir": str(watch_dir),
+                "base_dir": str(base_dir),
+                "repo_root": str(root),
+                "dry_run": True,
+            })
+
+            # Drive the shared fingerprint helper through a stable non-empty
+            # value via the same stub seam the empty-path regression uses, so
+            # this positive pointer-writer assertion no longer depends on the
+            # host actually exposing /proc/<pid>/stat. Watcher_pid stays live
+            # because os.getpid() is independent of the helper.
+            non_empty_fingerprint = "Mon Apr 18 12:34:56 2026"
+            with (
+                mock.patch.object(schema_module, "_proc_starttime_fingerprint", return_value=""),
+                mock.patch.object(
+                    schema_module,
+                    "_ps_lstart_fingerprint",
+                    return_value=non_empty_fingerprint,
+                ),
+            ):
+                core._write_current_run_pointer()
+
+            current_run_path = base_dir / "current_run.json"
+            self.assertTrue(current_run_path.exists())
+            data = json.loads(current_run_path.read_text())
+            self.assertEqual(data["run_id"], core.run_id)
+            self.assertEqual(data["watcher_pid"], os.getpid())
+            self.assertEqual(data.get("watcher_fingerprint", ""), non_empty_fingerprint)
+
+    def test_write_current_run_pointer_records_empty_fingerprint_when_both_sources_fail(self) -> None:
+        from pipeline_runtime import schema as schema_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            core = watcher_core.WatcherCore({
+                "watch_dir": str(watch_dir),
+                "base_dir": str(base_dir),
+                "repo_root": str(root),
+                "dry_run": True,
+            })
+
+            # On a minimal host where /proc/<pid>/stat, `ps -p <pid> -o
+            # lstart=`, and os.stat(f"/proc/{pid}") all fail the shared
+            # fingerprint helper falls all the way through to "". The watcher
+            # exporter must still write the watcher_fingerprint field
+            # explicitly as "" rather than silently dropping it, so supervisor
+            # inheritance can recognise the safe-degradation path instead of
+            # treating the pointer as a legacy/no-owner record.
+            with (
+                mock.patch.object(schema_module, "_proc_starttime_fingerprint", return_value=""),
+                mock.patch.object(schema_module, "_ps_lstart_fingerprint", return_value=""),
+                mock.patch.object(schema_module, "_proc_ctime_fingerprint", return_value=""),
+            ):
+                core._write_current_run_pointer()
+
+            current_run_path = base_dir / "current_run.json"
+            self.assertTrue(current_run_path.exists())
+            data = json.loads(current_run_path.read_text())
+            self.assertEqual(data["run_id"], core.run_id)
+            self.assertEqual(data["watcher_pid"], os.getpid())
+            self.assertIn("watcher_fingerprint", data)
+            self.assertEqual(data["watcher_fingerprint"], "")
+
     def test_transition_writes_turn_state_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -3478,6 +4078,26 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             self.assertEqual(send_prompt.call_args.args[0], "claude-pane")
             self.assertNotIn("codex_operator_retriage", core.dispatch_queue.pending_notifications)
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CLAUDE_ACTIVE)
+            raw_events = [
+                json.loads(line)
+                for line in (core.events_dir / "raw.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            drop_event = next(
+                event for event in raw_events if event.get("event") == "lane_input_deferred_dropped"
+            )
+            self.assertEqual(drop_event["reason"], "control_mismatch")
+            self.assertEqual(drop_event["reason_code"], "control_file_drift")
+            self.assertEqual(drop_event["expected_control_seq"], 20)
+            self.assertEqual(drop_event["active_control_seq"], 21)
+            self.assertEqual(
+                drop_event["expected_prompt_path"],
+                str(operator_request),
+            )
+            self.assertEqual(
+                drop_event["active_prompt_path"],
+                str(handoff),
+            )
 
 
 class VerifyCompletionContractTest(unittest.TestCase):
@@ -4197,6 +4817,114 @@ class VerifyCompletionContractTest(unittest.TestCase):
             self.assertEqual(job.degraded_reason, "")
             self.assertEqual(job.verify_result, "")
 
+    def test_matching_task_done_implies_accept_when_wrapper_model_already_folded_accept(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            work_day = watch_dir / "4" / "10"
+            work_day.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            run_dir = base_dir / "runs" / "run-1"
+            wrapper_dir = run_dir / "wrapper-events"
+            wrapper_dir.mkdir(parents=True, exist_ok=True)
+            (base_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "run-1",
+                        "events_path": ".pipeline/runs/run-1/events.jsonl",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            work_note = work_day / "2026-04-10-slice.md"
+            _write_work_note(work_note, ["tests/test_watcher_core.py"])
+            job = watcher_core.JobState.from_artifact("job-verify-folded-accept", str(work_note))
+
+            with mock.patch.dict(os.environ, {"PIPELINE_RUNTIME_DISABLE_EXPORTER": "1"}):
+                core = watcher_core.WatcherCore(
+                    {
+                        "watch_dir": str(watch_dir),
+                        "base_dir": str(base_dir),
+                        "repo_root": str(root),
+                        "dry_run": True,
+                        "verify_pane_target": "codex-pane",
+                        "verify_accept_deadline_sec": 30.0,
+                        "verify_done_deadline_sec": 45.0,
+                    }
+                )
+
+            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+                job = core.sm._handle_verify_pending(job)
+
+            append_wrapper_event(
+                wrapper_dir,
+                "Codex",
+                "DISPATCH_SEEN",
+                {
+                    "job_id": job.job_id,
+                    "dispatch_id": job.dispatch_id,
+                    "control_seq": 19,
+                    "attempt": 1,
+                },
+                source="wrapper",
+                derived_from="task_hint",
+            )
+            append_wrapper_event(
+                wrapper_dir,
+                "Codex",
+                "TASK_ACCEPTED",
+                {
+                    "job_id": job.job_id,
+                    "dispatch_id": job.dispatch_id,
+                    "control_seq": 19,
+                    "attempt": 1,
+                },
+                source="wrapper",
+                derived_from="vendor_output",
+            )
+            append_wrapper_event(
+                wrapper_dir,
+                "Codex",
+                "TASK_DONE",
+                {
+                    "job_id": job.job_id,
+                    "dispatch_id": job.dispatch_id,
+                    "control_seq": 19,
+                },
+                source="wrapper",
+                derived_from="vendor_output",
+            )
+            append_wrapper_event(
+                wrapper_dir,
+                "Codex",
+                "READY",
+                {"reason": "prompt_visible"},
+                source="wrapper",
+                derived_from="vendor_output",
+            )
+
+            job.last_activity_at = time.time() - 35
+            job.last_dispatch_at = time.time() - 35
+            job.accept_deadline_at = time.time() - 1
+            job.last_pane_snapshot = ""
+            core.sm.runtime_started_at = time.time() - 120
+
+            with mock.patch("watcher_core._capture_pane_text", return_value="› prompt"), \
+                 mock.patch("watcher_core._pane_text_has_busy_indicator", return_value=False), \
+                 mock.patch("watcher_core._pane_text_has_input_cursor", return_value=True):
+                job = core.sm._handle_verify_running(job)
+
+            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.accepted_dispatch_id, job.dispatch_id)
+            self.assertEqual(job.done_dispatch_id, job.dispatch_id)
+            self.assertEqual(job.dispatch_stall_count, 0)
+            self.assertEqual(job.dispatch_stall_stage, "")
+            self.assertEqual(job.lane_note, "")
+
     def test_dispatch_seen_missing_uses_distinct_machine_note_before_degrade(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4365,6 +5093,160 @@ class VerifyCompletionContractTest(unittest.TestCase):
             self.assertFalse(
                 core.dedupe.is_duplicate(job.job_id, job.round, job.artifact_hash, "slot_verify")
             )
+
+    def test_poll_replays_current_run_verify_pending_even_when_latest_work_is_already_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            verify_dir = root / "verify"
+            base_dir = root / ".pipeline"
+            work_day = watch_dir / "4" / "10"
+            verify_day = verify_dir / "4" / "10"
+            work_day.mkdir(parents=True, exist_ok=True)
+            verify_day.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            older_work = work_day / "2026-04-10-older.md"
+            latest_work = work_day / "2026-04-10-latest.md"
+            _write_work_note(older_work, ["watcher_dispatch.py"])
+            _write_work_note(latest_work, ["tests/test_pipeline_runtime_gate.py"])
+            verify_note = verify_day / "2026-04-10-latest-verification.md"
+            _write_verify_note_for_work(verify_note, "work/4/10/2026-04-10-latest.md")
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                }
+            )
+
+            pending_job_id = watcher_core.make_job_id(watch_dir, older_work)
+            pending_job = watcher_core.JobState.from_artifact(
+                pending_job_id,
+                str(older_work),
+                run_id=core.run_id,
+            )
+            pending_job.status = watcher_core.JobStatus.VERIFY_PENDING
+            pending_job.save(core.state_dir)
+
+            core._initial_turn_checked = True
+            core._current_turn_state = watcher_core.WatcherTurnState.CODEX_VERIFY
+
+            with mock.patch.object(core.sm, "step", side_effect=lambda job: job) as step_mock:
+                core._poll()
+
+            step_mock.assert_called_once()
+            stepped_job = step_mock.call_args.args[0]
+            self.assertEqual(stepped_job.job_id, pending_job_id)
+            self.assertEqual(stepped_job.status, watcher_core.JobStatus.VERIFY_PENDING)
+
+    def test_poll_steps_current_run_verify_running_before_pending_gemini_advice(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            work_day = watch_dir / "4" / "10"
+            work_day.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            work_note = work_day / "2026-04-10-slice.md"
+            _write_work_note(work_note, ["watcher_core.py"])
+            (base_dir / "gemini_advice.md").write_text(
+                "STATUS: advice_ready\nCONTROL_SEQ: 7\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                }
+            )
+
+            running_job_id = watcher_core.make_job_id(watch_dir, work_note)
+            running_job = watcher_core.JobState.from_artifact(
+                running_job_id,
+                str(work_note),
+                run_id=core.run_id,
+            )
+            running_job.status = watcher_core.JobStatus.VERIFY_RUNNING
+            running_job.save(core.state_dir)
+
+            core._initial_turn_checked = True
+            core._current_turn_state = watcher_core.WatcherTurnState.CODEX_FOLLOWUP
+
+            with (
+                mock.patch.object(core, "_check_pipeline_signal_updates"),
+                mock.patch.object(core, "_retry_gemini_advisory_if_idle") as retry_mock,
+                mock.patch.object(core.sm, "step", side_effect=lambda job: job) as step_mock,
+            ):
+                core._poll()
+
+            step_mock.assert_called_once()
+            stepped_job = step_mock.call_args.args[0]
+            self.assertEqual(stepped_job.job_id, running_job_id)
+            self.assertEqual(stepped_job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            retry_mock.assert_not_called()
+
+    def test_poll_steps_current_run_verify_pending_before_pending_gemini_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            work_day = watch_dir / "4" / "10"
+            work_day.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            work_note = work_day / "2026-04-10-slice.md"
+            _write_work_note(work_note, ["watcher_core.py"])
+            (base_dir / "gemini_request.md").write_text(
+                "STATUS: request_open\nCONTROL_SEQ: 8\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                }
+            )
+
+            pending_job_id = watcher_core.make_job_id(watch_dir, work_note)
+            pending_job = watcher_core.JobState.from_artifact(
+                pending_job_id,
+                str(work_note),
+                run_id=core.run_id,
+            )
+            pending_job.status = watcher_core.JobStatus.VERIFY_PENDING
+            pending_job.save(core.state_dir)
+
+            core._initial_turn_checked = True
+            core._current_turn_state = watcher_core.WatcherTurnState.GEMINI_ADVISORY
+
+            with (
+                mock.patch.object(core, "_check_pipeline_signal_updates"),
+                mock.patch.object(core, "_retry_gemini_advisory_if_idle") as retry_mock,
+                mock.patch.object(core.sm, "step", side_effect=lambda job: job) as step_mock,
+            ):
+                core._poll()
+
+            step_mock.assert_called_once()
+            stepped_job = step_mock.call_args.args[0]
+            self.assertEqual(stepped_job.job_id, pending_job_id)
+            self.assertEqual(stepped_job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            retry_mock.assert_not_called()
 
 
 class CodexDispatchConfirmationTest(unittest.TestCase):

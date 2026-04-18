@@ -14,6 +14,22 @@ from pipeline_runtime.supervisor import RuntimeSupervisor
 from pipeline_runtime.wrapper_events import append_wrapper_event, build_lane_read_models
 
 
+def _read_proc_starttime_fingerprint(pid: int) -> str:
+    # Mirror RuntimeSupervisor._watcher_process_fingerprint so test fixtures
+    # can build pointer payloads that match the live process instance.
+    try:
+        stat_text = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    end_paren = stat_text.rfind(")")
+    if end_paren < 0:
+        return ""
+    rest = stat_text[end_paren + 1:].split()
+    if len(rest) < 20:
+        return ""
+    return rest[19]
+
+
 def _write_active_profile(
     root: Path,
     *,
@@ -57,6 +73,120 @@ class RuntimeSupervisorTest(unittest.TestCase):
         self.assertEqual(args.legacy_mode, "baseline")
         self.assertTrue(args.no_attach)
 
+    def test_build_active_round_skips_autonomy_state_pseudo_job(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            state_dir = root / ".pipeline" / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (state_dir / "autonomy_state.json").write_text(
+                json.dumps(
+                    {
+                        "fingerprint": "",
+                        "mode": "normal",
+                        "block_reason": "",
+                        "reason_code": "",
+                        "operator_policy": "",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "turn_state.json").write_text(
+                json.dumps({"state": "IDLE", "entered_at": 0.0}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            from pipeline_runtime.schema import load_job_states
+
+            job_states = load_job_states(state_dir, run_id=supervisor.run_id)
+            self.assertEqual(job_states, [])
+
+            active_round = supervisor._build_active_round(job_states, last_receipt=None)
+            self.assertIsNone(active_round)
+
+    def test_build_active_round_prefers_live_verify_over_stale_real_job(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            last_receipt = {
+                "job_id": "job-stale-closed",
+                "round": 3,
+                "artifact_hash": "stale-closed-hash",
+            }
+            job_states = [
+                {
+                    "job_id": "job-stale-closed",
+                    "status": "VERIFY_DONE",
+                    "artifact_path": "work/4/17/stale.md",
+                    "artifact_hash": "stale-closed-hash",
+                    "round": 3,
+                    "updated_at": 999.0,
+                    "last_activity_at": 999.0,
+                    "verify_completed_at": 900.0,
+                },
+                {
+                    "job_id": "job-live-verify",
+                    "status": "VERIFY_PENDING",
+                    "artifact_path": "work/4/18/live.md",
+                    "artifact_hash": "live-hash",
+                    "round": 4,
+                    "updated_at": 200.0,
+                    "last_activity_at": 200.0,
+                },
+            ]
+
+            active_round = supervisor._build_active_round(job_states, last_receipt=last_receipt)
+
+            self.assertIsNotNone(active_round)
+            self.assertEqual(active_round["job_id"], "job-live-verify")
+            self.assertEqual(active_round["round"], 4)
+            self.assertEqual(active_round["state"], "VERIFY_PENDING")
+
+    def test_build_active_round_prefers_receipt_pending_over_stale_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            last_receipt = {
+                "job_id": "job-closed",
+                "round": 1,
+                "artifact_hash": "closed-hash",
+            }
+            job_states = [
+                {
+                    "job_id": "job-closed",
+                    "status": "VERIFY_DONE",
+                    "artifact_path": "work/4/17/closed.md",
+                    "artifact_hash": "closed-hash",
+                    "round": 1,
+                    "updated_at": 500.0,
+                    "last_activity_at": 500.0,
+                    "verify_completed_at": 400.0,
+                },
+                {
+                    "job_id": "job-receipt-pending",
+                    "status": "VERIFY_DONE",
+                    "artifact_path": "work/4/18/receipt-pending.md",
+                    "artifact_hash": "receipt-pending-hash",
+                    "round": 2,
+                    "updated_at": 100.0,
+                    "last_activity_at": 100.0,
+                    "verify_completed_at": 100.0,
+                },
+            ]
+
+            active_round = supervisor._build_active_round(job_states, last_receipt=last_receipt)
+
+            self.assertIsNotNone(active_round)
+            self.assertEqual(active_round["job_id"], "job-receipt-pending")
+            self.assertEqual(active_round["round"], 2)
+            self.assertEqual(active_round["state"], "RECEIPT_PENDING")
+
     def test_build_artifacts_uses_canonical_round_notes_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -85,6 +215,37 @@ class RuntimeSupervisorTest(unittest.TestCase):
 
             self.assertEqual(artifacts["latest_work"]["path"], "4/16/2026-04-16-real-round.md")
             self.assertEqual(artifacts["latest_verify"]["path"], "4/16/2026-04-16-real-verify.md")
+
+    def test_build_artifacts_latest_verify_matches_latest_work_over_newer_unrelated_verify(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            work_note = root / "work" / "4" / "18" / "2026-04-18-real-round.md"
+            matching_verify = root / "verify" / "4" / "18" / "2026-04-18-real-verify.md"
+            unrelated_verify = root / "verify" / "4" / "18" / "2026-04-18-unrelated-verify.md"
+            work_note.parent.mkdir(parents=True, exist_ok=True)
+            matching_verify.parent.mkdir(parents=True, exist_ok=True)
+            work_note.write_text("# work\n", encoding="utf-8")
+            matching_verify.write_text(
+                "Based on `work/4/18/2026-04-18-real-round.md`\n",
+                encoding="utf-8",
+            )
+            unrelated_verify.write_text(
+                "Based on `work/4/18/2026-04-18-other-round.md`\n",
+                encoding="utf-8",
+            )
+
+            now = time.time()
+            os.utime(work_note, (now, now))
+            os.utime(matching_verify, (now - 10, now - 10))
+            os.utime(unrelated_verify, (now + 10, now + 10))
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            artifacts = supervisor._build_artifacts()
+
+            self.assertEqual(artifacts["latest_work"]["path"], "4/18/2026-04-18-real-round.md")
+            self.assertEqual(artifacts["latest_verify"]["path"], "4/18/2026-04-18-real-verify.md")
 
     def test_write_status_emits_receipt_and_control_block(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -177,6 +338,189 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(receipt["job_id"], "job-1")
             self.assertEqual(receipt["control_seq"], 17)
             self.assertEqual(receipt["verify_result"], "passed_by_feedback")
+
+    def test_write_status_receipt_uses_verify_matching_job_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            manifest_dir = pipeline_dir / "manifests" / "job-verify-match"
+            verify_dir = root / "verify" / "4" / "18"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            verify_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "claude_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: 29\n",
+                encoding="utf-8",
+            )
+            (state_dir / "turn_state.json").write_text(
+                json.dumps(
+                    {
+                        "state": "CODEX_VERIFY",
+                        "entered_at": 1.0,
+                        "active_control_file": ".pipeline/claude_handoff.md",
+                        "active_control_seq": 29,
+                        "verify_job_id": "job-verify-match",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manifest_path = manifest_dir / "round-1.verify.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "job_id": "job-verify-match",
+                        "round": 1,
+                        "role": "verify",
+                        "artifact_hash": "artifact-match",
+                        "created_at": "2026-04-18T01:02:03Z",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "job-verify-match.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-verify-match",
+                        "status": "VERIFY_DONE",
+                        "artifact_path": "work/4/18/2026-04-18-real-round.md",
+                        "artifact_hash": "artifact-match",
+                        "round": 1,
+                        "verify_manifest_path": str(manifest_path),
+                        "verify_result": "passed_by_feedback",
+                        "updated_at": 100.0,
+                        "verify_completed_at": 100.0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            matching_verify = verify_dir / "2026-04-18-real-verify.md"
+            unrelated_verify = verify_dir / "2026-04-18-unrelated-verify.md"
+            matching_verify.write_text(
+                "Based on `work/4/18/2026-04-18-real-round.md`\n",
+                encoding="utf-8",
+            )
+            unrelated_verify.write_text(
+                "Based on `work/4/18/2026-04-18-other-round.md`\n",
+                encoding="utf-8",
+            )
+            now = time.time()
+            os.utime(matching_verify, (now - 10, now - 10))
+            os.utime(unrelated_verify, (now, now))
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            receipt_path = supervisor.receipts_dir / f"{status['last_receipt_id']}.json"
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                receipt["artifact_path"],
+                str(matching_verify),
+            )
+
+    def test_write_status_marks_receipt_verify_missing_when_only_unrelated_verify_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            manifest_dir = pipeline_dir / "manifests" / "job-verify-missing"
+            verify_dir = root / "verify" / "4" / "18"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            verify_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "claude_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: 31\n",
+                encoding="utf-8",
+            )
+            (state_dir / "turn_state.json").write_text(
+                json.dumps(
+                    {
+                        "state": "CODEX_VERIFY",
+                        "entered_at": 1.0,
+                        "active_control_file": ".pipeline/claude_handoff.md",
+                        "active_control_seq": 31,
+                        "verify_job_id": "job-verify-missing",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manifest_path = manifest_dir / "round-1.verify.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "job_id": "job-verify-missing",
+                        "round": 1,
+                        "role": "verify",
+                        "artifact_hash": "artifact-missing",
+                        "created_at": "2026-04-18T01:02:03Z",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "job-verify-missing.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-verify-missing",
+                        "status": "VERIFY_DONE",
+                        "artifact_path": "work/4/18/2026-04-18-real-round.md",
+                        "artifact_hash": "artifact-missing",
+                        "round": 1,
+                        "verify_manifest_path": str(manifest_path),
+                        "verify_result": "passed_by_feedback",
+                        "updated_at": 100.0,
+                        "verify_completed_at": 100.0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (verify_dir / "2026-04-18-unrelated-a.md").write_text("# verify a\n", encoding="utf-8")
+            (verify_dir / "2026-04-18-unrelated-b.md").write_text("# verify b\n", encoding="utf-8")
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["degraded_reason"], "receipt_verify_missing:job-verify-missing")
+            self.assertFalse(status["last_receipt_id"])
 
     def test_write_status_clears_live_fields_when_runtime_has_stopped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2650,6 +2994,44 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(status["degraded_reason"], "session_missing")
             self.assertIn("session_missing", list(status.get("degraded_reasons") or []))
 
+    def test_session_loss_keeps_session_missing_as_representative_reason_over_lane_recovery_failures(self) -> None:
+        """When the tmux session disappears and lane recovery also fails for every
+        enabled lane, `session_missing` is the root cause and must stay the
+        representative `degraded_reason`. The per-lane `*_recovery_failed` entries
+        are secondary evidence and must remain visible in `degraded_reasons`."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": False, "pid": None}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=False),
+                mock.patch.object(supervisor.adapter, "restart_lane", return_value=False),
+                mock.patch.object(supervisor, "_lane_shell_command", return_value="run-lane"),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "BROKEN", "attachable": False, "pid": None, "note": "exit:-15"},
+                            {"name": "Codex", "state": "BROKEN", "attachable": False, "pid": None, "note": "exit:-15"},
+                            {"name": "Gemini", "state": "BROKEN", "attachable": False, "pid": None, "note": "exit:-15"},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+            self.assertEqual(status["runtime_state"], "DEGRADED")
+            self.assertEqual(status["degraded_reason"], "session_missing")
+            reasons = list(status.get("degraded_reasons") or [])
+            self.assertEqual(reasons[0], "session_missing")
+            for lane_failure in ("claude_recovery_failed", "codex_recovery_failed", "gemini_recovery_failed"):
+                self.assertIn(lane_failure, reasons)
+
     def test_session_loss_degrades_even_if_lane_health_has_already_dropped_to_off(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2694,6 +3076,35 @@ class RuntimeSupervisorTest(unittest.TestCase):
                 )
             self.assertEqual(reason, "claude_interrupted_post_accept")
             restart_lane.assert_not_called()
+
+    def test_pre_accept_wrapper_exit_note_consumes_retry_budget_and_restarts(self) -> None:
+        """Wrapper-surfaced pre-accept breakage (``exit:<code>``, ``pane_dead``,
+        ``heartbeat_timeout``) must fall through to the bounded restart path and
+        emit ``recovery_started``/``recovery_completed`` so the fault-check gate's
+        synthetic Claude kill recovers within retry budget."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            lane = {"name": "Claude", "state": "BROKEN", "note": "exit:-15"}
+            lane_model = {"accepted_task": None}
+            with (
+                mock.patch.object(supervisor.adapter, "restart_lane", return_value=True) as restart_lane,
+                mock.patch.object(supervisor, "_lane_shell_command", return_value="run-claude") as lane_shell_command,
+                mock.patch.object(supervisor, "_append_event") as append_event,
+            ):
+                reason = supervisor._maybe_recover_lane(
+                    lane,
+                    lane_model=lane_model,
+                    active_round=None,
+                )
+            self.assertEqual(reason, "")
+            lane_shell_command.assert_called_once_with("Claude")
+            restart_lane.assert_called_once_with("Claude", "run-claude")
+            self.assertEqual(supervisor._lane_restart_counts["Claude"], 1)
+            event_types = [call.args[0] for call in append_event.call_args_list]
+            self.assertIn("recovery_started", event_types)
+            self.assertIn("recovery_completed", event_types)
 
     def test_auth_failure_breakage_blocks_restart(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2832,6 +3243,491 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertIn("env PYTHONPATH=/tmp/fake-path", command)
             self.assertIn(f"PROJECT_ROOT={root}", command)
             self.assertIn("pipeline_runtime.cli lane-wrapper", command)
+
+    def test_supervisor_inherits_run_id_when_watcher_is_alive_so_status_follows_verify_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            old_run_id = "20260418T010203Z-p999"
+            old_run_dir = pipeline_dir / "runs" / old_run_id
+            old_run_dir.mkdir(parents=True, exist_ok=True)
+            # canonical surface from the prior supervisor still says STOPPED.
+            (old_run_dir / "status.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "run_id": old_run_id,
+                        "current_run_id": old_run_id,
+                        "runtime_state": "STOPPED",
+                        "active_round": None,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            current_pid = os.getpid()
+            current_fingerprint = _read_proc_starttime_fingerprint(current_pid)
+            (pipeline_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": old_run_id,
+                        "status_path": f".pipeline/runs/{old_run_id}/status.json",
+                        "events_path": f".pipeline/runs/{old_run_id}/events.jsonl",
+                        "watcher_pid": current_pid,
+                        "watcher_fingerprint": current_fingerprint,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            # mark the watcher alive via the current python pid so _watcher_status
+            # and the supervisor's run_id inheritance both observe a live owner.
+            (pipeline_dir / "experimental.pid").write_text(str(current_pid), encoding="utf-8")
+            (state_dir / "job-replay-1.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-replay-1",
+                        "run_id": old_run_id,
+                        "status": "VERIFY_PENDING",
+                        "artifact_path": "work/4/18/replay.md",
+                        "artifact_hash": "replay-hash",
+                        "round": 5,
+                        "updated_at": 200.0,
+                        "last_activity_at": 200.0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            self.assertEqual(supervisor.run_id, old_run_id)
+            self.assertEqual(supervisor.status_path, old_run_dir / "status.json")
+
+            with (
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=False),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                            {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(
+                    supervisor,
+                    "_build_artifacts",
+                    return_value={"latest_work": {}, "latest_verify": {}},
+                ),
+            ):
+                status = supervisor._write_status()
+
+            self.assertNotEqual(status["runtime_state"], "STOPPED")
+            self.assertEqual(status["run_id"], old_run_id)
+            self.assertIsNotNone(status["active_round"])
+            self.assertEqual(status["active_round"]["state"], "VERIFY_PENDING")
+            self.assertEqual(status["active_round"]["job_id"], "job-replay-1")
+            canonical_status = json.loads((old_run_dir / "status.json").read_text(encoding="utf-8"))
+            self.assertNotEqual(canonical_status["runtime_state"], "STOPPED")
+            self.assertEqual(
+                canonical_status["active_round"]["state"], "VERIFY_PENDING"
+            )
+
+    def test_supervisor_skips_run_id_inheritance_when_watcher_pid_is_dead(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            pipeline_dir.mkdir(parents=True, exist_ok=True)
+            old_run_id = "20260418T010203Z-p888"
+            (pipeline_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": old_run_id,
+                        "status_path": f".pipeline/runs/{old_run_id}/status.json",
+                        "watcher_pid": os.getpid(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            # experimental.pid points to a pid that is not alive so inheritance
+            # must fall back to a freshly generated run_id.
+            (pipeline_dir / "experimental.pid").write_text("0", encoding="utf-8")
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            self.assertNotEqual(supervisor.run_id, old_run_id)
+
+    def test_supervisor_skips_run_id_inheritance_when_current_run_owner_pid_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            pipeline_dir.mkdir(parents=True, exist_ok=True)
+            old_run_id = "20260418T010203Z-p777"
+            # legacy pointer with no owner field must NOT trigger inheritance,
+            # even when experimental.pid is alive — the owner-match gate is
+            # the new minimum bar for adopting a prior run id.
+            (pipeline_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": old_run_id,
+                        "status_path": f".pipeline/runs/{old_run_id}/status.json",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (pipeline_dir / "experimental.pid").write_text(str(os.getpid()), encoding="utf-8")
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            self.assertNotEqual(supervisor.run_id, old_run_id)
+
+    def test_supervisor_skips_run_id_inheritance_when_current_run_owner_pid_mismatches_live_watcher(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            pipeline_dir.mkdir(parents=True, exist_ok=True)
+            old_run_id = "20260418T010203Z-p666"
+            current_pid = os.getpid()
+            # current_run.json claims a different owner pid than the live
+            # experimental.pid, which means the pointer belongs to a stale
+            # watcher process that is no longer the current owner. Supervisor
+            # must refuse to inherit and fall back to a fresh run id.
+            other_pid = current_pid + 1 if current_pid > 1 else current_pid + 2
+            (pipeline_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": old_run_id,
+                        "status_path": f".pipeline/runs/{old_run_id}/status.json",
+                        "watcher_pid": other_pid,
+                        "watcher_fingerprint": _read_proc_starttime_fingerprint(current_pid),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (pipeline_dir / "experimental.pid").write_text(str(current_pid), encoding="utf-8")
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            self.assertNotEqual(supervisor.run_id, old_run_id)
+
+    def test_supervisor_skips_run_id_inheritance_when_pointer_fingerprint_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            pipeline_dir.mkdir(parents=True, exist_ok=True)
+            old_run_id = "20260418T010203Z-p444"
+            # pid matches the live watcher exactly, but the pointer omits the
+            # watcher_fingerprint field. supervisor must still refuse to
+            # inherit because the same pid alone cannot prove the live
+            # watcher is the same process instance the pointer was written
+            # for.
+            (pipeline_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": old_run_id,
+                        "status_path": f".pipeline/runs/{old_run_id}/status.json",
+                        "watcher_pid": os.getpid(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (pipeline_dir / "experimental.pid").write_text(str(os.getpid()), encoding="utf-8")
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            self.assertNotEqual(supervisor.run_id, old_run_id)
+
+    def test_supervisor_skips_run_id_inheritance_when_pointer_fingerprint_mismatches_live_watcher(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            pipeline_dir.mkdir(parents=True, exist_ok=True)
+            old_run_id = "20260418T010203Z-p333"
+            current_pid = os.getpid()
+            real_fingerprint = _read_proc_starttime_fingerprint(current_pid)
+            # pointer claims a fingerprint from an older process instance
+            # that happened to recycle the same pid. supervisor must not
+            # inherit even though the pid lookup currently matches.
+            stale_fingerprint = "0" if real_fingerprint != "0" else "1"
+            (pipeline_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": old_run_id,
+                        "status_path": f".pipeline/runs/{old_run_id}/status.json",
+                        "watcher_pid": current_pid,
+                        "watcher_fingerprint": stale_fingerprint,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (pipeline_dir / "experimental.pid").write_text(str(current_pid), encoding="utf-8")
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            self.assertNotEqual(supervisor.run_id, old_run_id)
+
+    def test_supervisor_write_current_run_pointer_records_live_watcher_pid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            pipeline_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "experimental.pid").write_text(str(os.getpid()), encoding="utf-8")
+
+            supervisor = RuntimeSupervisor(root, run_id="20260418T010203Z-p555", start_runtime=False)
+            supervisor._write_current_run_pointer()
+
+            current_run = json.loads((pipeline_dir / "current_run.json").read_text(encoding="utf-8"))
+            self.assertEqual(current_run["run_id"], "20260418T010203Z-p555")
+            self.assertEqual(current_run["watcher_pid"], os.getpid())
+
+    def test_supervisor_restart_inherits_run_id_when_fingerprint_helper_uses_ps_fallback(self) -> None:
+        import watcher_core
+        from pipeline_runtime import schema as schema_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            watch_dir = root / "work"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            pipeline_dir = root / ".pipeline"
+            pipeline_dir.mkdir(parents=True, exist_ok=True)
+
+            # Force the shared fingerprint helper through its `/proc`-missing
+            # fallback by stubbing the primary `/proc` reader to "" and the
+            # POSIX `ps -o lstart=` fallback to a stable string. The watcher
+            # exporter and supervisor inheritance must still agree on the
+            # same fingerprint via the same shared helper.
+            fallback_value = "Mon Apr 18 12:34:56 2026"
+            watcher_owned_run_id = "ps-fallback-run-id-20260418T010203Z-p999"
+            with (
+                mock.patch.object(schema_module, "_proc_starttime_fingerprint", return_value=""),
+                mock.patch.object(schema_module, "_ps_lstart_fingerprint", return_value=fallback_value),
+                mock.patch.dict(
+                    "os.environ",
+                    {"PIPELINE_RUNTIME_RUN_ID": watcher_owned_run_id},
+                    clear=False,
+                ),
+            ):
+                core = watcher_core.WatcherCore({
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(pipeline_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                })
+                self.assertEqual(core.run_id, watcher_owned_run_id)
+                core._write_current_run_pointer()
+
+                (pipeline_dir / "experimental.pid").write_text(str(os.getpid()), encoding="utf-8")
+                supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            current_run = json.loads((pipeline_dir / "current_run.json").read_text(encoding="utf-8"))
+            self.assertEqual(current_run["watcher_fingerprint"], fallback_value)
+            self.assertEqual(supervisor.run_id, watcher_owned_run_id)
+
+    def test_supervisor_restart_inherits_run_id_when_fingerprint_helper_uses_proc_ctime_fallback(self) -> None:
+        import watcher_core
+        from pipeline_runtime import schema as schema_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            watch_dir = root / "work"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            pipeline_dir = root / ".pipeline"
+            pipeline_dir.mkdir(parents=True, exist_ok=True)
+
+            # Force the shared fingerprint helper through its narrow third
+            # fallback by stubbing both the /proc/<pid>/stat reader and the
+            # POSIX `ps -p <pid> -o lstart=` helper to "" while returning a
+            # stable ctime string from _proc_ctime_fingerprint. The watcher
+            # exporter and supervisor inheritance must still agree on the
+            # same fingerprint via the same shared helper, so a supervisor
+            # restart can still adopt the live watcher's run_id on hosts
+            # where /proc/<pid>/stat parsing/read fails and `ps` does not
+            # produce a usable lstart string but /proc/<pid> itself is still
+            # stat-able.
+            fallback_value = "1712345678901234567"
+            watcher_owned_run_id = "proc-ctime-fallback-run-id-20260418T010203Z-p999"
+            with (
+                mock.patch.object(schema_module, "_proc_starttime_fingerprint", return_value=""),
+                mock.patch.object(schema_module, "_ps_lstart_fingerprint", return_value=""),
+                mock.patch.object(schema_module, "_proc_ctime_fingerprint", return_value=fallback_value),
+                mock.patch.dict(
+                    "os.environ",
+                    {"PIPELINE_RUNTIME_RUN_ID": watcher_owned_run_id},
+                    clear=False,
+                ),
+            ):
+                core = watcher_core.WatcherCore({
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(pipeline_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                })
+                self.assertEqual(core.run_id, watcher_owned_run_id)
+                core._write_current_run_pointer()
+
+                (pipeline_dir / "experimental.pid").write_text(str(os.getpid()), encoding="utf-8")
+                supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            current_run = json.loads((pipeline_dir / "current_run.json").read_text(encoding="utf-8"))
+            self.assertEqual(current_run["watcher_fingerprint"], fallback_value)
+            self.assertEqual(supervisor.run_id, watcher_owned_run_id)
+
+    def test_supervisor_skips_run_id_inheritance_when_fingerprint_helper_returns_empty_for_live_watcher(self) -> None:
+        import watcher_core
+        from pipeline_runtime import schema as schema_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            watch_dir = root / "work"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            pipeline_dir = root / ".pipeline"
+            pipeline_dir.mkdir(parents=True, exist_ok=True)
+
+            # On a minimal host where /proc/<pid>/stat, `ps -p <pid> -o
+            # lstart=`, and os.stat(f"/proc/{pid}") all fail, the watcher
+            # exporter writes watcher_fingerprint="" and the supervisor's own
+            # _watcher_process_fingerprint also returns "". Inheritance must
+            # refuse to adopt the prior run_id in this safe-degradation path
+            # so a stale pointer cannot bind a fresh supervisor to a watcher
+            # whose process identity cannot be proven.
+            watcher_owned_run_id = "empty-fp-run-id-20260418T010203Z-p999"
+            with (
+                mock.patch.object(schema_module, "_proc_starttime_fingerprint", return_value=""),
+                mock.patch.object(schema_module, "_ps_lstart_fingerprint", return_value=""),
+                mock.patch.object(schema_module, "_proc_ctime_fingerprint", return_value=""),
+                mock.patch.dict(
+                    "os.environ",
+                    {"PIPELINE_RUNTIME_RUN_ID": watcher_owned_run_id},
+                    clear=False,
+                ),
+            ):
+                core = watcher_core.WatcherCore({
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(pipeline_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                })
+                self.assertEqual(core.run_id, watcher_owned_run_id)
+                core._write_current_run_pointer()
+
+                (pipeline_dir / "experimental.pid").write_text(str(os.getpid()), encoding="utf-8")
+                supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            current_run = json.loads((pipeline_dir / "current_run.json").read_text(encoding="utf-8"))
+            self.assertEqual(current_run["watcher_fingerprint"], "")
+            self.assertNotEqual(supervisor.run_id, watcher_owned_run_id)
+
+    def test_supervisor_restart_inherits_run_id_after_watcher_exporter_writes_pointer(self) -> None:
+        import watcher_core
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            watch_dir = root / "work"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            pipeline_dir = root / ".pipeline"
+            pipeline_dir.mkdir(parents=True, exist_ok=True)
+
+            # The watcher exporter is the only writer of current_run.json in
+            # this scenario; it must preserve the same owner contract that
+            # supervisor inheritance now requires so a supervisor restart can
+            # adopt the live watcher's run_id end-to-end. Use an explicit
+            # watcher-owned run_id so this test stays discriminating even
+            # when the supervisor's fresh _make_run_id() lands inside the
+            # same second/pid as the watcher's auto-generated run_id.
+            watcher_owned_run_id = "watcher-owned-run-id-20260418T010203Z-p999"
+            with mock.patch.dict(
+                "os.environ",
+                {"PIPELINE_RUNTIME_RUN_ID": watcher_owned_run_id},
+                clear=False,
+            ):
+                core = watcher_core.WatcherCore({
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(pipeline_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                })
+            self.assertEqual(core.run_id, watcher_owned_run_id)
+            core._write_current_run_pointer()
+
+            (pipeline_dir / "experimental.pid").write_text(str(os.getpid()), encoding="utf-8")
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            self.assertEqual(supervisor.run_id, watcher_owned_run_id)
+
+    def test_supervisor_write_current_run_pointer_records_live_watcher_fingerprint(self) -> None:
+        from pipeline_runtime import schema as schema_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            pipeline_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "experimental.pid").write_text(str(os.getpid()), encoding="utf-8")
+
+            supervisor = RuntimeSupervisor(root, run_id="20260418T010203Z-p222", start_runtime=False)
+
+            # Use the same shared-helper stub seam as the empty-path
+            # regression so this positive supervisor writer assertion no
+            # longer depends on the host actually exposing /proc/<pid>/stat.
+            # watcher_pid keeps coming from the live experimental.pid lookup,
+            # which is independent of the fingerprint helper.
+            non_empty_fingerprint = "Mon Apr 18 12:34:56 2026"
+            with (
+                mock.patch.object(schema_module, "_proc_starttime_fingerprint", return_value=""),
+                mock.patch.object(
+                    schema_module,
+                    "_ps_lstart_fingerprint",
+                    return_value=non_empty_fingerprint,
+                ),
+            ):
+                supervisor._write_current_run_pointer()
+
+            current_run = json.loads((pipeline_dir / "current_run.json").read_text(encoding="utf-8"))
+            self.assertEqual(current_run["watcher_pid"], os.getpid())
+            self.assertEqual(current_run["watcher_fingerprint"], non_empty_fingerprint)
+
+    def test_supervisor_write_current_run_pointer_records_empty_fingerprint_when_both_sources_fail(self) -> None:
+        from pipeline_runtime import schema as schema_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            pipeline_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "experimental.pid").write_text(str(os.getpid()), encoding="utf-8")
+
+            supervisor = RuntimeSupervisor(root, run_id="20260418T010203Z-p333", start_runtime=False)
+
+            # The watcher exporter and the supervisor are both writers of
+            # current_run.json. On a minimal host where none of the shared
+            # fingerprint helper sources are usable the supervisor writer
+            # must serialize the same explicit empty-string
+            # watcher_fingerprint as the watcher exporter, never silently
+            # omit the field. Otherwise a later supervisor restart would see
+            # a legacy-shaped pointer instead of the safe-degradation pointer
+            # the previous writer actually intended.
+            with (
+                mock.patch.object(schema_module, "_proc_starttime_fingerprint", return_value=""),
+                mock.patch.object(schema_module, "_ps_lstart_fingerprint", return_value=""),
+                mock.patch.object(schema_module, "_proc_ctime_fingerprint", return_value=""),
+            ):
+                supervisor._write_current_run_pointer()
+
+            current_run = json.loads((pipeline_dir / "current_run.json").read_text(encoding="utf-8"))
+            self.assertEqual(current_run["run_id"], "20260418T010203Z-p333")
+            self.assertEqual(current_run["watcher_pid"], os.getpid())
+            self.assertIn("watcher_fingerprint", current_run)
+            self.assertEqual(current_run["watcher_fingerprint"], "")
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ if str(REPO_ROOT) not in sys.path:
 from pipeline_gui.project import _session_name_for
 from pipeline_runtime.control_writers import validate_operator_candidate_status
 from pipeline_runtime.schema import parse_control_slots, read_json
+from pipeline_runtime.supervisor import RuntimeSupervisor
 from pipeline_runtime.tmux_adapter import TmuxAdapter
 
 _CLASSIFICATION_FALLBACK_EVENT = "classification_fallback_detected"
@@ -331,6 +332,73 @@ def _markdown_report(
     return "\n".join(lines) + "\n"
 
 
+def _report_json_sidecar_path(report_path: Path) -> Path:
+    """Return the JSON sidecar path paired with a given markdown report path.
+    Uses ``with_suffix(".json")`` so ``/tmp/foo.md`` pairs with ``/tmp/foo.json``
+    and suffix-less paths simply gain a ``.json`` suffix. Shared across
+    ``fault-check``, ``synthetic-soak``, and plain ``soak`` report writers."""
+    return report_path.with_suffix(".json")
+
+
+def _write_report_json_sidecar(
+    json_path: Path,
+    *,
+    title: str,
+    ok: bool,
+    summary_fields: dict[str, Any],
+    checks: list[dict[str, Any]],
+) -> None:
+    """Write a machine-readable JSON sidecar whose ``checks`` list mirrors the
+    same structured payloads the report writer already builds in memory so
+    consumers outside of Python do not have to scrape the markdown report.
+    Shared between the three gate reports to keep a single artifact shape."""
+    payload = {
+        "title": title,
+        "ok": bool(ok),
+        "summary": dict(summary_fields),
+        "checks": list(checks),
+    }
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _soak_summary_fields(summary: dict[str, Any], *, base: dict[str, Any]) -> dict[str, Any]:
+    """Build a JSON-safe structured summary dict for ``soak``/``synthetic-soak``
+    report sidecars. ``base`` carries path-specific keys (e.g. ``project``,
+    ``session``, ``workspace_retained``) that the CLI resolves. All other fields
+    are sourced from ``run_soak()``'s summary dict so the sidecar shape stays a
+    direct projection of the in-memory summary."""
+    fields: dict[str, Any] = dict(base)
+    fields.update(
+        {
+            "duration_sec": summary.get("duration_sec"),
+            "ready_ok": bool(summary.get("ready_ok")),
+            "ready_wait_sec": summary.get("ready_wait_sec"),
+            "ready_timeout_sec": summary.get("ready_timeout_sec"),
+            "samples": summary.get("samples"),
+            "state_counts": dict(summary.get("state_counts") or {}),
+            "degraded_counts": dict(summary.get("degraded_counts") or {}),
+            "receipt_count": summary.get("receipt_count"),
+            "control_change_count": summary.get("control_change_count"),
+            "duplicate_dispatch_count": summary.get("duplicate_dispatch_count"),
+            "control_mismatch_samples": summary.get("control_mismatch_samples"),
+            "control_mismatch_max_streak": summary.get("control_mismatch_max_streak"),
+            "receipt_pending_samples": summary.get("receipt_pending_samples"),
+            "classification_gate_failures": summary.get("classification_gate_failures"),
+            "classification_gate_details": list(summary.get("classification_gate_details") or []),
+            "orphan_session": bool(summary.get("orphan_session")),
+            "broken_seen": bool(summary.get("broken_seen")),
+            "degraded_seen": bool(summary.get("degraded_seen")),
+        }
+    )
+    if summary.get("readiness_snapshot"):
+        fields["readiness_snapshot"] = summary.get("readiness_snapshot")
+    return fields
+
+
 def _default_report_path(project_root: Path, slug: str) -> Path:
     date_prefix = dt.datetime.now().strftime("%Y-%m-%d")
     return project_root / "report" / "pipeline_runtime" / "verification" / f"{date_prefix}-{slug}.md"
@@ -409,6 +477,169 @@ def _analyze_run_artifacts(project_root: Path, session: str) -> dict[str, Any]:
     }
 
 
+_RECEIPT_MANIFEST_PROBE_REASON_PREFIX = "receipt_manifest:job-fault-manifest"
+_ACTIVE_AUTH_PROBE_EXPECTED_REASON = "claude_auth_login_required"
+
+
+def _probe_receipt_manifest_mismatch_degraded_precedence() -> tuple[bool, str, dict[str, Any]]:
+    """Synthetic fault probe: a VERIFY_DONE job with a mismatched artifact_hash against
+    its receipt manifest must surface `runtime_state = DEGRADED` with a
+    `receipt_manifest:<job>` entry even when `_runtime_started` is false. Regression
+    of the just-fixed boundary would silently fall back to STOPPED."""
+    with tempfile.TemporaryDirectory(prefix="projecth-fault-manifest-") as tmp:
+        root = Path(tmp)
+        _write_active_profile(root)
+        pipeline_dir = root / ".pipeline"
+        state_dir = pipeline_dir / "state"
+        manifest_dir = pipeline_dir / "manifests" / "job-fault-manifest"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        manifest_dir.mkdir(parents=True, exist_ok=True)
+        (pipeline_dir / "claude_handoff.md").write_text(
+            "STATUS: implement\nCONTROL_SEQ: 91\n",
+            encoding="utf-8",
+        )
+        (state_dir / "turn_state.json").write_text(
+            json.dumps(
+                {
+                    "state": "CODEX_VERIFY",
+                    "entered_at": 1.0,
+                    "active_control_file": ".pipeline/claude_handoff.md",
+                    "active_control_seq": 91,
+                    "verify_job_id": "job-fault-manifest",
+                }
+            ),
+            encoding="utf-8",
+        )
+        manifest_path = manifest_dir / "round-1.verify.json"
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "job_id": "job-fault-manifest",
+                    "round": 1,
+                    "role": "verify",
+                    "artifact_hash": "expected-hash",
+                    "created_at": "2026-04-18T00:00:00Z",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (state_dir / "job-fault-manifest.json").write_text(
+            json.dumps(
+                {
+                    "job_id": "job-fault-manifest",
+                    "status": "VERIFY_DONE",
+                    "artifact_path": "work/4/18/work-note.md",
+                    "artifact_hash": "mismatched-hash",
+                    "round": 1,
+                    "verify_manifest_path": str(manifest_path),
+                    "verify_result": "failed",
+                    "updated_at": 100.0,
+                    "verify_completed_at": 100.0,
+                }
+            ),
+            encoding="utf-8",
+        )
+        verify_dir = root / "verify" / "4" / "18"
+        verify_dir.mkdir(parents=True, exist_ok=True)
+        (verify_dir / "2026-04-18-verify.md").write_text("# verify\n", encoding="utf-8")
+
+        supervisor = RuntimeSupervisor(root, start_runtime=False)
+        status = supervisor._write_status()
+    runtime_state = str((status or {}).get("runtime_state") or "")
+    reasons = list((status or {}).get("degraded_reasons") or [])
+    matched_reason = next(
+        (reason for reason in reasons if reason.startswith(_RECEIPT_MANIFEST_PROBE_REASON_PREFIX)),
+        "",
+    )
+    ok = runtime_state == "DEGRADED" and bool(matched_reason)
+    data: dict[str, Any] = {
+        "runtime_state": runtime_state,
+        "degraded_reasons": reasons,
+        "expected_reason_prefix": _RECEIPT_MANIFEST_PROBE_REASON_PREFIX,
+        "matched_reason": matched_reason,
+    }
+    detail = (
+        f"runtime_state={runtime_state}, "
+        f"reasons={json.dumps(reasons, ensure_ascii=False)}"
+    )
+    return ok, detail, data
+
+
+def _probe_active_lane_auth_failure_degraded_precedence() -> tuple[bool, str, dict[str, Any]]:
+    """Synthetic fault probe: an active Claude lane with an auth failure in its pane
+    tail must surface `runtime_state = DEGRADED` with `claude_auth_login_required`,
+    not `STARTING`, even when `_runtime_started` is false. Regression of the
+    just-fixed boundary would silently keep STARTING."""
+    from unittest import mock
+
+    with tempfile.TemporaryDirectory(prefix="projecth-fault-auth-") as tmp:
+        root = Path(tmp)
+        _write_active_profile(root)
+        pipeline_dir = root / ".pipeline"
+        state_dir = pipeline_dir / "state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (pipeline_dir / "claude_handoff.md").write_text(
+            "STATUS: implement\nCONTROL_SEQ: 88\n",
+            encoding="utf-8",
+        )
+        (state_dir / "turn_state.json").write_text(
+            json.dumps(
+                {
+                    "state": "CLAUDE_ACTIVE",
+                    "entered_at": 1.0,
+                    "active_control_file": ".pipeline/claude_handoff.md",
+                    "active_control_seq": 88,
+                }
+            ),
+            encoding="utf-8",
+        )
+        supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+        def _lane_health(lane_name: str) -> dict[str, object]:
+            return {
+                "alive": True,
+                "pid": 5000,
+                "attachable": True,
+                "pane_id": f"%{lane_name}",
+            }
+
+        def _capture_tail(lane_name: str, lines: int = 60) -> str:
+            if lane_name == "Claude":
+                return (
+                    "API Error: 401\n"
+                    '{"error":{"type":"authentication_error","message":"Invalid authentication credentials"}}\n'
+                    "Please run /login\n"
+                )
+            return ""
+
+        with (
+            mock.patch.object(supervisor.adapter, "lane_health", side_effect=_lane_health),
+            mock.patch.object(supervisor.adapter, "capture_tail", side_effect=_capture_tail),
+            mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+        ):
+            status = supervisor._write_status()
+    runtime_state = str((status or {}).get("runtime_state") or "")
+    reasons = list((status or {}).get("degraded_reasons") or [])
+    matched_reason = (
+        _ACTIVE_AUTH_PROBE_EXPECTED_REASON
+        if _ACTIVE_AUTH_PROBE_EXPECTED_REASON in reasons
+        else ""
+    )
+    ok = runtime_state == "DEGRADED" and bool(matched_reason)
+    data: dict[str, Any] = {
+        "runtime_state": runtime_state,
+        "degraded_reasons": reasons,
+        "expected_reason": _ACTIVE_AUTH_PROBE_EXPECTED_REASON,
+        "matched_reason": matched_reason,
+    }
+    detail = (
+        f"runtime_state={runtime_state}, "
+        f"reasons={json.dumps(reasons, ensure_ascii=False)}"
+    )
+    return ok, detail, data
+
+
 def run_fault_check(
     project_root: Path,
     *,
@@ -419,9 +650,41 @@ def run_fault_check(
     checks: list[dict[str, Any]] = []
     adapter = TmuxAdapter(project_root, session)
 
+    precedence_ok, precedence_detail, precedence_data = _probe_receipt_manifest_mismatch_degraded_precedence()
+    checks.append(
+        {
+            "name": "receipt manifest mismatch degraded precedence",
+            "ok": precedence_ok,
+            "detail": precedence_detail,
+            "data": precedence_data,
+        }
+    )
+    auth_ok, auth_detail, auth_data = _probe_active_lane_auth_failure_degraded_precedence()
+    checks.append(
+        {
+            "name": "active lane auth failure degraded precedence",
+            "ok": auth_ok,
+            "detail": auth_detail,
+            "data": auth_data,
+        }
+    )
+
     try:
         started, detail = _start_runtime(project_root, mode=mode, session=session, extra_env=extra_env)
-        checks.append({"name": "runtime start", "ok": started, "detail": detail})
+        checks.append(
+            {
+                "name": "runtime start",
+                "ok": started,
+                "detail": detail,
+                # Stable machine-readable shape for the lifecycle action so automation
+                # does not have to scrape the literal ``started`` / ``stopped`` string.
+                "data": {
+                    "action": "start",
+                    "succeeded": bool(started),
+                    "result": detail,
+                },
+            }
+        )
         if not started:
             return False, checks
 
@@ -429,14 +692,32 @@ def run_fault_check(
             project_root,
             timeout_sec=30.0,
         )
+        snapshot = _status_readiness_snapshot(status)
+        snapshot_lanes = list(snapshot.get("lanes") or [])
+        ready_lane_names = [
+            str(lane.get("name") or "")
+            for lane in snapshot_lanes
+            if str(lane.get("state") or "") in {"READY", "WORKING"}
+        ]
+        ready_data = {
+            "wait_sec": round(float(ready_wait_sec), 3),
+            "ready": bool(ready_ok),
+            "runtime_state": str(snapshot.get("runtime_state") or ""),
+            "watcher_alive": bool((snapshot.get("watcher") or {}).get("alive")),
+            "active_control_status": str((snapshot.get("control") or {}).get("active_control_status") or ""),
+            "ready_lane_names": ready_lane_names,
+            "ready_lane_count": len(ready_lane_names),
+            "snapshot": snapshot,
+        }
         checks.append(
             {
                 "name": "status surface ready",
                 "ok": ready_ok,
                 "detail": (
                     f"wait_sec={ready_wait_sec:.1f}, "
-                    + json.dumps(_status_readiness_snapshot(status), ensure_ascii=False, sort_keys=True)
+                    + json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
                 ),
+                "data": ready_data,
             }
         )
         if not ready_ok or not isinstance(status, dict):
@@ -452,23 +733,69 @@ def run_fault_check(
             ),
             timeout_sec=20.0,
         )
+        degraded_reasons_list = list((degraded or {}).get("degraded_reasons") or [])
+        representative_reason = str((degraded or {}).get("degraded_reason") or "")
+        secondary_recovery_failures = [
+            reason for reason in degraded_reasons_list if reason.endswith("_recovery_failed")
+        ]
+        # Representative degraded_reason must stay on the session-missing root cause
+        # even when per-lane ``*_recovery_failed`` entries coexist as secondary
+        # evidence. Secondary entries are preserved inside degraded_reasons as-is;
+        # their presence is evidence-only and is not required to fail the gate.
+        session_loss_ok = (
+            isinstance(degraded, dict)
+            and representative_reason == "session_missing"
+        )
+        session_loss_data = {
+            "runtime_state": str((degraded or {}).get("runtime_state") or ""),
+            "representative_reason": representative_reason,
+            "degraded_reasons": degraded_reasons_list,
+            "secondary_recovery_failures": secondary_recovery_failures,
+        }
         checks.append(
             {
                 "name": "session loss degraded",
-                "ok": isinstance(degraded, dict),
+                "ok": session_loss_ok,
+                # Derive the human-readable detail from the structured ``data`` payload
+                # so automation (CI, launcher tooling) can read the same evidence
+                # without string scraping.
                 "detail": (
-                    f"runtime_state={str((degraded or {}).get('runtime_state') or '')}, "
-                    f"reason={str((degraded or {}).get('degraded_reason') or '')}, "
-                    f"reasons={json.dumps(list((degraded or {}).get('degraded_reasons') or []), ensure_ascii=False)}"
+                    f"runtime_state={session_loss_data['runtime_state']}, "
+                    f"reason={session_loss_data['representative_reason']}, "
+                    f"reasons={json.dumps(session_loss_data['degraded_reasons'], ensure_ascii=False)}, "
+                    f"secondary_recovery_failures={json.dumps(session_loss_data['secondary_recovery_failures'], ensure_ascii=False)}"
                 ),
+                "data": session_loss_data,
             }
         )
         stop_ok, stop_detail = _stop_runtime(project_root, session=session, extra_env=extra_env)
-        checks.append({"name": "runtime stop after session loss", "ok": stop_ok, "detail": stop_detail})
+        checks.append(
+            {
+                "name": "runtime stop after session loss",
+                "ok": stop_ok,
+                "detail": stop_detail,
+                "data": {
+                    "action": "stop",
+                    "succeeded": bool(stop_ok),
+                    "result": stop_detail,
+                },
+            }
+        )
         time.sleep(1.0)
 
         started, detail = _start_runtime(project_root, mode=mode, session=session, extra_env=extra_env)
-        checks.append({"name": "runtime restart", "ok": started, "detail": detail})
+        checks.append(
+            {
+                "name": "runtime restart",
+                "ok": started,
+                "detail": detail,
+                "data": {
+                    "action": "restart",
+                    "succeeded": bool(started),
+                    "result": detail,
+                },
+            }
+        )
         if not started:
             return False, checks
 
@@ -482,11 +809,21 @@ def run_fault_check(
             timeout_sec=30.0,
         )
         lane_name, lane_pid = _pick_fault_lane(project_root, live_status or {})
+        lane_pid_data = {
+            "lane": str(lane_name or ""),
+            "pid": int(lane_pid or 0),
+            "pid_available": bool(lane_pid),
+        }
         checks.append(
             {
                 "name": "recoverable lane pid observed",
-                "ok": bool(lane_pid),
-                "detail": f"lane={lane_name or '-'}, pid={lane_pid or 0}",
+                "ok": lane_pid_data["pid_available"],
+                # Detail and data carry the same evidence; automation reads ``data``
+                # directly instead of scraping the formatted string.
+                "detail": (
+                    f"lane={lane_pid_data['lane'] or '-'}, pid={lane_pid_data['pid']}"
+                ),
+                "data": lane_pid_data,
             }
         )
         if lane_pid:
@@ -503,19 +840,41 @@ def run_fault_check(
                 ),
                 timeout_sec=30.0,
             )
+            event_payload = dict((recovery_event or {}).get("payload") or {})
+            recovery_data = {
+                "event_observed": isinstance(recovery_event, dict),
+                "event_type": str((recovery_event or {}).get("event_type") or ""),
+                "lane": str(event_payload.get("lane") or ""),
+                "attempt": int(event_payload.get("attempt") or 0),
+                "result": str(event_payload.get("result") or ""),
+                "event": dict(recovery_event or {}),
+            }
             checks.append(
                 {
                     "name": "lane recovery",
-                    "ok": isinstance(recovery_event, dict),
+                    "ok": recovery_data["event_observed"],
+                    # Preserve the raw event JSON for readability; the same fields
+                    # live in ``data`` for automation.
                     "detail": json.dumps(recovery_event or {}, ensure_ascii=False),
+                    "data": recovery_data,
                 }
             )
         else:
+            recovery_data = {
+                "event_observed": False,
+                "event_type": "",
+                "lane": "",
+                "attempt": 0,
+                "result": "",
+                "event": {},
+                "reason": "lane_pid_unavailable_before_fault_injection",
+            }
             checks.append(
                 {
                     "name": "lane recovery",
                     "ok": False,
                     "detail": "lane pid unavailable before fault injection",
+                    "data": recovery_data,
                 }
             )
     finally:
@@ -792,22 +1151,31 @@ def main(argv: list[str] | None = None) -> int:
             keep_workspace=bool(args.keep_workspace),
             ok=ok,
         )
-        summary = [
-            f"source_project={project_root}",
-            f"project={synthetic_root}",
-            f"session={synthetic_session}",
-            f"mode={args.mode}",
-            f"workspace_retained={workspace_retained}",
-            f"workspace_cleanup={cleanup_mode}",
-        ]
+        summary_fields: dict[str, Any] = {
+            "source_project": str(project_root),
+            "project": str(synthetic_root),
+            "session": str(synthetic_session),
+            "mode": str(args.mode),
+            "workspace_retained": bool(workspace_retained),
+            "workspace_cleanup": str(cleanup_mode),
+        }
+        summary = [f"{key}={value}" for key, value in summary_fields.items()]
+        report_title = "Pipeline Runtime fault check"
         report_text = _markdown_report(
-            title="Pipeline Runtime fault check",
+            title=report_title,
             summary=summary,
             checks=checks,
         )
         report_path = Path(args.report).resolve() if args.report else _default_report_path(project_root, "pipeline-runtime-live-fault-check")
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(report_text, encoding="utf-8")
+        _write_report_json_sidecar(
+            _report_json_sidecar_path(report_path),
+            title=report_title,
+            ok=bool(ok),
+            summary_fields=summary_fields,
+            checks=checks,
+        )
         sys.stdout.write(report_text)
         return 0 if ok else 1
 
@@ -914,14 +1282,32 @@ def main(argv: list[str] | None = None) -> int:
                 "detail": f"orphan_session={bool(summary.get('orphan_session'))}",
             },
         ]
+        synthetic_report_title = "Pipeline Runtime synthetic soak sample"
         report_text = _markdown_report(
-            title="Pipeline Runtime synthetic soak sample",
+            title=synthetic_report_title,
             summary=lines,
             checks=checks,
         )
         report_path = Path(args.report).resolve() if args.report else _default_report_path(project_root, "pipeline-runtime-synthetic-soak")
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(report_text, encoding="utf-8")
+        synthetic_summary_fields = _soak_summary_fields(
+            summary,
+            base={
+                "project": str(synthetic_root),
+                "session": str(synthetic_session),
+                "mode": str(args.mode),
+                "workspace_retained": bool(workspace_retained),
+                "workspace_cleanup": str(cleanup_mode),
+            },
+        )
+        _write_report_json_sidecar(
+            _report_json_sidecar_path(report_path),
+            title=synthetic_report_title,
+            ok=bool(ok),
+            summary_fields=synthetic_summary_fields,
+            checks=checks,
+        )
         sys.stdout.write(report_text)
         return 0 if ok else 1
 
@@ -1037,14 +1423,30 @@ def main(argv: list[str] | None = None) -> int:
             "detail": f"orphan_session={bool(summary.get('orphan_session'))}",
         },
     ]
+    soak_report_title = "Pipeline Runtime soak sample"
     report_text = _markdown_report(
-        title="Pipeline Runtime soak sample",
+        title=soak_report_title,
         summary=lines,
         checks=checks,
     )
     report_path = Path(args.report).resolve() if args.report else _default_report_path(project_root, "pipeline-runtime-soak-sample")
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(report_text, encoding="utf-8")
+    soak_summary_fields = _soak_summary_fields(
+        summary,
+        base={
+            "project": str(project_root),
+            "session": str(session),
+            "mode": str(args.mode),
+        },
+    )
+    _write_report_json_sidecar(
+        _report_json_sidecar_path(report_path),
+        title=soak_report_title,
+        ok=bool(ok),
+        summary_fields=soak_summary_fields,
+        checks=checks,
+    )
     sys.stdout.write(report_text)
     return 0 if ok else 1
 

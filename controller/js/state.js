@@ -8,7 +8,7 @@ class _PipelineState {
     this.data = null;
     this.eventLog = [];
     this._listeners = [];
-    this._prev = { runtimeState: null, controlStatus: null, watcherStatus: null, uncertainRuntime: null, laneStates: {} };
+    this._prev = { runtimeState: null, controlStatus: null, watcherStatus: null, uncertainRuntime: null, laneStates: {}, roundState: null };
     this._pollInFlight = false;
     this._deliveryState = {
       initialized: false, controlSeq: null,
@@ -84,6 +84,16 @@ class _PipelineState {
       this.pushEvent(t, `Watcher: ${this._prev.watcherStatus} \u2192 ${ws}`);
     }
     this._prev.watcherStatus = ws;
+    // Round state change detection
+    const roundState = ((data.active_round || {}).state || 'IDLE').toUpperCase();
+    if (this._prev.roundState !== null && this._prev.roundState !== roundState) {
+      if (roundState === 'CLOSED' || roundState === 'DONE') {
+        this.pushEvent('ok', `Round closed \u{1F389}`);
+        this._notify('roundComplete', { from: this._prev.roundState, to: roundState });
+      }
+    }
+    this._prev.roundState = roundState;
+
     for (const lane of (data.lanes || [])) {
       const n = lane.name || '', s = (lane.state || 'off').toLowerCase(), prev = this._prev.laneStates[n];
       if (prev !== undefined && prev !== s) {

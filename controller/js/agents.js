@@ -1,44 +1,13 @@
 // controller/js/agents.js — Agent entities with zone-bounded movement
 import { ZONE_MAP, CORRIDOR_Y, STATE_COLORS, LANE_ROLES, WALK_SPEED,
-         STATE_GIF_ASSETS, STATE_PARTICLES, VIRTUAL_W } from './config.js';
+         STATE_PARTICLES, VIRTUAL_W } from './config.js';
 import { PipelineState } from './state.js';
 
 // ── Sprite Manager ──
 export const SpriteManager = {
-  manifest: null, stateGifs: {}, frames: {}, sequences: {}, loaded: false,
-
-  async init() {
-    for (const [state, src] of Object.entries(STATE_GIF_ASSETS)) {
-      const img = new Image(); img.src = src; this.stateGifs[state] = img;
-    }
-    this.stateGifs.off = this.stateGifs.dead || null;
-    this.stateGifs.idle = this.stateGifs.ready || null;
-    this.stateGifs.unknown = this.stateGifs.ready || null;
-    try {
-      const res = await fetch('/controller-assets/generated/office-sprite-manifest.json');
-      this.manifest = await res.json();
-      for (const [state, config] of Object.entries(this.manifest.states || {})) {
-        this.frames[state] = (config.frames || []).map(f => { const img = new Image(); img.src = f.src; return img; });
-        this.sequences[state] = { sequence: config.sequence || [0], intervalMs: config.interval_ms || 180 };
-      }
-      this.frames.off = this.frames.dead || []; this.frames.idle = this.frames.ready || []; this.frames.unknown = this.frames.ready || [];
-      this.sequences.off = this.sequences.dead || this.sequences.ready;
-      this.sequences.idle = this.sequences.ready; this.sequences.unknown = this.sequences.ready;
-      this.loaded = true;
-    } catch (e) { this.loaded = false; }
-  },
-
-  getAgentFrame(state, timeSeconds) {
-    const gif = this.stateGifs[state] || this.stateGifs.ready || null;
-    if (gif && gif.complete && gif.naturalWidth > 0) return gif;
-    const frames = this.frames[state] || this.frames.ready || [];
-    const seq = this.sequences[state] || this.sequences.ready;
-    if (!frames.length || !seq) return null;
-    const idx = Math.floor((timeSeconds * 1000 / seq.intervalMs) % seq.sequence.length);
-    const frameIdx = seq.sequence[idx] || 0;
-    const img = frames[frameIdx];
-    return (img && img.complete && img.naturalWidth > 0) ? img : null;
-  }
+  loaded: true,
+  async init() { return this; },
+  getAgentFrame() { return null; },
 };
 
 // ── Zone helpers ──
@@ -63,6 +32,14 @@ function clampToZone(px, py, zoneKey) {
 
 // ── Particles (shared) ──
 export const particles = [];
+let _agentLowMotion = false;
+export const FLOATING_CODE_SNIPPETS = [
+  'git commit -m "..."',
+  'npm run build',
+  'def main():',
+  'Analyzing...',
+  'Resolving dependencies...',
+];
 
 export class Particle {
   constructor(vx, vy, text, opts = {}) {
@@ -88,6 +65,44 @@ export class Particle {
   }
 }
 
+class FloatingCodeParticle {
+  constructor(vx, vy, text) {
+    this.vx = vx + (Math.random() - 0.5) * 8;
+    this.vy = vy;
+    this.text = text;
+    this.lifetime = 1.8;
+    this.maxLife = this.lifetime;
+    this.baseSize = 11 + Math.random() * 2;
+    this.riseSpeed = 30 + Math.random() * 8;
+    this.driftSpeed = (Math.random() - 0.5) * 10;
+    this.alive = true;
+  }
+
+  update(dt) {
+    this.vy -= this.riseSpeed * dt;
+    this.vx += (this.driftSpeed + Math.sin((this.maxLife - this.lifetime) * 4) * 4) * dt;
+    this.lifetime -= dt;
+    if (this.lifetime <= 0) this.alive = false;
+  }
+
+  draw(ctx, scale) {
+    const alpha = Math.max(0, this.lifetime / this.maxLife);
+    const shrink = 0.72 + alpha * 0.28;
+    const sx = this.vx * scale;
+    const sy = this.vy * scale;
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.85;
+    ctx.font = `${this.baseSize * shrink * scale}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowBlur = 10 * scale;
+    ctx.shadowColor = 'rgba(52,211,153,0.45)';
+    ctx.fillStyle = '#34d399';
+    ctx.fillText(this.text, sx, sy);
+    ctx.restore();
+  }
+}
+
 function truncate(s, n) { return s.length > n ? s.slice(0, n) + '\u2026' : s; }
 
 // ── Agent Map (shared) ──
@@ -97,6 +112,26 @@ export function spawnParticle(agentName, text, opts) {
   const agent = agents.get(agentName);
   if (!agent) return;
   particles.push(new Particle(agent.x, agent.y, text, opts));
+}
+
+export function setAgentLowMotion(v) {
+  _agentLowMotion = Boolean(v);
+  if (_agentLowMotion) particles.length = 0;
+}
+
+function pickFloatingCodeSnippet(agent) {
+  if (typeof agent.codeSnippetProvider === 'function') {
+    const provided = agent.codeSnippetProvider(agent);
+    if (typeof provided === 'string' && provided.trim()) return provided.trim();
+  }
+  return FLOATING_CODE_SNIPPETS[Math.floor(Math.random() * FLOATING_CODE_SNIPPETS.length)];
+}
+
+function spawnFloatingCodeParticle(agent) {
+  const zone = agent._homeZone ? ZONE_MAP[agent._homeZone] : null;
+  const anchorX = zone ? zone.x + zone.w * 0.56 : agent.x;
+  const anchorY = zone ? zone.y + zone.h * 0.54 : agent.y;
+  particles.push(new FloatingCodeParticle(anchorX, anchorY, pickFloatingCodeSnippet(agent)));
 }
 
 export function spawnStateParticle(agentName, newState) {
@@ -119,13 +154,15 @@ export class Agent {
     this.bubble = { text: '', timer: 0 };
     this._idleCooldown = 0; this._glanceCooldown = 0; this._staleTimer = 0;
     this.fatigue = 0; this._fatigueSweatTimer = 0; this._coffeeTimer = 0; this._atCoffee = false;
+    // Workload (paper stack visualization)
+    this.workLoad = 0;
+    this.workingTimer = 0;
+    this._floatingCodeTimer = 0.35 + Math.random() * 0.2;
+    this.codeSnippetProvider = null;
+    // Party state
+    this._partying = false; this._partyTimer = 0; this._partyFireworkTimer = 0;
     // Delivery walk state
     this._delivering = false; this._deliveryIcon = '';
-    // GIF overlay
-    this._gifEl = document.createElement('img');
-    this._gifEl.style.cssText = 'position:absolute;pointer-events:none;image-rendering:pixelated;z-index:10;display:none;';
-    this._gifState = '';
-    document.querySelector('.canvas-wrap')?.appendChild(this._gifEl);
   }
 
   get color() { return STATE_COLORS[this.state] || STATE_COLORS.off; }
@@ -133,6 +170,10 @@ export class Agent {
     if (this._atCoffee) return 'coffee';
     if (this.state === 'working' && this.fatigue >= 15) return 'fatigued';
     return '';
+  }
+
+  isBottleneck() {
+    return this.state === 'working' && this.workingTimer > 30;
   }
 
   speak(text, duration = 3.5) { if (text) this.bubble = { text: truncate(text, 25), timer: duration }; }
@@ -206,6 +247,35 @@ export class Agent {
   }
 
   update(dt) {
+    // Party mode
+    if (this._partying) {
+      this._partyTimer -= dt;
+      this._partyFireworkTimer -= dt;
+      if (this._partyFireworkTimer <= 0) {
+        this._partyFireworkTimer = 0.6 + Math.random() * 0.4;
+        const emojis = ['\u{1F389}', '\u{1F38A}', '\u2728', '\u{1F386}', '\u{1F973}'];
+        if (!_agentLowMotion) {
+          spawnParticle(this.name, emojis[Math.floor(Math.random() * emojis.length)], { size: 14 + Math.random() * 6, lifetime: 1.2 });
+        }
+      }
+      if (this._partyTimer <= 0) { this._partying = false; }
+    }
+
+    // Workload accumulation
+    if (this.state === 'working') {
+      this.workLoad += dt;
+      this.workingTimer += dt;
+      this._floatingCodeTimer -= dt;
+      if (!_agentLowMotion && this._floatingCodeTimer <= 0) {
+        this._floatingCodeTimer = 0.5;
+        spawnFloatingCodeParticle(this);
+      }
+    } else {
+      this.workLoad = 0;
+      this.workingTimer = 0;
+      this._floatingCodeTimer = 0.35 + Math.random() * 0.25;
+    }
+
     // Fatigue
     const fatigued = this.fatigue >= 15;
     if (this.state === 'working') { this.fatigue += dt; this._atCoffee = false; }
@@ -260,61 +330,181 @@ export class Agent {
 
   draw(ctx, scale) {
     const sx = this.x * scale, sy = this.y * scale;
-    const bob = Math.sin(this.bobPhase) * (this.state === 'working' ? 1.5 : 2.5) * scale;
+    const partyBounce = this._partying ? -Math.abs(Math.sin(this.bobPhase * 3)) * 12 * scale : 0;
+    const bob = Math.sin(this.bobPhase) * (this.state === 'working' ? 1.5 : 2.5) * scale + partyBounce;
     const walk = this._atTarget ? 0 : Math.sin(this.movePhase) * 2 * scale;
-    const gifSrc = STATE_GIF_ASSETS[this.state] || STATE_GIF_ASSETS.ready || '';
-    const hasGif = Boolean(gifSrc);
-    let headY = sy;
-
-    if (hasGif) {
-      if (this._gifState !== this.state) { this._gifEl.src = gifSrc; this._gifState = this.state; }
-      this._gifEl.style.display = 'block';
-      const spriteH = 90 * scale;
-      const spriteW = spriteH * (this._gifEl.naturalWidth && this._gifEl.naturalHeight ? this._gifEl.naturalWidth / this._gifEl.naturalHeight : 1);
-      headY = sy - spriteH + 12 * scale + bob + walk;
-      this._gifEl.style.width = spriteW + 'px'; this._gifEl.style.height = spriteH + 'px';
-      this._gifEl.style.left = (sx - spriteW / 2) + 'px'; this._gifEl.style.top = headY + 'px';
-      this._gifEl.style.transform = this.facingRight ? 'scaleX(1)' : 'scaleX(-1)';
-      this._gifEl.style.filter = (this.state === 'broken' || this.state === 'dead' || this.state === 'off') ? 'grayscale(0.9) brightness(0.7)' : '';
-      // Shadow
-      ctx.fillStyle = 'rgba(0,0,0,0.28)'; ctx.beginPath(); ctx.ellipse(sx, sy + 6 * scale, spriteW * 0.35, 5 * scale, 0, 0, Math.PI * 2); ctx.fill();
+    const r = 13 * scale;
+    const bodyY = sy + bob + walk;
+    const headY = bodyY - r;
+    ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(sx, sy + r + 3 * scale, r * 0.7, r * 0.22, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = this.color; ctx.beginPath(); ctx.arc(sx, bodyY, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.beginPath(); ctx.arc(sx - r * 0.25, bodyY - r * 0.3, r * 0.55, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1.2 * scale;
+    ctx.beginPath(); ctx.arc(sx, bodyY, r, 0, Math.PI * 2); ctx.stroke();
+    if (!this.isBlinking) {
+      const eyeY = bodyY - 2 * scale, eyeOx = 4.5 * scale, eyeR = 2.2 * scale, pupR = 1.2 * scale;
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(sx - eyeOx, eyeY, eyeR, 0, Math.PI * 2); ctx.arc(sx + eyeOx, eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
+      const lookX = (this.facingRight ? 1 : -1) * 0.8 * scale;
+      ctx.fillStyle = '#1a1a2e'; ctx.beginPath(); ctx.arc(sx - eyeOx + lookX, eyeY, pupR, 0, Math.PI * 2); ctx.arc(sx + eyeOx + lookX, eyeY, pupR, 0, Math.PI * 2); ctx.fill();
     } else {
-      this._gifEl.style.display = 'none';
-      const r = 13 * scale, bodyY = sy + bob + walk; headY = bodyY - r;
-      ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(sx, sy + r + 3 * scale, r * 0.7, r * 0.22, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = this.color; ctx.beginPath(); ctx.arc(sx, bodyY, r, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.beginPath(); ctx.arc(sx - r * 0.25, bodyY - r * 0.3, r * 0.55, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1.2 * scale;
-      ctx.beginPath(); ctx.arc(sx, bodyY, r, 0, Math.PI * 2); ctx.stroke();
-      if (!this.isBlinking) {
-        const eyeY = bodyY - 2 * scale, eyeOx = 4.5 * scale, eyeR = 2.2 * scale, pupR = 1.2 * scale;
-        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(sx - eyeOx, eyeY, eyeR, 0, Math.PI * 2); ctx.arc(sx + eyeOx, eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
-        const lookX = (this.facingRight ? 1 : -1) * 0.8 * scale;
-        ctx.fillStyle = '#1a1a2e'; ctx.beginPath(); ctx.arc(sx - eyeOx + lookX, eyeY, pupR, 0, Math.PI * 2); ctx.arc(sx + eyeOx + lookX, eyeY, pupR, 0, Math.PI * 2); ctx.fill();
-      } else {
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.4 * scale; const eyeY = bodyY - 2 * scale;
-        ctx.beginPath(); ctx.moveTo(sx - 6 * scale, eyeY); ctx.lineTo(sx - 3 * scale, eyeY);
-        ctx.moveTo(sx + 3 * scale, eyeY); ctx.lineTo(sx + 6 * scale, eyeY); ctx.stroke();
-      }
-      ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1 * scale;
-      if (this.state === 'working') { ctx.beginPath(); ctx.moveTo(sx - 3 * scale, bodyY + 4 * scale); ctx.lineTo(sx + 3 * scale, bodyY + 4 * scale); ctx.stroke(); }
-      else if (this.state === 'broken' || this.state === 'dead') { ctx.beginPath(); ctx.arc(sx, bodyY + 7 * scale, 3 * scale, Math.PI, 0); ctx.stroke(); }
-      else { ctx.beginPath(); ctx.arc(sx, bodyY + 3 * scale, 3 * scale, 0, Math.PI); ctx.stroke(); }
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.4 * scale; const eyeY = bodyY - 2 * scale;
+      ctx.beginPath(); ctx.moveTo(sx - 6 * scale, eyeY); ctx.lineTo(sx - 3 * scale, eyeY);
+      ctx.moveTo(sx + 3 * scale, eyeY); ctx.lineTo(sx + 6 * scale, eyeY); ctx.stroke();
     }
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1 * scale;
+    if (this.state === 'working') { ctx.beginPath(); ctx.moveTo(sx - 3 * scale, bodyY + 4 * scale); ctx.lineTo(sx + 3 * scale, bodyY + 4 * scale); ctx.stroke(); }
+    else if (this.state === 'broken' || this.state === 'dead') { ctx.beginPath(); ctx.arc(sx, bodyY + 7 * scale, 3 * scale, Math.PI, 0); ctx.stroke(); }
+    else { ctx.beginPath(); ctx.arc(sx, bodyY + 3 * scale, 3 * scale, 0, Math.PI); ctx.stroke(); }
 
     // Name label
-    const r = 13 * scale;
     ctx.font = `bold ${9.5 * scale}px 'Noto Sans KR', sans-serif`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillText(this.name, sx + 1, sy - (hasGif ? 72 * scale : r + 5 * scale) + 1);
-    ctx.fillStyle = '#e8ecf4'; ctx.fillText(this.name, sx, sy - (hasGif ? 72 * scale : r + 5 * scale));
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillText(this.name, sx + 1, sy - (r + 5 * scale) + 1);
+    ctx.fillStyle = '#e8ecf4'; ctx.fillText(this.name, sx, sy - (r + 5 * scale));
     // State badge
     const stateText = this.state.toUpperCase();
     ctx.font = `bold ${7 * scale}px sans-serif`;
     const tw = ctx.measureText(stateText).width;
-    const pillW = tw + 8 * scale, pillH = 12 * scale, pillX = sx - pillW / 2, pillY = sy + (hasGif ? 10 : r + 8) * scale;
+    const pillW = tw + 8 * scale, pillH = 12 * scale, pillX = sx - pillW / 2, pillY = sy + (r + 8) * scale;
     ctx.fillStyle = this.color + '33'; ctx.beginPath(); ctx.roundRect(pillX, pillY, pillW, pillH, 3 * scale); ctx.fill();
     ctx.fillStyle = this.color; ctx.textBaseline = 'middle'; ctx.fillText(stateText, sx, pillY + pillH / 2);
+
+    if (this.isBottleneck()) {
+      const crush = Math.abs(Math.sin(performance.now() / 140)) * 4 * scale;
+      const iconY = headY - 14 * scale + crush;
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.font = `${18 * scale}px sans-serif`;
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.fillText('\u23F3', sx + 1 * scale, iconY + 1 * scale);
+      ctx.shadowBlur = 12 * scale;
+      ctx.shadowColor = 'rgba(249,115,22,0.45)';
+      ctx.fillStyle = 'rgba(249,115,22,0.98)';
+      ctx.fillText('\u23F3', sx, iconY);
+      ctx.restore();
+    }
+
+    // Hologram light cone (working state only)
+    if (this.state === 'working') {
+      const t = performance.now() / 1000;
+      const coneBaseW = 22 * scale;   // half-width at feet
+      const coneTopW = 6 * scale;     // half-width at head
+      const feetY = sy + 8 * scale;   // just below agent feet
+      const topY = headY - 10 * scale; // above agent head
+      const coneH = feetY - topY;
+
+      ctx.save();
+
+      // Cone gradient (bottom opaque → top transparent)
+      const grad = ctx.createLinearGradient(sx, feetY, sx, topY);
+      grad.addColorStop(0, this.color.replace(')', ',0.12)').replace('rgb', 'rgba'));
+      grad.addColorStop(0.5, this.color.replace(')', ',0.06)').replace('rgb', 'rgba'));
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      // Use hex-to-rgba fallback for hex colors
+      const cAlpha = (a) => {
+        if (this.color.startsWith('#')) {
+          const r = parseInt(this.color.slice(1,3),16), g = parseInt(this.color.slice(3,5),16), b = parseInt(this.color.slice(5,7),16);
+          return `rgba(${r},${g},${b},${a})`;
+        }
+        return `rgba(200,220,255,${a})`;
+      };
+      const cGrad = ctx.createLinearGradient(sx, feetY, sx, topY);
+      cGrad.addColorStop(0, cAlpha(0.10));
+      cGrad.addColorStop(0.4, cAlpha(0.05));
+      cGrad.addColorStop(1, 'rgba(255,255,255,0)');
+
+      // Draw cone shape (trapezoid)
+      ctx.fillStyle = cGrad;
+      ctx.beginPath();
+      ctx.moveTo(sx - coneBaseW, feetY);
+      ctx.lineTo(sx + coneBaseW, feetY);
+      ctx.lineTo(sx + coneTopW, topY);
+      ctx.lineTo(sx - coneTopW, topY);
+      ctx.closePath();
+      ctx.fill();
+
+      // Edge lines (subtle)
+      ctx.strokeStyle = cAlpha(0.08);
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(sx - coneBaseW, feetY); ctx.lineTo(sx - coneTopW, topY);
+      ctx.moveTo(sx + coneBaseW, feetY); ctx.lineTo(sx + coneTopW, topY);
+      ctx.stroke();
+
+      // Scrolling hex/binary data inside the cone
+      ctx.clip(); // clip to cone shape
+      const hexChars = '0123456789ABCDEF';
+      const dataFontSz = 4.5 * scale;
+      ctx.font = `${dataFontSz}px monospace`;
+      ctx.textAlign = 'center';
+      const colCount = 5;
+      const colSpacing = (coneBaseW * 2) / (colCount + 1);
+      for (let c = 0; c < colCount; c++) {
+        const seed = c * 11.7 + 3.1;
+        const speed = 2.0 + (seed % 2.5);
+        const colX = sx - coneBaseW + colSpacing * (c + 1);
+        // Narrow toward top: interpolate x toward center
+        const rowCount = 8;
+        for (let r = 0; r < rowCount; r++) {
+          const frac = r / rowCount; // 0=bottom, 1=top
+          const rowY = feetY - frac * coneH;
+          const scrollOffset = (t * speed * 30 + seed * 20) % (coneH + 40 * scale);
+          const finalY = feetY - ((frac * coneH + scrollOffset) % (coneH + 20 * scale));
+          if (finalY < topY || finalY > feetY) continue;
+          // Lerp x toward center as we go up
+          const progress = (feetY - finalY) / coneH;
+          const lerpX = sx + (colX - sx) * (1 - progress * 0.7);
+          const alpha = (1 - progress) * 0.25;
+          ctx.fillStyle = cAlpha(alpha);
+          // Alternate binary and hex
+          const charIdx = Math.floor(seed * 7 + r * 3 + t * 4) % hexChars.length;
+          const txt = r % 2 === 0 ? hexChars[charIdx] : ((Math.floor(t * 5 + r + seed) % 2) ? '1' : '0');
+          ctx.fillText(txt, lerpX, finalY);
+        }
+      }
+
+      ctx.restore();
+    }
+
+    // Paper stack (workLoad visualization) — drawn on desk surface in home zone
+    if (this.workLoad > 0 && this._homeZone) {
+      const z = ZONE_MAP[this._homeZone];
+      // Desk position: slightly offset from zone center
+      const deskX = (z.x + z.w * 0.72) * scale;
+      const deskBaseY = (z.y + z.h * 0.55) * scale;
+      const paperCount = Math.min(Math.floor(this.workLoad / 3), 12); // 1 paper per 3s, max 12
+      const paperW = 14 * scale, paperH = 3 * scale, gap = 2.5 * scale;
+      const stackHeight = paperCount * (paperH + gap);
+      // Wobble when stack is tall (>6 papers)
+      const wobble = paperCount > 6
+        ? Math.sin(this.bobPhase * 1.5) * (paperCount - 6) * 0.4 * scale
+        : 0;
+      ctx.save();
+      for (let i = 0; i < paperCount; i++) {
+        const py = deskBaseY - i * (paperH + gap);
+        // Each paper gets slightly more wobble toward the top
+        const paperWobble = wobble * (i / paperCount);
+        const px = deskX + paperWobble;
+        // Slight random rotation for realism
+        const angle = (i % 3 - 1) * 0.06 + (paperCount > 8 ? Math.sin(this.bobPhase * 2 + i) * 0.04 : 0);
+        ctx.save();
+        ctx.translate(px + paperW / 2, py + paperH / 2);
+        ctx.rotate(angle);
+        // Paper shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.2)';
+        ctx.fillRect(-paperW / 2 + 1, -paperH / 2 + 1, paperW, paperH);
+        // Paper body
+        const brightness = 0.85 + (i / paperCount) * 0.15;
+        ctx.fillStyle = `rgba(${Math.floor(230 * brightness)},${Math.floor(235 * brightness)},${Math.floor(240 * brightness)},0.92)`;
+        ctx.fillRect(-paperW / 2, -paperH / 2, paperW, paperH);
+        // Tiny text lines on paper
+        ctx.fillStyle = 'rgba(80,100,120,0.3)';
+        ctx.fillRect(-paperW / 2 + 2 * scale, -paperH / 2 + 0.8 * scale, paperW * 0.6, 0.6 * scale);
+        ctx.restore();
+      }
+      ctx.restore();
+    }
 
     // Delivery icon (transit speech bubble)
     if (this._delivering && this._deliveryIcon) {
@@ -339,9 +529,16 @@ export class Agent {
     }
   }
 
+  startParty(duration = 5) {
+    this._partying = true;
+    this._partyTimer = duration;
+    this._partyFireworkTimer = 0; // fire immediately
+    this.speak('\u{1F389} \uD30C\uD2F0!', 2.5);
+  }
+
   hitTest(vx, vy) { const dx = vx - this.x, dy = vy - this.y; return Math.sqrt(dx * dx + dy * dy) < 20; }
 
-  cleanup() { this._gifEl?.remove(); }
+  cleanup() {}
 }
 
 // ── Test hooks (preserve E2E compatibility) ──

@@ -9,6 +9,7 @@ from unittest.mock import patch
 from app.web import WebAppService
 from config.settings import AppSettings
 from core.agent_loop import AgentLoop, UserRequest
+from core.contracts import AnswerMode
 from model_adapter.mock import MockModelAdapter
 from storage.session_store import SessionStore
 from storage.task_log import TaskLogger
@@ -1943,6 +1944,205 @@ class SmokeTest(unittest.TestCase):
                 ],
             )
 
+    def test_entity_reinvestigation_top3_ranks_by_slot_value_and_source_fragility_over_stored_order(self) -> None:
+        """Targeted entity-card reinvestigation prompts must not be chosen by
+        raw stored claim_coverage order. On a mixed unresolved-slot fixture:
+        among MISSING slots, a blank slot (no stored candidates yet) must
+        outrank a noisy MISSING slot that shares the same status; among WEAK
+        slots, a single-source entry whose source_role sits outside the
+        trusted set must beat a WEAK entry backed by a trusted source even
+        when the trusted-source entry appeared first in the stored order.
+        STRONG slots never consume a reinvestigation slot."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": _FakeWebSearchTool([]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+                web_search_store=WebSearchStore(base_dir=str(tmp_path / "web-search")),
+            )
+
+            claim_coverage = [
+                # MISSING with noise (multiple unconfirmed candidates) —
+                # raw stored order would put this first.
+                {
+                    "slot": "장르/성격",
+                    "status": "missing",
+                    "candidate_count": 2,
+                    "source_role": "",
+                    "rendered_as": "not_rendered",
+                },
+                # MISSING blank slot — prefer this over noisy MISSING.
+                {
+                    "slot": "서비스/배급",
+                    "status": "missing",
+                    "candidate_count": 0,
+                    "source_role": "",
+                    "rendered_as": "not_rendered",
+                },
+                # WEAK backed by a trusted wiki source — raw stored order
+                # would take this ahead of the untrusted WEAK below.
+                {
+                    "slot": "이용 형태",
+                    "status": "weak",
+                    "candidate_count": 3,
+                    "source_role": "백과 기반",
+                    "rendered_as": "uncertain",
+                },
+                # WEAK with an untrusted single-source blog — the most
+                # fragile slot, prefer this over trusted-source WEAK.
+                {
+                    "slot": "개발",
+                    "status": "weak",
+                    "candidate_count": 1,
+                    "source_role": "보조 블로그",
+                    "rendered_as": "uncertain",
+                },
+                # STRONG never consumes a reinvestigation slot.
+                {
+                    "slot": "상태",
+                    "status": "strong",
+                    "candidate_count": 2,
+                    "source_role": "공식 기반",
+                    "rendered_as": "fact_card",
+                },
+            ]
+
+            suggestions = loop._build_entity_reinvestigation_suggestions(
+                query="붉은사막",
+                claim_coverage=claim_coverage,
+            )
+            self.assertEqual(
+                suggestions,
+                [
+                    "붉은사막 서비스 공식 검색해봐",
+                    "붉은사막 장르 검색해봐",
+                    "붉은사막 개발사 검색해봐",
+                ],
+            )
+            # STRONG slot prompt must never leak into targeted suggestions.
+            self.assertNotIn("붉은사막 출시 상태 검색해봐", suggestions)
+            # The trusted-source WEAK slot must be pushed out of the top-3
+            # by the more fragile untrusted-source WEAK slot.
+            self.assertNotIn("붉은사막 공식 플랫폼 검색해봐", suggestions)
+
+            # The entity-card follow-up helper must lock the same top-3
+            # ordering and then append the existing generic fallback
+            # prompts exactly once each, preserving deduplication.
+            follow_ups = loop._follow_up_suggestions_for_web_search(
+                "붉은사막",
+                answer_mode=AnswerMode.ENTITY_CARD,
+                claim_coverage=claim_coverage,
+            )
+            self.assertEqual(follow_ups[:3], suggestions)
+            self.assertEqual(
+                follow_ups[3:],
+                [
+                    "붉은사막 검색 결과 핵심 3줄만 다시 정리해 주세요.",
+                    "붉은사막 검색 결과에서 가장 믿을 만한 출처만 추려 주세요.",
+                    "붉은사막 검색 결과를 메모 형식으로 다시 써 주세요.",
+                ],
+            )
+
+    def test_summarize_slot_coverage_untrusted_only_agreement_stays_weak(self) -> None:
+        """Raw multi-source support alone must not mark a slot `strong` when
+        none of the supporters are trusted roles. `strong` coverage requires
+        trusted agreement (at least two distinct trusted-role supporters)."""
+        from core.contracts import CoverageStatus, SourceRole
+        from core.web_claims import (
+            CORE_ENTITY_SLOTS,
+            ClaimRecord,
+            summarize_slot_coverage,
+        )
+
+        untrusted_only = ClaimRecord(
+            slot="개발",
+            value="펄어비스",
+            source_url="https://blog.example.com/a",
+            source_title="블로그 A",
+            source_role=SourceRole.BLOG,
+            support_count=3,
+            supporting_sources=(
+                ("https://blog.example.com/a", "블로그 A", SourceRole.BLOG),
+                ("https://blog.example.com/b", "블로그 B", SourceRole.BLOG),
+                ("https://community.example.com/c", "커뮤니티 C", SourceRole.COMMUNITY),
+            ),
+        )
+
+        coverage = summarize_slot_coverage([untrusted_only], slots=CORE_ENTITY_SLOTS)
+        self.assertEqual(coverage["개발"].status, CoverageStatus.WEAK)
+        self.assertIsNotNone(coverage["개발"].primary_claim)
+        self.assertEqual(coverage["개발"].primary_claim.value, "펄어비스")
+
+    def test_summarize_slot_coverage_conflicting_trusted_alternative_downgrades_to_weak(self) -> None:
+        """When the chosen primary has trusted agreement but a competing
+        non-overlapping value in the same slot also carries trusted backing,
+        the slot must stay non-strong because the truth is still contested."""
+        from core.contracts import CoverageStatus, SourceRole
+        from core.web_claims import (
+            CORE_ENTITY_SLOTS,
+            ClaimRecord,
+            summarize_slot_coverage,
+        )
+
+        primary_with_agreement = ClaimRecord(
+            slot="장르/성격",
+            value="오픈월드 액션 어드벤처 게임",
+            source_url="https://namu.wiki/w/x",
+            source_title="나무위키",
+            source_role=SourceRole.WIKI,
+            support_count=2,
+            supporting_sources=(
+                ("https://namu.wiki/w/x", "나무위키", SourceRole.WIKI),
+                ("https://ko.wikipedia.org/wiki/x", "위키백과", SourceRole.WIKI),
+            ),
+        )
+        trusted_conflict = ClaimRecord(
+            slot="장르/성격",
+            value="생존 제작 RPG",
+            source_url="https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=999",
+            source_title="공식 안내",
+            source_role=SourceRole.OFFICIAL,
+            support_count=2,
+            supporting_sources=(
+                (
+                    "https://www.pearlabyss.com/ko-KR/Board/Detail?_boardNo=999",
+                    "공식 안내",
+                    SourceRole.OFFICIAL,
+                ),
+                (
+                    "https://data.example.com/redsand",
+                    "게임 데이터베이스",
+                    SourceRole.DATABASE,
+                ),
+            ),
+        )
+
+        coverage = summarize_slot_coverage(
+            [primary_with_agreement, trusted_conflict], slots=CORE_ENTITY_SLOTS
+        )
+        self.assertEqual(coverage["장르/성격"].status, CoverageStatus.WEAK)
+        # Primary selection stays coherent with existing `_claim_sort_key` order
+        # — the cross-verified value still wins primary even while status drops.
+        self.assertEqual(
+            coverage["장르/성격"].primary_claim.value,
+            "오픈월드 액션 어드벤처 게임",
+        )
+        self.assertEqual(coverage["장르/성격"].candidate_count, 2)
+
+        # Sanity check: without the competing trusted alternative, the same
+        # primary is `strong` — confirming the conflict is what downgraded it.
+        coverage_no_conflict = summarize_slot_coverage(
+            [primary_with_agreement], slots=CORE_ENTITY_SLOTS
+        )
+        self.assertEqual(coverage_no_conflict["장르/성격"].status, CoverageStatus.STRONG)
+
     def test_load_web_search_record_legacy_claim_coverage_slots_reload_surface_and_follow_up_progress_canonicalized(self) -> None:
         """Stored entity records that carry legacy `claim_coverage` slot labels
         (`개발사`, `장르`, `플랫폼`, `출시일`) must surface canonical core-slot
@@ -2062,6 +2262,111 @@ class SmokeTest(unittest.TestCase):
             # No false improvement wording.
             self.assertNotIn("보강", summary)
             self.assertNotIn("미확인에서", summary)
+
+    def test_build_claim_coverage_progress_summary_focus_slot_strong_to_weak_drops_generic_weaken_wording(self) -> None:
+        """When a focus slot no longer qualifies for trusted agreement
+        after re-check (STRONG → WEAK), the Korean summary must stop
+        relying on the stale generic ``약해졌습니다`` wording and
+        instead explain that the 교차 확인 기준 is no longer met, while
+        staying conservative about causality (the data does not prove a
+        specific competing-source theory)."""
+        loop = AgentLoop.__new__(AgentLoop)
+        previous_claim_coverage = [
+            {"slot": "이용 형태", "status": "strong"},
+            {"slot": "개발", "status": "weak"},
+            {"slot": "장르/성격", "status": "weak"},
+            {"slot": "상태", "status": "missing"},
+        ]
+        current_claim_coverage = [
+            {"slot": "이용 형태", "status": "weak"},
+            {"slot": "개발", "status": "weak"},
+            {"slot": "장르/성격", "status": "weak"},
+            {"slot": "상태", "status": "missing"},
+        ]
+        summary = loop._build_claim_coverage_progress_summary(
+            previous_claim_coverage=previous_claim_coverage,
+            current_claim_coverage=current_claim_coverage,
+            query="붉은사막 공식 플랫폼 검색해봐",
+        )
+        self.assertIsNotNone(summary)
+        self.assertIn("이용 형태", summary)
+        self.assertIn("교차 확인 기준", summary)
+        self.assertIn("단일 출처", summary)
+        self.assertIn("조정되었습니다", summary)
+        # Keep 단일 출처 distinct from 미확인 — must not accidentally
+        # downgrade past WEAK into an unresolved-missing phrasing.
+        self.assertNotIn("미확인", summary)
+        # Stop relying on the stale generic wording for STRONG → WEAK.
+        self.assertNotIn("약해졌습니다", summary)
+        # No false improvement wording.
+        self.assertNotIn("보강", summary)
+
+    def test_build_claim_coverage_progress_summary_focus_slot_weak_to_strong_reflects_trusted_agreement(self) -> None:
+        """When a focus slot newly qualifies for trusted agreement after
+        re-check (WEAK → STRONG), the Korean summary must name the
+        교차 확인 기준 충족 outcome explicitly instead of the generic
+        보강 wording alone."""
+        loop = AgentLoop.__new__(AgentLoop)
+        previous_claim_coverage = [
+            {"slot": "이용 형태", "status": "weak"},
+        ]
+        current_claim_coverage = [
+            {"slot": "이용 형태", "status": "strong"},
+        ]
+        summary = loop._build_claim_coverage_progress_summary(
+            previous_claim_coverage=previous_claim_coverage,
+            current_claim_coverage=current_claim_coverage,
+            query="붉은사막 공식 플랫폼 검색해봐",
+        )
+        self.assertIsNotNone(summary)
+        self.assertIn("이용 형태", summary)
+        self.assertIn("단일 출처", summary)
+        self.assertIn("교차 확인", summary)
+        self.assertIn("기준", summary)
+        self.assertIn("충족", summary)
+        # Korean directional particle must stay correct: 교차 확인 ends
+        # in ㄴ (jongseong) so "으로" is required, not "로".
+        self.assertIn("교차 확인으로", summary)
+        self.assertNotIn("교차 확인로", summary)
+        # No false-downgrade wording.
+        self.assertNotIn("약해", summary)
+
+    def test_annotate_claim_coverage_progress_focus_slot_strong_boundary_labels_are_specific(self) -> None:
+        """``_annotate_claim_coverage_progress`` must surface a
+        trusted-agreement specific ``progress_label`` when the focus
+        slot crosses the 교차 확인 boundary, while keeping the
+        ``improved`` / ``regressed`` / ``unchanged`` state family intact
+        and preserving the unchanged ``유지`` label."""
+        loop = AgentLoop.__new__(AgentLoop)
+
+        annotated = loop._annotate_claim_coverage_progress(
+            previous_claim_coverage=[{"slot": "이용 형태", "status": "strong"}],
+            current_claim_coverage=[{"slot": "이용 형태", "status": "weak"}],
+            query="붉은사막 공식 플랫폼 검색해봐",
+        )
+        by_slot = {str(item.get("slot") or ""): item for item in annotated}
+        self.assertEqual(by_slot["이용 형태"]["progress_state"], "regressed")
+        self.assertEqual(by_slot["이용 형태"]["progress_label"], "교차 확인 해제")
+
+        annotated = loop._annotate_claim_coverage_progress(
+            previous_claim_coverage=[{"slot": "이용 형태", "status": "weak"}],
+            current_claim_coverage=[{"slot": "이용 형태", "status": "strong"}],
+            query="붉은사막 공식 플랫폼 검색해봐",
+        )
+        by_slot = {str(item.get("slot") or ""): item for item in annotated}
+        self.assertEqual(by_slot["이용 형태"]["progress_state"], "improved")
+        self.assertEqual(by_slot["이용 형태"]["progress_label"], "교차 확인 충족")
+
+        # WEAK → MISSING keeps the existing generic 약해짐 wording since
+        # the 교차 확인 boundary is not involved.
+        annotated = loop._annotate_claim_coverage_progress(
+            previous_claim_coverage=[{"slot": "이용 형태", "status": "weak"}],
+            current_claim_coverage=[{"slot": "이용 형태", "status": "missing"}],
+            query="붉은사막 공식 플랫폼 검색해봐",
+        )
+        by_slot = {str(item.get("slot") or ""): item for item in annotated}
+        self.assertEqual(by_slot["이용 형태"]["progress_state"], "regressed")
+        self.assertEqual(by_slot["이용 형태"]["progress_label"], "약해짐")
 
     def test_load_web_search_record_legacy_progress_summary_text_canonicalized_on_reload(self) -> None:
         """Stored entity records whose ``claim_coverage_progress_summary``

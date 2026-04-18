@@ -14557,6 +14557,129 @@ class WebAppServiceTest(unittest.TestCase):
             )
             self.assertNotIn("붉은사막 장르 검색해봐", follow_ups)
 
+    def test_handle_chat_load_web_search_record_id_entity_reinvestigation_top3_ranks_by_slot_value_and_source_fragility(self) -> None:
+        """`load_web_search_record_id` reload must lock the same entity-card
+        reinvestigation top-3 ranking as the AgentLoop helper: a blank
+        MISSING slot outranks a noisy MISSING slot, and an untrusted-source
+        WEAK slot outranks a trusted-source WEAK slot — neither pick is
+        determined by raw stored order alone. STRONG slots never consume a
+        reinvestigation slot in the API response."""
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = WebSearchStore(base_dir=str(tmp_path / "web-search"))
+            session_id = "reinvestigation-ranking-record-id-session"
+
+            store.save(
+                session_id=session_id,
+                query="붉은사막",
+                permission="enabled",
+                results=[
+                    {
+                        "title": "붉은사막 - 나무위키",
+                        "url": "https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                        "snippet": "붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                    }
+                ],
+                summary_text="웹 검색 요약: 붉은사막",
+                pages=[],
+                response_origin={
+                    "provider": "web",
+                    "answer_mode": "entity_card",
+                    "verification_label": "설명형 단일 출처",
+                    "source_roles": ["백과 기반"],
+                },
+                claim_coverage=[
+                    {
+                        "slot": "장르/성격",
+                        "status": "missing",
+                        "candidate_count": 2,
+                        "source_role": "",
+                        "rendered_as": "not_rendered",
+                    },
+                    {
+                        "slot": "서비스/배급",
+                        "status": "missing",
+                        "candidate_count": 0,
+                        "source_role": "",
+                        "rendered_as": "not_rendered",
+                    },
+                    {
+                        "slot": "이용 형태",
+                        "status": "weak",
+                        "candidate_count": 3,
+                        "source_role": "백과 기반",
+                        "rendered_as": "uncertain",
+                    },
+                    {
+                        "slot": "개발",
+                        "status": "weak",
+                        "candidate_count": 1,
+                        "source_role": "보조 블로그",
+                        "rendered_as": "uncertain",
+                    },
+                    {
+                        "slot": "상태",
+                        "status": "strong",
+                        "candidate_count": 2,
+                        "source_role": "공식 기반",
+                        "rendered_as": "fact_card",
+                    },
+                ],
+            )
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                web_search_history_dir=str(tmp_path / "web-search"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            service._build_tools = lambda: {
+                "read_file": FileReaderTool(),
+                "search_files": FileSearchTool(reader=FileReaderTool()),
+                "search_web": _FakeWebSearchTool([]),
+                "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+            }
+
+            records = store.list_session_record_summaries(session_id)
+            record_id = records[0]["record_id"]
+
+            result = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "provider": "mock",
+                    "load_web_search_record_id": record_id,
+                }
+            )
+
+            self.assertTrue(result["ok"])
+            follow_ups = result["response"]["follow_up_suggestions"]
+            self.assertEqual(
+                follow_ups[:3],
+                [
+                    "붉은사막 서비스 공식 검색해봐",
+                    "붉은사막 장르 검색해봐",
+                    "붉은사막 개발사 검색해봐",
+                ],
+            )
+            # STRONG slot prompt must never leak into reinvestigation
+            # suggestions — `상태` is fully resolved here.
+            self.assertNotIn("붉은사막 출시 상태 검색해봐", follow_ups)
+            # The trusted-source WEAK slot must be pushed out of the
+            # top-3 by the more fragile untrusted-source WEAK slot.
+            self.assertNotIn("붉은사막 공식 플랫폼 검색해봐", follow_ups)
+            # Generic fallback prompts still follow the targeted top-3
+            # once, preserving the existing dedupe contract.
+            self.assertEqual(
+                follow_ups[3:],
+                [
+                    "붉은사막 검색 결과 핵심 3줄만 다시 정리해 주세요.",
+                    "붉은사막 검색 결과에서 가장 믿을 만한 출처만 추려 주세요.",
+                    "붉은사막 검색 결과를 메모 형식으로 다시 써 주세요.",
+                ],
+            )
+
     def test_handle_chat_load_web_search_record_id_legacy_claim_coverage_slots_surface_canonical_slots_and_truthful_progress(self) -> None:
         """`load_web_search_record_id` reload of a stored entity record that
         carries legacy `claim_coverage` slot labels must surface canonical

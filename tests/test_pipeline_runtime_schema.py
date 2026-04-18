@@ -1,11 +1,27 @@
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from pipeline_runtime.schema import latest_round_markdown, parse_control_slots, read_control_meta
+from pipeline_runtime import schema as schema_module
+from pipeline_runtime.schema import (
+    JOB_STATE_DIR_NAME,
+    STATE_DIR_SHARED_FILES,
+    iter_job_state_paths,
+    jobs_state_dir,
+    latest_verify_note_for_work,
+    latest_round_markdown,
+    load_job_states,
+    parse_control_slots,
+    process_starttime_fingerprint,
+    read_control_meta,
+)
 
 
 class RuntimeSchemaTest(unittest.TestCase):
@@ -81,6 +97,554 @@ class RuntimeSchemaTest(unittest.TestCase):
 
             self.assertEqual(rel, "4/16/2026-04-16-real-round.md")
             self.assertEqual(mtime, round_mtime)
+
+
+class LoadJobStatesSharedFilesTest(unittest.TestCase):
+    def test_shared_state_files_cover_turn_and_autonomy(self) -> None:
+        self.assertIn("turn_state.json", STATE_DIR_SHARED_FILES)
+        self.assertIn("autonomy_state.json", STATE_DIR_SHARED_FILES)
+
+    def test_load_job_states_skips_autonomy_state_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp)
+            autonomy_payload = {
+                "fingerprint": "",
+                "mode": "normal",
+                "block_reason": "",
+                "reason_code": "",
+                "operator_policy": "",
+            }
+            (state_dir / "autonomy_state.json").write_text(
+                json.dumps(autonomy_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            turn_payload = {
+                "state": "CLAUDE_ACTIVE",
+                "entered_at": 0.0,
+                "reason": "test",
+            }
+            (state_dir / "turn_state.json").write_text(
+                json.dumps(turn_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            job_payload = {
+                "job_id": "job-current",
+                "status": "VERIFY_RUNNING",
+                "artifact_path": "work/4/18/current.md",
+                "run_id": "run-current",
+                "round": 1,
+                "updated_at": 123.0,
+            }
+            job_path = state_dir / "20260418-job-current.json"
+            job_path.write_text(
+                json.dumps(job_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+            jobs = load_job_states(state_dir)
+
+            self.assertEqual(len(jobs), 1)
+            self.assertEqual(jobs[0]["job_id"], "job-current")
+
+            filtered = load_job_states(state_dir, run_id="run-current")
+            self.assertEqual(len(filtered), 1)
+            self.assertEqual(filtered[0]["job_id"], "job-current")
+
+    def test_load_job_states_with_no_real_jobs_returns_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp)
+            (state_dir / "autonomy_state.json").write_text(
+                json.dumps({"mode": "normal"}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (state_dir / "turn_state.json").write_text(
+                json.dumps({"state": "IDLE"}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            jobs = load_job_states(state_dir)
+
+            self.assertEqual(jobs, [])
+
+
+class PathEnforcedJobStateOwnershipTest(unittest.TestCase):
+    def test_jobs_state_dir_is_primary_subdirectory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp)
+            primary = jobs_state_dir(state_dir)
+            self.assertEqual(primary, state_dir / JOB_STATE_DIR_NAME)
+            self.assertEqual(primary.name, "jobs")
+
+    def test_iter_job_state_paths_prefers_primary_over_root_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp)
+            primary_dir = jobs_state_dir(state_dir)
+            primary_dir.mkdir(parents=True)
+            (primary_dir / "job-shared.json").write_text(
+                json.dumps({"job_id": "job-shared", "where": "primary"}), encoding="utf-8"
+            )
+            (state_dir / "job-shared.json").write_text(
+                json.dumps({"job_id": "job-shared", "where": "fallback"}), encoding="utf-8"
+            )
+            (state_dir / "job-only-root.json").write_text(
+                json.dumps({"job_id": "job-only-root", "where": "fallback"}), encoding="utf-8"
+            )
+            (state_dir / "autonomy_state.json").write_text(
+                json.dumps({"mode": "normal"}), encoding="utf-8"
+            )
+            (state_dir / "turn_state.json").write_text(
+                json.dumps({"state": "IDLE"}), encoding="utf-8"
+            )
+
+            paths = iter_job_state_paths(state_dir)
+
+            names = {p.name for p in paths}
+            self.assertEqual(names, {"job-shared.json", "job-only-root.json"})
+
+            data_by_id: dict[str, str] = {}
+            for p in paths:
+                payload = json.loads(p.read_text(encoding="utf-8"))
+                data_by_id[payload["job_id"]] = payload["where"]
+            self.assertEqual(data_by_id["job-shared"], "primary")
+            self.assertEqual(data_by_id["job-only-root"], "fallback")
+
+    def test_iter_job_state_paths_skips_shared_files_in_root_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp)
+            for name in STATE_DIR_SHARED_FILES:
+                (state_dir / name).write_text("{}", encoding="utf-8")
+            paths = iter_job_state_paths(state_dir)
+            self.assertEqual(paths, [])
+
+    def test_iter_job_state_paths_handles_missing_primary_gracefully(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp)
+            (state_dir / "job-legacy.json").write_text(
+                json.dumps({"job_id": "job-legacy"}), encoding="utf-8"
+            )
+            paths = iter_job_state_paths(state_dir)
+            self.assertEqual([p.name for p in paths], ["job-legacy.json"])
+
+    def test_load_job_states_merges_primary_and_fallback_and_prefers_primary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp)
+            primary_dir = jobs_state_dir(state_dir)
+            primary_dir.mkdir(parents=True)
+            (primary_dir / "job-shared.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-shared",
+                        "run_id": "run-current",
+                        "status": "VERIFY_RUNNING",
+                        "updated_at": 200.0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "job-shared.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-shared",
+                        "run_id": "run-old",
+                        "status": "VERIFY_PENDING",
+                        "updated_at": 100.0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "job-legacy.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-legacy",
+                        "run_id": "run-current",
+                        "status": "VERIFY_PENDING",
+                        "updated_at": 150.0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            jobs = load_job_states(state_dir, run_id="run-current")
+
+            statuses = {row["job_id"]: row["status"] for row in jobs}
+            self.assertEqual(
+                statuses, {"job-shared": "VERIFY_RUNNING", "job-legacy": "VERIFY_PENDING"}
+            )
+
+    def test_job_state_save_writes_to_primary_jobs_subdirectory(self) -> None:
+        # Guard against regression: JobState.save must land in the primary jobs/ path,
+        # not the legacy root. The root is read-only fallback during migration.
+        from verify_fsm import JobState, JobStatus
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp)
+            job = JobState(
+                job_id="job-save-primary",
+                status=JobStatus.VERIFY_PENDING,
+                artifact_path="work/4/18/some.md",
+            )
+            job.save(state_dir)
+
+            primary_path = jobs_state_dir(state_dir) / "job-save-primary.json"
+            root_path = state_dir / "job-save-primary.json"
+            self.assertTrue(primary_path.exists())
+            self.assertFalse(root_path.exists())
+
+    def test_job_state_load_reads_primary_first_then_root_fallback(self) -> None:
+        from verify_fsm import JobState, JobStatus
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp)
+            # Only a root-level legacy file — reader must still find it via fallback.
+            (state_dir / "job-legacy-only.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-legacy-only",
+                        "status": JobStatus.VERIFY_PENDING.value,
+                        "artifact_path": "work/4/18/legacy.md",
+                        "round": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            loaded = JobState.load(state_dir, "job-legacy-only")
+            self.assertIsNotNone(loaded)
+            assert loaded is not None
+            self.assertEqual(loaded.job_id, "job-legacy-only")
+            self.assertEqual(loaded.status, JobStatus.VERIFY_PENDING)
+
+            # Primary copy written later must win over the root fallback.
+            primary_dir = jobs_state_dir(state_dir)
+            primary_dir.mkdir(parents=True, exist_ok=True)
+            (primary_dir / "job-legacy-only.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-legacy-only",
+                        "status": JobStatus.VERIFY_DONE.value,
+                        "artifact_path": "work/4/18/legacy.md",
+                        "round": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            reloaded = JobState.load(state_dir, "job-legacy-only")
+            self.assertIsNotNone(reloaded)
+            assert reloaded is not None
+            self.assertEqual(reloaded.status, JobStatus.VERIFY_DONE)
+
+
+class LatestVerifyNoteForWorkTest(unittest.TestCase):
+    def test_prefers_explicit_work_reference_over_newer_unrelated_verify(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work_root = root / "work"
+            verify_root = root / "verify"
+            work_path = work_root / "4" / "18" / "2026-04-18-slice.md"
+            matching_verify = verify_root / "4" / "18" / "2026-04-18-slice-verification.md"
+            unrelated_verify = verify_root / "4" / "18" / "2026-04-18-unrelated-verification.md"
+            work_path.parent.mkdir(parents=True, exist_ok=True)
+            matching_verify.parent.mkdir(parents=True, exist_ok=True)
+            work_path.write_text("# work\n", encoding="utf-8")
+            matching_verify.write_text(
+                "Based on `work/4/18/2026-04-18-slice.md`\n",
+                encoding="utf-8",
+            )
+            unrelated_verify.write_text(
+                "Based on `work/4/18/2026-04-18-other.md`\n",
+                encoding="utf-8",
+            )
+
+            now = time.time()
+            os.utime(matching_verify, (now - 10, now - 10))
+            os.utime(unrelated_verify, (now, now))
+
+            resolved = latest_verify_note_for_work(
+                work_root,
+                verify_root,
+                work_path,
+                repo_root=root,
+            )
+
+            self.assertEqual(resolved, matching_verify)
+
+    def test_falls_back_to_single_same_day_verify_without_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work_root = root / "work"
+            verify_root = root / "verify"
+            work_path = work_root / "4" / "18" / "2026-04-18-slice.md"
+            verify_path = verify_root / "4" / "18" / "2026-04-18-slice-verification.md"
+            work_path.parent.mkdir(parents=True, exist_ok=True)
+            verify_path.parent.mkdir(parents=True, exist_ok=True)
+            work_path.write_text("# work\n", encoding="utf-8")
+            verify_path.write_text("# verify\n", encoding="utf-8")
+
+            resolved = latest_verify_note_for_work(
+                work_root,
+                verify_root,
+                work_path,
+                repo_root=root,
+            )
+
+            self.assertEqual(resolved, verify_path)
+
+    def test_returns_none_when_multiple_same_day_verifies_do_not_reference_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work_root = root / "work"
+            verify_root = root / "verify"
+            work_path = work_root / "4" / "18" / "2026-04-18-slice.md"
+            verify_a = verify_root / "4" / "18" / "2026-04-18-a-verification.md"
+            verify_b = verify_root / "4" / "18" / "2026-04-18-b-verification.md"
+            work_path.parent.mkdir(parents=True, exist_ok=True)
+            verify_a.parent.mkdir(parents=True, exist_ok=True)
+            work_path.write_text("# work\n", encoding="utf-8")
+            verify_a.write_text("# verify a\n", encoding="utf-8")
+            verify_b.write_text("# verify b\n", encoding="utf-8")
+
+            resolved = latest_verify_note_for_work(
+                work_root,
+                verify_root,
+                work_path,
+                repo_root=root,
+            )
+
+            self.assertIsNone(resolved)
+
+    def test_returns_none_when_single_same_day_verify_references_other_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work_root = root / "work"
+            verify_root = root / "verify"
+            work_path = work_root / "4" / "18" / "2026-04-18-slice.md"
+            verify_path = verify_root / "4" / "18" / "2026-04-18-other-verification.md"
+            work_path.parent.mkdir(parents=True, exist_ok=True)
+            verify_path.parent.mkdir(parents=True, exist_ok=True)
+            work_path.write_text("# work\n", encoding="utf-8")
+            verify_path.write_text(
+                "Based on `work/4/18/2026-04-18-other.md`\n",
+                encoding="utf-8",
+            )
+
+            resolved = latest_verify_note_for_work(
+                work_root,
+                verify_root,
+                work_path,
+                repo_root=root,
+            )
+
+            self.assertIsNone(resolved)
+
+
+class ProcessStarttimeFingerprintTest(unittest.TestCase):
+    def test_process_starttime_fingerprint_returns_empty_for_non_positive_pid(self) -> None:
+        # The non-positive pid short-circuit must skip every source helper
+        # entirely. Otherwise a stray /proc read, `ps` invocation, or
+        # /proc/<pid> stat could surface for pid 0/-1 callers (e.g.
+        # supervisor inheritance when no live watcher pid is available)
+        # instead of the intended "do not inherit" empty fingerprint.
+        with (
+            mock.patch.object(schema_module, "_proc_starttime_fingerprint") as proc_mock,
+            mock.patch.object(schema_module, "_ps_lstart_fingerprint") as ps_mock,
+            mock.patch.object(schema_module, "_proc_ctime_fingerprint") as ctime_mock,
+        ):
+            self.assertEqual(process_starttime_fingerprint(0), "")
+            self.assertEqual(process_starttime_fingerprint(-1), "")
+        proc_mock.assert_not_called()
+        ps_mock.assert_not_called()
+        ctime_mock.assert_not_called()
+
+    def test_process_starttime_fingerprint_uses_proc_when_available(self) -> None:
+        # When the primary /proc source returns a non-empty fingerprint the
+        # helper must keep using it without falling back to the slower ps
+        # invocation or the /proc/<pid> ctime fallback. All three sources are
+        # stubbed so the assertion holds on hosts that do not expose
+        # /proc/<pid>/stat (non-Linux POSIX, restricted containers) just as
+        # well as on a standard Linux host.
+        with (
+            mock.patch.object(
+                schema_module,
+                "_proc_starttime_fingerprint",
+                return_value="proc-source-fingerprint",
+            ) as proc_mock,
+            mock.patch.object(schema_module, "_ps_lstart_fingerprint") as ps_mock,
+            mock.patch.object(schema_module, "_proc_ctime_fingerprint") as ctime_mock,
+        ):
+            fingerprint = process_starttime_fingerprint(12345)
+        self.assertEqual(fingerprint, "proc-source-fingerprint")
+        proc_mock.assert_called_once_with(12345)
+        ps_mock.assert_not_called()
+        ctime_mock.assert_not_called()
+
+    def test_process_starttime_fingerprint_falls_back_to_ps_when_proc_missing(self) -> None:
+        # With /proc/<pid>/stat empty but `ps -p <pid> -o lstart=` producing a
+        # usable string, the helper must return the ps fallback without
+        # touching the narrower /proc/<pid> ctime fallback.
+        with (
+            mock.patch.object(schema_module, "_proc_starttime_fingerprint", return_value=""),
+            mock.patch.object(
+                schema_module,
+                "_ps_lstart_fingerprint",
+                return_value="Mon Apr 18 12:34:56 2026",
+            ) as ps_mock,
+            mock.patch.object(schema_module, "_proc_ctime_fingerprint") as ctime_mock,
+        ):
+            fingerprint = process_starttime_fingerprint(12345)
+        self.assertEqual(fingerprint, "Mon Apr 18 12:34:56 2026")
+        ps_mock.assert_called_once_with(12345)
+        ctime_mock.assert_not_called()
+
+    def test_process_starttime_fingerprint_falls_back_to_proc_ctime_when_proc_and_ps_both_fail(self) -> None:
+        # /proc/<pid>/stat parsing/read fails and `ps -p <pid> -o lstart=`
+        # also yields "", but /proc/<pid> itself is still stat-able. The
+        # helper must thread that narrow case through the new
+        # os.stat(f"/proc/{pid}") ctime fallback rather than giving up so
+        # supervisor restart inheritance can still prove the watcher is the
+        # same process instance the pointer was written for.
+        with (
+            mock.patch.object(schema_module, "_proc_starttime_fingerprint", return_value=""),
+            mock.patch.object(schema_module, "_ps_lstart_fingerprint", return_value=""),
+            mock.patch.object(
+                schema_module,
+                "_proc_ctime_fingerprint",
+                return_value="1712345678901234567",
+            ) as ctime_mock,
+        ):
+            fingerprint = process_starttime_fingerprint(12345)
+        self.assertEqual(fingerprint, "1712345678901234567")
+        ctime_mock.assert_called_once_with(12345)
+
+    def test_process_starttime_fingerprint_returns_empty_when_all_sources_fail(self) -> None:
+        # Preserve the prior both-sources-fail contract once the third
+        # fallback also fails: when /proc/<pid>/stat parsing, `ps -p <pid>
+        # -o lstart=`, and os.stat(f"/proc/{pid}") all safe-degrade to "",
+        # the helper must return "" so inheritance falls through to a fresh
+        # _make_run_id() instead of falsely adopting a prior run_id.
+        with (
+            mock.patch.object(schema_module, "_proc_starttime_fingerprint", return_value=""),
+            mock.patch.object(schema_module, "_ps_lstart_fingerprint", return_value=""),
+            mock.patch.object(schema_module, "_proc_ctime_fingerprint", return_value=""),
+        ):
+            self.assertEqual(process_starttime_fingerprint(12345), "")
+
+    def test_proc_starttime_fingerprint_extracts_starttime_field_from_well_formed_stat(self) -> None:
+        # The Linux `/proc/<pid>/stat` line embeds the comm field inside
+        # parens which may themselves contain spaces and inner parens. The
+        # parser uses `rfind(")")` to skip the comm field once, then splits
+        # the tail on whitespace and reads the starttime token at index 19
+        # (field 22 of the original stat line). Build a fixture with a comm
+        # that has both spaces and an inner ')' so the regression proves
+        # `rfind(")")` lands on the outer closing paren and the tail split
+        # still surfaces the intended starttime.
+        tail_fields = [
+            "S", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+            "10", "11", "12", "13", "14", "15", "16", "17", "18",
+            "9876543210",  # rest[19] -> starttime token
+            "20", "21", "22", "23", "24", "25",
+        ]
+        stat_payload = "12345 (my (weird) cmd with spaces) " + " ".join(tail_fields) + "\n"
+        fake_path = mock.Mock()
+        fake_path.read_text.return_value = stat_payload
+        with mock.patch.object(schema_module, "Path", return_value=fake_path) as path_mock:
+            value = schema_module._proc_starttime_fingerprint(99999)
+        self.assertEqual(value, "9876543210")
+        path_mock.assert_called_once_with("/proc/99999/stat")
+
+    def test_proc_starttime_fingerprint_returns_empty_when_stat_read_raises_oserror(self) -> None:
+        # `/proc/<pid>/stat` may be missing (non-Linux POSIX, restricted
+        # containers) or unreadable. The helper must catch any OSError
+        # subclass — including FileNotFoundError — and return "" so the
+        # caller falls through to the ps fallback rather than seeing the
+        # exception escape.
+        fake_path = mock.Mock()
+        fake_path.read_text.side_effect = FileNotFoundError("stat")
+        with mock.patch.object(schema_module, "Path", return_value=fake_path) as path_mock:
+            self.assertEqual(schema_module._proc_starttime_fingerprint(99999), "")
+        path_mock.assert_called_once_with("/proc/99999/stat")
+
+    def test_proc_starttime_fingerprint_returns_empty_when_stat_payload_has_no_closing_paren(self) -> None:
+        # The Linux `/proc/<pid>/stat` line embeds the comm field inside
+        # parens; the parser locates the last ')' to skip past it. A payload
+        # with no ')' at all must be treated as unparseable rather than
+        # producing a partial fingerprint.
+        fake_path = mock.Mock()
+        fake_path.read_text.return_value = "12345 cmd_no_paren S 1 1 1 1 1\n"
+        with mock.patch.object(schema_module, "Path", return_value=fake_path):
+            self.assertEqual(schema_module._proc_starttime_fingerprint(99999), "")
+
+    def test_proc_starttime_fingerprint_returns_empty_when_stat_tail_has_fewer_than_twenty_fields(self) -> None:
+        # After skipping past the last ')', field 22 (starttime) sits at
+        # rest[19]. A truncated stat line that produces fewer than 20 tail
+        # fields must safe-degrade to "" instead of raising IndexError.
+        fake_path = mock.Mock()
+        fake_path.read_text.return_value = "12345 (cmd) S 1 2 3 4 5 6 7 8 9 10\n"
+        with mock.patch.object(schema_module, "Path", return_value=fake_path):
+            self.assertEqual(schema_module._proc_starttime_fingerprint(99999), "")
+
+    def test_ps_lstart_fingerprint_returns_stripped_stdout_on_success(self) -> None:
+        completed = mock.Mock(returncode=0, stdout="Mon Apr 18 12:34:56 2026\n", stderr="")
+        with mock.patch.object(schema_module.subprocess, "run", return_value=completed) as run_mock:
+            value = schema_module._ps_lstart_fingerprint(99999)
+        self.assertEqual(value, "Mon Apr 18 12:34:56 2026")
+        called_cmd = run_mock.call_args.args[0]
+        self.assertEqual(called_cmd[:1], ["ps"])
+        self.assertIn("-p", called_cmd)
+        self.assertIn("99999", called_cmd)
+        # Pin the subprocess kwargs that matter to safety and parsing:
+        # capture_output=True keeps stdout/stderr off the inheriting tty,
+        # text=True returns str so the helper can `.strip()` directly, and
+        # timeout=2.0 bounds a hung `ps` so the safe-degradation path
+        # (TimeoutExpired -> "") can actually trigger.
+        called_kwargs = run_mock.call_args.kwargs
+        self.assertIs(called_kwargs.get("capture_output"), True)
+        self.assertIs(called_kwargs.get("text"), True)
+        self.assertEqual(called_kwargs.get("timeout"), 2.0)
+
+    def test_ps_lstart_fingerprint_returns_empty_when_ps_fails(self) -> None:
+        completed = mock.Mock(returncode=1, stdout="", stderr="no such process")
+        with mock.patch.object(schema_module.subprocess, "run", return_value=completed):
+            self.assertEqual(schema_module._ps_lstart_fingerprint(99999), "")
+
+    def test_ps_lstart_fingerprint_returns_empty_when_ps_binary_missing(self) -> None:
+        with mock.patch.object(schema_module.subprocess, "run", side_effect=FileNotFoundError("ps")):
+            self.assertEqual(schema_module._ps_lstart_fingerprint(99999), "")
+
+    def test_ps_lstart_fingerprint_returns_empty_when_ps_times_out(self) -> None:
+        # subprocess.TimeoutExpired is a SubprocessError subclass and the
+        # helper already passes timeout=2.0 to subprocess.run. Pin the
+        # safe-degradation contract so a hung `ps` invocation cannot leak a
+        # partial value or escape the helper as an exception; callers must
+        # see "" and treat it as "do not inherit".
+        timeout_exc = subprocess.TimeoutExpired(cmd=["ps"], timeout=2.0)
+        with mock.patch.object(schema_module.subprocess, "run", side_effect=timeout_exc):
+            self.assertEqual(schema_module._ps_lstart_fingerprint(99999), "")
+
+    def test_proc_ctime_fingerprint_returns_stringified_ctime_ns_on_success(self) -> None:
+        # The third fallback is pinned to /proc/<pid>'s st_ctime_ns so the
+        # fingerprint stays deterministic per process instance. Callers embed
+        # this string into current_run.json; serializing ctime_ns as str keeps
+        # the JSON stable regardless of integer size.
+        fake_stat = mock.Mock()
+        fake_stat.st_ctime_ns = 1712345678901234567
+        with mock.patch.object(schema_module.os, "stat", return_value=fake_stat) as stat_mock:
+            value = schema_module._proc_ctime_fingerprint(99999)
+        self.assertEqual(value, "1712345678901234567")
+        stat_mock.assert_called_once_with("/proc/99999")
+
+    def test_proc_ctime_fingerprint_returns_empty_when_stat_raises_oserror(self) -> None:
+        # /proc/<pid> itself may be missing (pid died between ps fallback and
+        # this probe, restricted container, non-Linux POSIX host without
+        # /proc). The helper must catch any OSError subclass and return ""
+        # so the caller returns "" and inheritance falls through to a fresh
+        # _make_run_id() rather than seeing the exception escape.
+        with mock.patch.object(
+            schema_module.os,
+            "stat",
+            side_effect=FileNotFoundError("/proc/99999"),
+        ) as stat_mock:
+            self.assertEqual(schema_module._proc_ctime_fingerprint(99999), "")
+        stat_mock.assert_called_once_with("/proc/99999")
 
 
 if __name__ == "__main__":

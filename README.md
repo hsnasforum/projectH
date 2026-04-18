@@ -116,7 +116,7 @@ repo 안의 internal/operator tooling은 릴리즈 게이트 밖이지만 계속
   - gate된 operator candidate는 canonical `control` block에서는 `none`으로 내려가고, status의 `autonomy` block(`mode`, `block_reason`, `suppress_operator_until`, `operator_eligible` 등)으로만 노출됩니다. 오래 방치된 stop은 watcher가 Codex 재심사(`operator_wait_idle_retriage` 또는 gated follow-up)로 다시 넘깁니다.
   - browser log modal은 tail read-model 위에 bounded one-line lane input(`POST /api/runtime/send-input`)을 함께 제공합니다. permission/plan prompt처럼 operator 선택이 필요한 경우 현재 열린 lane에 `1`, `2`, `3` 같은 짧은 응답을 바로 보낼 수 있습니다. lane pause/resume/restart나 attach 같은 backend 미연결 액션은 계속 노출하지 않습니다.
   - Office View background는 `/controller-assets/background.png`를 우선 사용하고, 필요할 때만 `/controller-assets/generated/bg-office.png`로 fallback하며, sidebar `Scene` 상태와 event log로 load/fallback/error를 표시합니다.
-  - `ready` / `idle` 상태 에이전트는 복도 waypoint에 고정되지 않고 오픈 플로어 존(중앙 복도, 책상-라운지 사이, 라운지 영역, 입구 근처, 소파 앞 상단, 우측 오픈 에어리어)을 넓은 jitter로 자유 배회합니다. walkable floor bounds와 desk exclusion rect가 적용되어 에이전트가 벽, 가구, 책상 위에 서지 않습니다. 배회 대상 선정 시 다른 idle 에이전트와의 거리를 고려하여 겹침(stacking)을 방지하고, 최근 5곳 방문 이력에 graduated penalty를 부여하여 같은 자리를 반복 방문하는 현상을 줄입니다. 45% 확률로 정해진 anchor spot 대신 walkable floor 전체에서 무작위 지점을 선택하고, spot 기반 선택에도 넓은 jitter(×2.6)를 적용하여 움직임에 예측 불가능한 자연스러움을 더합니다. 오픈 플로어에서 다른 오픈 플로어로 이동할 때는 복도 waypoint를 거치지 않고 직선으로 걸어가며, 배회 간격(60% 짧은 1.0-3.5초, 30% 중간 2.5-5.5초, 10% 장시간 6-11초 체류)과 10초 이상 같은 자리에 서 있으면 강제 재선택하는 stale-position timer, 정지 중 micro-drift 및 주기적인 시선 전환(glance)이 적용되어 고정된 느낌을 줄입니다. `working` / `booting` / `broken` / `dead` 에이전트는 기존 desk/status 고정 동작을 유지합니다.
+  - `ready` / `idle` 상태 에이전트는 자기 데스크 존(`claude_desk`, `codex_desk`, `gemini_desk`) 안에서 zone-bounded 연속 micro-roam을 수행합니다. 각 에이전트는 `_pickIdleTarget()`이 자기 홈 존의 중심 주변에서 무작위 지점을 선택한 뒤 zone 경계로 clamp해 desk 밖 / 벽 / 가구 위에 서지 않도록 합니다. 존이 서로 분리되어 있으므로 idle 에이전트 사이의 겹침(stacking)이 자연스럽게 방지되고, 별도의 proximity anti-stacking이나 `_roamHistory` spot 방문 penalty는 더 이상 필요하지 않습니다. `window.testAntiStacking`은 zone-bounded 대응을 위해 `testPickIdleTargets`에 위임하고, `window.testHistoryPenalty`는 spot 기반 개념이 사라졌으므로 빈 배열을 반환합니다. `working` / `booting` / `broken` / `dead` 에이전트는 기존 desk/status 고정 동작을 유지합니다.
   - live fault / soak harness는 `python3 scripts/pipeline_runtime_gate.py ...` 경로를 사용합니다.
   - WSL에서 실행하면 Windows 브라우저 접근을 위해 기본 bind host를 `0.0.0.0`로 잡고, 브라우저 URL은 계속 `127.0.0.1` 기준으로 안내합니다.
   - 만약 Windows에서 `127.0.0.1:8780`이 안 열리면, 시작 로그에 함께 출력되는 `Windows fallback: http://<WSL-IP>:8780/controller` 주소를 사용하시면 됩니다.
@@ -384,17 +384,21 @@ Controller smoke uses a dedicated Playwright config (`e2e/playwright.controller.
 
 Run: `make controller-test`
 
+Direct equivalent: `cd e2e && CONTROLLER_SMOKE_PORT=<free-port> npx playwright test -c playwright.controller.config.mjs --reporter=line`
+
 Override port: `CONTROLLER_SMOKE_PORT=8782 make controller-test`
 
 Current controller smoke scenarios:
-1. controller shows `#storage-warn` chip (`⚠ 설정 비저장`) with expected tooltip when browser localStorage is blocked via `Storage.prototype` throw, and event log contains the one-time storage warning (`환경 설정 저장 불가`) exactly once
-2. controller hides `#storage-warn` chip and event log contains no storage warning when browser localStorage is available
-3. agent cards expose `data-fatigue` attribute for fatigue observability — verifies that a working agent's sidebar card carries `data-agent` and `data-fatigue` attributes, with no `.agent-fatigue` indicator visible before the fatigue threshold is reached
-4. `setAgentFatigue` hook transitions card to `fatigued` state — injects fatigue via `window.setAgentFatigue("Claude", "fatigued")` and asserts `data-fatigue="fatigued"` with `💦 피로 누적` label
-5. `setAgentFatigue` hook transitions card to `coffee` state — injects coffee via `window.setAgentFatigue("Claude", "coffee")` and asserts `data-fatigue="coffee"` with `☕ 커피 충전 중` label
-6. idle roam targets stay within walkable bounds and outside desk exclusion rects — forces 30 idle roam target picks via `window.testPickIdleTargets("Claude", 30)`, reads `WALKABLE_BOUNDS` and `DESK_RECTS` via `window.getRoamBounds()`, and asserts every picked point satisfies both constraints
-7. idle roam avoids proximity to other idle agents (anti-stacking) — places a phantom idle agent at walkable center via `window.testAntiStacking("Claude", cx, cy, 50)` and asserts fewer than 15% of 50 picks land within 50px of the phantom
-8. idle roam deprioritizes recently visited spots via `_roamHistory` penalty — pre-fills history with spots 0–4 via `window.testHistoryPenalty("Claude", [0,1,2,3,4], 120)` and asserts the most-penalized spot (index 0, −150) is chosen less than 10% of spot-based picks
+1. cozy runtime loads from shared `/controller-assets/js/cozy.js` module — asserts exactly one `<script src="/controller-assets/js/cozy.js">` tag on `/controller`, and that `window.getRoamBounds`, `window.setAgentFatigue`, `window.testPickIdleTargets`, `window.testAntiStacking`, and `window.testHistoryPenalty` are all reachable as functions from the shared module
+2. controller shows `#storage-warn` chip (`⚠ 설정 비저장`) with expected tooltip when browser localStorage is blocked via `Storage.prototype` throw, and event log contains the one-time storage warning (`환경 설정 저장 불가`) exactly once
+3. controller hides `#storage-warn` chip and event log contains no storage warning when browser localStorage is available
+4. marquee text keeps moving when the polled runtime payload is unchanged — routes `/api/runtime/status` to a stable payload and asserts `#marquee-text` `transform` translateX decreases monotonically across two 2.5s samples so the marquee animation does not stall on repeated identical polls
+5. agent cards expose `data-fatigue` attribute for fatigue observability — verifies that a working agent's sidebar card carries `data-agent` and `data-fatigue` attributes, with no `.agent-fatigue` indicator visible before the fatigue threshold is reached
+6. `setAgentFatigue` hook transitions card to `fatigued` state — injects fatigue via `window.setAgentFatigue("Claude", "fatigued")` and asserts `data-fatigue="fatigued"` with `💦 피로 누적` label
+7. `setAgentFatigue` hook transitions card to `coffee` state — injects coffee via `window.setAgentFatigue("Claude", "coffee")` and asserts `data-fatigue="coffee"` with `☕ 커피 충전 중` label
+8. idle roam targets stay within the agent's home desk zone — forces 30 idle roam target picks via `window.testPickIdleTargets("Claude", 30)`, reads the home zone rect (`claude_desk`) from `window.getRoamBounds().zones`, and asserts every picked point lies inside that zone
+9. zone-bounded agents inherently avoid stacking (separate desk zones) — places a phantom at the center of `codex_desk`, forces 50 picks via `window.testAntiStacking("Claude", cx, cy, 50)`, and asserts every pick still lies inside Claude's `claude_desk` zone because `testAntiStacking` delegates to `testPickIdleTargets` now that zone isolation already prevents stacking
+10. zone-bounded idle roam uses continuous micro-roam (no spot history) — asserts `window.testHistoryPenalty("Claude", [0,1,2,3,4], 120)` returns an empty array because zone-bounded micro-roam no longer tracks spot history, and that `window.testPickIdleTargets("Claude", 20)` still yields 20 points inside the `claude_desk` zone
 
 ## Safety Defaults
 

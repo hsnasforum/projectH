@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang='ko'>
+
+<head>
+    <meta charset='utf-8'>
+    <meta name='viewport' content='width=device-width,initial-scale=1'>
+    <title>Pipeline Office RPG Prototype</title>
+    <style>
+        :root {
+            --bg: #0b1020;
+            --panel: #10182a;
+            --line: #22304a;
+            --text: #dbe6ff;
+            --muted: #7f91ae;
+            --ok: #34d399;
+            --warn: #fbbf24;
+            --err: #f87171;
+            --info: #60a5fa
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        html,
+        body {
+            margin: 0;
+            height: 100%;
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Noto Sans KR', system-ui, sans-serif
+        }
+
+        body {
+            display: flex;
+            flex-direction: column
+        }
+
+        header {
+            height: 46px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 0 14px;
+            background: #0f1628;
+            border-bottom: 1px solid var(--line)
+        }
+
+        header .title {
+            font-weight: 800;
+            color: #9ec5ff
+        }
+
+        header .badge {
+            padding: 3px 10px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 700
+        }
+
+        header .sp {
+            flex: 1
+        }
+
+        button {
+            border: 1px solid #2a3a5a;
+            background: #16233a;
+            color: var(--text);
+            border-radius: 8px;
+            padding: 6px 10px;
+            font: inherit;
+            cursor: pointer
+        }
+
+        button:hover {
+            background: #1b2b47
+        }
+
+        .wrap {
+            display: flex;
+            min-height: 0;
+            flex: 1
+        }
+
+        .stage {
+            position: relative;
+            flex: 1;
+            min-height: 0
+        }
+
+        .stage canvas {
+            display: block;
+            width: 100%;
+            height: 100%
+        }
+
+        .tooltip {
+            position: absolute;
+            pointer-events: none;
+            display: none;
+            padding: 8px 10px;
+            background: rgba(7, 11, 20, .94);
+            border: 1px solid #314461;
+            border-radius: 10px;
+            font-size: 12px;
+            max-width: 240px;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, .35)
+        }
+
+        .tooltip .name {
+            font-weight: 800
+        }
+
+        .tooltip .meta {
+            font-size: 11px;
+            color: #9cb3d9;
+            margin-top: 4px
+        }
+
+        .side {
+            width: 320px;
+            background: var(--panel);
+            border-left: 1px solid var(--line);
+            overflow: auto;
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px
+        }
+
+        .section {
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            background: #0e1526;
+            padding: 12px
+        }
+
+        .section h3 {
+            margin: 0 0 10px;
+            font-size: 11px;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+            color: #6e84a8
+        }
+
+        .agents {
+            display: flex;
+            flex-direction: column;
+            gap: 8px
+        }
+
+        .agent {
+            padding: 10px;
+            border: 1px solid #23324f;
+            border-radius: 12px;
+            background: #131d31;
+            cursor: pointer
+        }
+
+        .agent:hover {
+            background: #18233a
+        }
+
+        .agent .top {
+            display: flex;
+            align-items: center;
+            gap: 8px
+        }
+
+        .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 999px
+        }
+
+        .agent .name {
+            font-weight: 700
+        }
+
+        .agent .role {
+            font-size: 11px;
+            color: #7f95bc;
+            margin-top: 2px
+        }
+
+        .agent .note {
+            font-size: 12px;
+            color: #9fb3d2;
+            margin-top: 8px;
+            line-height: 1.4
+        }
+
+        .rows {
+            display: flex;
+            flex-direction: column;
+            gap: 8px
+        }
+
+        .row {
+            display: flex;
+            gap: 8px;
+            justify-content: space-between;
+            font-size: 12px
+        }
+
+        .row .k {
+            color: var(--muted)
+        }
+
+        .row .v {
+            font-weight: 600;
+            text-align: right;
+            max-width: 170px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis
+        }
+
+        .events {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 180px;
+            overflow: auto
+        }
+
+        .ev {
+            display: grid;
+            grid-template-columns: 48px 8px 1fr;
+            gap: 8px;
+            font-size: 11px;
+            align-items: start
+        }
+
+        .ev .t {
+            color: #5f7498
+        }
+
+        .ev .d {
+            width: 6px;
+            height: 6px;
+            border-radius: 999px;
+            margin-top: 5px
+        }
+
+        .ev .m {
+            color: #93a7c8;
+            line-height: 1.35
+        }
+
+        .pill-ok {
+            background: rgba(6, 78, 59, .4);
+            color: #6ee7b7
+        }
+
+        .pill-warn {
+            background: rgba(120, 53, 15, .45);
+            color: #fcd34d
+        }
+
+        .pill-err {
+            background: rgba(127, 29, 29, .45);
+            color: #fca5a5
+        }
+
+        .pill-info {
+            background: rgba(29, 78, 216, .35);
+            color: #93c5fd
+        }
+
+        .modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(3, 7, 15, .74);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 18px
+        }
+
+        .modal.open {
+            display: flex
+        }
+
+        .card {
+            width: min(1100px, 96vw);
+            max-height: 88vh;
+            background: #0b1322;
+            border: 1px solid #263754;
+            border-radius: 18px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column
+        }
+
+        .card-h {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 14px 16px;
+            background: #10192c;
+            border-bottom: 1px solid var(--line)
+        }
+
+        .card-h .close {
+            margin-left: auto
+        }
+
+        .meta-bar {
+            padding: 10px 16px;
+            border-bottom: 1px solid #18243a;
+            color: #88a0c6;
+            font-size: 12px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px 14px
+        }
+
+        .card-b {
+            display: grid;
+            grid-template-columns: 1.3fr .9fr;
+            min-height: 0
+        }
+
+        .tail {
+            padding: 14px 16px;
+            white-space: pre-wrap;
+            overflow: auto;
+            min-height: 280px;
+            font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            background: #08111d;
+            color: #a7bad8
+        }
+
+        .deskinfo {
+            padding: 14px 16px;
+            border-left: 1px solid #18243a;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            background: #0d1627
+        }
+
+        .deskinfo .box {
+            border: 1px solid #22324d;
+            border-radius: 12px;
+            padding: 10px;
+            background: #10192c
+        }
+
+        .deskinfo .box b {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 12px
+        }
+
+        .send {
+            display: flex;
+            gap: 8px;
+            padding: 12px 16px;
+            border-top: 1px solid var(--line);
+            background: #0e1526
+        }
+
+        .send input {
+            flex: 1;
+            min-width: 0;
+            border: 1px solid #2a3a5a;
+            background: #09111d;
+            color: var(--text);
+            border-radius: 8px;
+            padding: 10px;
+            font: inherit
+        }
+
+        .footnote {
+            font-size: 11px;
+            color: #7f91ae
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <div class='title'>Pipeline Office Prototype</div>
+        <div id='runtime-badge' class='badge pill-info'>LOADING</div>
+        <div class='sp'></div><button onclick='apiPost("/api/runtime/start")'>Start</button><button
+            onclick='apiPost("/api/runtime/stop")'>Stop</button><button
+            onclick='apiPost("/api/runtime/restart")'>Restart</button>
+    </header>
+    <div class='wrap'>
+        <div class='stage'><canvas id='cv'></canvas>
+            <div id='tt' class='tooltip'>
+                <div class='name'></div>
+                <div class='meta'></div>
+            </div>
+        </div>
+        <aside class='side'>
+            <section class='section'>
+                <h3>Agents</h3>
+                <div id='agents' class='agents'></div>
+            </section>
+            <section class='section'>
+                <h3>Current Round</h3>
+                <div id='round' class='rows'></div>
+            </section>
+            <section class='section'>
+                <h3>Artifacts</h3>
+                <div id='arts' class='rows'></div>
+            </section>
+            <section class='section'>
+                <h3>Incident Room</h3>
+                <div id='incident' class='rows'></div>
+            </section>
+            <section class='section'>
+                <h3>Recent Events</h3>
+                <div id='events' class='events'></div>
+            </section>
+        </aside>
+    </div>
+    <div id='modal' class='modal' onclick='closeModal(event)'>
+        <div class='card' onclick='event.stopPropagation()'>
+            <div class='card-h'>
+                <div id='m-dot' class='dot'></div><b id='m-name'>Agent</b><span id='m-state'
+                    class='badge pill-info'>-</span><button class='close' onclick='closeModal()'>닫기</button>
+            </div>
+            <div id='m-meta' class='meta-bar'></div>
+            <div class='card-b'>
+                <div id='m-tail' class='tail'>대기 중...</div>
+                <div class='deskinfo'>
+                    <div class='box'><b>Desk Summary</b>
+                        <div id='m-summary'></div>
+                    </div>
+                    <div class='box'><b>Linked Artifacts</b>
+                        <div id='m-artifacts'></div>
+                    </div>
+                    <div class='box'><b>Operator Note</b>
+                        <div id='m-incident'></div>
+                    </div>
+                    <div class='footnote'>DeskRPG식 공간감만 차용한 운영실 프로토타입입니다. 실제 truth는 runtime status를 기준으로 읽습니다.</div>
+                </div>
+            </div>
+            <div class='send'><input id='m-input' placeholder='이 lane에 한 줄 입력을 보냅니다. 예: 1 / 승인 / continue'><button
+                    onclick='sendInput()'>전송</button></div>
+        </div>
+    </div>
+    <script>const CV = document.getElementById('cv'), CTX = CV.getContext('2d'), TT = document.getElementById('tt'); const W = 1100, H = 720, SPEED = 110, POLL = 1200; const COLORS = { working: '#34d399', ready: '#60a5fa', booting: '#fbbf24', broken: '#ef4444', dead: '#991b1b', off: '#475569', unknown: '#a78bfa' }; const ROLES = { claude: 'implement', codex: 'verify', gemini: 'advisory' }; const SPOTS = { claude: { x: 405, y: 200 }, codex: { x: 405, y: 360 }, gemini: { x: 405, y: 520 }, meeting: { x: 785, y: 210 }, incident: { x: 805, y: 530 }, archive: { x: 170, y: 220 }, receipt: { x: 180, y: 500 }, lounge: { x: 650, y: 360 }, entry: { x: 965, y: 640 } }; const WALK = { xMin: 300, xMax: 930, yMin: 160, yMax: 660 }; const DESKS = [{ x: 360, y: 168, w: 130, h: 70 }, { x: 360, y: 328, w: 130, h: 70 }, { x: 360, y: 488, w: 130, h: 70 }]; let runtime = null, last = performance.now(), events = [], packets = [], agents = new Map(), opened = ''; function esc(v) { return String(v ?? '').replace(/[&<>]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m])) } function base(p) { return String(p || '').split('/').filter(Boolean).pop() || '—' } function row(k, v, cls = '') { return '<div class=\'row\'><span class=\'k\'>' + esc(k) + '</span><span class=\'v ' + cls + '\'>' + esc(v) + '</span></div>' } function pushEv(type, msg) { const t = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); events.unshift({ type, msg, t }); events = events.slice(0, 24); document.getElementById('events').innerHTML = events.map(e => '<div class=\'ev\'><div class=\'t\'>' + esc(e.t) + '</div><div class=\'d\' style=\'background:' + (typeColor(e.type)) + '\'></div><div class=\'m\'>' + esc(e.msg) + '</div></div>').join('') } function typeColor(t) { return t === 'ok' ? COLORS.working : t === 'warn' ? COLORS.booting : t === 'err' ? COLORS.broken : COLORS.ready } function badgeCls(s) { return s === 'RUNNING' ? 'pill-ok' : s === 'DEGRADED' ? 'pill-warn' : s === 'BROKEN' ? 'pill-err' : 'pill-info' } function resize() { const r = CV.parentElement.getBoundingClientRect(), dpr = window.devicePixelRatio || 1; CV.width = r.width * dpr; CV.height = r.height * dpr; CV.style.width = r.width + 'px'; CV.style.height = r.height + 'px'; CTX.setTransform(dpr, 0, 0, dpr, 0, 0) } window.addEventListener('resize', resize); resize(); class Agent { constructor(name) { this.name = name; this.role = ROLES[name.toLowerCase()] || ''; this.x = SPOTS.entry.x; this.y = SPOTS.entry.y; this.tx = this.x; this.ty = this.y; this.state = 'off'; this.note = ''; this.pid = ''; this.lastEventAt = ''; this.bubble = ''; this.bubbleUntil = 0 } apply(l) { const prev = this.state; this.state = (l.state || 'off').toLowerCase(); this.note = l.note || l.status_note || ''; this.pid = l.pid || ''; this.lastEventAt = l.last_event_at || ''; const target = this.state === 'working' || this.state === 'booting' ? SPOTS[this.name.toLowerCase()] : (this.state === 'broken' || this.state === 'dead' ? SPOTS.incident : (this.state === 'ready' ? randIdle() : SPOTS.entry)); this.tx = target.x; this.ty = target.y; if (prev !== this.state) { pushEv(this.state === 'broken' || this.state === 'dead' ? 'err' : this.state === 'working' ? 'ok' : 'info', this.name + ' → ' + this.state); if (this.state === 'working' && this.note) this.say(this.note) } if (this.note && this.state === 'working') this.say(this.note, 2400) } say(msg, dur = 2200) { this.bubble = String(msg || '').slice(0, 26); this.bubbleUntil = performance.now() + dur } step(dt) { const dx = this.tx - this.x, dy = this.ty - this.y, dist = Math.hypot(dx, dy); if (dist > 1) { const step = Math.min(dist, SPEED * dt); this.x += dx / dist * step; this.y += dy / dist * step } else if (this.state === 'ready' && Math.random() < 0.003) { const p = randIdle(); this.tx = p.x; this.ty = p.y } } draw(scale) { const x = this.x * scale, y = this.y * scale, r = 15 * scale; CTX.fillStyle = 'rgba(0,0,0,.35)'; CTX.beginPath(); CTX.ellipse(x, y + r * 1.15, r * .8, r * .26, 0, 0, Math.PI * 2); CTX.fill(); CTX.fillStyle = COLORS[this.state] || COLORS.off; CTX.beginPath(); CTX.arc(x, y, r, 0, Math.PI * 2); CTX.fill(); CTX.fillStyle = 'rgba(255,255,255,.18)'; CTX.beginPath(); CTX.arc(x - r * .28, y - r * .34, r * .56, 0, Math.PI * 2); CTX.fill(); CTX.fillStyle = '#eaf1ff'; CTX.font = '700 ' + (11 * scale) + 'px sans-serif'; CTX.textAlign = 'center'; CTX.fillText(this.name, x, y - r - 10 * scale); const role = this.role.toUpperCase(); CTX.font = '700 ' + (8 * scale) + 'px sans-serif'; const tw = CTX.measureText(role).width + 10 * scale; CTX.fillStyle = 'rgba(9,14,28,.72)'; roundRect(x - tw / 2, y + r + 6 * scale, tw, 14 * scale, 7 * scale, true); CTX.fillStyle = COLORS[this.state] || COLORS.off; CTX.fillText(role, x, y + r + 17 * scale); if (this.bubble && this.bubbleUntil > performance.now()) { CTX.font = '700 ' + (10 * scale) + 'px sans-serif'; const bw = CTX.measureText(this.bubble).width + 18 * scale, bh = 26 * scale, bx = x - bw / 2, by = y - r - 42 * scale; CTX.fillStyle = 'rgba(255,255,255,.96)'; roundRect(bx, by, bw, bh, 10 * scale, true); CTX.beginPath(); CTX.moveTo(x - 5 * scale, by + bh); CTX.lineTo(x + 5 * scale, by + bh); CTX.lineTo(x, by + bh + 7 * scale); CTX.fill(); CTX.fillStyle = '#111827'; CTX.fillText(this.bubble, x, by + 17 * scale) } } hit(vx, vy) { return Math.hypot(vx - this.x, vy - this.y) < 20 } } function randIdle() { let x = WALK.xMin + Math.random() * (WALK.xMax - WALK.xMin), y = WALK.yMin + Math.random() * (WALK.yMax - WALK.yMin); for (const r of DESKS) { if (x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h) { x = r.x + r.w + 20; y = r.y + r.h + 20 } } return { x, y } } class Packet { constructor(from, to, label) { this.x = from.x; this.y = from.y - 28; this.tx = to.x; this.ty = to.y - 28; this.label = label; this.life = 1.6 } step(dt) { this.life -= dt; this.x += (this.tx - this.x) * 0.08; this.y += (this.ty - this.y) * 0.08 } draw(scale) { const x = this.x * scale, y = this.y * scale - (Math.sin((1.6 - this.life) / 1.6 * Math.PI) * 26 * scale); CTX.font = '18px sans-serif'; CTX.textAlign = 'center'; CTX.fillText(this.label, x, y) } } function roundRect(x, y, w, h, r, fill) { CTX.beginPath(); CTX.moveTo(x + r, y); CTX.arcTo(x + w, y, x + w, y + h, r); CTX.arcTo(x + w, y + h, x, y + h, r); CTX.arcTo(x, y + h, x, y, r); CTX.arcTo(x, y, x + w, y, r); if (fill) CTX.fill(); else CTX.stroke() } function drawScene() { const ww = CV.clientWidth, hh = CV.clientHeight, scale = Math.min(ww / W, hh / H); CTX.clearRect(0, 0, ww, hh); CTX.fillStyle = '#09111f'; CTX.fillRect(0, 0, ww, hh); CTX.fillStyle = '#0d1728'; roundRect(50 * scale, 60 * scale, 440 * scale, 600 * scale, 18 * scale, true); roundRect(560 * scale, 80 * scale, 410 * scale, 240 * scale, 18 * scale, true); roundRect(560 * scale, 360 * scale, 410 * scale, 270 * scale, 18 * scale, true); CTX.strokeStyle = 'rgba(100,140,200,.12)'; CTX.lineWidth = 1; for (let i = 0; i < 16; i++) { CTX.beginPath(); CTX.moveTo(60 * scale + i * 55 * scale, 70 * scale); CTX.lineTo(60 * scale + i * 55 * scale, 650 * scale); CTX.stroke() } drawZone('IMPLEMENT DESK', SPOTS.claude.x, SPOTS.claude.y - 72, scale, '#34d399'); drawZone('VERIFY DESK', SPOTS.codex.x, SPOTS.codex.y - 72, scale, '#60a5fa'); drawZone('ADVISORY DESK', SPOTS.gemini.x, SPOTS.gemini.y - 72, scale, '#fbbf24'); drawBoard(scale); for (const a of agents.values()) a.draw(scale); for (const p of packets) p.draw(scale) } function drawZone(label, x, y, scale, color) { CTX.fillStyle = 'rgba(0,0,0,.45)'; roundRect((x - 78) * scale, y * scale, 156 * scale, 22 * scale, 10 * scale, true); CTX.fillStyle = color; CTX.font = '700 ' + (10 * scale) + 'px sans-serif'; CTX.textAlign = 'center'; CTX.fillText(label, x * scale, (y + 15) * scale) } function drawBoard(scale) { CTX.fillStyle = 'rgba(8,13,24,.82)'; roundRect(592 * scale, 108 * scale, 350 * scale, 184 * scale, 16 * scale, true); CTX.fillStyle = '#dbe6ff'; CTX.font = '700 ' + (13 * scale) + 'px sans-serif'; CTX.textAlign = 'left'; CTX.fillText('Meeting / Advisory Room', 612 * scale, 132 * scale); CTX.font = '12px sans-serif'; CTX.fillStyle = '#9cb3d9'; const control = ((runtime || {}).control || {}).active_control_status || 'none'; const round = ((runtime || {}).active_round || {}).state || 'IDLE'; const rec = ((runtime || {}).last_receipt || {}).verify_result || 'pending'; CTX.fillText('control: ' + control, 612 * scale, 162 * scale); CTX.fillText('round: ' + round, 612 * scale, 186 * scale); CTX.fillText('receipt: ' + rec, 612 * scale, 210 * scale); CTX.fillStyle = 'rgba(8,13,24,.82)'; roundRect(592 * scale, 388 * scale, 350 * scale, 214 * scale, 16 * scale, true); CTX.fillStyle = '#dbe6ff'; CTX.font = '700 ' + (13 * scale) + 'px sans-serif'; CTX.fillText('Archive / Incident Room', 612 * scale, 414 * scale); CTX.font = '12px sans-serif'; const art = ((runtime || {}).artifacts || {}), work = base((art.latest_work || {}).path), verify = base((art.latest_verify || {}).path), dr = ((runtime || {}).degraded_reasons || [])[0] || runtime?.degraded_reason || 'none'; CTX.fillStyle = '#9cb3d9'; CTX.fillText('latest work: ' + work, 612 * scale, 448 * scale); CTX.fillText('latest verify: ' + verify, 612 * scale, 472 * scale); CTX.fillStyle = dr === 'none' ? '#6ee7b7' : '#fca5a5'; CTX.fillText('incident: ' + dr, 612 * scale, 496 * scale) } function renderSide() { const badge = document.getElementById('runtime-badge'); const rs = String(runtime?.runtime_state || 'STOPPED').toUpperCase(); badge.textContent = rs; badge.className = 'badge ' + badgeCls(rs); const lanes = runtime?.lanes || []; document.getElementById('agents').innerHTML = lanes.map(l => { const s = (l.state || 'off').toLowerCase(), c = COLORS[s] || COLORS.off; return '<div class=\'agent\' onclick=\'openAgent("' + esc(l.name) + '")\'><div class=\'top\'><div class=\'dot\' style=\'background:' + c + '\'></div><div><div class=\'name\'>' + esc(l.name) + '</div><div class=\'role\'>' + esc(ROLES[String(l.name || '').toLowerCase()] || '') + '</div></div></div>' + (l.note || l.status_note ? '<div class=\'note\'>' + esc(String(l.note || l.status_note).slice(0, 80)) + '</div>' : '') + '</div>' }).join('') || '<div class=\'footnote\'>에이전트 없음</div>'; const round = runtime?.active_round || {}, control = runtime?.control || {}, auto = runtime?.autonomy || {}; document.getElementById('round').innerHTML = [row('Runtime', rs), row('Control', control.active_control_status || 'none'), row('Seq', control.active_control_seq ?? -1), row('Round', round.state || 'IDLE'), row('Completion', round.completion_stage || '—'), row('Mode', auto.mode || 'normal')].join(''); const art = runtime?.artifacts || {}, lr = runtime?.last_receipt || {}; document.getElementById('arts').innerHTML = [row('Latest work', base(art.latest_work?.path)), row('Latest verify', base(art.latest_verify?.path)), row('Receipt ID', runtime?.last_receipt_id || '—'), row('Receipt result', lr.verify_result || 'pending'), row('Receipt close', round.receipt_close_status || '—')].join(''); const dr = ((runtime?.degraded_reasons) || [])[0] || runtime?.degraded_reason || 'none'; document.getElementById('incident').innerHTML = [row('Watcher', runtime?.watcher?.alive ? 'alive' : 'dead'), row('Degraded', dr), row('Operator eligible', String(runtime?.autonomy?.operator_eligible ?? false)), row('Block', runtime?.autonomy?.block_reason || '—')].join('') } function openAgent(name) { opened = name; const a = agents.get(name); if (!a) return; document.getElementById('modal').classList.add('open'); document.getElementById('m-dot').style.background = COLORS[a.state] || COLORS.off; document.getElementById('m-name').textContent = a.name; const ms = document.getElementById('m-state'); ms.textContent = a.state.toUpperCase(); ms.className = 'badge ' + (a.state === 'working' ? 'pill-ok' : a.state === 'broken' || a.state === 'dead' ? 'pill-err' : a.state === 'booting' ? 'pill-warn' : 'pill-info'); document.getElementById('m-meta').innerHTML = '<span>role: ' + esc(a.role) + '</span><span>pid: ' + esc(a.pid || '—') + '</span><span>last event: ' + esc(a.lastEventAt || '—') + '</span>'; const art = runtime?.artifacts || {}; document.getElementById('m-summary').innerHTML = row('state', a.state) + row('desk', a.role || '—') + row('note', a.note || '—'); document.getElementById('m-artifacts').innerHTML = row('latest work', base(art.latest_work?.path)) + row('latest verify', base(art.latest_verify?.path)) + row('last receipt', runtime?.last_receipt_id || '—'); const dr = ((runtime?.degraded_reasons) || [])[0] || runtime?.degraded_reason || 'none'; document.getElementById('m-incident').innerHTML = row('incident', dr) + row('control', runtime?.control?.active_control_status || 'none'); loadTail(name) } function closeModal(e) { if (e && e.target !== document.getElementById('modal')) return; document.getElementById('modal').classList.remove('open'); opened = '' } async function loadTail(name) { const el = document.getElementById('m-tail'); el.textContent = 'tail loading...'; try { const r = await fetch('/api/runtime/capture-tail?lane=' + encodeURIComponent(name) + '&lines=90'); const d = await r.json(); el.textContent = d.ok && d.text ? d.text : '활성 tail이 없습니다.' } catch (_) { el.textContent = 'prototype preview: 실제 route에 연결되면 lane tail이 여기 표시됩니다.' } } async function sendInput() { if (!opened) return; const input = document.getElementById('m-input'); const text = String(input.value || '').trim(); if (!text) return; try { const r = await fetch('/api/runtime/send-input', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lane: opened, text }) }); const d = await r.json(); pushEv(d.ok ? 'ok' : 'err', (d.ok ? opened + ' 입력 전송' : '전송 실패: ' + (d.error || 'unknown'))); if (d.ok) { input.value = ''; loadTail(opened) } } catch (e) { pushEv('err', '전송 실패: ' + e.message) } } async function apiPost(path) { try { const r = await fetch(path, { method: 'POST' }); const d = await r.json(); pushEv(d.ok ? 'ok' : 'err', path.split('/').pop() + (d.ok ? ' 완료' : ' 실패: ' + (d.error || 'unknown'))) } catch (e) { pushEv('err', '요청 실패: ' + e.message) } } function ensureAgents(lanes) { const seen = new Set(); for (const l of lanes) { const n = String(l.name || ''); seen.add(n); if (!agents.has(n)) agents.set(n, new Agent(n)); agents.get(n).apply(l) } for (const [n] of agents) { if (!seen.has(n)) agents.delete(n) } } function syncPackets(prev, next) { const pArt = prev?.artifacts || {}, nArt = next?.artifacts || {}; if (prev?.control?.active_control_seq !== undefined && next?.control?.active_control_seq !== prev?.control?.active_control_seq) { packets.push(new Packet(SPOTS.codex, SPOTS.claude, '📋')) } if (base(nArt.latest_work?.path) !== '—' && base(nArt.latest_work?.path) !== base(pArt.latest_work?.path)) { packets.push(new Packet(SPOTS.claude, SPOTS.codex, '📁')); pushEv('ok', '새 work artifact 감지') } if (base(nArt.latest_verify?.path) !== '—' && base(nArt.latest_verify?.path) !== base(pArt.latest_verify?.path)) { packets.push(new Packet(SPOTS.codex, SPOTS.claude, '✅')); pushEv('info', 'verify artifact 갱신') } if ((next?.last_receipt_id || '') && (next?.last_receipt_id !== prev?.last_receipt_id)) { packets.push(new Packet(SPOTS.codex, SPOTS.receipt, '🧾')); pushEv('ok', 'receipt 발급 감지') } } function mock() { const seq = Math.floor(Date.now() / 20000) % 3 + 181; return { runtime_state: 'RUNNING', control: { active_control_status: ['implement', 'none', 'needs_operator'][Math.floor(Date.now() / 15000) % 3], active_control_seq: seq }, active_round: { state: ['CLAUDE_ACTIVE', 'CODEX_VERIFY', 'RECEIPT_PENDING'][Math.floor(Date.now() / 12000) % 3], completion_stage: ['dispatch_active', 'task_done', 'waiting_receipt_close_after_task_done'][Math.floor(Date.now() / 12000) % 3], receipt_close_status: ['pending', 'pending', 'closed'][Math.floor(Date.now() / 12000) % 3] }, autonomy: { mode: ['normal', 'triage', 'pending_operator'][Math.floor(Date.now() / 14000) % 3], block_reason: ['', 'review_slice_needed', 'operator_wait'][Math.floor(Date.now() / 14000) % 3], operator_eligible: Math.floor(Date.now() / 14000) % 3 === 2 }, watcher: { alive: true }, artifacts: { latest_work: { path: 'work/4/17/2026-04-17-controller-room-pass.md' }, latest_verify: { path: 'verify/4/17/2026-04-17-controller-room-pass.md' } }, last_receipt_id: 'rcpt-' + seq, last_receipt: { verify_result: ['pass', 'pending', 'warn'][Math.floor(Date.now() / 11000) % 3] }, degraded_reason: Math.floor(Date.now() / 15000) % 3 === 2 ? 'operator_review_pending' : '', degraded_reasons: Math.floor(Date.now() / 15000) % 3 === 2 ? ['operator_review_pending'] : [], lanes: [{ name: 'Claude', state: ['working', 'ready', 'working'][Math.floor(Date.now() / 9000) % 3], note: 'controller office semantic zone 적용', last_event_at: new Date().toISOString() }, { name: 'Codex', state: ['ready', 'working', 'ready'][Math.floor(Date.now() / 9000) % 3], note: 'verify / artifact board 확인', last_event_at: new Date().toISOString() }, { name: 'Gemini', state: ['ready', 'ready', 'working'][Math.floor(Date.now() / 9000) % 3], note: 'advisory room 대기', last_event_at: new Date().toISOString() }] } } async function poll() { let next = null; try { const r = await fetch('/api/runtime/status'); next = await r.json() } catch (_) { next = mock() } syncPackets(runtime, next); runtime = next; ensureAgents(runtime.lanes || []); renderSide(); if (opened) openAgent(opened) } function frame(now) { const dt = Math.min(.08, (now - last) / 1000); last = now; for (const a of agents.values()) a.step(dt); packets = packets.filter(p => p.life > 0); for (const p of packets) p.step(dt); drawScene(); requestAnimationFrame(frame) } CV.addEventListener('mousemove', e => { const rect = CV.getBoundingClientRect(), scale = Math.min(CV.clientWidth / W, CV.clientHeight / H), mx = (e.clientX - rect.left) / scale, my = (e.clientY - rect.top) / scale; let hit = null; for (const a of agents.values()) if (a.hit(mx, my)) hit = a; if (!hit) { TT.style.display = 'none'; return } TT.style.display = 'block'; TT.style.left = e.clientX - rect.left + 14 + 'px'; TT.style.top = e.clientY - rect.top - 8 + 'px'; TT.querySelector('.name').textContent = hit.name + ' (' + hit.role + ')'; TT.querySelector('.meta').textContent = (hit.note || hit.state || '').slice(0, 80) }); CV.addEventListener('mouseleave', () => TT.style.display = 'none'); CV.addEventListener('click', e => { const rect = CV.getBoundingClientRect(), scale = Math.min(CV.clientWidth / W, CV.clientHeight / H), mx = (e.clientX - rect.left) / scale, my = (e.clientY - rect.top) / scale; for (const a of agents.values()) if (a.hit(mx, my)) return openAgent(a.name) }); pushEv('info', 'DeskRPG식 공간 운영실 프로토타입을 로드했습니다.'); poll(); setInterval(poll, POLL); requestAnimationFrame(frame);</script>
+</body>
+
+</html>

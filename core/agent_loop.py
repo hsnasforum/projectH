@@ -2486,6 +2486,22 @@ class AgentLoop:
             canonical.append(updated)
         return canonical
 
+    # Local slot-priority map for entity-card reinvestigation targeting.
+    # Lower value = stronger preference. Rationale: within the same
+    # unresolved bucket, we want the three targeted prompts to land on
+    # the slots whose ambiguity most commonly blocks a confident
+    # entity-card answer. `개발`, `이용 형태`, `상태` carry the most
+    # user-visible disambiguation weight; `서비스/배급` and
+    # `장르/성격` are secondary and frequently overlap with other
+    # slots in practice.
+    _REINVESTIGATION_SLOT_USER_PRIORITY = {
+        "개발": 0,
+        "이용 형태": 1,
+        "상태": 2,
+        "서비스/배급": 3,
+        "장르/성격": 4,
+    }
+
     def _build_entity_reinvestigation_suggestions(
         self,
         *,
@@ -2500,7 +2516,9 @@ class AgentLoop:
             "이용 형태": f"{query} 공식 플랫폼 검색해봐",
         }
         status_priority = {CoverageStatus.MISSING: 0, CoverageStatus.WEAK: 1}
-        candidates: list[tuple[int, int, str]] = []
+        slot_user_priority = self._REINVESTIGATION_SLOT_USER_PRIORITY
+        unknown_slot_rank = len(slot_user_priority)
+        candidates: list[tuple[int, int, int, int, str]] = []
         for index, item in enumerate(claim_coverage or []):
             if not isinstance(item, dict):
                 continue
@@ -2511,12 +2529,29 @@ class AgentLoop:
             prompt = slot_prompt_map.get(slot)
             if not prompt or status not in status_priority:
                 continue
-            candidates.append((status_priority[status], index, prompt))
+            # Primary: MISSING before WEAK — unresolved slots are still
+            # preferred over strong slots, and truly missing slots keep
+            # the most urgent claim on a reinvestigation prompt.
+            status_rank = status_priority[status]
+            # Secondary: within MISSING prefer slots that have no
+            # stored candidates yet (a blank slot closes a clean
+            # user-visible gap); within WEAK prefer slots whose single
+            # primary source is NOT in the trusted set, since those
+            # are the most fragile entries and benefit the most from
+            # a targeted recheck.
+            if status == CoverageStatus.MISSING:
+                candidate_count = int(item.get("candidate_count") or 0)
+                sub_rank = 0 if candidate_count == 0 else 1
+            else:
+                source_role = str(item.get("source_role") or "").strip()
+                sub_rank = 0 if source_role not in TRUSTED_CLAIM_SOURCE_ROLES else 1
+            slot_rank = slot_user_priority.get(slot, unknown_slot_rank)
+            candidates.append((status_rank, sub_rank, slot_rank, index, prompt))
 
-        candidates.sort(key=lambda item: (item[0], item[1]))
+        candidates.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
         suggestions: list[str] = []
         seen: set[str] = set()
-        for _, _, prompt in candidates:
+        for _, _, _, _, prompt in candidates:
             if prompt in seen:
                 continue
             seen.add(prompt)
@@ -3546,6 +3581,17 @@ class AgentLoop:
             return pair[0] if has_final else pair[1]
         return pair[1]
 
+    def _select_korean_directional_particle(self, text: str) -> str:
+        compact = " ".join(str(text or "").split()).strip()
+        if not compact:
+            return "로"
+        last_char = compact[-1]
+        if "가" <= last_char <= "힣":
+            jongseong = (ord(last_char) - 0xAC00) % 28
+            # No final (0) or final ㄹ (8) → 로; otherwise 으로.
+            return "로" if jongseong in (0, 8) else "으로"
+        return "로"
+
     def _web_source_role_label(self, *, query: str, source: dict[str, Any]) -> str:
         url = str(source.get("url") or "").strip()
         title = str(source.get("title") or source.get("result_title") or "").strip()
@@ -4237,10 +4283,23 @@ class AgentLoop:
             progress_label = ""
             if current_rank > previous_rank:
                 progress_state = "improved"
-                progress_label = "보강됨"
+                # When the slot newly qualifies for trusted agreement after
+                # re-check, name that specifically instead of relying on the
+                # generic 보강됨 wording, so the focus-slot meta stays
+                # coherent with the shipped summarize_slot_coverage rule.
+                if current_status == CoverageStatus.STRONG:
+                    progress_label = "교차 확인 충족"
+                else:
+                    progress_label = "보강됨"
             elif current_rank < previous_rank:
                 progress_state = "regressed"
-                progress_label = "약해짐"
+                # Symmetric: if the slot no longer qualifies for trusted
+                # agreement after re-check, say that instead of a generic
+                # 약해짐 that hides why 교차 확인 was dropped.
+                if previous_status == CoverageStatus.STRONG:
+                    progress_label = "교차 확인 해제"
+                else:
+                    progress_label = "약해짐"
             elif previous_map:
                 progress_state = "unchanged"
                 progress_label = "유지"
@@ -4318,8 +4377,8 @@ class AgentLoop:
             return None
 
         focus_slot = self._entity_slot_from_probe_text(query)
-        improved_slots: list[tuple[str, str, str]] = []
-        regressed_slots: list[tuple[str, str, str]] = []
+        improved_slots: list[tuple[str, str, str, str, str]] = []
+        regressed_slots: list[tuple[str, str, str, str, str]] = []
         unresolved_slots: list[tuple[str, str]] = []
         for slot in CORE_ENTITY_SLOTS:
             current_status = current_map.get(slot, "")
@@ -4334,6 +4393,8 @@ class AgentLoop:
                         slot,
                         self._claim_coverage_status_label(previous_status),
                         self._claim_coverage_status_label(current_status),
+                        previous_status,
+                        current_status,
                     )
                 )
             elif current_rank < previous_rank:
@@ -4342,6 +4403,8 @@ class AgentLoop:
                         slot,
                         self._claim_coverage_status_label(previous_status),
                         self._claim_coverage_status_label(current_status),
+                        previous_status,
+                        current_status,
                     )
                 )
             if current_status in {CoverageStatus.WEAK, CoverageStatus.MISSING}:
@@ -4349,19 +4412,48 @@ class AgentLoop:
 
         if focus_slot:
             focus_particle = self._select_korean_particle(focus_slot, "은는")
-            for slot, previous_label, current_label in improved_slots:
+            for slot, previous_label, current_label, _prev_status, cur_status in improved_slots:
                 if slot == focus_slot:
-                    return f"재조사 결과 {slot}{focus_particle} {previous_label}에서 {current_label}로 보강되었습니다."
-            for slot, previous_label, current_label in regressed_slots:
+                    directional = self._select_korean_directional_particle(current_label)
+                    # When re-check newly satisfies trusted agreement,
+                    # say so explicitly instead of the generic 보강
+                    # wording, to stay coherent with the shipped
+                    # summarize_slot_coverage rule.
+                    if cur_status == CoverageStatus.STRONG:
+                        return (
+                            f"재조사 결과 {slot}{focus_particle} {previous_label}에서 "
+                            f"{current_label}{directional} 보강되어 신뢰할 만한 출처들의 "
+                            f"교차 확인 기준을 충족했습니다."
+                        )
+                    return (
+                        f"재조사 결과 {slot}{focus_particle} {previous_label}에서 "
+                        f"{current_label}{directional} 보강되었습니다."
+                    )
+            for slot, previous_label, current_label, prev_status, _cur_status in regressed_slots:
                 if slot == focus_slot:
-                    return f"재조사 결과 {slot}{focus_particle} {previous_label}에서 {current_label}로 약해졌습니다."
+                    directional = self._select_korean_directional_particle(current_label)
+                    # When the slot no longer qualifies for trusted
+                    # agreement after re-check, stop relying on the
+                    # generic 약해 wording that hides why 교차 확인 was
+                    # dropped. Stay conservative about causality — the
+                    # data only tells us the rule is no longer met.
+                    if prev_status == CoverageStatus.STRONG:
+                        return (
+                            f"재조사 결과 {slot}{focus_particle} 교차 확인 기준을 더 이상 "
+                            f"충족하지 않아 {current_label}{directional} 조정되었습니다."
+                        )
+                    return (
+                        f"재조사 결과 {slot}{focus_particle} {previous_label}에서 "
+                        f"{current_label}{directional} 약해졌습니다."
+                    )
             for slot, current_label in unresolved_slots:
                 if slot == focus_slot:
                     return f"재조사했지만 {slot}{focus_particle} 아직 {current_label} 상태입니다."
 
         if improved_slots:
             improved_summary = ", ".join(
-                f"{slot} {before}->{after}" for slot, before, after in improved_slots[:3]
+                f"{slot} {before}->{after}"
+                for slot, before, after, _prev_status, _cur_status in improved_slots[:3]
             )
             if unresolved_slots:
                 unresolved_summary = ", ".join(

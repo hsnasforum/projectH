@@ -59,7 +59,14 @@ from pipeline_runtime.lane_surface import (
     wait_for_pane_settle as _shared_wait_for_pane_settle,
 )
 from pipeline_runtime.operator_autonomy import classify_operator_candidate, normalize_reason_code
-from pipeline_runtime.schema import read_control_meta, read_json
+from pipeline_runtime.schema import (
+    iter_job_state_paths,
+    latest_verify_note_for_work,
+    process_starttime_fingerprint,
+    read_control_meta,
+    read_json,
+    same_day_verify_dir_for_work,
+)
 from pipeline_runtime.turn_arbitration import WatcherTurnInputs, resolve_watcher_turn
 from pipeline_runtime.wrapper_events import build_lane_read_models
 from verify_fsm import (
@@ -130,7 +137,6 @@ WORK_PATH_RE = re.compile(r"(work/\d+/\d+/[^\s`]+\.md)")
 _DISPATCH_LOCKS_GUARD = threading.Lock()
 _DISPATCH_LOCKS: dict[str, threading.Lock] = {}
 _DISPATCH_LOCK_TIMEOUT_SEC = 30.0
-_SHARED_STATE_SPECIAL_FILES = {"turn_state.json", "autonomy_state.json"}
 
 
 class WatcherTurnState(str, Enum):
@@ -211,6 +217,7 @@ class LeaseData:
     started_at:    float
     lease_ttl_sec: int
     pane_target:   str
+    owner_pid:     int | None = None
 
 
 @dataclass
@@ -226,18 +233,108 @@ class ControlSignal:
 class PaneLease:
     """slot별 lock 파일 기반 lease. dry_run 시 dispatch 직후 즉시 해제."""
 
-    def __init__(self, lock_dir: Path, default_ttl: int = 900, dry_run: bool = False) -> None:
+    def __init__(
+        self,
+        lock_dir: Path,
+        default_ttl: int = 900,
+        dry_run: bool = False,
+        owner_pid_path: Optional[Path] = None,
+    ) -> None:
         self.lock_dir    = lock_dir
         self.default_ttl = default_ttl
         self.dry_run     = dry_run
+        self.owner_pid_path = owner_pid_path
         lock_dir.mkdir(parents=True, exist_ok=True)
 
     def _lock_path(self, slot: str) -> Path:
         return self.lock_dir / f"{slot}.lock"
 
+    def _read_owner_pid_state(self) -> tuple[int | None, float]:
+        if self.owner_pid_path is None:
+            return None, 0.0
+        try:
+            stat = self.owner_pid_path.stat()
+            raw_pid = self.owner_pid_path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            return None, 0.0
+        except OSError:
+            return None, 0.0
+        if not raw_pid:
+            return None, stat.st_mtime
+        try:
+            pid = int(raw_pid)
+        except ValueError:
+            return None, stat.st_mtime
+        if pid <= 0:
+            return None, stat.st_mtime
+        return pid, stat.st_mtime
+
+    def _pid_dead(self, pid: int | None) -> bool:
+        if pid is None or pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return False
+        except OSError:
+            return False
+        return False
+
+    def _owner_dead(self) -> bool:
+        # owner_pid_path가 wired되지 않은 경우: 감시할 supervisor가 없는 standalone 운영이
+        # 가능하므로 "dead"로 판정하지 않는다.
+        owner_pid, _ = self._read_owner_pid_state()
+        if owner_pid is None:
+            # pid 파일이 없거나 비어 있거나 손상된 경우는 dead가 아니라 판단 보류.
+            return False
+        return self._pid_dead(owner_pid)
+
+    def _clear_lock(self, slot: str, *, reason: str) -> None:
+        path = self._lock_path(slot)
+        if not path.exists():
+            return
+        try:
+            path.unlink()
+        except OSError:
+            return
+        log.warning("lease released: slot=%s reason=%s", slot, reason)
+
+    def _clear_if_owner_dead(self, slot: str) -> None:
+        path = self._lock_path(slot)
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+
+        owner_pid = data.get("owner_pid")
+        if isinstance(owner_pid, int) and owner_pid > 0:
+            if self._pid_dead(owner_pid):
+                self._clear_lock(slot, reason="owner_dead")
+            return
+
+        # legacy lease에는 owner_pid가 없으므로, supervisor.pid가 lock보다 나중에
+        # 다시 쓰였으면 restart 이후 stale lease로 보고 정리한다.
+        _, owner_pid_mtime = self._read_owner_pid_state()
+        started_at = 0.0
+        try:
+            started_at = float(data.get("started_at") or 0.0)
+        except (TypeError, ValueError):
+            started_at = 0.0
+        if owner_pid_mtime > 0.0 and started_at > 0.0 and owner_pid_mtime > started_at:
+            self._clear_lock(slot, reason="owner_restarted")
+            return
+
+        if self._owner_dead():
+            self._clear_lock(slot, reason="owner_dead")
+
     def acquire(self, slot: str, job_id: str, round_: int,
                 pane_target: str, ttl: Optional[int] = None) -> bool:
         path = self._lock_path(slot)
+        self._clear_if_owner_dead(slot)
         if path.exists():
             try:
                 data    = json.loads(path.read_text())
@@ -252,6 +349,7 @@ class PaneLease:
         lease = LeaseData(
             job_id=job_id, round=round_, started_at=time.time(),
             lease_ttl_sec=ttl or self.default_ttl, pane_target=pane_target,
+            owner_pid=self._read_owner_pid_state()[0],
         )
         path.write_text(json.dumps(asdict(lease), ensure_ascii=False, indent=2))
         log.info("lease acquired: slot=%s job=%s round=%d pane=%s",
@@ -266,6 +364,7 @@ class PaneLease:
 
     def is_active(self, slot: str) -> bool:
         path = self._lock_path(slot)
+        self._clear_if_owner_dead(slot)
         if not path.exists():
             return False
         try:
@@ -1295,10 +1394,16 @@ class WatcherCore:
             settle_sec=config.get("settle_sec", 3.0),
             required_stable=config.get("required_stable", 2),
         )
+        # owner_pid_path는 watcher init 시점의 `supervisor.pid` 존재 여부와 무관하게 항상
+        # 동일 경로를 가리킨다. supervisor가 나중에 뜨고/정리되는 전환은 `PaneLease._owner_dead`
+        # 가 매 check마다 파일을 다시 읽어 판단한다. 이렇게 두지 않으면 watcher가 supervisor
+        # 보다 먼저 뜨는 start-up race에서 owner_pid_path가 None으로 영구 고정되어,
+        # supervisor가 비정상 종료해도 stale lease가 TTL 만기 전까지 해제되지 않는다.
         self.lease  = PaneLease(
             self.lock_dir,
             default_ttl=config.get("lease_ttl", 900),
             dry_run=self.dry_run,
+            owner_pid_path=self.base_dir / "supervisor.pid",
         )
         self.dedupe = DedupeGuard(self.events_dir)
 
@@ -1527,9 +1632,7 @@ class WatcherCore:
         terminal_values = {status.value for status in TERMINAL_STATES}
         archived = 0
         legacy_cutoff = self.started_at - self.state_cleanup_legacy_grace_sec
-        for path in sorted(self.state_dir.glob("*.json")):
-            if path.name in _SHARED_STATE_SPECIAL_FILES:
-                continue
+        for path in iter_job_state_paths(self.state_dir):
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
@@ -1572,10 +1675,19 @@ class WatcherCore:
     def _write_current_run_pointer(self) -> None:
         if not self._runtime_export_enabled:
             return
+        # watcher가 자기 process identity(`watcher_pid` + `watcher_fingerprint`)를
+        # current_run.json에 같이 남겨야, supervisor 재시작 inheritance가 watcher가
+        # 직접 쓴 pointer를 보고도 같은 owner-match 계약 아래에서 prior run_id를
+        # 이어받을 수 있다. 이 두 필드가 빠지면 supervisor가 fresh run_id로 fall
+        # through 하면서 canonical runtime surface가 다시 어긋난다.
+        watcher_pid = os.getpid()
+        watcher_fingerprint = process_starttime_fingerprint(watcher_pid)
         data = {
             "run_id": self.run_id,
             "status_path": self._repo_relative(self.run_status_path),
             "events_path": self._repo_relative(self.run_events_path),
+            "watcher_pid": watcher_pid,
+            "watcher_fingerprint": watcher_fingerprint,
             "updated_at": self._iso_utc(time.time()),
         }
         tmp_path = self.current_run_path.with_suffix(".json.tmp")
@@ -1878,9 +1990,7 @@ class WatcherCore:
         verified: set[str] = set()
         if not self.state_dir.exists():
             return verified
-        for path in self.state_dir.glob("*.json"):
-            if path.name == "turn_state.json":
-                continue
+        for path in iter_job_state_paths(self.state_dir):
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
@@ -2079,60 +2189,21 @@ class WatcherCore:
         return self._find_latest_md(self.verify_dir)
 
     # ------------------------------------------------------------------
-    def _note_referenced_work_paths(self, note_path: Optional[Path]) -> set[str]:
-        if note_path is None or not note_path.exists():
-            return set()
-        try:
-            text = note_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            return set()
-        return {
-            normalized
-            for normalized in (
-                self._normalize_artifact_path(match.group(1))
-                for match in WORK_PATH_RE.finditer(text)
-            )
-            if normalized
-        }
-
-    # ------------------------------------------------------------------
     def _get_latest_same_day_verify_path_for_work(self, work_path: Optional[Path]) -> Optional[Path]:
         if work_path is None:
             return None
-        normalized_work = self._normalize_artifact_path(work_path)
-        if not normalized_work:
-            return None
-
-        verify_dir = self._get_same_day_verify_dir(work_path)
-        latest_path: Optional[Path] = None
-        latest_mtime = 0.0
-        if not verify_dir.exists():
-            return None
-        for md in verify_dir.rglob("*.md"):
-            if not self._is_canonical_round_note(verify_dir, md):
-                continue
-            if normalized_work not in self._note_referenced_work_paths(md):
-                continue
-            try:
-                mt = md.stat().st_mtime
-            except OSError:
-                continue
-            if mt >= latest_mtime:
-                latest_path = md
-                latest_mtime = mt
-        return latest_path
+        return latest_verify_note_for_work(
+            self.watch_dir,
+            self.verify_dir,
+            work_path,
+            repo_root=self.repo_root,
+        )
 
     # ------------------------------------------------------------------
     def _get_same_day_verify_dir(self, work_path: Optional[Path]) -> Path:
         if work_path is None:
             return self.verify_dir
-        try:
-            rel = work_path.relative_to(self.watch_dir)
-        except ValueError:
-            return self.verify_dir
-        if len(rel.parts) >= 2:
-            return self.verify_dir / rel.parts[0] / rel.parts[1]
-        return self.verify_dir
+        return same_day_verify_dir_for_work(self.watch_dir, self.verify_dir, work_path)
 
     # ------------------------------------------------------------------
     def _build_verify_feedback_sigs(self, job: JobState) -> tuple[str, str]:
@@ -2489,6 +2560,42 @@ class WatcherCore:
         if latest_unverified_broad is not None:
             return latest_unverified_broad
         return self._get_latest_unverified_work_path(include_metadata_only=False)
+
+    # ------------------------------------------------------------------
+    def _get_current_run_jobs(
+        self,
+        *,
+        statuses: Optional[set[JobStatus]] = None,
+    ) -> list[JobState]:
+        """Load current-run watcher jobs from shared state.
+
+        Blank run_id is tolerated for test scaffolds and legacy local state.
+        """
+        if not self.state_dir.exists():
+            return []
+        jobs: list[JobState] = []
+        seen_job_ids: set[str] = set()
+        for path in iter_job_state_paths(self.state_dir):
+            if path.stem in seen_job_ids:
+                continue
+            seen_job_ids.add(path.stem)
+            job = JobState.load(self.state_dir, path.stem)
+            if job is None:
+                continue
+            if job.run_id and job.run_id != self.run_id:
+                continue
+            if statuses is not None and job.status not in statuses:
+                continue
+            jobs.append(job)
+        jobs.sort(
+            key=lambda job: (
+                float(job.last_dispatch_at or 0.0),
+                float(job.updated_at or 0.0),
+                str(job.job_id),
+            ),
+            reverse=True,
+        )
+        return jobs
 
     # ------------------------------------------------------------------
     def _resolve_turn(self) -> str:
@@ -3326,6 +3433,23 @@ class WatcherCore:
         # --- 최신 control signal이 operator stop이면 자동 진행을 멈춤 ---
         _, handoff_mtime = self._get_latest_implement_handoff()
         if self._operator_blocks_handoff(handoff_mtime):
+            return
+
+        # --- current-run verify가 살아 있으면 그 라운드를 끝까지 우선 진행 ---
+        active_verify_jobs = self._get_current_run_jobs(statuses={JobStatus.VERIFY_RUNNING})
+        if active_verify_jobs:
+            for job in active_verify_jobs:
+                self.sm.step(job)
+            self._flush_pending_claude_handoff()
+            return
+
+        pending_verify_jobs = self._get_current_run_jobs(statuses={JobStatus.VERIFY_PENDING})
+        if pending_verify_jobs:
+            # startup 이후 state에서 복원된 current-run verify pending은 최신 work candidate
+            # 스캔만으로는 다시 step되지 않을 수 있으므로, 가장 최근 pending round를 먼저
+            # 재개해 starvation 없이 verify lane으로 다시 밀어준다.
+            self.sm.step(pending_verify_jobs[0])
+            self._flush_pending_claude_handoff()
             return
 
         # --- Gemini arbitration이 pending이면 다른 자동 진행을 잠시 멈춤 ---

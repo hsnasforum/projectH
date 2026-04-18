@@ -382,6 +382,1127 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
             )
         )
 
+    def test_probe_receipt_manifest_mismatch_degraded_precedence_catches_regression(self) -> None:
+        ok, detail, data = pipeline_runtime_gate._probe_receipt_manifest_mismatch_degraded_precedence()
+        self.assertTrue(ok, detail)
+        self.assertIn("runtime_state=DEGRADED", detail)
+        self.assertIn("receipt_manifest:job-fault-manifest", detail)
+        self.assertEqual(data.get("runtime_state"), "DEGRADED")
+        self.assertEqual(
+            data.get("expected_reason_prefix"), "receipt_manifest:job-fault-manifest"
+        )
+        self.assertTrue(
+            str(data.get("matched_reason") or "").startswith("receipt_manifest:job-fault-manifest"),
+            data,
+        )
+        self.assertTrue(
+            any(
+                reason.startswith("receipt_manifest:job-fault-manifest")
+                for reason in (data.get("degraded_reasons") or [])
+            ),
+            data,
+        )
+
+    def test_probe_active_lane_auth_failure_degraded_precedence_catches_regression(self) -> None:
+        ok, detail, data = pipeline_runtime_gate._probe_active_lane_auth_failure_degraded_precedence()
+        self.assertTrue(ok, detail)
+        self.assertIn("runtime_state=DEGRADED", detail)
+        self.assertIn("claude_auth_login_required", detail)
+        self.assertEqual(data.get("runtime_state"), "DEGRADED")
+        self.assertEqual(data.get("expected_reason"), "claude_auth_login_required")
+        self.assertEqual(data.get("matched_reason"), "claude_auth_login_required")
+        self.assertIn("claude_auth_login_required", data.get("degraded_reasons") or [])
+
+    def test_probe_receipt_manifest_mismatch_flags_regression_when_supervisor_hides_degrade(self) -> None:
+        """If `_write_status` regresses and returns STOPPED for the seeded mismatch,
+        the fault-check probe must flag ok=False so the gate does not silently pass
+        and the structured payload must record the missing match explicitly."""
+        with mock.patch.object(
+            pipeline_runtime_gate.RuntimeSupervisor,
+            "_write_status",
+            autospec=True,
+            return_value={"runtime_state": "STOPPED", "degraded_reasons": []},
+        ):
+            ok, detail, data = pipeline_runtime_gate._probe_receipt_manifest_mismatch_degraded_precedence()
+        self.assertFalse(ok)
+        self.assertIn("runtime_state=STOPPED", detail)
+        self.assertEqual(data.get("runtime_state"), "STOPPED")
+        self.assertEqual(data.get("matched_reason"), "")
+        self.assertEqual(
+            data.get("expected_reason_prefix"), "receipt_manifest:job-fault-manifest"
+        )
+        self.assertEqual(data.get("degraded_reasons"), [])
+
+    def test_probe_active_lane_auth_failure_flags_regression_when_supervisor_hides_degrade(self) -> None:
+        """If `_write_status` regresses and returns STARTING for the seeded auth
+        failure, the fault-check probe must flag ok=False and the structured
+        payload must record the missing match explicitly."""
+        with mock.patch.object(
+            pipeline_runtime_gate.RuntimeSupervisor,
+            "_write_status",
+            autospec=True,
+            return_value={"runtime_state": "STARTING", "degraded_reasons": []},
+        ):
+            ok, detail, data = pipeline_runtime_gate._probe_active_lane_auth_failure_degraded_precedence()
+        self.assertFalse(ok)
+        self.assertIn("runtime_state=STARTING", detail)
+        self.assertEqual(data.get("runtime_state"), "STARTING")
+        self.assertEqual(data.get("matched_reason"), "")
+        self.assertEqual(data.get("expected_reason"), "claude_auth_login_required")
+        self.assertEqual(data.get("degraded_reasons"), [])
+
+    def test_run_fault_check_synthetic_probe_entries_carry_structured_data_payloads(self) -> None:
+        """The top-of-``run_fault_check`` synthetic probe entries must attach their
+        structured payload as ``data`` alongside the human-readable ``detail``
+        string so automation can read the match evidence directly. The markdown
+        report must also reflect the human-readable proof."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with (
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_probe_receipt_manifest_mismatch_degraded_precedence",
+                    return_value=(
+                        True,
+                        "runtime_state=DEGRADED, reasons=[\"receipt_manifest:job-fault-manifest:artifact_hash_mismatch\"]",
+                        {
+                            "runtime_state": "DEGRADED",
+                            "degraded_reasons": ["receipt_manifest:job-fault-manifest:artifact_hash_mismatch"],
+                            "expected_reason_prefix": "receipt_manifest:job-fault-manifest",
+                            "matched_reason": "receipt_manifest:job-fault-manifest:artifact_hash_mismatch",
+                        },
+                    ),
+                ),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_probe_active_lane_auth_failure_degraded_precedence",
+                    return_value=(
+                        True,
+                        "runtime_state=DEGRADED, reasons=[\"claude_auth_login_required\"]",
+                        {
+                            "runtime_state": "DEGRADED",
+                            "degraded_reasons": ["claude_auth_login_required"],
+                            "expected_reason": "claude_auth_login_required",
+                            "matched_reason": "claude_auth_login_required",
+                        },
+                    ),
+                ),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_start_runtime",
+                    return_value=(False, "synthetic: start skipped"),
+                ),
+                mock.patch.object(pipeline_runtime_gate, "_stop_runtime", return_value=(True, "stopped")),
+            ):
+                ok, checks = pipeline_runtime_gate.run_fault_check(
+                    root,
+                    mode="experimental",
+                    session="aip-test",
+                )
+        receipt_entry = next(
+            item for item in checks if item.get("name") == "receipt manifest mismatch degraded precedence"
+        )
+        auth_entry = next(
+            item for item in checks if item.get("name") == "active lane auth failure degraded precedence"
+        )
+        self.assertTrue(receipt_entry.get("ok"))
+        self.assertTrue(auth_entry.get("ok"))
+        receipt_data = receipt_entry.get("data") or {}
+        auth_data = auth_entry.get("data") or {}
+        self.assertEqual(receipt_data.get("runtime_state"), "DEGRADED")
+        self.assertEqual(
+            receipt_data.get("matched_reason"),
+            "receipt_manifest:job-fault-manifest:artifact_hash_mismatch",
+        )
+        self.assertEqual(
+            receipt_data.get("expected_reason_prefix"),
+            "receipt_manifest:job-fault-manifest",
+        )
+        self.assertEqual(auth_data.get("runtime_state"), "DEGRADED")
+        self.assertEqual(auth_data.get("matched_reason"), "claude_auth_login_required")
+        self.assertEqual(auth_data.get("expected_reason"), "claude_auth_login_required")
+        report = pipeline_runtime_gate._markdown_report(
+            title="Pipeline Runtime fault check",
+            summary=["project=/tmp/fake"],
+            checks=checks,
+        )
+        self.assertIn("`PASS` receipt manifest mismatch degraded precedence", report)
+        self.assertIn("`PASS` active lane auth failure degraded precedence", report)
+        self.assertIn("receipt_manifest:job-fault-manifest:artifact_hash_mismatch", report)
+        self.assertIn("claude_auth_login_required", report)
+        # The probe entries must be safe to run even when later live steps fail,
+        # so the aggregate ``ok`` still matches the live-start failure here.
+        self.assertFalse(ok)
+
+    def test_run_fault_check_session_loss_requires_session_missing_as_representative_reason(self) -> None:
+        """The live `session loss degraded` step must assert that the root-cause
+        `degraded_reason` stays on `session_missing` even when per-lane
+        `*_recovery_failed` entries coexist inside `degraded_reasons`."""
+        representative_ok_status = {
+            "runtime_state": "DEGRADED",
+            "degraded_reason": "session_missing",
+            "degraded_reasons": [
+                "session_missing",
+                "claude_recovery_failed",
+                "codex_recovery_failed",
+                "gemini_recovery_failed",
+            ],
+        }
+        representative_wrong_status = {
+            "runtime_state": "DEGRADED",
+            "degraded_reason": "claude_recovery_failed",
+            "degraded_reasons": [
+                "claude_recovery_failed",
+                "codex_recovery_failed",
+                "gemini_recovery_failed",
+                "session_missing",
+            ],
+        }
+        ready_status = {
+            "runtime_state": "RUNNING",
+            "watcher": {"alive": True, "pid": 1},
+            "lanes": [{"name": "Claude", "state": "READY", "attachable": True, "pid": 1234}],
+            "control": {"active_control_status": "none"},
+            "active_round": {"state": ""},
+        }
+        def _wait_until_one_shot(predicate, timeout_sec: float = 0.0):
+            try:
+                return predicate()
+            except Exception:
+                return None
+
+        for status_payload, expected_ok in (
+            (representative_ok_status, True),
+            (representative_wrong_status, False),
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                with (
+                    mock.patch.object(
+                        pipeline_runtime_gate,
+                        "_probe_receipt_manifest_mismatch_degraded_precedence",
+                        return_value=(True, "probe ok", {}),
+                    ),
+                    mock.patch.object(
+                        pipeline_runtime_gate,
+                        "_probe_active_lane_auth_failure_degraded_precedence",
+                        return_value=(True, "probe ok", {}),
+                    ),
+                    mock.patch.object(pipeline_runtime_gate, "_start_runtime", return_value=(True, "started")),
+                    mock.patch.object(pipeline_runtime_gate, "_stop_runtime", return_value=(True, "stopped")),
+                    mock.patch.object(
+                        pipeline_runtime_gate,
+                        "_wait_for_runtime_readiness",
+                        return_value=(True, ready_status, 0.5),
+                    ),
+                    mock.patch.object(pipeline_runtime_gate.TmuxAdapter, "kill_session", return_value=None),
+                    mock.patch.object(pipeline_runtime_gate, "_read_status", return_value=status_payload),
+                    mock.patch.object(pipeline_runtime_gate, "_wait_until", side_effect=_wait_until_one_shot),
+                    mock.patch.object(pipeline_runtime_gate, "_pick_fault_lane", return_value=("Claude", 0)),
+                    mock.patch.object(pipeline_runtime_gate.time, "sleep", return_value=None),
+                ):
+                    ok, checks = pipeline_runtime_gate.run_fault_check(
+                        root,
+                        mode="experimental",
+                        session="aip-test",
+                    )
+            session_loss_entry = next(
+                item for item in checks if item.get("name") == "session loss degraded"
+            )
+            self.assertEqual(bool(session_loss_entry.get("ok")), expected_ok, session_loss_entry)
+            if expected_ok:
+                self.assertIn("reason=session_missing", session_loss_entry.get("detail") or "")
+                self.assertIn("claude_recovery_failed", session_loss_entry.get("detail") or "")
+                self.assertIn(
+                    "secondary_recovery_failures=[\"claude_recovery_failed\", \"codex_recovery_failed\", \"gemini_recovery_failed\"]",
+                    session_loss_entry.get("detail") or "",
+                )
+            else:
+                self.assertIn("reason=claude_recovery_failed", session_loss_entry.get("detail") or "")
+            # Regardless of representative-ordering assertion outcome, the run must not
+            # be accidentally green when the representative reason is wrong.
+            if not expected_ok:
+                self.assertFalse(ok)
+
+    def test_session_loss_check_exposes_secondary_recovery_failures_as_structured_data(self) -> None:
+        """``session loss degraded`` must carry a structured ``data`` payload whose
+        ``secondary_recovery_failures`` list is populated when per-lane
+        ``*_recovery_failed`` entries coexist with ``session_missing``. Automation
+        should be able to read the evidence without scraping the detail string."""
+        representative_ok_status = {
+            "runtime_state": "DEGRADED",
+            "degraded_reason": "session_missing",
+            "degraded_reasons": [
+                "session_missing",
+                "claude_recovery_failed",
+                "codex_recovery_failed",
+                "gemini_recovery_failed",
+            ],
+        }
+        ready_status = {
+            "runtime_state": "RUNNING",
+            "watcher": {"alive": True, "pid": 1},
+            "lanes": [{"name": "Claude", "state": "READY", "attachable": True, "pid": 1234}],
+            "control": {"active_control_status": "none"},
+            "active_round": {"state": ""},
+        }
+
+        def _wait_until_one_shot(predicate, timeout_sec: float = 0.0):
+            try:
+                return predicate()
+            except Exception:
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with (
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_probe_receipt_manifest_mismatch_degraded_precedence",
+                    return_value=(True, "probe ok", {}),
+                ),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_probe_active_lane_auth_failure_degraded_precedence",
+                    return_value=(True, "probe ok", {}),
+                ),
+                mock.patch.object(pipeline_runtime_gate, "_start_runtime", return_value=(True, "started")),
+                mock.patch.object(pipeline_runtime_gate, "_stop_runtime", return_value=(True, "stopped")),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_wait_for_runtime_readiness",
+                    return_value=(True, ready_status, 0.5),
+                ),
+                mock.patch.object(pipeline_runtime_gate.TmuxAdapter, "kill_session", return_value=None),
+                mock.patch.object(pipeline_runtime_gate, "_read_status", return_value=representative_ok_status),
+                mock.patch.object(pipeline_runtime_gate, "_wait_until", side_effect=_wait_until_one_shot),
+                mock.patch.object(pipeline_runtime_gate, "_pick_fault_lane", return_value=("Claude", 0)),
+                mock.patch.object(pipeline_runtime_gate.time, "sleep", return_value=None),
+            ):
+                ok, checks = pipeline_runtime_gate.run_fault_check(
+                    root,
+                    mode="experimental",
+                    session="aip-test",
+                )
+
+        session_loss_entry = next(item for item in checks if item.get("name") == "session loss degraded")
+        self.assertTrue(session_loss_entry.get("ok"))
+        data = session_loss_entry.get("data") or {}
+        self.assertEqual(data.get("representative_reason"), "session_missing")
+        self.assertEqual(data.get("runtime_state"), "DEGRADED")
+        self.assertEqual(
+            data.get("secondary_recovery_failures"),
+            ["claude_recovery_failed", "codex_recovery_failed", "gemini_recovery_failed"],
+        )
+        self.assertEqual(
+            data.get("degraded_reasons"),
+            [
+                "session_missing",
+                "claude_recovery_failed",
+                "codex_recovery_failed",
+                "gemini_recovery_failed",
+            ],
+        )
+        # Markdown report remains readable and is consistent with the structured payload.
+        report = pipeline_runtime_gate._markdown_report(
+            title="Pipeline Runtime fault check",
+            summary=["project=/tmp/fake"],
+            checks=checks,
+        )
+        self.assertIn("`PASS` session loss degraded", report)
+        self.assertIn("reason=session_missing", report)
+        self.assertIn("secondary_recovery_failures=[\"claude_recovery_failed\", \"codex_recovery_failed\", \"gemini_recovery_failed\"]", report)
+
+    def test_session_loss_check_reports_empty_secondary_recovery_failures_when_none_present(self) -> None:
+        """When only ``session_missing`` is reported, the structured
+        ``secondary_recovery_failures`` field must still be present as an empty
+        list so automation can rely on a stable schema."""
+        only_session_missing_status = {
+            "runtime_state": "DEGRADED",
+            "degraded_reason": "session_missing",
+            "degraded_reasons": ["session_missing"],
+        }
+        ready_status = {
+            "runtime_state": "RUNNING",
+            "watcher": {"alive": True, "pid": 1},
+            "lanes": [{"name": "Claude", "state": "READY", "attachable": True, "pid": 1234}],
+            "control": {"active_control_status": "none"},
+            "active_round": {"state": ""},
+        }
+
+        def _wait_until_one_shot(predicate, timeout_sec: float = 0.0):
+            try:
+                return predicate()
+            except Exception:
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with (
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_probe_receipt_manifest_mismatch_degraded_precedence",
+                    return_value=(True, "probe ok", {}),
+                ),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_probe_active_lane_auth_failure_degraded_precedence",
+                    return_value=(True, "probe ok", {}),
+                ),
+                mock.patch.object(pipeline_runtime_gate, "_start_runtime", return_value=(True, "started")),
+                mock.patch.object(pipeline_runtime_gate, "_stop_runtime", return_value=(True, "stopped")),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_wait_for_runtime_readiness",
+                    return_value=(True, ready_status, 0.5),
+                ),
+                mock.patch.object(pipeline_runtime_gate.TmuxAdapter, "kill_session", return_value=None),
+                mock.patch.object(pipeline_runtime_gate, "_read_status", return_value=only_session_missing_status),
+                mock.patch.object(pipeline_runtime_gate, "_wait_until", side_effect=_wait_until_one_shot),
+                mock.patch.object(pipeline_runtime_gate, "_pick_fault_lane", return_value=("Claude", 0)),
+                mock.patch.object(pipeline_runtime_gate.time, "sleep", return_value=None),
+            ):
+                ok, checks = pipeline_runtime_gate.run_fault_check(
+                    root,
+                    mode="experimental",
+                    session="aip-test",
+                )
+
+        session_loss_entry = next(item for item in checks if item.get("name") == "session loss degraded")
+        self.assertTrue(session_loss_entry.get("ok"))
+        data = session_loss_entry.get("data") or {}
+        self.assertEqual(data.get("representative_reason"), "session_missing")
+        self.assertIn("secondary_recovery_failures", data)
+        self.assertEqual(data.get("secondary_recovery_failures"), [])
+
+    def test_live_recovery_proof_checks_expose_structured_data_for_success_path(self) -> None:
+        """``recoverable lane pid observed`` and ``lane recovery`` must carry
+        structured ``data`` payloads alongside the human-readable detail so
+        automation can read lane pid / recovery event fields without scraping."""
+        representative_ok_status = {
+            "runtime_state": "DEGRADED",
+            "degraded_reason": "session_missing",
+            "degraded_reasons": [
+                "session_missing",
+                "claude_recovery_failed",
+            ],
+        }
+        ready_status = {
+            "runtime_state": "RUNNING",
+            "watcher": {"alive": True, "pid": 1},
+            "lanes": [{"name": "Claude", "state": "READY", "attachable": True, "pid": 1234}],
+            "control": {"active_control_status": "none"},
+            "active_round": {"state": ""},
+        }
+        recovery_event = {
+            "seq": 8,
+            "ts": "2026-04-18T09:30:00Z",
+            "run_id": "run-42",
+            "event_type": "recovery_completed",
+            "source": "supervisor",
+            "payload": {"lane": "Claude", "attempt": 1, "result": "restarted"},
+        }
+
+        def _wait_until_one_shot(predicate, timeout_sec: float = 0.0):
+            try:
+                return predicate()
+            except Exception:
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with (
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_probe_receipt_manifest_mismatch_degraded_precedence",
+                    return_value=(True, "probe ok", {}),
+                ),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_probe_active_lane_auth_failure_degraded_precedence",
+                    return_value=(True, "probe ok", {}),
+                ),
+                mock.patch.object(pipeline_runtime_gate, "_start_runtime", return_value=(True, "started")),
+                mock.patch.object(pipeline_runtime_gate, "_stop_runtime", return_value=(True, "stopped")),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_wait_for_runtime_readiness",
+                    return_value=(True, ready_status, 0.5),
+                ),
+                mock.patch.object(pipeline_runtime_gate.TmuxAdapter, "kill_session", return_value=None),
+                mock.patch.object(pipeline_runtime_gate, "_read_status", return_value=representative_ok_status),
+                mock.patch.object(pipeline_runtime_gate, "_wait_until", side_effect=_wait_until_one_shot),
+                mock.patch.object(pipeline_runtime_gate, "_pick_fault_lane", return_value=("Claude", 9876)),
+                mock.patch.object(pipeline_runtime_gate, "_kill_pid", return_value=None),
+                mock.patch.object(pipeline_runtime_gate, "_read_events", return_value=[recovery_event]),
+                mock.patch.object(pipeline_runtime_gate.time, "sleep", return_value=None),
+            ):
+                ok, checks = pipeline_runtime_gate.run_fault_check(
+                    root,
+                    mode="experimental",
+                    session="aip-test",
+                )
+
+        lane_pid_entry = next(item for item in checks if item.get("name") == "recoverable lane pid observed")
+        self.assertTrue(lane_pid_entry.get("ok"))
+        lane_pid_data = lane_pid_entry.get("data") or {}
+        self.assertEqual(lane_pid_data.get("lane"), "Claude")
+        self.assertEqual(lane_pid_data.get("pid"), 9876)
+        self.assertTrue(lane_pid_data.get("pid_available"))
+        self.assertIn("lane=Claude", lane_pid_entry.get("detail") or "")
+        self.assertIn("pid=9876", lane_pid_entry.get("detail") or "")
+
+        recovery_entry = next(item for item in checks if item.get("name") == "lane recovery")
+        self.assertTrue(recovery_entry.get("ok"))
+        recovery_data = recovery_entry.get("data") or {}
+        self.assertTrue(recovery_data.get("event_observed"))
+        self.assertEqual(recovery_data.get("event_type"), "recovery_completed")
+        self.assertEqual(recovery_data.get("lane"), "Claude")
+        self.assertEqual(recovery_data.get("attempt"), 1)
+        self.assertEqual(recovery_data.get("result"), "restarted")
+        self.assertEqual(recovery_data.get("event"), recovery_event)
+        # Markdown report remains readable and is derived from the same evidence.
+        report = pipeline_runtime_gate._markdown_report(
+            title="Pipeline Runtime fault check",
+            summary=["project=/tmp/fake"],
+            checks=checks,
+        )
+        self.assertIn("`PASS` recoverable lane pid observed", report)
+        self.assertIn("`PASS` lane recovery", report)
+        self.assertIn("recovery_completed", report)
+        # ``session loss degraded`` structured payload must not regress.
+        session_loss_entry = next(item for item in checks if item.get("name") == "session loss degraded")
+        self.assertEqual((session_loss_entry.get("data") or {}).get("representative_reason"), "session_missing")
+
+    def test_live_recovery_proof_checks_expose_structured_empty_payload_when_lane_pid_unavailable(self) -> None:
+        """If ``_pick_fault_lane`` returns no live pid, ``recoverable lane pid
+        observed`` must still carry a stable structured ``data`` payload with
+        ``pid_available=False``, and ``lane recovery`` must surface an empty
+        recovery event payload with an explicit ``reason`` string."""
+        representative_ok_status = {
+            "runtime_state": "DEGRADED",
+            "degraded_reason": "session_missing",
+            "degraded_reasons": ["session_missing"],
+        }
+        ready_status = {
+            "runtime_state": "RUNNING",
+            "watcher": {"alive": True, "pid": 1},
+            "lanes": [{"name": "Claude", "state": "READY", "attachable": True, "pid": 1234}],
+            "control": {"active_control_status": "none"},
+            "active_round": {"state": ""},
+        }
+
+        def _wait_until_one_shot(predicate, timeout_sec: float = 0.0):
+            try:
+                return predicate()
+            except Exception:
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with (
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_probe_receipt_manifest_mismatch_degraded_precedence",
+                    return_value=(True, "probe ok", {}),
+                ),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_probe_active_lane_auth_failure_degraded_precedence",
+                    return_value=(True, "probe ok", {}),
+                ),
+                mock.patch.object(pipeline_runtime_gate, "_start_runtime", return_value=(True, "started")),
+                mock.patch.object(pipeline_runtime_gate, "_stop_runtime", return_value=(True, "stopped")),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_wait_for_runtime_readiness",
+                    return_value=(True, ready_status, 0.5),
+                ),
+                mock.patch.object(pipeline_runtime_gate.TmuxAdapter, "kill_session", return_value=None),
+                mock.patch.object(pipeline_runtime_gate, "_read_status", return_value=representative_ok_status),
+                mock.patch.object(pipeline_runtime_gate, "_wait_until", side_effect=_wait_until_one_shot),
+                mock.patch.object(pipeline_runtime_gate, "_pick_fault_lane", return_value=("Claude", 0)),
+                mock.patch.object(pipeline_runtime_gate, "_read_events", return_value=[]),
+                mock.patch.object(pipeline_runtime_gate.time, "sleep", return_value=None),
+            ):
+                ok, checks = pipeline_runtime_gate.run_fault_check(
+                    root,
+                    mode="experimental",
+                    session="aip-test",
+                )
+
+        lane_pid_entry = next(item for item in checks if item.get("name") == "recoverable lane pid observed")
+        self.assertFalse(lane_pid_entry.get("ok"))
+        lane_pid_data = lane_pid_entry.get("data") or {}
+        self.assertFalse(lane_pid_data.get("pid_available"))
+        self.assertEqual(lane_pid_data.get("pid"), 0)
+        self.assertEqual(lane_pid_data.get("lane"), "Claude")
+
+        recovery_entry = next(item for item in checks if item.get("name") == "lane recovery")
+        self.assertFalse(recovery_entry.get("ok"))
+        recovery_data = recovery_entry.get("data") or {}
+        self.assertFalse(recovery_data.get("event_observed"))
+        self.assertEqual(recovery_data.get("event"), {})
+        self.assertEqual(recovery_data.get("reason"), "lane_pid_unavailable_before_fault_injection")
+        self.assertFalse(ok)
+
+    def test_lifecycle_checks_expose_structured_data_on_green_path(self) -> None:
+        """The four lifecycle lifecycle check entries (``runtime start``,
+        ``status surface ready``, ``runtime stop after session loss``,
+        ``runtime restart``) must each carry a stable structured ``data`` payload
+        alongside the human-readable ``detail`` string so automation can read the
+        lifecycle evidence without scraping."""
+        representative_ok_status = {
+            "runtime_state": "DEGRADED",
+            "degraded_reason": "session_missing",
+            "degraded_reasons": ["session_missing"],
+        }
+        ready_status = {
+            "runtime_state": "RUNNING",
+            "watcher": {"alive": True, "pid": 111},
+            "lanes": [
+                {
+                    "name": "Claude",
+                    "state": "READY",
+                    "attachable": True,
+                    "pid": 1234,
+                    "note": "prompt_visible",
+                    "last_event_at": "2026-04-18T09:00:00Z",
+                    "last_heartbeat_at": "2026-04-18T09:00:00Z",
+                },
+                {
+                    "name": "Codex",
+                    "state": "WORKING",
+                    "attachable": True,
+                    "pid": 5678,
+                    "note": "",
+                    "last_event_at": "",
+                    "last_heartbeat_at": "",
+                },
+            ],
+            "control": {"active_control_status": "none"},
+            "active_round": {"state": ""},
+        }
+        recovery_event = {
+            "seq": 1,
+            "ts": "2026-04-18T09:00:05Z",
+            "run_id": "run-1",
+            "event_type": "recovery_completed",
+            "source": "supervisor",
+            "payload": {"lane": "Claude", "attempt": 1, "result": "restarted"},
+        }
+
+        def _wait_until_one_shot(predicate, timeout_sec: float = 0.0):
+            try:
+                return predicate()
+            except Exception:
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with (
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_probe_receipt_manifest_mismatch_degraded_precedence",
+                    return_value=(True, "probe ok", {}),
+                ),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_probe_active_lane_auth_failure_degraded_precedence",
+                    return_value=(True, "probe ok", {}),
+                ),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_start_runtime",
+                    return_value=(True, "started"),
+                ),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_stop_runtime",
+                    return_value=(True, "stopped"),
+                ),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_wait_for_runtime_readiness",
+                    return_value=(True, ready_status, 1.5),
+                ),
+                mock.patch.object(pipeline_runtime_gate.TmuxAdapter, "kill_session", return_value=None),
+                mock.patch.object(pipeline_runtime_gate, "_read_status", return_value=representative_ok_status),
+                mock.patch.object(pipeline_runtime_gate, "_wait_until", side_effect=_wait_until_one_shot),
+                mock.patch.object(pipeline_runtime_gate, "_pick_fault_lane", return_value=("Claude", 9999)),
+                mock.patch.object(pipeline_runtime_gate, "_kill_pid", return_value=None),
+                mock.patch.object(pipeline_runtime_gate, "_read_events", return_value=[recovery_event]),
+                mock.patch.object(pipeline_runtime_gate.time, "sleep", return_value=None),
+            ):
+                ok, checks = pipeline_runtime_gate.run_fault_check(
+                    root,
+                    mode="experimental",
+                    session="aip-test",
+                )
+
+        by_name = {str(item.get("name") or ""): item for item in checks}
+
+        runtime_start = by_name["runtime start"]
+        self.assertTrue(runtime_start.get("ok"))
+        self.assertEqual(runtime_start.get("data"), {
+            "action": "start",
+            "succeeded": True,
+            "result": "started",
+        })
+
+        status_ready = by_name["status surface ready"]
+        self.assertTrue(status_ready.get("ok"))
+        ready_data = status_ready.get("data") or {}
+        self.assertTrue(ready_data.get("ready"))
+        self.assertEqual(ready_data.get("wait_sec"), 1.5)
+        self.assertEqual(ready_data.get("runtime_state"), "RUNNING")
+        self.assertTrue(ready_data.get("watcher_alive"))
+        self.assertEqual(ready_data.get("active_control_status"), "none")
+        self.assertEqual(ready_data.get("ready_lane_names"), ["Claude", "Codex"])
+        self.assertEqual(ready_data.get("ready_lane_count"), 2)
+        self.assertEqual(
+            ready_data.get("snapshot"),
+            pipeline_runtime_gate._status_readiness_snapshot(ready_status),
+        )
+
+        stop_entry = by_name["runtime stop after session loss"]
+        self.assertTrue(stop_entry.get("ok"))
+        self.assertEqual(stop_entry.get("data"), {
+            "action": "stop",
+            "succeeded": True,
+            "result": "stopped",
+        })
+
+        restart_entry = by_name["runtime restart"]
+        self.assertTrue(restart_entry.get("ok"))
+        self.assertEqual(restart_entry.get("data"), {
+            "action": "restart",
+            "succeeded": True,
+            "result": "started",
+        })
+
+        # Previously-landed structured payloads must not regress.
+        session_loss = by_name["session loss degraded"]
+        self.assertEqual((session_loss.get("data") or {}).get("representative_reason"), "session_missing")
+        lane_pid = by_name["recoverable lane pid observed"]
+        self.assertTrue((lane_pid.get("data") or {}).get("pid_available"))
+        lane_recovery = by_name["lane recovery"]
+        self.assertTrue((lane_recovery.get("data") or {}).get("event_observed"))
+
+        # Markdown report keeps the same human-readable evidence lines.
+        report = pipeline_runtime_gate._markdown_report(
+            title="Pipeline Runtime fault check",
+            summary=["project=/tmp/fake"],
+            checks=checks,
+        )
+        self.assertIn("`PASS` runtime start", report)
+        self.assertIn("`PASS` status surface ready", report)
+        self.assertIn("wait_sec=1.5", report)
+        self.assertIn("`PASS` runtime stop after session loss", report)
+        self.assertIn("`PASS` runtime restart", report)
+
+    def test_lifecycle_runtime_start_failure_exposes_structured_data(self) -> None:
+        """A failed ``runtime start`` must surface the structured lifecycle payload
+        so automation can read ``succeeded=False`` and the raw result string without
+        scraping the detail field."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with (
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_probe_receipt_manifest_mismatch_degraded_precedence",
+                    return_value=(True, "probe ok", {}),
+                ),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_probe_active_lane_auth_failure_degraded_precedence",
+                    return_value=(True, "probe ok", {}),
+                ),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_start_runtime",
+                    return_value=(False, "failed: adapter error"),
+                ),
+                mock.patch.object(pipeline_runtime_gate, "_stop_runtime", return_value=(True, "stopped")),
+            ):
+                ok, checks = pipeline_runtime_gate.run_fault_check(
+                    root,
+                    mode="experimental",
+                    session="aip-test",
+                )
+        self.assertFalse(ok)
+        runtime_start = next(item for item in checks if item.get("name") == "runtime start")
+        self.assertFalse(runtime_start.get("ok"))
+        self.assertEqual(
+            runtime_start.get("data"),
+            {"action": "start", "succeeded": False, "result": "failed: adapter error"},
+        )
+        # Downstream lifecycle checks must not appear once runtime start failed.
+        later_names = {"status surface ready", "runtime stop after session loss", "runtime restart"}
+        observed_names = {str(item.get("name") or "") for item in checks}
+        self.assertTrue(later_names.isdisjoint(observed_names))
+
+    def test_fault_check_cli_writes_markdown_and_json_sidecar_with_structured_checks(self) -> None:
+        """The ``fault-check`` CLI path must persist both the markdown report
+        and a JSON sidecar at the matching ``.json`` path. The sidecar carries
+        the same summary metadata plus ``checks`` entries that keep their
+        structured ``data`` payloads for probes, lifecycle, and live recovery."""
+        import json as _json
+
+        sample_checks = [
+            {
+                "name": "receipt manifest mismatch degraded precedence",
+                "ok": True,
+                "detail": "runtime_state=DEGRADED, reasons=[\"receipt_manifest:job-fault-manifest:artifact_hash_mismatch\"]",
+                "data": {
+                    "runtime_state": "DEGRADED",
+                    "degraded_reasons": ["receipt_manifest:job-fault-manifest:artifact_hash_mismatch"],
+                    "expected_reason_prefix": "receipt_manifest:job-fault-manifest",
+                    "matched_reason": "receipt_manifest:job-fault-manifest:artifact_hash_mismatch",
+                },
+            },
+            {
+                "name": "runtime start",
+                "ok": True,
+                "detail": "started",
+                "data": {"action": "start", "succeeded": True, "result": "started"},
+            },
+            {
+                "name": "status surface ready",
+                "ok": True,
+                "detail": "wait_sec=1.0, {}",
+                "data": {
+                    "wait_sec": 1.0,
+                    "ready": True,
+                    "runtime_state": "RUNNING",
+                    "watcher_alive": True,
+                    "active_control_status": "none",
+                    "ready_lane_names": ["Claude"],
+                    "ready_lane_count": 1,
+                    "snapshot": {"runtime_state": "RUNNING", "watcher": {"alive": True, "pid": 1}, "lanes": []},
+                },
+            },
+            {
+                "name": "lane recovery",
+                "ok": True,
+                "detail": '{"event_type": "recovery_completed"}',
+                "data": {
+                    "event_observed": True,
+                    "event_type": "recovery_completed",
+                    "lane": "Claude",
+                    "attempt": 1,
+                    "result": "restarted",
+                    "event": {"event_type": "recovery_completed", "payload": {"lane": "Claude", "attempt": 1, "result": "restarted"}},
+                },
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            synthetic_root = tmp_root / "synthetic"
+            synthetic_root.mkdir()
+            report_path = tmp_root / "projecth-runtime-fault-check.md"
+            expected_json_path = tmp_root / "projecth-runtime-fault-check.json"
+
+            with (
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "prepare_synthetic_workspace",
+                    return_value=(synthetic_root, {}),
+                ),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "run_fault_check",
+                    return_value=(True, sample_checks),
+                ),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_finalize_synthetic_workspace",
+                    return_value=(False, "background_delete_requested(pid=123)"),
+                ),
+            ):
+                exit_code = pipeline_runtime_gate.main(
+                    [
+                        "--project-root",
+                        str(tmp_root),
+                        "fault-check",
+                        "--workspace-root",
+                        str(tmp_root),
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(report_path.exists())
+            self.assertTrue(expected_json_path.exists())
+
+            report_text = report_path.read_text(encoding="utf-8")
+            # Markdown report keeps its human-readable content.
+            self.assertIn("`PASS` receipt manifest mismatch degraded precedence", report_text)
+            self.assertIn("`PASS` runtime start", report_text)
+            self.assertIn("`PASS` status surface ready", report_text)
+            self.assertIn("`PASS` lane recovery", report_text)
+
+            payload = _json.loads(expected_json_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload.get("title"), "Pipeline Runtime fault check")
+            self.assertTrue(payload.get("ok"))
+            summary = payload.get("summary") or {}
+            self.assertEqual(summary.get("session"), pipeline_runtime_gate._session_name_for(synthetic_root))
+            self.assertEqual(summary.get("mode"), "experimental")
+            self.assertEqual(summary.get("workspace_retained"), False)
+            self.assertEqual(summary.get("workspace_cleanup"), "background_delete_requested(pid=123)")
+            checks_payload = payload.get("checks") or []
+            names = {str(item.get("name") or ""): item for item in checks_payload}
+            # Probe, lifecycle, and live recovery entries must retain their ``data`` payloads.
+            probe_entry = names["receipt manifest mismatch degraded precedence"]
+            self.assertEqual(
+                (probe_entry.get("data") or {}).get("matched_reason"),
+                "receipt_manifest:job-fault-manifest:artifact_hash_mismatch",
+            )
+            start_entry = names["runtime start"]
+            self.assertEqual(start_entry.get("data"), {"action": "start", "succeeded": True, "result": "started"})
+            ready_entry = names["status surface ready"]
+            self.assertEqual((ready_entry.get("data") or {}).get("ready_lane_names"), ["Claude"])
+            recovery_entry = names["lane recovery"]
+            self.assertEqual((recovery_entry.get("data") or {}).get("event_type"), "recovery_completed")
+
+    def test_synthetic_soak_cli_writes_markdown_and_json_sidecar(self) -> None:
+        """``synthetic-soak`` CLI must persist both the markdown report and a
+        JSON sidecar at the matching ``.json`` path. The sidecar carries the
+        same summary metadata that ``run_soak()`` produced plus representative
+        check entries such as ``runtime ready barrier``, ``classification_fallback_detected``,
+        and ``stop left no orphan session``."""
+        import json as _json
+
+        soak_summary = {
+            "start_detail": "started",
+            "ready_ok": True,
+            "ready_wait_sec": 2.1,
+            "ready_timeout_sec": 45.0,
+            "duration_sec": 10.0,
+            "samples": 6,
+            "state_counts": {"RUNNING": 6},
+            "degraded_counts": {},
+            "degraded_seen": False,
+            "broken_seen": False,
+            "receipt_count": 2,
+            "control_change_count": 1,
+            "duplicate_dispatch_count": 0,
+            "control_mismatch_samples": 0,
+            "control_mismatch_max_streak": 0,
+            "receipt_pending_samples": 0,
+            "classification_gate_failures": 0,
+            "classification_gate_details": [],
+            "orphan_session": False,
+            "readiness_snapshot": {"runtime_state": "RUNNING", "lanes": []},
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            synthetic_root = tmp_root / "synthetic"
+            synthetic_root.mkdir()
+            report_path = tmp_root / "projecth-runtime-synthetic-soak.md"
+            expected_json_path = tmp_root / "projecth-runtime-synthetic-soak.json"
+
+            with (
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "prepare_synthetic_workspace",
+                    return_value=(synthetic_root, {}),
+                ),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "run_soak",
+                    return_value=(True, soak_summary),
+                ),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_finalize_synthetic_workspace",
+                    return_value=(False, "background_delete_requested(pid=42)"),
+                ),
+            ):
+                exit_code = pipeline_runtime_gate.main(
+                    [
+                        "--project-root",
+                        str(tmp_root),
+                        "synthetic-soak",
+                        "--workspace-root",
+                        str(tmp_root),
+                        "--duration-sec",
+                        "10",
+                        "--sample-interval-sec",
+                        "1",
+                        "--min-receipts",
+                        "1",
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(report_path.exists())
+            self.assertTrue(expected_json_path.exists())
+
+            report_text = report_path.read_text(encoding="utf-8")
+            # Markdown stays readable and includes representative checks.
+            self.assertIn("`PASS` runtime ready barrier", report_text)
+            self.assertIn("`PASS` classification_fallback_detected", report_text)
+            self.assertIn("`PASS` stop left no orphan session", report_text)
+
+            payload = _json.loads(expected_json_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload.get("title"), "Pipeline Runtime synthetic soak sample")
+            self.assertTrue(payload.get("ok"))
+            summary = payload.get("summary") or {}
+            self.assertEqual(summary.get("project"), str(synthetic_root))
+            self.assertEqual(summary.get("mode"), "experimental")
+            self.assertEqual(summary.get("workspace_retained"), False)
+            self.assertEqual(summary.get("workspace_cleanup"), "background_delete_requested(pid=42)")
+            self.assertEqual(summary.get("receipt_count"), 2)
+            self.assertEqual(summary.get("duplicate_dispatch_count"), 0)
+            self.assertEqual(summary.get("classification_gate_failures"), 0)
+            self.assertEqual(summary.get("classification_gate_details"), [])
+            self.assertEqual(summary.get("orphan_session"), False)
+            self.assertEqual(summary.get("readiness_snapshot"), {"runtime_state": "RUNNING", "lanes": []})
+            names = {str(item.get("name") or "") for item in payload.get("checks") or []}
+            for expected_name in (
+                "runtime start",
+                "runtime ready barrier",
+                "synthetic workload produced receipts",
+                "classification_fallback_detected",
+                "stop left no orphan session",
+            ):
+                self.assertIn(expected_name, names)
+
+    def test_plain_soak_cli_writes_markdown_and_json_sidecar(self) -> None:
+        """Plain ``soak`` CLI must also persist both markdown and JSON sidecar,
+        sharing the same sidecar contract as ``synthetic-soak``. The sidecar
+        must include the path-specific ``project`` / ``session`` / ``mode``
+        metadata and representative readiness and classification checks."""
+        import json as _json
+
+        soak_summary = {
+            "start_detail": "started",
+            "ready_ok": True,
+            "ready_wait_sec": 4.2,
+            "ready_timeout_sec": 60.0,
+            "duration_sec": 30.0,
+            "samples": 10,
+            "state_counts": {"RUNNING": 10},
+            "degraded_counts": {},
+            "degraded_seen": False,
+            "broken_seen": False,
+            "receipt_count": 5,
+            "control_change_count": 3,
+            "duplicate_dispatch_count": 0,
+            "control_mismatch_samples": 0,
+            "control_mismatch_max_streak": 0,
+            "receipt_pending_samples": 0,
+            "classification_gate_failures": 0,
+            "classification_gate_details": [],
+            "orphan_session": False,
+            "readiness_snapshot": {"runtime_state": "RUNNING", "lanes": []},
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            report_path = tmp_root / "projecth-runtime-soak-sample.md"
+            expected_json_path = tmp_root / "projecth-runtime-soak-sample.json"
+
+            with (
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "run_soak",
+                    return_value=(True, soak_summary),
+                ),
+            ):
+                exit_code = pipeline_runtime_gate.main(
+                    [
+                        "--project-root",
+                        str(tmp_root),
+                        "soak",
+                        "--duration-sec",
+                        "30",
+                        "--sample-interval-sec",
+                        "1",
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(report_path.exists())
+            self.assertTrue(expected_json_path.exists())
+
+            report_text = report_path.read_text(encoding="utf-8")
+            self.assertIn("`PASS` runtime ready barrier", report_text)
+            self.assertIn("`PASS` classification_fallback_detected", report_text)
+
+            payload = _json.loads(expected_json_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload.get("title"), "Pipeline Runtime soak sample")
+            self.assertTrue(payload.get("ok"))
+            summary = payload.get("summary") or {}
+            self.assertEqual(summary.get("project"), str(tmp_root))
+            self.assertEqual(summary.get("mode"), "experimental")
+            self.assertEqual(summary.get("receipt_count"), 5)
+            self.assertEqual(summary.get("duplicate_dispatch_count"), 0)
+            self.assertNotIn("workspace_retained", summary)
+            self.assertNotIn("workspace_cleanup", summary)
+            names = {str(item.get("name") or "") for item in payload.get("checks") or []}
+            for expected_name in (
+                "runtime start",
+                "runtime ready barrier",
+                "classification_fallback_detected",
+                "stop left no orphan session",
+            ):
+                self.assertIn(expected_name, names)
+
+    def test_report_json_sidecar_path_swaps_md_suffix_and_appends_for_suffixless_paths(self) -> None:
+        self.assertEqual(
+            pipeline_runtime_gate._report_json_sidecar_path(Path("/tmp/foo.md")),
+            Path("/tmp/foo.json"),
+        )
+        self.assertEqual(
+            pipeline_runtime_gate._report_json_sidecar_path(Path("/tmp/foo")),
+            Path("/tmp/foo.json"),
+        )
+
+    def test_run_fault_check_surfaces_degraded_precedence_probes_before_live_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with (
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_start_runtime",
+                    return_value=(False, "synthetic: start skipped"),
+                ),
+                mock.patch.object(pipeline_runtime_gate, "_stop_runtime", return_value=(True, "stopped")),
+            ):
+                ok, checks = pipeline_runtime_gate.run_fault_check(
+                    root,
+                    mode="experimental",
+                    session="aip-test",
+                )
+        check_names = [str(item.get("name") or "") for item in checks]
+        self.assertIn("receipt manifest mismatch degraded precedence", check_names)
+        self.assertIn("active lane auth failure degraded precedence", check_names)
+        # Probes run before the live runtime-start step.
+        self.assertLess(
+            check_names.index("receipt manifest mismatch degraded precedence"),
+            check_names.index("runtime start"),
+        )
+        self.assertLess(
+            check_names.index("active lane auth failure degraded precedence"),
+            check_names.index("runtime start"),
+        )
+        for name in (
+            "receipt manifest mismatch degraded precedence",
+            "active lane auth failure degraded precedence",
+        ):
+            entry = next(item for item in checks if item.get("name") == name)
+            self.assertTrue(entry.get("ok"), entry.get("detail"))
+        self.assertFalse(ok)
+
     def test_pick_fault_lane_prefers_wrapper_event_pid(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

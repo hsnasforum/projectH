@@ -249,6 +249,7 @@ class LocalOnlyHTTPServer(ThreadingHTTPServer):
 
 class LocalAssistantHandler(BaseHTTPRequestHandler):
     server: LocalOnlyHTTPServer
+    _CONTROLLER_DIR = Path(__file__).resolve().parent.parent / "controller"
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -274,8 +275,14 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/preferences":
             self._send_json(HTTPStatus.OK, self.server.service.list_preferences_payload())
             return
+        if parsed.path.startswith("/controller-assets/"):
+            self._serve_controller_asset(parsed.path)
+            return
         if parsed.path.startswith("/static/"):
             self._serve_static(parsed.path)
+            return
+        if parsed.path == "/controller" or parsed.path == "/controller/":
+            self._serve_controller_html()
             return
         if parsed.path == "/app" or parsed.path == "/app/":
             self._serve_shipped_app()
@@ -442,6 +449,62 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
         return payload
 
     _STATIC_DIR = Path(__file__).with_name("static")
+    _CONTROLLER_HTML = _CONTROLLER_DIR / "index.html"
+
+    def _resolve_controller_asset(self, url_path: str) -> Path | None:
+        relative = url_path[len("/controller-assets/"):].strip().lstrip("/")
+        if not relative:
+            return None
+        if relative.startswith("css/"):
+            root = (self._CONTROLLER_DIR / "css").resolve()
+            local = relative[len("css/"):]
+        elif relative.startswith("js/"):
+            root = (self._CONTROLLER_DIR / "js").resolve()
+            local = relative[len("js/"):]
+        else:
+            root = (self._CONTROLLER_DIR / "assets").resolve()
+            local = relative
+        candidate = (root / local).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            return None
+        if not candidate.is_file():
+            return None
+        return candidate
+
+    def _serve_controller_html(self) -> None:
+        if not self._CONTROLLER_HTML.is_file():
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "요청한 경로를 찾을 수 없습니다."}})
+            return
+        try:
+            data = self._CONTROLLER_HTML.read_bytes()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+    def _serve_controller_asset(self, url_path: str) -> None:
+        file_path = self._resolve_controller_asset(url_path)
+        if file_path is None:
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "요청한 경로를 찾을 수 없습니다."}})
+            return
+        content_type, _ = mimetypes.guess_type(file_path.name)
+        if content_type is None:
+            content_type = "application/octet-stream"
+        try:
+            data = file_path.read_bytes()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "public, max-age=3600")
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def _serve_static(self, url_path: str) -> None:
         relative = url_path[len("/static/"):]

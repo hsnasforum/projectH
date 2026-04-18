@@ -1,44 +1,13 @@
 // controller/js/agents.js — Agent entities with zone-bounded movement
 import { ZONE_MAP, CORRIDOR_Y, STATE_COLORS, LANE_ROLES, WALK_SPEED,
-         STATE_GIF_ASSETS, STATE_PARTICLES, VIRTUAL_W } from './config.js';
+         STATE_PARTICLES, VIRTUAL_W } from './config.js';
 import { PipelineState } from './state.js';
 
 // ── Sprite Manager ──
 export const SpriteManager = {
-  manifest: null, stateGifs: {}, frames: {}, sequences: {}, loaded: false,
-
-  async init() {
-    for (const [state, src] of Object.entries(STATE_GIF_ASSETS)) {
-      const img = new Image(); img.src = src; this.stateGifs[state] = img;
-    }
-    this.stateGifs.off = this.stateGifs.dead || null;
-    this.stateGifs.idle = this.stateGifs.ready || null;
-    this.stateGifs.unknown = this.stateGifs.ready || null;
-    try {
-      const res = await fetch('/controller-assets/generated/office-sprite-manifest.json');
-      this.manifest = await res.json();
-      for (const [state, config] of Object.entries(this.manifest.states || {})) {
-        this.frames[state] = (config.frames || []).map(f => { const img = new Image(); img.src = f.src; return img; });
-        this.sequences[state] = { sequence: config.sequence || [0], intervalMs: config.interval_ms || 180 };
-      }
-      this.frames.off = this.frames.dead || []; this.frames.idle = this.frames.ready || []; this.frames.unknown = this.frames.ready || [];
-      this.sequences.off = this.sequences.dead || this.sequences.ready;
-      this.sequences.idle = this.sequences.ready; this.sequences.unknown = this.sequences.ready;
-      this.loaded = true;
-    } catch (e) { this.loaded = false; }
-  },
-
-  getAgentFrame(state, timeSeconds) {
-    const gif = this.stateGifs[state] || this.stateGifs.ready || null;
-    if (gif && gif.complete && gif.naturalWidth > 0) return gif;
-    const frames = this.frames[state] || this.frames.ready || [];
-    const seq = this.sequences[state] || this.sequences.ready;
-    if (!frames.length || !seq) return null;
-    const idx = Math.floor((timeSeconds * 1000 / seq.intervalMs) % seq.sequence.length);
-    const frameIdx = seq.sequence[idx] || 0;
-    const img = frames[frameIdx];
-    return (img && img.complete && img.naturalWidth > 0) ? img : null;
-  }
+  loaded: true,
+  async init() { return this; },
+  getAgentFrame() { return null; },
 };
 
 // ── Zone helpers ──
@@ -194,11 +163,6 @@ export class Agent {
     this._partying = false; this._partyTimer = 0; this._partyFireworkTimer = 0;
     // Delivery walk state
     this._delivering = false; this._deliveryIcon = '';
-    // GIF overlay
-    this._gifEl = document.createElement('img');
-    this._gifEl.style.cssText = 'position:absolute;pointer-events:none;image-rendering:pixelated;z-index:10;display:none;';
-    this._gifState = '';
-    document.querySelector('.canvas-wrap')?.appendChild(this._gifEl);
   }
 
   get color() { return STATE_COLORS[this.state] || STATE_COLORS.off; }
@@ -369,57 +333,39 @@ export class Agent {
     const partyBounce = this._partying ? -Math.abs(Math.sin(this.bobPhase * 3)) * 12 * scale : 0;
     const bob = Math.sin(this.bobPhase) * (this.state === 'working' ? 1.5 : 2.5) * scale + partyBounce;
     const walk = this._atTarget ? 0 : Math.sin(this.movePhase) * 2 * scale;
-    const gifSrc = STATE_GIF_ASSETS[this.state] || STATE_GIF_ASSETS.ready || '';
-    const hasGif = Boolean(gifSrc);
-    let headY = sy;
-
-    if (hasGif) {
-      if (this._gifState !== this.state) { this._gifEl.src = gifSrc; this._gifState = this.state; }
-      this._gifEl.style.display = 'block';
-      const spriteH = 90 * scale;
-      const spriteW = spriteH * (this._gifEl.naturalWidth && this._gifEl.naturalHeight ? this._gifEl.naturalWidth / this._gifEl.naturalHeight : 1);
-      headY = sy - spriteH + 12 * scale + bob + walk;
-      this._gifEl.style.width = spriteW + 'px'; this._gifEl.style.height = spriteH + 'px';
-      this._gifEl.style.left = (sx - spriteW / 2) + 'px'; this._gifEl.style.top = headY + 'px';
-      this._gifEl.style.transform = this.facingRight ? 'scaleX(1)' : 'scaleX(-1)';
-      this._gifEl.style.filter = (this.state === 'broken' || this.state === 'dead' || this.state === 'off') ? 'grayscale(0.9) brightness(0.7)' : '';
-      // Shadow
-      ctx.fillStyle = 'rgba(0,0,0,0.28)'; ctx.beginPath(); ctx.ellipse(sx, sy + 6 * scale, spriteW * 0.35, 5 * scale, 0, 0, Math.PI * 2); ctx.fill();
+    const r = 13 * scale;
+    const bodyY = sy + bob + walk;
+    const headY = bodyY - r;
+    ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(sx, sy + r + 3 * scale, r * 0.7, r * 0.22, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = this.color; ctx.beginPath(); ctx.arc(sx, bodyY, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.beginPath(); ctx.arc(sx - r * 0.25, bodyY - r * 0.3, r * 0.55, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1.2 * scale;
+    ctx.beginPath(); ctx.arc(sx, bodyY, r, 0, Math.PI * 2); ctx.stroke();
+    if (!this.isBlinking) {
+      const eyeY = bodyY - 2 * scale, eyeOx = 4.5 * scale, eyeR = 2.2 * scale, pupR = 1.2 * scale;
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(sx - eyeOx, eyeY, eyeR, 0, Math.PI * 2); ctx.arc(sx + eyeOx, eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
+      const lookX = (this.facingRight ? 1 : -1) * 0.8 * scale;
+      ctx.fillStyle = '#1a1a2e'; ctx.beginPath(); ctx.arc(sx - eyeOx + lookX, eyeY, pupR, 0, Math.PI * 2); ctx.arc(sx + eyeOx + lookX, eyeY, pupR, 0, Math.PI * 2); ctx.fill();
     } else {
-      this._gifEl.style.display = 'none';
-      const r = 13 * scale, bodyY = sy + bob + walk; headY = bodyY - r;
-      ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(sx, sy + r + 3 * scale, r * 0.7, r * 0.22, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = this.color; ctx.beginPath(); ctx.arc(sx, bodyY, r, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.beginPath(); ctx.arc(sx - r * 0.25, bodyY - r * 0.3, r * 0.55, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1.2 * scale;
-      ctx.beginPath(); ctx.arc(sx, bodyY, r, 0, Math.PI * 2); ctx.stroke();
-      if (!this.isBlinking) {
-        const eyeY = bodyY - 2 * scale, eyeOx = 4.5 * scale, eyeR = 2.2 * scale, pupR = 1.2 * scale;
-        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(sx - eyeOx, eyeY, eyeR, 0, Math.PI * 2); ctx.arc(sx + eyeOx, eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
-        const lookX = (this.facingRight ? 1 : -1) * 0.8 * scale;
-        ctx.fillStyle = '#1a1a2e'; ctx.beginPath(); ctx.arc(sx - eyeOx + lookX, eyeY, pupR, 0, Math.PI * 2); ctx.arc(sx + eyeOx + lookX, eyeY, pupR, 0, Math.PI * 2); ctx.fill();
-      } else {
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.4 * scale; const eyeY = bodyY - 2 * scale;
-        ctx.beginPath(); ctx.moveTo(sx - 6 * scale, eyeY); ctx.lineTo(sx - 3 * scale, eyeY);
-        ctx.moveTo(sx + 3 * scale, eyeY); ctx.lineTo(sx + 6 * scale, eyeY); ctx.stroke();
-      }
-      ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1 * scale;
-      if (this.state === 'working') { ctx.beginPath(); ctx.moveTo(sx - 3 * scale, bodyY + 4 * scale); ctx.lineTo(sx + 3 * scale, bodyY + 4 * scale); ctx.stroke(); }
-      else if (this.state === 'broken' || this.state === 'dead') { ctx.beginPath(); ctx.arc(sx, bodyY + 7 * scale, 3 * scale, Math.PI, 0); ctx.stroke(); }
-      else { ctx.beginPath(); ctx.arc(sx, bodyY + 3 * scale, 3 * scale, 0, Math.PI); ctx.stroke(); }
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.4 * scale; const eyeY = bodyY - 2 * scale;
+      ctx.beginPath(); ctx.moveTo(sx - 6 * scale, eyeY); ctx.lineTo(sx - 3 * scale, eyeY);
+      ctx.moveTo(sx + 3 * scale, eyeY); ctx.lineTo(sx + 6 * scale, eyeY); ctx.stroke();
     }
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1 * scale;
+    if (this.state === 'working') { ctx.beginPath(); ctx.moveTo(sx - 3 * scale, bodyY + 4 * scale); ctx.lineTo(sx + 3 * scale, bodyY + 4 * scale); ctx.stroke(); }
+    else if (this.state === 'broken' || this.state === 'dead') { ctx.beginPath(); ctx.arc(sx, bodyY + 7 * scale, 3 * scale, Math.PI, 0); ctx.stroke(); }
+    else { ctx.beginPath(); ctx.arc(sx, bodyY + 3 * scale, 3 * scale, 0, Math.PI); ctx.stroke(); }
 
     // Name label
-    const r = 13 * scale;
     ctx.font = `bold ${9.5 * scale}px 'Noto Sans KR', sans-serif`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillText(this.name, sx + 1, sy - (hasGif ? 72 * scale : r + 5 * scale) + 1);
-    ctx.fillStyle = '#e8ecf4'; ctx.fillText(this.name, sx, sy - (hasGif ? 72 * scale : r + 5 * scale));
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillText(this.name, sx + 1, sy - (r + 5 * scale) + 1);
+    ctx.fillStyle = '#e8ecf4'; ctx.fillText(this.name, sx, sy - (r + 5 * scale));
     // State badge
     const stateText = this.state.toUpperCase();
     ctx.font = `bold ${7 * scale}px sans-serif`;
     const tw = ctx.measureText(stateText).width;
-    const pillW = tw + 8 * scale, pillH = 12 * scale, pillX = sx - pillW / 2, pillY = sy + (hasGif ? 10 : r + 8) * scale;
+    const pillW = tw + 8 * scale, pillH = 12 * scale, pillX = sx - pillW / 2, pillY = sy + (r + 8) * scale;
     ctx.fillStyle = this.color + '33'; ctx.beginPath(); ctx.roundRect(pillX, pillY, pillW, pillH, 3 * scale); ctx.fill();
     ctx.fillStyle = this.color; ctx.textBaseline = 'middle'; ctx.fillText(stateText, sx, pillY + pillH / 2);
 
@@ -592,7 +538,7 @@ export class Agent {
 
   hitTest(vx, vy) { const dx = vx - this.x, dy = vy - this.y; return Math.sqrt(dx * dx + dy * dy) < 20; }
 
-  cleanup() { this._gifEl?.remove(); }
+  cleanup() {}
 }
 
 // ── Test hooks (preserve E2E compatibility) ──

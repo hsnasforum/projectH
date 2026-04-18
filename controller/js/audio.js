@@ -47,6 +47,22 @@ export const SoundFX = {
   error()   { this._play([[220, 0.12], [165, 0.18]], { gain: 0.13, type: 'sawtooth' }); },
   warn()    { this._play([[440, 0.08], [0, 0.06], [440, 0.08]], { gain: 0.09 }); },
   blip()    { this._play([[660, 0.05]], { gain: 0.06 }); },
+  fanfare() {
+    // 8-bit victory fanfare: C-E-G-C5 arpeggio → sustained high C
+    this._play([
+      [523, 0.1], [659, 0.1], [784, 0.1], [1047, 0.15],
+      [0, 0.05],
+      [784, 0.08], [1047, 0.25],
+    ], { gain: 0.14, type: 'square' });
+    // Harmony layer (delayed)
+    setTimeout(() => {
+      this._play([
+        [330, 0.1], [392, 0.1], [523, 0.1], [659, 0.15],
+        [0, 0.05],
+        [523, 0.08], [659, 0.25],
+      ], { gain: 0.08, type: 'triangle' });
+    }, 50);
+  },
 };
 
 export const AmbientAudio = {

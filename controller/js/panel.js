@@ -11,7 +11,6 @@ let _tailInFlight = false;
 let _sendInFlight = false;
 
 function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-function basename(p) { return String(p || '').split('/').filter(Boolean).pop() || '\u2014'; }
 
 export function openPanel(agentName) {
   _panelLane = agentName;
@@ -22,7 +21,7 @@ export function openPanel(agentName) {
   renderPanel();
   fetchTail();
   if (_tailInterval) clearInterval(_tailInterval);
-  _tailInterval = setInterval(fetchTail, 10000); // 10s refresh
+  _tailInterval = setInterval(fetchTail, 1000); // 1s refresh
   SoundFX.blip();
 }
 
@@ -60,7 +59,6 @@ function renderPanel() {
   const data = PipelineState.data || {};
   const lane = (data.lanes || []).find(l => l.name === _panelLane) || {};
   const control = data.control || {};
-  const artifacts = data.artifacts || {};
   const color = agent ? agent.color : STATE_COLORS.off;
 
   document.getElementById('panel-title').textContent = `${_panelLane} Desk`;
@@ -73,7 +71,6 @@ function renderPanel() {
   document.getElementById('panel-control-file').textContent = control.active_control_file || '\u2014';
   document.getElementById('panel-control-seq').textContent = control.active_control_seq >= 0 ? `#${control.active_control_seq}` : '\u2014';
   document.getElementById('panel-control-status').textContent = control.active_control_status || 'none';
-  document.getElementById('panel-artifact').textContent = basename((artifacts.latest_work || {}).path);
 }
 
 async function fetchTail() {
@@ -83,7 +80,7 @@ async function fetchTail() {
   try {
     const res = await fetch(`/api/runtime/capture-tail?lane=${encodeURIComponent(_panelLane)}&lines=15`);
     const data = await res.json();
-    if (data.ok && data.text) { body.textContent = data.text; body.scrollTop = body.scrollHeight; }
+    if (data.ok && data.text) { body.textContent = data.text; }
     else { body.textContent = `(${_panelLane} \u2014 \uD65C\uC131 \uB85C\uADF8 \uC5C6\uC74C)`; }
   } catch (e) { body.textContent = `(\uB85C\uADF8 \uC870\uD68C \uC2E4\uD328: ${e.message})`; }
   finally { _tailInFlight = false; }

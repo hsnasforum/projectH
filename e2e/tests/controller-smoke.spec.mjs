@@ -1,6 +1,31 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("controller office smoke", () => {
+  test("cozy runtime loads from shared /controller-assets/js/cozy.js module", async ({
+    page,
+  }) => {
+    await page.goto("/controller");
+    const moduleScripts = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("script"))
+        .map((el) => el.getAttribute("src") || "")
+        .filter((src) => src.includes("/controller-assets/js/cozy.js")),
+    );
+    expect(moduleScripts.length).toBe(1);
+    // Runtime globals exposed by cozy.js must be reachable on window.
+    const hasGlobals = await page.evaluate(() => ({
+      getRoamBounds: typeof window.getRoamBounds === "function",
+      setAgentFatigue: typeof window.setAgentFatigue === "function",
+      testPickIdleTargets: typeof window.testPickIdleTargets === "function",
+      testAntiStacking: typeof window.testAntiStacking === "function",
+      testHistoryPenalty: typeof window.testHistoryPenalty === "function",
+    }));
+    expect(hasGlobals.getRoamBounds).toBe(true);
+    expect(hasGlobals.setAgentFatigue).toBe(true);
+    expect(hasGlobals.testPickIdleTargets).toBe(true);
+    expect(hasGlobals.testAntiStacking).toBe(true);
+    expect(hasGlobals.testHistoryPenalty).toBe(true);
+  });
+
   test("controller shows storage unavailable indicator when browser storage is blocked", async ({
     page,
   }) => {
@@ -52,6 +77,58 @@ test.describe("controller office smoke", () => {
     const warnMsg = "환경 설정 저장 불가 — 새로고침 시 toolbar 설정이 초기화됩니다";
     const matchingMsgs = page.locator("#event-list .event-msg").filter({ hasText: warnMsg });
     await expect(matchingMsgs).toHaveCount(0);
+  });
+
+  test("marquee text keeps moving when the polled runtime payload is unchanged", async ({
+    page,
+  }) => {
+    await page.route("**/api/runtime/status", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          runtime_state: "RUNNING",
+          project_root: "/tmp/projectH",
+          lanes: [
+            { name: "Claude", state: "working", note: "implementing slice" },
+            { name: "Codex", state: "ready", note: "waiting for handoff" },
+            { name: "Gemini", state: "off", note: "" },
+          ],
+          control: { active_control_status: "implement", active_control_seq: 42 },
+          watcher: { alive: true },
+          active_round: { state: "ACTIVE" },
+          artifacts: {
+            latest_work: { path: "work/4/18/demo-work.md", mtime: "2026-04-18T00:00:00Z" },
+            latest_verify: { path: "verify/4/18/demo-verify.md", mtime: "2026-04-18T00:00:00Z" },
+          },
+        }),
+      }),
+    );
+
+    await page.goto("/controller");
+
+    const marquee = page.locator("#marquee-text");
+    await expect(marquee).toContainText("Runtime RUNNING");
+
+    const readTranslateX = () =>
+      page.evaluate(() => {
+        const el = document.getElementById("marquee-text");
+        if (!el) return 0;
+        const transform = getComputedStyle(el).transform;
+        if (!transform || transform === "none") return 0;
+        const match = transform.match(/matrix(3d)?\((.+)\)/);
+        if (!match) return 0;
+        const parts = match[2].split(",").map((value) => Number(value.trim()));
+        return match[1] ? (parts[12] || 0) : (parts[4] || 0);
+      });
+
+    const x1 = await readTranslateX();
+    await page.waitForTimeout(2500);
+    const x2 = await readTranslateX();
+    await page.waitForTimeout(2500);
+    const x3 = await readTranslateX();
+
+    expect(x2).toBeLessThan(x1 - 20);
+    expect(x3).toBeLessThan(x2 - 20);
   });
 
   test("agent cards expose data-fatigue attribute for fatigue observability", async ({
@@ -151,7 +228,7 @@ test.describe("controller office smoke", () => {
     await expect(fatigueEl).toHaveText("☕ 커피 충전 중");
   });
 
-  test("idle roam targets stay within walkable bounds and outside desk exclusion rects", async ({
+  test("idle roam targets stay within agent's home zone bounds", async ({
     page,
   }) => {
     // Stub the API to return one idle agent so the roam system is active
@@ -176,31 +253,25 @@ test.describe("controller office smoke", () => {
     const card = page.locator('.agent-card[data-agent="Claude"]');
     await expect(card).toBeVisible();
 
-    // Read bounds constants from the controller
+    // Read zone map from the controller (zone-based layout)
     const bounds = await page.evaluate(() => window.getRoamBounds());
+    const zone = bounds.zones.claude_desk;
+    expect(zone).toBeTruthy();
 
     // Force 30 idle roam picks and collect the coordinates
     const points = await page.evaluate(() => window.testPickIdleTargets("Claude", 30));
     expect(points.length).toBe(30);
 
     for (const pt of points) {
-      // Must be within walkable bounds
-      expect(pt.x).toBeGreaterThanOrEqual(bounds.walkable.xMin);
-      expect(pt.x).toBeLessThanOrEqual(bounds.walkable.xMax);
-      expect(pt.y).toBeGreaterThanOrEqual(bounds.walkable.yMin);
-      expect(pt.y).toBeLessThanOrEqual(bounds.walkable.yMax);
-
-      // Must not be inside any desk exclusion rect
-      for (const desk of bounds.desks) {
-        const insideDesk =
-          pt.x > desk.x && pt.x < desk.x + desk.w &&
-          pt.y > desk.y && pt.y < desk.y + desk.h;
-        expect(insideDesk).toBe(false);
-      }
+      // Must be within the agent's home zone
+      expect(pt.x).toBeGreaterThanOrEqual(zone.x);
+      expect(pt.x).toBeLessThanOrEqual(zone.x + zone.w);
+      expect(pt.y).toBeGreaterThanOrEqual(zone.y);
+      expect(pt.y).toBeLessThanOrEqual(zone.y + zone.h);
     }
   });
 
-  test("idle roam avoids proximity to other idle agents (anti-stacking)", async ({
+  test("zone-bounded agents inherently avoid stacking (separate desk zones)", async ({
     page,
   }) => {
     await page.route("**/api/runtime/status", (route) =>
@@ -223,24 +294,33 @@ test.describe("controller office smoke", () => {
     const card = page.locator('.agent-card[data-agent="Claude"]');
     await expect(card).toBeVisible();
 
-    // Place a phantom idle agent at the center of the walkable area
+    // Zone-bounded agents stay in their own desk zones, so stacking is
+    // prevented by the zone layout itself. Verify that idle picks remain
+    // within the agent's home zone even when a phantom is placed elsewhere.
     const bounds = await page.evaluate(() => window.getRoamBounds());
-    const centerX = (bounds.walkable.xMin + bounds.walkable.xMax) / 2;
-    const centerY = (bounds.walkable.yMin + bounds.walkable.yMax) / 2;
+    const zone = bounds.zones.claude_desk;
+
+    // Place phantom outside Claude's zone (e.g. center of Codex desk)
+    const codexZone = bounds.zones.codex_desk;
+    const cx = codexZone.x + codexZone.w / 2;
+    const cy = codexZone.y + codexZone.h / 2;
 
     const results = await page.evaluate(
       ({ cx, cy }) => window.testAntiStacking("Claude", cx, cy, 50),
-      { cx: centerX, cy: centerY },
+      { cx, cy },
     );
     expect(results.length).toBe(50);
 
-    // Free-walk path has hard 50px exclusion; spot-based has soft scoring penalty.
-    // The vast majority of picks should be >50px from the phantom agent.
-    const closeCount = results.filter((r) => r.distFromOther < 50).length;
-    expect(closeCount).toBeLessThan(results.length * 0.15);
+    // All picks should still be within Claude's home zone (zone isolation)
+    for (const r of results) {
+      expect(r.x).toBeGreaterThanOrEqual(zone.x);
+      expect(r.x).toBeLessThanOrEqual(zone.x + zone.w);
+      expect(r.y).toBeGreaterThanOrEqual(zone.y);
+      expect(r.y).toBeLessThanOrEqual(zone.y + zone.h);
+    }
   });
 
-  test("idle roam deprioritizes recently visited spots via _roamHistory penalty", async ({
+  test("zone-bounded idle roam uses continuous micro-roam (no spot history)", async ({
     page,
   }) => {
     await page.route("**/api/runtime/status", (route) =>
@@ -263,16 +343,24 @@ test.describe("controller office smoke", () => {
     const card = page.locator('.agent-card[data-agent="Claude"]');
     await expect(card).toBeVisible();
 
-    // Pre-fill history with spots 0-4 (index 0 = most recent = most penalized at -150)
+    // Zone-bounded roaming uses continuous micro-roam within the desk zone
+    // instead of discrete spot-based movement. testHistoryPenalty returns
+    // an empty array because the spot history concept no longer applies.
     const results = await page.evaluate(() =>
       window.testHistoryPenalty("Claude", [0, 1, 2, 3, 4], 120),
     );
+    expect(results.length).toBe(0);
 
-    // Only spot-based picks are returned (free-walk picks excluded)
-    expect(results.length).toBeGreaterThan(15);
-
-    // The most-penalized spot (index 0, -150 penalty) should be very rarely chosen
-    const mostPenalizedCount = results.filter((r) => r.spotIndex === 0).length;
-    expect(mostPenalizedCount).toBeLessThan(results.length * 0.1);
+    // Verify that idle picks still produce valid zone-bounded coordinates
+    const points = await page.evaluate(() => window.testPickIdleTargets("Claude", 20));
+    expect(points.length).toBe(20);
+    const bounds = await page.evaluate(() => window.getRoamBounds());
+    const zone = bounds.zones.claude_desk;
+    for (const pt of points) {
+      expect(pt.x).toBeGreaterThanOrEqual(zone.x);
+      expect(pt.x).toBeLessThanOrEqual(zone.x + zone.w);
+      expect(pt.y).toBeGreaterThanOrEqual(zone.y);
+      expect(pt.y).toBeLessThanOrEqual(zone.y + zone.h);
+    }
   });
 });

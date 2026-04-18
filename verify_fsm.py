@@ -10,7 +10,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from pipeline_runtime.schema import read_json
+from pipeline_runtime.schema import jobs_state_dir, read_json
 from pipeline_runtime.wrapper_events import build_lane_read_models
 
 log = logging.getLogger("watcher_core")
@@ -97,8 +97,12 @@ class JobState:
         log.info("state %s  %s → %s  (%s)", self.job_id, old.value, new_status.value, reason)
 
     def save(self, state_dir: Path) -> None:
-        state_dir.mkdir(parents=True, exist_ok=True)
-        path = state_dir / f"{self.job_id}.json"
+        # primary JobState path는 `<state_dir>/jobs/<job_id>.json`. 쓰기는 항상 primary로
+        # 간다. migration 기간 동안 루트에 남아 있는 fallback copy는 읽기에만 허용하고
+        # 이번 라운드에서는 자동 이동시키지 않는다.
+        primary_dir = jobs_state_dir(state_dir)
+        primary_dir.mkdir(parents=True, exist_ok=True)
+        path = primary_dir / f"{self.job_id}.json"
         tmp_path = path.with_suffix(f"{path.suffix}.tmp")
         data = asdict(self)
         data["status"] = self.status.value
@@ -107,8 +111,13 @@ class JobState:
 
     @classmethod
     def load(cls, state_dir: Path, job_id: str) -> Optional["JobState"]:
-        path = state_dir / f"{job_id}.json"
-        if not path.exists():
+        primary_path = jobs_state_dir(state_dir) / f"{job_id}.json"
+        fallback_path = state_dir / f"{job_id}.json"
+        if primary_path.exists():
+            path = primary_path
+        elif fallback_path.exists():
+            path = fallback_path
+        else:
             return None
         try:
             data = json.loads(path.read_text())
@@ -373,6 +382,21 @@ class StateMachine:
             return False
         lane_model = dict(lane_model or self._verify_wrapper_model())
         accepted_task = dict(lane_model.get("accepted_task") or {})
+        accepted_seen_at = 0.0
+        # wrapper read model은 최신 current state를 평탄화하므로, polling 타이밍이 늦으면
+        # 같은 dispatch의 TASK_ACCEPTED가 already-folded TASK_DONE 뒤에 보이지 않을 수 있다.
+        # 이 경우 current dispatch의 matching TASK_DONE는 이미 accept가 있었다는 더 강한 증거다.
+        if not accepted_task:
+            done_task = dict(lane_model.get("done_task") or {})
+            done_dispatch_id = str(done_task.get("dispatch_id") or "")
+            if done_dispatch_id and done_dispatch_id == job.dispatch_id:
+                accepted_task = {
+                    "job_id": str(done_task.get("job_id") or job.job_id),
+                    "dispatch_id": done_dispatch_id,
+                    "control_seq": int(done_task.get("control_seq") or -1),
+                    "attempt": int(done_task.get("attempt") or 0),
+                }
+                accepted_seen_at = float(lane_model.get("done_ts") or lane_model.get("last_event_ts") or 0.0)
         if not accepted_task:
             return False
 
@@ -389,7 +413,7 @@ class StateMachine:
             return False
 
         job.accepted_dispatch_id = job.dispatch_id
-        job.accepted_at = time.time()
+        job.accepted_at = accepted_seen_at if accepted_seen_at > 0.0 else time.time()
         job.done_deadline_at = job.accepted_at + self.verify_done_deadline_sec
         job.last_activity_at = job.accepted_at
         job.last_pane_snapshot = current_pane

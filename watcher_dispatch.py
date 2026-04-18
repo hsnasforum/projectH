@@ -173,25 +173,52 @@ class WatcherDispatchQueue:
         pending: dict[str, object],
         active_control: Any,
     ) -> bool:
+        return self.pending_notification_control_mismatch_reason(pending, active_control) is None
+
+    def pending_notification_control_mismatch_reason(
+        self,
+        pending: dict[str, object],
+        active_control: Any,
+    ) -> str | None:
         expected_control_path = str(pending.get("expected_control_path") or "").strip()
         expected_status = str(pending.get("expected_status") or "").strip()
         expected_control_seq = int(pending.get("expected_control_seq") or -1)
         if not expected_control_path and not expected_status and expected_control_seq < 0:
-            return True
+            return None
         if active_control is None:
-            return False
+            return "active_control_missing"
         if expected_control_path and active_control.path.name != expected_control_path:
-            return False
+            return "control_file_drift"
         if expected_status and active_control.status != expected_status:
-            return False
+            return "control_status_drift"
         if expected_control_seq >= 0 and active_control.control_seq != expected_control_seq:
-            return False
-        return True
+            return "control_seq_drift"
+        return None
+
+    def _control_mismatch_payload(
+        self,
+        pending: dict[str, object],
+        *,
+        prompt_path: Path,
+        active_control: Any,
+        reason_code: str,
+    ) -> dict[str, object]:
+        return {
+            "notify_kind": str(pending.get("notify_kind") or ""),
+            "reason": "control_mismatch",
+            "reason_code": reason_code,
+            "expected_control_seq": int(pending.get("expected_control_seq") or -1),
+            "active_control_seq": int(active_control.control_seq) if active_control else -1,
+            "expected_prompt_path": str(prompt_path),
+            "active_prompt_path": str(active_control.path) if active_control else "",
+            "expected_status": str(pending.get("expected_status") or ""),
+            "active_status": str(active_control.status) if active_control else "",
+            "active_control": active_control.kind if active_control else "none",
+        }
 
     def flush_pending(self) -> None:
         if not self.pending_notifications:
             return
-        active_control = self._get_active_control_signal()
         for pending_key, pending in list(self.pending_notifications.items()):
             prompt_path = Path(str(pending.get("prompt_path") or ""))
             if not prompt_path:
@@ -202,21 +229,26 @@ class WatcherDispatchQueue:
                 self.pending_notifications.pop(pending_key, None)
                 self.last_lane_input_defer_at.pop(pending_key, None)
                 continue
+            active_control = self._get_active_control_signal()
             expected_status = str(pending.get("expected_status") or "")
             require_active_control = bool(pending.get("require_active_control"))
-            if not self.pending_notification_matches_control(pending, active_control):
+            mismatch_reason = self.pending_notification_control_mismatch_reason(pending, active_control)
+            if mismatch_reason is not None:
                 self.pending_notifications.pop(pending_key, None)
                 self.last_lane_input_defer_at.pop(pending_key, None)
+                payload = self._control_mismatch_payload(
+                    pending,
+                    prompt_path=prompt_path,
+                    active_control=active_control,
+                    reason_code=mismatch_reason,
+                )
                 self._log_raw(
                     "lane_input_deferred_dropped",
                     str(prompt_path),
                     "turn_signal",
-                    {
-                        "notify_kind": str(pending.get("notify_kind") or ""),
-                        "reason": "control_mismatch",
-                        "active_control": active_control.kind if active_control else "none",
-                    },
+                    payload,
                 )
+                self._append_runtime_event("lane_input_deferred_dropped", payload)
                 continue
             if require_active_control and expected_status and not self._is_active_control(prompt_path, expected_status):
                 self.pending_notifications.pop(pending_key, None)

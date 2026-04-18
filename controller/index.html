@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pipeline Controller — Office</title>
+<title>🏡 Pipeline Office — Cozy RPG</title>
 <link rel="stylesheet" href="/controller-assets/css/office.css">
 </head>
 <body>
@@ -13,11 +13,11 @@
   <span class="title">Pipeline Office</span>
   <span class="badge stopped" id="status-badge">Stopped</span>
   <div class="spacer"></div>
-  <button class="btn" id="btn-start">Start</button>
-  <button class="btn" id="btn-stop">Stop</button>
-  <button class="btn" id="btn-restart">Restart</button>
-  <button class="btn" id="mute-btn" title="음소거" style="font-size:13px;padding:2px 8px">🔊</button>
-  <button class="btn" id="motion-btn" title="장식 효과 줄이기" style="font-size:13px;padding:2px 8px">✨</button>
+  <button class="btn" id="btn-start">▶ Start</button>
+  <button class="btn" id="btn-stop">■ Stop</button>
+  <button class="btn" id="btn-restart">↻ Restart</button>
+  <button class="btn" id="mute-btn" title="음소거" style="font-size:13px;padding:6px 10px">🔊</button>
+  <button class="btn" id="motion-btn" title="장식 효과 줄이기" style="font-size:13px;padding:6px 10px">✨</button>
   <span class="storage-warn" id="storage-warn" title="localStorage 사용 불가 — 새로고침 시 toolbar 설정이 초기화됩니다">⚠ 설정 비저장</span>
   <span class="project-path" id="project-path">—</span>
 </div>
@@ -30,6 +30,10 @@
       <div class="tt-name"></div>
       <div class="tt-state"></div>
       <div class="tt-note"></div>
+    </div>
+    <div class="marquee-bar">
+      <span class="marquee-badge">📢 NEWS</span>
+      <div class="marquee-track"><span class="marquee-text" id="marquee-text">Welcome to the Pipeline Office ✿ 모두가 각자의 자리에서 즐겁게 일하는 중입니다.</span></div>
     </div>
   </div>
 
@@ -51,45 +55,15 @@
         <input id="lm-input" type="text" placeholder="이 lane에 한 줄 입력을 보냅니다. 예: 1 / 2 / 3" autocomplete="off" />
         <button class="lm-send" id="lm-send">전송</button>
       </div>
-      <div class="log-modal-send-status" id="lm-send-status">읽기 전용 tail만 보이는 상태였던 문제를 피하려고, 이 창에서 한 줄 입력을 lane으로 보낼 수 있습니다.</div>
-    </div>
-  </div>
-
-  <!-- Slide-in Desk Dashboard Panel -->
-  <div class="desk-panel" id="desk-panel">
-    <div class="panel-header">
-      <span class="panel-title" id="panel-title" style="border-left:3px solid #60a5fa;padding-left:8px">Desk</span>
-      <button class="panel-close" id="panel-close-btn">✕</button>
-    </div>
-    <div class="panel-body">
-      <div class="info-row"><span class="info-label">State</span><span class="info-value" id="panel-state">—</span></div>
-      <div class="info-row"><span class="info-label">PID</span><span class="info-value dim" id="panel-pid">—</span></div>
-      <div class="info-row"><span class="info-label">Fatigue</span><span class="info-value" id="panel-fatigue">—</span></div>
-      <div class="info-row"><span class="info-label">Last event</span><span class="info-value dim" id="panel-last-event">—</span></div>
-      <div class="panel-divider"></div>
-      <div class="section-title">Current Control</div>
-      <div class="info-row"><span class="info-label">File</span><span class="info-value dim" id="panel-control-file">—</span></div>
-      <div class="info-row"><span class="info-label">Seq</span><span class="info-value dim" id="panel-control-seq">—</span></div>
-      <div class="info-row"><span class="info-label">Status</span><span class="info-value" id="panel-control-status">—</span></div>
-      <div class="panel-divider"></div>
-      <div class="section-title">Terminal Tail</div>
-      <div class="panel-tail" id="panel-tail">대기 중...</div>
-      <div class="panel-divider"></div>
-      <div class="section-title">Latest Artifact</div>
-      <div class="info-row"><span class="info-value dim" id="panel-artifact">—</span></div>
-    </div>
-    <div class="panel-input-row">
-      <input id="panel-input" type="text" placeholder="한 줄 입력" autocomplete="off" disabled>
-      <button class="panel-send" id="panel-send" disabled>전송</button>
+      <div class="log-modal-send-status" id="lm-send-status">숫자 선택이나 짧은 응답이 필요한 prompt가 뜨면 여기서 바로 보내실 수 있습니다.</div>
     </div>
   </div>
 
   <!-- Sidebar -->
   <div class="sidebar">
-    <div id="tab-bar" class="tab-bar"></div>
     <div id="tab-content" class="tab-content"></div>
     <div class="event-log-section">
-      <div class="section-title">이벤트</div>
+      <div class="sidebar-section-title">Quest Log</div>
       <div class="event-list" id="event-list">
         <div class="event-item"><span class="event-time">—</span><span class="event-msg">대기 중</span></div>
       </div>
@@ -97,222 +71,6 @@
   </div>
 </div>
 
-<!-- Module entry point -->
-<script type="module">
-import { PipelineState } from '/controller-assets/js/state.js';
-import { agents, Agent, SpriteManager } from '/controller-assets/js/agents.js';
-import { startRenderLoop, resize, setLowMotion, isLowMotion } from '/controller-assets/js/canvas.js';
-import { initZoneHandlers } from '/controller-assets/js/zones.js';
-import { initDeliverySystem } from '/controller-assets/js/delivery.js';
-import { initSidebar } from '/controller-assets/js/sidebar.js';
-import { initPanel, closePanel } from '/controller-assets/js/panel.js';
-import { SoundFX, AmbientAudio, PrefStore } from '/controller-assets/js/audio.js';
-import { ACTION_REPOLL_MS, LOG_REFRESH_MS } from '/controller-assets/js/config.js';
-
-// ── Wire PrefStore events ──
-PrefStore.setEventCallback((type, msg) => PipelineState.pushEvent(type, msg));
-
-// ── Toolbar buttons ──
-async function apiPost(path) {
-  SoundFX.click();
-  try {
-    const res = await fetch(path, { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok || data.ok === false) { PipelineState.pushEvent('err', '요청 실패: ' + (data.error || 'unknown')); SoundFX.error(); }
-    else {
-      PipelineState.pushEvent('ok', path.split('/').pop() + ' 완료');
-      if (path.includes('start')) SoundFX.success(); else if (path.includes('stop')) SoundFX.warn(); else SoundFX.blip();
-    }
-    setTimeout(() => PipelineState.poll(), ACTION_REPOLL_MS);
-  } catch (e) { PipelineState.pushEvent('err', '요청 실패: ' + e.message); SoundFX.error(); }
-}
-
-document.getElementById('btn-start').onclick = () => apiPost('/api/runtime/start');
-document.getElementById('btn-stop').onclick = () => apiPost('/api/runtime/stop');
-document.getElementById('btn-restart').onclick = () => apiPost('/api/runtime/restart');
-document.getElementById('mute-btn').onclick = () => AmbientAudio.toggle();
-document.getElementById('motion-btn').onclick = () => {
-  setLowMotion(!isLowMotion());
-  const btn = document.getElementById('motion-btn');
-  btn.textContent = isLowMotion() ? '🚫' : '✨';
-  btn.title = isLowMotion() ? '장식 효과 켜기' : '장식 효과 줄이기';
-  PrefStore.set('office_low_motion', isLowMotion() ? '1' : '0');
-};
-
-// ── Panel close button ──
-document.getElementById('panel-close-btn').onclick = () => closePanel();
-
-// ── Terminal Log Modal (preserved for E2E) ──
-let _logRefreshInterval = null;
-let _logRefreshInFlight = false;
-let _modalLaneName = '';
-let _modalSendInFlight = false;
-
-function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-function truncate(s, n) { return s.length > n ? s.slice(0, n) + '…' : s; }
-
-function setLogSendStatus(message, tone = '') {
-  const el = document.getElementById('lm-send-status');
-  if (!el) return;
-  el.textContent = message || '';
-  el.classList.remove('ok', 'err');
-  if (tone) el.classList.add(tone);
-}
-
-function syncModalInputState() {
-  const input = document.getElementById('lm-input');
-  const button = document.getElementById('lm-send');
-  if (!input || !button) return;
-  const hasLane = !!_modalLaneName;
-  const hasText = !!String(input.value || '').trim();
-  input.disabled = !hasLane || _modalSendInFlight;
-  button.disabled = !hasLane || !hasText || _modalSendInFlight;
-}
-
-async function openLogModal(agent) {
-  _modalLaneName = agent.name;
-  const modal = document.getElementById('log-modal');
-  document.getElementById('lm-dot').style.background = agent.color;
-  document.getElementById('lm-name').textContent = agent.name;
-  document.getElementById('lm-role').textContent = agent.role;
-  const stateEl = document.getElementById('lm-state');
-  stateEl.textContent = agent.state.toUpperCase();
-  stateEl.style.background = agent.color + '33'; stateEl.style.color = agent.color;
-  const infoItems = [
-    agent.pid ? `PID ${agent.pid}` : null,
-    agent.note ? truncate(agent.note, 60) : null,
-    agent.lastEventAt ? `event: ${agent.lastEventAt}` : null,
-  ].filter(Boolean);
-  document.getElementById('lm-info').innerHTML = infoItems.map(t => `<span>${esc(t)}</span>`).join('');
-  const body = document.getElementById('lm-body');
-  const input = document.getElementById('lm-input');
-  body.innerHTML = '<span class="log-loading">$ tail -f …</span>';
-  if (input) input.value = '';
-  setLogSendStatus('숫자 선택이나 짧은 응답이 필요한 prompt가 뜨면 여기서 바로 보내실 수 있습니다.');
-  syncModalInputState();
-  modal.classList.add('open');
-  await _fetchTail(agent.name, body);
-  requestAnimationFrame(() => { if (input) input.focus(); });
-  if (_logRefreshInterval) clearInterval(_logRefreshInterval);
-  _logRefreshInterval = setInterval(() => {
-    if (!modal.classList.contains('open')) { clearInterval(_logRefreshInterval); return; }
-    _fetchTail(agent.name, body);
-  }, LOG_REFRESH_MS);
-}
-
-async function _fetchTail(laneName, bodyEl) {
-  if (_logRefreshInFlight) return;
-  _logRefreshInFlight = true;
-  try {
-    const res = await fetch(`/api/runtime/capture-tail?lane=${encodeURIComponent(laneName)}&lines=100`);
-    const data = await res.json();
-    if (data.ok && data.text) {
-      const wasAtBottom = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 40;
-      bodyEl.textContent = data.text;
-      if (wasAtBottom) bodyEl.scrollTop = bodyEl.scrollHeight;
-    } else { bodyEl.innerHTML = `<span class="log-loading">(${esc(laneName)} — 활성 로그 없음)</span>`; }
-  } catch (e) { bodyEl.innerHTML = `<span class="log-loading">(로그 조회 실패: ${esc(e.message)})</span>`; }
-  finally { _logRefreshInFlight = false; }
-}
-
-function closeLogModal(e) {
-  if (e && e.target !== document.getElementById('log-modal')) return;
-  document.getElementById('log-modal').classList.remove('open');
-  _modalLaneName = '';
-  _modalSendInFlight = false;
-  const input = document.getElementById('lm-input');
-  if (input) { input.value = ''; input.disabled = true; }
-  setLogSendStatus('');
-  syncModalInputState();
-  _logRefreshInFlight = false;
-  if (_logRefreshInterval) { clearInterval(_logRefreshInterval); _logRefreshInterval = null; }
-}
-
-async function sendModalInput() {
-  const lane = String(_modalLaneName || '').trim();
-  const input = document.getElementById('lm-input');
-  const body = document.getElementById('lm-body');
-  const text = String(input?.value || '');
-  if (!lane || !text.trim() || _modalSendInFlight) return;
-  _modalSendInFlight = true;
-  syncModalInputState();
-  setLogSendStatus(`${lane}에 입력 전송 중…`);
-  try {
-    const res = await fetch('/api/runtime/send-input', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lane, text }),
-    });
-    const data = await res.json();
-    if (!res.ok || data.ok === false) throw new Error(data.error || 'send failed');
-    if (input) input.value = '';
-    setLogSendStatus(`${lane}에 입력을 보냈습니다.`, 'ok');
-    SoundFX.blip();
-    await _fetchTail(lane, body);
-    setTimeout(() => _fetchTail(lane, body), 350);
-  } catch (e) {
-    setLogSendStatus(`입력 전송 실패: ${e.message}`, 'err');
-    SoundFX.error();
-  } finally {
-    _modalSendInFlight = false;
-    syncModalInputState();
-    if (input) input.focus();
-  }
-}
-
-// Wire modal events
-document.getElementById('log-modal').addEventListener('click', (e) => closeLogModal(e));
-document.getElementById('lm-close').addEventListener('click', () => closeLogModal());
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLogModal(); });
-document.getElementById('lm-input').addEventListener('input', syncModalInputState);
-document.getElementById('lm-input').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendModalInput(); }
-});
-document.getElementById('lm-send').addEventListener('click', sendModalInput);
-
-// Expose openLogModal for agent clicks (backup for E2E, zones.js uses panel by default)
-window.__openLogModal = openLogModal;
-
-// ── State listeners ──
-PipelineState.onChange((type, data) => {
-  if (type === 'poll') {
-    const pres = PipelineState.getPresentation(data);
-    document.getElementById('status-badge').textContent = pres.runtimeState;
-    document.getElementById('status-badge').className = 'badge ' + pres.badgeClass;
-    document.getElementById('project-path').textContent = data.project_root || '—';
-
-    // Sync agents
-    const lanes = data.lanes || [];
-    const seen = new Set();
-    for (const lane of lanes) {
-      const name = lane.name || ''; seen.add(name);
-      if (!agents.has(name)) agents.set(name, new Agent(name));
-      agents.get(name).applyLaneData(lane, SoundFX);
-    }
-    for (const [name, agent] of agents) {
-      if (!seen.has(name)) { agent.cleanup(); agents.delete(name); }
-    }
-  }
-});
-
-// ── Boot ──
-AmbientAudio.restore();
-if (!PrefStore.available) {
-  const sw = document.getElementById('storage-warn');
-  if (sw) sw.style.display = 'inline-block';
-}
-if (PrefStore.get('office_low_motion') === '1') {
-  setLowMotion(true);
-  document.getElementById('motion-btn').textContent = '🚫';
-}
-
-SpriteManager.init();
-startRenderLoop();
-initZoneHandlers();
-initDeliverySystem();
-initSidebar();
-initPanel();
-PipelineState.startPolling();
-</script>
+<script src="/controller-assets/js/cozy.js"></script>
 </body>
 </html>

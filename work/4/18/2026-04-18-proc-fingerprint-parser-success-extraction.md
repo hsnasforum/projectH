@@ -1,0 +1,40 @@
+# 2026-04-18 _proc_starttime_fingerprint 성공 추출 회귀 고정
+
+## 변경 파일
+- `tests/test_pipeline_runtime_schema.py`
+
+## 사용 skill
+- 없음
+
+## 변경 이유
+- 직전 라운드 `work/4/18/2026-04-18-proc-fingerprint-parser-safe-degradation.md`와 `verify/4/18/2026-04-18-proc-fingerprint-parser-safe-degradation-verification.md`는 `_proc_starttime_fingerprint`의 unreadable / `)` 미발견 / tail field 부족 세 safe-degradation 분기를 회귀로 닫았습니다.
+- 같은 family에 남은 current-risk는 같은 helper의 positive 경로였습니다. 잘 형성된 `/proc/<pid>/stat` payload가 들어왔을 때 helper가 `rfind(")")`로 comm 필드를 건너뛰고 tail의 `rest[19]`(field 22 = starttime)를 정확히 돌리는지를 dedicated 회귀로 못 박은 적이 없었습니다. 기존 `test_process_starttime_fingerprint_uses_proc_when_available`은 primary helper가 호출되는지(그리고 fallback이 호출되지 않는지) 정도만 단언하고, 실제 추출 값 자체는 검증하지 않습니다.
+- 핸드오프(`STATUS: implement`, `CONTROL_SEQ: 319`)는 새 third fallback이나 runtime 행동 변경 없이, primary 성공 경로 한 회귀만 좁게 추가하라고 지목했습니다. 추가로 comm에 공백과 inner `)`가 들어간 fixture를 권고해, `rfind(")")`가 outer closing paren을 잡는다는 contract까지 같이 보호하도록 했습니다.
+
+## 핵심 변경
+- `tests/test_pipeline_runtime_schema.py`
+  - `ProcessStarttimeFingerprintTest`에 `test_proc_starttime_fingerprint_extracts_starttime_field_from_well_formed_stat`을 추가했습니다. 기존 `_proc_starttime_fingerprint` safe-degradation 회귀들 바로 앞에 두어 success → safe-degradation 순서로 family를 한 자리에서 비춥니다.
+  - fixture 본문은 `12345 (my (weird) cmd with spaces) S 1 2 3 ... 18 9876543210 20 21 22 23 24 25\n`입니다.
+    - comm 안에 공백과 inner `)`가 모두 들어 있어, naive `find(")")`였다면 inner `)`에서 잘려 `rest[19]`이 `STARTTIME`이 아닌 다른 토큰이 됐을 텍스트입니다.
+    - tail이 26개 토큰으로 정상 split되며, `rest[19] == "9876543210"`이 starttime token입니다.
+  - `mock.patch.object(schema_module, "Path", return_value=fake_path)` 패턴으로 `Path("/proc/99999/stat").read_text(...)`만 stub seam에 올려, 다른 schema helper의 `Path` 사용에 영향이 없게 했습니다.
+  - 단언:
+    - `schema_module._proc_starttime_fingerprint(99999) == "9876543210"`
+    - `Path` 호출이 정확히 `"/proc/99999/stat"` 한 번 일어났는지
+- `pipeline_runtime/schema.py`는 손대지 않았습니다. 이번 회귀는 현재 helper 동작이 contract와 맞다는 것을 그대로 검증했고, mismatch는 발견되지 않았습니다.
+- `.pipeline/README.md`도 손대지 않았습니다. fallback contract와 빈 fingerprint면 fresh `_make_run_id()`로 fall through 한다는 경계는 직전 라운드들에서 이미 한 줄로 적혀 있어, primary 성공 회귀 추가만으로 README 표면을 다시 좁힐 필요가 없었습니다.
+
+## 검증
+- `python3 -m py_compile pipeline_runtime/schema.py tests/test_pipeline_runtime_schema.py`
+  - 결과: 통과
+- `python3 -m unittest -v tests.test_pipeline_runtime_schema.ProcessStarttimeFingerprintTest.test_proc_starttime_fingerprint_extracts_starttime_field_from_well_formed_stat tests.test_pipeline_runtime_schema.ProcessStarttimeFingerprintTest.test_process_starttime_fingerprint_uses_proc_when_available tests.test_pipeline_runtime_schema.ProcessStarttimeFingerprintTest.test_proc_starttime_fingerprint_returns_empty_when_stat_read_raises_oserror tests.test_pipeline_runtime_schema.ProcessStarttimeFingerprintTest.test_process_starttime_fingerprint_returns_empty_when_proc_and_ps_both_fail`
+  - 결과: `Ran 4 tests`, `OK` (새 success 회귀 + primary 사용 경로 + safe-degradation 첫 케이스 + both-empty bookend 모두 통과)
+- `git diff --check -- pipeline_runtime/schema.py tests/test_pipeline_runtime_schema.py .pipeline/README.md`
+  - 결과: 통과
+- `tests.test_pipeline_runtime_schema` full module rerun, 그리고 supervisor/watcher writer/inheritance 회귀 재실행은 이번 라운드에서 다시 돌리지 않았습니다.
+  - 이유: 이번 변경이 같은 클래스 안에 회귀 한 개를 추가한 좁은 슬라이스이고, helper 본문은 직전 verified 라운드들과 동일하기 때문입니다. 핸드오프도 새 success 회귀와 같은 family bookend 3개만 재실행하라고 지정했고 그 4개가 모두 통과했습니다.
+
+## 남은 리스크
+- 새 회귀는 `_proc_starttime_fingerprint`가 내부적으로 `Path(...).read_text(...)`를 한 번 호출한다는 현재 구현 형태에 의존합니다. helper가 다른 IO 추상화(예: `os.open`)로 바뀌면 stub seam을 같이 옮겨야 하지만, 두 인터페이스 모두 같은 contract("`rest[19]`을 starttime token으로 돌린다")를 유지하면 회귀 의도는 그대로 유지됩니다.
+- BusyBox 등 `ps -p <pid> -o lstart=` 자체를 지원하지 않는 minimal 환경에서는 helper가 여전히 `""`로 safe degradation 합니다. 더 portable한 third fallback(예: Python ctypes syscall, watcher가 owner identity를 따로 기록)은 여전히 별도 follow-up로 남습니다.
+- 이번 closeout이 직접 편집한 파일은 `tests/test_pipeline_runtime_schema.py` 한 개입니다. `git status`에 보이는 다른 dirty 변경(runtime/controller/browser/docs)은 이번 라운드의 산출물이 아니므로, 다음 verify 라운드에서 이 파일 외 영역의 diff 책임을 이 closeout에 귀속하면 안 됩니다.

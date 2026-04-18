@@ -128,6 +128,41 @@ def merge_claim_records(records: Iterable[ClaimRecord]) -> list[ClaimRecord]:
     return merged
 
 
+def _trusted_supporting_source_count(record: ClaimRecord) -> int:
+    """Distinct trusted-role supporters backing this claim's chosen value."""
+    seen: set[str] = set()
+    for url, title, role in record.supporting_sources:
+        if role not in TRUSTED_CLAIM_SOURCE_ROLES:
+            continue
+        key = (url or "").strip() or (title or "").strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+    if not seen and record.source_role in TRUSTED_CLAIM_SOURCE_ROLES:
+        fallback_key = (record.source_url or "").strip() or (record.source_title or "").strip()
+        if fallback_key:
+            seen.add(fallback_key)
+    return len(seen)
+
+
+def _has_competing_trusted_alternative(
+    items: Iterable[ClaimRecord], primary: ClaimRecord
+) -> bool:
+    """True when another non-overlapping same-slot value also carries its own
+    cross-verified trusted agreement. A single-source alternative does not
+    outweigh a primary that already has trusted agreement — only a rival with
+    its own trusted agreement (≥2 distinct trusted supporters) keeps the slot
+    genuinely uncertain."""
+    for other in items:
+        if other is primary:
+            continue
+        if claim_values_overlap(other.value, primary.value):
+            continue
+        if _trusted_supporting_source_count(other) >= 2:
+            return True
+    return False
+
+
 def summarize_slot_coverage(
     records: Iterable[ClaimRecord],
     *,
@@ -147,7 +182,16 @@ def summarize_slot_coverage(
             coverage[slot] = SlotCoverage(slot=slot, status=CoverageStatus.MISSING, primary_claim=None, candidate_count=0)
             continue
         primary = max(items, key=_claim_sort_key)
-        status = CoverageStatus.STRONG if primary.support_count >= 2 else CoverageStatus.WEAK
+        has_trusted_agreement = (
+            primary.support_count >= 2
+            and _trusted_supporting_source_count(primary) >= 2
+        )
+        has_conflict = _has_competing_trusted_alternative(items, primary)
+        status = (
+            CoverageStatus.STRONG
+            if has_trusted_agreement and not has_conflict
+            else CoverageStatus.WEAK
+        )
         coverage[slot] = SlotCoverage(
             slot=slot,
             status=status,

@@ -267,16 +267,15 @@ controller browser UI의 active runtime contract는 아래로 제한합니다.
 - `active_round=VERIFY_PENDING|VERIFYING`이어도 Codex pane이 이미 prompt-visible이고 busy tail이 없으면 controller lane badge는 `WORKING`이 아니라 `READY`로 내려와야 합니다. pending work truth는 runtime summary와 lane note(`verify_pending`/`verifying`)로만 남깁니다.
 - log modal은 tail 확인 + bounded one-line 입력용입니다. permission/plan prompt 같은 interactive 선택이 뜨면 현재 lane에 `1`, `2`, `3` 같은 짧은 응답을 보낼 수 있습니다. backend route가 없는 lane pause/resume/restart나 attach 버튼은 계속 노출하지 않습니다.
 - Codex startup 시 self-update dialog가 뜨면 wrapper가 `Skip until next version`을 자동 선택해야 하며, update dialog 자체를 `READY(prompt_visible)`로 surface하면 안 됩니다. `codex_exit:0`와 함께 pane에 `Please restart Codex`가 남았다면 self-update prompt miss로 봅니다.
-- 상태별 GIF를 테스트하려면 operator가 `controller/assets/BOOTING.gif`, `WORKING.gif`, `BROKEN.gif`, `READY.gif`, `DEAD.gif`를 두고 controller를 새로고침하면 됩니다. browser는 이 다섯 파일을 우선 사용합니다.
-- background는 `/controller-assets/background.png`를 먼저 시도하고, 필요 시 `/controller-assets/generated/bg-office.png`로 fallback 합니다. sidebar `Scene` 값이 `fallback` 또는 `asset_error`면 자산 경로/로딩 문제를 먼저 의심합니다.
+- 현재 browser controller는 `controller/assets/cozy/` 기반 테마를 `controller/index.html`, `controller/css/office.css`, `controller/js/cozy.js`에 반영해 사용합니다. `controller/index.html`은 DOM shell만 담고 cozy 런타임(polling, sidebar rendering, log modal input/tail refresh, storage 경고 와이어링, idle-roam test hooks)은 `<script src="/controller-assets/js/cozy.js">` 하나로 shared `/controller-assets/js/` 모듈 소유권 아래에서 로드됩니다. shipped 화면은 canvas/CSS avatar만 쓰며 상태별 GIF나 별도 background 파일 배치를 요구하지 않습니다.
 - log modal info strip 은 좁은 viewport 에서도 wrap 되어야 하며, body 는 전체 폭을 유지해야 합니다. 내부 pane 이 좁은 고정폭처럼 보이는 스타일을 다시 넣지 않습니다.
 - Office View의 packet/날씨/펫/ambient audio는 runtime payload에서 읽은 read-model 연출입니다. `latest_work`, `latest_verify`, `last_receipt`, `control_seq`, lane state 변화와 맞물려 보여야 하며, pane text scraping이나 hidden route에 의존하면 안 됩니다.
-- `working` / `booting` lane은 desk anchor 위에 유지하되, `ready` / `idle` lane은 browser-local roam spot 사이를 이동할 수 있습니다. 이 wandering은 purely decorative이며 runtime state 판정과는 분리해서 봐야 합니다.
+- `working` / `booting` lane은 desk anchor 위에 유지하되, `ready` / `idle` lane은 자기 데스크 존(`claude_desk`, `codex_desk`, `gemini_desk`) 안에서 zone-bounded 연속 micro-roam을 수행합니다. 존이 서로 분리되어 있어 에이전트 간 겹침이 자연스럽게 방지되므로 별도의 proximity anti-stacking이나 `_roamHistory` spot 방문 penalty를 쓰지 않습니다. 이 wandering은 purely decorative이며 runtime state 판정과는 분리해서 봐야 합니다.
 - ambient audio는 operator가 mute 버튼 등 explicit browser gesture를 준 뒤에만 시작해야 합니다. 새로고침 직후 자동 재생되면 현재 운영 계약과 어긋난 것입니다.
 - toolbar의 `✨` 버튼으로 reduced-motion 모드를 켜면 weather rain, pet roaming, event particle, delivery packet animation이 멈춥니다. agent 렌더링, runtime badge, event log, log modal, needs-operator overlay는 그대로 유지됩니다. 이 설정은 browser-local이며 backend에 영향을 주지 않습니다.
 - reduced-motion(`✨`)과 ambient mute(`🔊`) 토글 상태는 `localStorage`에 저장되어 새로고침 후에도 유지됩니다. muted 복원 시 audio가 자동 재생되지는 않습니다.
 - `localStorage`가 차단된 환경(private browsing 등)에서는 controller event log에 `환경 설정 저장 불가` 경고가 한 번 표시되고, toolbar 영역에 `⚠ 설정 비저장` 경고 chip이 지속 표시됩니다. 이 경우 toolbar 토글은 현재 페이지에서 정상 동작하지만, 새로고침 시 기본값으로 초기화됩니다. 이 경고는 runtime authority와 무관한 browser-local 안내입니다.
-- GIF 세트가 없거나 일부만 준비된 경우에는 `controller/assets/fren-office-sheet.png`를 기준으로 `python3 scripts/build_office_sprites.py`를 실행해 `controller/assets/generated/office-sprite-manifest.json`과 normalized frame PNG를 만들면 됩니다. generated 자산까지 없으면 raw sheet fallback 또는 CSS fallback avatar를 유지합니다.
+- cozy 화면 수정 시에는 `controller/assets/cozy/` 원본과 실제 사용 파일(`controller/index.html`, `controller/css/office.css`, `controller/js/cozy.js`)을 함께 비교하면 됩니다. GIF/background 배치는 더 이상 운영 전제 조건이 아닙니다.
 - 설명용 흰 배경 시트를 그대로 넣었을 때는 controller browser가 frame crop과 가장자리 white trim을 시도해 자연스러운 sprite animation으로 보여줄 수 있습니다. 다만 완전한 transparency 품질이 필요하면 투명 배경 PNG를 우선합니다.
 - 프레임별 sprite 크기가 들쭉날쭉해 보이면 Office View는 browser에서 viewport normalization과 ping-pong/crossfade를 적용합니다. 그래도 어색하면 sprite sheet의 frame 간 safe margin과 기준선 자체를 더 맞춘 자산이 필요합니다.
 

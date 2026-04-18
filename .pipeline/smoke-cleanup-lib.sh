@@ -169,3 +169,35 @@ prune_live_arb_smoke_dirs() {
     prune_smoke_dirs "$project_root/.pipeline" "live-arb-smoke-*" \
         "$keep_recent" 0 0 >/dev/null
 }
+
+# prune_manual_smoke_dirs <smoke_root> <pattern> <keep_recent> <dry_run>
+#
+# Canonical caller contract for the manual cleanup script
+# `.pipeline/cleanup-old-smoke-dirs.sh`. Delegates to `prune_smoke_dirs`
+# with `protect_tracked=1` always-on, so a pattern override
+# (e.g. PIPELINE_SMOKE_PATTERN='live-blocked-smoke-*') cannot delete
+# checked-in fixture directories. Unlike the auto-prune wrappers above,
+# this wrapper does NOT silence stdout: the manual script surfaces
+# KEEP/PROTECT/DELETE diagnostics to the operator.
+#
+# Returns 0 as a no-op when inputs are missing or `keep_recent` is not
+# a non-negative integer (the script guards this before calling, but
+# the wrapper stays defensive for direct callers in tests).
+prune_manual_smoke_dirs() {
+    local smoke_root="$1"
+    local pattern="$2"
+    local keep_recent="${3:-}"
+    local dry_run="${4:-0}"
+
+    if [ -z "$smoke_root" ] || [ -z "$pattern" ]; then
+        return 0
+    fi
+    if [ -z "$keep_recent" ]; then
+        return 0
+    fi
+    if ! [[ "$keep_recent" =~ ^[0-9]+$ ]]; then
+        return 0
+    fi
+
+    prune_smoke_dirs "$smoke_root" "$pattern" "$keep_recent" 1 "$dry_run"
+}

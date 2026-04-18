@@ -36,8 +36,9 @@ if [ "${#SMOKE_DIRS[@]}" -le "$KEEP_RECENT" ]; then
     exit 0
 fi
 
-# Manual cleanup always passes protect_tracked=1 so that a pattern override
-# (for example PIPELINE_SMOKE_PATTERN='live-blocked-smoke-*') cannot delete
-# checked-in fixture directories. Auto-prune callers in the smoke helpers
-# keep picking protect_tracked themselves for their own pattern.
-prune_smoke_dirs "$SMOKE_ROOT" "$PATTERN" "$KEEP_RECENT" 1 "$DRY_RUN"
+# Delegate to the shared canonical caller in smoke-cleanup-lib.sh so the
+# manual cleanup contract (protect_tracked=1 always, honoring
+# PIPELINE_SMOKE_PATTERN / PIPELINE_SMOKE_KEEP_RECENT /
+# PIPELINE_SMOKE_CLEANUP_DRY_RUN) is covered by focused regressions in
+# tests/test_pipeline_smoke_cleanup.py.
+prune_manual_smoke_dirs "$SMOKE_ROOT" "$PATTERN" "$KEEP_RECENT" "$DRY_RUN"

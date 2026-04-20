@@ -738,19 +738,69 @@ def run_fault_check(
         secondary_recovery_failures = [
             reason for reason in degraded_reasons_list if reason.endswith("_recovery_failed")
         ]
+        # Supervisor contract: bounded session recovery is attempted when the
+        # degraded snapshot shows both ``session_missing`` as representative
+        # root cause and at least one lane in ``BROKEN`` state. Mirror that
+        # decision here so the gate can assert terminal
+        # ``session_recovery_completed`` / ``session_recovery_failed`` evidence
+        # instead of passing through on the representative reason alone.
+        degraded_lanes = list((degraded or {}).get("lanes") or [])
+        broken_lane_names = [
+            str(lane.get("name") or "")
+            for lane in degraded_lanes
+            if str(lane.get("state") or "") == "BROKEN"
+        ]
+        recovery_expected = (
+            isinstance(degraded, dict)
+            and representative_reason == "session_missing"
+            and bool(broken_lane_names)
+        )
+        recovery_event: dict[str, Any] | None = None
+        if recovery_expected:
+            recovery_event = _wait_until(
+                lambda: next(
+                    (
+                        event
+                        for event in reversed(_read_events(project_root))
+                        if str(event.get("event_type") or "")
+                        in {"session_recovery_completed", "session_recovery_failed"}
+                    ),
+                    None,
+                ),
+                timeout_sec=20.0,
+            )
+        event_observed = isinstance(recovery_event, dict)
+        recovery_payload = dict((recovery_event or {}).get("payload") or {})
+        session_recovery_data = {
+            "recovery_expected": recovery_expected,
+            "broken_lane_names": broken_lane_names,
+            "event_observed": event_observed,
+            "event_type": str((recovery_event or {}).get("event_type") or ""),
+            "attempt": int(recovery_payload.get("attempt") or 0),
+            "result": str(recovery_payload.get("result") or ""),
+            "error": str(recovery_payload.get("error") or ""),
+            "event": dict(recovery_event or {}),
+        }
         # Representative degraded_reason must stay on the session-missing root cause
         # even when per-lane ``*_recovery_failed`` entries coexist as secondary
         # evidence. Secondary entries are preserved inside degraded_reasons as-is;
         # their presence is evidence-only and is not required to fail the gate.
+        # Additionally, when the supervisor contract expected a bounded session
+        # recovery attempt, a terminal ``session_recovery_completed`` or
+        # ``session_recovery_failed`` event must be observed — otherwise the gate
+        # would mask a regression where the supervisor stops attempting session
+        # recovery but still surfaces ``session_missing`` as representative.
         session_loss_ok = (
             isinstance(degraded, dict)
             and representative_reason == "session_missing"
+            and (not recovery_expected or event_observed)
         )
         session_loss_data = {
             "runtime_state": str((degraded or {}).get("runtime_state") or ""),
             "representative_reason": representative_reason,
             "degraded_reasons": degraded_reasons_list,
             "secondary_recovery_failures": secondary_recovery_failures,
+            "session_recovery": session_recovery_data,
         }
         checks.append(
             {
@@ -763,7 +813,8 @@ def run_fault_check(
                     f"runtime_state={session_loss_data['runtime_state']}, "
                     f"reason={session_loss_data['representative_reason']}, "
                     f"reasons={json.dumps(session_loss_data['degraded_reasons'], ensure_ascii=False)}, "
-                    f"secondary_recovery_failures={json.dumps(session_loss_data['secondary_recovery_failures'], ensure_ascii=False)}"
+                    f"secondary_recovery_failures={json.dumps(session_loss_data['secondary_recovery_failures'], ensure_ascii=False)}, "
+                    f"session_recovery={json.dumps({k: session_recovery_data[k] for k in ('recovery_expected', 'event_observed', 'event_type', 'attempt', 'result', 'error')}, ensure_ascii=False)}"
                 ),
                 "data": session_loss_data,
             }

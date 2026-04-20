@@ -179,6 +179,8 @@ class SQLiteSessionStore:
             data["created_at"] = row["created_at"]
             data["updated_at"] = row["updated_at"]
             data["_version"] = row["_version"]
+            from storage.session_store import SessionStore as _SS
+            _SS._backfill_active_context_summary_hint_basis(data)
             return data
         # Auto-create
         now = _now_iso()

@@ -8,7 +8,7 @@ This repository implements a **local-first document assistant web MVP** with exp
 
 ### Current Contract
 - current shipped behavior is the document-first MVP with response feedback capture, grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, artifact-linked reject/reissue reason traces, and the first reviewed-memory slice (review queue, aggregate apply trigger, emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility)
-- web investigation is a permission-gated secondary mode (disabled/approval/enabled per session) under the document-first guardrail, with local JSON history, in-session reload, history-card badges (answer-mode badges, color-coded verification-strength badges, color-coded source-role trust badges), entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade, and a claim-coverage panel with status tags, actionable hints, source role with trust level labels, color-coded fact-strength summary bar, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved)
+- web investigation is a permission-gated secondary mode (disabled/approval/enabled per session) under the document-first guardrail, with local JSON history, in-session reload, history-card badges (answer-mode badges, color-coded verification-strength badges, color-coded source-role trust badges), entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade, and a claim-coverage panel with status tags, actionable hints, source role with trust level labels, color-coded fact-strength summary bar, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved / or remains in an explicit `정보 상충` state)
 - approval currently governs note saving only
 
 ### Current Reviewed-Memory Boundary
@@ -97,6 +97,13 @@ Responsibilities:
 - summarization / context answer / note generation
 - runtime status reporting
 
+## Internal Operator Tooling Note
+
+- Internal/operator tooling such as `controller.server`, `pipeline_gui`, and `pipeline-launcher.py` stays outside the shipped web release gate, but it still follows a thin-client boundary against the supervisor-owned runtime surface.
+- That runtime surface is the run-scoped `status.json` / `events.jsonl` / `receipt` set plus the watcher-owned export-only `.pipeline/state/turn_state.json` mirror.
+- Thin clients should prefer canonical runtime payloads first and use the turn-state mirror only for current-turn labeling.
+- `turn_state.json` now carries legacy enum `state` together with `active_role` and `active_lane`, so swapped profiles can surface the actual bound owner lane instead of re-inferencing fixed `Claude` / `Codex` ownership from enum names alone.
+
 ## Current Runtime Entry
 
 Primary UX entry:
@@ -132,7 +139,7 @@ The web shell is the main MVP surface. CLI remains available as a narrower debug
 2. permission gate is checked
 3. search results and page extracts are collected
 4. claim extraction / slot coverage / reinvestigation may run
-5. response renders source-role trust labels, verification-strength label, answer-mode badge, and claim-coverage panel with status tags, actionable hints, source role with trust level labels, color-coded fact-strength summary bar, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved)
+5. response renders source-role trust labels, verification-strength label, answer-mode badge, and claim-coverage panel with status tags, actionable hints, source role with trust level labels, color-coded fact-strength summary bar, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved / or remains in an explicit `정보 상충` state)
 6. entity-card / latest-update answer-mode distinction applies with separate verification labels and entity-card strong-badge downgrade
 7. search history is stored locally with in-session reload and history-card badges (answer-mode badges, color-coded verification-strength badges, color-coded source-role trust badges)
 
@@ -185,7 +192,7 @@ Current session JSON stores:
 - `messages`
 - `pending_approvals` — list of serialized approval objects (see Approval section for field shape)
 - `permissions` — `{web_search, web_search_label}` where `web_search` is `disabled` / `approval` / `enabled` and `web_search_label` is `차단 · 읽기 전용 검색` / `승인 필요 · 읽기 전용 검색` / `허용 · 읽기 전용 검색`
-- `active_context` — `{kind, label, source_paths, summary_hint, suggested_prompts, record_path, claim_coverage_progress_summary}`; updated by correction-submit `summary_hint`
+- `active_context` — `{kind, label, source_paths, summary_hint, summary_hint_basis, suggested_prompts, record_path, claim_coverage_progress_summary}`; updated by correction-submit `summary_hint`, with `summary_hint_basis` seeded as `current_summary` by `_build_active_context()` and flipped to `recorded_correction` by `record_correction_for_message()` when it rewrites the hint; legacy sessions without `summary_hint_basis` are backfilled by `SessionStore._backfill_active_context_summary_hint_basis()` (called from the JSON normalization path and the SQLite `_load`) only when a same-session grounded-brief `corrected_text` compacts to the stored hint — otherwise they fall back to `current_summary`
 - `created_at`
 - `updated_at`
 
@@ -210,9 +217,9 @@ Current message records include:
   - `response_origin` — `{provider, badge, label, model, kind, answer_mode, source_roles, verification_label}` when present; omitted from the session message when absent (unlike the top-level response payload, which returns `null`)
   - `evidence` — list of `{label, source_name, source_path, snippet, source_role}`
   - `summary_chunks` — list of `{chunk_id, chunk_index, total_chunks, source_path, source_name, selected_line}`
-  - `claim_coverage` — list of slot objects, each containing `slot`, `status`, `status_label`, `value`, `support_count`, `candidate_count`, `source_role`, `rendered_as` (`fact_card` / `uncertain` / `not_rendered`); during reinvestigation, slots also carry `previous_status`, `previous_status_label`, `progress_state` (`improved` / `regressed` / `unchanged`), `progress_label`, and `is_focus_slot`
+  - `claim_coverage` — list of slot objects, each containing `slot`, `status`, `status_label`, `value`, `support_count`, `candidate_count`, `source_role`, `rendered_as` (`fact_card` / `conflict` / `uncertain` / `not_rendered`); during reinvestigation, slots also carry `previous_status`, `previous_status_label`, `progress_state` (`improved` / `regressed` / `unchanged`), `progress_label`, and `is_focus_slot`
   - `claim_coverage_progress_summary` — plain-language Korean sentence summarizing the focus-slot reinvestigation outcome (empty string on first investigation)
-  - `web_search_history` — list of recent search record summaries (up to 8), each containing `record_id`, `query`, `created_at`, `result_count`, `page_count`, `record_path`, `summary_head`, `answer_mode` (`entity_card` / `latest_update` / `general`), `verification_label`, `source_roles` (list of role strings), `claim_coverage_summary` (`strong` / `weak` / `missing` counts), and `pages_preview` (list of `{title, url, excerpt, text_preview, char_count}`)
+  - `web_search_history` — list of recent search record summaries (up to 8), each containing `record_id`, `query`, `created_at`, `result_count`, `page_count`, `record_path`, `summary_head`, `answer_mode` (`entity_card` / `latest_update` / `general`), `verification_label`, `source_roles` (list of role strings), `claim_coverage_summary` (`strong` / `conflict` / `weak` / `missing` counts), and `pages_preview` (list of `{title, url, excerpt, text_preview, char_count}`)
   - `feedback`
   - `selected_source_paths`
   - `saved_note_path`
@@ -1367,7 +1374,7 @@ The next phase should standardize one `grounded brief` artifact.
 - applied-preferences badge (`선호 N건 반영`) on assistant messages when `applied_preferences` is non-empty
 - streaming progress and cancel
 - feedback capture on assistant messages
-- claim-coverage panel with status tags, actionable hints, source role with trust level labels, color-coded fact-strength summary bar, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved)
+- claim-coverage panel with status tags, actionable hints, source role with trust level labels, color-coded fact-strength summary bar, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved / or remains in an explicit `정보 상충` state)
 - entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade
 - web-investigation history-card badges (answer-mode badges, color-coded verification-strength badges, color-coded source-role trust badges) and in-session reload
 

@@ -19,7 +19,7 @@ from pipeline_gui.project import _session_name_for
 from pipeline_gui.setup_profile import resolve_project_runtime_adapter
 
 from .lane_surface import tail_has_busy_indicator, tail_has_ready_indicator, tail_surface_state
-from .operator_autonomy import classify_operator_candidate
+from .operator_autonomy import allows_verified_blocker_auto_recovery, classify_operator_candidate
 from .receipts import build_receipt, receipt_path, validate_manifest, write_receipt
 from .schema import (
     RUNTIME_LANE_ORDER,
@@ -113,6 +113,7 @@ class RuntimeSupervisor:
         self._last_lane_states: dict[str, str] = {}
         self._last_degraded_reason = ""
         self._lane_restart_counts: dict[str, int] = {}
+        self._session_recovery_attempts = 0
         self._start_runtime = start_runtime
         self._launch_failed_reason = ""
         self._current_duplicate_control_marker: dict[str, Any] | None = None
@@ -430,6 +431,8 @@ class RuntimeSupervisor:
         if control_path is None or not control_path.exists():
             return None
         control_meta = read_control_meta(control_path)
+        if not allows_verified_blocker_auto_recovery(control_meta):
+            return None
         try:
             control_text = control_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -1170,8 +1173,8 @@ class RuntimeSupervisor:
 
         lane_command = self._lane_shell_command(lane_name)
         self._append_event("recovery_started", {"lane": lane_name, "attempt": retries + 1})
+        self._lane_restart_counts[lane_name] = retries + 1
         if self.adapter.restart_lane(lane_name, lane_command):
-            self._lane_restart_counts[lane_name] = retries + 1
             self._append_event(
                 "recovery_completed",
                 {"lane": lane_name, "attempt": retries + 1, "result": "restarted"},
@@ -1290,6 +1293,8 @@ class RuntimeSupervisor:
         )
         watcher = self._watcher_status()
         session_alive = self.adapter.session_exists()
+        if session_alive:
+            self._session_recovery_attempts = 0
         if not self._runtime_started and not session_alive and not watcher.get("alive"):
             lanes = [
                 {
@@ -1328,19 +1333,28 @@ class RuntimeSupervisor:
             reason = str(job_state.get("degraded_reason") or "").strip()
             if reason:
                 job_state_reasons.append(reason)
+        session_missing = bool(
+            self._runtime_started
+            and not self._stop_requested
+            and not session_alive
+            and configured_enabled_lanes
+        )
+        session_recovery_needed = session_missing and any(str(lane.get("state") or "") == "BROKEN" for lane in lanes)
+        session_recovered = self._recover_missing_session() if session_recovery_needed else False
         lane_recover_reasons: list[str] = []
-        for lane in lanes:
-            reason = self._maybe_recover_lane(
-                lane,
-                lane_model=lane_models.get(str(lane.get("name") or ""), {}),
-                active_round=active_round,
-            )
-            if reason:
-                lane_recover_reasons.append(reason)
+        if not session_recovered:
+            for lane in lanes:
+                reason = self._maybe_recover_lane(
+                    lane,
+                    lane_model=lane_models.get(str(lane.get("name") or ""), {}),
+                    active_round=active_round,
+                )
+                if reason:
+                    lane_recover_reasons.append(reason)
         active_breakage_reasons.extend(lane_recover_reasons)
         enabled_lanes = [lane for lane in lanes if str(lane.get("state") or "") != "OFF"]
         session_missing_reasons: list[str] = []
-        if self._runtime_started and not self._stop_requested and not session_alive and configured_enabled_lanes:
+        if session_missing:
             session_missing_reasons.append("session_missing")
         if runtime_inactive and not self._launch_failed_reason:
             # Clean inactive runtime clears stale job-state reasons but keeps active
@@ -1963,14 +1977,7 @@ class RuntimeSupervisor:
             except FileNotFoundError:
                 pass
 
-    def _launch_runtime(self) -> None:
-        self.adapter.kill_session()
-        self._terminate_pid_file(self.base_dir / "baseline.pid")
-        self._terminate_pid_file(self.base_dir / "experimental.pid")
-        self._stop_token_collector()
-        self._terminate_repo_watchers()
-        self._prepare_runtime_surfaces()
-        self._clear_runtime_sidecars()
+    def _spawn_runtime_session(self) -> None:
         self.adapter.create_scaffold()
 
         lane_configs = self.runtime_lane_configs or [
@@ -2041,6 +2048,47 @@ class RuntimeSupervisor:
 
         self._start_token_collector()
         self._runtime_started = True
+        self._write_current_run_pointer()
+
+    def _launch_runtime(self) -> None:
+        self.adapter.kill_session()
+        self._terminate_pid_file(self.base_dir / "baseline.pid")
+        self._terminate_pid_file(self.base_dir / "experimental.pid")
+        self._stop_token_collector()
+        self._terminate_repo_watchers()
+        self._prepare_runtime_surfaces()
+        self._clear_runtime_sidecars()
+        self._spawn_runtime_session()
+
+    def _recover_missing_session(self) -> bool:
+        if self._stop_requested or not self._runtime_started:
+            return False
+        retries = self._session_recovery_attempts
+        retry_limit = 1
+        if retries >= retry_limit:
+            return False
+        attempt = retries + 1
+        self._session_recovery_attempts = attempt
+        self._append_event("session_recovery_started", {"attempt": attempt})
+        try:
+            self.adapter.kill_session()
+            self._terminate_pid_file(self.base_dir / "baseline.pid")
+            self._terminate_pid_file(self.base_dir / "experimental.pid")
+            self._stop_token_collector()
+            self._terminate_repo_watchers()
+            self._clear_runtime_sidecars()
+            self._spawn_runtime_session()
+        except Exception as exc:
+            self._append_event(
+                "session_recovery_failed",
+                {
+                    "attempt": attempt,
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+            )
+            return False
+        self._append_event("session_recovery_completed", {"attempt": attempt, "result": "recreated"})
+        return True
 
     def _stop_runtime(self) -> None:
         self._stop_token_collector()

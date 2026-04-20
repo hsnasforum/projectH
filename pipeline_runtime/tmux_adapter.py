@@ -19,6 +19,19 @@ class TmuxAdapter:
     def _run(self, cmd: list[str], *, timeout: float = 8.0) -> subprocess.CompletedProcess[str]:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
+    def _run_required(
+        self,
+        cmd: list[str],
+        description: str,
+        *,
+        timeout: float = 5.0,
+    ) -> subprocess.CompletedProcess[str]:
+        result = self._run(cmd, timeout=timeout)
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip() or f"exit={result.returncode}"
+            raise RuntimeError(f"tmux {description} failed: {detail}")
+        return result
+
     def _pane_pid(self, pane_id: str) -> int | None:
         result = self._run(["tmux", "display-message", "-p", "-t", pane_id, "#{pane_pid}"], timeout=5.0)
         text = result.stdout.strip()
@@ -89,50 +102,66 @@ class TmuxAdapter:
             ["tmux", "set-window-option", "-t", self.session_name, "window-status-format", "#I:#W"],
             ["tmux", "set-window-option", "-t", self.session_name, "window-status-current-format", "#[bold]#I:#W"],
             ["tmux", "set-window-option", "-t", f"{self.session_name}:0", "remain-on-exit", "on"],
-            ["tmux", "set-window-option", "-t", f"{self.session_name}:0", "window-size", "manual"],
         ]
         for cmd in session_options:
             self._run(cmd, timeout=5.0)
         self._run(["tmux", "set-option", "-u", "-t", self.session_name, "status-format[1]"], timeout=5.0)
 
-        claude_pane = self._run(
+        self._run_required(
+            ["tmux", "set-option", "-t", f"{self.session_name}:0", "window-size", "manual"],
+            "set-option window-size manual",
+        )
+
+        base_pane_result = self._run(
             ["tmux", "display-message", "-t", f"{self.session_name}:0.0", "-p", "#{pane_id}"],
             timeout=5.0,
-        ).stdout.strip()
-        codex_pane = self._run(
-            [
-                "tmux",
-                "split-window",
-                "-P",
-                "-F",
-                "#{pane_id}",
-                "-h",
-                "-t",
-                claude_pane,
-                "-c",
-                str(self.project_root),
-                "bash",
-            ],
-            timeout=5.0,
-        ).stdout.strip()
-        gemini_pane = self._run(
-            [
-                "tmux",
-                "split-window",
-                "-P",
-                "-F",
-                "#{pane_id}",
-                "-h",
-                "-t",
-                codex_pane,
-                "-c",
-                str(self.project_root),
-                "bash",
-            ],
-            timeout=5.0,
-        ).stdout.strip()
-        self._run(["tmux", "select-layout", "-t", f"{self.session_name}:0", "even-horizontal"], timeout=5.0)
+        )
+        claude_pane = base_pane_result.stdout.strip()
+        if base_pane_result.returncode != 0 or not claude_pane:
+            detail = (
+                base_pane_result.stderr.strip()
+                or base_pane_result.stdout.strip()
+                or "empty pane id"
+            )
+            raise RuntimeError(
+                f"tmux display-message for base pane id returned empty pane id: {detail}"
+            )
+
+        codex_pane = self._split_pane_required(claude_pane, "Codex")
+        gemini_pane = self._split_pane_required(codex_pane, "Gemini")
+
+        self._run_required(
+            ["tmux", "select-layout", "-t", f"{self.session_name}:0", "even-horizontal"],
+            "select-layout even-horizontal",
+        )
         return {"Claude": claude_pane, "Codex": codex_pane, "Gemini": gemini_pane}
+
+    def _split_pane_required(self, target_pane: str, lane_label: str) -> str:
+        result = self._run(
+            [
+                "tmux",
+                "split-window",
+                "-P",
+                "-F",
+                "#{pane_id}",
+                "-h",
+                "-t",
+                target_pane,
+                "-c",
+                str(self.project_root),
+                "bash",
+            ],
+            timeout=5.0,
+        )
+        pane_id = result.stdout.strip()
+        if result.returncode != 0 or not pane_id:
+            detail = (
+                result.stderr.strip()
+                or result.stdout.strip()
+                or f"exit={result.returncode}"
+            )
+            raise RuntimeError(f"tmux split {lane_label} pane failed: {detail}")
+        return pane_id
 
     def list_panes(self) -> list[dict[str, Any]]:
         if not self.session_exists():

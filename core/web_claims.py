@@ -31,13 +31,13 @@ class SlotCoverage:
 
 _ROLE_PRIORITY = {
     SourceRole.WIKI: 4,
-    SourceRole.OFFICIAL: 3,
-    SourceRole.DATABASE: 3,
-    SourceRole.DESCRIPTIVE: 2,
-    SourceRole.NEWS: 1,
+    SourceRole.OFFICIAL: 5,
+    SourceRole.DATABASE: 4,
+    SourceRole.DESCRIPTIVE: 3,
+    SourceRole.NEWS: 2,
     SourceRole.AUXILIARY: 1,
-    SourceRole.COMMUNITY: 0,
-    SourceRole.PORTAL: 0,
+    SourceRole.COMMUNITY: 1,
+    SourceRole.PORTAL: 1,
     SourceRole.BLOG: 0,
 }
 
@@ -58,13 +58,14 @@ def claim_values_overlap(left: str, right: str) -> bool:
     )
 
 
-def _claim_sort_key(record: ClaimRecord) -> tuple[int, int, int, int, str]:
+def _claim_sort_key(record: ClaimRecord) -> tuple[int, int, int, int, str, str]:
     return (
         record.support_count,
         _ROLE_PRIORITY.get(record.source_role, 0),
         int(record.confidence * 1000),
-        len(record.value),
+        -len(record.value),
         record.value,
+        record.source_url,
     )
 
 
@@ -190,6 +191,8 @@ def summarize_slot_coverage(
         status = (
             CoverageStatus.STRONG
             if has_trusted_agreement and not has_conflict
+            else CoverageStatus.CONFLICT
+            if has_conflict
             else CoverageStatus.WEAK
         )
         coverage[slot] = SlotCoverage(

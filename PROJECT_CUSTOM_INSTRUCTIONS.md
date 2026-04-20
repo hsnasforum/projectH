@@ -82,11 +82,11 @@
 - `work/`, `verify/`, `report/` 같은 persistent 기록은 기본적으로 한국어로 남깁니다.
 - `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, `.pipeline/gemini_advice.md`, `.pipeline/operator_request.md` 같은 execution/control 슬롯은 기본적으로 영어 중심 실행 지시로 유지합니다.
 - 다만 파일 경로, 테스트 이름, selector, field name, literal code identifier는 기록 언어와 무관하게 원문 그대로 둡니다.
-- `.pipeline/claude_handoff.md`는 현재 Claude 실행용 rolling 최신 슬롯입니다.
-- `.pipeline/gemini_request.md`는 현재 Codex -> Gemini arbitration 요청 슬롯입니다.
-- `.pipeline/gemini_advice.md`는 현재 Gemini -> Codex advisory 슬롯입니다.
+- `.pipeline/claude_handoff.md`는 현재 implement control slot의 rolling 최신 파일입니다. 파일명은 역사적 호환을 위해 유지되며, 실제 implement owner는 `.pipeline/config/agent_profile.json`을 따릅니다.
+- `.pipeline/gemini_request.md`는 현재 verify/handoff-owner -> advisory-owner arbitration 요청 슬롯입니다.
+- `.pipeline/gemini_advice.md`는 현재 advisory-owner -> verify/handoff-owner advisory 슬롯입니다.
 - `.pipeline/operator_request.md`는 현재 operator 정지용 rolling 최신 슬롯입니다.
-- `.pipeline/session_arbitration_draft.md`는 watcher가 active session side-question을 감지했을 때 Codex/Gemini가 idle이고 Claude가 idle이거나 같은 escalation text에 짧게 안정돼 있을 때만 남길 수 있는 non-canonical draft 슬롯입니다. Claude activity resume, canonical Gemini/operator open 같은 resolved 조건이 생기면 watcher가 다시 정리하고, 같은 fingerprint는 짧은 cooldown 동안 바로 재생성하지 않는 편이 맞습니다.
+- `.pipeline/session_arbitration_draft.md`는 watcher가 active implement-owner session side-question을 감지했을 때 verify/advisory lanes가 idle이고 implement owner가 idle이거나 같은 escalation text에 짧게 안정돼 있을 때만 남길 수 있는 non-canonical draft 슬롯입니다. implement-owner activity resume, canonical Gemini/operator open 같은 resolved 조건이 생기면 watcher가 다시 정리하고, 같은 fingerprint는 짧은 cooldown 동안 바로 재생성하지 않는 편이 맞습니다.
 - Gemini advisory 출력은 shell heredoc/redirection보다 file edit/write tool을 우선 사용합니다.
 - Gemini arbitration prompt는 일반 경로 나열보다 `@path` file mention과 exact output path를 우선 사용합니다.
 - `.pipeline/codex_feedback.md`는 optional scratch 또는 legacy compatibility text일 뿐이며, 실행 경로나 `/work`와 `/verify`를 대체하지 않습니다.
@@ -97,28 +97,28 @@
 - 검증 전용 메모에서 파일을 바꾸지 않았다면 `변경 파일`에는 `- 없음`이라고 적습니다.
 - 실행하지 않은 검증은 적지 말고, 미실행이면 그대로 남깁니다.
 
-## 6-1. single Codex tmux 운영 규칙
-- Codex는 하나의 verification + handoff 레인입니다.
+## 6-1. single tmux runtime 운영 규칙
+- runtime owner는 active `role_bindings`를 따릅니다. 현재 적용된 A profile은 `implement=Codex`, `verify=Claude`, `advisory=Gemini`입니다.
 - 권장 흐름은 아래와 같습니다.
-  - Claude가 구현 후 `/work`를 남깁니다.
-  - Codex가 최신 `/work`, 최신 `/verify`를 읽고 실제 검증을 재실행합니다.
-  - Codex가 `/verify`를 남기거나 갱신합니다.
-  - Codex가 다음 Claude 실행용 지시사항을 `.pipeline/claude_handoff.md`에 씁니다.
-  - exact slice를 못 좁히는 이유가 next-slice ambiguity, overlapping candidates, low-confidence tie-break라면 Codex가 `.pipeline/gemini_request.md`를 먼저 씁니다.
-  - Gemini가 `.pipeline/gemini_advice.md`와 `report/gemini/...md`를 남깁니다.
-  - Codex가 Gemini advice를 읽고 최종 `.pipeline/claude_handoff.md` 또는 `.pipeline/operator_request.md`를 씁니다.
+  - active implement owner가 구현 후 `/work`를 남깁니다.
+  - active verify/handoff owner가 최신 `/work`, 최신 `/verify`를 읽고 실제 검증을 재실행합니다.
+  - active verify/handoff owner가 `/verify`를 남기거나 갱신합니다.
+  - active verify/handoff owner가 다음 implement 지시사항을 `.pipeline/claude_handoff.md`에 씁니다.
+  - exact slice를 못 좁히는 이유가 next-slice ambiguity, overlapping candidates, low-confidence tie-break라면 active verify/handoff owner가 `.pipeline/gemini_request.md`를 먼저 씁니다.
+  - active advisory owner가 `.pipeline/gemini_advice.md`와 `report/gemini/...md`를 남깁니다.
+  - active verify/handoff owner가 Gemini advice를 읽고 최종 `.pipeline/claude_handoff.md` 또는 `.pipeline/operator_request.md`를 씁니다.
   - real operator-only decision, approval/truth-sync blocker, immediate safety stop, 또는 Gemini advice 이후에도 exact slice가 안 좁혀질 때만 `.pipeline/operator_request.md`를 씁니다.
-- 다만 Claude가 이미 active session 안에서 context exhaustion, session rollover, continue-vs-switch 같은 live side question을 던진 경우에는 Codex가 Gemini advice를 짧은 lane reply로만 relay하고, `.pipeline/claude_handoff.md`는 그 세션이 끝날 때까지 다시 쓰지 않는 편이 맞습니다.
+- 다만 active implement owner가 이미 session 안에서 context exhaustion, session rollover, continue-vs-switch 같은 live side question을 던진 경우에는 active verify/handoff owner가 Gemini advice를 짧은 lane reply로만 relay하고, `.pipeline/claude_handoff.md`는 그 세션이 끝날 때까지 다시 쓰지 않는 편이 맞습니다.
 - `.pipeline/claude_handoff.md`는 `STATUS: implement`만 담는 실행 슬롯입니다.
 - `.pipeline/gemini_request.md`는 `STATUS: request_open`만 담는 arbitration 요청 슬롯입니다.
 - `.pipeline/gemini_advice.md`는 `STATUS: advice_ready`만 담는 advisory 슬롯입니다.
 - `.pipeline/operator_request.md`는 `STATUS: needs_operator` stop 슬롯이며, pending일 때 `CONTROL_SEQ`, `REASON_CODE`, `OPERATOR_POLICY`, `DECISION_CLASS`, `DECISION_REQUIRED`, `BASED_ON_WORK`, `BASED_ON_VERIFY`를 함께 두는 편이 canonical입니다.
 - 위 canonical control slot은 pending일 때 `CONTROL_SEQ`도 함께 써서 newest-valid-control 판정을 `CONTROL_SEQ` 우선, `mtime` 보조로 맞춥니다.
 - `.pipeline/session_arbitration_draft.md`는 `STATUS: draft_only`만 담는 draft 슬롯이며, stop/go 실행 신호가 아닙니다.
-- `STATUS: implement`이면 Codex가 이미 다음 단일 슬라이스를 확정한 상태이고, Claude는 그 한 슬라이스만 구현합니다.
-- Claude 구현 라운드는 bounded 파일 수정과 canonical `/work` closeout에서 끝납니다. implement lane에서 commit, push, branch publish, PR 생성까지 진행하지 않습니다.
-- 그 handoff가 막혔으면 Claude는 operator 선택지를 새로 열지 말고, pane 출력에만 `STATUS: implement_blocked` + `BLOCK_REASON` + `BLOCK_REASON_CODE` + `REQUEST: codex_triage` + `ESCALATION_CLASS: codex_triage` + `HANDOFF` + `HANDOFF_SHA` + `BLOCK_ID`를 남긴 뒤 멈춥니다.
-- `STATUS: needs_operator`이면 Codex가 real operator-only decision 또는 blocker 때문에 아직 truthful하게 다음 단일 슬라이스를 확정하지 못한 상태이며, Claude는 새 구현을 시작하지 않고 대기합니다.
+- `STATUS: implement`이면 active verify/handoff owner가 이미 다음 단일 슬라이스를 확정한 상태이고, active implement owner는 그 한 슬라이스만 구현합니다.
+- implement-owner 라운드는 bounded 파일 수정과 canonical `/work` closeout에서 끝납니다. implement lane에서 commit, push, branch publish, PR 생성까지 진행하지 않습니다.
+- 그 handoff가 막혔으면 active implement owner는 operator 선택지를 새로 열지 말고, pane 출력에만 `STATUS: implement_blocked` + `BLOCK_REASON` + `BLOCK_REASON_CODE` + `REQUEST: codex_triage` + `ESCALATION_CLASS: codex_triage` + `HANDOFF` + `HANDOFF_SHA` + `BLOCK_ID`를 남긴 뒤 멈춥니다.
+- `STATUS: needs_operator`이면 active verify/handoff owner가 real operator-only decision 또는 blocker 때문에 아직 truthful하게 다음 단일 슬라이스를 확정하지 못한 상태이며, active implement owner는 새 구현을 시작하지 않고 대기합니다.
 - `STATUS: needs_operator`는 한 줄짜리 bare stop signal로 끝내지 않습니다. 최소한 아래를 같이 남깁니다.
   - 왜 지금 자동 진행을 멈추는지
   - 어떤 최신 `/work`와 `/verify`를 근거로 멈췄는지
@@ -129,15 +129,15 @@
 - `.pipeline/gpt_prompt.md`는 필요하면 scratch나 legacy 호환용으로 남길 수 있지만, canonical 흐름의 필수 단계는 아닙니다.
 - rolling 슬롯 파일은 매 라운드 덮어써도 되지만, 영속 truth는 항상 `/work`와 `/verify`에 남겨야 합니다.
 - 기본 모드에서 Codex는 "이번 Claude 작업 검수자 + 방향 가드"입니다. 매 라운드 전체 프로젝트 감사처럼 동작하지 않습니다.
-- Codex는 검수 후 다음 단일 슬라이스를 정하거나 `needs_operator`로 멈춰야 합니다. "슬라이스가 안 보이면 Claude가 알아서 고르라"는 식으로 넘기지 않습니다.
-- Claude는 `.pipeline/operator_request.md`를 구현 입력으로 읽지 않습니다. watcher도 이 stop 슬롯을 Claude에게 전달하지 않습니다.
-- Claude는 `.pipeline/gemini_request.md`와 `.pipeline/gemini_advice.md`도 구현 입력으로 읽지 않습니다.
-- Claude는 implement lane에서 operator에게 선택지를 직접 묻지 않습니다. 막히면 watcher가 Codex triage로 자동 전이하는 `implement_blocked` sentinel만 남깁니다.
+- active verify/handoff owner는 검수 후 다음 단일 슬라이스를 정하거나 `needs_operator`로 멈춰야 합니다. "슬라이스가 안 보이면 implement owner가 알아서 고르라"는 식으로 넘기지 않습니다.
+- active implement owner는 `.pipeline/operator_request.md`를 구현 입력으로 읽지 않습니다. watcher도 이 stop 슬롯을 implement owner에게 전달하지 않습니다.
+- active implement owner는 `.pipeline/gemini_request.md`와 `.pipeline/gemini_advice.md`도 구현 입력으로 읽지 않습니다.
+- active implement owner는 implement lane에서 operator에게 선택지를 직접 묻지 않습니다. 막히면 watcher가 verify/handoff-owner triage로 자동 전이하는 `implement_blocked` sentinel만 남깁니다.
 - Gemini는 advisory only입니다. 최종 execution slot이나 operator stop slot은 여전히 Codex가 씁니다.
 - Gemini advisory round는 pane-only 답변으로 닫히지 않습니다. `report/gemini/...md`와 `.pipeline/gemini_advice.md`를 둘 다 남겨야 advisory round가 완료된 것으로 봅니다.
-- Codex verification round도 pane-only reasoning이나 control-slot rewrite만으로 닫지 않습니다. `/verify`를 먼저 남기거나 갱신한 뒤 다음 control slot을 씁니다.
-- 따라서 active Claude session의 side-question arbitration은 `Claude -> Codex -> Gemini -> Codex -> Claude short reply`로 닫고, `.pipeline/claude_handoff.md`는 session boundary 또는 next round handoff에서만 갱신합니다.
-- watcher가 이런 side-question을 감지해도 canonical `.pipeline/gemini_request.md`를 자동 생성하지 않습니다. 대신 Codex/Gemini가 idle이고 Claude가 idle이거나 짧게 settle된 상태일 때 `.pipeline/session_arbitration_draft.md`까지만 자동 생성할 수 있고, Codex가 직접 승격 여부를 판단합니다.
+- active verify/handoff owner round도 pane-only reasoning이나 control-slot rewrite만으로 닫지 않습니다. `/verify`를 먼저 남기거나 갱신한 뒤 다음 control slot을 씁니다.
+- 따라서 active implement-owner session의 side-question arbitration은 `implement owner -> verify/handoff owner -> advisory owner -> verify/handoff owner -> implement owner short reply`로 닫고, `.pipeline/claude_handoff.md`는 session boundary 또는 next round handoff에서만 갱신합니다.
+- watcher가 이런 side-question을 감지해도 canonical `.pipeline/gemini_request.md`를 자동 생성하지 않습니다. 대신 verify/advisory lanes가 idle이고 implement owner가 idle이거나 짧게 settle된 상태일 때 `.pipeline/session_arbitration_draft.md`까지만 자동 생성할 수 있고, active verify/handoff owner가 직접 승격 여부를 판단합니다.
 - watcher는 파일 감지와 pane 전달까지만 보장합니다. pane이 바쁘거나 interrupted 상태인 경우 자동 전송 후 실제 처리 실패는 watcher 밖의 세션 상태 문제로 봅니다.
 - 전체 프로젝트 진단이나 milestone audit이 필요할 때만 별도 `report/` 문서로 분리합니다.
 

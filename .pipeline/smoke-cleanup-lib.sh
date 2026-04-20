@@ -31,9 +31,14 @@ _smoke_enumerate_dirs() {
     if [ -z "$smoke_root" ] || [ ! -d "$smoke_root" ]; then
         return 0
     fi
-    find "$smoke_root" -maxdepth 1 -mindepth 1 -type d -name "$pattern" -printf '%T@ %p\n' \
+    # Separate mtime and path with a tab so directory names containing
+    # spaces survive the sort pipeline intact. `cut -f2-` then strips the
+    # leading mtime field without touching the rest of the path. Paths
+    # containing tabs or newlines are still unsupported (downstream
+    # mapfile -t splits on newlines).
+    find "$smoke_root" -maxdepth 1 -mindepth 1 -type d -name "$pattern" -printf '%T@\t%p\n' \
         | sort -nr \
-        | awk '{print $2}'
+        | cut -f2-
 }
 
 _smoke_has_tracked_contents() {
@@ -196,6 +201,13 @@ prune_manual_smoke_dirs() {
         return 0
     fi
     if ! [[ "$keep_recent" =~ ^[0-9]+$ ]]; then
+        return 0
+    fi
+    # Match the blocked/live-arb wrappers and the `PIPELINE_SMOKE_KEEP_RECENT=0
+    # disables cleanup` contract documented in .pipeline/README.md: treat
+    # `keep_recent <= 0` as a fail-safe no-op instead of letting the
+    # underlying helper delete every matching directory.
+    if [ "$keep_recent" -le 0 ]; then
         return 0
     fi
 

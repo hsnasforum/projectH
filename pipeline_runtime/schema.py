@@ -365,9 +365,10 @@ def latest_verify_note_for_work(
     normalized_work = normalize_repo_artifact_path(work_path, repo_root)
     if not normalized_work:
         return None
-    verify_dir = same_day_verify_dir_for_work(work_root, verify_root, work_path)
-    if not verify_dir.exists():
+    if not verify_root.exists():
         return None
+
+    verify_dir = same_day_verify_dir_for_work(work_root, verify_root, work_path)
 
     latest_any: Path | None = None
     latest_any_mtime = 0.0
@@ -375,20 +376,35 @@ def latest_verify_note_for_work(
     latest_referenced_mtime = 0.0
     candidate_count = 0
     latest_any_refs: set[str] = set()
-    for md in verify_dir.rglob("*.md"):
-        if not is_canonical_round_note(verify_dir, md, work_root=work_root, verify_root=verify_root):
+    if verify_dir.exists():
+        for md in verify_dir.rglob("*.md"):
+            if not is_canonical_round_note(verify_dir, md, work_root=work_root, verify_root=verify_root):
+                continue
+            try:
+                mtime = md.stat().st_mtime
+            except OSError:
+                continue
+            candidate_count += 1
+            refs = note_referenced_work_paths(md, repo_root=repo_root)
+            if mtime >= latest_any_mtime:
+                latest_any = md
+                latest_any_mtime = mtime
+                latest_any_refs = refs
+            if normalized_work not in refs:
+                continue
+            if mtime >= latest_referenced_mtime:
+                latest_referenced = md
+                latest_referenced_mtime = mtime
+
+    for md in verify_root.rglob("*.md"):
+        if not is_canonical_round_note(verify_root, md, work_root=work_root, verify_root=verify_root):
+            continue
+        refs = note_referenced_work_paths(md, repo_root=repo_root)
+        if normalized_work not in refs:
             continue
         try:
             mtime = md.stat().st_mtime
         except OSError:
-            continue
-        candidate_count += 1
-        refs = note_referenced_work_paths(md, repo_root=repo_root)
-        if mtime >= latest_any_mtime:
-            latest_any = md
-            latest_any_mtime = mtime
-            latest_any_refs = refs
-        if normalized_work not in refs:
             continue
         if mtime >= latest_referenced_mtime:
             latest_referenced = md

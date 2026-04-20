@@ -1035,6 +1035,358 @@ class SmokeTest(unittest.TestCase):
             self.assertNotIn("영상 더보기", response.text)
             self.assertIn("메이플스토리 설명", search_tool.search_calls)
 
+    def test_coverage_entity_card_response_emits_conflict_section_header_when_conflict_slot_present(self) -> None:
+        from core.contracts import SourceRole
+        from core.web_claims import ClaimRecord
+
+        loop = AgentLoop.__new__(AgentLoop)
+        loop._split_web_page_segments = lambda text: [str(text)] if str(text or "").strip() else []
+        loop._looks_like_noisy_web_segment = lambda text: False
+        loop._looks_like_contact_or_legal_web_segment = lambda text: False
+        loop._looks_like_operational_entity_noise = lambda text: False
+        loop._score_entity_fact_line = lambda **kwargs: 1
+        loop._compose_entity_intro_line = lambda **kwargs: kwargs["fallback_intro"]
+        loop._preferred_entity_source_segments = lambda source: []
+
+        selected_sources = [
+            {
+                "title": "붉은사막 공식 소개",
+                "url": "https://example.com/crimson-desert",
+                "snippet": "붉은사막은 액션 게임입니다.",
+            }
+        ]
+
+        strong_claim = ClaimRecord(
+            slot="개발",
+            value="펄어비스",
+            source_url="https://example.com/developer",
+            source_title="개발 공식",
+            source_role=SourceRole.OFFICIAL,
+            support_count=2,
+            supporting_sources=(
+                ("https://example.com/developer", "개발 공식", SourceRole.OFFICIAL),
+                ("https://db.example.com/developer", "개발 데이터", SourceRole.DATABASE),
+            ),
+        )
+        conflict_claim = ClaimRecord(
+            slot="장르/성격",
+            value="오픈월드 액션 어드벤처",
+            source_url="https://example.com/genre-official",
+            source_title="장르 공식",
+            source_role=SourceRole.OFFICIAL,
+            support_count=3,
+            supporting_sources=(
+                ("https://example.com/genre-official", "장르 공식", SourceRole.OFFICIAL),
+                ("https://db.example.com/genre-official", "장르 데이터", SourceRole.DATABASE),
+            ),
+        )
+        competing_conflict_claim = ClaimRecord(
+            slot="장르/성격",
+            value="생존 제작 RPG",
+            source_url="https://wiki.example.com/genre",
+            source_title="장르 위키",
+            source_role=SourceRole.WIKI,
+            support_count=2,
+            supporting_sources=(
+                ("https://wiki.example.com/genre", "장르 위키", SourceRole.WIKI),
+                ("https://official.example.com/genre-alt", "장르 보조 공식", SourceRole.OFFICIAL),
+            ),
+        )
+        weak_claim = ClaimRecord(
+            slot="이용 형태",
+            value="PC와 콘솔",
+            source_url="https://wiki.example.com/platform",
+            source_title="플랫폼 위키",
+            source_role=SourceRole.WIKI,
+            support_count=1,
+        )
+
+        loop._build_entity_claim_records = lambda **kwargs: [
+            strong_claim,
+            conflict_claim,
+            competing_conflict_claim,
+            weak_claim,
+        ]
+        response_text = loop._build_entity_web_summary(
+            query="붉은사막",
+            selected_sources=selected_sources,
+        )
+
+        self.assertIn("상충하는 정보 [정보 상충]:", response_text)
+        self.assertIn("장르/성격: 오픈월드 액션 어드벤처", response_text)
+        self.assertLess(
+            response_text.index("확인된 사실 [교차 확인]:"),
+            response_text.index("상충하는 정보 [정보 상충]:"),
+        )
+        self.assertLess(
+            response_text.index("상충하는 정보 [정보 상충]:"),
+            response_text.index("단일 출처 정보 [단일 출처] (추가 확인 필요):"),
+        )
+
+        loop._build_entity_claim_records = lambda **kwargs: [strong_claim, weak_claim]
+        no_conflict_text = loop._build_entity_web_summary(
+            query="붉은사막",
+            selected_sources=selected_sources,
+        )
+        self.assertNotIn("상충하는 정보 [정보 상충]:", no_conflict_text)
+
+    def test_coverage_entity_card_source_line_includes_conflict_slot_source(self) -> None:
+        from core.contracts import SourceRole
+        from core.web_claims import ClaimRecord
+
+        loop = AgentLoop.__new__(AgentLoop)
+        loop._split_web_page_segments = lambda text: [str(text)] if str(text or "").strip() else []
+        loop._looks_like_noisy_web_segment = lambda text: False
+        loop._looks_like_contact_or_legal_web_segment = lambda text: False
+        loop._looks_like_operational_entity_noise = lambda text: False
+        loop._score_entity_fact_line = lambda **kwargs: 1
+        loop._compose_entity_intro_line = lambda **kwargs: kwargs["fallback_intro"]
+        loop._preferred_entity_source_segments = lambda source: []
+
+        selected_sources = [
+            {
+                "title": "붉은사막 공식 소개",
+                "url": "https://example.com/crimson-desert",
+                "snippet": "붉은사막은 액션 게임입니다.",
+            }
+        ]
+
+        strong_claim = ClaimRecord(
+            slot="개발",
+            value="펄어비스",
+            source_url="https://example.com/developer",
+            source_title="개발 공식",
+            source_role=SourceRole.OFFICIAL,
+            support_count=2,
+        )
+        conflict_claim = ClaimRecord(
+            slot="장르/성격",
+            value="오픈월드 액션 어드벤처",
+            source_url="https://conflict.example.com/genre-official",
+            source_title="상충 장르 공식",
+            source_role=SourceRole.OFFICIAL,
+            support_count=3,
+        )
+        competing_conflict_claim = ClaimRecord(
+            slot="장르/성격",
+            value="생존 제작 RPG",
+            source_url="https://wiki.example.com/genre",
+            source_title="장르 위키",
+            source_role=SourceRole.WIKI,
+            support_count=2,
+            supporting_sources=(
+                ("https://wiki.example.com/genre", "장르 위키", SourceRole.WIKI),
+                ("https://official.example.com/genre-alt", "장르 보조 공식", SourceRole.OFFICIAL),
+            ),
+        )
+        weak_claim = ClaimRecord(
+            slot="이용 형태",
+            value="PC와 콘솔",
+            source_url="https://wiki.example.com/platform",
+            source_title="플랫폼 위키",
+            source_role=SourceRole.WIKI,
+            support_count=1,
+        )
+
+        loop._build_entity_claim_records = lambda **kwargs: [
+            strong_claim,
+            conflict_claim,
+            competing_conflict_claim,
+            weak_claim,
+        ]
+        response_text = loop._build_entity_web_summary(
+            query="붉은사막",
+            selected_sources=selected_sources,
+        )
+
+        self.assertIn("근거 출처:", response_text)
+        self.assertIn("  링크: https://conflict.example.com/genre-official", response_text)
+        self.assertNotIn("  링크: https://conflict.example.com/genre-official", response_text.split("상충하는 정보 [정보 상충]:")[0])
+
+    def test_coverage_entity_card_claim_coverage_payload_marks_conflict_slot_with_conflict_rendered_as(self) -> None:
+        from core.contracts import SourceRole
+        from core.web_claims import CORE_ENTITY_SLOTS, ClaimRecord, summarize_slot_coverage
+
+        loop = AgentLoop.__new__(AgentLoop)
+        claim_records = [
+            ClaimRecord(
+                slot="개발",
+                value="펄어비스",
+                source_url="https://example.com/developer",
+                source_title="개발 공식",
+                source_role=SourceRole.OFFICIAL,
+                support_count=2,
+                supporting_sources=(
+                    ("https://example.com/developer", "개발 공식", SourceRole.OFFICIAL),
+                    ("https://db.example.com/developer", "개발 데이터", SourceRole.DATABASE),
+                ),
+            ),
+            ClaimRecord(
+                slot="장르/성격",
+                value="오픈월드 액션 어드벤처",
+                source_url="https://conflict.example.com/genre-official",
+                source_title="상충 장르 공식",
+                source_role=SourceRole.OFFICIAL,
+                support_count=3,
+                supporting_sources=(
+                    ("https://conflict.example.com/genre-official", "상충 장르 공식", SourceRole.OFFICIAL),
+                    ("https://db.example.com/genre-official", "장르 데이터", SourceRole.DATABASE),
+                ),
+            ),
+            ClaimRecord(
+                slot="장르/성격",
+                value="생존 제작 RPG",
+                source_url="https://wiki.example.com/genre",
+                source_title="장르 위키",
+                source_role=SourceRole.WIKI,
+                support_count=2,
+                supporting_sources=(
+                    ("https://wiki.example.com/genre", "장르 위키", SourceRole.WIKI),
+                    ("https://official.example.com/genre-alt", "장르 보조 공식", SourceRole.OFFICIAL),
+                ),
+            ),
+            ClaimRecord(
+                slot="이용 형태",
+                value="PC와 콘솔",
+                source_url="https://wiki.example.com/platform",
+                source_title="플랫폼 위키",
+                source_role=SourceRole.WIKI,
+                support_count=1,
+            ),
+        ]
+        core_coverage = summarize_slot_coverage(claim_records, slots=CORE_ENTITY_SLOTS)
+        primary_claims, conflict_claims, weak_claims, _, _ = loop._select_entity_fact_card_claims(
+            query="붉은사막",
+            claim_records=claim_records,
+        )
+        claim_coverage = loop._build_entity_claim_coverage_items(
+            core_coverage=core_coverage,
+            primary_claims=primary_claims,
+            conflict_claims=conflict_claims,
+            weak_claims=weak_claims,
+        )
+        coverage_by_slot = {
+            str(item.get("slot") or ""): dict(item)
+            for item in claim_coverage
+            if isinstance(item, dict)
+        }
+
+        self.assertEqual(coverage_by_slot["개발"]["status_label"], "교차 확인")
+        self.assertEqual(coverage_by_slot["개발"]["rendered_as"], "fact_card")
+        self.assertEqual(coverage_by_slot["장르/성격"]["status_label"], "정보 상충")
+        self.assertEqual(coverage_by_slot["장르/성격"]["rendered_as"], "conflict")
+        self.assertEqual(coverage_by_slot["이용 형태"]["status_label"], "단일 출처")
+        self.assertEqual(coverage_by_slot["이용 형태"]["rendered_as"], "uncertain")
+        self.assertEqual(coverage_by_slot["상태"]["status_label"], "미확인")
+        self.assertEqual(coverage_by_slot["상태"]["rendered_as"], "not_rendered")
+
+    def test_build_entity_claim_coverage_items_emits_trust_tier_and_support_plurality_internal_fields(self) -> None:
+        """Coverage items add internal trust/support metadata without changing
+        the existing coverage status label surface."""
+        from core.contracts import CoverageStatus, SourceRole
+        from core.web_claims import ClaimRecord, SlotCoverage
+
+        loop = AgentLoop.__new__(AgentLoop)
+        strong_trusted_claim = ClaimRecord(
+            slot="개발",
+            value="펄어비스",
+            source_url="https://official.example.com/developer",
+            source_title="개발 공식",
+            source_role=SourceRole.OFFICIAL,
+            support_count=2,
+            supporting_sources=(
+                ("https://official.example.com/developer", "개발 공식", SourceRole.OFFICIAL),
+                ("https://db.example.com/developer", "개발 데이터", SourceRole.DATABASE),
+            ),
+        )
+        strong_mixed_claim = ClaimRecord(
+            slot="서비스/배급",
+            value="비공식 유통사 추정",
+            source_url="https://news.example.com/distribution-a",
+            source_title="보조 기사 A",
+            source_role=SourceRole.NEWS,
+            support_count=2,
+            supporting_sources=(
+                ("https://news.example.com/distribution-a", "보조 기사 A", SourceRole.NEWS),
+                ("https://news.example.com/distribution-b", "보조 기사 B", SourceRole.NEWS),
+            ),
+        )
+        weak_multiple_claim = ClaimRecord(
+            slot="장르/성격",
+            value="오픈월드 액션 어드벤처",
+            source_url="https://wiki.example.com/genre",
+            source_title="장르 위키",
+            source_role=SourceRole.WIKI,
+            support_count=2,
+            supporting_sources=(
+                ("https://wiki.example.com/genre", "장르 위키", SourceRole.WIKI),
+                ("https://mirror.example.com/genre", "장르 위키 미러", SourceRole.WIKI),
+            ),
+        )
+        weak_single_claim = ClaimRecord(
+            slot="이용 형태",
+            value="PC",
+            source_url="https://blog.example.com/platform",
+            source_title="플랫폼 블로그",
+            source_role=SourceRole.BLOG,
+            support_count=1,
+            supporting_sources=(
+                ("https://blog.example.com/platform", "플랫폼 블로그", SourceRole.BLOG),
+            ),
+        )
+
+        claim_coverage = loop._build_entity_claim_coverage_items(
+            core_coverage={
+                "개발": SlotCoverage(
+                    slot="개발",
+                    status=CoverageStatus.STRONG,
+                    primary_claim=strong_trusted_claim,
+                    candidate_count=2,
+                ),
+                "서비스/배급": SlotCoverage(
+                    slot="서비스/배급",
+                    status=CoverageStatus.STRONG,
+                    primary_claim=strong_mixed_claim,
+                    candidate_count=2,
+                ),
+                "장르/성격": SlotCoverage(
+                    slot="장르/성격",
+                    status=CoverageStatus.WEAK,
+                    primary_claim=weak_multiple_claim,
+                    candidate_count=2,
+                ),
+                "이용 형태": SlotCoverage(
+                    slot="이용 형태",
+                    status=CoverageStatus.WEAK,
+                    primary_claim=weak_single_claim,
+                    candidate_count=1,
+                ),
+            },
+            primary_claims=[strong_trusted_claim, strong_mixed_claim],
+            conflict_claims=[],
+            weak_claims=[weak_multiple_claim, weak_single_claim],
+        )
+        coverage_by_slot = {
+            str(item.get("slot") or ""): dict(item)
+            for item in claim_coverage
+            if isinstance(item, dict)
+        }
+
+        for item in claim_coverage:
+            self.assertIn("trust_tier", item)
+            self.assertIn("support_plurality", item)
+
+        self.assertEqual(coverage_by_slot["개발"]["trust_tier"], "trusted")
+        self.assertEqual(coverage_by_slot["개발"]["support_plurality"], "")
+        self.assertEqual(coverage_by_slot["서비스/배급"]["trust_tier"], "mixed")
+        self.assertEqual(coverage_by_slot["서비스/배급"]["support_plurality"], "")
+        self.assertEqual(coverage_by_slot["장르/성격"]["trust_tier"], "")
+        self.assertEqual(coverage_by_slot["장르/성격"]["support_plurality"], "multiple")
+        self.assertEqual(coverage_by_slot["이용 형태"]["trust_tier"], "")
+        self.assertEqual(coverage_by_slot["이용 형태"]["support_plurality"], "single")
+        self.assertEqual(coverage_by_slot["상태"]["trust_tier"], "")
+        self.assertEqual(coverage_by_slot["상태"]["support_plurality"], "")
+
     def test_web_search_entity_summary_runs_second_pass_queries_for_missing_core_slots(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -2050,6 +2402,149 @@ class SmokeTest(unittest.TestCase):
                 ],
             )
 
+    def test_coverage_reinvestigation_suggestions_include_conflict_slot_when_only_conflict_is_pending(self) -> None:
+        from core.contracts import CoverageStatus
+
+        loop = AgentLoop.__new__(AgentLoop)
+        suggestions = loop._build_entity_reinvestigation_suggestions(
+            query="붉은사막",
+            claim_coverage=[
+                {
+                    "slot": "상태",
+                    "status": CoverageStatus.CONFLICT,
+                    "candidate_count": 2,
+                    "source_role": "공식 기반",
+                }
+            ],
+        )
+
+        self.assertEqual(suggestions, ["붉은사막 출시 상태 검색해봐"])
+
+    def test_coverage_reinvestigation_second_pass_conflict_slot_uses_weak_like_probe_boost_rules(self) -> None:
+        from core.contracts import SourceRole
+        from core.web_claims import ClaimRecord
+
+        loop = AgentLoop.__new__(AgentLoop)
+        confirmation_variants = ["확인 쿼리 1", "확인 쿼리 2"]
+        probe_variants = ["탐침 쿼리 1", "탐침 쿼리 2"]
+        loop._build_entity_claim_confirmation_queries = lambda **kwargs: list(confirmation_variants)
+        loop._build_entity_slot_probe_queries = lambda **kwargs: list(probe_variants)
+
+        def _strong_claim(slot: str, value: str) -> ClaimRecord:
+            return ClaimRecord(
+                slot=slot,
+                value=value,
+                source_url=f"https://example.com/{slot}",
+                source_title=f"{slot}-source",
+                source_role=SourceRole.OFFICIAL,
+                support_count=2,
+                supporting_sources=(
+                    (f"https://example.com/{slot}", f"{slot}-source", SourceRole.OFFICIAL),
+                    (f"https://mirror.example.com/{slot}", f"{slot}-mirror", SourceRole.DATABASE),
+                ),
+            )
+
+        strong_background_claims = [
+            _strong_claim("개발", "펄어비스"),
+            _strong_claim("서비스/배급", "펄어비스"),
+            _strong_claim("이용 형태", "PC"),
+            _strong_claim("상태", "출시 예정"),
+        ]
+
+        cases = [
+            {
+                "name": "non_official_conflict_gets_two_queries",
+                "claim": ClaimRecord(
+                    slot="장르/성격",
+                    value="오픈월드 액션 어드벤처 게임",
+                    source_url="https://example.com/conflict",
+                    source_title="conflict-source",
+                    source_role=SourceRole.WIKI,
+                    support_count=2,
+                    confidence=0.9,
+                    supporting_sources=(
+                        ("https://example.com/conflict", "conflict-source", SourceRole.WIKI),
+                        ("https://mirror.example.com/conflict", "conflict-mirror", SourceRole.WIKI),
+                    ),
+                ),
+                "expected": ["확인 쿼리 1", "확인 쿼리 2"],
+            },
+            {
+                "name": "official_conflict_without_prior_probe_stays_capped",
+                "claim": ClaimRecord(
+                    slot="장르/성격",
+                    value="오픈월드 액션 어드벤처 게임",
+                    source_url="https://example.com/official-conflict",
+                    source_title="official-conflict-source",
+                    source_role=SourceRole.OFFICIAL,
+                    support_count=2,
+                    confidence=0.9,
+                    supporting_sources=(
+                        (
+                            "https://example.com/official-conflict",
+                            "official-conflict-source",
+                            SourceRole.OFFICIAL,
+                        ),
+                        (
+                            "https://mirror.example.com/official-conflict",
+                            "official-conflict-mirror",
+                            SourceRole.DATABASE,
+                        ),
+                    ),
+                ),
+                "expected": ["확인 쿼리 1"],
+            },
+        ]
+
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                competing_claim = ClaimRecord(
+                    slot="장르/성격",
+                    value="생존 제작 RPG",
+                    source_url="https://example.com/competing-claim",
+                    source_title="competing-claim",
+                    source_role=SourceRole.DATABASE,
+                    support_count=2,
+                    confidence=0.1,
+                    supporting_sources=(
+                        ("https://example.com/competing-claim", "competing-claim", SourceRole.DATABASE),
+                        ("https://mirror.example.com/competing-claim", "competing-claim-mirror", SourceRole.WIKI),
+                    ),
+                )
+                loop._build_entity_claim_records = (
+                    lambda **kwargs: [*strong_background_claims, case["claim"], competing_claim]
+                )
+                loop._entity_slot_from_search_query = lambda **kwargs: ""
+                queries = loop._build_entity_second_pass_queries(
+                    query="붉은사막",
+                    selected_sources=[],
+                    existing_queries=[],
+                )
+                self.assertEqual(queries, case["expected"])
+
+    def test_coverage_reinvestigation_overall_cap_is_now_5(self) -> None:
+        from core.contracts import CoverageStatus, SourceRole
+        from core.web_claims import CORE_ENTITY_SLOTS, ClaimRecord, summarize_slot_coverage
+
+        loop = AgentLoop.__new__(AgentLoop)
+        loop._build_entity_claim_confirmation_queries = lambda **kwargs: []
+        loop._build_entity_slot_probe_queries = (
+            lambda *, query, slot, status, primary_claim: [f"붉은사막 {slot} 탐침"]
+        )
+        loop._build_entity_claim_records = lambda **kwargs: []
+        loop._entity_slot_from_search_query = lambda **kwargs: ""
+
+        queries = loop._build_entity_second_pass_queries(
+            query="붉은사막",
+            selected_sources=[],
+            existing_queries=[],
+        )
+
+        self.assertEqual(len(queries), 5)
+        self.assertEqual(len(set(queries)), 5)
+        for slot in CORE_ENTITY_SLOTS:
+            self.assertTrue(any(slot in q for q in queries), f"slot {slot} missing from second-pass queries")
+
     def test_summarize_slot_coverage_untrusted_only_agreement_stays_weak(self) -> None:
         """Raw multi-source support alone must not mark a slot `strong` when
         none of the supporters are trusted roles. `strong` coverage requires
@@ -2077,13 +2572,14 @@ class SmokeTest(unittest.TestCase):
 
         coverage = summarize_slot_coverage([untrusted_only], slots=CORE_ENTITY_SLOTS)
         self.assertEqual(coverage["개발"].status, CoverageStatus.WEAK)
+        self.assertEqual(coverage["상태"].status, CoverageStatus.MISSING)
         self.assertIsNotNone(coverage["개발"].primary_claim)
         self.assertEqual(coverage["개발"].primary_claim.value, "펄어비스")
 
-    def test_summarize_slot_coverage_conflicting_trusted_alternative_downgrades_to_weak(self) -> None:
+    def test_claims_summarize_slot_coverage_conflicting_trusted_alternative_returns_conflict(self) -> None:
         """When the chosen primary has trusted agreement but a competing
         non-overlapping value in the same slot also carries trusted backing,
-        the slot must stay non-strong because the truth is still contested."""
+        the slot must surface `conflict` because the truth is still contested."""
         from core.contracts import CoverageStatus, SourceRole
         from core.web_claims import (
             CORE_ENTITY_SLOTS,
@@ -2127,12 +2623,12 @@ class SmokeTest(unittest.TestCase):
         coverage = summarize_slot_coverage(
             [primary_with_agreement, trusted_conflict], slots=CORE_ENTITY_SLOTS
         )
-        self.assertEqual(coverage["장르/성격"].status, CoverageStatus.WEAK)
-        # Primary selection stays coherent with existing `_claim_sort_key` order
-        # — the cross-verified value still wins primary even while status drops.
+        self.assertEqual(coverage["장르/성격"].status, CoverageStatus.CONFLICT)
+        # Primary selection follows the elevated OFFICIAL > WIKI tie-break in
+        # `_ROLE_PRIORITY` while the slot still reads `CONFLICT`.
         self.assertEqual(
             coverage["장르/성격"].primary_claim.value,
-            "오픈월드 액션 어드벤처 게임",
+            "생존 제작 RPG",
         )
         self.assertEqual(coverage["장르/성격"].candidate_count, 2)
 
@@ -2142,6 +2638,289 @@ class SmokeTest(unittest.TestCase):
             [primary_with_agreement], slots=CORE_ENTITY_SLOTS
         )
         self.assertEqual(coverage_no_conflict["장르/성격"].status, CoverageStatus.STRONG)
+
+    def test_claims_summarize_slot_coverage_prefers_official_over_wiki_when_support_ties(self) -> None:
+        from core.contracts import SourceRole
+        from core.web_claims import (
+            _ROLE_PRIORITY,
+            ClaimRecord,
+            summarize_slot_coverage,
+        )
+
+        slot = "장르/성격"
+        official_claim = ClaimRecord(
+            slot=slot,
+            value="공식 액션 RPG",
+            source_url="https://www.pearlabyss.com/game",
+            source_title="공식 페이지",
+            source_role=SourceRole.OFFICIAL,
+            support_count=1,
+        )
+        wiki_claim = ClaimRecord(
+            slot=slot,
+            value="위키식 장르 요약",
+            source_url="https://namu.wiki/w/game",
+            source_title="나무위키",
+            source_role=SourceRole.WIKI,
+            support_count=1,
+        )
+
+        self.assertGreater(_ROLE_PRIORITY[SourceRole.OFFICIAL], _ROLE_PRIORITY[SourceRole.WIKI])
+
+        coverage = summarize_slot_coverage([wiki_claim, official_claim], slots=(slot,))
+        self.assertEqual(coverage[slot].primary_claim.source_role, SourceRole.OFFICIAL)
+        self.assertEqual(coverage[slot].primary_claim.value, "공식 액션 RPG")
+
+    def test_claims_source_role_priority_ties_database_with_wiki_above_descriptive(self) -> None:
+        from core.contracts import SourceRole
+        from core.web_claims import (
+            _ROLE_PRIORITY,
+            ClaimRecord,
+            summarize_slot_coverage,
+        )
+
+        slot = "서비스/배급"
+        database_claim = ClaimRecord(
+            slot=slot,
+            value="스팀 데이터 레코드",
+            source_url="https://data.example.com/game",
+            source_title="게임 데이터베이스",
+            source_role=SourceRole.DATABASE,
+            support_count=1,
+        )
+        descriptive_claim = ClaimRecord(
+            slot=slot,
+            value="설명형 소개 페이지",
+            source_url="https://guide.example.com/game",
+            source_title="설명형 소개",
+            source_role=SourceRole.DESCRIPTIVE,
+            support_count=1,
+        )
+
+        self.assertEqual(_ROLE_PRIORITY[SourceRole.DATABASE], _ROLE_PRIORITY[SourceRole.WIKI])
+        self.assertGreater(_ROLE_PRIORITY[SourceRole.DATABASE], _ROLE_PRIORITY[SourceRole.DESCRIPTIVE])
+        self.assertGreater(_ROLE_PRIORITY[SourceRole.OFFICIAL], _ROLE_PRIORITY[SourceRole.DATABASE])
+
+        coverage = summarize_slot_coverage([descriptive_claim, database_claim], slots=(slot,))
+        self.assertEqual(coverage[slot].primary_claim.source_role, SourceRole.DATABASE)
+        self.assertEqual(coverage[slot].primary_claim.value, "스팀 데이터 레코드")
+
+    def test_claims_source_role_priority_places_descriptive_above_news_below_database(self) -> None:
+        from core.contracts import SourceRole
+        from core.web_claims import (
+            _ROLE_PRIORITY,
+            ClaimRecord,
+            summarize_slot_coverage,
+        )
+
+        slot = "상태"
+        descriptive_claim = ClaimRecord(
+            slot=slot,
+            value="설명형 분석 정리",
+            source_url="https://guide.example.com/state",
+            source_title="설명형 분석",
+            source_role=SourceRole.DESCRIPTIVE,
+            support_count=1,
+        )
+        news_claim = ClaimRecord(
+            slot=slot,
+            value="속보 기사 단서",
+            source_url="https://news.example.com/state",
+            source_title="뉴스 기사",
+            source_role=SourceRole.NEWS,
+            support_count=1,
+        )
+
+        self.assertGreater(_ROLE_PRIORITY[SourceRole.DESCRIPTIVE], _ROLE_PRIORITY[SourceRole.NEWS])
+        self.assertGreater(_ROLE_PRIORITY[SourceRole.DESCRIPTIVE], _ROLE_PRIORITY[SourceRole.AUXILIARY])
+        self.assertLess(_ROLE_PRIORITY[SourceRole.DESCRIPTIVE], _ROLE_PRIORITY[SourceRole.DATABASE])
+        self.assertLess(_ROLE_PRIORITY[SourceRole.DESCRIPTIVE], _ROLE_PRIORITY[SourceRole.WIKI])
+
+        coverage = summarize_slot_coverage([news_claim, descriptive_claim], slots=(slot,))
+        self.assertEqual(coverage[slot].primary_claim.source_role, SourceRole.DESCRIPTIVE)
+        self.assertEqual(coverage[slot].primary_claim.value, "설명형 분석 정리")
+
+    def test_claims_source_role_priority_places_news_above_auxiliary_below_descriptive(self) -> None:
+        from core.contracts import SourceRole
+        from core.web_claims import (
+            _ROLE_PRIORITY,
+            ClaimRecord,
+            summarize_slot_coverage,
+        )
+
+        slot = "이용 형태"
+        news_claim = ClaimRecord(
+            slot=slot,
+            value="검증된 기사 보도",
+            source_url="https://news.example.com/platform",
+            source_title="검증된 기사",
+            source_role=SourceRole.NEWS,
+            support_count=1,
+        )
+        auxiliary_claim = ClaimRecord(
+            slot=slot,
+            value="보조 출처 메모",
+            source_url="https://aux.example.com/platform",
+            source_title="보조 출처",
+            source_role=SourceRole.AUXILIARY,
+            support_count=1,
+        )
+
+        self.assertGreater(_ROLE_PRIORITY[SourceRole.NEWS], _ROLE_PRIORITY[SourceRole.AUXILIARY])
+        self.assertLess(_ROLE_PRIORITY[SourceRole.NEWS], _ROLE_PRIORITY[SourceRole.DESCRIPTIVE])
+        self.assertGreater(_ROLE_PRIORITY[SourceRole.NEWS], _ROLE_PRIORITY[SourceRole.COMMUNITY])
+
+        coverage = summarize_slot_coverage([auxiliary_claim, news_claim], slots=(slot,))
+        self.assertEqual(coverage[slot].primary_claim.source_role, SourceRole.NEWS)
+        self.assertEqual(coverage[slot].primary_claim.value, "검증된 기사 보도")
+
+    def test_claims_source_role_priority_splits_portal_community_above_blog(self) -> None:
+        from core.contracts import SourceRole
+        from core.web_claims import (
+            _ROLE_PRIORITY,
+            ClaimRecord,
+            summarize_slot_coverage,
+        )
+
+        self.assertEqual(_ROLE_PRIORITY[SourceRole.COMMUNITY], 1)
+        self.assertEqual(_ROLE_PRIORITY[SourceRole.PORTAL], 1)
+        self.assertEqual(_ROLE_PRIORITY[SourceRole.BLOG], 0)
+        self.assertEqual(_ROLE_PRIORITY[SourceRole.AUXILIARY], 1)
+        self.assertGreater(_ROLE_PRIORITY[SourceRole.COMMUNITY], _ROLE_PRIORITY[SourceRole.BLOG])
+        self.assertGreater(_ROLE_PRIORITY[SourceRole.PORTAL], _ROLE_PRIORITY[SourceRole.BLOG])
+        self.assertGreater(_ROLE_PRIORITY[SourceRole.NEWS], _ROLE_PRIORITY[SourceRole.COMMUNITY])
+
+        slot = "이용 형태"
+        blog_claim = ClaimRecord(
+            slot=slot,
+            value="개인 블로그 추정 플랫폼",
+            source_url="https://blog.example.com/platform",
+            source_title="개인 블로그",
+            source_role=SourceRole.BLOG,
+            support_count=1,
+        )
+        portal_claim = ClaimRecord(
+            slot=slot,
+            value="포털 집계 플랫폼 정보",
+            source_url="https://portal.example.com/platform",
+            source_title="포털 집계",
+            source_role=SourceRole.PORTAL,
+            support_count=1,
+        )
+
+        coverage = summarize_slot_coverage([blog_claim, portal_claim], slots=(slot,))
+        self.assertEqual(coverage[slot].primary_claim.source_role, SourceRole.PORTAL)
+        self.assertEqual(coverage[slot].primary_claim.value, "포털 집계 플랫폼 정보")
+
+    def test_claims_sort_key_prefers_shorter_value_when_other_keys_tie(self) -> None:
+        from core.contracts import SourceRole
+        from core.web_claims import ClaimRecord, summarize_slot_coverage
+
+        short_claim = ClaimRecord(
+            slot="개발",
+            value="펄어비스",
+            source_url="https://short.example.com/a",
+            source_title="짧은 출처",
+            source_role=SourceRole.WIKI,
+            support_count=1,
+            confidence=0.5,
+            supporting_sources=(
+                ("https://short.example.com/a", "짧은 출처", SourceRole.WIKI),
+            ),
+        )
+        long_claim = ClaimRecord(
+            slot="개발",
+            value="펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임 타이틀",
+            source_url="https://long.example.com/a",
+            source_title="긴 출처",
+            source_role=SourceRole.WIKI,
+            support_count=1,
+            confidence=0.5,
+            supporting_sources=(
+                ("https://long.example.com/a", "긴 출처", SourceRole.WIKI),
+            ),
+        )
+
+        coverage = summarize_slot_coverage([long_claim, short_claim], slots=("개발",))
+        coverage_reversed = summarize_slot_coverage([short_claim, long_claim], slots=("개발",))
+        self.assertEqual(coverage["개발"].primary_claim.value, "펄어비스")
+        self.assertEqual(coverage_reversed["개발"].primary_claim.value, "펄어비스")
+
+        url_a_claim = ClaimRecord(
+            slot="개발",
+            value="펄어비스",
+            source_url="https://a.example.com",
+            source_title="A 출처",
+            source_role=SourceRole.WIKI,
+            support_count=1,
+            confidence=0.5,
+            supporting_sources=(
+                ("https://a.example.com", "A 출처", SourceRole.WIKI),
+            ),
+        )
+        url_b_claim = ClaimRecord(
+            slot="개발",
+            value="펄어비스",
+            source_url="https://b.example.com",
+            source_title="B 출처",
+            source_role=SourceRole.WIKI,
+            support_count=1,
+            confidence=0.5,
+            supporting_sources=(
+                ("https://b.example.com", "B 출처", SourceRole.WIKI),
+            ),
+        )
+
+        coverage_url_order1 = summarize_slot_coverage([url_a_claim, url_b_claim], slots=("개발",))
+        coverage_url_order2 = summarize_slot_coverage([url_b_claim, url_a_claim], slots=("개발",))
+        self.assertEqual(
+            coverage_url_order1["개발"].primary_claim.source_url,
+            coverage_url_order2["개발"].primary_claim.source_url,
+        )
+        self.assertGreaterEqual(
+            len(coverage_url_order1["개발"].primary_claim.supporting_sources),
+            1,
+        )
+
+    def test_claim_coverage_conflict_status_label_rank_and_probe_queries(self) -> None:
+        """Agent-loop helpers must keep CONFLICT distinct from STRONG/WEAK/MISSING."""
+        from core.contracts import CoverageStatus, SourceRole
+        from core.web_claims import ClaimRecord
+
+        loop = AgentLoop.__new__(AgentLoop)
+
+        self.assertEqual(loop._claim_coverage_status_label(CoverageStatus.STRONG), "교차 확인")
+        self.assertEqual(loop._claim_coverage_status_label(CoverageStatus.CONFLICT), "정보 상충")
+        self.assertEqual(loop._claim_coverage_status_label(CoverageStatus.WEAK), "단일 출처")
+        self.assertEqual(loop._claim_coverage_status_label(CoverageStatus.MISSING), "미확인")
+
+        strong_rank = loop._claim_coverage_status_rank(CoverageStatus.STRONG)
+        conflict_rank = loop._claim_coverage_status_rank(CoverageStatus.CONFLICT)
+        weak_rank = loop._claim_coverage_status_rank(CoverageStatus.WEAK)
+        missing_rank = loop._claim_coverage_status_rank(CoverageStatus.MISSING)
+        self.assertGreater(strong_rank, conflict_rank)
+        self.assertGreater(conflict_rank, weak_rank)
+        self.assertGreater(weak_rank, missing_rank)
+
+        primary_claim = ClaimRecord(
+            slot="장르/성격",
+            value="오픈월드 액션 어드벤처 게임",
+            source_url="https://namu.wiki/w/x",
+            source_title="나무위키",
+            source_role=SourceRole.WIKI,
+        )
+        self.assertEqual(
+            loop._build_entity_slot_probe_queries(
+                query="붉은사막",
+                slot="장르/성격",
+                status=CoverageStatus.CONFLICT,
+                primary_claim=primary_claim,
+            ),
+            [
+                "붉은사막 오픈월드 액션 어드벤처 게임 장르 위키",
+                "붉은사막 오픈월드 액션 어드벤처 게임 소개",
+            ],
+        )
 
     def test_load_web_search_record_legacy_claim_coverage_slots_reload_surface_and_follow_up_progress_canonicalized(self) -> None:
         """Stored entity records that carry legacy `claim_coverage` slot labels
@@ -2258,7 +3037,7 @@ class SmokeTest(unittest.TestCase):
             self.assertIn("재조사했지만", summary)
             self.assertIn("이용 형태", summary)
             self.assertIn("아직", summary)
-            self.assertIn("단일 출처 상태", summary)
+            self.assertIn("한 가지 출처의 정보로만 확인됩니다", summary)
             # No false improvement wording.
             self.assertNotIn("보강", summary)
             self.assertNotIn("미확인에서", summary)
@@ -2301,6 +3080,26 @@ class SmokeTest(unittest.TestCase):
         # No false improvement wording.
         self.assertNotIn("보강", summary)
 
+    def test_build_claim_coverage_progress_summary_focus_slot_weak_to_missing_says_information_no_longer_found(self) -> None:
+        loop = AgentLoop.__new__(AgentLoop)
+        previous_claim_coverage = [
+            {"slot": "이용 형태", "status": "weak"},
+        ]
+        current_claim_coverage = [
+            {"slot": "이용 형태", "status": "missing"},
+        ]
+        summary = loop._build_claim_coverage_progress_summary(
+            previous_claim_coverage=previous_claim_coverage,
+            current_claim_coverage=current_claim_coverage,
+            query="붉은사막 공식 플랫폼 검색해봐",
+        )
+        self.assertEqual(
+            summary,
+            "재조사 결과 이용 형태는 정보를 더 이상 찾을 수 없어 미확인으로 조정되었습니다.",
+        )
+        self.assertNotIn("약해졌습니다", summary)
+        self.assertNotIn("교차 확인 기준", summary)
+
     def test_build_claim_coverage_progress_summary_focus_slot_weak_to_strong_reflects_trusted_agreement(self) -> None:
         """When a focus slot newly qualifies for trusted agreement after
         re-check (WEAK → STRONG), the Korean summary must name the
@@ -2330,6 +3129,67 @@ class SmokeTest(unittest.TestCase):
         self.assertNotIn("교차 확인로", summary)
         # No false-downgrade wording.
         self.assertNotIn("약해", summary)
+
+    def test_build_claim_coverage_progress_summary_focus_slot_conflict_stays_unresolved(self) -> None:
+        """A focus slot that remains CONFLICT after re-check must stay on the unresolved path."""
+        from core.contracts import CoverageStatus
+
+        loop = AgentLoop.__new__(AgentLoop)
+        previous_claim_coverage = [
+            {"slot": "장르/성격", "status": CoverageStatus.CONFLICT},
+            {"slot": "이용 형태", "status": CoverageStatus.STRONG},
+            {"slot": "상태", "status": CoverageStatus.MISSING},
+        ]
+        current_claim_coverage = [
+            {"slot": "장르/성격", "status": CoverageStatus.CONFLICT},
+            {"slot": "이용 형태", "status": CoverageStatus.STRONG},
+            {"slot": "상태", "status": CoverageStatus.MISSING},
+        ]
+
+        summary = loop._build_claim_coverage_progress_summary(
+            previous_claim_coverage=previous_claim_coverage,
+            current_claim_coverage=current_claim_coverage,
+            query="붉은사막 장르 검색해봐",
+        )
+
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary, "재조사했지만 장르/성격은 출처들이 서로 어긋난 채 남아 있습니다.")
+        self.assertNotIn("보강", summary)
+        self.assertNotIn("교차 확인 기준", summary)
+
+    def test_build_claim_coverage_progress_summary_focus_slot_unresolved_wording_branches_by_status(self) -> None:
+        from core.contracts import CoverageStatus
+
+        loop = AgentLoop.__new__(AgentLoop)
+        cases = [
+            (
+                "붉은사막 장르 검색해봐",
+                [{"slot": "장르/성격", "status": CoverageStatus.CONFLICT}],
+                [{"slot": "장르/성격", "status": CoverageStatus.CONFLICT}],
+                "재조사했지만 장르/성격은 출처들이 서로 어긋난 채 남아 있습니다.",
+            ),
+            (
+                "붉은사막 공식 플랫폼 검색해봐",
+                [{"slot": "이용 형태", "status": CoverageStatus.WEAK}],
+                [{"slot": "이용 형태", "status": CoverageStatus.WEAK}],
+                "재조사했지만 이용 형태는 아직 한 가지 출처의 정보로만 확인됩니다.",
+            ),
+            (
+                "붉은사막 출시일 검색해봐",
+                [{"slot": "상태", "status": CoverageStatus.MISSING}],
+                [{"slot": "상태", "status": CoverageStatus.MISSING}],
+                "재조사했지만 상태는 아직 관련 정보를 찾지 못했습니다.",
+            ),
+        ]
+
+        for query, previous_claim_coverage, current_claim_coverage, expected in cases:
+            with self.subTest(query=query):
+                summary = loop._build_claim_coverage_progress_summary(
+                    previous_claim_coverage=previous_claim_coverage,
+                    current_claim_coverage=current_claim_coverage,
+                    query=query,
+                )
+                self.assertEqual(summary, expected)
 
     def test_annotate_claim_coverage_progress_focus_slot_strong_boundary_labels_are_specific(self) -> None:
         """``_annotate_claim_coverage_progress`` must surface a
@@ -2883,7 +3743,10 @@ class SmokeTest(unittest.TestCase):
             self.assertEqual(second.response_origin["answer_mode"], "entity_card")
             self.assertTrue(second.claim_coverage_progress_summary)
             self.assertIn("이용 형태", second.claim_coverage_progress_summary)
-            self.assertIn("단일 출처 상태", second.claim_coverage_progress_summary)
+            self.assertIn(
+                "한 가지 출처의 정보로만 확인됩니다",
+                second.claim_coverage_progress_summary,
+            )
             coverage_by_slot = {
                 str(item.get("slot") or ""): dict(item)
                 for item in second.claim_coverage
@@ -5494,6 +6357,7 @@ class SmokeTest(unittest.TestCase):
                     "source_paths": [str(source_path)],
                     "excerpt": "hello world",
                     "summary_hint": "원본 요약입니다.",
+                    "summary_hint_basis": "current_summary",
                     "suggested_prompts": [],
                     "evidence_pool": [],
                     "retrieval_chunks": [],
@@ -5502,6 +6366,7 @@ class SmokeTest(unittest.TestCase):
 
             ctx_before = store.get_active_context("session-hint-update")
             self.assertEqual(ctx_before["summary_hint"], "원본 요약입니다.")
+            self.assertEqual(ctx_before["summary_hint_basis"], "current_summary")
 
             store.record_correction_for_message(
                 "session-hint-update",
@@ -5512,6 +6377,122 @@ class SmokeTest(unittest.TestCase):
             ctx_after = store.get_active_context("session-hint-update")
             self.assertIsNotNone(ctx_after)
             self.assertEqual(ctx_after["summary_hint"], "수정한 요약입니다. 핵심만 남겼습니다.")
+            self.assertEqual(ctx_after["summary_hint_basis"], "recorded_correction")
+
+    def test_legacy_active_context_summary_hint_basis_backfills_recorded_correction(self) -> None:
+        """summary_hint_basis가 없는 예전 세션도 동일 세션 수정본 매칭이면 recorded_correction으로 복원."""
+        import json
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            sessions_dir = tmp_path / "sessions"
+            sessions_dir.mkdir(parents=True)
+            source_path = tmp_path / "source.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            corrected_raw = "수정한 요약입니다.\n핵심만 남겼습니다."
+            legacy_hint = " ".join(corrected_raw.split())
+            legacy_session = {
+                "schema_version": "1.0",
+                "session_id": "legacy-basis-session",
+                "title": "legacy-basis-session",
+                "messages": [
+                    {
+                        "role": "user",
+                        "text": "요약해줘",
+                        "message_id": "m-user",
+                    },
+                    {
+                        "role": "assistant",
+                        "text": "원본 요약입니다.",
+                        "status": "answer",
+                        "message_id": "m-assistant",
+                        "artifact_id": "artifact-legacy",
+                        "artifact_kind": "grounded_brief",
+                        "selected_source_paths": [str(source_path)],
+                        "evidence": [
+                            {
+                                "source_path": str(source_path),
+                                "source_name": "source.md",
+                                "label": "본문 근거",
+                                "snippet": "hello world",
+                            }
+                        ],
+                        "corrected_text": corrected_raw,
+                        "corrected_outcome": {
+                            "outcome": "corrected",
+                            "recorded_at": "2026-04-19T00:00:00Z",
+                            "artifact_id": "artifact-legacy",
+                            "source_message_id": "m-assistant",
+                        },
+                    },
+                ],
+                "pending_approvals": [],
+                "permissions": {"web_search": "disabled"},
+                "active_context": {
+                    "kind": "document",
+                    "label": "source.md 요약",
+                    "source_paths": [str(source_path)],
+                    "excerpt": "hello world",
+                    "summary_hint": legacy_hint,
+                    "suggested_prompts": [],
+                    "evidence_pool": [],
+                    "retrieval_chunks": [],
+                },
+                "_version": 1,
+                "created_at": "2026-04-19T00:00:00Z",
+                "updated_at": "2026-04-19T00:00:00Z",
+            }
+            (sessions_dir / "legacy-basis-session.json").write_text(
+                json.dumps(legacy_session, ensure_ascii=False), encoding="utf-8"
+            )
+
+            store = SessionStore(base_dir=str(sessions_dir))
+            ctx = store.get_active_context("legacy-basis-session")
+            self.assertIsNotNone(ctx)
+            self.assertEqual(ctx["summary_hint_basis"], "recorded_correction")
+            self.assertEqual(ctx["summary_hint"], legacy_hint)
+
+            session = store.get_session("legacy-basis-session")
+            self.assertEqual(
+                session["active_context"]["summary_hint_basis"], "recorded_correction"
+            )
+
+    def test_legacy_active_context_summary_hint_basis_without_match_falls_back_to_current_summary(self) -> None:
+        """수정본과 매칭되지 않으면 current_summary로 안전하게 fallback."""
+        import json
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            sessions_dir = tmp_path / "sessions"
+            sessions_dir.mkdir(parents=True)
+            legacy_session = {
+                "schema_version": "1.0",
+                "session_id": "legacy-no-match",
+                "title": "legacy-no-match",
+                "messages": [],
+                "pending_approvals": [],
+                "permissions": {"web_search": "disabled"},
+                "active_context": {
+                    "kind": "document",
+                    "label": "source.md 요약",
+                    "source_paths": [],
+                    "excerpt": "",
+                    "summary_hint": "원본 요약입니다.",
+                    "suggested_prompts": [],
+                },
+                "_version": 1,
+                "created_at": "2026-04-19T00:00:00Z",
+                "updated_at": "2026-04-19T00:00:00Z",
+            }
+            (sessions_dir / "legacy-no-match.json").write_text(
+                json.dumps(legacy_session, ensure_ascii=False), encoding="utf-8"
+            )
+
+            store = SessionStore(base_dir=str(sessions_dir))
+            ctx = store.get_active_context("legacy-no-match")
+            self.assertIsNotNone(ctx)
+            self.assertEqual(ctx["summary_hint_basis"], "current_summary")
 
     def test_correction_without_active_context_does_not_fail(self) -> None:
         """active_context가 없는 상태에서 교정해도 에러 없이 동작하는지 확인."""

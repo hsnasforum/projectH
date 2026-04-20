@@ -2280,7 +2280,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
 
             self.assertEqual(active_lane, "")
 
-    def test_active_lane_for_runtime_keeps_canonical_claude_lane_under_nondefault_role_binding(self) -> None:
+    def test_active_lane_for_runtime_follows_implement_owner_under_nondefault_role_binding(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write_active_profile(
@@ -2303,7 +2303,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
                 },
             )
 
-            self.assertEqual(active_lane, "Claude")
+            self.assertEqual(active_lane, "Codex")
 
     def test_write_status_clears_codex_task_hint_during_operator_wait(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2549,6 +2549,135 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertTrue(status["autonomy"]["suppress_operator_until"])
             self.assertEqual(len(gated_events), 1)
             self.assertEqual(gated_events[0]["payload"]["reason"], "slice_ambiguity")
+
+    def test_write_status_normalizes_next_slice_aliases_to_gated_operator_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "operator_request.md").write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 188\n"
+                "REASON_CODE: gemini_axis_switch_without_exact_slice\n"
+                "OPERATOR_POLICY: stop_until_exact_slice_selected\n"
+                "DECISION_CLASS: next_slice_selection\n"
+                "DECISION_REQUIRED: choose exact next slice\n",
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                            {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+                supervisor._record_status_events(status)
+
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            gated_events = [event for event in events if event.get("event_type") == "control_operator_gated"]
+
+            self.assertEqual(status["control"]["active_control_status"], "none")
+            self.assertEqual(status["autonomy"]["mode"], "triage")
+            self.assertEqual(status["autonomy"]["block_reason"], "slice_ambiguity")
+            self.assertEqual(status["autonomy"]["reason_code"], "slice_ambiguity")
+            self.assertEqual(status["autonomy"]["operator_policy"], "gate_24h")
+            self.assertEqual(status["autonomy"]["classification_source"], "operator_policy")
+            self.assertTrue(status["autonomy"]["suppress_operator_until"])
+            self.assertEqual(len(gated_events), 1)
+            self.assertEqual(gated_events[0]["payload"]["reason"], "slice_ambiguity")
+
+    def test_write_status_keeps_slice_ambiguity_operator_stop_gated_when_based_work_is_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "operator_request.md").write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 188\n"
+                "REASON_CODE: slice_ambiguity\n"
+                "OPERATOR_POLICY: gate_24h\n"
+                "DECISION_CLASS: next_slice_selection\n"
+                "DECISION_REQUIRED: choose exact next slice\n"
+                "BASED_ON_WORK: work/4/19/2026-04-19-legacy-active-context-summary-hint-basis-backfill.md\n",
+                encoding="utf-8",
+            )
+            (state_dir / "job-188.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-188",
+                        "status": "VERIFY_DONE",
+                        "artifact_path": "work/4/19/2026-04-19-legacy-active-context-summary-hint-basis-backfill.md",
+                        "artifact_hash": "hash-188",
+                        "round": 1,
+                        "verify_result": "passed_by_feedback",
+                        "updated_at": 100.0,
+                        "verify_completed_at": 100.0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                            {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+                supervisor._record_status_events(status)
+
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            gated_events = [event for event in events if event.get("event_type") == "control_operator_gated"]
+            stale_events = [event for event in events if event.get("event_type") == "control_operator_stale_ignored"]
+
+            self.assertEqual(status["control"]["active_control_status"], "none")
+            self.assertEqual(status["autonomy"]["mode"], "triage")
+            self.assertEqual(status["autonomy"]["block_reason"], "slice_ambiguity")
+            self.assertEqual(len(gated_events), 1)
+            self.assertEqual(len(stale_events), 0)
 
     def test_write_status_keeps_truth_sync_operator_stop_active(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2919,7 +3048,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertIn(".pipeline/operator_request.md", prompt)
             self.assertIn("no truthful exact slice", prompt)
 
-    def test_prompt_templates_use_canonical_prompt_owners_when_lanes_exist(self) -> None:
+    def test_prompt_templates_follow_role_bound_prompt_owners_when_lanes_exist(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write_active_profile(
@@ -2936,13 +3065,13 @@ class RuntimeSupervisorTest(unittest.TestCase):
             verify_prompt = supervisor._prompt_templates()["verify"]
             followup_prompt = supervisor._prompt_templates()["followup"]
 
-            self.assertIn("OWNER: Claude", implement_prompt)
-            self.assertIn("- CLAUDE.md", implement_prompt)
-            self.assertNotIn("OWNER: Codex", implement_prompt)
-            self.assertIn("OWNER: Codex", verify_prompt)
-            self.assertIn("- AGENTS.md", verify_prompt)
-            self.assertIn("OWNER: Codex", followup_prompt)
-            self.assertIn("- AGENTS.md", followup_prompt)
+            self.assertIn("OWNER: Codex", implement_prompt)
+            self.assertIn("- AGENTS.md", implement_prompt)
+            self.assertNotIn("OWNER: Claude", implement_prompt)
+            self.assertIn("OWNER: Claude", verify_prompt)
+            self.assertIn("- CLAUDE.md", verify_prompt)
+            self.assertIn("OWNER: Claude", followup_prompt)
+            self.assertIn("- CLAUDE.md", followup_prompt)
 
     def test_session_loss_transitions_runtime_to_degraded(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3007,7 +3136,14 @@ class RuntimeSupervisorTest(unittest.TestCase):
             with (
                 mock.patch.object(supervisor, "_watcher_status", return_value={"alive": False, "pid": None}),
                 mock.patch.object(supervisor.adapter, "session_exists", return_value=False),
+                mock.patch.object(supervisor.adapter, "kill_session", return_value=True),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "create_scaffold",
+                    side_effect=RuntimeError("tmux create_scaffold failed"),
+                ),
                 mock.patch.object(supervisor.adapter, "restart_lane", return_value=False),
+                mock.patch.object(supervisor, "_terminate_repo_watchers"),
                 mock.patch.object(supervisor, "_lane_shell_command", return_value="run-lane"),
                 mock.patch.object(
                     supervisor,
@@ -3031,6 +3167,110 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(reasons[0], "session_missing")
             for lane_failure in ("claude_recovery_failed", "codex_recovery_failed", "gemini_recovery_failed"):
                 self.assertIn(lane_failure, reasons)
+
+    def test_session_loss_recreates_scaffold_once_before_lane_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+            pane_ids = {"Claude": "%1", "Codex": "%2", "Gemini": "%3"}
+            with (
+                mock.patch.object(supervisor, "_find_cli_bin", side_effect=lambda name: f"/usr/bin/{name}"),
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": False, "pid": None}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=False),
+                mock.patch.object(supervisor.adapter, "kill_session", return_value=True),
+                mock.patch.object(supervisor.adapter, "create_scaffold", return_value=pane_ids) as create_scaffold,
+                mock.patch.object(supervisor.adapter, "spawn_lane", return_value=True) as spawn_lane,
+                mock.patch.object(supervisor.adapter, "pane_for_lane", side_effect=lambda lane: {"pane_id": pane_ids[lane]}),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "spawn_watcher",
+                    return_value={"pane_id": "%9", "pid": 12345, "window_name": "watcher-exp"},
+                ) as spawn_watcher,
+                mock.patch.object(supervisor.adapter, "restart_lane", return_value=True) as restart_lane,
+                mock.patch.object(supervisor, "_start_token_collector"),
+                mock.patch.object(supervisor, "_terminate_repo_watchers"),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "BROKEN", "attachable": False, "pid": None, "note": "pane_dead"},
+                            {"name": "Codex", "state": "BROKEN", "attachable": False, "pid": None, "note": "pane_dead"},
+                            {"name": "Gemini", "state": "BROKEN", "attachable": False, "pid": None, "note": "pane_dead"},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+                mock.patch("pipeline_runtime.supervisor.resolve_project_runtime_file", side_effect=lambda _project, name: root / name),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["runtime_state"], "DEGRADED")
+            self.assertEqual(status["degraded_reason"], "session_missing")
+            create_scaffold.assert_called_once()
+            self.assertGreaterEqual(spawn_lane.call_count, 3)
+            spawn_watcher.assert_called_once()
+            restart_lane.assert_not_called()
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            event_types = [event.get("event_type") for event in events]
+            self.assertIn("session_recovery_started", event_types)
+            self.assertIn("session_recovery_completed", event_types)
+
+    def test_session_loss_failed_recovery_is_bounded_without_lane_restart_loop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": False, "pid": None}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=False),
+                mock.patch.object(supervisor.adapter, "kill_session", return_value=True),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "create_scaffold",
+                    side_effect=RuntimeError("tmux create_scaffold failed"),
+                ) as create_scaffold,
+                mock.patch.object(supervisor.adapter, "restart_lane", return_value=False) as restart_lane,
+                mock.patch.object(supervisor, "_terminate_repo_watchers"),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "BROKEN", "attachable": False, "pid": None, "note": "pane_dead"},
+                            {"name": "Codex", "state": "BROKEN", "attachable": False, "pid": None, "note": "pane_dead"},
+                            {"name": "Gemini", "state": "BROKEN", "attachable": False, "pid": None, "note": "pane_dead"},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                first_status = supervisor._write_status()
+                second_status = supervisor._write_status()
+
+            self.assertEqual(first_status["degraded_reason"], "session_missing")
+            self.assertEqual(second_status["degraded_reason"], "session_missing")
+            create_scaffold.assert_called_once()
+            self.assertEqual(restart_lane.call_count, 5)
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            event_types = [event.get("event_type") for event in events]
+            self.assertEqual(event_types.count("session_recovery_started"), 1)
+            self.assertEqual(event_types.count("session_recovery_failed"), 1)
 
     def test_session_loss_degrades_even_if_lane_health_has_already_dropped_to_off(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3105,6 +3345,31 @@ class RuntimeSupervisorTest(unittest.TestCase):
             event_types = [call.args[0] for call in append_event.call_args_list]
             self.assertIn("recovery_started", event_types)
             self.assertIn("recovery_completed", event_types)
+
+    def test_failed_pre_accept_restart_consumes_retry_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            lane = {"name": "Claude", "state": "BROKEN", "note": "exit:-15"}
+            lane_model = {"accepted_task": None}
+            with (
+                mock.patch.object(supervisor.adapter, "restart_lane", return_value=False) as restart_lane,
+                mock.patch.object(supervisor, "_lane_shell_command", return_value="run-claude"),
+            ):
+                first_reason = supervisor._maybe_recover_lane(
+                    lane,
+                    lane_model=lane_model,
+                    active_round=None,
+                )
+                second_reason = supervisor._maybe_recover_lane(
+                    lane,
+                    lane_model=lane_model,
+                    active_round=None,
+                )
+            self.assertEqual(first_reason, "claude_recovery_failed")
+            self.assertEqual(second_reason, "claude_broken")
+            restart_lane.assert_called_once_with("Claude", "run-claude")
 
     def test_auth_failure_breakage_blocks_restart(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

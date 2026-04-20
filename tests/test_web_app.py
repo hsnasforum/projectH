@@ -396,6 +396,203 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("artifact-correction", log_text)
             self.assertIn("corrected", log_text)
 
+    def test_submit_correction_serializes_active_context_summary_hint_basis(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            source_path = base / "source.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+            settings = AppSettings(
+                sessions_dir=str(base / "sessions"),
+                task_log_path=str(base / "task_log.jsonl"),
+                notes_dir=str(base / "notes"),
+                web_search_history_dir=str(base / "web-search"),
+            )
+            service = WebAppService(settings=settings)
+
+            service.session_store.append_message("basis-session", {"role": "user", "text": "질문"})
+            stored_message = service.session_store.append_message(
+                "basis-session",
+                {
+                    "role": "assistant",
+                    "text": "원본 요약입니다.",
+                    "status": "answer",
+                    "artifact_id": "artifact-basis",
+                    "artifact_kind": "grounded_brief",
+                    "selected_source_paths": [str(source_path)],
+                    "response_origin": {"provider": "mock", "badge": "MOCK", "label": "모의 데모 응답", "kind": "assistant"},
+                    "evidence": [
+                        {
+                            "source_path": str(source_path),
+                            "source_name": "source.md",
+                            "label": "본문 근거",
+                            "snippet": "hello world",
+                        }
+                    ],
+                },
+            )
+            service.session_store.set_active_context(
+                "basis-session",
+                {
+                    "kind": "document",
+                    "label": "source.md 요약",
+                    "source_paths": [str(source_path)],
+                    "excerpt": "hello world",
+                    "summary_hint": "원본 요약입니다.",
+                    "summary_hint_basis": "current_summary",
+                    "suggested_prompts": [],
+                    "evidence_pool": [],
+                    "retrieval_chunks": [],
+                },
+            )
+
+            session_before = service.get_session_payload("basis-session")
+            self.assertEqual(
+                session_before["session"]["active_context"]["summary_hint_basis"],
+                "current_summary",
+            )
+
+            payload = service.submit_correction(
+                {
+                    "session_id": "basis-session",
+                    "message_id": stored_message["message_id"],
+                    "corrected_text": "수정한 요약입니다.\n후속 질문 기준을 이 수정본으로 고정합니다.",
+                }
+            )
+
+            self.assertTrue(payload["ok"])
+            serialized_active_context = payload["session"]["active_context"]
+            self.assertEqual(serialized_active_context["summary_hint_basis"], "recorded_correction")
+            self.assertIn("수정한 요약입니다.", serialized_active_context["summary_hint"])
+
+            session_after = service.get_session_payload("basis-session")
+            self.assertEqual(
+                session_after["session"]["active_context"]["summary_hint_basis"],
+                "recorded_correction",
+            )
+
+    def _legacy_session_payload_missing_basis(self, source_path: Path) -> tuple[dict, str, str]:
+        corrected_raw = "수정한 요약입니다.\n후속 질문 기준을 이 수정본으로 고정합니다."
+        legacy_hint = " ".join(corrected_raw.split())
+        session = {
+            "schema_version": "1.0",
+            "session_id": "legacy-basis-web",
+            "title": "legacy-basis-web",
+            "messages": [
+                {"role": "user", "text": "요약해줘", "message_id": "m-user"},
+                {
+                    "role": "assistant",
+                    "text": "원본 요약입니다.",
+                    "status": "answer",
+                    "message_id": "m-assistant",
+                    "artifact_id": "artifact-legacy-web",
+                    "artifact_kind": "grounded_brief",
+                    "selected_source_paths": [str(source_path)],
+                    "evidence": [
+                        {
+                            "source_path": str(source_path),
+                            "source_name": "source.md",
+                            "label": "본문 근거",
+                            "snippet": "hello world",
+                        }
+                    ],
+                    "corrected_text": corrected_raw,
+                    "corrected_outcome": {
+                        "outcome": "corrected",
+                        "recorded_at": "2026-04-19T00:00:00Z",
+                        "artifact_id": "artifact-legacy-web",
+                        "source_message_id": "m-assistant",
+                    },
+                },
+            ],
+            "pending_approvals": [],
+            "permissions": {"web_search": "disabled"},
+            "active_context": {
+                "kind": "document",
+                "label": "source.md 요약",
+                "source_paths": [str(source_path)],
+                "excerpt": "hello world",
+                "summary_hint": legacy_hint,
+                "suggested_prompts": [],
+                "evidence_pool": [],
+                "retrieval_chunks": [],
+            },
+            "_version": 1,
+            "created_at": "2026-04-19T00:00:00Z",
+            "updated_at": "2026-04-19T00:00:00Z",
+        }
+        return session, legacy_hint, "legacy-basis-web"
+
+    def test_get_session_payload_backfills_legacy_summary_hint_basis(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            sessions_dir = base / "sessions"
+            sessions_dir.mkdir(parents=True)
+            source_path = base / "source.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+            settings = AppSettings(
+                sessions_dir=str(sessions_dir),
+                task_log_path=str(base / "task_log.jsonl"),
+                notes_dir=str(base / "notes"),
+                web_search_history_dir=str(base / "web-search"),
+            )
+
+            legacy_session, legacy_hint, session_id = self._legacy_session_payload_missing_basis(source_path)
+            (sessions_dir / f"{session_id}.json").write_text(
+                json.dumps(legacy_session, ensure_ascii=False), encoding="utf-8"
+            )
+            # Sanity: the raw blob has no summary_hint_basis.
+            self.assertNotIn("summary_hint_basis", legacy_session["active_context"])
+
+            service = WebAppService(settings=settings)
+            payload = service.get_session_payload(session_id)
+
+            self.assertTrue(payload["ok"])
+            active_context = payload["session"]["active_context"]
+            self.assertEqual(active_context["summary_hint_basis"], "recorded_correction")
+            self.assertEqual(active_context["summary_hint"], legacy_hint)
+
+    def test_get_session_payload_backfills_legacy_summary_hint_basis_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            db_path = str(base / "test.db")
+            source_path = base / "source.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+            settings = AppSettings(
+                storage_backend="sqlite",
+                sqlite_db_path=db_path,
+                corrections_dir=str(base / "corrections"),
+                notes_dir=str(base / "notes"),
+                web_search_history_dir=str(base / "web-search"),
+            )
+            service = WebAppService(settings=settings)
+
+            legacy_session, legacy_hint, session_id = self._legacy_session_payload_missing_basis(source_path)
+            # Write the legacy blob directly into SQLite without the new field.
+            import sqlite3
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    """INSERT INTO sessions (session_id, title, data, created_at, updated_at, _version)
+                       VALUES (?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(session_id) DO UPDATE SET
+                         title=excluded.title, data=excluded.data,
+                         updated_at=excluded.updated_at, _version=excluded._version""",
+                    (
+                        session_id,
+                        legacy_session["title"],
+                        json.dumps(legacy_session, ensure_ascii=False),
+                        legacy_session["created_at"],
+                        legacy_session["updated_at"],
+                        1,
+                    ),
+                )
+                conn.commit()
+
+            payload = service.get_session_payload(session_id)
+            self.assertTrue(payload["ok"])
+            active_context = payload["session"]["active_context"]
+            self.assertEqual(active_context["summary_hint_basis"], "recorded_correction")
+            self.assertEqual(active_context["summary_hint"], legacy_hint)
+
     def test_submit_correction_rejects_unchanged_text(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             base = Path(tmp_dir)
@@ -8255,6 +8452,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(payload["response"]["response_origin"]["provider"], "web")
             self.assertGreaterEqual(len(payload["response"]["claim_coverage"]), 5)
             self.assertEqual(payload["session"]["web_search_history"][0]["answer_mode"], "entity_card")
+            self.assertEqual(payload["session"]["web_search_history"][0]["claim_coverage_summary"]["conflict"], 0)
             self.assertEqual(payload["session"]["web_search_history"][0]["claim_coverage_summary"]["weak"], 3)
             self.assertEqual(payload["session"]["web_search_history"][0]["claim_coverage_summary"]["missing"], 2)
             coverage_by_slot = {
@@ -13670,7 +13868,7 @@ class WebAppServiceTest(unittest.TestCase):
             reload_entry = reload_history[0]
             self.assertEqual(
                 reload_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(reload_entry.get("claim_coverage_progress_summary") or ""),
@@ -13775,7 +13973,7 @@ class WebAppServiceTest(unittest.TestCase):
             reload_entry = reload_history[0]
             self.assertEqual(
                 reload_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(reload_entry.get("claim_coverage_progress_summary") or ""),
@@ -13889,7 +14087,7 @@ class WebAppServiceTest(unittest.TestCase):
             reload_entry = reload_history[0]
             self.assertEqual(
                 reload_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(reload_entry.get("claim_coverage_progress_summary") or ""),
@@ -14316,9 +14514,10 @@ class WebAppServiceTest(unittest.TestCase):
                 "strong": int(first_summary.get("strong") or 0),
                 "weak": int(first_summary.get("weak") or 0),
                 "missing": int(first_summary.get("missing") or 0),
+                "conflict": int(first_summary.get("conflict") or 0),
             }
             self.assertGreater(
-                baseline_counts["strong"] + baseline_counts["weak"] + baseline_counts["missing"],
+                baseline_counts["strong"] + baseline_counts["weak"] + baseline_counts["missing"] + baseline_counts["conflict"],
                 0,
                 "baseline entity-card record must emit a non-empty claim_coverage summary",
             )
@@ -14418,9 +14617,10 @@ class WebAppServiceTest(unittest.TestCase):
                 "strong": int(first_summary.get("strong") or 0),
                 "weak": int(first_summary.get("weak") or 0),
                 "missing": int(first_summary.get("missing") or 0),
+                "conflict": int(first_summary.get("conflict") or 0),
             }
             self.assertGreater(
-                baseline_counts["strong"] + baseline_counts["weak"] + baseline_counts["missing"],
+                baseline_counts["strong"] + baseline_counts["weak"] + baseline_counts["missing"] + baseline_counts["conflict"],
                 0,
                 "baseline entity-card record must emit a non-empty claim_coverage summary",
             )
@@ -15898,7 +16098,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(reload_entry)
             self.assertEqual(
                 reload_entry.get("claim_coverage_summary") or {},
-                {"strong": 3, "weak": 0, "missing": 2},
+                {"strong": 3, "weak": 0, "missing": 2, "conflict": 0},
             )
             self.assertEqual(
                 str(reload_entry.get("claim_coverage_progress_summary") or ""),
@@ -16007,7 +16207,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(reload_entry)
             self.assertEqual(
                 reload_entry.get("claim_coverage_summary") or {},
-                {"strong": 1, "weak": 4, "missing": 0},
+                {"strong": 1, "weak": 4, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(reload_entry.get("claim_coverage_progress_summary") or ""),
@@ -16111,7 +16311,7 @@ class WebAppServiceTest(unittest.TestCase):
             reload_entry = reload_history[0]
             self.assertEqual(
                 reload_entry.get("claim_coverage_summary") or {},
-                {"strong": 1, "weak": 4, "missing": 0},
+                {"strong": 1, "weak": 4, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(reload_entry.get("claim_coverage_progress_summary") or ""),
@@ -16185,7 +16385,7 @@ class WebAppServiceTest(unittest.TestCase):
             reload_entry = reload_history[0]
             self.assertEqual(
                 reload_entry.get("claim_coverage_summary") or {},
-                {"strong": 3, "weak": 0, "missing": 2},
+                {"strong": 3, "weak": 0, "missing": 2, "conflict": 0},
             )
             self.assertEqual(
                 str(reload_entry.get("claim_coverage_progress_summary") or ""),
@@ -16264,7 +16464,7 @@ class WebAppServiceTest(unittest.TestCase):
             reload_entry = reload_history[0]
             self.assertEqual(
                 reload_entry.get("claim_coverage_summary") or {},
-                {"strong": 3, "weak": 0, "missing": 2},
+                {"strong": 3, "weak": 0, "missing": 2, "conflict": 0},
             )
             self.assertEqual(
                 str(reload_entry.get("claim_coverage_progress_summary") or ""),
@@ -16328,7 +16528,7 @@ class WebAppServiceTest(unittest.TestCase):
             # so the service continuity must agree on the same exact shape.
             self.assertEqual(
                 first_history[0].get("claim_coverage_summary"),
-                {"strong": 3, "weak": 0, "missing": 2},
+                {"strong": 3, "weak": 0, "missing": 2, "conflict": 0},
             )
             self.assertEqual(
                 first_history[0]["verification_label"],
@@ -16358,7 +16558,7 @@ class WebAppServiceTest(unittest.TestCase):
                 )
                 self.assertEqual(
                     entry["claim_coverage_summary"],
-                    {"strong": 3, "weak": 0, "missing": 2},
+                    {"strong": 3, "weak": 0, "missing": 2, "conflict": 0},
                     f"{stage} claim_coverage_summary must match the shipped strong-plus-missing dict",
                 )
                 self.assertEqual(
@@ -16466,7 +16666,7 @@ class WebAppServiceTest(unittest.TestCase):
             # dict, so the click-reload service chain must agree on the same exact shape.
             self.assertEqual(
                 baseline_entry.get("claim_coverage_summary"),
-                {"strong": 3, "weak": 0, "missing": 2},
+                {"strong": 3, "weak": 0, "missing": 2, "conflict": 0},
             )
             self.assertEqual(
                 str(baseline_entry.get("claim_coverage_progress_summary") or ""),
@@ -16497,7 +16697,7 @@ class WebAppServiceTest(unittest.TestCase):
                 )
                 self.assertEqual(
                     entry["claim_coverage_summary"],
-                    {"strong": 3, "weak": 0, "missing": 2},
+                    {"strong": 3, "weak": 0, "missing": 2, "conflict": 0},
                     f"{stage} claim_coverage_summary must match the shipped strong-plus-missing dict",
                 )
                 self.assertEqual(
@@ -16647,7 +16847,7 @@ class WebAppServiceTest(unittest.TestCase):
             reload_entry = reload_history[0]
             self.assertEqual(
                 reload_entry.get("claim_coverage_summary") or {},
-                {"strong": 1, "weak": 4, "missing": 0},
+                {"strong": 1, "weak": 4, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(reload_entry.get("claim_coverage_progress_summary") or ""),
@@ -16749,7 +16949,7 @@ class WebAppServiceTest(unittest.TestCase):
             # so the click-reload service chain must agree on the same exact shape.
             self.assertEqual(
                 baseline_entry.get("claim_coverage_summary"),
-                {"strong": 1, "weak": 4, "missing": 0},
+                {"strong": 1, "weak": 4, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(baseline_entry.get("claim_coverage_progress_summary") or ""),
@@ -16780,7 +16980,7 @@ class WebAppServiceTest(unittest.TestCase):
                 )
                 self.assertEqual(
                     entry["claim_coverage_summary"],
-                    {"strong": 1, "weak": 4, "missing": 0},
+                    {"strong": 1, "weak": 4, "missing": 0, "conflict": 0},
                     f"{stage} claim_coverage_summary must match the shipped mixed-count dict",
                 )
                 self.assertEqual(
@@ -16861,7 +17061,7 @@ class WebAppServiceTest(unittest.TestCase):
             # so the natural-reload service chain must agree on the same exact shape.
             self.assertEqual(
                 baseline_entry.get("claim_coverage_summary"),
-                {"strong": 1, "weak": 4, "missing": 0},
+                {"strong": 1, "weak": 4, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(baseline_entry.get("claim_coverage_progress_summary") or ""),
@@ -16892,7 +17092,7 @@ class WebAppServiceTest(unittest.TestCase):
                 )
                 self.assertEqual(
                     entry["claim_coverage_summary"],
-                    {"strong": 1, "weak": 4, "missing": 0},
+                    {"strong": 1, "weak": 4, "missing": 0, "conflict": 0},
                     f"{stage} claim_coverage_summary must match the shipped mixed-count dict",
                 )
                 self.assertEqual(
@@ -17037,7 +17237,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(reload_entry)
             self.assertEqual(
                 reload_entry.get("claim_coverage_summary") or {},
-                {"strong": 1, "weak": 4, "missing": 0},
+                {"strong": 1, "weak": 4, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(reload_entry.get("claim_coverage_progress_summary") or ""),
@@ -17155,7 +17355,7 @@ class WebAppServiceTest(unittest.TestCase):
             # follow-up stages, so the initial serialization anchor must agree.
             self.assertEqual(
                 entry.get("claim_coverage_summary"),
-                {"strong": 0, "weak": 0, "missing": 5},
+                {"strong": 0, "weak": 0, "missing": 5, "conflict": 0},
             )
 
             # progress summary must stay empty on the zero-strong path
@@ -17223,7 +17423,7 @@ class WebAppServiceTest(unittest.TestCase):
             # on the same exact shape.
             self.assertEqual(
                 baseline_entry.get("claim_coverage_summary"),
-                {"strong": 0, "weak": 0, "missing": 5},
+                {"strong": 0, "weak": 0, "missing": 5, "conflict": 0},
             )
             self.assertEqual(
                 str(baseline_entry.get("claim_coverage_progress_summary") or ""),
@@ -17254,7 +17454,7 @@ class WebAppServiceTest(unittest.TestCase):
                 )
                 self.assertEqual(
                     entry["claim_coverage_summary"],
-                    {"strong": 0, "weak": 0, "missing": 5},
+                    {"strong": 0, "weak": 0, "missing": 5, "conflict": 0},
                     f"{stage} claim_coverage_summary must match the shipped missing-only dict",
                 )
                 self.assertEqual(
@@ -17351,7 +17551,7 @@ class WebAppServiceTest(unittest.TestCase):
             # on the same exact shape.
             self.assertEqual(
                 baseline_entry.get("claim_coverage_summary"),
-                {"strong": 0, "weak": 0, "missing": 5},
+                {"strong": 0, "weak": 0, "missing": 5, "conflict": 0},
             )
             self.assertEqual(
                 str(baseline_entry.get("claim_coverage_progress_summary") or ""),
@@ -17382,7 +17582,7 @@ class WebAppServiceTest(unittest.TestCase):
                 )
                 self.assertEqual(
                     entry["claim_coverage_summary"],
-                    {"strong": 0, "weak": 0, "missing": 5},
+                    {"strong": 0, "weak": 0, "missing": 5, "conflict": 0},
                     f"{stage} claim_coverage_summary must match the shipped missing-only dict",
                 )
                 self.assertEqual(
@@ -17496,7 +17696,7 @@ class WebAppServiceTest(unittest.TestCase):
             reload_entry = second["session"]["web_search_history"][0]
             self.assertEqual(
                 reload_entry.get("claim_coverage_summary"),
-                {"strong": 0, "weak": 0, "missing": 5},
+                {"strong": 0, "weak": 0, "missing": 5, "conflict": 0},
             )
             self.assertEqual(
                 str(reload_entry.get("claim_coverage_progress_summary") or ""),
@@ -17578,7 +17778,7 @@ class WebAppServiceTest(unittest.TestCase):
             reload_entry = second["session"]["web_search_history"][0]
             self.assertEqual(
                 reload_entry.get("claim_coverage_summary"),
-                {"strong": 0, "weak": 0, "missing": 5},
+                {"strong": 0, "weak": 0, "missing": 5, "conflict": 0},
             )
             self.assertEqual(
                 str(reload_entry.get("claim_coverage_progress_summary") or ""),
@@ -17981,6 +18181,7 @@ class WebAppServiceTest(unittest.TestCase):
                 claim_coverage=[
                     {"slot": "장르", "status": "strong", "status_label": "교차 확인"},
                     {"slot": "개발사", "status": "strong", "status_label": "교차 확인"},
+                    {"slot": "서비스", "status": "conflict", "status_label": "정보 상충"},
                     {"slot": "출시일", "status": "weak", "status_label": "단일 출처"},
                     {"slot": "플랫폼", "status": "missing", "status_label": "미확인"},
                 ],
@@ -18005,13 +18206,13 @@ class WebAppServiceTest(unittest.TestCase):
             entity = by_query["붉은사막"]
             self.assertEqual(
                 entity["claim_coverage_summary"],
-                {"strong": 2, "weak": 1, "missing": 1},
+                {"strong": 2, "weak": 1, "missing": 1, "conflict": 1},
             )
 
             general = by_query["일반 검색"]
             self.assertEqual(
                 general["claim_coverage_summary"],
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
 
     def test_web_search_history_serializer_includes_claim_coverage_summary(self) -> None:
@@ -18042,10 +18243,11 @@ class WebAppServiceTest(unittest.TestCase):
                 },
                 claim_coverage=[
                     {"slot": "장르", "status": "strong", "status_label": "교차 확인"},
+                    {"slot": "서비스", "status": "conflict", "status_label": "정보 상충"},
                     {"slot": "출시일", "status": "weak", "status_label": "단일 출처"},
                     {"slot": "플랫폼", "status": "missing", "status_label": "미확인"},
                 ],
-                claim_coverage_progress_summary="교차 확인 1건, 단일 출처 1건, 미확인 1건.",
+                claim_coverage_progress_summary="교차 확인 1건, 정보 상충 1건, 단일 출처 1건, 미확인 1건.",
             )
 
             history = service._serialize_web_search_history(
@@ -18054,8 +18256,9 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(len(history), 1)
             self.assertEqual(
                 history[0]["claim_coverage_summary"],
-                {"strong": 1, "weak": 1, "missing": 1},
+                {"strong": 1, "weak": 1, "missing": 1, "conflict": 1},
             )
+            self.assertEqual(history[0]["claim_coverage_summary"]["conflict"], 1)
 
     def test_web_search_history_serializer_includes_claim_coverage_progress_summary(self) -> None:
         """session.web_search_history 직렬화가
@@ -18189,7 +18392,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(first_history["verification_label"], "설명형 다중 출처 합의")
             self.assertEqual(
                 first_history["claim_coverage_summary"],
-                {"strong": 3, "weak": 0, "missing": 2},
+                {"strong": 3, "weak": 0, "missing": 2, "conflict": 0},
             )
             self.assertEqual(first_history["claim_coverage_progress_summary"], "")
 
@@ -18245,7 +18448,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(reload_history["verification_label"], "설명형 다중 출처 합의")
             self.assertEqual(
                 reload_history["claim_coverage_summary"],
-                {"strong": 3, "weak": 0, "missing": 2},
+                {"strong": 3, "weak": 0, "missing": 2, "conflict": 0},
             )
             self.assertEqual(reload_history["claim_coverage_progress_summary"], "")
 
@@ -18343,7 +18546,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(first_history["verification_label"], "설명형 다중 출처 합의")
             self.assertEqual(
                 first_history["claim_coverage_summary"],
-                {"strong": 3, "weak": 0, "missing": 2},
+                {"strong": 3, "weak": 0, "missing": 2, "conflict": 0},
             )
             self.assertEqual(first_history["claim_coverage_progress_summary"], "")
 
@@ -18389,7 +18592,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(reload_history["verification_label"], "설명형 다중 출처 합의")
             self.assertEqual(
                 reload_history["claim_coverage_summary"],
-                {"strong": 3, "weak": 0, "missing": 2},
+                {"strong": 3, "weak": 0, "missing": 2, "conflict": 0},
             )
             self.assertEqual(reload_history["claim_coverage_progress_summary"], "")
 
@@ -18486,7 +18689,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(first_history["verification_label"], "기사 교차 확인")
             self.assertEqual(
                 first_history.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(first_history.get("claim_coverage_progress_summary") or ""),
@@ -18652,7 +18855,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(reload_entry)
             self.assertEqual(
                 reload_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(reload_entry.get("claim_coverage_progress_summary") or ""),
@@ -18763,7 +18966,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(reload_entry)
             self.assertEqual(
                 reload_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(reload_entry.get("claim_coverage_progress_summary") or ""),
@@ -18880,7 +19083,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(reload_entry)
             self.assertEqual(
                 reload_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(reload_entry.get("claim_coverage_progress_summary") or ""),
@@ -23855,7 +24058,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(history_entry)
             self.assertEqual(
                 history_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(history_entry.get("claim_coverage_progress_summary") or ""),
@@ -23958,7 +24161,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(history_entry)
             self.assertEqual(
                 history_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(history_entry.get("claim_coverage_progress_summary") or ""),
@@ -24068,7 +24271,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(history_entry)
             self.assertEqual(
                 history_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(history_entry.get("claim_coverage_progress_summary") or ""),
@@ -24160,7 +24363,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(followup_entry)
             self.assertEqual(
                 followup_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(followup_entry.get("claim_coverage_progress_summary") or ""),
@@ -24269,7 +24472,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(followup_entry)
             self.assertEqual(
                 followup_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(followup_entry.get("claim_coverage_progress_summary") or ""),
@@ -24371,7 +24574,7 @@ class WebAppServiceTest(unittest.TestCase):
                 )
                 self.assertEqual(
                     entry.get("claim_coverage_summary") or {},
-                    {"strong": 0, "weak": 0, "missing": 0},
+                    {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
                     f"{stage} claim_coverage_summary must stay zero-count",
                 )
                 self.assertEqual(
@@ -24815,7 +25018,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(history_entry)
             self.assertEqual(
                 history_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(history_entry.get("claim_coverage_progress_summary") or ""),
@@ -25876,7 +26079,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(history_entry)
             self.assertEqual(
                 history_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(history_entry.get("claim_coverage_progress_summary") or ""),
@@ -25975,7 +26178,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(history_entry)
             self.assertEqual(
                 history_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(history_entry.get("claim_coverage_progress_summary") or ""),
@@ -26046,7 +26249,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(history_entry)
             self.assertEqual(
                 history_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(history_entry.get("claim_coverage_progress_summary") or ""),
@@ -26119,7 +26322,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(history_entry)
             self.assertEqual(
                 history_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(history_entry.get("claim_coverage_progress_summary") or ""),
@@ -26180,7 +26383,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(history_entry)
             self.assertEqual(
                 history_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(history_entry.get("claim_coverage_progress_summary") or ""),
@@ -26243,7 +26446,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(history_entry)
             self.assertEqual(
                 history_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(history_entry.get("claim_coverage_progress_summary") or ""),
@@ -26311,7 +26514,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(history_entry)
             self.assertEqual(
                 history_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(history_entry.get("claim_coverage_progress_summary") or ""),
@@ -26381,7 +26584,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(history_entry)
             self.assertEqual(
                 history_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(history_entry.get("claim_coverage_progress_summary") or ""),
@@ -26476,7 +26679,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIsNotNone(reload_entry)
             self.assertEqual(
                 reload_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(reload_entry.get("claim_coverage_progress_summary") or ""),
@@ -26570,7 +26773,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(latest_entry["verification_label"], "기사 교차 확인")
             self.assertEqual(
                 latest_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(latest_entry.get("claim_coverage_progress_summary") or ""),
@@ -26666,7 +26869,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(latest_entry["verification_label"], "기사 교차 확인")
             self.assertEqual(
                 latest_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(latest_entry.get("claim_coverage_progress_summary") or ""),
@@ -26761,7 +26964,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(latest_entry["verification_label"], "기사 교차 확인")
             self.assertEqual(
                 latest_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(latest_entry.get("claim_coverage_progress_summary") or ""),
@@ -26857,7 +27060,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(latest_entry["verification_label"], "기사 교차 확인")
             self.assertEqual(
                 latest_entry.get("claim_coverage_summary") or {},
-                {"strong": 0, "weak": 0, "missing": 0},
+                {"strong": 0, "weak": 0, "missing": 0, "conflict": 0},
             )
             self.assertEqual(
                 str(latest_entry.get("claim_coverage_progress_summary") or ""),
@@ -26925,7 +27128,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(noisy_entry["verification_label"], "설명형 다중 출처 합의")
             self.assertEqual(
                 noisy_entry.get("claim_coverage_summary"),
-                {"strong": 3, "weak": 0, "missing": 2},
+                {"strong": 3, "weak": 0, "missing": 2, "conflict": 0},
             )
             self.assertEqual(
                 str(noisy_entry.get("claim_coverage_progress_summary") or ""),
@@ -27004,7 +27207,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(noisy_entry["verification_label"], "설명형 다중 출처 합의")
             self.assertEqual(
                 noisy_entry.get("claim_coverage_summary"),
-                {"strong": 3, "weak": 0, "missing": 2},
+                {"strong": 3, "weak": 0, "missing": 2, "conflict": 0},
             )
             self.assertEqual(
                 str(noisy_entry.get("claim_coverage_progress_summary") or ""),
@@ -27080,7 +27283,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(noisy_entry["verification_label"], "설명형 다중 출처 합의")
             self.assertEqual(
                 noisy_entry.get("claim_coverage_summary"),
-                {"strong": 3, "weak": 0, "missing": 2},
+                {"strong": 3, "weak": 0, "missing": 2, "conflict": 0},
             )
             self.assertEqual(
                 str(noisy_entry.get("claim_coverage_progress_summary") or ""),
@@ -27158,7 +27361,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(noisy_entry["verification_label"], "설명형 다중 출처 합의")
             self.assertEqual(
                 noisy_entry.get("claim_coverage_summary"),
-                {"strong": 3, "weak": 0, "missing": 2},
+                {"strong": 3, "weak": 0, "missing": 2, "conflict": 0},
             )
             self.assertEqual(
                 str(noisy_entry.get("claim_coverage_progress_summary") or ""),

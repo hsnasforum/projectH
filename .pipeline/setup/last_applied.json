@@ -1,8 +1,8 @@
 {
-  "setup_id": "setup-20260410-032059-905058",
-  "approved_preview_fingerprint": "sha256:3dd83882b6d270746faa4aef68232a57dac68a55a4fe7734295d0c71dace969e",
-  "active_profile_fingerprint": "sha256:28194da5012667f70096b2dae3f070d27ddaae38ebb4965c13018f667041fb6b",
-  "applied_at": "2026-04-09T18:21:14.374056+00:00",
+  "setup_id": "setup-20260419-195239-7007a0",
+  "approved_preview_fingerprint": "sha256:d2d90b60ad62e238a3bc04c40afe1cd6e6533c59dbcdbd45c2025ff71c0cbbe3",
+  "active_profile_fingerprint": "sha256:2f7a62303c946ebcbf0343d01bd825910826eb2b1d08ea0a393fa915e87734ef",
+  "applied_at": "2026-04-19T10:52:39.943153+00:00",
   "restart_required": true,
-  "executor": "Codex"
+  "executor": "Claude"
 }

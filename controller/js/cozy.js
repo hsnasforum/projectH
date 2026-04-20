@@ -32,6 +32,23 @@ const LOG_REFRESH_MS = 1000;
 const EVENT_LIMIT = 40;
 const INACTIVE_RUNTIME_STATES = new Set(['STOPPED', 'STOPPING', 'BROKEN']);
 const UNCERTAIN_RUNTIME_REASONS = new Set(['supervisor_missing_recent_ambiguous', 'supervisor_missing_snapshot_undated']);
+const AGENT_NAMES = Object.freeze(['Claude', 'Codex', 'Gemini']);
+const ROLE_NAMES = Object.freeze(['implement', 'verify', 'advisory']);
+const DEFAULT_ROLE_OWNERS = Object.freeze({
+  implement: 'Claude',
+  verify: 'Codex',
+  advisory: 'Gemini',
+});
+const ROLE_ZONE_KEYS = Object.freeze({
+  implement: 'claude_desk',
+  verify: 'codex_desk',
+  advisory: 'gemini_desk',
+});
+const ROLE_ICONS = Object.freeze({
+  implement: '🌿',
+  verify: '📘',
+  advisory: '✨',
+});
 const LANE_META = {
   Claude: { role: 'implement', zone: 'claude_desk', color: '#5c9a4a' },
   Codex: { role: 'verify', zone: 'codex_desk', color: '#6aa7c9' },
@@ -40,6 +57,8 @@ const LANE_META = {
 const runtimeStateStore = {
   data: null,
   events: [],
+  statusFetchFailureActive: false,
+  statusFetchFailureMessage: '',
   previous: { runtimeState: null, controlStatus: null, watcherStatus: null, uncertainRuntime: null, laneStates: {}, roundState: null },
   delivery: {
     initialized: false,
@@ -55,6 +74,127 @@ let lastMarqueeText = '';
 let lowMotion = false;
 let muted = false;
 let pollInFlight = false;
+
+function isIdleLikeState(state) {
+  const value = String(state || '').toLowerCase();
+  return value === 'ready' || value === 'idle' || value === 'off';
+}
+
+function loungeSeatZone(agentName) {
+  const lounge = ZONE_MAP.lounge;
+  const idx = Math.max(0, AGENT_NAMES.indexOf(agentName));
+  const paddingX = 72;
+  const paddingY = 44;
+  const usableW = lounge.w - paddingX * 2;
+  const seatW = usableW / AGENT_NAMES.length;
+  return {
+    x: lounge.x + paddingX + seatW * idx,
+    y: lounge.y + paddingY,
+    w: seatW,
+    h: lounge.h - paddingY - 54,
+  };
+}
+
+function loungeSeatTarget(agentName) {
+  const zone = loungeSeatZone(agentName);
+  return {
+    x: zone.x + zone.w / 2,
+    y: zone.y + zone.h * 0.45,
+  };
+}
+
+function movementZoneForAgent(agent) {
+  if (agent && isIdleLikeState(agent.state)) return loungeSeatZone(agent.name);
+  const zone = agent ? ZONE_MAP[agent._homeZone] : null;
+  return zone || ZONE_MAP.claude_desk;
+}
+
+function currentRoleOwners(data = runtimeStateStore.data) {
+  const raw = data && typeof data.role_owners === 'object' && data.role_owners ? data.role_owners : null;
+  const owners = { ...DEFAULT_ROLE_OWNERS };
+  for (const role of ROLE_NAMES) {
+    if (!raw || !Object.prototype.hasOwnProperty.call(raw, role)) continue;
+    const owner = String(raw[role] || '').trim();
+    owners[role] = AGENT_NAMES.includes(owner) ? owner : '';
+  }
+  return owners;
+}
+
+function roleForAgent(name, data = runtimeStateStore.data) {
+  const owners = currentRoleOwners(data);
+  for (const role of ROLE_NAMES) {
+    if (owners[role] === name) return role;
+  }
+  return LANE_META[name]?.role || '';
+}
+
+function zoneKeyForRole(role) {
+  return ROLE_ZONE_KEYS[role] || 'claude_desk';
+}
+
+function ownerForZone(zoneKey, data = runtimeStateStore.data) {
+  const role = ZONE_MAP[zoneKey]?.role || '';
+  if (!ROLE_NAMES.includes(role)) return '';
+  return currentRoleOwners(data)[role] || '';
+}
+
+function labelForZone(zoneKey, data = runtimeStateStore.data) {
+  const zone = ZONE_MAP[zoneKey];
+  if (!zone) return '';
+  if (!ROLE_NAMES.includes(zone.role)) {
+    return STATE_ZONE_LABELS[zoneKey] || zone.role.toUpperCase();
+  }
+  const owner = ownerForZone(zoneKey, data);
+  const icon = ROLE_ICONS[zone.role] || '';
+  return owner ? `${icon} ${owner} · ${zone.role.toUpperCase()}` : `${icon} ${zone.role.toUpperCase()}`;
+}
+
+function zoneView(zoneKey, data = runtimeStateStore.data) {
+  const zone = ZONE_MAP[zoneKey];
+  if (!zone) return null;
+  if (!ROLE_NAMES.includes(zone.role)) return zone;
+  const owner = ownerForZone(zoneKey, data);
+  return owner ? { ...zone, agent: owner } : { ...zone, agent: null };
+}
+
+function agentMetaForName(name, data = runtimeStateStore.data) {
+  const role = roleForAgent(name, data);
+  const zoneKey = zoneKeyForRole(role);
+  const zone = ZONE_MAP[zoneKey] || ZONE_MAP.claude_desk;
+  return { role, zoneKey, color: zone.color };
+}
+
+function applyAgentRoleBinding(agent, data = runtimeStateStore.data, { snap = false } = {}) {
+  const meta = agentMetaForName(agent.name, data);
+  const previousZone = agent._homeZone;
+  const wasAtLounge = !!agent.atLounge;
+  agent.role = meta.role;
+  agent.color = meta.color || agent.color;
+  agent._homeZone = meta.zoneKey;
+  if (isIdleLikeState(agent.state)) {
+    const seat = loungeSeatTarget(agent.name);
+    agent.atLounge = true;
+    agent.loungeTimer = 0;
+    agent.tx = seat.x;
+    agent.ty = seat.y;
+    if (snap || previousZone !== meta.zoneKey || !wasAtLounge) {
+      agent.x = seat.x;
+      agent.y = seat.y;
+    }
+    return;
+  }
+  agent.atLounge = false;
+  const home = ZONE_MAP[meta.zoneKey];
+  if (!home) return;
+  const homeX = home.x + home.w / 2;
+  const homeY = home.y + home.h * 0.58;
+  agent.tx = homeX;
+  agent.ty = homeY;
+  if (snap || previousZone !== meta.zoneKey || wasAtLounge) {
+    agent.x = homeX;
+    agent.y = homeY;
+  }
+}
 
 const canvas = document.getElementById('office');
 const ctx = canvas.getContext('2d');
@@ -77,18 +217,17 @@ window.addEventListener('resize', resize);
 /* ─── Agents (mock state) ────────────────────────────────────── */
 class Agent {
   constructor(name, state, note, color) {
+    const meta = agentMetaForName(name);
+    const resting = isIdleLikeState(state);
     this.name = name;
     this.state = state;
     this.note = note || '';
-    this.color = color;
-    this.role = LANE_META[name]?.role || '';
+    this.color = color || meta.color;
+    this.role = meta.role;
     this.pid = null;
     this.lastEventAt = '';
     this.fatigueState = '';
-    const home = ZONE_MAP[`${name.toLowerCase()}_desk`];
-    this.x = home.x + home.w / 2;
-    this.y = home.y + home.h * 0.58;
-    this._homeZone = `${name.toLowerCase()}_desk`;
+    this._homeZone = meta.zoneKey;
     this.bobPhase = Math.random() * Math.PI * 2;
     this.blinkTimer = Math.random() * 3;
     this.isBlinking = false;
@@ -96,9 +235,18 @@ class Agent {
     this.bubble = { text: note || '', fullText: note || '', timer: 999, typeIdx: (note || '').length, typeTimer: 0 };
     this.workLoad = state === 'working' ? 6 : 0;
     this.wanderTimer = 2 + Math.random() * 2;
-    this.atLounge = false;
+    this.atLounge = resting;
     this.loungeTimer = 0;
-    this.tx = this.x; this.ty = this.y;
+    const start = resting
+      ? loungeSeatTarget(name)
+      : {
+          x: (ZONE_MAP[meta.zoneKey] || ZONE_MAP.claude_desk).x + (ZONE_MAP[meta.zoneKey] || ZONE_MAP.claude_desk).w / 2,
+          y: (ZONE_MAP[meta.zoneKey] || ZONE_MAP.claude_desk).y + (ZONE_MAP[meta.zoneKey] || ZONE_MAP.claude_desk).h * 0.58,
+        };
+    this.x = start.x;
+    this.y = start.y;
+    this.tx = this.x;
+    this.ty = this.y;
   }
   setBubble(text) {
     this.bubble = { text: '', fullText: text || '', timer: 4.5, typeIdx: 0, typeTimer: 0 };
@@ -111,40 +259,14 @@ class Agent {
       this.blinkTimer = this.isBlinking ? 0.12 : 2 + Math.random() * 3;
     }
 
-    // Lounge-routing: idle-like agents drift to the sofa after a beat
-    const isIdle = this.state === 'ready' || this.state === 'off' || this.state === 'idle';
-    if (isIdle && !this.atLounge) {
-      this.loungeTimer += dt;
-      if (this.loungeTimer > 4) {
-        // Go to a random sofa seat
-        const lounge = ZONE_MAP.lounge;
-        const seatIdx = ['Claude','Codex','Gemini'].indexOf(this.name);
-        const seatX = lounge.x + lounge.w * 0.5 + (seatIdx - 1) * 70;
-        const seatY = lounge.y + lounge.h * 0.45;
-        this.tx = seatX; this.ty = seatY;
-        this.facingRight = this.tx > this.x;
-        this.atLounge = true;
-        this.wanderTimer = 999; // freeze desk wander while heading out
-      }
-    } else if (!isIdle && this.atLounge) {
-      // Snap back to desk when they get busy
-      this.atLounge = false;
-      this.loungeTimer = 0;
-      this.wanderTimer = 0;
-    } else if (!isIdle) {
-      this.loungeTimer = 0;
-    }
-
     // Wander
     this.wanderTimer -= dt;
     if (this.wanderTimer <= 0) {
       this.wanderTimer = 2 + Math.random() * 3;
       if (this.atLounge) {
-        // small shuffle on the sofa
-        const lounge = ZONE_MAP.lounge;
-        const seatIdx = ['Claude','Codex','Gemini'].indexOf(this.name);
-        this.tx = lounge.x + lounge.w * 0.5 + (seatIdx - 1) * 70 + (Math.random() - 0.5) * 8;
-        this.ty = lounge.y + lounge.h * 0.45 + (Math.random() - 0.5) * 4;
+        const seat = loungeSeatZone(this.name);
+        this.tx = seat.x + 18 + Math.random() * Math.max(20, seat.w - 36);
+        this.ty = seat.y + 12 + Math.random() * Math.max(20, seat.h - 24);
       } else {
         const z = ZONE_MAP[this._homeZone];
         this.tx = z.x + 30 + Math.random() * (z.w - 60);
@@ -224,7 +346,8 @@ function drawFloor() {
 
 /* ═══ Zones: cozy mat + pixel-frame label plate ═══ */
 function drawZones() {
-  for (const [key, zone] of Object.entries(ZONE_MAP)) {
+  for (const key of Object.keys(ZONE_MAP)) {
+    const zone = zoneView(key) || ZONE_MAP[key];
     const sx = zone.x * scale, sy = zone.y * scale;
     const sw = zone.w * scale, sh = zone.h * scale;
 
@@ -245,7 +368,7 @@ function drawZones() {
     if (zone.agent) drawWallDecor(zone);
 
     // Label plate (top-left) — JRPG menu style
-    drawLabelPlate(sx + 8 * scale, sy + 8 * scale, STATE_ZONE_LABELS[key] || zone.role.toUpperCase());
+    drawLabelPlate(sx + 8 * scale, sy + 8 * scale, labelForZone(key));
 
     // Zone-specific furniture
     if (zone.agent) { drawRug(zone); drawWoodenDesk(zone); }
@@ -299,34 +422,37 @@ function drawPlankFloor(sx, sy, sw, sh) {
   ctx.restore();
 }
 
-/* ─── Wall decor: pixel clock + post-its + shelf/bunting per desk zone ─── */
+/* ─── Wall decor: pixel clock + post-its + window + bunting per desk zone ─── */
 function drawWallDecor(zone) {
   const sx = zone.x * scale, sy = zone.y * scale;
   const sw = zone.w * scale;
 
+  // Window on the back wall (time-of-day scenery).
+  drawWindow(sx + sw * 0.50, sy + 58 * scale, zone.agent);
+
   // Small pixel wall clock (top-right of each desk zone)
   drawPixelClock(sx + sw - 32 * scale, sy + 22 * scale);
 
-  // Post-its on the "wall" — offset per zone so each feels different
+  // Post-its on the wall, pushed to the edges so the window stays readable.
   const agentSeed = { Claude: 0, Codex: 1, Gemini: 2 }[zone.agent] ?? 0;
   const notes = [
     // Claude — yellow + green
     [
-      { x: 0.32, y: 18, col: '#f0d056', txt: 'TODO' },
-      { x: 0.46, y: 12, col: '#a8d89a', txt: '✓' },
-      { x: 0.60, y: 22, col: '#f4a8b0', txt: '!!' },
+      { x: 0.10, y: 30, col: '#f0d056', txt: 'TODO' },
+      { x: 0.22, y: 42, col: '#a8d89a', txt: '✓' },
+      { x: 0.88, y: 52, col: '#f4a8b0', txt: '!!' },
     ],
     // Codex — blue + pink
     [
-      { x: 0.30, y: 14, col: '#a8cce0', txt: 'REV' },
-      { x: 0.44, y: 22, col: '#f0d056', txt: '...' },
-      { x: 0.58, y: 16, col: '#f4a8b0', txt: '♥' },
+      { x: 0.10, y: 36, col: '#a8cce0', txt: 'REV' },
+      { x: 0.22, y: 26, col: '#f0d056', txt: '...' },
+      { x: 0.88, y: 46, col: '#f4a8b0', txt: '♥' },
     ],
     // Gemini — mustard + lilac
     [
-      { x: 0.30, y: 20, col: '#d6b0e0', txt: '~~~' },
-      { x: 0.46, y: 14, col: '#f0d056', txt: 'IDEA' },
-      { x: 0.60, y: 24, col: '#a8d89a', txt: '✦' },
+      { x: 0.10, y: 44, col: '#d6b0e0', txt: '~~~' },
+      { x: 0.22, y: 30, col: '#f0d056', txt: 'IDEA' },
+      { x: 0.88, y: 40, col: '#a8d89a', txt: '✦' },
     ],
   ][agentSeed];
   notes.forEach(n => {
@@ -504,6 +630,192 @@ function drawLabelPlate(x, y, text) {
   ctx.textAlign = 'left';
   ctx.fillText(text, x + padX, y + h / 2 + 1);
   ctx.restore();
+}
+
+/* ─── Window with time-of-day scenery ─── */
+const _stars = Array.from({ length: 24 }, () => ({
+  x: Math.random(),
+  y: Math.random() * 0.6,
+  phase: Math.random() * Math.PI * 2,
+  speed: 0.8 + Math.random() * 1.8,
+  bright: 0.5 + Math.random() * 0.5,
+}));
+
+const _clouds = [
+  { x: 0.15, y: 0.25, w: 18, h: 6 },
+  { x: 0.55, y: 0.18, w: 22, h: 7 },
+  { x: 0.82, y: 0.32, w: 14, h: 5 },
+];
+
+function drawWindow(vcx, vcy, _agentName) {
+  if (window.__hideWindow) return;
+  const ww = 110 * scale;
+  const wh = 72 * scale;
+  const x = vcx - ww / 2;
+  const y = vcy - wh / 2;
+
+  let hr;
+  if (window.__timeOverride != null) {
+    hr = window.__timeOverride;
+  } else {
+    const now = new Date();
+    hr = now.getHours() + now.getMinutes() / 60;
+  }
+
+  let phase;
+  if (hr >= 5 && hr < 8) phase = 'dawn';
+  else if (hr >= 8 && hr < 17) phase = 'day';
+  else if (hr >= 17 && hr < 20) phase = 'sunset';
+  else phase = 'night';
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, ww, wh);
+  ctx.clip();
+
+  if (phase === 'day') {
+    const gradient = ctx.createLinearGradient(x, y, x, y + wh);
+    gradient.addColorStop(0, '#7ac0e0');
+    gradient.addColorStop(1, '#b8dced');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(x, y, ww, wh);
+    ctx.fillStyle = '#6a9a5a';
+    ctx.fillRect(x, y + wh * 0.75, ww, wh * 0.25);
+    ctx.fillRect(x + ww * 0.15, y + wh * 0.7, ww * 0.2, wh * 0.1);
+    ctx.fillRect(x + ww * 0.55, y + wh * 0.68, ww * 0.25, wh * 0.12);
+    ctx.fillStyle = '#507a42';
+    ctx.fillRect(x, y + wh * 0.82, ww, wh * 0.18);
+    ctx.fillStyle = '#f8e090';
+    ctx.fillRect(x + ww * 0.78, y + wh * 0.15, 6 * scale, 6 * scale);
+    ctx.fillRect(x + ww * 0.80, y + wh * 0.13, 2 * scale, 10 * scale);
+    ctx.fillRect(x + ww * 0.76, y + wh * 0.17, 10 * scale, 2 * scale);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x + ww * 0.79, y + wh * 0.15, 2 * scale, 2 * scale);
+    const now = performance.now() / 1000;
+    _clouds.forEach((cloud, index) => {
+      const offset = ((now * 4 + index * 50) % (ww + 80)) - 40;
+      drawCloud(x + offset, y + cloud.y * wh, cloud.w * scale, cloud.h * scale);
+    });
+  } else if (phase === 'dawn' || phase === 'sunset') {
+    const gradient = ctx.createLinearGradient(x, y, x, y + wh);
+    if (phase === 'dawn') {
+      gradient.addColorStop(0, '#6a5a8a');
+      gradient.addColorStop(0.5, '#e09a6a');
+      gradient.addColorStop(1, '#f4c488');
+    } else {
+      gradient.addColorStop(0, '#3a2a5a');
+      gradient.addColorStop(0.4, '#c2553a');
+      gradient.addColorStop(0.75, '#e8893a');
+      gradient.addColorStop(1, '#f4b84a');
+    }
+    ctx.fillStyle = gradient;
+    ctx.fillRect(x, y, ww, wh);
+    ctx.fillStyle = '#3a2a3a';
+    ctx.fillRect(x, y + wh * 0.78, ww, wh * 0.22);
+    ctx.fillRect(x + ww * 0.2, y + wh * 0.72, ww * 0.2, wh * 0.1);
+    ctx.fillRect(x + ww * 0.58, y + wh * 0.70, ww * 0.25, wh * 0.12);
+    const sunY = phase === 'sunset' ? y + wh * 0.52 : y + wh * 0.45;
+    ctx.fillStyle = '#fde0a0';
+    ctx.fillRect(x + ww * 0.55, sunY, 10 * scale, 10 * scale);
+    ctx.fillStyle = '#fff4c0';
+    ctx.fillRect(x + ww * 0.57, sunY + 2 * scale, 6 * scale, 6 * scale);
+    ctx.fillStyle = 'rgba(255, 230, 160, 0.35)';
+    ctx.fillRect(x + ww * 0.5, sunY + 12 * scale, 14 * scale, 1 * scale);
+    ctx.fillRect(x + ww * 0.52, sunY + 15 * scale, 10 * scale, 1 * scale);
+    if (phase === 'sunset') {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+      [[0.15, 0.1], [0.3, 0.15], [0.75, 0.08]].forEach(([sx, sy]) => {
+        ctx.fillRect(x + sx * ww, y + sy * wh, 1, 1);
+      });
+    }
+  } else {
+    const gradient = ctx.createLinearGradient(x, y, x, y + wh);
+    gradient.addColorStop(0, '#0a0f2a');
+    gradient.addColorStop(1, '#1a2048');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(x, y, ww, wh);
+    const now = performance.now() / 1000;
+    _stars.forEach((star) => {
+      const sx = x + star.x * ww;
+      const sy = y + star.y * wh;
+      const twinkle = 0.4 + 0.6 * Math.max(0, Math.sin(now * star.speed + star.phase));
+      ctx.fillStyle = `rgba(255, 255, 255, ${twinkle * star.bright})`;
+      ctx.fillRect(sx, sy, 1, 1);
+      if (twinkle > 0.85 && star.bright > 0.8) {
+        ctx.fillStyle = `rgba(255, 255, 255, ${(twinkle - 0.5) * 0.8})`;
+        ctx.fillRect(sx - 1, sy, 1, 1);
+        ctx.fillRect(sx + 1, sy, 1, 1);
+        ctx.fillRect(sx, sy - 1, 1, 1);
+        ctx.fillRect(sx, sy + 1, 1, 1);
+      }
+    });
+    const moonX = x + ww * 0.78;
+    const moonY = y + wh * 0.22;
+    ctx.fillStyle = '#f4e8c0';
+    ctx.fillRect(moonX - 4 * scale, moonY - 4 * scale, 9 * scale, 9 * scale);
+    ctx.fillRect(moonX - 3 * scale, moonY - 5 * scale, 7 * scale, 1 * scale);
+    ctx.fillRect(moonX - 3 * scale, moonY + 5 * scale, 7 * scale, 1 * scale);
+    ctx.fillRect(moonX - 5 * scale, moonY - 3 * scale, 1 * scale, 7 * scale);
+    ctx.fillRect(moonX + 5 * scale, moonY - 3 * scale, 1 * scale, 7 * scale);
+    ctx.fillStyle = '#1a2048';
+    ctx.fillRect(moonX - 2 * scale, moonY - 4 * scale, 7 * scale, 9 * scale);
+    ctx.fillRect(moonX - 1 * scale, moonY - 5 * scale, 6 * scale, 1 * scale);
+    ctx.fillRect(moonX - 1 * scale, moonY + 5 * scale, 6 * scale, 1 * scale);
+    ctx.fillRect(moonX - 3 * scale, moonY - 3 * scale, 1 * scale, 7 * scale);
+    ctx.fillStyle = '#d4c090';
+    ctx.fillRect(moonX - 4 * scale, moonY - 2 * scale, 1 * scale, 1 * scale);
+    ctx.fillRect(moonX - 3 * scale, moonY + 2 * scale, 1 * scale, 1 * scale);
+    ctx.fillStyle = '#0a0a18';
+    ctx.fillRect(x, y + wh * 0.78, ww, wh * 0.22);
+    ctx.fillRect(x + ww * 0.22, y + wh * 0.72, ww * 0.2, wh * 0.1);
+    ctx.fillRect(x + ww * 0.58, y + wh * 0.70, ww * 0.25, wh * 0.12);
+  }
+
+  ctx.restore();
+
+  ctx.fillStyle = '#5a3d22';
+  ctx.fillRect(x - 4 * scale, y - 4 * scale, ww + 8 * scale, 4 * scale);
+  ctx.fillRect(x - 4 * scale, y + wh, ww + 8 * scale, 4 * scale);
+  ctx.fillRect(x - 4 * scale, y - 4 * scale, 4 * scale, wh + 8 * scale);
+  ctx.fillRect(x + ww, y - 4 * scale, 4 * scale, wh + 8 * scale);
+  ctx.fillStyle = '#2a1810';
+  ctx.fillRect(x - 5 * scale, y - 5 * scale, ww + 10 * scale, 1);
+  ctx.fillRect(x - 5 * scale, y + wh + 4 * scale, ww + 10 * scale, 1);
+  ctx.fillRect(x - 5 * scale, y - 5 * scale, 1, wh + 10 * scale);
+  ctx.fillRect(x + ww + 4 * scale, y - 5 * scale, 1, wh + 10 * scale);
+  ctx.fillStyle = '#8a5f35';
+  ctx.fillRect(x - 3 * scale, y - 3 * scale, ww + 6 * scale, 1);
+  ctx.fillRect(x - 3 * scale, y - 3 * scale, 1, wh + 6 * scale);
+  ctx.fillStyle = '#3a2a1a';
+  ctx.fillRect(x + ww / 2 - 1, y, 2, wh);
+  ctx.fillRect(x, y + wh / 2 - 1, ww, 2);
+  ctx.fillStyle = '#5a3d22';
+  ctx.fillRect(x + ww / 2 - 1, y, 1, wh);
+  ctx.fillRect(x, y + wh / 2 - 1, ww, 1);
+  ctx.fillStyle = '#6a4525';
+  ctx.fillRect(x - 6 * scale, y + wh + 3 * scale, ww + 12 * scale, 3 * scale);
+  ctx.fillStyle = '#2a1810';
+  ctx.fillRect(x - 6 * scale, y + wh + 6 * scale, ww + 12 * scale, 1);
+  ctx.fillStyle = '#8a5f35';
+  ctx.fillRect(x - 6 * scale, y + wh + 3 * scale, ww + 12 * scale, 1);
+
+  const plantX = x + ww - 8 * scale;
+  const plantY = y + wh + 3 * scale;
+  ctx.fillStyle = '#a85030';
+  ctx.fillRect(plantX - 3 * scale, plantY, 6 * scale, 3 * scale);
+  ctx.fillStyle = '#5c9a4a';
+  ctx.fillRect(plantX - 2 * scale, plantY - 3 * scale, 4 * scale, 3 * scale);
+  ctx.fillStyle = '#7ab867';
+  ctx.fillRect(plantX - 1 * scale, plantY - 4 * scale, 2 * scale, 1 * scale);
+}
+
+function drawCloud(cx, cy, w, h) {
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.fillRect(cx, cy, w, h);
+  ctx.fillRect(cx + w * 0.2, cy - h * 0.4, w * 0.4, h * 0.4);
+  ctx.fillRect(cx + w * 0.55, cy - h * 0.25, w * 0.3, h * 0.25);
+  ctx.fillStyle = 'rgba(180, 200, 220, 0.7)';
+  ctx.fillRect(cx, cy + h - 2, w, 2);
 }
 
 /* ═══ Wooden desk (replaces iso wireframe) ═══ */
@@ -1585,17 +1897,50 @@ class Cat {
     this.x = lounge.x + lounge.w * 0.3;
     this.y = lounge.y + lounge.h * 0.78;
     this.tx = this.x; this.ty = this.y;
-    this.state = 'wander';    // wander | sleep | sit
+    this.state = 'wander';    // wander | sleep | sit | pet
     this.stateTimer = 3 + Math.random() * 3;
     this.facingRight = true;
     this.bobPhase = Math.random() * Math.PI * 2;
     this.walkPhase = 0;
     this.zPhase = 0;
+    this.petPurrPhase = 0;
+    this.heartCooldown = 0;
+  }
+  pet(clickX) {
+    this.facingRight = clickX > this.x;
+    this.state = 'pet';
+    this.stateTimer = 3.5;
+    this.petPurrPhase = 0;
+    for (let i = 0; i < 5; i++) {
+      spawnRedHeart(
+        this.x + (Math.random() - 0.5) * 10,
+        this.y - 14 - Math.random() * 4,
+      );
+    }
+    this.heartCooldown = 0.2;
+    window.Audio8?.meow();
   }
   update(dt) {
     this.stateTimer -= dt;
     this.bobPhase += dt * 4;
     this.zPhase += dt;
+
+    if (this.state === 'pet') {
+      this.petPurrPhase += dt * 6;
+      this.heartCooldown -= dt;
+      if (this.heartCooldown <= 0) {
+        spawnRedHeart(
+          this.x + (Math.random() - 0.5) * 8,
+          this.y - 14 - Math.random() * 3,
+        );
+        this.heartCooldown = 0.18 + Math.random() * 0.18;
+      }
+      if (this.stateTimer <= 0) {
+        this.state = 'sit';
+        this.stateTimer = 1.2;
+      }
+      return;
+    }
 
     if (this.stateTimer <= 0) {
       this.pickNewAction();
@@ -2021,6 +2366,16 @@ function spawnHeart(x, y) {
     shape: Math.random() < 0.5 ? 'heart' : 'note',
   });
 }
+function spawnRedHeart(x, y) {
+  particles.push({
+    x, y,
+    vy: -26 - Math.random() * 10,
+    vx: (Math.random() - 0.5) * 10,
+    life: 1.4, maxLife: 1.4,
+    color: '#e83a4a',
+    shape: 'heart',
+  });
+}
 function updateParticles(dt) {
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
@@ -2054,6 +2409,337 @@ function drawParticles() {
   }
 }
 
+/* ═══ Pneumatic tube / courier packets / owls ═══ */
+const TUBE = {
+  x: 988,
+  yTop: 50,
+  yBot: 500,
+  radius: 14,
+};
+
+const packets = [];
+const owls = [];
+
+function queueScenePacket(fromZone, toZone, color = '#fbf3dd') {
+  if (lowMotion) return;
+  sendPacket(fromZone, toZone, color);
+}
+
+function queueSceneOwl(toZone, pickup = true) {
+  if (lowMotion) return;
+  sendOwl(toZone, pickup);
+}
+
+function drawPneumaticTube() {
+  const time = performance.now() / 1000;
+  const cx = TUBE.x * scale;
+  const radius = TUBE.radius * scale;
+  const yTop = TUBE.yTop * scale;
+  const yBottom = TUBE.yBot * scale;
+
+  [yTop, (yTop + yBottom) / 2, yBottom].forEach((bracketY) => {
+    ctx.fillStyle = '#5a3d22';
+    ctx.fillRect(cx - radius - 6 * scale, bracketY - 3 * scale, 2 * scale, 6 * scale);
+    ctx.fillRect(cx + radius + 4 * scale, bracketY - 3 * scale, 2 * scale, 6 * scale);
+    ctx.fillStyle = '#3a2a1a';
+    ctx.fillRect(cx - radius - 6 * scale, bracketY - 4 * scale, radius * 2 + 12 * scale, 1);
+    ctx.fillRect(cx - radius - 6 * scale, bracketY + 3 * scale, radius * 2 + 12 * scale, 1);
+  });
+
+  ctx.fillStyle = '#8a5f35';
+  ctx.fillRect(cx - radius - 4 * scale, yTop - 10 * scale, radius * 2 + 8 * scale, 6 * scale);
+  ctx.fillRect(cx - radius - 4 * scale, yBottom + 4 * scale, radius * 2 + 8 * scale, 6 * scale);
+  ctx.fillStyle = '#3a2a1a';
+  ctx.fillRect(cx - radius - 5 * scale, yTop - 11 * scale, radius * 2 + 10 * scale, 1);
+  ctx.fillRect(cx - radius - 5 * scale, yTop - 4 * scale, radius * 2 + 10 * scale, 1);
+  ctx.fillRect(cx - radius - 5 * scale, yBottom + 3 * scale, radius * 2 + 10 * scale, 1);
+  ctx.fillRect(cx - radius - 5 * scale, yBottom + 10 * scale, radius * 2 + 10 * scale, 1);
+  ctx.fillStyle = '#1a0f08';
+  ctx.fillRect(cx - radius + 1, yTop - 10 * scale, radius * 2 - 2, 4 * scale);
+  ctx.fillRect(cx - radius + 1, yBottom + 6 * scale, radius * 2 - 2, 4 * scale);
+
+  ctx.fillStyle = 'rgba(180, 220, 235, 0.22)';
+  ctx.fillRect(cx - radius, yTop, radius * 2, yBottom - yTop);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+  ctx.fillRect(cx - radius + 2, yTop + 4, 1 * scale, yBottom - yTop - 8);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
+  ctx.fillRect(cx - radius + 4 * scale, yTop + 4, 1, yBottom - yTop - 8);
+  ctx.fillStyle = 'rgba(40, 60, 80, 0.18)';
+  ctx.fillRect(cx + radius - 3 * scale, yTop + 4, 1 * scale, yBottom - yTop - 8);
+
+  const ringSpacing = 60 * scale;
+  for (let ringY = yTop + ringSpacing; ringY < yBottom - 4; ringY += ringSpacing) {
+    ctx.fillStyle = '#b08a5f';
+    ctx.fillRect(cx - radius - 2 * scale, ringY, radius * 2 + 4 * scale, 4 * scale);
+    ctx.fillStyle = '#e0c080';
+    ctx.fillRect(cx - radius - 2 * scale, ringY, radius * 2 + 4 * scale, 1);
+    ctx.fillStyle = '#5a3d22';
+    ctx.fillRect(cx - radius - 2 * scale, ringY + 3 * scale, radius * 2 + 4 * scale, 1);
+    ctx.fillStyle = '#2a1810';
+    ctx.fillRect(cx - radius - 3 * scale, ringY - 1, radius * 2 + 6 * scale, 1);
+    ctx.fillRect(cx - radius - 3 * scale, ringY + 4 * scale, radius * 2 + 6 * scale, 1);
+  }
+
+  ctx.fillStyle = '#2a1810';
+  ctx.fillRect(cx - radius - 1, yTop, 1, yBottom - yTop);
+  ctx.fillRect(cx + radius, yTop, 1, yBottom - yTop);
+
+  if (!lowMotion) {
+    for (let i = 0; i < 5; i++) {
+      const phase = (time * 0.3 + i * 0.19) % 1;
+      const py = yTop + phase * (yBottom - yTop);
+      const px = cx + Math.sin(time * 2 + i) * (radius - 4) * 0.3;
+      ctx.fillStyle = `rgba(180, 220, 240, ${0.35 * (1 - Math.abs(phase - 0.5) * 1.4)})`;
+      ctx.fillRect(px - 1, py, 2, 1);
+    }
+  }
+}
+
+function sendPacket(fromZone, toZone, color = '#fbf3dd') {
+  const from = ZONE_MAP[fromZone];
+  const to = ZONE_MAP[toZone];
+  if (!from || !to) return;
+  packets.push({
+    phase: 'approach_up',
+    t: 0,
+    sx: from.x + from.w * 0.5,
+    sy: from.y + from.h * 0.55,
+    ex: TUBE.x,
+    ey: TUBE.yTop - 4,
+    ox: TUBE.x,
+    oy: TUBE.yBot + 4,
+    dx: to.x + to.w * 0.5,
+    dy: to.y + to.h * 0.4,
+    color,
+    d1: 0.9,
+    d2: 0.65,
+    d3: 0.85,
+  });
+}
+
+function updatePackets(dt) {
+  for (let i = packets.length - 1; i >= 0; i--) {
+    const packet = packets[i];
+    packet.t += dt;
+    if (packet.phase === 'approach_up' && packet.t >= packet.d1) {
+      packet.phase = 'in_tube';
+      packet.t = 0;
+    } else if (packet.phase === 'in_tube' && packet.t >= packet.d2) {
+      packet.phase = 'approach_out';
+      packet.t = 0;
+    } else if (packet.phase === 'approach_out' && packet.t >= packet.d3) {
+      packets.splice(i, 1);
+    }
+  }
+}
+
+function drawPackets() {
+  for (const packet of packets) {
+    let x;
+    let y;
+    let tilt = 0;
+    let squish = 1;
+    if (packet.phase === 'approach_up') {
+      const u = packet.t / packet.d1;
+      const ease = 1 - (1 - u) * (1 - u);
+      x = packet.sx + (packet.ex - packet.sx) * ease;
+      y = packet.sy + (packet.ey - packet.sy) * ease - Math.sin(u * Math.PI) * 40;
+      tilt = Math.sin(u * Math.PI * 2) * 0.35 + (packet.ex - packet.sx) * 0.003;
+    } else if (packet.phase === 'in_tube') {
+      const u = packet.t / packet.d2;
+      const ease = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
+      x = packet.ex;
+      y = packet.ey + (packet.oy - packet.ey) * ease;
+      squish = 0.72;
+    } else {
+      const u = packet.t / packet.d3;
+      const ease = 1 - (1 - u) * (1 - u);
+      x = packet.ox + (packet.dx - packet.ox) * ease;
+      y = packet.oy + (packet.dy - packet.oy) * ease - Math.sin(u * Math.PI) * 18;
+      tilt = Math.sin(u * Math.PI * 1.5) * -0.3;
+    }
+    drawEnvelope(x * scale, y * scale, packet.color, tilt, squish, packet.phase === 'in_tube');
+  }
+}
+
+function drawEnvelope(cx, cy, color, tilt, squish, inTube) {
+  const width = 14 * scale;
+  const height = 10 * scale * squish;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(tilt);
+  if (inTube) {
+    ctx.fillStyle = 'rgba(255, 240, 200, 0.25)';
+    ctx.fillRect(-width / 2, -height / 2 - 14 * scale, width, 3 * scale);
+    ctx.fillStyle = 'rgba(255, 240, 200, 0.45)';
+    ctx.fillRect(-width / 2, -height / 2 - 8 * scale, width, 3 * scale);
+  }
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+  ctx.fillRect(-width / 2 + 1, -height / 2 + 1, width, height);
+  ctx.fillStyle = color;
+  ctx.fillRect(-width / 2, -height / 2, width, height);
+  ctx.fillStyle = '#e8d5a8';
+  ctx.fillRect(-width / 2 + 1, -height / 2, width - 2, 1 * scale);
+  ctx.fillRect(-width / 2 + 2, -height / 2 + 1, width - 4, 1 * scale);
+  ctx.fillRect(-width / 2 + 3, -height / 2 + 2, width - 6, 1 * scale);
+  ctx.fillRect(-width / 2 + 5, -height / 2 + 3, width - 10, 1 * scale);
+  ctx.fillStyle = '#d2553a';
+  ctx.fillRect(-1 * scale, 1 * scale, 3 * scale, 3 * scale);
+  ctx.fillStyle = '#a8402a';
+  ctx.fillRect(1 * scale, 3 * scale, 1 * scale, 1 * scale);
+  ctx.fillStyle = '#2a1810';
+  ctx.fillRect(-width / 2 - 1, -height / 2, 1, height);
+  ctx.fillRect(width / 2, -height / 2, 1, height);
+  ctx.fillRect(-width / 2, -height / 2 - 1, width, 1);
+  ctx.fillRect(-width / 2, height / 2, width, 1);
+  ctx.restore();
+}
+
+function sendOwl(toZone, pickup = true) {
+  const zone = ZONE_MAP[toZone];
+  if (!zone) return;
+  const target = { x: zone.x + zone.w * 0.5, y: zone.y + zone.h * 0.4 };
+  const fromRight = Math.random() < 0.5;
+  owls.push({
+    phase: 'fly_in',
+    t: 0,
+    x: fromRight ? VIRTUAL_W + 40 : -40,
+    y: target.y - 60 - Math.random() * 20,
+    dir: fromRight ? -1 : 1,
+    target,
+    hasLetter: pickup,
+    exitX: fromRight ? -40 : VIRTUAL_W + 40,
+    exitY: target.y - 80 - Math.random() * 30,
+    d1: 1.9,
+    d2: 0.9,
+    d3: 1.6,
+  });
+}
+
+function updateOwls(dt) {
+  for (let i = owls.length - 1; i >= 0; i--) {
+    const owl = owls[i];
+    owl.t += dt;
+    if (owl.phase === 'fly_in') {
+      const u = Math.min(1, owl.t / owl.d1);
+      const ease = 1 - (1 - u) * (1 - u);
+      owl.x = (owl.phaseStartX ?? (owl.phaseStartX = owl.x)) + ((owl.target.x - 10 * owl.dir) - owl.phaseStartX) * ease;
+      owl.y = (owl.phaseStartY ?? (owl.phaseStartY = owl.y)) + ((owl.target.y - 28) - owl.phaseStartY) * ease + Math.sin(u * Math.PI) * -8;
+      if (u >= 1) {
+        owl.phase = 'drop';
+        owl.t = 0;
+        delete owl.phaseStartX;
+        delete owl.phaseStartY;
+      }
+    } else if (owl.phase === 'drop') {
+      const u = Math.min(1, owl.t / owl.d2);
+      owl.y = owl.target.y - 28 + Math.sin(u * Math.PI) * 6;
+      if (u > 0.5 && owl.hasLetter) {
+        owl.hasLetter = false;
+        packets.push({
+          phase: 'approach_out',
+          t: 0,
+          d3: 0.5,
+          sx: owl.x,
+          sy: owl.y + 4,
+          ex: owl.x,
+          ey: owl.y,
+          ox: owl.x,
+          oy: owl.y,
+          dx: owl.target.x,
+          dy: owl.target.y + 6,
+          color: '#fbf3dd',
+        });
+      }
+      if (u >= 1) {
+        owl.phase = 'fly_out';
+        owl.t = 0;
+        owl.phaseStartX = owl.x;
+        owl.phaseStartY = owl.y;
+      }
+    } else if (owl.phase === 'fly_out') {
+      const u = Math.min(1, owl.t / owl.d3);
+      const ease = u * u;
+      owl.x = owl.phaseStartX + (owl.exitX - owl.phaseStartX) * ease;
+      owl.y = owl.phaseStartY + (owl.exitY - owl.phaseStartY) * ease - Math.sin(u * Math.PI) * 10;
+      if (u >= 1) owls.splice(i, 1);
+    }
+  }
+}
+
+function drawOwls() {
+  const time = performance.now() / 1000;
+  for (const owl of owls) {
+    const cx = owl.x * scale;
+    const cy = owl.y * scale;
+    const wingUp = Math.sin(time * 14) * 0.5 + 0.5 > 0.5;
+    const groundY = (owl.target.y + 10) * scale;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.beginPath();
+    ctx.ellipse(cx, groundY, 10 * scale, 3 * scale, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    const facing = owl.dir;
+    ctx.fillStyle = '#8a5f35';
+    ctx.fillRect(cx - 6 * scale, cy - 6 * scale, 12 * scale, 10 * scale);
+    ctx.fillStyle = '#a67a4a';
+    ctx.fillRect(cx - 5 * scale, cy - 7 * scale, 10 * scale, 3 * scale);
+    ctx.fillStyle = '#8a5f35';
+    ctx.fillRect(cx - 5 * scale, cy - 11 * scale, 10 * scale, 6 * scale);
+    ctx.fillStyle = '#a67a4a';
+    ctx.fillRect(cx - 4 * scale, cy - 12 * scale, 8 * scale, 2 * scale);
+    ctx.fillStyle = '#5a3d22';
+    ctx.fillRect(cx - 5 * scale, cy - 13 * scale, 2 * scale, 2 * scale);
+    ctx.fillRect(cx + 3 * scale, cy - 13 * scale, 2 * scale, 2 * scale);
+    ctx.fillStyle = '#e8d5a8';
+    ctx.fillRect(cx - 4 * scale, cy - 10 * scale, 8 * scale, 4 * scale);
+    ctx.fillStyle = '#f0d056';
+    ctx.fillRect(cx - 4 * scale, cy - 10 * scale, 3 * scale, 3 * scale);
+    ctx.fillRect(cx + 1 * scale, cy - 10 * scale, 3 * scale, 3 * scale);
+    ctx.fillStyle = '#2a1810';
+    ctx.fillRect(cx - 3 * scale + (facing > 0 ? 1 : 0), cy - 9 * scale, 1 * scale, 1 * scale);
+    ctx.fillRect(cx + 2 * scale + (facing > 0 ? 1 : 0), cy - 9 * scale, 1 * scale, 1 * scale);
+    ctx.fillStyle = '#e0a93b';
+    ctx.fillRect(cx - 1 * scale, cy - 7 * scale, 2 * scale, 2 * scale);
+    ctx.fillStyle = '#6a4525';
+    ctx.fillRect(cx - 4 * scale, cy - 2 * scale, 1, 1);
+    ctx.fillRect(cx - 1 * scale, cy - 2 * scale, 1, 1);
+    ctx.fillRect(cx + 2 * scale, cy - 2 * scale, 1, 1);
+    ctx.fillRect(cx - 3 * scale, cy, 1, 1);
+    ctx.fillRect(cx, cy, 1, 1);
+    ctx.fillRect(cx + 3 * scale, cy, 1, 1);
+    ctx.fillStyle = '#5a3d22';
+    if (wingUp) {
+      ctx.fillRect(cx - 10 * scale, cy - 10 * scale, 4 * scale, 6 * scale);
+      ctx.fillRect(cx + 6 * scale, cy - 10 * scale, 4 * scale, 6 * scale);
+      ctx.fillStyle = '#8a5f35';
+      ctx.fillRect(cx - 9 * scale, cy - 9 * scale, 2 * scale, 3 * scale);
+      ctx.fillRect(cx + 7 * scale, cy - 9 * scale, 2 * scale, 3 * scale);
+    } else {
+      ctx.fillStyle = '#5a3d22';
+      ctx.fillRect(cx - 12 * scale, cy - 4 * scale, 6 * scale, 4 * scale);
+      ctx.fillRect(cx + 6 * scale, cy - 4 * scale, 6 * scale, 4 * scale);
+      ctx.fillStyle = '#8a5f35';
+      ctx.fillRect(cx - 11 * scale, cy - 3 * scale, 4 * scale, 2 * scale);
+      ctx.fillRect(cx + 7 * scale, cy - 3 * scale, 4 * scale, 2 * scale);
+    }
+    ctx.fillStyle = '#e0a93b';
+    ctx.fillRect(cx - 3 * scale, cy + 4 * scale, 1 * scale, 2 * scale);
+    ctx.fillRect(cx + 2 * scale, cy + 4 * scale, 1 * scale, 2 * scale);
+    if (owl.hasLetter) {
+      ctx.fillStyle = '#fbf3dd';
+      ctx.fillRect(cx - 2 * scale, cy - 4 * scale, 4 * scale, 3 * scale);
+      ctx.fillStyle = '#2a1810';
+      ctx.fillRect(cx - 2 * scale, cy - 5 * scale, 4 * scale, 1);
+      ctx.fillRect(cx - 2 * scale, cy - 1 * scale, 4 * scale, 1);
+      ctx.fillStyle = '#d2553a';
+      ctx.fillRect(cx - 1 * scale, cy - 3 * scale, 1, 1);
+    }
+    ctx.restore();
+  }
+}
+
 /* ═══ Main loop ═══ */
 let last = performance.now();
 let heartTimer = 0;
@@ -2066,8 +2752,12 @@ function loop(now) {
   for (const a of agents) a.update(dt);
   cat.update(dt);
   updateParticles(dt);
+  if (!lowMotion) {
+    updatePackets(dt);
+    updateOwls(dt);
+  }
   heartTimer -= dt;
-  if (heartTimer <= 0) {
+  if (!lowMotion && heartTimer <= 0) {
     heartTimer = 1.5 + Math.random();
     const working = agents.filter(a => a.state === 'working');
     if (working.length) {
@@ -2080,11 +2770,16 @@ function loop(now) {
   ctx.clearRect(0, 0, cw, ch);
   drawFloor();
   drawZones();
+  drawPneumaticTube();
 
   // Sort agents by Y, cat mixed in for correct overlap
   const drawables = [...agents.map(a => ({kind:'agent', o:a, y:a.y})), {kind:'cat', o:cat, y:cat.y}];
   drawables.sort((a, b) => a.y - b.y);
   for (const d of drawables) d.kind === 'agent' ? drawAgent(d.o) : drawCat(d.o);
+  if (!lowMotion) {
+    drawPackets();
+    drawOwls();
+  }
   drawParticles();
 }
 
@@ -2096,6 +2791,12 @@ canvas.addEventListener('click', (e) => {
   const rect = canvas.getBoundingClientRect();
   const mx = (e.clientX - rect.left) / scale;
   const my = (e.clientY - rect.top) / scale;
+  const catDx = mx - cat.x;
+  const catDy = my - (cat.y - 6);
+  if (catDx * catDx + catDy * catDy < 16 * 16) {
+    cat.pet(mx);
+    return;
+  }
   for (const a of agents) {
     const dx = mx - a.x, dy = my - a.y;
     if (Math.sqrt(dx*dx + dy*dy) < 22) {
@@ -2104,8 +2805,9 @@ canvas.addEventListener('click', (e) => {
     }
   }
   for (const [key, zone] of Object.entries(ZONE_MAP)) {
-    if (zone.agent && mx >= zone.x && mx <= zone.x + zone.w && my >= zone.y && my <= zone.y + zone.h) {
-      const agent = agents.find(a => a.name === zone.agent);
+    const renderedZone = zoneView(key) || zone;
+    if (renderedZone.agent && mx >= renderedZone.x && mx <= renderedZone.x + renderedZone.w && my >= renderedZone.y && my <= renderedZone.y + renderedZone.h) {
+      const agent = agents.find(a => a.name === renderedZone.agent);
       if (agent) openLogModal(agent);
       return;
     }
@@ -2122,11 +2824,15 @@ canvas.addEventListener('mousemove', (e) => {
     const dx = mx - a.x, dy = my - a.y;
     if (Math.sqrt(dx*dx + dy*dy) < 22) { hit = a; break; }
   }
+  const catDx = mx - cat.x;
+  const catDy = my - (cat.y - 6);
+  const overCat = (catDx * catDx + catDy * catDy) < 16 * 16;
+  canvas.style.cursor = (hit || overCat) ? 'pointer' : '';
   if (hit) {
     tooltip.style.display = 'block';
     tooltip.style.left = (e.clientX - rect.left + 16) + 'px';
     tooltip.style.top = (e.clientY - rect.top - 8) + 'px';
-    tooltip.querySelector('.tt-name').textContent = `${hit.name} · ${hit._homeZone.replace('_desk', '')}`;
+    tooltip.querySelector('.tt-name').textContent = `${hit.name} · ${(hit.role || 'unassigned').toUpperCase()}`;
     tooltip.querySelector('.tt-state').textContent = hit.state.toUpperCase();
     tooltip.querySelector('.tt-state').style.color = hit.color;
     tooltip.querySelector('.tt-note').textContent = hit.note || '';
@@ -2155,7 +2861,7 @@ function getAgent(name) {
 
 function sampleIdleTarget(agentName) {
   const agent = getAgent(agentName);
-  const zone = agent ? ZONE_MAP[agent._homeZone] : null;
+  const zone = agent ? movementZoneForAgent(agent) : null;
   if (!zone) return { x: 500, y: 350 };
   return {
     x: zone.x + 30 + Math.random() * (zone.w - 60),
@@ -2199,6 +2905,28 @@ function pushEvent(type, msg) {
   runtimeStateStore.events.unshift({ type, msg, time });
   if (runtimeStateStore.events.length > EVENT_LIMIT) runtimeStateStore.events.length = EVENT_LIMIT;
   renderEvents();
+}
+
+function getErrorMessage(error, fallback = 'unknown') {
+  if (error && typeof error.message === 'string' && error.message.trim()) return error.message.trim();
+  const text = String(error || '').trim();
+  return text || fallback;
+}
+
+function recordStatusFetchFailure(error) {
+  const message = getErrorMessage(error);
+  if (runtimeStateStore.statusFetchFailureActive && runtimeStateStore.statusFetchFailureMessage === message) return;
+  runtimeStateStore.statusFetchFailureActive = true;
+  runtimeStateStore.statusFetchFailureMessage = message;
+  pushEvent('err', `상태 조회 실패: ${message}`);
+}
+
+function clearStatusFetchFailure() {
+  if (!runtimeStateStore.statusFetchFailureActive) return;
+  const message = runtimeStateStore.statusFetchFailureMessage || 'unknown';
+  runtimeStateStore.statusFetchFailureActive = false;
+  runtimeStateStore.statusFetchFailureMessage = '';
+  pushEvent('ok', `상태 조회 복구: ${message}`);
 }
 
 function renderEvents() {
@@ -2249,8 +2977,88 @@ function updateMuteButton() {
 function setMuted(nextMuted, persist = true) {
   muted = Boolean(nextMuted);
   updateMuteButton();
+  if (!muted) unlockAudio8();
   if (persist) PrefStore.set('office_muted', muted ? '1' : '0');
 }
+
+let _audio8Context = null;
+
+function ensureAudio8Context() {
+  if (_audio8Context) return _audio8Context;
+  try {
+    _audio8Context = new (window.AudioContext || window.webkitAudioContext)();
+  } catch (_error) {
+    _audio8Context = null;
+  }
+  return _audio8Context;
+}
+
+function unlockAudio8() {
+  const context = ensureAudio8Context();
+  if (context && context.state === 'suspended') context.resume();
+}
+
+function playAudio8Meow() {
+  if (muted) return;
+  const context = ensureAudio8Context();
+  if (!context) return;
+  if (context.state === 'suspended') context.resume();
+  const now = context.currentTime;
+  const master = context.createGain();
+  master.gain.setValueAtTime(0.0001, now);
+  master.connect(context.destination);
+
+  const lowpass = context.createBiquadFilter();
+  lowpass.type = 'lowpass';
+  lowpass.frequency.value = 2800;
+  lowpass.Q.value = 0.6;
+  lowpass.connect(master);
+
+  [
+    { t: 0.00, dur: 0.11, f0: 620, f1: 880, gain: 0.22 },
+    { t: 0.10, dur: 0.18, f0: 780, f1: 380, gain: 0.28 },
+  ].forEach(({ t, dur, f0, f1, gain }) => {
+    const osc = context.createOscillator();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(f0, now + t);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(40, f1), now + t + dur);
+
+    const lfo = context.createOscillator();
+    const lfoGain = context.createGain();
+    lfo.frequency.value = 14;
+    lfoGain.gain.value = 18;
+    lfo.connect(lfoGain);
+    lfoGain.connect(osc.frequency);
+
+    const gainNode = context.createGain();
+    gainNode.gain.setValueAtTime(0.0001, now + t);
+    gainNode.gain.exponentialRampToValueAtTime(gain, now + t + 0.015);
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, now + t + dur);
+
+    osc.connect(gainNode);
+    gainNode.connect(lowpass);
+    osc.start(now + t);
+    lfo.start(now + t);
+    osc.stop(now + t + dur + 0.02);
+    lfo.stop(now + t + dur + 0.02);
+  });
+
+  master.gain.setValueAtTime(0.0001, now);
+  master.gain.exponentialRampToValueAtTime(1.0, now + 0.01);
+  master.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+}
+
+window.Audio8 = {
+  meow: playAudio8Meow,
+  unlock: unlockAudio8,
+  get muted() { return muted; },
+  setMuted(value) { setMuted(value); },
+  toggle() {
+    const nextMuted = !muted;
+    setMuted(nextMuted);
+    return nextMuted;
+  },
+};
 
 function updateMotionButton() {
   const button = document.getElementById('motion-btn');
@@ -2262,7 +3070,11 @@ function updateMotionButton() {
 function setLowMotion(nextLowMotion, persist = true) {
   lowMotion = Boolean(nextLowMotion);
   updateMotionButton();
-  if (lowMotion) particles.length = 0;
+  if (lowMotion) {
+    particles.length = 0;
+    packets.length = 0;
+    owls.length = 0;
+  }
   if (persist) PrefStore.set('office_low_motion', lowMotion ? '1' : '0');
 }
 
@@ -2376,6 +3188,8 @@ function detectChanges(data) {
 
 function checkDeliveryTriggers(data) {
   const delivery = runtimeStateStore.delivery;
+  const implementDesk = zoneKeyForRole('implement');
+  const verifyDesk = zoneKeyForRole('verify');
   const controlSeq = (data.control || {}).active_control_seq;
   const artifacts = data.artifacts || {};
   const latestWorkPath = String((artifacts.latest_work || {}).path || '').trim();
@@ -2399,15 +3213,20 @@ function checkDeliveryTriggers(data) {
 
   if (controlSeq != null && controlSeq >= 0 && delivery.controlSeq !== null && controlSeq !== delivery.controlSeq) {
     pushEvent('info', `Control seq → #${controlSeq}`);
+    queueScenePacket(implementDesk, verifyDesk, '#a8cce0');
   }
   if (latestWorkPath && delivery.latestWorkPath && (latestWorkPath !== delivery.latestWorkPath || (latestWorkMtime && latestWorkMtime !== delivery.latestWorkMtime))) {
     pushEvent('ok', `Latest work → ${basename(latestWorkPath)}`);
+    queueScenePacket(implementDesk, 'archive_shelf', '#f4d49a');
   }
   if (latestVerifyPath && delivery.latestVerifyPath && (latestVerifyPath !== delivery.latestVerifyPath || (latestVerifyMtime && latestVerifyMtime !== delivery.latestVerifyMtime))) {
     pushEvent('info', `Latest verify → ${basename(latestVerifyPath)}`);
+    queueScenePacket(verifyDesk, 'archive_shelf', '#a8cce0');
   }
   if (delivery.lastReceiptId && lastReceiptId && lastReceiptId !== delivery.lastReceiptId) {
     pushEvent('ok', `Receipt issued → ${lastReceiptId}`);
+    queueScenePacket(verifyDesk, 'receipt_board', '#fbf3dd');
+    queueSceneOwl('receipt_board');
   }
 
   Object.assign(delivery, {
@@ -2431,7 +3250,6 @@ function syncAgentsFromRuntime(data) {
       agent.note = lane.note || lane.status_note || '';
       agent.pid = lane.pid || null;
       agent.lastEventAt = lane.last_event_at || '';
-      agent.color = LANE_META[agent.name]?.color || agent.color;
       if (agent.state !== 'working' && agent.fatigueState !== 'coffee' && agent.fatigueState !== 'fatigued') {
         agent.fatigueState = '';
       }
@@ -2444,6 +3262,7 @@ function syncAgentsFromRuntime(data) {
         agent.fatigueState = '';
       }
     }
+    applyAgentRoleBinding(agent, data);
     if (agent.note && previousNote !== agent.note) agent.setBubble(agent.note);
     if (previousState !== agent.state && previousState !== 'off' && !agent.note) {
       agent.setBubble(`${agent.state.toUpperCase()} 상태`);
@@ -2511,6 +3330,8 @@ async function pollRuntime() {
   try {
     const response = await fetch('/api/runtime/status');
     const data = await response.json();
+    if (!response.ok || data.ok === false) throw new Error(data.error || `HTTP ${response.status}`);
+    clearStatusFetchFailure();
     runtimeStateStore.data = data;
     detectChanges(data);
     checkDeliveryTriggers(data);
@@ -2519,7 +3340,7 @@ async function pollRuntime() {
     renderStatus(data);
     updateMarqueeFromState(data);
   } catch (error) {
-    pushEvent('err', `상태 조회 실패: ${error.message}`);
+    recordStatusFetchFailure(error);
   } finally {
     pollInFlight = false;
   }
@@ -2711,7 +3532,10 @@ window.setAgentFatigue = function(name, value) {
 };
 
 window.getRoamBounds = function() {
-  return { zones: ZONE_MAP };
+  return {
+    zones: ZONE_MAP,
+    restZones: Object.fromEntries(AGENT_NAMES.map((name) => [name, loungeSeatZone(name)])),
+  };
 };
 
 window.testPickIdleTargets = function(name, count) {
@@ -2728,14 +3552,134 @@ window.testHistoryPenalty = function() {
   return [];
 };
 
+window.getSceneDebug = function() {
+  return {
+    hasWindowRenderer: typeof drawWindow === 'function',
+    hasPneumaticTube: typeof drawPneumaticTube === 'function',
+    hasPacketCourier: typeof sendPacket === 'function',
+    hasOwlCourier: typeof sendOwl === 'function',
+    hasAudio8: typeof window.Audio8?.meow === 'function',
+    catState: cat.state,
+    tube: { ...TUBE },
+  };
+};
+
+window.getAgentPositions = function() {
+  return Object.fromEntries(
+    agents.map((agent) => [
+      agent.name,
+      {
+        x: agent.x,
+        y: agent.y,
+        tx: agent.tx,
+        ty: agent.ty,
+        state: agent.state,
+        atLounge: !!agent.atLounge,
+      },
+    ]),
+  );
+};
+
+window.testPetCat = function() {
+  cat.pet(cat.x + 10);
+  return {
+    catState: cat.state,
+    particleCount: particles.length,
+    hasAudio8: typeof window.Audio8?.meow === 'function',
+  };
+};
+
+const TWEAKS = /*EDITMODE-BEGIN*/{
+  timeOfDay: 'auto',
+  showWindow: true,
+}/*EDITMODE-END*/;
+
+function applyTweaks() {
+  const timeOfDay = TWEAKS.timeOfDay;
+  if (timeOfDay === 'auto') window.__timeOverride = null;
+  else if (timeOfDay === 'dawn') window.__timeOverride = 6.5;
+  else if (timeOfDay === 'day') window.__timeOverride = 13;
+  else if (timeOfDay === 'sunset') window.__timeOverride = 18.5;
+  else if (timeOfDay === 'night') window.__timeOverride = 22;
+  window.__hideWindow = !TWEAKS.showWindow;
+}
+
+function buildTweaksPanel() {
+  if (document.getElementById('tweaks-panel')) return;
+  const panel = document.createElement('div');
+  panel.id = 'tweaks-panel';
+  panel.style.cssText = `
+    position: fixed; right: 18px; bottom: 18px; z-index: 90;
+    background: var(--parchment-bright, #fbf3dd);
+    color: var(--ink, #2a1810);
+    font-family: 'Galmuri11', 'DungGeunMo', monospace;
+    padding: 14px; min-width: 220px;
+    box-shadow: 0 -3px 0 0 #2a1810, 0 3px 0 0 #2a1810, -3px 0 0 0 #2a1810, 3px 0 0 0 #2a1810, 6px 6px 0 0 rgba(0,0,0,0.25);
+    display: none;
+  `;
+  panel.innerHTML = `
+    <div style="font-size:13px; letter-spacing:0.08em; color:#5c3b22; border-bottom:2px dashed #c9a875; padding-bottom:6px; margin-bottom:10px; text-transform:uppercase;">
+      ✦ Tweaks
+    </div>
+    <div style="font-size:11px; color:#5a3d28; margin-bottom:6px;">Time of day</div>
+    <div id="tweak-tod" style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:4px; margin-bottom:12px;">
+      ${['auto', 'dawn', 'day', 'sunset', 'night'].map((value) => `
+        <button data-tod="${value}" style="
+          font-family: inherit; font-size: 11px;
+          padding: 6px 4px; cursor: pointer;
+          background: ${TWEAKS.timeOfDay === value ? '#e0a93b' : '#fbf3dd'};
+          color: #2a1810; border: none;
+          box-shadow: 0 -2px 0 0 #2a1810, 0 2px 0 0 #2a1810, -2px 0 0 0 #2a1810, 2px 0 0 0 #2a1810, inset 2px 2px 0 0 rgba(255,255,255,0.3), inset -2px -2px 0 0 rgba(0,0,0,0.15);
+        ">${value}</button>
+      `).join('')}
+    </div>
+    <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:#5a3d28; cursor:pointer;">
+      <input type="checkbox" id="tweak-win" ${TWEAKS.showWindow ? 'checked' : ''} style="width:14px; height:14px;">
+      Show windows
+    </label>
+  `;
+  document.body.appendChild(panel);
+
+  panel.querySelectorAll('[data-tod]').forEach((button) => {
+    button.addEventListener('click', () => {
+      TWEAKS.timeOfDay = button.dataset.tod;
+      applyTweaks();
+      panel.querySelectorAll('[data-tod]').forEach((other) => {
+        other.style.background = TWEAKS.timeOfDay === other.dataset.tod ? '#e0a93b' : '#fbf3dd';
+      });
+      window.parent.postMessage({ type: '__edit_mode_set_keys', edits: { timeOfDay: TWEAKS.timeOfDay } }, '*');
+    });
+  });
+
+  panel.querySelector('#tweak-win').addEventListener('change', (event) => {
+    TWEAKS.showWindow = event.target.checked;
+    applyTweaks();
+    window.parent.postMessage({ type: '__edit_mode_set_keys', edits: { showWindow: TWEAKS.showWindow } }, '*');
+  });
+}
+
 renderSidebar();
 renderEvents();
+applyTweaks();
+buildTweaksPanel();
 setMuted(PrefStore.get('office_muted') === '1', false);
 setLowMotion(PrefStore.get('office_low_motion') === '1', false);
 if (!PrefStore.available) {
   const chip = document.getElementById('storage-warn');
   if (chip) chip.style.display = 'inline-block';
 }
+window.addEventListener('pointerdown', unlockAudio8, { once: true });
+window.addEventListener('message', (event) => {
+  if (!event.data || !event.data.type) return;
+  const panel = document.getElementById('tweaks-panel');
+  if (!panel) return;
+  if (event.data.type === '__activate_edit_mode') {
+    panel.style.display = 'block';
+  } else if (event.data.type === '__deactivate_edit_mode') {
+    panel.style.display = 'none';
+  }
+});
+window.parent.postMessage({ type: '__edit_mode_available' }, '*');
 resize();
 requestAnimationFrame(loop);
 pollRuntime();

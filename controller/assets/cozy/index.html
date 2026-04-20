@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>🏡 Pipeline Office — Cozy RPG</title>
 <link rel="stylesheet" href="css/office.css">
+<script src="js/audio.js" defer></script>
 </head>
 <body>
 
@@ -402,34 +403,37 @@ function drawPlankFloor(sx, sy, sw, sh) {
   ctx.restore();
 }
 
-/* ─── Wall decor: pixel clock + post-its + shelf/bunting per desk zone ─── */
+/* ─── Wall decor: pixel clock + post-its + window + bunting per desk zone ─── */
 function drawWallDecor(zone) {
   const sx = zone.x * scale, sy = zone.y * scale;
   const sw = zone.w * scale;
 
+  // ── Window on back wall (time-of-day scenery) ──
+  drawWindow(sx + sw * 0.50, sy + 58 * scale, zone.agent);
+
   // Small pixel wall clock (top-right of each desk zone)
   drawPixelClock(sx + sw - 32 * scale, sy + 22 * scale);
 
-  // Post-its on the "wall" — offset per zone so each feels different
+  // Post-its on the "wall" — clustered to edges so they don't cover the window
   const agentSeed = { Claude: 0, Codex: 1, Gemini: 2 }[zone.agent] ?? 0;
   const notes = [
-    // Claude — yellow + green
+    // Claude — yellow + green (left-side cluster)
     [
-      { x: 0.32, y: 18, col: '#f0d056', txt: 'TODO' },
-      { x: 0.46, y: 12, col: '#a8d89a', txt: '✓' },
-      { x: 0.60, y: 22, col: '#f4a8b0', txt: '!!' },
+      { x: 0.10, y: 30, col: '#f0d056', txt: 'TODO' },
+      { x: 0.22, y: 42, col: '#a8d89a', txt: '✓' },
+      { x: 0.88, y: 52, col: '#f4a8b0', txt: '!!' },
     ],
     // Codex — blue + pink
     [
-      { x: 0.30, y: 14, col: '#a8cce0', txt: 'REV' },
-      { x: 0.44, y: 22, col: '#f0d056', txt: '...' },
-      { x: 0.58, y: 16, col: '#f4a8b0', txt: '♥' },
+      { x: 0.10, y: 36, col: '#a8cce0', txt: 'REV' },
+      { x: 0.22, y: 26, col: '#f0d056', txt: '...' },
+      { x: 0.88, y: 46, col: '#f4a8b0', txt: '♥' },
     ],
     // Gemini — mustard + lilac
     [
-      { x: 0.30, y: 20, col: '#d6b0e0', txt: '~~~' },
-      { x: 0.46, y: 14, col: '#f0d056', txt: 'IDEA' },
-      { x: 0.60, y: 24, col: '#a8d89a', txt: '✦' },
+      { x: 0.10, y: 44, col: '#d6b0e0', txt: '~~~' },
+      { x: 0.22, y: 30, col: '#f0d056', txt: 'IDEA' },
+      { x: 0.88, y: 40, col: '#a8d89a', txt: '✦' },
     ],
   ][agentSeed];
   notes.forEach(n => {
@@ -607,6 +611,223 @@ function drawLabelPlate(x, y, text) {
   ctx.textAlign = 'left';
   ctx.fillText(text, x + padX, y + h / 2 + 1);
   ctx.restore();
+}
+
+/* ─── Window with time-of-day scenery ─── */
+// Deterministic star positions (generated once)
+const _stars = Array.from({ length: 24 }, (_, i) => ({
+  x: Math.random(),
+  y: Math.random() * 0.6,
+  phase: Math.random() * Math.PI * 2,
+  speed: 0.8 + Math.random() * 1.8,
+  bright: 0.5 + Math.random() * 0.5,
+}));
+// Cloud shapes (pixel blobs)
+const _clouds = [
+  { x: 0.15, y: 0.25, w: 18, h: 6 },
+  { x: 0.55, y: 0.18, w: 22, h: 7 },
+  { x: 0.82, y: 0.32, w: 14, h: 5 },
+];
+
+function drawWindow(vcx, vcy, agentName) {
+  if (window.__hideWindow) return;
+  const ww = 110 * scale;
+  const wh = 72 * scale;
+  const x = vcx - ww / 2;
+  const y = vcy - wh / 2;
+
+  // Get local hour — or override from Tweaks panel
+  let hr;
+  if (window.__timeOverride != null) {
+    hr = window.__timeOverride;
+  } else {
+    const now = new Date();
+    hr = now.getHours() + now.getMinutes() / 60;
+  }
+  // Time phase: 0=dawn, 1=day, 2=sunset, 3=night
+  let phase;
+  if (hr >= 5 && hr < 8)        phase = 'dawn';
+  else if (hr >= 8 && hr < 17)  phase = 'day';
+  else if (hr >= 17 && hr < 20) phase = 'sunset';
+  else                          phase = 'night';
+
+  // Clip to window interior for sky
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, ww, wh);
+  ctx.clip();
+
+  // ── Sky background per phase ──
+  if (phase === 'day') {
+    // Gradient blue sky
+    const g = ctx.createLinearGradient(x, y, x, y + wh);
+    g.addColorStop(0, '#7ac0e0');
+    g.addColorStop(1, '#b8dced');
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, ww, wh);
+    // Distant hills silhouette
+    ctx.fillStyle = '#6a9a5a';
+    ctx.fillRect(x, y + wh * 0.75, ww, wh * 0.25);
+    ctx.fillRect(x + ww * 0.15, y + wh * 0.7, ww * 0.2, wh * 0.1);
+    ctx.fillRect(x + ww * 0.55, y + wh * 0.68, ww * 0.25, wh * 0.12);
+    ctx.fillStyle = '#507a42';
+    ctx.fillRect(x, y + wh * 0.82, ww, wh * 0.18);
+    // Sun (bright top-right)
+    ctx.fillStyle = '#f8e090';
+    ctx.fillRect(x + ww * 0.78, y + wh * 0.15, 6 * scale, 6 * scale);
+    ctx.fillRect(x + ww * 0.80, y + wh * 0.13, 2 * scale, 10 * scale);
+    ctx.fillRect(x + ww * 0.76, y + wh * 0.17, 10 * scale, 2 * scale);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x + ww * 0.79, y + wh * 0.15, 2 * scale, 2 * scale);
+    // Moving clouds
+    const t = performance.now() / 1000;
+    _clouds.forEach((c, i) => {
+      const cdx = ((t * 4 + i * 50) % (ww + 80)) - 40;
+      const cx = x + cdx;
+      const cy = y + c.y * wh;
+      drawCloud(cx, cy, c.w * scale, c.h * scale);
+    });
+  } else if (phase === 'dawn' || phase === 'sunset') {
+    // Warm gradient sky (orange→pink→purple)
+    const g = ctx.createLinearGradient(x, y, x, y + wh);
+    if (phase === 'dawn') {
+      g.addColorStop(0, '#6a5a8a');
+      g.addColorStop(0.5, '#e09a6a');
+      g.addColorStop(1, '#f4c488');
+    } else {
+      g.addColorStop(0, '#3a2a5a');
+      g.addColorStop(0.4, '#c2553a');
+      g.addColorStop(0.75, '#e8893a');
+      g.addColorStop(1, '#f4b84a');
+    }
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, ww, wh);
+    // Silhouette hills darker
+    ctx.fillStyle = '#3a2a3a';
+    ctx.fillRect(x, y + wh * 0.78, ww, wh * 0.22);
+    ctx.fillRect(x + ww * 0.2, y + wh * 0.72, ww * 0.2, wh * 0.1);
+    ctx.fillRect(x + ww * 0.58, y + wh * 0.70, ww * 0.25, wh * 0.12);
+    // Sun low on horizon
+    const sunY = phase === 'sunset' ? y + wh * 0.52 : y + wh * 0.45;
+    ctx.fillStyle = '#fde0a0';
+    ctx.fillRect(x + ww * 0.55, sunY, 10 * scale, 10 * scale);
+    ctx.fillStyle = '#fff4c0';
+    ctx.fillRect(x + ww * 0.57, sunY + 2 * scale, 6 * scale, 6 * scale);
+    // Reflection streak
+    ctx.fillStyle = 'rgba(255, 230, 160, 0.35)';
+    ctx.fillRect(x + ww * 0.5, sunY + 12 * scale, 14 * scale, 1 * scale);
+    ctx.fillRect(x + ww * 0.52, sunY + 15 * scale, 10 * scale, 1 * scale);
+    // Faint stars starting to show (sunset only)
+    if (phase === 'sunset') {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+      [[0.15, 0.1], [0.3, 0.15], [0.75, 0.08]].forEach(([sx, sy]) => {
+        ctx.fillRect(x + sx * ww, y + sy * wh, 1, 1);
+      });
+    }
+  } else {
+    // ── Night ──
+    const g = ctx.createLinearGradient(x, y, x, y + wh);
+    g.addColorStop(0, '#0a0f2a');
+    g.addColorStop(1, '#1a2048');
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, ww, wh);
+    // Twinkling stars
+    const t = performance.now() / 1000;
+    _stars.forEach(s => {
+      const sx = x + s.x * ww;
+      const sy = y + s.y * wh;
+      const twinkle = 0.4 + 0.6 * Math.max(0, Math.sin(t * s.speed + s.phase));
+      ctx.fillStyle = `rgba(255, 255, 255, ${twinkle * s.bright})`;
+      ctx.fillRect(sx, sy, 1, 1);
+      // Occasional brighter star (cross shape)
+      if (twinkle > 0.85 && s.bright > 0.8) {
+        ctx.fillStyle = `rgba(255, 255, 255, ${(twinkle - 0.5) * 0.8})`;
+        ctx.fillRect(sx - 1, sy, 1, 1);
+        ctx.fillRect(sx + 1, sy, 1, 1);
+        ctx.fillRect(sx, sy - 1, 1, 1);
+        ctx.fillRect(sx, sy + 1, 1, 1);
+      }
+    });
+    // Moon (crescent)
+    const mx = x + ww * 0.78;
+    const my = y + wh * 0.22;
+    ctx.fillStyle = '#f4e8c0';
+    ctx.fillRect(mx - 4 * scale, my - 4 * scale, 9 * scale, 9 * scale);
+    ctx.fillRect(mx - 3 * scale, my - 5 * scale, 7 * scale, 1 * scale);
+    ctx.fillRect(mx - 3 * scale, my + 5 * scale, 7 * scale, 1 * scale);
+    ctx.fillRect(mx - 5 * scale, my - 3 * scale, 1 * scale, 7 * scale);
+    ctx.fillRect(mx + 5 * scale, my - 3 * scale, 1 * scale, 7 * scale);
+    // Crescent shadow
+    ctx.fillStyle = '#1a2048';
+    ctx.fillRect(mx - 2 * scale, my - 4 * scale, 7 * scale, 9 * scale);
+    ctx.fillRect(mx - 1 * scale, my - 5 * scale, 6 * scale, 1 * scale);
+    ctx.fillRect(mx - 1 * scale, my + 5 * scale, 6 * scale, 1 * scale);
+    ctx.fillRect(mx - 3 * scale, my - 3 * scale, 1 * scale, 7 * scale);
+    // Moon highlight (pixel craters)
+    ctx.fillStyle = '#d4c090';
+    ctx.fillRect(mx - 4 * scale, my - 2 * scale, 1 * scale, 1 * scale);
+    ctx.fillRect(mx - 3 * scale, my + 2 * scale, 1 * scale, 1 * scale);
+    // Silhouette hills
+    ctx.fillStyle = '#0a0a18';
+    ctx.fillRect(x, y + wh * 0.78, ww, wh * 0.22);
+    ctx.fillRect(x + ww * 0.22, y + wh * 0.72, ww * 0.2, wh * 0.1);
+    ctx.fillRect(x + ww * 0.58, y + wh * 0.70, ww * 0.25, wh * 0.12);
+  }
+
+  ctx.restore();
+
+  // ── Window frame (wooden) ──
+  // Outer frame
+  ctx.fillStyle = '#5a3d22';
+  ctx.fillRect(x - 4 * scale, y - 4 * scale, ww + 8 * scale, 4 * scale);
+  ctx.fillRect(x - 4 * scale, y + wh, ww + 8 * scale, 4 * scale);
+  ctx.fillRect(x - 4 * scale, y - 4 * scale, 4 * scale, wh + 8 * scale);
+  ctx.fillRect(x + ww, y - 4 * scale, 4 * scale, wh + 8 * scale);
+  // Outer outline
+  ctx.fillStyle = '#2a1810';
+  ctx.fillRect(x - 5 * scale, y - 5 * scale, ww + 10 * scale, 1);
+  ctx.fillRect(x - 5 * scale, y + wh + 4 * scale, ww + 10 * scale, 1);
+  ctx.fillRect(x - 5 * scale, y - 5 * scale, 1, wh + 10 * scale);
+  ctx.fillRect(x + ww + 4 * scale, y - 5 * scale, 1, wh + 10 * scale);
+  // Frame highlight
+  ctx.fillStyle = '#8a5f35';
+  ctx.fillRect(x - 3 * scale, y - 3 * scale, ww + 6 * scale, 1);
+  ctx.fillRect(x - 3 * scale, y - 3 * scale, 1, wh + 6 * scale);
+  // Cross mullions (pane divider)
+  ctx.fillStyle = '#3a2a1a';
+  ctx.fillRect(x + ww / 2 - 1, y, 2, wh);
+  ctx.fillRect(x, y + wh / 2 - 1, ww, 2);
+  ctx.fillStyle = '#5a3d22';
+  ctx.fillRect(x + ww / 2 - 1, y, 1, wh);
+  ctx.fillRect(x, y + wh / 2 - 1, ww, 1);
+  // Sill (thicker bottom ledge)
+  ctx.fillStyle = '#6a4525';
+  ctx.fillRect(x - 6 * scale, y + wh + 3 * scale, ww + 12 * scale, 3 * scale);
+  ctx.fillStyle = '#2a1810';
+  ctx.fillRect(x - 6 * scale, y + wh + 6 * scale, ww + 12 * scale, 1);
+  ctx.fillStyle = '#8a5f35';
+  ctx.fillRect(x - 6 * scale, y + wh + 3 * scale, ww + 12 * scale, 1);
+
+  // Potted plant on sill (small accent, varies per agent)
+  const plantX = x + ww - 8 * scale;
+  const plantY = y + wh + 3 * scale;
+  ctx.fillStyle = '#a85030';
+  ctx.fillRect(plantX - 3 * scale, plantY, 6 * scale, 3 * scale);
+  ctx.fillStyle = '#5c9a4a';
+  ctx.fillRect(plantX - 2 * scale, plantY - 3 * scale, 4 * scale, 3 * scale);
+  ctx.fillStyle = '#7ab867';
+  ctx.fillRect(plantX - 1 * scale, plantY - 4 * scale, 2 * scale, 1 * scale);
+}
+
+function drawCloud(cx, cy, w, h) {
+  // Chunky 3-bump cloud
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.fillRect(cx, cy, w, h);
+  ctx.fillRect(cx + w * 0.2, cy - h * 0.4, w * 0.4, h * 0.4);
+  ctx.fillRect(cx + w * 0.55, cy - h * 0.25, w * 0.3, h * 0.25);
+  // Shadow underside
+  ctx.fillStyle = 'rgba(180, 200, 220, 0.7)';
+  ctx.fillRect(cx, cy + h - 2, w, 2);
 }
 
 /* ═══ Wooden desk (replaces iso wireframe) ═══ */
@@ -1688,17 +1909,55 @@ class Cat {
     this.x = lounge.x + lounge.w * 0.3;
     this.y = lounge.y + lounge.h * 0.78;
     this.tx = this.x; this.ty = this.y;
-    this.state = 'wander';    // wander | sleep | sit
+    this.state = 'wander';    // wander | sleep | sit | pet
     this.stateTimer = 3 + Math.random() * 3;
     this.facingRight = true;
     this.bobPhase = Math.random() * Math.PI * 2;
     this.walkPhase = 0;
     this.zPhase = 0;
+    this.petPurrPhase = 0;      // gentle wiggle while being petted
+    this.heartCooldown = 0;     // time until next heart spawn
+  }
+  // Called when the user clicks the cat
+  pet(clickX) {
+    // Face the user (who clicks from roughly where the pointer landed)
+    this.facingRight = clickX > this.x;
+    this.state = 'pet';
+    this.stateTimer = 3.5;      // look at user for 3.5s, then resume
+    this.petPurrPhase = 0;
+    // Immediate burst of red hearts
+    for (let i = 0; i < 5; i++) {
+      spawnRedHeart(
+        this.x + (Math.random() - 0.5) * 10,
+        this.y - 14 - Math.random() * 4
+      );
+    }
+    this.heartCooldown = 0.2;
+    if (window.Audio8) window.Audio8.meow();
   }
   update(dt) {
     this.stateTimer -= dt;
     this.bobPhase += dt * 4;
     this.zPhase += dt;
+
+    // Pet state: freeze in place, keep heart particles flowing, then resume
+    if (this.state === 'pet') {
+      this.petPurrPhase += dt * 6;
+      this.heartCooldown -= dt;
+      if (this.heartCooldown <= 0) {
+        spawnRedHeart(
+          this.x + (Math.random() - 0.5) * 8,
+          this.y - 14 - Math.random() * 3
+        );
+        this.heartCooldown = 0.18 + Math.random() * 0.18;
+      }
+      if (this.stateTimer <= 0) {
+        // Resume normal life
+        this.state = 'sit';
+        this.stateTimer = 1.2;
+      }
+      return; // no movement, no new action rolls
+    }
 
     if (this.stateTimer <= 0) {
       this.pickNewAction();
@@ -2115,6 +2374,367 @@ function drawJRPGBubble(cx, cy, text) {
 
 /* ═══ Little pixel hearts drifting up from working agents ═══ */
 const particles = [];
+
+/* ═══ Pneumatic tube — vertical glass tube on right edge ═══ */
+// Tube lives in the sliver on the right edge, between top desks and bottom zones
+const TUBE = {
+  x: 988,     // center x (in virtual coords)
+  yTop: 50,   // top opening
+  yBot: 500,  // bottom opening
+  radius: 14, // half-width
+};
+
+function drawPneumaticTube() {
+  const t = performance.now() / 1000;
+  const cx = TUBE.x * scale;
+  const r = TUBE.radius * scale;
+  const yT = TUBE.yTop * scale;
+  const yB = TUBE.yBot * scale;
+
+  // Wall mount brackets (top, middle, bottom)
+  const bracketYs = [yT, (yT + yB) / 2, yB];
+  bracketYs.forEach(by => {
+    ctx.fillStyle = '#5a3d22';
+    ctx.fillRect(cx - r - 6 * scale, by - 3 * scale, 2 * scale, 6 * scale);
+    ctx.fillRect(cx + r + 4 * scale, by - 3 * scale, 2 * scale, 6 * scale);
+    ctx.fillStyle = '#3a2a1a';
+    ctx.fillRect(cx - r - 6 * scale, by - 4 * scale, r * 2 + 12 * scale, 1);
+    ctx.fillRect(cx - r - 6 * scale, by + 3 * scale, r * 2 + 12 * scale, 1);
+  });
+
+  // Top funnel (wider opening)
+  ctx.fillStyle = '#8a5f35';
+  ctx.fillRect(cx - r - 4 * scale, yT - 10 * scale, r * 2 + 8 * scale, 6 * scale);
+  ctx.fillStyle = '#3a2a1a';
+  ctx.fillRect(cx - r - 5 * scale, yT - 11 * scale, r * 2 + 10 * scale, 1);
+  ctx.fillRect(cx - r - 5 * scale, yT - 4 * scale, r * 2 + 10 * scale, 1);
+  // Funnel mouth (dark opening)
+  ctx.fillStyle = '#1a0f08';
+  ctx.fillRect(cx - r + 1, yT - 10 * scale, r * 2 - 2, 4 * scale);
+
+  // Bottom funnel
+  ctx.fillStyle = '#8a5f35';
+  ctx.fillRect(cx - r - 4 * scale, yB + 4 * scale, r * 2 + 8 * scale, 6 * scale);
+  ctx.fillStyle = '#3a2a1a';
+  ctx.fillRect(cx - r - 5 * scale, yB + 3 * scale, r * 2 + 10 * scale, 1);
+  ctx.fillRect(cx - r - 5 * scale, yB + 10 * scale, r * 2 + 10 * scale, 1);
+  ctx.fillStyle = '#1a0f08';
+  ctx.fillRect(cx - r + 1, yB + 6 * scale, r * 2 - 2, 4 * scale);
+
+  // Glass tube — translucent cyan fill
+  ctx.fillStyle = 'rgba(180, 220, 235, 0.22)';
+  ctx.fillRect(cx - r, yT, r * 2, yB - yT);
+
+  // Inner vertical streaks (glass reflection — left highlight, right shadow)
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+  ctx.fillRect(cx - r + 2, yT + 4, 1 * scale, yB - yT - 8);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
+  ctx.fillRect(cx - r + 4 * scale, yT + 4, 1, yB - yT - 8);
+  ctx.fillStyle = 'rgba(40, 60, 80, 0.18)';
+  ctx.fillRect(cx + r - 3 * scale, yT + 4, 1 * scale, yB - yT - 8);
+
+  // Metal rings every ~60px
+  const ringSpacing = 60 * scale;
+  for (let ry = yT + ringSpacing; ry < yB - 4; ry += ringSpacing) {
+    // Ring body
+    ctx.fillStyle = '#b08a5f';
+    ctx.fillRect(cx - r - 2 * scale, ry, r * 2 + 4 * scale, 4 * scale);
+    // Ring highlight
+    ctx.fillStyle = '#e0c080';
+    ctx.fillRect(cx - r - 2 * scale, ry, r * 2 + 4 * scale, 1);
+    // Ring shadow
+    ctx.fillStyle = '#5a3d22';
+    ctx.fillRect(cx - r - 2 * scale, ry + 3 * scale, r * 2 + 4 * scale, 1);
+    // Ring outline
+    ctx.fillStyle = '#2a1810';
+    ctx.fillRect(cx - r - 3 * scale, ry - 1, r * 2 + 6 * scale, 1);
+    ctx.fillRect(cx - r - 3 * scale, ry + 4 * scale, r * 2 + 6 * scale, 1);
+  }
+
+  // Glass frame (dark pixel outline)
+  ctx.fillStyle = '#2a1810';
+  ctx.fillRect(cx - r - 1, yT, 1, yB - yT);
+  ctx.fillRect(cx + r, yT, 1, yB - yT);
+
+  // Gentle "vacuum flow" particles drifting inside tube (ambient)
+  for (let i = 0; i < 5; i++) {
+    const ph = (t * 0.3 + i * 0.19) % 1;
+    const py = yT + ph * (yB - yT);
+    const px = cx + Math.sin(t * 2 + i) * (r - 4) * 0.3;
+    ctx.fillStyle = `rgba(180, 220, 240, ${0.35 * (1 - Math.abs(ph - 0.5) * 1.4)})`;
+    ctx.fillRect(px - 1, py, 2, 1);
+  }
+}
+
+/* ═══ Packets — envelopes traveling through the tube ═══ */
+const packets = [];
+// Phases: "approach_up" (to top funnel) → "in_tube" (slide down) → "approach_out" (to dest)
+function sendPacket(fromZone, toZone, color = '#fbf3dd') {
+  const fz = ZONE_MAP[fromZone], tz = ZONE_MAP[toZone];
+  if (!fz || !tz) return;
+  const sx = fz.x + fz.w * 0.5;
+  const sy = fz.y + fz.h * 0.55;
+  const dx = tz.x + tz.w * 0.5;
+  const dy = tz.y + tz.h * 0.4;
+  packets.push({
+    phase: 'approach_up',
+    t: 0,
+    sx, sy,             // starting point (origin desk)
+    ex: TUBE.x, ey: TUBE.yTop - 4,  // entry to tube
+    ox: TUBE.x, oy: TUBE.yBot + 4,  // exit from tube
+    dx, dy,             // final destination
+    color,
+    tilt: 0,
+    // fly durations (seconds)
+    d1: 0.9,  // desk → tube entry
+    d2: 0.65, // slide through tube
+    d3: 0.85, // tube exit → desk
+  });
+}
+
+function updatePackets(dt) {
+  for (let i = packets.length - 1; i >= 0; i--) {
+    const p = packets[i];
+    p.t += dt;
+    if (p.phase === 'approach_up') {
+      if (p.t >= p.d1) { p.phase = 'in_tube'; p.t = 0; }
+    } else if (p.phase === 'in_tube') {
+      if (p.t >= p.d2) { p.phase = 'approach_out'; p.t = 0; }
+    } else if (p.phase === 'approach_out') {
+      if (p.t >= p.d3) packets.splice(i, 1);
+    }
+  }
+}
+
+function drawPackets() {
+  for (const p of packets) {
+    let x, y, tilt = 0, squish = 1;
+    if (p.phase === 'approach_up') {
+      // Arc flight from desk up to tube mouth
+      const u = p.t / p.d1;
+      const e = 1 - (1 - u) * (1 - u); // ease-out
+      x = p.sx + (p.ex - p.sx) * e;
+      y = p.sy + (p.ey - p.sy) * e - Math.sin(u * Math.PI) * 40;
+      tilt = Math.sin(u * Math.PI * 2) * 0.35 + (p.ex - p.sx) * 0.003;
+    } else if (p.phase === 'in_tube') {
+      // Fast slide down inside tube — sharp ease-in then ease-out
+      const u = p.t / p.d2;
+      const e = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
+      x = p.ex;
+      y = p.ey + (p.oy - p.ey) * e;
+      squish = 0.72; // squeeze vertically from speed
+    } else {
+      // Exit tube → arc down to destination
+      const u = p.t / p.d3;
+      const e = 1 - (1 - u) * (1 - u);
+      x = p.ox + (p.dx - p.ox) * e;
+      y = p.oy + (p.dy - p.oy) * e - Math.sin(u * Math.PI) * 18;
+      tilt = Math.sin(u * Math.PI * 1.5) * -0.3;
+    }
+    drawEnvelope(x * scale, y * scale, p.color, tilt, squish, p.phase === 'in_tube');
+  }
+}
+
+function drawEnvelope(cx, cy, col, tilt, squish, inTube) {
+  const w = 14 * scale, h = 10 * scale * squish;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(tilt);
+  // Motion trail if in tube
+  if (inTube) {
+    ctx.fillStyle = 'rgba(255, 240, 200, 0.25)';
+    ctx.fillRect(-w / 2, -h / 2 - 14 * scale, w, 3 * scale);
+    ctx.fillStyle = 'rgba(255, 240, 200, 0.45)';
+    ctx.fillRect(-w / 2, -h / 2 - 8 * scale, w, 3 * scale);
+  }
+  // Shadow
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+  ctx.fillRect(-w / 2 + 1, -h / 2 + 1, w, h);
+  // Body
+  ctx.fillStyle = col;
+  ctx.fillRect(-w / 2, -h / 2, w, h);
+  // Flap (V-shape)
+  ctx.fillStyle = '#e8d5a8';
+  ctx.fillRect(-w / 2 + 1, -h / 2, w - 2, 1 * scale);
+  ctx.fillRect(-w / 2 + 2, -h / 2 + 1, w - 4, 1 * scale);
+  ctx.fillRect(-w / 2 + 3, -h / 2 + 2, w - 6, 1 * scale);
+  ctx.fillRect(-w / 2 + 5, -h / 2 + 3, w - 10, 1 * scale);
+  // Wax seal
+  ctx.fillStyle = '#d2553a';
+  ctx.fillRect(-1 * scale, 1 * scale, 3 * scale, 3 * scale);
+  ctx.fillStyle = '#a8402a';
+  ctx.fillRect(1 * scale, 3 * scale, 1 * scale, 1 * scale);
+  // Outline
+  ctx.fillStyle = '#2a1810';
+  ctx.fillRect(-w / 2 - 1, -h / 2, 1, h);
+  ctx.fillRect(w / 2, -h / 2, 1, h);
+  ctx.fillRect(-w / 2, -h / 2 - 1, w, 1);
+  ctx.fillRect(-w / 2, h / 2, w, 1);
+  ctx.restore();
+}
+
+/* ═══ Owls — postal courier birds ═══ */
+const owls = [];
+function sendOwl(toZone, pickup = true) {
+  const tz = ZONE_MAP[toZone];
+  if (!tz) return;
+  const target = { x: tz.x + tz.w * 0.5, y: tz.y + tz.h * 0.4 };
+  // Fly from left or right off-screen, deliver, fly out opposite side
+  const fromRight = Math.random() < 0.5;
+  owls.push({
+    phase: 'fly_in',
+    t: 0,
+    x: fromRight ? VIRTUAL_W + 40 : -40,
+    y: target.y - 60 - Math.random() * 20,
+    dir: fromRight ? -1 : 1,
+    target,
+    hasLetter: pickup,
+    exitX: fromRight ? -40 : VIRTUAL_W + 40,
+    exitY: target.y - 80 - Math.random() * 30,
+    hover: 1.1,
+    d1: 1.9,
+    d2: 0.9,
+    d3: 1.6,
+  });
+}
+
+function updateOwls(dt) {
+  for (let i = owls.length - 1; i >= 0; i--) {
+    const o = owls[i];
+    o.t += dt;
+    if (o.phase === 'fly_in') {
+      const u = Math.min(1, o.t / o.d1);
+      const e = 1 - (1 - u) * (1 - u);
+      o.x = (o.phase_startX ?? (o.phase_startX = o.x)) + ((o.target.x - 10 * o.dir) - o.phase_startX) * e;
+      o.y = (o.phase_startY ?? (o.phase_startY = o.y)) + ((o.target.y - 28) - o.phase_startY) * e
+            + Math.sin(u * Math.PI) * -8;
+      if (u >= 1) { o.phase = 'drop'; o.t = 0; delete o.phase_startX; delete o.phase_startY; }
+    } else if (o.phase === 'drop') {
+      const u = Math.min(1, o.t / o.d2);
+      o.y = o.target.y - 28 + Math.sin(u * Math.PI) * 6;
+      if (u > 0.5 && o.hasLetter) {
+        o.hasLetter = false;
+        // Spawn an envelope particle falling to desk
+        packets.push({
+          phase: 'approach_out',
+          t: 0, d3: 0.5,
+          sx: o.x, sy: o.y + 4,
+          ex: o.x, ey: o.y,
+          ox: o.x, oy: o.y,
+          dx: o.target.x, dy: o.target.y + 6,
+          color: '#fbf3dd',
+          tilt: 0,
+        });
+      }
+      if (u >= 1) { o.phase = 'fly_out'; o.t = 0; o.phase_startX = o.x; o.phase_startY = o.y; }
+    } else if (o.phase === 'fly_out') {
+      const u = Math.min(1, o.t / o.d3);
+      const e = u * u;
+      o.x = o.phase_startX + (o.exitX - o.phase_startX) * e;
+      o.y = o.phase_startY + (o.exitY - o.phase_startY) * e - Math.sin(u * Math.PI) * 10;
+      if (u >= 1) owls.splice(i, 1);
+    }
+  }
+}
+
+function drawOwls() {
+  const t = performance.now() / 1000;
+  for (const o of owls) {
+    const cx = o.x * scale, cy = o.y * scale;
+    const flap = Math.sin(t * 14) * 0.5 + 0.5; // 0..1
+    const wingUp = flap > 0.5;
+    ctx.save();
+    // Shadow on ground
+    const groundY = (o.target.y + 10) * scale;
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.beginPath();
+    ctx.ellipse(cx, groundY, 10 * scale, 3 * scale, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    const f = o.dir; // facing: 1 = right, -1 = left
+    // Body (round brown)
+    ctx.fillStyle = '#8a5f35';
+    ctx.fillRect(cx - 6 * scale, cy - 6 * scale, 12 * scale, 10 * scale);
+    ctx.fillStyle = '#a67a4a';
+    ctx.fillRect(cx - 5 * scale, cy - 7 * scale, 10 * scale, 3 * scale);
+    // Head
+    ctx.fillStyle = '#8a5f35';
+    ctx.fillRect(cx - 5 * scale, cy - 11 * scale, 10 * scale, 6 * scale);
+    ctx.fillStyle = '#a67a4a';
+    ctx.fillRect(cx - 4 * scale, cy - 12 * scale, 8 * scale, 2 * scale);
+    // Ear tufts
+    ctx.fillStyle = '#5a3d22';
+    ctx.fillRect(cx - 5 * scale, cy - 13 * scale, 2 * scale, 2 * scale);
+    ctx.fillRect(cx + 3 * scale, cy - 13 * scale, 2 * scale, 2 * scale);
+    // Face disc (lighter)
+    ctx.fillStyle = '#e8d5a8';
+    ctx.fillRect(cx - 4 * scale, cy - 10 * scale, 8 * scale, 4 * scale);
+    // Eyes (big yellow with black pupils)
+    ctx.fillStyle = '#f0d056';
+    ctx.fillRect(cx - 4 * scale, cy - 10 * scale, 3 * scale, 3 * scale);
+    ctx.fillRect(cx + 1 * scale, cy - 10 * scale, 3 * scale, 3 * scale);
+    ctx.fillStyle = '#2a1810';
+    ctx.fillRect(cx - 3 * scale + (f > 0 ? 1 : 0), cy - 9 * scale, 1 * scale, 1 * scale);
+    ctx.fillRect(cx + 2 * scale + (f > 0 ? 1 : 0), cy - 9 * scale, 1 * scale, 1 * scale);
+    // Beak
+    ctx.fillStyle = '#e0a93b';
+    ctx.fillRect(cx - 1 * scale, cy - 7 * scale, 2 * scale, 2 * scale);
+    // Belly chevrons
+    ctx.fillStyle = '#6a4525';
+    ctx.fillRect(cx - 4 * scale, cy - 2 * scale, 1, 1);
+    ctx.fillRect(cx - 1 * scale, cy - 2 * scale, 1, 1);
+    ctx.fillRect(cx + 2 * scale, cy - 2 * scale, 1, 1);
+    ctx.fillRect(cx - 3 * scale, cy, 1, 1);
+    ctx.fillRect(cx, cy, 1, 1);
+    ctx.fillRect(cx + 3 * scale, cy, 1, 1);
+    // Wings (flap)
+    ctx.fillStyle = '#5a3d22';
+    if (wingUp) {
+      // Wings up
+      ctx.fillRect(cx - 10 * scale, cy - 10 * scale, 4 * scale, 6 * scale);
+      ctx.fillRect(cx + 6 * scale, cy - 10 * scale, 4 * scale, 6 * scale);
+      ctx.fillStyle = '#8a5f35';
+      ctx.fillRect(cx - 9 * scale, cy - 9 * scale, 2 * scale, 3 * scale);
+      ctx.fillRect(cx + 7 * scale, cy - 9 * scale, 2 * scale, 3 * scale);
+    } else {
+      // Wings down (spread)
+      ctx.fillRect(cx - 12 * scale, cy - 4 * scale, 6 * scale, 4 * scale);
+      ctx.fillRect(cx + 6 * scale, cy - 4 * scale, 6 * scale, 4 * scale);
+      ctx.fillStyle = '#8a5f35';
+      ctx.fillRect(cx - 11 * scale, cy - 3 * scale, 4 * scale, 2 * scale);
+      ctx.fillRect(cx + 7 * scale, cy - 3 * scale, 4 * scale, 2 * scale);
+    }
+    // Feet
+    ctx.fillStyle = '#e0a93b';
+    ctx.fillRect(cx - 3 * scale, cy + 4 * scale, 1 * scale, 2 * scale);
+    ctx.fillRect(cx + 2 * scale, cy + 4 * scale, 1 * scale, 2 * scale);
+    // Letter in beak
+    if (o.hasLetter) {
+      ctx.fillStyle = '#fbf3dd';
+      ctx.fillRect(cx - 2 * scale, cy - 4 * scale, 4 * scale, 3 * scale);
+      ctx.fillStyle = '#2a1810';
+      ctx.fillRect(cx - 2 * scale, cy - 5 * scale, 4 * scale, 1);
+      ctx.fillRect(cx - 2 * scale, cy - 1 * scale, 4 * scale, 1);
+      ctx.fillStyle = '#d2553a';
+      ctx.fillRect(cx - 1 * scale, cy - 3 * scale, 1, 1);
+    }
+    ctx.restore();
+  }
+}
+
+// Demo: periodically send packets through the tube and owls from outside
+setInterval(() => {
+  const topZones = ['claude_desk', 'codex_desk', 'gemini_desk'];
+  const botZones = ['archive_shelf', 'receipt_board'];
+  const from = topZones[Math.floor(Math.random() * topZones.length)];
+  const to = botZones[Math.floor(Math.random() * botZones.length)];
+  sendPacket(from, to, ['#fbf3dd', '#f4d49a', '#e8d5a8'][Math.floor(Math.random() * 3)]);
+}, 3800);
+setInterval(() => {
+  const zones = ['claude_desk', 'codex_desk', 'gemini_desk'];
+  sendOwl(zones[Math.floor(Math.random() * zones.length)]);
+}, 7200);
+
 function spawnHeart(x, y) {
   particles.push({
     x, y, vy: -20 - Math.random() * 10,
@@ -2122,6 +2742,16 @@ function spawnHeart(x, y) {
     life: 1.6, maxLife: 1.6,
     color: ['#d98ca0', '#e0a93b', '#a88cc5'][Math.floor(Math.random() * 3)],
     shape: Math.random() < 0.5 ? 'heart' : 'note',
+  });
+}
+function spawnRedHeart(x, y) {
+  particles.push({
+    x, y,
+    vy: -26 - Math.random() * 10,
+    vx: (Math.random() - 0.5) * 10,
+    life: 1.4, maxLife: 1.4,
+    color: '#e83a4a',           // bright red
+    shape: 'heart',
   });
 }
 function updateParticles(dt) {
@@ -2183,11 +2813,18 @@ function loop(now) {
   ctx.clearRect(0, 0, cw, ch);
   drawFloor();
   drawZones();
+  drawPneumaticTube();
 
   // Sort agents by Y, cat mixed in for correct overlap
   const drawables = [...agents.map(a => ({kind:'agent', o:a, y:a.y})), {kind:'cat', o:cat, y:cat.y}];
   drawables.sort((a, b) => a.y - b.y);
   for (const d of drawables) d.kind === 'agent' ? drawAgent(d.o) : drawCat(d.o);
+
+  updatePackets(dt);
+  drawPackets();
+  updateOwls(dt);
+  drawOwls();
+
   drawParticles();
 }
 
@@ -2199,6 +2836,15 @@ canvas.addEventListener('click', (e) => {
   const rect = canvas.getBoundingClientRect();
   const mx = (e.clientX - rect.left) / scale;
   const my = (e.clientY - rect.top) / scale;
+  // Cat first — small hitbox so you have to aim, but forgiving
+  {
+    const cdx = mx - cat.x;
+    const cdy = my - (cat.y - 6); // aim roughly at the body center (draw origin is feet)
+    if (cdx * cdx + cdy * cdy < 16 * 16) {
+      cat.pet(mx);
+      return;
+    }
+  }
   for (const a of agents) {
     const dx = mx - a.x, dy = my - a.y;
     if (Math.sqrt(dx*dx + dy*dy) < 22) {
@@ -2225,6 +2871,10 @@ canvas.addEventListener('mousemove', (e) => {
     const dx = mx - a.x, dy = my - a.y;
     if (Math.sqrt(dx*dx + dy*dy) < 22) { hit = a; break; }
   }
+  // Cat hover → pointer cursor (no tooltip, keeps it subtle)
+  const cdx = mx - cat.x, cdy = my - (cat.y - 6);
+  const overCat = (cdx * cdx + cdy * cdy) < 16 * 16;
+  canvas.style.cursor = (hit || overCat) ? 'pointer' : '';
   if (hit) {
     tooltip.style.display = 'block';
     tooltip.style.left = (e.clientX - rect.left + 16) + 'px';
@@ -2310,6 +2960,90 @@ setInterval(() => {
     }
   }
 }, 4500);
+
+/* ═══════════════════════════════════════════════════════════════
+   TWEAKS PANEL — time of day + window visibility
+   ═══════════════════════════════════════════════════════════════ */
+const TWEAKS = /*EDITMODE-BEGIN*/{
+  "timeOfDay": "auto",
+  "showWindow": true
+}/*EDITMODE-END*/;
+
+function applyTweaks() {
+  const t = TWEAKS.timeOfDay;
+  if (t === 'auto') window.__timeOverride = null;
+  else if (t === 'dawn')    window.__timeOverride = 6.5;
+  else if (t === 'day')     window.__timeOverride = 13;
+  else if (t === 'sunset')  window.__timeOverride = 18.5;
+  else if (t === 'night')   window.__timeOverride = 22;
+  window.__hideWindow = !TWEAKS.showWindow;
+}
+applyTweaks();
+
+// Build Tweaks panel UI
+function buildTweaksPanel() {
+  if (document.getElementById('tweaks-panel')) return;
+  const panel = document.createElement('div');
+  panel.id = 'tweaks-panel';
+  panel.style.cssText = `
+    position: fixed; right: 18px; bottom: 18px; z-index: 90;
+    background: var(--parchment-bright, #fbf3dd);
+    color: var(--ink, #2a1810);
+    font-family: 'Galmuri11', 'DungGeunMo', monospace;
+    padding: 14px; min-width: 220px;
+    box-shadow: 0 -3px 0 0 #2a1810, 0 3px 0 0 #2a1810, -3px 0 0 0 #2a1810, 3px 0 0 0 #2a1810, 6px 6px 0 0 rgba(0,0,0,0.25);
+    display: none;
+  `;
+  panel.innerHTML = `
+    <div style="font-size:13px; letter-spacing:0.08em; color:#5c3b22; border-bottom:2px dashed #c9a875; padding-bottom:6px; margin-bottom:10px; text-transform:uppercase;">
+      ✦ Tweaks
+    </div>
+    <div style="font-size:11px; color:#5a3d28; margin-bottom:6px;">Time of day</div>
+    <div id="tweak-tod" style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:4px; margin-bottom:12px;">
+      ${['auto','dawn','day','sunset','night'].map(t => `
+        <button data-tod="${t}" style="
+          font-family: inherit; font-size: 11px;
+          padding: 6px 4px; cursor: pointer;
+          background: ${TWEAKS.timeOfDay === t ? '#e0a93b' : '#fbf3dd'};
+          color: #2a1810; border: none;
+          box-shadow: 0 -2px 0 0 #2a1810, 0 2px 0 0 #2a1810, -2px 0 0 0 #2a1810, 2px 0 0 0 #2a1810, inset 2px 2px 0 0 rgba(255,255,255,0.3), inset -2px -2px 0 0 rgba(0,0,0,0.15);
+        ">${t}</button>
+      `).join('')}
+    </div>
+    <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:#5a3d28; cursor:pointer;">
+      <input type="checkbox" id="tweak-win" ${TWEAKS.showWindow ? 'checked' : ''} style="width:14px; height:14px;">
+      Show windows
+    </label>
+  `;
+  document.body.appendChild(panel);
+
+  panel.querySelectorAll('[data-tod]').forEach(b => {
+    b.addEventListener('click', () => {
+      TWEAKS.timeOfDay = b.dataset.tod;
+      applyTweaks();
+      panel.querySelectorAll('[data-tod]').forEach(bb => {
+        bb.style.background = TWEAKS.timeOfDay === bb.dataset.tod ? '#e0a93b' : '#fbf3dd';
+      });
+      window.parent.postMessage({type: '__edit_mode_set_keys', edits: {timeOfDay: TWEAKS.timeOfDay}}, '*');
+    });
+  });
+  panel.querySelector('#tweak-win').addEventListener('change', e => {
+    TWEAKS.showWindow = e.target.checked;
+    applyTweaks();
+    window.parent.postMessage({type: '__edit_mode_set_keys', edits: {showWindow: TWEAKS.showWindow}}, '*');
+  });
+}
+buildTweaksPanel();
+
+window.addEventListener('message', (e) => {
+  if (!e.data || !e.data.type) return;
+  if (e.data.type === '__activate_edit_mode') {
+    document.getElementById('tweaks-panel').style.display = 'block';
+  } else if (e.data.type === '__deactivate_edit_mode') {
+    document.getElementById('tweaks-panel').style.display = 'none';
+  }
+});
+window.parent.postMessage({type: '__edit_mode_available'}, '*');
 </script>
 </body>
 </html>

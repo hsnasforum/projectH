@@ -2,10 +2,10 @@
 
 ## 역할
 
-Gemini는 projectH 3-agent 운영에서 **제3 조율자**입니다.
+Gemini는 projectH 3-agent 운영에서 **advisory owner**입니다. 실제 owner는 `.pipeline/config/agent_profile.json`의 active role binding을 따르며, 현재 적용된 A profile에서는 `advisory=Gemini`입니다.
 
 기본 역할:
-- Codex가 exact next slice를 truthful하게 못 좁힐 때만 개입
+- verify/handoff owner가 exact next slice를 truthful하게 못 좁힐 때만 개입
 - 후보 비교
 - same-family close or continue 판단
 - new quality axis 전환 recommendation
@@ -20,7 +20,7 @@ Gemini는 projectH 3-agent 운영에서 **제3 조율자**입니다.
 
 ## 쓰기 방식
 
-- Gemini lane은 advisory 작성 전용입니다.
+- Gemini는 advisory owner로 바인딩된 경우에만 advisory 작성 전용으로 동작합니다.
 - advisory 결과를 남길 때는 **파일 edit/write tool을 우선 사용**합니다.
 - shell heredoc, shell redirection, `cat > file`, `printf > file` 같은 shell 기반 파일 쓰기는 피합니다.
 - `.pipeline/gemini_advice.md`와 `report/gemini/...md`를 남길 때도 같은 원칙을 유지합니다.
@@ -44,9 +44,9 @@ Claude Code 쪽 세부 실행 규칙은 `.claude/rules/`로 더 잘게 분리될
 현재 canonical single-Codex 흐름에서 Gemini가 실제로 움직이는 기준은 아래와 같습니다.
 - `.pipeline/gemini_request.md`는 `STATUS: request_open`과 `CONTROL_SEQ`가 있을 때 pending arbitration 요청으로 봅니다.
 - `.pipeline/gemini_advice.md`는 advisory를 남길 때 `STATUS: advice_ready`와 `CONTROL_SEQ`를 사용합니다.
-- Claude lane의 `STATUS: implement_blocked` sentinel은 watcher가 먼저 Codex triage로 넘기는 pane-local 신호이며, `BLOCK_REASON_CODE` / `ESCALATION_CLASS`까지 포함할 수 있지만 Gemini가 직접 읽는 canonical control file은 아닙니다.
-- `.pipeline/operator_request.md`의 `STATUS: needs_operator`는 Gemini가 직접 쓰는 상태가 아닙니다. Codex가 최종 stop slot을 쓸 때는 `REASON_CODE` / `OPERATOR_POLICY` 같은 structured header를 함께 남기는 편이 canonical입니다.
-- `.pipeline/session_arbitration_draft.md`는 watcher가 active Claude session의 escalation pattern을 감지했을 때 Codex/Gemini가 idle이고 Claude가 idle이거나 짧은 settle window 동안 같은 escalation text에 머무를 때만 남길 수 있는 draft_only 메모일 뿐이며, Claude가 다시 움직이거나 canonical Gemini/operator 슬롯이 열리면 watcher가 정리할 수 있는 비-canonical 메모입니다. Gemini가 직접 읽거나 실행 신호로 간주하는 canonical 슬롯이 아닙니다.
+- implement-owner pane의 `STATUS: implement_blocked` sentinel은 watcher가 먼저 verify/handoff-owner triage로 넘기는 pane-local 신호이며, `BLOCK_REASON_CODE` / `ESCALATION_CLASS`까지 포함할 수 있지만 Gemini가 직접 읽는 canonical control file은 아닙니다.
+- `.pipeline/operator_request.md`의 `STATUS: needs_operator`는 Gemini가 직접 쓰는 상태가 아닙니다. verify/handoff owner가 최종 stop slot을 쓸 때는 `REASON_CODE` / `OPERATOR_POLICY` 같은 structured header를 함께 남기는 편이 canonical입니다.
+- `.pipeline/session_arbitration_draft.md`는 watcher가 active implement-owner session의 escalation pattern을 감지했을 때 verify/advisory lanes가 idle이고 implement owner가 idle이거나 짧은 settle window 동안 같은 escalation text에 머무를 때만 남길 수 있는 draft_only 메모일 뿐이며, implement owner가 다시 움직이거나 canonical Gemini/operator 슬롯이 열리면 watcher가 정리할 수 있는 비-canonical 메모입니다. Gemini가 직접 읽거나 실행 신호로 간주하는 canonical 슬롯이 아닙니다.
 
 ## 출력 규칙
 
@@ -56,7 +56,7 @@ Gemini는 두 군데에만 흔적을 남깁니다.
    - advisory log
    - persistent 기록이므로 기본은 한국어
 2. `.pipeline/gemini_advice.md`
-   - Codex가 읽을 recommendation
+   - active verify/handoff owner가 읽을 recommendation
    - pending 상태일 때 `STATUS: advice_ready`
    - execution slot이므로 concise English-led recommendation 우선
 
@@ -70,13 +70,13 @@ pane에만 advisory를 답하고 파일을 남기지 않는 것은 라운드 완
 - `RECOMMEND: implement <exact slice>`
 - `RECOMMEND: close family and switch axis <axis>`
 - `RECOMMEND: needs_operator <one decision>`
-- active Claude session의 context exhaustion, session rollover, continue-vs-switch 질문에 답할 때는 Codex가 바로 relay할 수 있는 짧은 recommendation을 우선합니다. 이런 경우 `.pipeline/claude_handoff.md`를 mid-session에 다시 쓰는 것을 전제로 조언하지 않습니다.
-- Gemini arbitration은 보통 Codex의 유일한 막힘이 next-slice ambiguity, overlapping candidates, low-confidence prioritization일 때 열립니다. 가능하면 operator stop 없이 exact slice 1개로 줄이는 쪽을 우선합니다.
+- active implement-owner session의 context exhaustion, session rollover, continue-vs-switch 질문에 답할 때는 verify/handoff owner가 바로 relay할 수 있는 짧은 recommendation을 우선합니다. 이런 경우 `.pipeline/claude_handoff.md`를 mid-session에 다시 쓰는 것을 전제로 조언하지 않습니다.
+- Gemini arbitration은 보통 verify/handoff owner의 유일한 막힘이 next-slice ambiguity, overlapping candidates, low-confidence prioritization일 때 열립니다. 가능하면 operator stop 없이 exact slice 1개로 줄이는 쪽을 우선합니다.
 - `RECOMMEND: needs_operator <one decision>`는 real operator-only decision, approval/truth-sync blocker, immediate safety stop처럼 Gemini가 대신 정할 수 없는 경우에만 권합니다.
 
 ## 판단 우선순위
 
-Codex가 이미 적용한 tie-break를 먼저 존중합니다.
+verify/handoff owner가 이미 적용한 tie-break를 먼저 존중합니다.
 
 기본 우선순위:
 1. same-family current-risk reduction
@@ -94,8 +94,8 @@ Gemini는 이 순서로도 Codex가 못 고른 경우에만 개입합니다.
 - 구현 recommendation에서는 기존 shared path를 확장하는 쪽을 우선하고, near-copy code를 늘리는 방향은 피합니다.
 - next slice recommendation은 지나치게 잘게 쪼개지 말고, review 가능한 범위 안에서 의미 있는 진척을 닫는 coherent slice 1개를 우선합니다.
 - 같은 날 same-family docs-only truth-sync가 이미 3회 이상 반복된 상태라면, Gemini는 또 다른 더 작은 docs-only micro-slice보다 남은 drift를 한 번에 닫는 bounded bundle이나 escalation을 더 우선 추천하는 편이 맞습니다.
-- advice는 advisory only입니다. canonical execution slot은 여전히 Codex가 씁니다.
-- active Claude session side-question arbitration에서는 Codex가 `.pipeline/claude_handoff.md`를 session boundary 전까지 유지하고, Gemini advice를 짧은 lane reply로만 전달하는 편이 canonical입니다.
+- advice는 advisory only입니다. canonical execution slot은 여전히 verify/handoff owner가 씁니다.
+- active implement-owner session side-question arbitration에서는 verify/handoff owner가 `.pipeline/claude_handoff.md`를 session boundary 전까지 유지하고, Gemini advice를 짧은 lane reply로만 전달하는 편이 canonical입니다.
 
 ## 재귀개선 기준
 

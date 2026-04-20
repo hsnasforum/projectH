@@ -28,10 +28,17 @@ from pipeline_gui.backend import (
     runtime_send_input as backend_runtime_send_input,
 )
 from pipeline_gui.project import _session_name_for
+from pipeline_gui.setup_profile import resolve_project_runtime_adapter
 
 PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parent.parent))
 CONTROLLER_DIR = Path(__file__).parent
 CONTROLLER_PORT = int(os.environ.get("CONTROLLER_PORT", "8780"))
+_KNOWN_LANE_NAMES = ("Claude", "Codex", "Gemini")
+_DEFAULT_ROLE_OWNERS = {
+    "implement": "Claude",
+    "verify": "Codex",
+    "advisory": "Gemini",
+}
 
 
 def _running_in_wsl() -> bool:
@@ -52,6 +59,40 @@ def _controller_windows_fallback_host() -> str | None:
 
 CONTROLLER_HOST = _controller_bind_host()
 SESSION_NAME = _session_name_for(PROJECT_ROOT)
+
+
+def _runtime_role_metadata() -> dict:
+    try:
+        adapter = resolve_project_runtime_adapter(PROJECT_ROOT)
+    except Exception:
+        adapter = {}
+
+    ready_profile = isinstance(adapter, dict) and str(adapter.get("resolution_state") or "") == "ready"
+    raw_role_owners = dict(adapter.get("role_owners") or {}) if isinstance(adapter, dict) else {}
+    raw_prompt_owners = dict(adapter.get("prompt_owners") or {}) if isinstance(adapter, dict) else {}
+    raw_enabled_lanes = list(adapter.get("enabled_lanes") or []) if isinstance(adapter, dict) else []
+
+    role_owners: dict[str, str] = {}
+    prompt_owners: dict[str, str] = {}
+    for role, default_owner in _DEFAULT_ROLE_OWNERS.items():
+        role_owner = str(raw_role_owners.get(role) or "").strip()
+        prompt_owner = str(raw_prompt_owners.get(role) or "").strip()
+        if role_owner not in _KNOWN_LANE_NAMES:
+            role_owner = "" if ready_profile else default_owner
+        if prompt_owner not in _KNOWN_LANE_NAMES:
+            prompt_owner = role_owner or ("" if ready_profile else default_owner)
+        role_owners[role] = role_owner
+        prompt_owners[role] = prompt_owner
+
+    enabled_lanes = [name for name in raw_enabled_lanes if str(name) in _KNOWN_LANE_NAMES]
+    if not enabled_lanes:
+        enabled_lanes = list(_KNOWN_LANE_NAMES)
+
+    return {
+        "role_owners": role_owners,
+        "prompt_owners": prompt_owners,
+        "enabled_lanes": enabled_lanes,
+    }
 
 
 def _resolve_controller_asset(rel_path: str) -> tuple[Path | None, str | None]:
@@ -81,11 +122,12 @@ def _resolve_controller_asset(rel_path: str) -> tuple[Path | None, str | None]:
 def _runtime_status_or_placeholder() -> dict:
     status = normalize_runtime_status(read_runtime_status(PROJECT_ROOT))
     if status:
-        return {**status, "project_root": str(PROJECT_ROOT)}
+        return {**status, "project_root": str(PROJECT_ROOT), **_runtime_role_metadata()}
     return {
         "schema_version": 1,
         "backend_type": "tmux",
         "project_root": str(PROJECT_ROOT),
+        **_runtime_role_metadata(),
         "run_id": "",
         "current_run_id": "",
         "runtime_state": "STOPPED",
@@ -147,7 +189,7 @@ def get_runtime_status() -> tuple[dict, HTTPStatus]:
             "ok": False,
             "error": "runtime status not available",
         }, HTTPStatus.SERVICE_UNAVAILABLE
-    return {**status, "project_root": str(PROJECT_ROOT)}, HTTPStatus.OK
+    return {**status, "project_root": str(PROJECT_ROOT), **_runtime_role_metadata()}, HTTPStatus.OK
 
 
 def pipeline_start() -> dict:

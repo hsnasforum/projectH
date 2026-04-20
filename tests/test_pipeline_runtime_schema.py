@@ -368,6 +368,37 @@ class LatestVerifyNoteForWorkTest(unittest.TestCase):
 
             self.assertEqual(resolved, matching_verify)
 
+    def test_accepts_cross_day_verify_when_note_explicitly_references_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work_root = root / "work"
+            verify_root = root / "verify"
+            work_path = work_root / "4" / "19" / "2026-04-19-slice.md"
+            same_day_verify = verify_root / "4" / "19" / "2026-04-19-unrelated-verification.md"
+            cross_day_verify = verify_root / "4" / "20" / "2026-04-20-slice-verification.md"
+            work_path.parent.mkdir(parents=True, exist_ok=True)
+            same_day_verify.parent.mkdir(parents=True, exist_ok=True)
+            cross_day_verify.parent.mkdir(parents=True, exist_ok=True)
+            work_path.write_text("# work\n", encoding="utf-8")
+            same_day_verify.write_text("# verify\n", encoding="utf-8")
+            cross_day_verify.write_text(
+                "Based on `work/4/19/2026-04-19-slice.md`\n",
+                encoding="utf-8",
+            )
+
+            now = time.time()
+            os.utime(same_day_verify, (now - 20, now - 20))
+            os.utime(cross_day_verify, (now - 10, now - 10))
+
+            resolved = latest_verify_note_for_work(
+                work_root,
+                verify_root,
+                work_path,
+                repo_root=root,
+            )
+
+            self.assertEqual(resolved, cross_day_verify)
+
     def test_falls_back_to_single_same_day_verify_without_reference(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -411,6 +442,33 @@ class LatestVerifyNoteForWorkTest(unittest.TestCase):
             )
 
             self.assertIsNone(resolved)
+
+    def test_cross_day_unrelated_verify_does_not_replace_same_day_fallback_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work_root = root / "work"
+            verify_root = root / "verify"
+            work_path = work_root / "4" / "19" / "2026-04-19-slice.md"
+            same_day_verify = verify_root / "4" / "19" / "2026-04-19-slice-verification.md"
+            cross_day_verify = verify_root / "4" / "20" / "2026-04-20-unrelated-verification.md"
+            work_path.parent.mkdir(parents=True, exist_ok=True)
+            same_day_verify.parent.mkdir(parents=True, exist_ok=True)
+            cross_day_verify.parent.mkdir(parents=True, exist_ok=True)
+            work_path.write_text("# work\n", encoding="utf-8")
+            same_day_verify.write_text("# verify\n", encoding="utf-8")
+            cross_day_verify.write_text(
+                "Based on `work/4/20/2026-04-20-other.md`\n",
+                encoding="utf-8",
+            )
+
+            resolved = latest_verify_note_for_work(
+                work_root,
+                verify_root,
+                work_path,
+                repo_root=root,
+            )
+
+            self.assertEqual(resolved, same_day_verify)
 
     def test_returns_none_when_single_same_day_verify_references_other_work(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

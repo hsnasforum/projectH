@@ -546,6 +546,8 @@ class TestTurnStateRead(unittest.TestCase):
                 "reason": "work_needs_verify",
                 "active_control_file": "claude_handoff.md",
                 "active_control_seq": 17,
+                "active_role": "verify",
+                "active_lane": "Claude",
             }))
 
             from pipeline_gui.backend import read_turn_state
@@ -572,13 +574,15 @@ class TestTurnStateRead(unittest.TestCase):
                 "reason": "work_needs_verify",
                 "active_control_file": "claude_handoff.md",
                 "active_control_seq": 17,
+                "active_role": "verify",
+                "active_lane": "Claude",
             }))
 
             from pipeline_gui.backend import read_turn_state
             turn = read_turn_state(root)
             parsed: dict[str, object] = {"active": None, "stale": []}
             active_text, _ = format_control_summary(parsed, turn_state=turn)
-            self.assertIn("Codex 검증 중", active_text)
+            self.assertIn("Claude 검증 중", active_text)
 
     def test_format_control_summary_falls_back_without_turn_state(self) -> None:
         parsed: dict[str, object] = {"active": None, "stale": []}

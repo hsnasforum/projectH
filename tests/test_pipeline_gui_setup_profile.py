@@ -146,7 +146,7 @@ class PipelineGuiSetupProfileTest(unittest.TestCase):
         self.assertFalse(adapter["controls"]["advisory_enabled"])
         self.assertFalse(adapter["controls"]["session_arbitration_enabled"])
 
-    def test_runtime_adapter_keeps_canonical_prompt_owners_when_lanes_exist(self) -> None:
+    def test_runtime_adapter_routes_prompt_owners_from_role_bindings_when_lanes_exist(self) -> None:
         adapter = runtime_adapter_from_resolved(
             resolve_active_profile(
                 _profile(
@@ -164,7 +164,7 @@ class PipelineGuiSetupProfileTest(unittest.TestCase):
         )
         self.assertEqual(
             adapter["prompt_owners"],
-            {"implement": "Claude", "verify": "Codex", "advisory": "Gemini"},
+            {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"},
         )
 
     def test_resolve_active_profile_blocks_invalid_same_agent_without_self_verify(self) -> None:

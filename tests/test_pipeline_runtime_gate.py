@@ -775,6 +775,185 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
         self.assertIn("secondary_recovery_failures", data)
         self.assertEqual(data.get("secondary_recovery_failures"), [])
 
+    def _run_session_loss_with_events(
+        self,
+        degraded_status: dict,
+        events: list[dict],
+    ) -> list[dict]:
+        ready_status = {
+            "runtime_state": "RUNNING",
+            "watcher": {"alive": True, "pid": 1},
+            "lanes": [{"name": "Claude", "state": "READY", "attachable": True, "pid": 1234}],
+            "control": {"active_control_status": "none"},
+            "active_round": {"state": ""},
+        }
+
+        def _wait_until_one_shot(predicate, timeout_sec: float = 0.0):
+            try:
+                return predicate()
+            except Exception:
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with (
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_probe_receipt_manifest_mismatch_degraded_precedence",
+                    return_value=(True, "probe ok", {}),
+                ),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_probe_active_lane_auth_failure_degraded_precedence",
+                    return_value=(True, "probe ok", {}),
+                ),
+                mock.patch.object(pipeline_runtime_gate, "_start_runtime", return_value=(True, "started")),
+                mock.patch.object(pipeline_runtime_gate, "_stop_runtime", return_value=(True, "stopped")),
+                mock.patch.object(
+                    pipeline_runtime_gate,
+                    "_wait_for_runtime_readiness",
+                    return_value=(True, ready_status, 0.5),
+                ),
+                mock.patch.object(pipeline_runtime_gate.TmuxAdapter, "kill_session", return_value=None),
+                mock.patch.object(pipeline_runtime_gate, "_read_status", return_value=degraded_status),
+                mock.patch.object(pipeline_runtime_gate, "_wait_until", side_effect=_wait_until_one_shot),
+                mock.patch.object(pipeline_runtime_gate, "_pick_fault_lane", return_value=("Claude", 0)),
+                mock.patch.object(pipeline_runtime_gate, "_read_events", return_value=events),
+                mock.patch.object(pipeline_runtime_gate.time, "sleep", return_value=None),
+            ):
+                _, checks = pipeline_runtime_gate.run_fault_check(
+                    root,
+                    mode="experimental",
+                    session="aip-test",
+                )
+        return checks
+
+    def test_session_loss_check_requires_bounded_session_recovery_completed_evidence(self) -> None:
+        """When the degraded snapshot shows ``session_missing`` alongside a
+        BROKEN lane, the gate must wait for a terminal
+        ``session_recovery_completed`` event and record its structured payload
+        inside the ``session loss degraded`` check."""
+        degraded_status = {
+            "runtime_state": "DEGRADED",
+            "degraded_reason": "session_missing",
+            "degraded_reasons": ["session_missing"],
+            "lanes": [
+                {"name": "Claude", "state": "BROKEN", "attachable": False, "pid": 0},
+                {"name": "Codex", "state": "BROKEN", "attachable": False, "pid": 0},
+                {"name": "Gemini", "state": "BROKEN", "attachable": False, "pid": 0},
+            ],
+        }
+        recovery_event = {
+            "seq": 11,
+            "ts": "2026-04-19T02:00:00Z",
+            "run_id": "run-99",
+            "event_type": "session_recovery_completed",
+            "source": "supervisor",
+            "payload": {"attempt": 1, "result": "recreated"},
+        }
+        checks = self._run_session_loss_with_events(degraded_status, [recovery_event])
+        session_loss_entry = next(item for item in checks if item.get("name") == "session loss degraded")
+        self.assertTrue(session_loss_entry.get("ok"))
+        data = session_loss_entry.get("data") or {}
+        self.assertEqual(data.get("representative_reason"), "session_missing")
+        recovery_data = data.get("session_recovery") or {}
+        self.assertTrue(recovery_data.get("recovery_expected"))
+        self.assertEqual(recovery_data.get("broken_lane_names"), ["Claude", "Codex", "Gemini"])
+        self.assertTrue(recovery_data.get("event_observed"))
+        self.assertEqual(recovery_data.get("event_type"), "session_recovery_completed")
+        self.assertEqual(recovery_data.get("attempt"), 1)
+        self.assertEqual(recovery_data.get("result"), "recreated")
+        self.assertEqual(recovery_data.get("error"), "")
+        self.assertEqual(recovery_data.get("event"), recovery_event)
+        self.assertIn("session_recovery=", session_loss_entry.get("detail") or "")
+        self.assertIn("session_recovery_completed", session_loss_entry.get("detail") or "")
+
+    def test_session_loss_check_accepts_bounded_session_recovery_failed_evidence(self) -> None:
+        """A terminal ``session_recovery_failed`` event must count as bounded
+        recovery evidence so the gate does not spuriously fail when the
+        supervisor attempted but could not recreate the tmux session."""
+        degraded_status = {
+            "runtime_state": "DEGRADED",
+            "degraded_reason": "session_missing",
+            "degraded_reasons": ["session_missing"],
+            "lanes": [
+                {"name": "Claude", "state": "BROKEN", "attachable": False, "pid": 0},
+            ],
+        }
+        recovery_event = {
+            "seq": 12,
+            "ts": "2026-04-19T02:01:00Z",
+            "run_id": "run-99",
+            "event_type": "session_recovery_failed",
+            "source": "supervisor",
+            "payload": {"attempt": 1, "error": "RuntimeError: tmux split Codex pane failed: no space"},
+        }
+        checks = self._run_session_loss_with_events(degraded_status, [recovery_event])
+        session_loss_entry = next(item for item in checks if item.get("name") == "session loss degraded")
+        self.assertTrue(session_loss_entry.get("ok"))
+        data = session_loss_entry.get("data") or {}
+        recovery_data = data.get("session_recovery") or {}
+        self.assertTrue(recovery_data.get("recovery_expected"))
+        self.assertEqual(recovery_data.get("broken_lane_names"), ["Claude"])
+        self.assertTrue(recovery_data.get("event_observed"))
+        self.assertEqual(recovery_data.get("event_type"), "session_recovery_failed")
+        self.assertEqual(recovery_data.get("attempt"), 1)
+        self.assertEqual(recovery_data.get("result"), "")
+        self.assertIn("tmux split Codex pane failed", recovery_data.get("error") or "")
+        self.assertEqual(recovery_data.get("event"), recovery_event)
+
+    def test_session_loss_check_fails_when_recovery_expected_but_no_event_observed(self) -> None:
+        """If the supervisor contract expected bounded session recovery
+        (``session_missing`` + BROKEN lane) but neither
+        ``session_recovery_completed`` nor ``session_recovery_failed`` is ever
+        emitted, the gate must fail instead of silently passing on the
+        representative reason alone."""
+        degraded_status = {
+            "runtime_state": "DEGRADED",
+            "degraded_reason": "session_missing",
+            "degraded_reasons": ["session_missing"],
+            "lanes": [
+                {"name": "Claude", "state": "BROKEN", "attachable": False, "pid": 0},
+            ],
+        }
+        checks = self._run_session_loss_with_events(degraded_status, [])
+        session_loss_entry = next(item for item in checks if item.get("name") == "session loss degraded")
+        self.assertFalse(session_loss_entry.get("ok"))
+        data = session_loss_entry.get("data") or {}
+        self.assertEqual(data.get("representative_reason"), "session_missing")
+        recovery_data = data.get("session_recovery") or {}
+        self.assertTrue(recovery_data.get("recovery_expected"))
+        self.assertFalse(recovery_data.get("event_observed"))
+        self.assertEqual(recovery_data.get("event_type"), "")
+        self.assertEqual(recovery_data.get("attempt"), 0)
+        self.assertEqual(recovery_data.get("event"), {})
+
+    def test_session_loss_check_does_not_overclaim_recovery_when_no_broken_lane(self) -> None:
+        """When the degraded snapshot shows ``session_missing`` but no lane is
+        BROKEN, the supervisor contract does not trigger bounded session
+        recovery. The gate must reflect that with a stable structured payload
+        (``recovery_expected=False``, no required event) and must still pass."""
+        degraded_status = {
+            "runtime_state": "DEGRADED",
+            "degraded_reason": "session_missing",
+            "degraded_reasons": ["session_missing"],
+            "lanes": [
+                {"name": "Claude", "state": "READY", "attachable": True, "pid": 1234},
+            ],
+        }
+        # Even if an unrelated event stream exists, the gate must not require
+        # terminal session-recovery evidence when recovery was not expected.
+        checks = self._run_session_loss_with_events(degraded_status, [])
+        session_loss_entry = next(item for item in checks if item.get("name") == "session loss degraded")
+        self.assertTrue(session_loss_entry.get("ok"))
+        data = session_loss_entry.get("data") or {}
+        recovery_data = data.get("session_recovery") or {}
+        self.assertFalse(recovery_data.get("recovery_expected"))
+        self.assertEqual(recovery_data.get("broken_lane_names"), [])
+        self.assertFalse(recovery_data.get("event_observed"))
+        self.assertEqual(recovery_data.get("event_type"), "")
+        self.assertEqual(recovery_data.get("event"), {})
+
     def test_live_recovery_proof_checks_expose_structured_data_for_success_path(self) -> None:
         """``recoverable lane pid observed`` and ``lane recovery`` must carry
         structured ``data`` payloads alongside the human-readable detail so
@@ -1083,7 +1262,22 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
 
         # Previously-landed structured payloads must not regress.
         session_loss = by_name["session loss degraded"]
-        self.assertEqual((session_loss.get("data") or {}).get("representative_reason"), "session_missing")
+        session_loss_data = session_loss.get("data") or {}
+        self.assertEqual(session_loss_data.get("representative_reason"), "session_missing")
+        # Green-path degraded snapshot has no BROKEN lane, so the bounded
+        # session-recovery contract is not expected to fire. The structured
+        # ``session_recovery`` sub-payload must still be present with stable
+        # empty defaults so automation can read the same schema on every run.
+        recovery_payload = session_loss_data.get("session_recovery") or {}
+        self.assertIn("session_recovery", session_loss_data)
+        self.assertFalse(recovery_payload.get("recovery_expected"))
+        self.assertEqual(recovery_payload.get("broken_lane_names"), [])
+        self.assertFalse(recovery_payload.get("event_observed"))
+        self.assertEqual(recovery_payload.get("event_type"), "")
+        self.assertEqual(recovery_payload.get("attempt"), 0)
+        self.assertEqual(recovery_payload.get("result"), "")
+        self.assertEqual(recovery_payload.get("error"), "")
+        self.assertEqual(recovery_payload.get("event"), {})
         lane_pid = by_name["recoverable lane pid observed"]
         self.assertTrue((lane_pid.get("data") or {}).get("pid_available"))
         lane_recovery = by_name["lane recovery"]
@@ -1183,6 +1377,35 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
                 },
             },
             {
+                "name": "session loss degraded",
+                "ok": True,
+                "detail": (
+                    "runtime_state=DEGRADED, reason=session_missing, "
+                    "reasons=[\"session_missing\"], "
+                    "secondary_recovery_failures=[], "
+                    "session_recovery={\"recovery_expected\": true, \"event_observed\": true, \"event_type\": \"session_recovery_completed\", \"attempt\": 1, \"result\": \"recreated\", \"error\": \"\"}"
+                ),
+                "data": {
+                    "runtime_state": "DEGRADED",
+                    "representative_reason": "session_missing",
+                    "degraded_reasons": ["session_missing"],
+                    "secondary_recovery_failures": [],
+                    "session_recovery": {
+                        "recovery_expected": True,
+                        "broken_lane_names": ["Claude"],
+                        "event_observed": True,
+                        "event_type": "session_recovery_completed",
+                        "attempt": 1,
+                        "result": "recreated",
+                        "error": "",
+                        "event": {
+                            "event_type": "session_recovery_completed",
+                            "payload": {"attempt": 1, "result": "recreated"},
+                        },
+                    },
+                },
+            },
+            {
                 "name": "lane recovery",
                 "ok": True,
                 "detail": '{"event_type": "recovery_completed"}',
@@ -1242,6 +1465,8 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
             self.assertIn("`PASS` receipt manifest mismatch degraded precedence", report_text)
             self.assertIn("`PASS` runtime start", report_text)
             self.assertIn("`PASS` status surface ready", report_text)
+            self.assertIn("`PASS` session loss degraded", report_text)
+            self.assertIn("session_recovery=", report_text)
             self.assertIn("`PASS` lane recovery", report_text)
 
             payload = _json.loads(expected_json_path.read_text(encoding="utf-8"))
@@ -1264,6 +1489,23 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
             self.assertEqual(start_entry.get("data"), {"action": "start", "succeeded": True, "result": "started"})
             ready_entry = names["status surface ready"]
             self.assertEqual((ready_entry.get("data") or {}).get("ready_lane_names"), ["Claude"])
+            session_loss_entry = names["session loss degraded"]
+            session_loss_payload = session_loss_entry.get("data") or {}
+            self.assertEqual(session_loss_payload.get("representative_reason"), "session_missing")
+            session_loss_recovery = session_loss_payload.get("session_recovery") or {}
+            self.assertTrue(session_loss_recovery.get("recovery_expected"))
+            self.assertEqual(session_loss_recovery.get("broken_lane_names"), ["Claude"])
+            self.assertTrue(session_loss_recovery.get("event_observed"))
+            self.assertEqual(session_loss_recovery.get("event_type"), "session_recovery_completed")
+            self.assertEqual(session_loss_recovery.get("attempt"), 1)
+            self.assertEqual(session_loss_recovery.get("result"), "recreated")
+            self.assertEqual(
+                session_loss_recovery.get("event"),
+                {
+                    "event_type": "session_recovery_completed",
+                    "payload": {"attempt": 1, "result": "recreated"},
+                },
+            )
             recovery_entry = names["lane recovery"]
             self.assertEqual((recovery_entry.get("data") or {}).get("event_type"), "recovery_completed")
 

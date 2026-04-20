@@ -23,7 +23,7 @@ projectH aims to become a **teachable local personal agent** that stores user co
 
 ### Facts
 - The repository already supports local file reading, summarization, document search, general chat, follow-up Q&A in document context, approval-gated save, evidence panels, response feedback capture, grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, artifact-linked reject/reissue reason traces, the first reviewed-memory slice (review queue, aggregate apply trigger, emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility), and local session/log storage.
-- Web investigation is a permission-gated secondary mode (disabled/approval/enabled per session) under the document-first guardrail, with local JSON history, in-session reload, history-card badges (answer-mode badges, color-coded verification-strength badges, color-coded source-role trust badges), entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade, and a claim-coverage panel with status tags, actionable hints, source role with trust level labels, color-coded fact-strength summary bar, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved) already shipped.
+- Web investigation is a permission-gated secondary mode (disabled/approval/enabled per session) under the document-first guardrail, with local JSON history, in-session reload, history-card badges (answer-mode badges, color-coded verification-strength badges, color-coded source-role trust badges), entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade, and a claim-coverage panel with status tags, actionable hints, source role with trust level labels, color-coded fact-strength summary bar, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved / or remains in an explicit `정보 상충` state) already shipped.
 - The current phase is not model training and not program operation.
 
 ### Recommendation
@@ -62,7 +62,7 @@ projectH aims to become a **teachable local personal agent** that stores user co
 - PDF text-layer support with OCR-not-supported guidance
 - permission-gated web investigation (disabled/approval/enabled per session) with local JSON history, in-session reload, and history-card badges (answer-mode badges, color-coded verification-strength badges, color-coded source-role trust badges)
 - entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade
-- claim-coverage panel with status tags, actionable hints, source role with trust level labels, color-coded fact-strength summary bar, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved)
+- claim-coverage panel with status tags, actionable hints, source role with trust level labels, color-coded fact-strength summary bar, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved / or remains in an explicit `정보 상충` state)
 
 ### Core Product Boundaries
 - Core product: local document assistant

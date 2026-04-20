@@ -58,7 +58,12 @@ class PipelineGuiHomeControllerTest(unittest.TestCase):
                         "active_round": {"job_id": "job-1", "round": 2, "state": "VERIFYING"},
                         "compat": {
                             "control_slots": {"active": None, "stale": []},
-                            "turn_state": {"state": "CODEX_VERIFY", "entered_at": 3.0},
+                            "turn_state": {
+                                "state": "CODEX_VERIFY",
+                                "entered_at": 3.0,
+                                "active_role": "verify",
+                                "active_lane": "Claude",
+                            },
                         },
                     }
                 ),
@@ -74,6 +79,8 @@ class PipelineGuiHomeControllerTest(unittest.TestCase):
         self.assertEqual(snapshot.work_name, "4/11/work.md")
         self.assertEqual(snapshot.verify_name, "4/11/verify.md")
         self.assertEqual(snapshot.verify_activity["status"], "VERIFY_RUNNING")
+        self.assertEqual(snapshot.verify_activity["label"], "Claude 검증 실행 중")
+        self.assertEqual(snapshot.run_summary["turn"], "Claude 검증 중")
         self.assertEqual(snapshot.agents[1], ("Codex", "WORKING", "verify", ""))
         self.assertTrue(snapshot.lane_details["Codex"]["attachable"])
 

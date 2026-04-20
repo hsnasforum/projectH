@@ -42,6 +42,8 @@ _INTERNAL_REASON_CODES = {
     "idle_hibernate": {"mode": "hibernate", "routed_to": "hibernate"},
 }
 
+_VERIFIED_BLOCKER_AUTO_RECOVERY_REASON_CODES = frozenset({"truth_sync_required"})
+
 SUPPORTED_OPERATOR_POLICIES = frozenset({"immediate_publish", "gate_24h", "internal_only"})
 SUPPORTED_REASON_CODES = frozenset(
     set(_IMMEDIATE_REASON_CODES)
@@ -134,7 +136,11 @@ def _normalize_text(parts: Iterable[object]) -> str:
 def normalize_reason_code(value: object) -> str:
     text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
     text = _NON_REASON_CODE_RE.sub("_", text)
-    return text.strip("_")
+    text = text.strip("_")
+    aliases = {
+        "gemini_axis_switch_without_exact_slice": "slice_ambiguity",
+    }
+    return aliases.get(text, text)
 
 
 def normalize_operator_policy(value: object) -> str:
@@ -146,6 +152,8 @@ def normalize_operator_policy(value: object) -> str:
         "gate24h": "gate_24h",
         "gate_24": "gate_24h",
         "stop_until_truth_sync": "gate_24h",
+        "stop_until_exact_slice_selected": "gate_24h",
+        "stop_until_exact_slice_selection": "gate_24h",
         "internal": "internal_only",
         "suppress": "internal_only",
         "suppress_internal": "internal_only",
@@ -155,6 +163,12 @@ def normalize_operator_policy(value: object) -> str:
 
 def normalize_decision_class(value: object) -> str:
     return normalize_reason_code(value)
+
+
+def allows_verified_blocker_auto_recovery(control_meta: Mapping[str, Any] | None = None) -> bool:
+    meta = _normalize_meta(control_meta)
+    reason_code = normalize_reason_code(meta.get("reason_code"))
+    return reason_code in _VERIFIED_BLOCKER_AUTO_RECOVERY_REASON_CODES
 
 
 def _match_reason(text: str) -> str:

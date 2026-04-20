@@ -1,16 +1,16 @@
 {
   "status": "setup_requested",
-  "setup_id": "setup-20260410-032059-905058",
+  "setup_id": "setup-20260419-195239-7007a0",
   "schema_version": 1,
-  "project_root": "\\home\\xpdlqj\\code\\projectH",
+  "project_root": "/home/xpdlqj/code/projectH",
   "selected_agents": [
     "Claude",
     "Codex",
     "Gemini"
   ],
   "role_bindings": {
-    "implement": "Claude",
-    "verify": "Codex",
+    "implement": "Codex",
+    "verify": "Claude",
     "advisory": "Gemini"
   },
   "role_options": {
@@ -27,19 +27,21 @@
     "active": ".pipeline/config/agent_profile.json",
     "draft": ".pipeline/config/agent_profile.draft.json"
   },
-  "draft_fingerprint": "sha256:a63e9b18ef5222121a7f5e9217a40714507f068ea97425c4b2b88663d332a831",
-  "executor_candidate": "Codex",
-  "support_level": "supported",
+  "draft_fingerprint": "sha256:c7f68be32534241711a9f30b865ef1bd23989fa4c0beeaa5acdcc03ce192ea18",
+  "executor_candidate": "Claude",
+  "support_level": "experimental",
   "controls": {
     "preview_allowed": true,
     "apply_allowed": true,
     "launch_allowed": true,
-    "banner_required": false,
+    "banner_required": true,
     "advisory_enabled": true,
     "operator_stop_enabled": true,
     "session_arbitration_enabled": true
   },
-  "messages": [],
+  "messages": [
+    "Profile is experimental and requires extra operator attention."
+  ],
   "effective_runtime_plan": {
     "enabled_lanes": [
       "Claude",
@@ -47,8 +49,8 @@
       "Gemini"
     ],
     "role_owners": {
-      "implement": "Claude",
-      "verify": "Codex",
+      "implement": "Codex",
+      "verify": "Claude",
       "advisory": "Gemini"
     },
     "prompt_owners": {
@@ -60,7 +62,7 @@
       "preview_allowed": true,
       "apply_allowed": true,
       "launch_allowed": true,
-      "banner_required": false,
+      "banner_required": true,
       "advisory_enabled": true,
       "operator_stop_enabled": true,
       "session_arbitration_enabled": true

@@ -781,9 +781,56 @@ class SessionStore:
         normalized["title"] = str(normalized.get("title") or self._derive_title(session_id, normalized["messages"]))
         if normalized.get("active_context") is not None and not isinstance(normalized.get("active_context"), dict):
             normalized["active_context"] = None
+        self._backfill_active_context_summary_hint_basis(normalized)
         normalized["created_at"] = str(normalized.get("created_at") or self._now())
         normalized["updated_at"] = str(normalized.get("updated_at") or normalized["created_at"])
         return normalized
+
+    @staticmethod
+    def _compact_summary_hint_for_persist(text: str, max_chars: int = 240) -> str:
+        compact = " ".join(str(text or "").split())
+        if len(compact) <= max_chars:
+            return compact
+        return compact[:max_chars].rstrip() + "..."
+
+    @staticmethod
+    def _backfill_active_context_summary_hint_basis(data: Dict[str, Any]) -> None:
+        """Ensure `active_context.summary_hint_basis` is set on legacy sessions.
+
+        Legacy sessions saved before the field existed may still carry
+        `active_context.summary_hint` without an explicit `summary_hint_basis`.
+        Recover `recorded_correction` only when a same-session grounded-brief
+        assistant message with `corrected_text` compacts to the current hint;
+        otherwise fall back to the safe `current_summary`.
+        """
+        active_context = data.get("active_context")
+        if not isinstance(active_context, dict):
+            return
+        if "summary_hint" not in active_context:
+            return
+        raw_basis = str(active_context.get("summary_hint_basis") or "").strip()
+        if raw_basis in {"current_summary", "recorded_correction"}:
+            return
+        hint = active_context.get("summary_hint")
+        if not hint:
+            active_context["summary_hint_basis"] = "current_summary"
+            return
+        hint_text = str(hint)
+        matched = False
+        for message in data.get("messages", []) or []:
+            if not isinstance(message, dict):
+                continue
+            if message.get("role") != "assistant":
+                continue
+            if str(message.get("artifact_kind") or "").strip() != "grounded_brief":
+                continue
+            corrected_text = message.get("corrected_text")
+            if not corrected_text:
+                continue
+            if SessionStore._compact_summary_hint_for_persist(str(corrected_text)) == hint_text:
+                matched = True
+                break
+        active_context["summary_hint_basis"] = "recorded_correction" if matched else "current_summary"
 
     def _save(self, session_id: str, data: Dict[str, Any]) -> None:
         with self._lock:
@@ -977,11 +1024,10 @@ class SessionStore:
 
             active_context = data.get("active_context")
             if isinstance(active_context, dict) and "summary_hint" in active_context:
-                compact = " ".join(normalized_corrected_text.split())
-                max_hint = 240
-                active_context["summary_hint"] = (
-                    compact if len(compact) <= max_hint else compact[:max_hint].rstrip() + "..."
+                active_context["summary_hint"] = self._compact_summary_hint_for_persist(
+                    normalized_corrected_text
                 )
+                active_context["summary_hint_basis"] = "recorded_correction"
                 data["active_context"] = active_context
 
             self._save(session_id, data)

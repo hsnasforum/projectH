@@ -1443,6 +1443,7 @@
           "먼저 수정본 기록을 눌러야 저장 요청 버튼이 켜집니다.",
           "입력창의 미기록 텍스트는 바로 승인 스냅샷이 되지 않습니다.",
           "저장 승인과는 별도입니다.",
+          "아직 기록된 수정본이 없어 같은 세션의 후속 질문과 재요약은 원본 요약 기준으로 이어집니다.",
         ].join(" ");
         return;
       }
@@ -1453,6 +1454,7 @@
           "저장 요청 버튼은 직전 기록본으로만 동작합니다.",
           "지금 입력 중인 수정으로 저장하려면 먼저 수정본 기록을 다시 눌러 주세요.",
           "저장 승인과는 별도입니다.",
+          "후속 질문과 재요약도 직전 기록본 기준으로 이어지며, 입력창의 새 변경을 기준으로 바꾸려면 다시 수정본 기록을 눌러 주세요.",
         ];
         if (currentApprovalMatchesArtifact) {
           if (usesCorrectedSaveSnapshot(state.currentApproval)) {
@@ -1471,6 +1473,7 @@
       const statusParts = [
         "저장 요청은 현재 입력창이 아니라 이미 기록된 수정본으로 새 승인 미리보기를 만듭니다.",
         "저장 승인과는 별도입니다.",
+        "기록된 수정본이 같은 세션의 후속 질문과 재요약 기준이 됩니다.",
       ];
       if (currentApprovalMatchesArtifact) {
         if (usesCorrectedSaveSnapshot(state.currentApproval)) {
@@ -2242,10 +2245,11 @@
 
     function summarizeClaimCoverageCounts(claimCoverage) {
       const items = Array.isArray(claimCoverage) ? claimCoverage.filter((item) => item && typeof item === "object") : [];
-      const counts = { strong: 0, weak: 0, missing: 0 };
+      const counts = { strong: 0, weak: 0, missing: 0, conflict: 0 };
       items.forEach((item) => {
         const status = String(item.status || "").trim();
         if (status === C.CoverageStatus.STRONG) counts.strong += 1;
+        else if (status === C.CoverageStatus.CONFLICT) counts.conflict += 1;
         else if (status === C.CoverageStatus.WEAK) counts.weak += 1;
         else if (status === C.CoverageStatus.MISSING) counts.missing += 1;
       });
@@ -2254,7 +2258,7 @@
 
     function renderFactStrengthBar(claimCoverage) {
       const counts = summarizeClaimCoverageCounts(claimCoverage);
-      const total = counts.strong + counts.weak + counts.missing;
+      const total = counts.strong + counts.conflict + counts.weak + counts.missing;
       if (total === 0) {
         showElement(factStrengthBar, false);
         return;
@@ -2272,6 +2276,16 @@
         badge.textContent = counts.strong;
         group.appendChild(badge);
         group.appendChild(document.createTextNode(" 교차 확인"));
+        factStrengthBar.appendChild(group);
+      }
+      if (counts.conflict > 0) {
+        const group = document.createElement("span");
+        group.className = "fact-group";
+        const badge = document.createElement("span");
+        badge.className = "fact-count conflict";
+        badge.textContent = counts.conflict;
+        group.appendChild(badge);
+        group.appendChild(document.createTextNode(" 정보 상충"));
         factStrengthBar.appendChild(group);
       }
       if (counts.weak > 0) {
@@ -2306,6 +2320,7 @@
       const normalized = counts && typeof counts === "object" ? counts : {};
       const parts = [];
       if (Number(normalized.strong || 0) > 0) parts.push(`교차 확인 ${Number(normalized.strong || 0)}`);
+      if (Number(normalized.conflict || 0) > 0) parts.push(`정보 상충 ${Number(normalized.conflict || 0)}`);
       if (Number(normalized.weak || 0) > 0) parts.push(`단일 출처 ${Number(normalized.weak || 0)}`);
       if (Number(normalized.missing || 0) > 0) parts.push(`미확인 ${Number(normalized.missing || 0)}`);
       return parts.join(" · ");
@@ -2392,6 +2407,7 @@
       const normalized = String(renderedAs || "").trim();
       if (normalized === "fact_card") return "사실 카드 반영";
       if (normalized === "uncertain") return "불확실 정보 반영";
+      if (normalized === "conflict") return "상충 정보 반영";
       if (normalized === "not_rendered") return "아직 본문 미반영";
       return "";
     }
@@ -2423,6 +2439,12 @@
         return `→ 재조사 결과: ${prev} → ${curr}${particle} 보강되었습니다.`;
       }
       if (progressState === "regressed" && prev && curr) {
+        if (prev === "교차 확인" && curr === "단일 출처") {
+          return "→ 재조사 결과: 교차 확인 기준을 더 이상 충족하지 않아 단일 출처로 조정되었습니다.";
+        }
+        if (curr === "미확인") {
+          return "→ 재조사 결과: 정보를 더 이상 찾을 수 없어 미확인으로 조정되었습니다.";
+        }
         return `→ 재조사 결과: ${prev} → ${curr}${particle} 약해졌습니다. 추가 교차 검증이 권장됩니다.`;
       }
       if (curr === "교차 확인") {
@@ -2493,8 +2515,8 @@
       renderPanelHint(
         claimCoverageHint,
         progressText
-          ? `${progressText} [교차 확인] 여러 출처가 합의한 사실, [단일 출처] 1개 출처에서만 확인된 정보, [미확인] 추가 조사가 필요한 항목입니다.`
-          : "[교차 확인] 여러 출처가 합의한 사실, [단일 출처] 1개 출처에서만 확인된 정보, [미확인] 추가 조사가 필요한 항목입니다."
+          ? `${progressText} [교차 확인] 여러 출처가 합의한 사실, [정보 상충] 출처들이 서로 어긋나 추가 확인이 필요한 항목, [단일 출처] 1개 출처에서만 확인된 정보, [미확인] 추가 조사가 필요한 항목입니다.`
+          : "[교차 확인] 여러 출처가 합의한 사실, [정보 상충] 출처들이 서로 어긋나 추가 확인이 필요한 항목, [단일 출처] 1개 출처에서만 확인된 정보, [미확인] 추가 조사가 필요한 항목입니다."
       );
       if (claimCoverageScrollRegion) claimCoverageScrollRegion.scrollTop = 0;
       claimCoverageText.textContent = lines.join("\n");
@@ -2518,8 +2540,15 @@
         lines.push(`검색 기록: ${compactDisplayPath(context.record_path)}`);
       }
       if (context.summary_hint) {
+        const hintText = String(context.summary_hint);
+        const isCorrectedBasis = String(context.summary_hint_basis || "") === "recorded_correction";
         lines.push("");
-        lines.push(context.summary_hint);
+        lines.push(
+          isCorrectedBasis
+            ? "후속 질문 / 재요약 기준 (기록된 수정본):"
+            : "후속 질문 / 재요약 기준 (현재 요약):"
+        );
+        lines.push(hintText);
       }
       contextText.textContent = lines.join("\n");
     }

@@ -31,6 +31,15 @@ echo "Keep recent: $KEEP_RECENT"
 echo "Dry run: $DRY_RUN"
 echo
 
+# Surface the PIPELINE_SMOKE_KEEP_RECENT=0 fail-safe contract as an explicit
+# operator-visible receipt so the disabled-cleanup case is not mistaken for
+# a silent helper return. Matches the fail-safe boundary in
+# prune_manual_smoke_dirs and the README contract.
+if [ "$KEEP_RECENT" -le 0 ]; then
+    echo "Cleanup disabled: PIPELINE_SMOKE_KEEP_RECENT=0, preserving all matching $PATTERN directories."
+    exit 0
+fi
+
 if [ "${#SMOKE_DIRS[@]}" -le "$KEEP_RECENT" ]; then
     echo "Nothing to clean."
     exit 0

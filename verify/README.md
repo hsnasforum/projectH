@@ -1,6 +1,6 @@
 # /verify 정책
 
-`/verify`는 projectH에서 **최신 Claude 작업을 검수**하기 위해 검증 재실행, 현재 truth 재대조, 다음 라운드 handoff 결과를 남기는 verification 디렉터리입니다.
+`/verify`는 projectH에서 **최신 구현 라운드를 검수**하기 위해 검증 재실행, 현재 truth 재대조, 다음 라운드 handoff 결과를 남기는 verification 디렉터리입니다.
 
 ## tracked 대상
 
@@ -39,7 +39,7 @@
 - `.pipeline/gemini_request.md`와 `.pipeline/gemini_advice.md`는 arbitration용 rolling 슬롯이며, 최신 verification truth를 편하게 넘기기 위한 보조 수단일 뿐 `/verify`를 대체하지 않습니다.
 - `.pipeline` execution/control 슬롯은 `/verify`와 달리 기본적으로 영어 중심 실행 지시를 유지하는 편이 맞습니다.
 - canonical control slot은 pending일 때 `CONTROL_SEQ`를 함께 써서 newest-valid-control 판정을 `CONTROL_SEQ` 우선 / `mtime` 보조로 유지하는 편이 맞습니다.
-- `.pipeline/session_arbitration_draft.md`는 watcher가 active Claude session의 escalation pattern을 감지했고 Codex/Gemini가 idle이며 Claude가 idle이거나 짧게 settle된 상태일 때만 남길 수 있는 draft_only 메모이며, 검증 truth나 canonical arbitration 슬롯을 대체하지 않습니다. resolved 조건이 생기면 watcher가 정리할 수 있고, 같은 fingerprint는 짧은 cooldown 동안 반복 생성하지 않습니다.
+- `.pipeline/session_arbitration_draft.md`는 watcher가 active implement-owner session의 escalation pattern을 감지했고 verify/advisory lanes가 idle이며 implement owner가 idle이거나 짧게 settle된 상태일 때만 남길 수 있는 draft_only 메모이며, 검증 truth나 canonical arbitration 슬롯을 대체하지 않습니다. resolved 조건이 생기면 watcher가 정리할 수 있고, 같은 fingerprint는 짧은 cooldown 동안 반복 생성하지 않습니다.
 - `.pipeline/codex_feedback.md`는 optional scratch 또는 legacy compatibility text일 뿐이며, 실행 신호로는 쓰지 않습니다.
 - `.pipeline/gpt_prompt.md`는 optional/legacy scratch 슬롯로 남길 수 있지만, canonical single-Codex 흐름의 필수 단계는 아닙니다.
 - whole-project trajectory audit이나 milestone-level 평가는 `/verify`가 아니라 `report/`에 남기는 편이 맞습니다.
@@ -55,17 +55,17 @@
 - `/verify`는 `/work`와 같은 섹션 순서를 유지하되, 검증자가 실제로 다시 실행한 명령과 현재 truth를 더 엄격하게 기록하는 용도입니다.
 - round-handoff, release-check 같은 verification/handoff 성격의 skill을 썼다면 그 사실을 `## 사용 skill`에 적습니다.
 - `/work` 또는 `/verify` 정책이 바뀌면 두 README를 같은 라운드에서 함께 갱신해 후속 작업자가 경계를 헷갈리지 않게 합니다.
-- single-Codex tmux 흐름에서는 Codex가 실제 검증 후 `/verify`를 남긴 다음:
+- single tmux 흐름에서는 active verify/handoff owner가 실제 검증 후 `/verify`를 남긴 다음:
   - 구현 가능한 경우 `.pipeline/claude_handoff.md`에 `STATUS: implement`
   - Gemini arbitration이 필요하면 `.pipeline/gemini_request.md`에 `STATUS: request_open`
-  - Gemini가 `.pipeline/gemini_advice.md`에 `STATUS: advice_ready`
+  - advisory owner가 `.pipeline/gemini_advice.md`에 `STATUS: advice_ready`
   - 멈춰야 하는 경우 `.pipeline/operator_request.md`에 `STATUS: needs_operator`
   를 남깁니다. persistent verification truth는 항상 `/verify`가 먼저입니다.
 - 따라서 pane 안 reasoning만 남기거나 next control slot만 먼저 갱신하는 것은 canonical verification closeout이 아닙니다. `/verify`를 먼저 남기거나 갱신한 뒤에만 다음 control slot을 쓰는 편이 맞습니다.
-- watcher가 Claude lane의 `STATUS: implement_blocked` sentinel을 감지한 경우에도, Codex는 그 blocked triage를 `.pipeline/claude_handoff.md` / `.pipeline/gemini_request.md` / `.pipeline/operator_request.md` 중 하나의 최신 valid control로 닫는 편이 맞습니다. blocked sentinel 자체에는 `BLOCK_REASON_CODE`와 `ESCALATION_CLASS`를 함께 두는 편이 canonical입니다.
+- watcher가 implement-owner pane의 `STATUS: implement_blocked` sentinel을 감지한 경우에도, active verify/handoff owner는 그 blocked triage를 `.pipeline/claude_handoff.md` / `.pipeline/gemini_request.md` / `.pipeline/operator_request.md` 중 하나의 최신 valid control로 닫는 편이 맞습니다. blocked sentinel 자체에는 `BLOCK_REASON_CODE`와 `ESCALATION_CLASS`를 함께 두는 편이 canonical입니다.
 - `STATUS: needs_operator`를 쓸 때는 bare stop line만 남기지 말고, 최소한 `CONTROL_SEQ`, `REASON_CODE`, `OPERATOR_POLICY`, `DECISION_CLASS`, `DECISION_REQUIRED`, `BASED_ON_WORK`, `BASED_ON_VERIFY`, stop reason, 근거가 된 latest `/work`와 `/verify`, 그리고 operator가 다음에 무엇을 정해야 하는지를 같이 남깁니다.
 - `/verify`의 1차 목적은 현재 truth를 정직하게 다시 맞추는 것입니다. 다음 슬라이스 제안은 가능하지만, 단순한 uncovered regression 채우기보다 현재 MVP 우선순위를 먼저 통과해야 합니다.
-- `/verify`의 1차 목적은 repo 전체 상태를 새로 재판정하는 것이 아니라, 최신 Claude 라운드가 truthful한지 확인하고 그 범위 안에서 다음 한 슬라이스를 좁게 제안하는 것입니다.
+- `/verify`의 1차 목적은 repo 전체 상태를 새로 재판정하는 것이 아니라, 최신 implement-owner 라운드가 truthful한지 확인하고 그 범위 안에서 다음 한 슬라이스를 좁게 제안하는 것입니다.
 - 다음 슬라이스를 제안할 때도 기존 shared path 재사용으로 중복 코드를 줄일 수 있는지 먼저 보고, 하나의 coherent slice로 닫을 수 있는데도 필요 이상으로 micro-slice로 쪼개지 않습니다.
 - latest `/work`와 `/verify`가 한 family를 truthfully 닫았다면, 다음 슬라이스 제안은 보통 같은 family의 가장 작은 current-risk reduction부터 검토하는 편이 맞습니다.
 - 자동 제안 우선순위는 보통 다음과 같습니다.
@@ -74,10 +74,10 @@
   - new quality axis
   - internal cleanup
 - 다만 같은 날 same-family docs-only truth-sync가 이미 3회 이상 반복됐다면, `/verify`는 또 하나의 더 작은 docs-only micro-slice를 기본 제안으로 내지 않는 편이 맞습니다. 이 경우 남은 drift를 한 번에 닫는 bounded bundle이나 Gemini/operator escalation을 먼저 검토합니다.
-- 따라서 `/verify`에서 바로 다음 단일 슬라이스를 고르지 못했다면, Claude에게 선택권을 넘기지 않습니다.
-- 다음 막힘이 next-slice ambiguity, overlapping candidates, low-confidence prioritization이라면 `.pipeline/operator_request.md`보다 `.pipeline/gemini_request.md`를 먼저 열고 Gemini recommendation을 받은 뒤 Codex가 다시 한 번 exact slice를 좁히는 편이 맞습니다.
+- 따라서 `/verify`에서 바로 다음 단일 슬라이스를 고르지 못했다면, implement owner에게 선택권을 넘기지 않습니다.
+- 다음 막힘이 next-slice ambiguity, overlapping candidates, low-confidence prioritization이라면 `.pipeline/operator_request.md`보다 `.pipeline/gemini_request.md`를 먼저 열고 Gemini recommendation을 받은 뒤 active verify/handoff owner가 다시 한 번 exact slice를 좁히는 편이 맞습니다.
 - `.pipeline/operator_request.md`는 real operator-only decision, approval/truth-sync blocker, immediate safety stop, 또는 Gemini advice 이후에도 exact slice를 못 좁힌 경우에만 `STATUS: needs_operator`로 남기는 편이 맞습니다.
-- 다만 그 Gemini arbitration이 active Claude session의 context exhaustion, session rollover, continue-vs-switch 같은 side question을 다루는 경우에는, Codex가 그 답을 Claude에게 짧은 lane reply로만 relay하고 `.pipeline/claude_handoff.md`는 session boundary 전까지 그대로 두는 편이 맞습니다.
+- 다만 그 Gemini arbitration이 active implement-owner session의 context exhaustion, session rollover, continue-vs-switch 같은 side question을 다루는 경우에는, active verify/handoff owner가 그 답을 implement owner에게 짧은 lane reply로만 relay하고 `.pipeline/claude_handoff.md`는 session boundary 전까지 그대로 두는 편이 맞습니다.
 - 다만 그 경우에도 `.pipeline/operator_request.md`는 빈 정지 신호가 아니라, 사람이 다시 읽었을 때 즉시 맥락을 복원할 수 있는 stop handoff여야 합니다.
 - focused regression만 다시 돌렸다면 그 이유를 적고, full browser 또는 end-to-end verification을 생략했다면 왜 이번 변경과 직접 관련이 없었는지 분명히 적습니다.
 - Playwright-only smoke tightening, selector drift, single-scenario fixture update 같은 브라우저 검수는 isolated scenario rerun을 먼저 적고, `make e2e-test`를 생략했다면 shared browser helper 변경이 없었는지, release/ready 판정 라운드가 아닌지 같이 남기는 편이 맞습니다.

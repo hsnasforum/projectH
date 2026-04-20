@@ -26,6 +26,25 @@ test.describe("controller office smoke", () => {
     expect(hasGlobals.testHistoryPenalty).toBe(true);
   });
 
+  test("cozy scene exposes window/tube/cat/audio feature hooks from the shared runtime", async ({
+    page,
+  }) => {
+    await page.goto("/controller");
+
+    const sceneDebug = await page.evaluate(() => window.getSceneDebug());
+    expect(sceneDebug.hasWindowRenderer).toBe(true);
+    expect(sceneDebug.hasPneumaticTube).toBe(true);
+    expect(sceneDebug.hasPacketCourier).toBe(true);
+    expect(sceneDebug.hasOwlCourier).toBe(true);
+    expect(sceneDebug.hasAudio8).toBe(true);
+    expect(sceneDebug.tube.x).toBe(988);
+
+    const petResult = await page.evaluate(() => window.testPetCat());
+    expect(petResult.catState).toBe("pet");
+    expect(petResult.particleCount).toBeGreaterThan(0);
+    expect(petResult.hasAudio8).toBe(true);
+  });
+
   test("controller shows storage unavailable indicator when browser storage is blocked", async ({
     page,
   }) => {
@@ -77,6 +96,52 @@ test.describe("controller office smoke", () => {
     const warnMsg = "환경 설정 저장 불가 — 새로고침 시 toolbar 설정이 초기화됩니다";
     const matchingMsgs = page.locator("#event-list .event-msg").filter({ hasText: warnMsg });
     await expect(matchingMsgs).toHaveCount(0);
+  });
+
+  test("controller deduplicates repeated status fetch failures and logs one recovery", async ({
+    page,
+  }) => {
+    let statusPollCount = 0;
+    await page.route("**/api/runtime/status", async (route) => {
+      statusPollCount += 1;
+      if (statusPollCount <= 3) {
+        await route.abort();
+        return;
+      }
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          runtime_state: "RUNNING",
+          project_root: "/tmp/projectH",
+          lanes: [
+            { name: "Claude", state: "working", note: "implementing slice" },
+            { name: "Codex", state: "ready", note: "waiting for handoff" },
+            { name: "Gemini", state: "off", note: "" },
+          ],
+          control: { active_control_status: "implement", active_control_seq: 77 },
+          watcher: { alive: true },
+          active_round: { state: "ACTIVE" },
+          artifacts: {
+            latest_work: { path: "work/4/19/demo-work.md", mtime: "2026-04-19T00:00:00Z" },
+            latest_verify: { path: "verify/4/19/demo-verify.md", mtime: "2026-04-19T00:00:00Z" },
+          },
+        }),
+      });
+    });
+
+    await page.goto("/controller");
+    await page.waitForTimeout(2800);
+
+    const failureMsgs = page
+      .locator("#event-list .event-msg")
+      .filter({ hasText: "상태 조회 실패: Failed to fetch" });
+    await expect(failureMsgs).toHaveCount(1);
+
+    const recoveryMsgs = page
+      .locator("#event-list .event-msg")
+      .filter({ hasText: "상태 조회 복구: Failed to fetch" });
+    await expect(recoveryMsgs).toHaveCount(1);
+    await expect(page.locator("#status-badge")).toHaveText("RUNNING");
   });
 
   test("marquee text keeps moving when the polled runtime payload is unchanged", async ({
@@ -228,7 +293,7 @@ test.describe("controller office smoke", () => {
     await expect(fatigueEl).toHaveText("☕ 커피 충전 중");
   });
 
-  test("idle roam targets stay within agent's home zone bounds", async ({
+  test("idle agents settle into lounge rest bounds", async ({
     page,
   }) => {
     // Stub the API to return one idle agent so the roam system is active
@@ -253,17 +318,24 @@ test.describe("controller office smoke", () => {
     const card = page.locator('.agent-card[data-agent="Claude"]');
     await expect(card).toBeVisible();
 
-    // Read zone map from the controller (zone-based layout)
+    // Read lounge rest-zone map from the controller
     const bounds = await page.evaluate(() => window.getRoamBounds());
-    const zone = bounds.zones.claude_desk;
+    const zone = bounds.restZones.Claude;
     expect(zone).toBeTruthy();
+
+    const position = await page.evaluate(() => window.getAgentPositions().Claude);
+    expect(position.atLounge).toBe(true);
+    expect(position.x).toBeGreaterThanOrEqual(zone.x);
+    expect(position.x).toBeLessThanOrEqual(zone.x + zone.w);
+    expect(position.y).toBeGreaterThanOrEqual(zone.y);
+    expect(position.y).toBeLessThanOrEqual(zone.y + zone.h);
 
     // Force 30 idle roam picks and collect the coordinates
     const points = await page.evaluate(() => window.testPickIdleTargets("Claude", 30));
     expect(points.length).toBe(30);
 
     for (const pt of points) {
-      // Must be within the agent's home zone
+      // Must be within the agent's lounge rest zone
       expect(pt.x).toBeGreaterThanOrEqual(zone.x);
       expect(pt.x).toBeLessThanOrEqual(zone.x + zone.w);
       expect(pt.y).toBeGreaterThanOrEqual(zone.y);
@@ -271,7 +343,7 @@ test.describe("controller office smoke", () => {
     }
   });
 
-  test("zone-bounded agents inherently avoid stacking (separate desk zones)", async ({
+  test("lounge rest zones keep idle agents partitioned", async ({
     page,
   }) => {
     await page.route("**/api/runtime/status", (route) =>
@@ -294,11 +366,11 @@ test.describe("controller office smoke", () => {
     const card = page.locator('.agent-card[data-agent="Claude"]');
     await expect(card).toBeVisible();
 
-    // Zone-bounded agents stay in their own desk zones, so stacking is
-    // prevented by the zone layout itself. Verify that idle picks remain
-    // within the agent's home zone even when a phantom is placed elsewhere.
+    // Idle agents rest inside their own lounge seat partition, so even with
+    // a phantom placed elsewhere the sampled points should stay in Claude's
+    // assigned lounge rest zone.
     const bounds = await page.evaluate(() => window.getRoamBounds());
-    const zone = bounds.zones.claude_desk;
+    const zone = bounds.restZones.Claude;
 
     // Place phantom outside Claude's zone (e.g. center of Codex desk)
     const codexZone = bounds.zones.codex_desk;
@@ -311,7 +383,7 @@ test.describe("controller office smoke", () => {
     );
     expect(results.length).toBe(50);
 
-    // All picks should still be within Claude's home zone (zone isolation)
+    // All picks should still be within Claude's lounge rest zone
     for (const r of results) {
       expect(r.x).toBeGreaterThanOrEqual(zone.x);
       expect(r.x).toBeLessThanOrEqual(zone.x + zone.w);
@@ -320,7 +392,7 @@ test.describe("controller office smoke", () => {
     }
   });
 
-  test("zone-bounded idle roam uses continuous micro-roam (no spot history)", async ({
+  test("lounge idle roam uses continuous micro-roam (no spot history)", async ({
     page,
   }) => {
     await page.route("**/api/runtime/status", (route) =>
@@ -343,7 +415,7 @@ test.describe("controller office smoke", () => {
     const card = page.locator('.agent-card[data-agent="Claude"]');
     await expect(card).toBeVisible();
 
-    // Zone-bounded roaming uses continuous micro-roam within the desk zone
+    // Lounge resting uses continuous micro-roam within the assigned seat zone
     // instead of discrete spot-based movement. testHistoryPenalty returns
     // an empty array because the spot history concept no longer applies.
     const results = await page.evaluate(() =>
@@ -351,11 +423,11 @@ test.describe("controller office smoke", () => {
     );
     expect(results.length).toBe(0);
 
-    // Verify that idle picks still produce valid zone-bounded coordinates
+    // Verify that idle picks still produce valid lounge-rest coordinates
     const points = await page.evaluate(() => window.testPickIdleTargets("Claude", 20));
     expect(points.length).toBe(20);
     const bounds = await page.evaluate(() => window.getRoamBounds());
-    const zone = bounds.zones.claude_desk;
+    const zone = bounds.restZones.Claude;
     for (const pt of points) {
       expect(pt.x).toBeGreaterThanOrEqual(zone.x);
       expect(pt.x).toBeLessThanOrEqual(zone.x + zone.w);

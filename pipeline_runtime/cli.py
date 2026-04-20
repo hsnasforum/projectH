@@ -24,6 +24,7 @@ from pipeline_gui.project import _session_name_for
 from .lane_surface import READY_MARKERS as _READY_MARKERS
 from .lane_surface import busy_markers_for_lane
 from .lane_surface import lines_match_markers as _shared_lines_match_markers
+from .lane_surface import pane_text_has_codex_activity as _shared_pane_text_has_codex_activity
 from .lane_surface import text_is_ready as _shared_text_is_ready
 from .lane_surface import text_matches_markers as _shared_text_matches_markers
 from .schema import atomic_write_json, iso_utc, read_json
@@ -469,6 +470,12 @@ def _text_matches_markers(text: str, markers: tuple[str, ...]) -> bool:
     return _shared_text_matches_markers(text, markers)
 
 
+def _lines_have_codex_activity(lines: list[str]) -> bool:
+    if not lines:
+        return False
+    return _shared_pane_text_has_codex_activity("\n".join(lines))
+
+
 class _WrapperEmitter:
     def __init__(
         self,
@@ -592,6 +599,8 @@ class _WrapperEmitter:
             return
         lane_busy_markers = busy_markers_for_lane(self.lane_name)
         activity_detected = _lines_match_markers(new_lines, lane_busy_markers + _ACTIVITY_MARKERS)
+        if not activity_detected and self.lane_name == "Codex":
+            activity_detected = _lines_have_codex_activity(new_lines)
         ready_detected = _lines_match_markers(new_lines, _READY_MARKERS.get(self.lane_name, ()))
         task_hint = _load_task_hint(self.task_hint_dir, self.lane_name)
         job_id = str(task_hint.get("job_id") or "")

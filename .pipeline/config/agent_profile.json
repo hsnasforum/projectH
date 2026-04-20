@@ -6,8 +6,8 @@
     "Gemini"
   ],
   "role_bindings": {
-    "implement": "Claude",
-    "verify": "Codex",
+    "implement": "Codex",
+    "verify": "Claude",
     "advisory": "Gemini"
   },
   "role_options": {
@@ -21,8 +21,8 @@
     "self_advisory_allowed": false
   },
   "metadata": {
-    "saved_at": "2026-04-09T18:21:16.601656+00:00",
+    "saved_at": "2026-04-19T10:52:39.943163+00:00",
     "saved_by": "launcher",
-    "source_setup_id": "setup-20260410-032059-905058"
+    "source_setup_id": "setup-20260419-195239-7007a0"
   }
 }

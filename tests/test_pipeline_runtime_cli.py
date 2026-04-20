@@ -202,6 +202,77 @@ class WrapperEmitterTest(unittest.TestCase):
             self.assertIn('"event_type": "DISPATCH_SEEN"', log_text)
             self.assertNotIn('"event_type": "TASK_ACCEPTED"', log_text)
 
+    def test_codex_bullet_activity_emits_task_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            task_hint_dir.mkdir(parents=True, exist_ok=True)
+            (task_hint_dir / "codex.json").write_text(
+                json.dumps(
+                    {
+                        "lane": "Codex",
+                        "active": True,
+                        "job_id": "job-codex-accept",
+                        "dispatch_id": "dispatch-codex-accept",
+                        "control_seq": 347,
+                        "attempt": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            emitter = _WrapperEmitter(
+                wrapper_dir=root,
+                lane_name="Codex",
+                task_hint_dir=task_hint_dir,
+                child_pid=793,
+                send_child_bytes=lambda _data: None,
+            )
+
+            emitter.feed("OpenAI Codex\n› Type your message\n", now=0.0)
+            emitter.feed("• Exploring the workspace before changing files\n", now=1.0)
+
+            wrapper_log = root / "codex.jsonl"
+            log_text = wrapper_log.read_text(encoding="utf-8")
+            self.assertIn('"event_type": "DISPATCH_SEEN"', log_text)
+            self.assertIn('"event_type": "TASK_ACCEPTED"', log_text)
+            self.assertIn('"dispatch_id": "dispatch-codex-accept"', log_text)
+
+    def test_codex_working_status_line_emits_task_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            task_hint_dir.mkdir(parents=True, exist_ok=True)
+            (task_hint_dir / "codex.json").write_text(
+                json.dumps(
+                    {
+                        "lane": "Codex",
+                        "active": True,
+                        "job_id": "job-codex-working",
+                        "dispatch_id": "dispatch-codex-working",
+                        "control_seq": 349,
+                        "attempt": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            emitter = _WrapperEmitter(
+                wrapper_dir=root,
+                lane_name="Codex",
+                task_hint_dir=task_hint_dir,
+                child_pid=794,
+                send_child_bytes=lambda _data: None,
+            )
+
+            emitter.feed("OpenAI Codex\n› Type your message\n", now=0.0)
+            emitter.feed("• Working (22s • esc to interrupt)\n", now=1.0)
+
+            wrapper_log = root / "codex.jsonl"
+            log_text = wrapper_log.read_text(encoding="utf-8")
+            self.assertIn('"event_type": "DISPATCH_SEEN"', log_text)
+            self.assertIn('"event_type": "TASK_ACCEPTED"', log_text)
+            self.assertIn('"dispatch_id": "dispatch-codex-working"', log_text)
+            self.assertNotIn('"event_type": "TASK_DONE"', log_text)
+
     def test_active_task_hint_with_invalid_control_seq_emits_bridge_diagnostic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

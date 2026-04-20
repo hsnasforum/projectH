@@ -31,7 +31,7 @@
   - runtime/script가 이 파일을 machine-write해야 할 때는 `pipeline_runtime.control_writers.write_operator_request(...)`를 써서 필수 top header 누락을 막는 편이 맞음
 - `session_arbitration_draft.md`
   - 작성자: watcher
-  - 역할: active Claude session의 live side question을 감지했고 Codex/Gemini가 idle이며 Claude가 idle이거나 같은 escalation text에 짧게 안정됐을 때만 남기는 non-canonical draft 슬롯
+  - 역할: active implement-owner session의 live side question을 감지했고 verify/advisory lanes가 idle이며 implement owner가 idle이거나 같은 escalation text에 짧게 안정됐을 때만 남기는 non-canonical draft 슬롯
   - 형식: `STATUS: draft_only`만 포함
   - 자동 실행 슬롯이 아니며 watcher / Claude / Gemini는 이 파일만으로 dispatch하지 않음
   - resolved 조건이 생기면 watcher가 정리할 수 있으며, 같은 fingerprint는 짧은 cooldown 동안 즉시 다시 열지 않음
@@ -59,9 +59,12 @@
 | `reason` | string | 전이 사유 |
 | `active_control_file` | string | 현재 active control slot 파일명 |
 | `active_control_seq` | int | 현재 active CONTROL_SEQ (-1이면 없음) |
+| `active_role` | string | 현재 turn의 semantic role (`implement`, `verify`, `advisory`, `operator`) |
+| `active_lane` | string | 현재 turn을 맡은 실제 owner lane 이름 (`Claude`, `Codex`, `Gemini`) |
 | `verify_job_id` | string | (선택) 현재 verify 대상 job ID |
 
 - 이 파일은 watcher 내부 canonical state의 **UI 투영**입니다. job state를 대체하지 않습니다.
+- `state` 값(`CLAUDE_ACTIVE`, `CODEX_VERIFY` 등)은 legacy enum 이름을 유지하지만, owner 표시는 `active_role`/`active_lane`을 우선 읽는 편이 맞습니다. role swap profile에서 `CLAUDE_ACTIVE`가 곧 "Claude pane"를 뜻하는 것은 아닙니다.
 - `pipeline_gui/backend.py`는 이 파일이 있으면 이것만 읽어 표시합니다. control slot 재해석과 혼합하지 않습니다.
 - 이 파일이 없으면 기존 control slot + job state 해석으로 fallback합니다.
 
@@ -77,10 +80,11 @@
 - 파일 경로, 테스트 이름, selector, field name 같은 literal identifier는 기록 언어와 무관하게 원문 그대로 둡니다.
 - `.pipeline` 내용과 `/work` 또는 `/verify`가 충돌하면 `/work`와 `/verify`를 우선합니다.
 - watcher는 active `CLAUDE_ACTIVE` 구현 라운드가 이미 진행 중이면 새 `claude_handoff.md`를 즉시 hot-swap하지 않고, 현재 라운드가 `/work`, `implement_blocked`, 또는 idle timeout으로 닫힌 뒤 다음 판정에서 반영하는 편이 맞습니다.
-- watcher는 control slot 변경만으로 Codex verification round를 닫지 않습니다. 현재 라운드 시작 이후의 `/verify` receipt가 실제로 갱신된 것이 확인될 때만 feedback-only completion을 인정합니다.
-- Codex verification round가 idle timeout에 걸렸는데 current-round `/verify` receipt나 next control output이 아직 incomplete하면, watcher는 그 라운드를 terminal done으로 닫지 않고 `VERIFY_PENDING`으로 되돌려 backoff 후 자동 재시도를 거치게 하는 편이 맞습니다.
-- Codex verification pane이 busy indicator 없이 idle prompt로 빨리 돌아왔는데 current-round `/verify` receipt나 next control output이 아직 incomplete하면, watcher는 5분 full timeout까지 붙들지 말고 short idle window 뒤 `VERIFY_PENDING`으로 되돌려 재시도하는 편이 맞습니다.
+- watcher는 control slot 변경만으로 verify/handoff-owner round를 닫지 않습니다. 현재 라운드 시작 이후의 `/verify` receipt가 실제로 갱신된 것이 확인될 때만 feedback-only completion을 인정합니다.
+- verify/handoff-owner round가 idle timeout에 걸렸는데 current-round `/verify` receipt나 next control output이 아직 incomplete하면, watcher는 그 라운드를 terminal done으로 닫지 않고 `VERIFY_PENDING`으로 되돌려 backoff 후 자동 재시도를 거치게 하는 편이 맞습니다.
+- verify/handoff-owner pane이 busy indicator 없이 idle prompt로 빨리 돌아왔는데 current-round `/verify` receipt나 next control output이 아직 incomplete하면, watcher는 5분 full timeout까지 붙들지 말고 short idle window 뒤 `VERIFY_PENDING`으로 되돌려 재시도하는 편이 맞습니다.
 - 새 verify dispatch에는 `dispatch_id`와 `accept_deadline`이 같이 붙고, wrapper는 active task hint를 실제로 읽은 순간 `DISPATCH_SEEN`, 실제 작업 수락 신호가 보일 때 `TASK_ACCEPTED`를 emit하는 편이 맞습니다.
+- Codex lane에서는 일반 busy marker가 늦게 보여도 첫 `• ...` 작업 시작선을 `TASK_ACCEPTED` 증거로 같이 인정하는 편이 맞습니다. verify dispatch helper도 input prompt가 실제로 소비된 뒤에는 immediate busy/activity 확인이 비어 있어도 이를 dispatch 성공으로 보고, 이후 acceptance 판단은 wrapper `DISPATCH_SEEN` / `TASK_ACCEPTED` deadline이 맡는 편이 맞습니다. prompt consumed를 곧바로 dispatch 실패로 되돌리면 같은 verify prompt가 한 번 더 paste될 수 있습니다.
 - verify round는 `status.control=none`이어도 `active_round.dispatch_control_seq`, `job_id`, `dispatch_id`를 가진 round-scoped task hint로 Codex dispatch를 계속 이어가는 편이 맞습니다. supervisor는 active control slot이 없다는 이유만으로 Codex hint를 inactive로 내리면 안 됩니다.
 - 반대로 `CODEX_FOLLOWUP` / `GEMINI_ADVISORY` turn에서는 stale verify `job_id`/`dispatch_id`/`dispatch_control_seq`를 current task hint나 `active_round` surface에 다시 싣지 않는 편이 맞습니다. follow-up/advisory는 current control seq를 쓰고, 이전 verify round truth는 current surface에서 비워야 합니다.
 - watcher는 current run의 wrapper `DISPATCH_SEEN`, `TASK_ACCEPTED`, `TASK_DONE`를 그 dispatch와 직접 연결해 보며, prompt가 잠깐 idle처럼 보인다는 이유만으로 pre-accept stall이나 post-accept completion을 바로 확정하지 않는 편이 맞습니다.
@@ -88,8 +92,9 @@
 - wrapper read model이 최신 state를 평탄화하는 과정에서 same-dispatch `TASK_ACCEPTED`가 이미 `TASK_DONE` 뒤에 접혀 보이지 않을 수 있습니다. 이 경우 verify FSM은 current dispatch의 matching `TASK_DONE`를 accept의 더 강한 증거로 보고 `task_accept_missing` 재큐잉으로 되감지 않는 편이 맞습니다.
 - wrapper는 verify hint가 아직 active여도 같은 dispatch가 prompt-visible + no-busy 상태로 짧게 settle되면 `TASK_DONE`를 직접 emit할 수 있어야 합니다. `TASK_DONE`를 task-hint clear 이후로만 미루면 verify close chain이 순환에 빠집니다.
 - wrapper는 verify hint가 active인데 `control_seq` metadata가 비정상이면 event를 조용히 생략하지 않고 `BRIDGE_DIAGNOSTIC(code=active_task_hint_metadata_invalid)`를 남기는 편이 맞습니다. silent no-event가 다시 false `dispatch_stall`로 숨으면 안 됩니다.
-- Codex verify round close는 `TASK_ACCEPTED -> TASK_DONE -> current-round /verify receipt + next control -> receipt close` 순서로만 허용합니다. matching `TASK_DONE`가 없으면 `/verify`와 next control이 먼저 바뀌어도 close authority가 열리지 않습니다.
-- current run에 `VERIFY_RUNNING` job이 남아 있으면 watcher는 그 job을 terminal close 또는 재큐잉까지 계속 step하는 편이 맞습니다. 이때 오래된 다른 unverified `/work`를 새 verify candidate로 먼저 끼워 넣어 current round lease release나 pending Claude handoff를 가리지 않는 편이 맞고, 열린 `.pipeline/gemini_request.md` / `.pipeline/gemini_advice.md`가 있어도 current-run verify step을 먼저 굴려 close chain을 얼리지 않는 편이 맞습니다.
+- verify/handoff-owner round close는 `TASK_ACCEPTED -> TASK_DONE -> current-round /verify receipt + next control -> receipt close` 순서로만 허용합니다. matching `TASK_DONE`가 없으면 `/verify`와 next control이 먼저 바뀌어도 close authority가 열리지 않습니다.
+- current run에 `VERIFY_RUNNING` job이 남아 있으면 watcher는 그 job을 terminal close 또는 재큐잉까지 계속 step하는 편이 맞습니다. 이때 오래된 다른 unverified `/work`를 새 verify candidate로 먼저 끼워 넣어 current round lease release나 pending Claude handoff를 가리지 않는 편이 맞고, 열린 `.pipeline/gemini_request.md` / `.pipeline/gemini_advice.md`가 있어도 current-run `VERIFY_RUNNING` close chain은 먼저 굴려 얼리지 않는 편이 맞습니다.
+- 반대로 merely `VERIFY_PENDING`인 current-run job replay나 새 `/work` verify candidate 스캔은 `CODEX_FOLLOWUP` / `GEMINI_ADVISORY` / gated operator retriage 같은 current control-resolution turn이 살아 있는 동안 끼어들지 않는 편이 맞습니다. 이 경계가 풀리기 전 stale verify가 같은 pane에 다시 paste되면 follow-up/advisory control truth가 오염됩니다.
 - `slot_verify` lease owner인 supervisor pid가 **유효한 pid로 읽히고도 `signal 0`에 응답하지 않을 때만** watcher는 그 lease를 TTL까지 active로 붙들지 않고 stale lock으로 즉시 정리하는 편이 맞습니다. supervisor 비정상 종료 뒤에도 새 handoff나 recovery turn이 lease TTL에 묶여 지연되면 안 됩니다.
 - `PaneLease`의 `owner_pid_path`는 watcher init 시점의 `supervisor.pid` 존재 여부와 무관하게 항상 `<base>/supervisor.pid`를 가리키는 편이 맞습니다. init 시점에만 존재 여부를 체크해 None으로 고정해 두면 watcher가 supervisor보다 먼저 뜨는 start-up race에서 owner-death 감지가 영구적으로 꺼집니다. 반대로 "pid 파일 없음" 자체는 standalone 운영(예: 테스트/수동 디버깅)을 의미하므로 dead로 해석하지 않고, 유효 pid가 `signal 0`에 응답하지 않을 때만 dead로 판정해 stale lock을 정리합니다.
 - supervisor의 `finally` unlink는 `SIGTERM`/`SIGINT` 같은 정상 종료 경로에서만 기대하는 편이 맞습니다. `SIGKILL`처럼 `finally`가 실행되지 않는 종료에서는 stale `supervisor.pid` 파일이 남을 수 있으며, 이 경우 cleanup 책임은 죽는 supervisor가 아니라 살아남은 watcher의 owner-death 판정이 맡습니다.
@@ -105,8 +110,8 @@
 - runtime이 `STOPPED`로 내려가거나 `active_round.artifact_path`가 더 새 round로 바뀌면 old `dispatch_stall`, old operator/autonomy gate, 이전 `/work` 기반 degraded reason은 current truth에서 같이 지워지는 편이 맞습니다. sidebar/runtime surface가 예전 stale gate를 현재 round와 섞어 보이면 안 됩니다.
 - 다만 current receipt manifest mismatch나 active lane의 auth/post-accept breakage 같은 current boundary 파손은 `_runtime_started`가 false여서 runtime이 `STARTING`/`STOPPED`처럼 보이는 상황에서도 `runtime_state = DEGRADED`와 matching `degraded_reasons` entry로 계속 surface하는 편이 맞습니다. degrade 우선순위가 inactive/startup surface보다 먼저 판정되어야 current truth가 틀리지 않고, stale job-state reason은 여전히 inactive runtime에서 정리되어야 healthy stop이 오인되지 않습니다.
 - `scripts/pipeline_runtime_gate.py fault-check`는 이 degrade 우선순위 boundary를 synthetic `receipt_manifest:<job>` mismatch와 active Claude `claude_auth_login_required` 경로로 직접 재현하는 fault probe를 live session-loss / lane recovery 검증보다 먼저 수행해, supervisor가 두 경로 중 하나라도 `STARTING`/`STOPPED`로 숨기면 gate가 바로 실패하도록 합니다. 뒤이은 live `lane recovery` 단계는 wrapper가 남긴 `exit:<code>` / `pane_dead` / `heartbeat_timeout` 같은 pre-accept breakage note를 terminal로 보지 않고 retry budget 안에서 supervisor가 `recovery_started`/`recovery_completed`를 실제로 emit하는지까지 확인합니다. terminal recovery block은 `auth_login_required` 같은 명시된 failure reason으로만 좁혀 유지합니다.
-- tmux session 자체가 사라진 `session loss degraded` 시나리오에서는 `session_missing`이 root cause이므로 supervisor는 representative `degraded_reason`을 `session_missing`으로 유지하고, 같이 발생한 per-lane `*_recovery_failed`는 `degraded_reasons` 뒤쪽에 secondary evidence로 남깁니다. fault-check의 `session loss degraded` 단계도 이 순서를 assert하므로, representative reason이 lane recovery 실패로 밀리면 gate가 곧바로 실패합니다.
-- 같은 `session loss degraded` 체크 엔트리는 사람이 읽는 `detail` 문자열 외에 `data.runtime_state` / `data.representative_reason` / `data.degraded_reasons` / `data.secondary_recovery_failures`를 구조화된 payload로 함께 싣습니다. `secondary_recovery_failures`는 lane 실패가 없을 때도 빈 list(`[]`)로 항상 존재하므로 CI/launcher 자동화는 detail 문자열을 scraping하지 않고 이 필드를 바로 읽습니다.
+- tmux session 자체가 사라진 `session loss degraded` 시나리오에서는 `session_missing`이 root cause이므로 supervisor는 representative `degraded_reason`을 `session_missing`으로 유지하고, 먼저 bounded `session_recovery_started`/`session_recovery_completed` 한 번으로 scaffold를 다시 세우는 편이 맞습니다. 이때 pane가 없는 lane별 `restart_lane()`를 바로 반복 호출해 recovery log를 스팸처럼 쌓지 않는 편이 맞고, session recovery가 실패해도 next observed `session_alive` 전까지는 같은 missing-session에 대해 무한 retry storm을 만들지 않는 편이 맞습니다. per-lane `*_recovery_failed`는 session이 살아 있지만 lane만 깨진 경우의 secondary evidence로 남깁니다. fault-check의 `session loss degraded` 단계도 representative reason이 lane recovery 실패로 밀리지 않는 순서를 계속 assert합니다.
+- 같은 `session loss degraded` 체크 엔트리는 사람이 읽는 `detail` 문자열 외에 `data.runtime_state` / `data.representative_reason` / `data.degraded_reasons` / `data.secondary_recovery_failures` / `data.session_recovery`를 구조화된 payload로 함께 싣습니다. `secondary_recovery_failures`는 lane 실패가 없을 때도 빈 list(`[]`)로 항상 존재하므로 CI/launcher 자동화는 detail 문자열을 scraping하지 않고 이 필드를 바로 읽습니다. `data.session_recovery`는 supervisor의 bounded recovery 계약(`session_missing` + 최소 1개 BROKEN lane)이 충족됐는지 `recovery_expected` / `broken_lane_names`로 표현하고, 기대된 경우에는 terminal `session_recovery_completed` 또는 `session_recovery_failed` 이벤트에서 읽은 `event_observed` / `event_type` / `attempt` / `result` / `error`와 원본 `event`를 싣습니다. recovery가 기대된 상황에서 terminal event가 관측되지 않으면 `session loss degraded` 자체가 실패하므로, supervisor가 scaffold 재생성을 시도 자체를 잃어버린 회귀가 representative `session_missing`만으로 가려지지 않습니다. recovery가 기대되지 않은 경로에서도 같은 스키마 키가 기본값(`recovery_expected=false`, `broken_lane_names=[]`, `event_observed=false`, 빈 문자열/빈 dict)으로 유지되어 자동화가 match 실패를 scraping 없이 읽을 수 있습니다.
 - live 복구 검증 체크인 `recoverable lane pid observed`와 `lane recovery`도 같은 규약으로 구조화 `data`를 싣습니다. 전자는 `data.lane` / `data.pid` / `data.pid_available`을, 후자는 `data.event_observed` / `data.event_type` / `data.lane` / `data.attempt` / `data.result`와 원본 `data.event`를 포함하며, lane pid가 없어 복구 증거를 얻지 못한 경우에도 빈 event와 함께 `data.reason = "lane_pid_unavailable_before_fault_injection"` 같은 명시적 사유 문자열을 남깁니다.
 - `fault-check` 최상단의 두 synthetic degraded-precedence 프로브(`receipt manifest mismatch degraded precedence`, `active lane auth failure degraded precedence`)도 같은 방식으로 `data.runtime_state` / `data.degraded_reasons` / `data.matched_reason`과 각각 `data.expected_reason_prefix` 또는 `data.expected_reason`을 함께 싣습니다. supervisor가 degrade를 숨겨 match가 실패한 회귀 경로에서는 `matched_reason`이 빈 문자열로 유지되므로 자동화가 detail scraping 없이 증거 부재를 읽을 수 있습니다.
 - `runtime start` / `runtime stop after session loss` / `runtime restart`는 `data = {"action", "succeeded", "result"}`로 lifecycle action 결과를 구조화하고, `status surface ready`는 `data.wait_sec` / `data.ready` / `data.runtime_state` / `data.watcher_alive` / `data.active_control_status` / `data.ready_lane_names` / `data.ready_lane_count` / `data.snapshot`을 함께 실어 readiness 증거를 자동화가 snapshot helper 경로 그대로 읽을 수 있게 합니다.
@@ -125,7 +130,7 @@
 - shared `.pipeline/state/`에는 `turn_state.json`, `autonomy_state.json`, 그리고 blocker resolution에 아직 필요한 `VERIFY_DONE` 기록만 오래 남길 수 있습니다. 이전 run의 `VERIFY_PENDING` / `VERIFY_RUNNING` 같은 non-terminal job state는 watcher startup에서 `.pipeline/runs/<old_run_id>/state-archive/` 또는 `.pipeline/state-archive/legacy/`로 옮겨 현재 run surface와 섞이지 않게 하는 편이 맞습니다.
 - JobState JSON의 **primary 경로는 `.pipeline/state/jobs/<job_id>.json`**이고, 공용 상태 파일(`turn_state.json`, `autonomy_state.json`)은 `.pipeline/state/` 루트에 남습니다. owner boundary는 name filter가 아니라 디렉터리 path 자체로 강제되며, 새 JobState 쓰기는 항상 `jobs/` 하위로 들어갑니다. migration 기간 동안 `.pipeline/state/<job_id>.json` 루트 fallback은 **읽기 전용**으로만 허용되며, 같은 `job_id`가 양쪽에 있으면 primary가 항상 우선입니다. 자동 이동(auto-move)은 이번 라운드 범위 밖이며, 추후 마이그레이션 라운드에서 replay/복구 테스트와 함께 별도로 다룹니다.
 - state-dir scan 소유권은 `pipeline_runtime/schema.py`의 `jobs_state_dir(...)` / `iter_job_state_paths(...)` / `load_job_states(...)` helper가 가집니다. watcher_core의 `_archive_stale_job_states`, `_verified_work_paths`, `_get_current_run_jobs`와 supervisor의 job state loading은 모두 이 helper를 통해서만 접근하며, 각 파일 안의 직접 `state_dir.glob("*.json")` 조립은 제거됐습니다. `STATE_DIR_SHARED_FILES` name filter는 이제 primary 경로가 아니라 루트 fallback 해석에만 좁게 남아 있습니다.
-- watcher startup이 current run의 `VERIFY_PENDING` job을 state에서 복원했다면, 최신 `/work` candidate 스캔 결과와 무관하게 그 pending round를 먼저 다시 step해 Codex verify lane으로 재개하는 편이 맞습니다. 그렇지 않으면 matching `/verify`가 이미 있는 더 최신 `/work`만 보이는 경우 older current-run pending round가 `active_round=VERIFY_PENDING`으로만 남고 dispatch starvation에 빠질 수 있습니다.
+- watcher startup이 current run의 `VERIFY_PENDING` job을 state에서 복원했다면, 최신 `/work` candidate 스캔 결과와 무관하게 그 pending round를 먼저 다시 step해 verify/handoff owner lane으로 재개하는 편이 맞습니다. 다만 이 replay는 current control-resolution turn(`CODEX_FOLLOWUP`, `GEMINI_ADVISORY`, gated operator retriage)이나 열린 Gemini arbitration이 없을 때만 허용합니다. 그렇지 않으면 older pending round가 현재 follow-up/advisory pane truth를 덮는 false restart가 됩니다.
 - supervisor-managed runtime에서는 watcher job state도 supervisor가 만든 current `run_id`를 그대로 써야 합니다. watcher가 자기 PID 기반 별도 `run_id`를 만들면 Codex/Claude job state가 current run status surface에서 빠져 stale `READY`/`prompt_visible`처럼 보일 수 있습니다.
 - 반대로 supervisor가 재시작될 때 watcher가 살아 있다면, supervisor는 `.pipeline/current_run.json`의 기존 `run_id`를 그대로 이어받는 편이 맞습니다. 그래야 canonical `runs/<run_id>/status.json`이 watcher가 이미 startup-replay한 current-run `VERIFY_PENDING` / `VERIFYING` job state와 같은 라인을 계속 비추고, 새 supervisor가 별도 run dir로 옮겨가 이전 status.json이 stale `STOPPED`로 굳는 일이 생기지 않습니다.
 - 다만 inheritance는 stale pointer가 다른 live watcher와 섞이지 않도록 좁게 게이트해야 맞습니다. `current_run.json`은 supervisor가 매번 갱신할 때 현재 살아 있는 `experimental.pid`를 `watcher_pid` 필드로 같이 기록하고, supervisor restart의 `_inherited_run_id_from_live_watcher()`는 그 pointer `watcher_pid`가 현재 live `experimental.pid`와 정확히 같을 때만 기존 `run_id`를 이어받습니다. owner 필드가 없거나 mismatched이거나 pid가 죽었으면 fresh `_make_run_id()`가 그대로 이깁니다.
@@ -136,8 +141,8 @@
 - `RECEIPT_PENDING` round가 남아 있어도 current turn이 더 이상 `CODEX_VERIFY`/`CODEX_FOLLOWUP`가 아니면 launcher/runtime이 이를 곧바로 "Codex active lane" current truth로 끌어올리지는 않는 편이 맞습니다. receipt close 대기는 `active_round.completion_stage`와 lane note로 보이게 하고, active lane 우선순위는 current turn/control에 먼저 맞춥니다.
 - launcher snapshot은 thin client 그대로 `active_round.state`, `dispatch_id`, `completion_stage`, `Receipt: pending close`를 같이 보여서, verify lane이 task는 끝냈지만 receipt close를 기다리는 상태를 “멈춤”이 아니라 current runtime truth로 읽을 수 있어야 합니다.
 - runtime이 `STOPPING`/`STOPPED`/`BROKEN`으로 내려가더라도 마지막 `active_round.state`가 `RECEIPT_PENDING`이면 status surface에서는 그 round만 visible하게 유지하는 편이 맞습니다. `VERIFY_PENDING`/`VERIFYING` 같은 live verify surface는 계속 fail-safe로 비워야 하고, `control`/task hint/autonomy block은 이 경우에도 같이 초기화해서 stopped 상태에서 verify 또는 receipt task가 되살아난 것처럼 보이지 않게 해야 합니다.
-- metadata-only `/work` closeout(`## 변경 파일 - 없음` 또는 work/verify/.pipeline 경로만 기록)도 latest canonical round note라면 Claude round 종료 신호로는 인정하는 편이 맞습니다. watcher는 이런 closeout으로 `CLAUDE_ACTIVE`를 풀고 Codex verify artifact로 넘길 수 있어야 하며, 단지 dispatch prompt content를 좁히기 위해서만 metadata-only filtering을 유지합니다.
-- latest `/work` verify 필요 판정과 receipt close용 verify artifact 선택은 generic latest same-day `/verify` mtime 하나만으로 닫지 않는 편이 맞습니다. watcher와 supervisor는 current run `VERIFY_DONE` state나 verify note 안의 `work/...md` 참조를 보고 latest `/work` 또는 current `VERIFY_DONE` job과 실제로 연결된 matching `/verify`가 있는지 먼저 확인하고, `verify/<month>/<day>/` day-folder 바로 아래 note도 canonical same-day verify로 인정해야 합니다. unrelated newer `/verify`가 있어도 latest `/work` 자체가 아직 매칭 verify 없이 남아 있으면 Codex verify를 계속 우선해야 하고, receipt/`artifacts.latest_verify`도 그런 unrelated note를 current truth처럼 가리키면 안 됩니다. `REASON_CODE: newer_unverified_work_present` + `OPERATOR_POLICY: stop_until_truth_sync`도 이런 recovery family로 보고 즉시 operator stop이 아니라 Codex verify 우선 경계로 다루는 편이 맞습니다.
+- metadata-only `/work` closeout(`## 변경 파일 - 없음` 또는 work/verify/.pipeline 경로만 기록)도 latest canonical round note라면 watcher의 implement-owner round-completion 감지에는 포함하는 편이 맞습니다. watcher는 이런 closeout으로 `CLAUDE_ACTIVE`를 풀고 verify artifact 후보로 넘길 수 있어야 하며, 단지 dispatch prompt content를 좁히기 위해서만 metadata-only filtering을 유지합니다.
+- latest `/work` verify 필요 판정과 receipt close용 verify artifact 선택은 generic latest same-day `/verify` mtime 하나만으로 닫지 않는 편이 맞습니다. watcher와 supervisor는 current run `VERIFY_DONE` state나 verify note 안의 `work/...md` 참조를 보고 latest `/work` 또는 current `VERIFY_DONE` job과 실제로 연결된 matching `/verify`가 있는지 먼저 확인하고, `verify/<month>/<day>/` day-folder 바로 아래 note도 canonical same-day verify로 인정해야 합니다. same-day fallback은 유지하되, verify root 다른 날짜 폴더에 있더라도 note 본문이 해당 `work/...md`를 직접 참조하면 matching verify로 인정해야 합니다. unrelated newer `/verify`가 있어도 latest `/work` 자체가 아직 매칭 verify 없이 남아 있으면 verify/handoff-owner verification을 계속 우선해야 하고, receipt/`artifacts.latest_verify`도 그런 unrelated note를 current truth처럼 가리키면 안 됩니다. `REASON_CODE: newer_unverified_work_present` + `OPERATOR_POLICY: stop_until_truth_sync`도 이런 recovery family로 보고 즉시 operator stop이 아니라 verify/handoff-owner verification 우선 경계로 다루는 편이 맞습니다.
 
 ## handoff 작성 원칙
 
@@ -146,27 +151,29 @@
 - `.pipeline/gemini_request.md`는 Codex가 실제로 exact slice를 못 좁혔을 때만 쓰는 **arbitration 요청 슬롯**입니다.
 - `.pipeline/gemini_advice.md`는 Gemini가 Codex에게 recommendation을 남기는 **advisory 슬롯**입니다.
 - `.pipeline/operator_request.md`는 Codex가 실제로 operator 판단이 필요할 때만 쓰는 **정지 슬롯**입니다.
-- `.pipeline/session_arbitration_draft.md`는 watcher가 active session의 context exhaustion / session rollover / continue-vs-switch를 감지했고 Codex/Gemini가 idle이며 Claude가 idle이거나 같은 escalation text에 짧게 안정됐을 때만 남기는 **draft 슬롯**이며, canonical stop/go 신호가 아닙니다.
-- 이 draft는 Claude activity resume, canonical Gemini/operator slot open, signal cleared 같은 resolved 조건이 생기면 watcher가 다시 정리할 수 있고, 같은 fingerprint는 짧은 cooldown 동안 곧바로 재생성하지 않는 편이 맞습니다.
-- 실행 슬롯, Gemini arbitration 슬롯, 정지 슬롯을 Claude가 같이 읽지 않도록 분리하는 것이 stage-3 구조의 핵심입니다.
-- `.pipeline/claude_handoff.md`는 현재 MVP 우선순위에 맞는 다음 Claude 라운드 한 슬라이스만 남겨야 합니다.
-- active Claude session 중 context exhaustion, session rollover, continue-vs-switch 같은 live side question이 생기면, Codex는 `.pipeline/gemini_request.md` / `.pipeline/gemini_advice.md`를 coordination에만 쓰고 답은 Claude에게 짧은 lane reply로 relay합니다. 이 경우 `.pipeline/claude_handoff.md`는 session boundary 전까지 그대로 둡니다.
+- `.pipeline/session_arbitration_draft.md`는 watcher가 active session의 context exhaustion / session rollover / continue-vs-switch를 감지했고 verify/advisory lanes가 idle이며 implement owner가 idle이거나 같은 escalation text에 짧게 안정됐을 때만 남기는 **draft 슬롯**이며, canonical stop/go 신호가 아닙니다.
+- 이 draft는 implement-owner activity resume, canonical Gemini/operator slot open, signal cleared 같은 resolved 조건이 생기면 watcher가 다시 정리할 수 있고, 같은 fingerprint는 짧은 cooldown 동안 곧바로 재생성하지 않는 편이 맞습니다.
+- 실행 슬롯, Gemini arbitration 슬롯, 정지 슬롯을 implement owner가 같이 읽지 않도록 분리하는 것이 stage-3 구조의 핵심입니다.
+- `.pipeline/claude_handoff.md`는 현재 MVP 우선순위에 맞는 다음 implement-owner 라운드 한 슬라이스만 남겨야 합니다.
+- active implement-owner session 중 context exhaustion, session rollover, continue-vs-switch 같은 live side question이 생기면, active verify/handoff owner는 `.pipeline/gemini_request.md` / `.pipeline/gemini_advice.md`를 coordination에만 쓰고 답은 implement owner에게 짧은 lane reply로 relay합니다. 이 경우 `.pipeline/claude_handoff.md`는 session boundary 전까지 그대로 둡니다.
 - `.pipeline/claude_handoff.md`는 `STATUS: implement`와 `CONTROL_SEQ`를 함께 사용합니다.
 - `.pipeline/gemini_request.md`는 `STATUS: request_open`와 `CONTROL_SEQ`를 함께 사용합니다.
 - `.pipeline/gemini_advice.md`는 `STATUS: advice_ready`와 `CONTROL_SEQ`를 함께 사용합니다.
 - `.pipeline/operator_request.md`는 `STATUS: needs_operator`와 `CONTROL_SEQ`를 함께 사용합니다.
 - `.pipeline/session_arbitration_draft.md`는 `STATUS: draft_only`만 사용합니다.
 - `STATUS: implement_blocked`는 rolling control file status가 아니라, active Claude pane에서만 watcher가 읽는 machine-readable blocked sentinel입니다.
-- `STATUS: implement`이면 Codex가 다음 단일 슬라이스를 이미 확정한 상태입니다. Claude는 그 한 슬라이스만 구현합니다.
-- Claude가 그 슬라이스를 실행할 수 없으면 operator 선택지를 직접 열지 않고 `STATUS: implement_blocked` + `BLOCK_REASON` + `BLOCK_REASON_CODE` + `REQUEST: codex_triage` + `ESCALATION_CLASS: codex_triage` + `HANDOFF` + `HANDOFF_SHA` + `BLOCK_ID`를 pane에 남기고 멈추는 편이 맞습니다.
+- `STATUS: implement`이면 active verify/handoff owner가 다음 단일 슬라이스를 이미 확정한 상태입니다. active implement owner는 그 한 슬라이스만 구현합니다.
+- active implement owner가 그 슬라이스를 실행할 수 없으면 operator 선택지를 직접 열지 않고 `STATUS: implement_blocked` + `BLOCK_REASON` + `BLOCK_REASON_CODE` + `REQUEST: codex_triage` + `ESCALATION_CLASS: codex_triage` + `HANDOFF` + `HANDOFF_SHA` + `BLOCK_ID`를 pane에 남기고 멈추는 편이 맞습니다.
 - runtime/script smoke가 `implement_blocked` sentinel을 만들 때도 자유문장 출력 대신 `pipeline_runtime.control_writers.render_implement_blocked(...)`로 구조화 필드를 같이 렌더링하는 편이 맞습니다.
 - `STATUS: request_open`이면 Codex가 Gemini arbitration을 먼저 요청한 상태입니다. watcher는 Gemini를 먼저 부릅니다.
-- `STATUS: advice_ready`이면 Gemini가 recommendation을 남긴 상태입니다. watcher는 Codex follow-up을 먼저 부릅니다.
+- `STATUS: advice_ready`이면 Gemini가 recommendation을 남긴 상태입니다. watcher는 verify/handoff-owner follow-up을 먼저 부릅니다.
 - `STATUS: needs_operator` file이 생겼다고 해서 곧바로 current truth operator stop이 되는 것은 아닙니다. supervisor/watcher는 `safety_stop`, `approval_required`, `truth_sync_required`만 즉시 publish하고, 나머지는 최대 24시간 동안 gated candidate로 다룹니다.
 - supervisor/watcher는 operator stop publish/gate를 `OPERATOR_POLICY` 우선, `REASON_CODE` 다음, 설명 prose 마지막 참고 순서로 판정합니다. 구조화 metadata가 없거나 알 수 없으면 fail-safe로 즉시 publish하는 편이 맞습니다.
+- runtime은 오래 남은 control slot compatibility를 위해 `OPERATOR_POLICY: stop_until_exact_slice_selected`를 `gate_24h`로, `REASON_CODE: gemini_axis_switch_without_exact_slice`를 `slice_ambiguity`로 정규화해 false immediate publish를 막습니다. 새 slot은 canonical 값(`gate_24h`, `slice_ambiguity`)을 그대로 쓰는 편이 맞습니다.
+- `BASED_ON_WORK`가 이미 `VERIFY_DONE`라고 해서 모든 `needs_operator`를 stale stop으로 되돌리면 안 됩니다. `verified_blockers_resolved` self-heal은 명시적인 `truth_sync_required`처럼 "해당 work note verification이 blocker를 직접 닫는" family에만 적용하고, `slice_ambiguity`나 다른 next-slice/operator-selection stop은 같은 `BASED_ON_WORK`를 갖더라도 gate/publish 계약을 그대로 유지하는 편이 맞습니다.
 - launcher와 runtime soak/smoke gate도 operator candidate status에서 `classification_source`가 `operator_policy` 또는 `reason_code`가 아니면 `classification_fallback_detected`로 즉시 실패시키는 편이 맞습니다. 즉 fallback metadata는 화면 경고가 아니라 운영 게이트 실패로 다룹니다.
-- gate 중인 후보는 runtime `status.control=none`으로 내려가고, 대신 `status.autonomy.mode = recovery|triage|hibernate|pending_operator`와 `block_reason`, `suppress_operator_until`, `operator_eligible`로 surface됩니다. 이 동안 watcher는 Codex follow-up 또는 idle hibernate를 먼저 선택하고, 즉시 operator wait로 고정하지 않습니다.
-- gate window가 지나도 같은 fingerprint가 남아 있고 여전히 real operator-only decision이면 그때 `STATUS: needs_operator`가 current truth로 publish될 수 있습니다. Claude는 current truth가 아닌 gated stop 슬롯을 직접 따르지 않습니다.
+- gate 중인 후보는 runtime `status.control=none`으로 내려가고, 대신 `status.autonomy.mode = recovery|triage|hibernate|pending_operator`와 `block_reason`, `suppress_operator_until`, `operator_eligible`로 surface됩니다. 이 동안 watcher는 verify/handoff-owner follow-up 또는 idle hibernate를 먼저 선택하고, 즉시 operator wait로 고정하지 않습니다.
+- gate window가 지나도 같은 fingerprint가 남아 있고 여전히 real operator-only decision이면 그때 `STATUS: needs_operator`가 current truth로 publish될 수 있습니다. active implement owner는 current truth가 아닌 gated stop 슬롯을 직접 따르지 않습니다.
 - runtime long soak는 baseline evidence로 유지하되, 기본 검증 메뉴는 아닙니다. 현재 기본 검증은 launcher live stability gate, incident replay, 실제 작업 세션이며, 6h/24h long soak는 supervisor/watcher/tmux adapter/wrapper event 계약 대변경, control/receipt/state writer 계약 변경, adoption 직전 최종 gate 같은 예외 상황에서만 다시 실행하는 편이 맞습니다.
 - 현재 launcher live stability gate는 `handoff_dispatch -> TASK_ACCEPTED -> TASK_DONE -> receipt_close` chain continuity, READY/WORKING 오표시 0회, 불필요한 `needs_operator` 0회, `classification_fallback_detected` 0회, stop/restart 후 stale `RUNNING/STOPPING` 0회, orphan watcher/session 0회, dispatch/completion/receipt close incident의 named event surface, 반복 incident의 replay 고정 여부를 기준으로 봅니다.
 - `STATUS: needs_operator`는 bare stop line만 남기는 용도가 아닙니다. 이 상태를 쓸 때는 최소한 아래를 같이 적는 편이 canonical입니다.
@@ -190,36 +197,36 @@
 - route-by-route handler completeness, contract-family completeness, internal helper completeness는 기본 handoff 우선순위가 아닙니다.
 - stale handoff를 줄이기 위해 현재 `/work`와 `/verify`의 최신 truth를 먼저 확인하고, 그 범위 안에서만 handoff를 작성합니다.
 - Playwright-only smoke tightening, selector drift, single-scenario fixture update handoff는 기본적으로 isolated browser rerun을 요구하는 편이 맞습니다. shared browser helper 변경, 여러 browser scenario 변경, release/ready 판단, isolated rerun의 broader drift 신호가 없는데도 `make e2e-test`를 기본처럼 요구하는 stale handoff는 피합니다.
-- latest `/work`의 `## 변경 파일`이 markdown-only docs sync로 보이면, watcher의 Codex verify prompt는 docs-only fast path를 붙입니다. 이 경우 Codex는 우선 `git diff --check`와 직접 docs/code truth-sync를 먼저 확인하고, `/work`가 실제로 code/test/runtime 변경을 주장하지 않는 한 broader unit/Playwright rerun으로 자동 확장하지 않는 편이 맞습니다.
+- latest `/work`의 `## 변경 파일`이 markdown-only docs sync로 보이면, watcher의 verify/handoff-owner prompt는 docs-only fast path를 붙입니다. 이 경우 active verify/handoff owner는 우선 `git diff --check`와 직접 docs/code truth-sync를 먼저 확인하고, `/work`가 실제로 code/test/runtime 변경을 주장하지 않는 한 broader unit/Playwright rerun으로 자동 확장하지 않는 편이 맞습니다.
 - 다만 같은 날 same-family docs-only truth-sync가 이미 3회 이상 반복됐다면, Codex는 또 하나의 더 작은 docs-only micro-slice를 `.pipeline/claude_handoff.md`에 쓰지 않는 편이 맞습니다. 이 경우 남은 docs drift를 한 번에 닫는 bounded bundle로 묶거나, truthful한 단일 bundle을 못 고르면 `.pipeline/gemini_request.md` 또는 `.pipeline/operator_request.md`로 전환합니다.
 - whole-project trajectory review나 milestone audit은 `.pipeline` handoff가 아니라 `report/`에서 별도로 다룹니다.
 
 ## 권장 흐름
 
-1. Claude가 구현 후 최신 `/work` closeout을 남깁니다.
-2. Codex가 최신 `/work`, 최신 same-day `/verify`를 읽고 실제 검증을 재실행합니다.
-3. Codex가 `/verify` note를 남기거나 갱신합니다.
-4. Codex가 구현 가능한 경우 `.pipeline/claude_handoff.md`에 `STATUS: implement`를 씁니다.
-5. Codex가 exact slice를 못 좁히면 `.pipeline/gemini_request.md`에 `STATUS: request_open`을 씁니다.
-6. Gemini가 `report/gemini/...md`와 `.pipeline/gemini_advice.md`에 `STATUS: advice_ready`를 남깁니다.
-7. Codex가 Gemini advice를 읽고 최종 `.pipeline/claude_handoff.md` 또는 `.pipeline/operator_request.md`를 씁니다.
-7-0. 예외적으로 active Claude implement lane이 막히면, Claude는 pane-local `implement_blocked` sentinel만 남기고 watcher가 Codex blocked triage를 자동 dispatch합니다.
-7-1. 예외적으로 active Claude session의 side-question arbitration이면, Codex는 Gemini advice를 Claude에게 짧은 lane reply로만 relay하고 `.pipeline/claude_handoff.md`는 덮어쓰지 않습니다. handoff 갱신은 session boundary 또는 다음 라운드 시작 시점으로 미룹니다.
-7-2. watcher는 이런 active-session side-question을 감지해도 `.pipeline/gemini_request.md`를 자동으로 열지 않습니다. 필요하면 Codex/Gemini가 idle이고 Claude가 idle이거나 짧게 settle된 상태일 때 `.pipeline/session_arbitration_draft.md`만 생성하고, Codex가 직접 canonical 슬롯 승격 여부를 정합니다.
-7-3. watcher가 생성한 `.pipeline/session_arbitration_draft.md`는 perpetual slot이 아닙니다. Claude가 다시 작업을 시작하거나 canonical Gemini/operator 슬롯이 열리면 watcher가 정리하고, 같은 fingerprint는 짧은 cooldown 동안 반복 생성하지 않는 편이 맞습니다.
+1. active implement owner가 구현 후 최신 `/work` closeout을 남깁니다.
+2. active verify/handoff owner가 최신 `/work`와 그 work에 매칭되는 `/verify`(same-day fallback 또는 explicit work reference가 있는 cross-day note)를 읽고 실제 검증을 재실행합니다.
+3. active verify/handoff owner가 `/verify` note를 남기거나 갱신합니다.
+4. active verify/handoff owner가 구현 가능한 경우 `.pipeline/claude_handoff.md`에 `STATUS: implement`를 씁니다.
+5. active verify/handoff owner가 exact slice를 못 좁히면 `.pipeline/gemini_request.md`에 `STATUS: request_open`을 씁니다.
+6. advisory owner가 `report/gemini/...md`와 `.pipeline/gemini_advice.md`에 `STATUS: advice_ready`를 남깁니다.
+7. active verify/handoff owner가 Gemini advice를 읽고 최종 `.pipeline/claude_handoff.md` 또는 `.pipeline/operator_request.md`를 씁니다.
+7-0. 예외적으로 active implement-owner lane이 막히면, implement owner는 pane-local `implement_blocked` sentinel만 남기고 watcher가 verify/handoff-owner blocked triage를 자동 dispatch합니다.
+7-1. 예외적으로 active implement-owner session의 side-question arbitration이면, active verify/handoff owner는 Gemini advice를 implement owner에게 짧은 lane reply로만 relay하고 `.pipeline/claude_handoff.md`는 덮어쓰지 않습니다. handoff 갱신은 session boundary 또는 다음 라운드 시작 시점으로 미룹니다.
+7-2. watcher는 이런 active-session side-question을 감지해도 `.pipeline/gemini_request.md`를 자동으로 열지 않습니다. 필요하면 verify/advisory lanes가 idle이고 implement owner가 idle이거나 짧게 settle된 상태일 때 `.pipeline/session_arbitration_draft.md`만 생성하고, active verify/handoff owner가 직접 canonical 슬롯 승격 여부를 정합니다.
+7-3. watcher가 생성한 `.pipeline/session_arbitration_draft.md`는 perpetual slot이 아닙니다. implement owner가 다시 작업을 시작하거나 canonical Gemini/operator 슬롯이 열리면 watcher가 정리하고, 같은 fingerprint는 짧은 cooldown 동안 반복 생성하지 않는 편이 맞습니다.
 8. `.pipeline/codex_feedback.md`는 필요하면 scratch로 남길 수 있지만, watcher는 그것을 stop/go 실행 신호로 읽지 않습니다.
-9. watcher 또는 자동화는 최신 valid control 기준으로 `.pipeline/claude_handoff.md`의 `STATUS: implement`일 때만 Claude에 전달하고, `.pipeline/gemini_request.md`가 최신이면 Gemini를, `.pipeline/gemini_advice.md`가 최신이면 Codex follow-up을 실행합니다. `.pipeline/operator_request.md`는 latest slot이어도 gate 대상이면 바로 operator로 서지 않고, immediate publish 사유일 때나 24시간 gate가 지난 뒤에만 operator wait current truth가 됩니다.
+9. watcher 또는 자동화는 최신 valid control 기준으로 `.pipeline/claude_handoff.md`의 `STATUS: implement`일 때만 implement owner에 전달하고, `.pipeline/gemini_request.md`가 최신이면 advisory owner를, `.pipeline/gemini_advice.md`가 최신이면 verify/handoff-owner follow-up을 실행합니다. `.pipeline/operator_request.md`는 latest slot이어도 gate 대상이면 바로 operator로 서지 않고, immediate publish 사유일 때나 24시간 gate가 지난 뒤에만 operator wait current truth가 됩니다.
 10. watcher의 책임은 파일 변경 감지와 올바른 pane 전달까지입니다. 전송 후 Claude 또는 Codex or Gemini pane이 바쁘거나 interrupted 상태여서 처리가 안 되는 경우는 watcher contract 문제가 아니라 세션 상태 문제입니다.
 11. Codex가 다음 슬라이스를 고를 때는, 같은 family 안의 작은 current-risk reduction을 먼저 닫고 그다음 새 quality axis로 넘어가는 편이 기본값입니다.
 12. startup dispatch는 pane이 실제로 입력을 받을 준비가 됐는지 먼저 확인한 뒤 보내는 편이 맞습니다. 그 뒤에는 짧은 readiness 확인과 watcher retry에 맡기는 쪽이 기본값입니다.
-13. startup 또는 rolling dispatch에서 최신 canonical `/work`가 아직 matching `/verify` 없이 남아 있으면, unrelated same-day `/verify`가 더 늦게 찍혀 있어도 fresher `claude_handoff.md`보다 Codex verification이 우선입니다.
+13. startup 또는 rolling dispatch에서 최신 canonical `/work`가 아직 matching `/verify` 없이 남아 있으면, unrelated same-day `/verify`가 더 늦게 찍혀 있어도 fresher `claude_handoff.md`보다 verify/handoff-owner verification이 우선입니다.
 14. launcher가 `tmux attach`에서 빠져나와도 자동 진행이 이어져야 하므로, watcher는 launcher shell background보다 tmux session 내부의 별도 hidden watcher window에서 유지하는 편이 더 안전합니다.
-15. active Claude implement round가 이미 진행 중이면, newer `claude_handoff.md`가 생겨도 watcher는 mid-round re-dispatch를 하지 않고 현재 라운드 exit 뒤에만 반영합니다.
+15. active implement-owner round가 이미 진행 중이면, newer `claude_handoff.md`가 생겨도 watcher는 mid-round re-dispatch를 하지 않고 현재 라운드 exit 뒤에만 반영합니다.
 
 ## 추가 실행 규칙
 
-- Claude implement round는 bounded file edits와 canonical `/work` closeout에서 끝납니다. implement lane에서 commit, push, branch publish, PR 생성까지 같이 진행하지 않는 편이 맞습니다.
-- Codex verification round는 pane-only reasoning이나 next control slot rewrite만으로 닫히지 않습니다. dispatch 이후 current-round `/verify` receipt가 실제로 갱신된 것이 확인된 뒤에만 `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, `.pipeline/operator_request.md`를 쓰는 편이 맞습니다.
+- implement-owner round는 bounded file edits와 canonical `/work` closeout에서 끝납니다. implement lane에서 commit, push, branch publish, PR 생성까지 같이 진행하지 않는 편이 맞습니다.
+- verify/handoff-owner round는 pane-only reasoning이나 next control slot rewrite만으로 닫히지 않습니다. dispatch 이후 current-round `/verify` receipt가 실제로 갱신된 것이 확인된 뒤에만 `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, `.pipeline/operator_request.md`를 쓰는 편이 맞습니다.
 - Gemini advisory round도 pane-only answer로 닫지 않습니다. `report/gemini/...md` advisory log와 `.pipeline/gemini_advice.md` recommendation slot이 둘 다 있어야 round가 완료된 것으로 봅니다.
 
 ## stale control slot archive helper
@@ -280,6 +287,8 @@ operator 확인 필요:
 - 실패 시 기본값으로 tmux session과 산출물을 남겨 inspection에 씁니다.
 - 오래된 smoke 디렉터리만 수동으로 정리하려면 `.pipeline/cleanup-old-smoke-dirs.sh`를 쓸 수 있습니다.
 - 기본값은 최근 `3`개 유지이며, `PIPELINE_SMOKE_CLEANUP_DRY_RUN=1`로 삭제 없이 대상만 확인할 수 있습니다.
+- 수동 cleanup도 자동 prune과 동일하게 `PIPELINE_SMOKE_KEEP_RECENT=0`이면 fail-safe no-op으로 동작하여 매칭되는 smoke 디렉터리를 전부 지우지 않고 종료합니다.
+- 이 경우 `.pipeline/cleanup-old-smoke-dirs.sh`는 `Cleanup disabled: PIPELINE_SMOKE_KEEP_RECENT=0, preserving all matching <pattern> directories.`라는 explicit receipt 한 줄을 stdout에 남겨, helper가 조용히 return한 경우와 disabled 경우를 operator가 바로 구분할 수 있게 합니다.
 
 ## smoke 디렉터리 정리 규약
 

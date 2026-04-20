@@ -281,6 +281,7 @@ class SerializerMixin:
                     "source_roles": [localize_text(str(role)) for role in item.get("source_roles", []) if str(role).strip()],
                     "claim_coverage_summary": {
                         CoverageStatus.STRONG: int((item.get("claim_coverage_summary") or {}).get(CoverageStatus.STRONG) or 0),
+                        CoverageStatus.CONFLICT: int((item.get("claim_coverage_summary") or {}).get(CoverageStatus.CONFLICT) or 0),
                         CoverageStatus.WEAK: int((item.get("claim_coverage_summary") or {}).get(CoverageStatus.WEAK) or 0),
                         CoverageStatus.MISSING: int((item.get("claim_coverage_summary") or {}).get(CoverageStatus.MISSING) or 0),
                     },
@@ -323,11 +324,14 @@ class SerializerMixin:
     def _serialize_active_context(self, context: dict[str, Any] | None) -> dict[str, Any] | None:
         if context is None:
             return None
+        raw_basis = str(context.get("summary_hint_basis") or "").strip()
+        basis = raw_basis if raw_basis in {"current_summary", "recorded_correction"} else "current_summary"
         return {
             "kind": context.get("kind"),
             "label": context.get("label"),
             "source_paths": [str(path) for path in context.get("source_paths", [])],
             "summary_hint": localize_text(str(context.get("summary_hint", ""))),
+            "summary_hint_basis": basis,
             "suggested_prompts": [localize_text(str(item)) for item in context.get("suggested_prompts", [])],
             "record_path": str(context.get("record_path") or ""),
             "claim_coverage_progress_summary": localize_text(

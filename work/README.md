@@ -47,18 +47,18 @@
 - helper-agent, skill, Codex operator flow가 바뀌면 `/work`에도 그 라운드의 이유와 영향 범위를 남겨 후속 작업자가 문맥을 이어받을 수 있게 합니다.
 - 구현 closeout에는 가능하면 기존 shared path를 재사용해 중복 코드를 늘리지 않았는지, 또는 왜 예외가 필요했는지를 짧게 드러내는 편이 좋습니다.
 - `/work`가 구현 closeout, `/verify`가 검증 결과라는 경계가 바뀌면 두 README를 같은 라운드에서 함께 갱신합니다.
-- `.pipeline/claude_handoff.md`는 현재 Claude 실행용 rolling 최신 슬롯입니다. 구현 truth는 항상 최신 `/work`에 남기고, `.pipeline`은 그 내용을 넘겨주기 위한 보조 수단으로만 씁니다.
+- `.pipeline/claude_handoff.md`는 현재 implement control slot의 rolling 최신 파일입니다. 파일명은 역사적 호환을 위해 유지되며, 구현 truth는 항상 최신 `/work`에 남기고 `.pipeline`은 그 내용을 넘겨주기 위한 보조 수단으로만 씁니다.
 - `.pipeline` execution/control 슬롯은 `/work`와 달리 기본적으로 영어 중심 실행 지시를 유지하는 편이 맞습니다.
 - canonical control slot은 pending일 때 `CONTROL_SEQ`를 같이 써서 newest-valid-control 판정을 `CONTROL_SEQ` 우선 / `mtime` 보조로 맞추는 편이 맞습니다.
 - `.pipeline/gemini_request.md`와 `.pipeline/gemini_advice.md`는 현재 Gemini arbitration 슬롯입니다. 구현 truth를 대체하지 않습니다.
-- `.pipeline/session_arbitration_draft.md`는 watcher가 active Claude session의 escalation pattern을 감지했고 Codex/Gemini가 idle이며 Claude가 idle이거나 짧게 settle된 상태일 때만 남길 수 있는 draft_only 메모이며, 구현 truth나 canonical arbitration 슬롯을 대체하지 않습니다. resolved 조건이 생기면 watcher가 정리할 수 있고, 같은 fingerprint는 짧은 cooldown 동안 반복 생성하지 않습니다.
-- `.pipeline/operator_request.md`는 현재 operator 정지용 rolling 최신 슬롯입니다. 이 파일은 Claude가 구현 입력으로 읽지 않습니다.
+- `.pipeline/session_arbitration_draft.md`는 watcher가 active implement-owner session의 escalation pattern을 감지했고 verify/advisory lanes가 idle이며 implement owner가 idle이거나 짧게 settle된 상태일 때만 남길 수 있는 draft_only 메모이며, 구현 truth나 canonical arbitration 슬롯을 대체하지 않습니다. resolved 조건이 생기면 watcher가 정리할 수 있고, 같은 fingerprint는 짧은 cooldown 동안 반복 생성하지 않습니다.
+- `.pipeline/operator_request.md`는 현재 operator 정지용 rolling 최신 슬롯입니다. 이 파일은 active implement owner가 구현 입력으로 읽지 않습니다.
 - `.pipeline/codex_feedback.md`는 optional scratch 또는 legacy compatibility text일 뿐이며, 실행 신호로는 쓰지 않습니다.
-- active Claude session에서 context exhaustion, session rollover, continue-vs-switch 같은 side question 때문에 Gemini arbitration이 열리더라도, Codex는 답을 짧은 lane reply로만 relay하고 `.pipeline/claude_handoff.md`는 그 세션이 끝날 때까지 유지하는 편이 맞습니다. 그래야 나중에 실제 구현 결과를 round-start handoff와 다시 대조할 수 있습니다.
-- Claude는 보통 `.pipeline/claude_handoff.md`가 `STATUS: implement`일 때만 새 구현 `/work`를 남깁니다. 최신 control 파일이 `.pipeline/operator_request.md`라면 새 `/work` closeout을 억지로 만들지 않습니다.
-- Claude implement round는 bounded 파일 수정과 `/work` closeout에서 끝나는 편이 맞습니다. implement lane에서 commit, push, branch publish, PR 생성까지 같이 진행하지 않습니다.
+- active implement-owner session에서 context exhaustion, session rollover, continue-vs-switch 같은 side question 때문에 Gemini arbitration이 열리더라도, active verify/handoff owner는 답을 짧은 lane reply로만 relay하고 `.pipeline/claude_handoff.md`는 그 세션이 끝날 때까지 유지하는 편이 맞습니다. 그래야 나중에 실제 구현 결과를 round-start handoff와 다시 대조할 수 있습니다.
+- active implement owner는 보통 `.pipeline/claude_handoff.md`가 `STATUS: implement`일 때만 새 구현 `/work`를 남깁니다. 최신 control 파일이 `.pipeline/operator_request.md`라면 새 `/work` closeout을 억지로 만들지 않습니다.
+- implement-owner round는 bounded 파일 수정과 `/work` closeout에서 끝나는 편이 맞습니다. implement lane에서 commit, push, branch publish, PR 생성까지 같이 진행하지 않습니다.
 - 최신 control 파일이 `.pipeline/gemini_request.md` 또는 `.pipeline/gemini_advice.md`라면, 그 arbitration이 끝날 때까지 새 `/work` closeout을 억지로 만들지 않습니다.
-- active `STATUS: implement` handoff가 blocked라면 Claude는 새 `/work` closeout 대신 pane-local `STATUS: implement_blocked` + `BLOCK_REASON_CODE` + `ESCALATION_CLASS` sentinel로 Codex triage를 기다리는 편이 맞습니다.
+- active `STATUS: implement` handoff가 blocked라면 active implement owner는 새 `/work` closeout 대신 pane-local `STATUS: implement_blocked` + `BLOCK_REASON_CODE` + `ESCALATION_CLASS` sentinel로 verify/handoff-owner triage를 기다리는 편이 맞습니다.
 - `STATUS: needs_operator` stop request는 bare stop line 하나로 끝내지 않는 편이 맞습니다. 최소한 `CONTROL_SEQ`, `REASON_CODE`, `OPERATOR_POLICY`, `DECISION_CLASS`, `DECISION_REQUIRED`, `BASED_ON_WORK`, `BASED_ON_VERIFY`와 함께 왜 멈췄는지, operator가 다음에 무엇을 정해야 하는지는 `.pipeline/operator_request.md`에 남겨야 automation이 멈춘 이유를 나중에 다시 추적할 수 있습니다.
 - Codex는 latest `/work`와 `/verify`가 한 family를 truthfully 닫았을 때 같은 family의 가장 작은 current-risk reduction을 먼저 자동 확정할 수 있습니다. 다음 슬라이스를 매번 operator가 직접 고를 필요는 없습니다.
 - 다만 Codex가 next-slice ambiguity, overlapping candidates, low-confidence prioritization 때문에 바로 확정하지 못한 경우에는 `.pipeline/operator_request.md`보다 `.pipeline/gemini_request.md`를 먼저 여는 편이 맞습니다.
@@ -66,7 +66,7 @@
 - 따라서 `/work` closeout도 다음 우선순위를 설명할 때는 같은 family 안의 더 작은 risk를 먼저 닫는지, 아니면 왜 새 quality axis로 넘어가야 하는지를 짧게 드러내는 편이 좋습니다.
 - 다만 같은 날 same-family docs-only truth-sync가 이미 3회 이상 반복된 상태라면, 다음 `/work` closeout은 또 하나의 더 작은 docs-only micro-slice보다 남은 drift를 한 번에 닫는 bounded bundle이나 escalation 문맥을 반영하는 편이 맞습니다.
 - `.pipeline/gpt_prompt.md`는 optional/legacy scratch 슬롯로 남길 수 있지만, canonical single-Codex 흐름의 필수 단계는 아닙니다.
-- single-Codex tmux 흐름에서도 Claude가 `/work`를 남긴 뒤 Codex가 검증과 handoff를 처리하더라도, 구현의 canonical closeout은 계속 `/work`입니다.
+- single tmux 흐름에서도 active implement owner가 `/work`를 남긴 뒤 active verify/handoff owner가 검증과 handoff를 처리하더라도, 구현의 canonical closeout은 계속 `/work`입니다.
 - 현재 helper-agent 표면에는 `trace-implementer`가 포함되며, 이 역할은 grounded-brief trace/memory foundation의 작은 구현 슬라이스를 맡는 전용 구현 서브에이전트입니다.
 - `/work`의 구현 closeout은 "무엇을 만들었는가"를 기록하는 곳이지, 단순히 아직 비어 있는 internal regression 자리를 채웠다는 이유만으로 다음 제품 우선순위를 정당화하는 곳이 아닙니다.
 - 현재 reviewed-memory 구현은 계속 허용되지만, closeout reason은 user-visible value, current-risk reduction, 또는 현재 shipped contract 정합성 중 무엇을 개선했는지 먼저 드러내야 합니다.

@@ -1834,6 +1834,7 @@ class AgentLoop:
             "source_paths": list(source_paths),
             "excerpt": excerpt,
             "summary_hint": self._summarize_hint(summary_hint),
+            "summary_hint_basis": "current_summary",
             "suggested_prompts": [prompt for prompt in suggested_prompts if isinstance(prompt, str)],
             "evidence_pool": [dict(item) for item in (evidence_pool or []) if isinstance(item, dict)],
             "retrieval_chunks": [dict(item) for item in (retrieval_chunks or []) if isinstance(item, dict)],
@@ -2515,7 +2516,11 @@ class AgentLoop:
             "상태": f"{query} 출시 상태 검색해봐",
             "이용 형태": f"{query} 공식 플랫폼 검색해봐",
         }
-        status_priority = {CoverageStatus.MISSING: 0, CoverageStatus.WEAK: 1}
+        status_priority = {
+            CoverageStatus.MISSING: 0,
+            CoverageStatus.WEAK: 1,
+            CoverageStatus.CONFLICT: 2,
+        }
         slot_user_priority = self._REINVESTIGATION_SLOT_USER_PRIORITY
         unknown_slot_rank = len(slot_user_priority)
         candidates: list[tuple[int, int, int, int, str]] = []
@@ -3725,7 +3730,7 @@ class AgentLoop:
         primary_claim: ClaimRecord | None,
     ) -> list[str]:
         compact_value = " ".join(str(getattr(primary_claim, "value", "") or "").split()).strip().rstrip(".")
-        if status == CoverageStatus.WEAK and compact_value:
+        if status in {CoverageStatus.WEAK, CoverageStatus.CONFLICT} and compact_value:
             query_map: dict[str, list[str]] = {
                 "개발": [f"{query} {compact_value} 개발사 공식", f"{query} {compact_value} 개발사 위키"],
                 "서비스/배급": [f"{query} {compact_value} 서비스 공식", f"{query} {compact_value} 운영 공식"],
@@ -3841,7 +3846,8 @@ class AgentLoop:
             added_for_slot = 0
             max_queries_for_slot = (
                 2
-                if slot_coverage.status == CoverageStatus.WEAK and (prior_probe_count >= 1 or source_role != SourceRole.OFFICIAL)
+                if slot_coverage.status in {CoverageStatus.WEAK, CoverageStatus.CONFLICT}
+                and (prior_probe_count >= 1 or source_role != SourceRole.OFFICIAL)
                 else 1
             )
             for variant in ordered_variants:
@@ -3854,7 +3860,7 @@ class AgentLoop:
                 added_for_slot += 1
                 if added_for_slot >= max_queries_for_slot:
                     break
-            if len(second_pass_queries) >= 4:
+            if len(second_pass_queries) >= 5:
                 break
         return second_pass_queries
 
@@ -4121,22 +4127,25 @@ class AgentLoop:
                 )
         return merge_claim_records(records)
 
-    def _entity_claim_sort_key(self, claim: ClaimRecord) -> tuple[int, int, int, int, str]:
+    def _entity_claim_sort_key(self, claim: ClaimRecord) -> tuple[int, int, int, int, str, str]:
         role_priority = {
+            SourceRole.OFFICIAL: 5,
             SourceRole.WIKI: 4,
-            SourceRole.OFFICIAL: 3,
-            SourceRole.DESCRIPTIVE: 2,
-            SourceRole.NEWS: 1,
+            SourceRole.DATABASE: 4,
+            SourceRole.DESCRIPTIVE: 3,
+            SourceRole.NEWS: 2,
             SourceRole.AUXILIARY: 1,
-            SourceRole.PORTAL: 0,
+            SourceRole.COMMUNITY: 1,
+            SourceRole.PORTAL: 1,
             SourceRole.BLOG: 0,
         }
         return (
             claim.support_count,
             role_priority.get(claim.source_role, 0),
             int(claim.confidence * 1000),
-            len(claim.value),
+            -len(claim.value),
             claim.value,
+            claim.source_url,
         )
 
     def _select_entity_fact_card_claims(
@@ -4144,7 +4153,7 @@ class AgentLoop:
         *,
         query: str,
         claim_records: list[ClaimRecord],
-    ) -> tuple[list[ClaimRecord], list[ClaimRecord], list[ClaimRecord], list[str]]:
+    ) -> tuple[list[ClaimRecord], list[ClaimRecord], list[ClaimRecord], list[ClaimRecord], list[str]]:
         grouped: dict[str, list[ClaimRecord]] = {}
         for claim in claim_records:
             grouped.setdefault(claim.slot, []).append(claim)
@@ -4154,6 +4163,7 @@ class AgentLoop:
         coverage = summarize_slot_coverage(claim_records, slots=core_slots)
 
         strong_selected: list[ClaimRecord] = []
+        conflict_selected: list[ClaimRecord] = []
         weak_selected: list[ClaimRecord] = []
         for slot in core_slots:
             items = grouped.get(slot) or []
@@ -4165,6 +4175,10 @@ class AgentLoop:
                 continue
             if slot_coverage.status == CoverageStatus.STRONG:
                 strong_selected.append(best)
+                continue
+            if slot_coverage.status == CoverageStatus.CONFLICT:
+                if best.source_role in TRUSTED_CLAIM_SOURCE_ROLES:
+                    conflict_selected.append(best)
                 continue
             if best.source_role in TRUSTED_CLAIM_SOURCE_ROLES:
                 weak_selected.append(best)
@@ -4189,24 +4203,33 @@ class AgentLoop:
             supporting.append(best)
 
         strong_selected.sort(key=lambda item: self._entity_fact_sort_key(item.slot))
+        conflict_selected.sort(key=lambda item: self._entity_fact_sort_key(item.slot))
         weak_selected.sort(key=lambda item: self._entity_fact_sort_key(item.slot))
         supporting.sort(key=lambda item: (self._entity_fact_sort_key(item.slot), -item.support_count))
-        covered_slots = {claim.slot for claim in [*strong_selected, *weak_selected]}
+        covered_slots = {claim.slot for claim in [*strong_selected, *conflict_selected, *weak_selected]}
         unresolved_slots = [
             slot
             for slot in core_slots
             if coverage.get(slot) and coverage[slot].status != CoverageStatus.STRONG and slot not in covered_slots
         ]
-        return strong_selected[:5], weak_selected[:5], supporting[:2], unresolved_slots[:3]
+        return (
+            strong_selected[:5],
+            conflict_selected[:5],
+            weak_selected[:5],
+            supporting[:2],
+            unresolved_slots[:3],
+        )
 
     def _build_entity_claim_coverage_items(
         self,
         *,
         core_coverage: dict[str, Any],
         primary_claims: list[ClaimRecord],
+        conflict_claims: list[ClaimRecord],
         weak_claims: list[ClaimRecord],
     ) -> list[dict[str, Any]]:
         strong_slots = {claim.slot for claim in primary_claims}
+        conflict_slots = {claim.slot for claim in conflict_claims}
         weak_slots = {claim.slot for claim in weak_claims}
         coverage_items: list[dict[str, Any]] = []
 
@@ -4218,34 +4241,62 @@ class AgentLoop:
                     {
                         "slot": slot,
                         "status": CoverageStatus.MISSING,
-                        "status_label": "미확인",
+                        "status_label": self._claim_coverage_status_label(CoverageStatus.MISSING),
                         "support_count": 0,
                         "candidate_count": 0,
                         "value": "",
                         "source_role": "",
                         "rendered_as": "not_rendered",
+                        "trust_tier": "",
+                        "support_plurality": "",
                     }
                 )
                 continue
 
             if slot in strong_slots:
                 rendered_as = "fact_card"
+            elif slot in conflict_slots:
+                rendered_as = "conflict"
             elif slot in weak_slots:
                 rendered_as = "uncertain"
             else:
                 rendered_as = "not_rendered"
 
             status = str(getattr(slot_coverage, "status", CoverageStatus.WEAK) or CoverageStatus.WEAK)
+            _trusted_roles_for_trust_tier = {
+                SourceRole.OFFICIAL,
+                SourceRole.DATABASE,
+                SourceRole.WIKI,
+            }
+            _supporting_source_roles = tuple(
+                str(role or "")
+                for _url, _title, role in getattr(primary_claim, "supporting_sources", ()) or ()
+            )
+            if status == CoverageStatus.STRONG:
+                trust_tier = (
+                    "trusted"
+                    if any(role in _trusted_roles_for_trust_tier for role in _supporting_source_roles)
+                    else "mixed"
+                )
+            else:
+                trust_tier = ""
+            _primary_support_count = int(getattr(primary_claim, "support_count", 0) or 0)
+            if status == CoverageStatus.WEAK:
+                support_plurality = "multiple" if _primary_support_count >= 2 else "single"
+            else:
+                support_plurality = ""
             coverage_items.append(
                 {
                     "slot": slot,
                     "status": status,
-                    "status_label": "교차 확인" if status == CoverageStatus.STRONG else "단일 출처",
+                    "status_label": self._claim_coverage_status_label(status),
                     "support_count": int(getattr(primary_claim, "support_count", 0) or 0),
                     "candidate_count": int(getattr(slot_coverage, "candidate_count", 0) or 0),
                     "value": str(getattr(primary_claim, "value", "") or ""),
                     "source_role": str(getattr(primary_claim, "source_role", "") or ""),
                     "rendered_as": rendered_as,
+                    "trust_tier": trust_tier,
+                    "support_plurality": support_plurality,
                 }
             )
 
@@ -4316,6 +4367,8 @@ class AgentLoop:
     def _claim_coverage_status_rank(self, status: str) -> int:
         normalized = str(status or "").strip()
         if normalized == CoverageStatus.STRONG:
+            return 3
+        if normalized == CoverageStatus.CONFLICT:
             return 2
         if normalized == CoverageStatus.WEAK:
             return 1
@@ -4325,6 +4378,8 @@ class AgentLoop:
         normalized = str(status or "").strip()
         if normalized == CoverageStatus.STRONG:
             return "교차 확인"
+        if normalized == CoverageStatus.CONFLICT:
+            return "정보 상충"
         if normalized == CoverageStatus.WEAK:
             return "단일 출처"
         return "미확인"
@@ -4379,7 +4434,7 @@ class AgentLoop:
         focus_slot = self._entity_slot_from_probe_text(query)
         improved_slots: list[tuple[str, str, str, str, str]] = []
         regressed_slots: list[tuple[str, str, str, str, str]] = []
-        unresolved_slots: list[tuple[str, str]] = []
+        unresolved_slots: list[tuple[str, str, str]] = []
         for slot in CORE_ENTITY_SLOTS:
             current_status = current_map.get(slot, "")
             if not current_status:
@@ -4407,8 +4462,14 @@ class AgentLoop:
                         current_status,
                     )
                 )
-            if current_status in {CoverageStatus.WEAK, CoverageStatus.MISSING}:
-                unresolved_slots.append((slot, self._claim_coverage_status_label(current_status)))
+            if current_status in {
+                CoverageStatus.CONFLICT,
+                CoverageStatus.WEAK,
+                CoverageStatus.MISSING,
+            }:
+                unresolved_slots.append(
+                    (slot, self._claim_coverage_status_label(current_status), current_status)
+                )
 
         if focus_slot:
             focus_particle = self._select_korean_particle(focus_slot, "은는")
@@ -4429,7 +4490,7 @@ class AgentLoop:
                         f"재조사 결과 {slot}{focus_particle} {previous_label}에서 "
                         f"{current_label}{directional} 보강되었습니다."
                     )
-            for slot, previous_label, current_label, prev_status, _cur_status in regressed_slots:
+            for slot, previous_label, current_label, prev_status, cur_status in regressed_slots:
                 if slot == focus_slot:
                     directional = self._select_korean_directional_particle(current_label)
                     # When the slot no longer qualifies for trusted
@@ -4442,13 +4503,31 @@ class AgentLoop:
                             f"재조사 결과 {slot}{focus_particle} 교차 확인 기준을 더 이상 "
                             f"충족하지 않아 {current_label}{directional} 조정되었습니다."
                         )
+                    if prev_status == CoverageStatus.WEAK and cur_status == CoverageStatus.MISSING:
+                        return (
+                            f"재조사 결과 {slot}{focus_particle} 정보를 더 이상 찾을 수 없어 "
+                            f"{current_label}{directional} 조정되었습니다."
+                        )
                     return (
                         f"재조사 결과 {slot}{focus_particle} {previous_label}에서 "
                         f"{current_label}{directional} 약해졌습니다."
                     )
-            for slot, current_label in unresolved_slots:
+            for slot, current_label, cur_status in unresolved_slots:
                 if slot == focus_slot:
-                    return f"재조사했지만 {slot}{focus_particle} 아직 {current_label} 상태입니다."
+                    if cur_status == CoverageStatus.CONFLICT:
+                        return (
+                            f"재조사했지만 {slot}{focus_particle} "
+                            "출처들이 서로 어긋난 채 남아 있습니다."
+                        )
+                    if cur_status == CoverageStatus.WEAK:
+                        return (
+                            f"재조사했지만 {slot}{focus_particle} "
+                            "아직 한 가지 출처의 정보로만 확인됩니다."
+                        )
+                    return (
+                        f"재조사했지만 {slot}{focus_particle} "
+                        "아직 관련 정보를 찾지 못했습니다."
+                    )
 
         if improved_slots:
             improved_summary = ", ".join(
@@ -4457,14 +4536,14 @@ class AgentLoop:
             )
             if unresolved_slots:
                 unresolved_summary = ", ".join(
-                    f"{slot} {label}" for slot, label in unresolved_slots[:2]
+                    f"{slot} {label}" for slot, label, _status in unresolved_slots[:2]
                 )
                 return f"재조사 결과 {improved_summary}로 보강되었습니다. 아직 {unresolved_summary} 상태의 슬롯이 남아 있습니다."
             return f"재조사 결과 {improved_summary}로 보강되었습니다."
 
         if unresolved_slots:
             unresolved_summary = ", ".join(
-                f"{slot} {label}" for slot, label in unresolved_slots[:3]
+                f"{slot} {label}" for slot, label, _status in unresolved_slots[:3]
             )
             return f"재조사했지만 아직 {unresolved_summary} 상태입니다."
         return None
@@ -4475,12 +4554,13 @@ class AgentLoop:
         query: str,
         selected_sources: list[dict[str, Any]],
         primary_claims: list[ClaimRecord],
+        conflict_claims: list[ClaimRecord],
         weak_claims: list[ClaimRecord],
         supplemental_claims: list[ClaimRecord],
     ) -> list[str]:
         support_refs: list[tuple[str, str, str]] = []
         seen_support_refs: set[tuple[str, str, str]] = set()
-        for claim in [*primary_claims, *weak_claims, *supplemental_claims]:
+        for claim in [*primary_claims, *conflict_claims, *weak_claims, *supplemental_claims]:
             refs = claim.supporting_sources or ((claim.source_url, claim.source_title, claim.source_role),)
             for url, title, role in refs:
                 compact_url = str(url or "").strip()
@@ -4495,12 +4575,14 @@ class AgentLoop:
         lines: list[str] = []
         seen_urls: set[str] = set()
         role_priority = {
+            SourceRole.OFFICIAL: 5,
             SourceRole.WIKI: 4,
-            SourceRole.OFFICIAL: 3,
-            SourceRole.DESCRIPTIVE: 2,
-            SourceRole.NEWS: 1,
+            SourceRole.DATABASE: 4,
+            SourceRole.DESCRIPTIVE: 3,
+            SourceRole.NEWS: 2,
             SourceRole.AUXILIARY: 1,
-            SourceRole.PORTAL: 0,
+            SourceRole.COMMUNITY: 1,
+            SourceRole.PORTAL: 1,
             SourceRole.BLOG: 0,
         }
         support_refs.sort(key=lambda item: (role_priority.get(item[2], 0), len(item[1])), reverse=True)
@@ -4652,7 +4734,7 @@ class AgentLoop:
             selected_sources=selected_sources,
         )
         core_coverage = summarize_slot_coverage(claim_records, slots=CORE_ENTITY_SLOTS)
-        primary_claims, weak_claims, supplemental_claims, unresolved_slots = self._select_entity_fact_card_claims(
+        primary_claims, conflict_claims, weak_claims, supplemental_claims, unresolved_slots = self._select_entity_fact_card_claims(
             query=query,
             claim_records=claim_records,
         )
@@ -4692,6 +4774,19 @@ class AgentLoop:
             for claim in primary_claims:
                 support_suffix = f" (교차 확인 {claim.support_count}건)" if claim.support_count >= 2 else ""
                 lines.append(f"- {claim.slot}: {claim.value}{support_suffix}")
+        if conflict_claims:
+            lines.append("")
+            lines.append("상충하는 정보 [정보 상충]:")
+            for claim in conflict_claims:
+                _slot_cov = core_coverage.get(claim.slot)
+                role_label = (
+                    _slot_cov.primary_claim.source_role
+                    if _slot_cov is not None and _slot_cov.primary_claim is not None
+                    else claim.source_role
+                )
+                is_community = role_label in ("보조 커뮤니티", "보조 포털", "보조 블로그")
+                qualifier = "비공식 출처, 확정 금지" if is_community else f"정보 상충, {role_label}, 확정 금지"
+                lines.append(f"- {claim.slot}: {claim.value} ({qualifier})")
         if weak_claims:
             lines.append("")
             lines.append("단일 출처 정보 [단일 출처] (추가 확인 필요):")
@@ -4723,6 +4818,7 @@ class AgentLoop:
                 query=query,
                 selected_sources=selected_sources,
                 primary_claims=primary_claims,
+                conflict_claims=conflict_claims,
                 weak_claims=weak_claims,
                 supplemental_claims=supplemental_claims,
             )
@@ -6179,13 +6275,14 @@ class AgentLoop:
                 selected_sources=entity_sources,
             )
             entity_core_coverage = summarize_slot_coverage(entity_claim_records, slots=CORE_ENTITY_SLOTS)
-            primary_claims, weak_claims, _, _ = self._select_entity_fact_card_claims(
+            primary_claims, conflict_claims, weak_claims, _, _ = self._select_entity_fact_card_claims(
                 query=query,
                 claim_records=entity_claim_records,
             )
             claim_coverage = self._build_entity_claim_coverage_items(
                 core_coverage=entity_core_coverage,
                 primary_claims=primary_claims,
+                conflict_claims=conflict_claims,
                 weak_claims=weak_claims,
             )
             if previous_claim_coverage and self._looks_like_related_entity_query(previous_query, query):
@@ -6453,13 +6550,14 @@ class AgentLoop:
                     selected_sources=entity_sources,
                 )
                 entity_core_coverage = summarize_slot_coverage(entity_claim_records, slots=CORE_ENTITY_SLOTS)
-                primary_claims, weak_claims, _, _ = self._select_entity_fact_card_claims(
+                primary_claims, conflict_claims, weak_claims, _, _ = self._select_entity_fact_card_claims(
                     query=query,
                     claim_records=entity_claim_records,
                 )
                 claim_coverage = self._build_entity_claim_coverage_items(
                     core_coverage=entity_core_coverage,
                     primary_claims=primary_claims,
+                    conflict_claims=conflict_claims,
                     weak_claims=weak_claims,
                 )
 
@@ -6784,6 +6882,7 @@ class AgentLoop:
             "label": context.get("label"),
             "source_paths": [str(path) for path in context.get("source_paths", [])],
             "summary_hint": context.get("summary_hint"),
+            "summary_hint_basis": str(context.get("summary_hint_basis") or "current_summary"),
             "suggested_prompts": [str(prompt) for prompt in context.get("suggested_prompts", [])],
             "record_path": context.get("record_path"),
             "claim_coverage_progress_summary": str(context.get("claim_coverage_progress_summary") or "").strip(),

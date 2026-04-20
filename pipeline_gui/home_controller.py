@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable
 
 from .backend import (
+    describe_turn_state,
     normalize_runtime_status,
     read_runtime_event_tail,
     read_runtime_status,
@@ -210,6 +211,8 @@ class HomeController:
         verify_name = str(latest_verify.get("path") or "—")
         verify_mtime = float(latest_verify.get("mtime") or 0.0)
         compat = dict(runtime_status.get("compat") or {})
+        turn_state = dict(compat.get("turn_state") or {}) or None
+        turn_description = describe_turn_state(turn_state)
         log_lines: list[str] = []
         for data in read_runtime_event_tail(self.project, max_lines=14):
             event_type = str(data.get("event_type") or "")
@@ -221,17 +224,27 @@ class HomeController:
         verify_activity = None
         round_state = str(active_round.get("state") or "")
         if round_state in {"VERIFY_PENDING", "VERIFYING", "RECEIPT_PENDING"}:
+            verify_lane = (
+                turn_description["active_lane"]
+                if turn_description.get("active_role") == "verify"
+                else ""
+            ) or "Codex"
+            verify_label = (
+                f"{verify_lane} 검증 실행 중"
+                if round_state != "VERIFY_PENDING"
+                else f"{verify_lane} 검증 준비 중"
+            )
             verify_activity = {
                 "job_id": str(active_round.get("job_id") or ""),
                 "status": "VERIFY_RUNNING" if round_state != "VERIFY_PENDING" else "VERIFY_PENDING",
-                "label": "Codex 검증 실행 중" if round_state != "VERIFY_PENDING" else "Codex 검증 준비 중",
+                "label": verify_label,
                 "artifact_name": verify_name,
                 "artifact_path": verify_name,
             }
         run_summary = {
             "job": str(active_round.get("job_id") or ""),
             "phase": round_state,
-            "turn": str((compat.get("turn_state") or {}).get("state") or ""),
+            "turn": "" if turn_description["state"] == "IDLE" else turn_description["label"],
         }
         return HomeSnapshot(
             runtime_state=runtime_state,
@@ -252,6 +265,6 @@ class HomeController:
             run_summary=run_summary,
             control_slots=dict(compat.get("control_slots") or {"active": None, "stale": []}),
             verify_activity=verify_activity,
-            turn_state=dict(compat.get("turn_state") or {}) or None,
+            turn_state=turn_state,
             polled_at=polled_at,
         )

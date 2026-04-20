@@ -122,6 +122,7 @@ TRUSTED_SOURCE_ROLES = frozenset({
 
 class CoverageStatus(StrEnum):
     STRONG = "strong"
+    CONFLICT = "conflict"
     WEAK = "weak"
     MISSING = "missing"
 

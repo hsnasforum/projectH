@@ -58,7 +58,11 @@ from pipeline_runtime.lane_surface import (
     pane_text_is_idle as _shared_pane_text_is_idle,
     wait_for_pane_settle as _shared_wait_for_pane_settle,
 )
-from pipeline_runtime.operator_autonomy import classify_operator_candidate, normalize_reason_code
+from pipeline_runtime.operator_autonomy import (
+    allows_verified_blocker_auto_recovery,
+    classify_operator_candidate,
+    normalize_reason_code,
+)
 from pipeline_runtime.schema import (
     iter_job_state_paths,
     latest_verify_note_for_work,
@@ -675,8 +679,8 @@ _LIVE_SESSION_ESCALATION_FALLBACK_KEYWORDS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-_IMPLEMENT_BLOCKED_STATUS_RE = re.compile(r"^\s*STATUS:\s*(.*?)\s*$", re.IGNORECASE)
-_IMPLEMENT_BLOCKED_FIELD_RE = re.compile(r"^\s*([A-Z_]+):\s*(.*?)\s*$")
+_IMPLEMENT_BLOCKED_STATUS_RE = re.compile(r"^\s*(?:[-*•]\s+)?STATUS:\s*(.*?)\s*$", re.IGNORECASE)
+_IMPLEMENT_BLOCKED_FIELD_RE = re.compile(r"^\s*(?:[-*•]\s+)?([A-Z_]+):\s*(.*?)\s*$")
 _IMPLEMENT_BLOCKED_WRAP_KEYS = {"BLOCK_REASON", "HANDOFF", "HANDOFF_SHA", "BLOCK_ID"}
 _IMPLEMENT_BLOCKED_TEMPLATE_MARKERS = (
     "blocked_sentinel:",
@@ -1189,8 +1193,10 @@ def _dispatch_codex(pane_target: str, command: str) -> bool:
                     log.info("codex response activity detected after consume: attempt %d", attempt + 1)
                     return True
                 time.sleep(0.5)
-            log.info("codex dispatch not confirmed after consume: no working indicator or response activity")
-            continue
+            log.info(
+                "codex dispatch consumed without immediate confirmation: defer acceptance to wrapper events"
+            )
+            return True
         if snapshot != pasted_snapshot and _pane_text_has_codex_activity(snapshot):
             log.info("codex response activity detected: attempt %d", attempt + 1)
             return True
@@ -1723,6 +1729,19 @@ class WatcherCore:
         return ""
 
     # ------------------------------------------------------------------
+    def _active_role_for_turn(self, turn_state: Optional[WatcherTurnState] = None) -> str:
+        state = turn_state or self._current_turn_state
+        if state == WatcherTurnState.CLAUDE_ACTIVE:
+            return "implement"
+        if state in (WatcherTurnState.CODEX_VERIFY, WatcherTurnState.CODEX_FOLLOWUP):
+            return "verify"
+        if state == WatcherTurnState.GEMINI_ADVISORY:
+            return "advisory"
+        if state == WatcherTurnState.OPERATOR_WAIT:
+            return "operator"
+        return ""
+
+    # ------------------------------------------------------------------
     def _implement_control_should_surface_working(self, active_control: Optional[ControlSignal]) -> bool:
         if active_control is None:
             return False
@@ -1841,6 +1860,8 @@ class WatcherCore:
         self._turn_entered_at = now
         self._turn_active_control_file = active_control_file
         self._turn_active_control_seq = active_control_seq
+        active_role = self._active_role_for_turn(new_state)
+        active_lane = self._active_lane_name_for_turn(new_state)
         if new_state == WatcherTurnState.CLAUDE_ACTIVE:
             self._last_progress_at = now
             self._last_active_pane_fingerprint = ""
@@ -1858,6 +1879,8 @@ class WatcherCore:
                 "reason": reason,
                 "active_control_file": active_control_file,
                 "active_control_seq": active_control_seq,
+                "active_role": active_role,
+                "active_lane": active_lane,
             },
         )
         # Write turn_state.json atomically
@@ -1867,6 +1890,8 @@ class WatcherCore:
             "reason": reason,
             "active_control_file": active_control_file,
             "active_control_seq": active_control_seq,
+            "active_role": active_role,
+            "active_lane": active_lane,
         }
         if verify_job_id:
             data["verify_job_id"] = verify_job_id
@@ -1881,6 +1906,8 @@ class WatcherCore:
                 "reason": reason,
                 "active_control_file": active_control_file,
                 "active_control_seq": active_control_seq,
+                "active_role": active_role,
+                "active_lane": active_lane,
             },
         )
         self._write_runtime_status()
@@ -2011,6 +2038,8 @@ class WatcherCore:
         except OSError:
             return None
         control_meta = read_control_meta(self.operator_request_path)
+        if not allows_verified_blocker_auto_recovery(control_meta):
+            return None
         based_on_work = self._normalize_artifact_path(control_meta.get("based_on_work"))
         if based_on_work:
             referenced_work_paths = [based_on_work]
@@ -2209,8 +2238,8 @@ class WatcherCore:
     def _build_verify_feedback_sigs(self, job: JobState) -> tuple[str, str]:
         work_path = Path(job.artifact_path)
         control_sig = compute_multi_file_sig(self.completion_paths)
-        verify_dir = self._get_same_day_verify_dir(work_path)
-        verify_sig = compute_md_tree_sig(verify_dir)
+        del work_path
+        verify_sig = compute_md_tree_sig(self.verify_dir)
         return control_sig, verify_sig
 
     # ------------------------------------------------------------------
@@ -2331,6 +2360,14 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _get_pending_gemini_advice_mtime(self) -> float:
         return self._get_gemini_advice_mtime()
+
+    # ------------------------------------------------------------------
+    def _control_resolution_turn_active(self) -> bool:
+        return self._current_turn_state in {
+            WatcherTurnState.CODEX_FOLLOWUP,
+            WatcherTurnState.GEMINI_ADVISORY,
+            WatcherTurnState.OPERATOR_WAIT,
+        }
 
     # ------------------------------------------------------------------
     def _gemini_advice_is_current_for_request(self, request_seq: int) -> bool:
@@ -3443,8 +3480,18 @@ class WatcherCore:
             self._flush_pending_claude_handoff()
             return
 
+        gemini_control_pending = (
+            self._get_pending_gemini_request_mtime() > 0.0
+            or self._get_pending_gemini_advice_mtime() > 0.0
+        )
+
         pending_verify_jobs = self._get_current_run_jobs(statuses={JobStatus.VERIFY_PENDING})
         if pending_verify_jobs:
+            if gemini_control_pending or self._control_resolution_turn_active():
+                if gemini_control_pending:
+                    self._retry_gemini_advisory_if_idle()
+                    self._clear_session_arbitration_draft("canonical_gemini_pending")
+                return
             # startup 이후 state에서 복원된 current-run verify pending은 최신 work candidate
             # 스캔만으로는 다시 step되지 않을 수 있으므로, 가장 최근 pending round를 먼저
             # 재개해 starvation 없이 verify lane으로 다시 밀어준다.
@@ -3453,9 +3500,13 @@ class WatcherCore:
             return
 
         # --- Gemini arbitration이 pending이면 다른 자동 진행을 잠시 멈춤 ---
-        if self._get_pending_gemini_request_mtime() > 0.0 or self._get_pending_gemini_advice_mtime() > 0.0:
+        if gemini_control_pending:
             self._retry_gemini_advisory_if_idle()
             self._clear_session_arbitration_draft("canonical_gemini_pending")
+            return
+
+        # --- follow-up/advisory/operator resolution 중에는 stale verify를 다시 열지 않음 ---
+        if self._control_resolution_turn_active():
             return
 
         # --- Claude 차례 대기 중이면 work/ 감시 건너뜀 ---

@@ -49,11 +49,52 @@ class ControllerServerHostTests(unittest.TestCase):
 
 class ControllerServerLaunchGateTests(unittest.TestCase):
     def test_runtime_status_placeholder_handles_non_mapping_payload(self) -> None:
-        with mock.patch.object(controller_server, "read_runtime_status", return_value="corrupted-status"):
+        with (
+            mock.patch.object(controller_server, "read_runtime_status", return_value="corrupted-status"),
+            mock.patch.object(
+                controller_server,
+                "resolve_project_runtime_adapter",
+                return_value={
+                    "resolution_state": "ready",
+                    "role_owners": {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"},
+                    "prompt_owners": {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"},
+                    "enabled_lanes": ["Codex", "Claude", "Gemini"],
+                },
+            ),
+        ):
             status = controller_server._runtime_status_or_placeholder()
         self.assertEqual(status["runtime_state"], "STOPPED")
         self.assertEqual(status["project_root"], str(controller_server.PROJECT_ROOT))
         self.assertEqual(status["autonomy"]["mode"], "normal")
+        self.assertEqual(status["role_owners"]["implement"], "Codex")
+        self.assertEqual(status["role_owners"]["verify"], "Claude")
+        self.assertEqual(status["prompt_owners"]["implement"], "Codex")
+
+    def test_get_runtime_status_includes_active_profile_role_metadata(self) -> None:
+        with (
+            mock.patch.object(
+                controller_server,
+                "read_runtime_status",
+                return_value={"runtime_state": "RUNNING", "lanes": [], "control": {}, "artifacts": {}},
+            ),
+            mock.patch.object(
+                controller_server,
+                "resolve_project_runtime_adapter",
+                return_value={
+                    "resolution_state": "ready",
+                    "role_owners": {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"},
+                    "prompt_owners": {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"},
+                    "enabled_lanes": ["Codex", "Claude", "Gemini"],
+                },
+            ),
+        ):
+            data, status = controller_server.get_runtime_status()
+
+        self.assertEqual(int(status), 200)
+        self.assertEqual(data["role_owners"]["implement"], "Codex")
+        self.assertEqual(data["role_owners"]["verify"], "Claude")
+        self.assertEqual(data["prompt_owners"]["verify"], "Claude")
+        self.assertEqual(data["enabled_lanes"], ["Codex", "Claude", "Gemini"])
 
     def test_pipeline_start_propagates_launch_gate_error_from_backend(self) -> None:
         with mock.patch.object(controller_server, "backend_pipeline_start", return_value="실행 차단: active profile이 없습니다 (.pipeline/config/agent_profile.json)."):
@@ -102,6 +143,9 @@ class ControllerServerLaunchGateTests(unittest.TestCase):
         self.assertIn("/api/runtime/restart", cozy_js)
         self.assertIn("/api/runtime/capture-tail", cozy_js)
         self.assertIn("/api/runtime/send-input", cozy_js)
+        self.assertIn("role_owners", cozy_js)
+        self.assertIn("currentRoleOwners", cozy_js)
+        self.assertIn("ownerForZone", cozy_js)
         # Cozy scene should not depend on GIF/background runtime assets
         self.assertNotIn("/controller-assets/BOOTING.gif", cozy_js)
         self.assertNotIn("/controller-assets/WORKING.gif", cozy_js)
@@ -125,6 +169,10 @@ class ControllerServerLaunchGateTests(unittest.TestCase):
         self.assertIn("LOG_REFRESH_MS", cozy_js)
         self.assertIn("logRefreshInFlight", cozy_js)
         self.assertIn("modalSendInFlight", cozy_js)
+        self.assertIn("recordStatusFetchFailure", cozy_js)
+        self.assertIn("clearStatusFetchFailure", cozy_js)
+        self.assertIn("statusFetchFailureActive", cozy_js)
+        self.assertIn("상태 조회 복구:", cozy_js)
         # CSS assertions
         self.assertIn("width: min(1360px, 98vw)", css)
         self.assertIn("width: 100%; min-width: 0;", css)
@@ -153,13 +201,21 @@ class ControllerServerLaunchGateTests(unittest.TestCase):
         self.assertIn("codex_desk", cozy_js)
         self.assertIn("gemini_desk", cozy_js)
         self.assertIn("lounge", cozy_js)
-        # Zone-bounded idle roaming and test hooks stay available
+        # Lounge rest roaming and scene test hooks stay available
         self.assertIn("sampleIdleTarget", cozy_js)
         self.assertIn("setAgentFatigue", cozy_js)
         self.assertIn("getRoamBounds", cozy_js)
+        self.assertIn("getAgentPositions", cozy_js)
         self.assertIn("testPickIdleTargets", cozy_js)
         self.assertIn("testAntiStacking", cozy_js)
         self.assertIn("testHistoryPenalty", cozy_js)
+        self.assertIn("testPetCat", cozy_js)
+        self.assertIn("getSceneDebug", cozy_js)
+        self.assertIn("drawWindow", cozy_js)
+        self.assertIn("drawPneumaticTube", cozy_js)
+        self.assertIn("sendPacket", cozy_js)
+        self.assertIn("sendOwl", cozy_js)
+        self.assertIn("window.Audio8", cozy_js)
         # Low-motion and browser-local preferences
         self.assertIn("motion-btn", html)
         self.assertIn("office_low_motion", cozy_js)
@@ -180,6 +236,7 @@ class ControllerServerLaunchGateTests(unittest.TestCase):
         self.assertNotIn("apiPost('/api/start')", cozy_js)
         self.assertNotIn("/api/runtime/exec", cozy_js)
         self.assertIn("/api/runtime/send-input", server_source)
+        self.assertIn("resolve_project_runtime_adapter", server_source)
         self.assertNotIn("/api/state", server_source)
         self.assertNotIn("/api/health", server_source)
         self.assertNotIn("/api/start", server_source)

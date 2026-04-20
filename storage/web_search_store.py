@@ -235,7 +235,7 @@ class WebSearchStore:
         return previews
 
     def _summarize_claim_coverage(self, claim_coverage: list[dict[str, Any]] | None) -> dict[str, int]:
-        counts = {"strong": 0, "weak": 0, "missing": 0}
+        counts = {"strong": 0, "weak": 0, "missing": 0, "conflict": 0}
         for item in claim_coverage or []:
             if not isinstance(item, dict):
                 continue

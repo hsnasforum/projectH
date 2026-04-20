@@ -436,17 +436,10 @@ def _prompt_owners_for_runtime_plan(
     role_owners: dict[str, Any],
 ) -> dict[str, Any]:
     enabled_set = {str(name).strip() for name in enabled_lanes if str(name).strip() in SETUP_AGENT_ORDER}
-    prompt_owners = {
-        "implement": role_owners.get("implement"),
-        "verify": role_owners.get("verify"),
-        "advisory": role_owners.get("advisory"),
-    }
-    if "Claude" in enabled_set:
-        prompt_owners["implement"] = "Claude"
-    if "Codex" in enabled_set:
-        prompt_owners["verify"] = "Codex"
-    if "Gemini" in enabled_set and role_owners.get("advisory"):
-        prompt_owners["advisory"] = "Gemini"
+    prompt_owners: dict[str, Any] = {}
+    for role_name in ("implement", "verify", "advisory"):
+        owner = str(role_owners.get(role_name) or "").strip()
+        prompt_owners[role_name] = owner if owner in enabled_set else None
     return prompt_owners
 
 

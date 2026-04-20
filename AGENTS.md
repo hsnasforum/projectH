@@ -114,9 +114,9 @@ Priority order:
   - `report/gemini/` stores Gemini advisory or mediation logs
 - `.pipeline/`
   - rolling automation handoff slots for the single-Codex tmux flow
-  - `claude_handoff.md` is the Claude-only execution slot in the current stage-3 flow
-  - `gemini_request.md` is the Codex -> Gemini arbitration request slot in the current stage-3 flow
-  - `gemini_advice.md` is the Gemini -> Codex advisory slot in the current stage-3 flow
+  - `claude_handoff.md` is the historical filename for the implement control slot in the current stage-3 flow; the active implement owner comes from `.pipeline/config/agent_profile.json`
+  - `gemini_request.md` is the verify/handoff-owner -> advisory-owner arbitration request slot in the current stage-3 flow
+  - `gemini_advice.md` is the advisory-owner -> verify/handoff-owner advisory slot in the current stage-3 flow
   - `operator_request.md` is the operator-only stop slot in the current stage-3 flow
   - `codex_feedback.md` is optional scratch or legacy compatibility text and is no longer part of the execution path
   - `gpt_prompt.md` is an optional or legacy scratch slot and is no longer part of the canonical flow
@@ -166,27 +166,30 @@ Current source-of-truth docs live in the root `docs/` directory.
 
 ## Single Codex Pipeline Convention
 
-- When tmux or a comparable split-lane setup is used, the canonical lanes are:
-  - Claude = implementation lane
-  - Codex = round verification plus handoff lane
+- When tmux or a comparable split-lane setup is used, the canonical runtime roles are:
+  - implement owner lane = active `role_bindings.implement`
+  - verify/handoff owner lane = active `role_bindings.verify`
+  - advisory owner lane = active `role_bindings.advisory` when enabled
   - watcher = file-watch and delivery helper lane
-- Codex responsibilities:
+- Historical slot filenames stay stable for compatibility. `.pipeline/claude_handoff.md` remains the implement control slot name even when Claude is not the implement owner.
+- Prompt ownership follows the active role binding. The bound owner reads its root memory file (`AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`) for that round.
+- Verification / handoff owner responsibilities:
   - read the newest `/work` note first
   - read the newest same-day `/verify` note if one exists
   - rerun the requested verification honestly
   - leave or update the persistent `/verify` note
-  - write the next Claude-facing execution handoff to `.pipeline/claude_handoff.md` when one exact slice is fixed
+  - write the next implement-facing execution handoff to `.pipeline/claude_handoff.md` when one exact slice is fixed
   - write `.pipeline/gemini_request.md` when the only blocker is next-slice ambiguity, overlapping candidates, or a low-confidence tie-break before operator escalation
-  - if an active Claude session asks a live side question such as context exhaustion, session rollover, or continue-vs-switch, use `.pipeline/gemini_request.md` only as Codex↔Gemini coordination and relay the answer back to Claude as a short lane reply instead of rewriting `.pipeline/claude_handoff.md` mid-session
+  - if an active implement-owner session asks a live side question such as context exhaustion, session rollover, or continue-vs-switch, use `.pipeline/gemini_request.md` only as verify/advisory coordination and relay the answer back to the implement owner as a short lane reply instead of rewriting `.pipeline/claude_handoff.md` mid-session
   - write `.pipeline/operator_request.md` only when automation must stop for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, or after Gemini advice still leaves no truthful exact slice
-- `.pipeline/claude_handoff.md` is the current Claude-only execution slot.
+- `.pipeline/claude_handoff.md` is the current implement control slot (historical filename).
 - `.pipeline/claude_handoff.md` should declare `STATUS: implement` and should include `CONTROL_SEQ`.
-- When `STATUS: implement` is active, Claude may only implement that exact slice or emit a pane-local `STATUS: implement_blocked` sentinel with `BLOCK_REASON`, `BLOCK_REASON_CODE`, `REQUEST: codex_triage`, `ESCALATION_CLASS: codex_triage`, `HANDOFF`, `HANDOFF_SHA`, and `BLOCK_ID`.
-- Claude implement rounds stop after the bounded file edits plus the canonical `/work` closeout. Claude must not commit, push, publish a branch, or open a PR from the implement lane.
-- watcher should auto-route that `implement_blocked` sentinel to Codex triage instead of opening an operator stop directly.
-- `.pipeline/gemini_request.md` is the current Codex -> Gemini arbitration slot.
+- When `STATUS: implement` is active, the implement owner may only implement that exact slice or emit a pane-local `STATUS: implement_blocked` sentinel with `BLOCK_REASON`, `BLOCK_REASON_CODE`, `REQUEST: codex_triage`, `ESCALATION_CLASS: codex_triage`, `HANDOFF`, `HANDOFF_SHA`, and `BLOCK_ID`.
+- Implement-owner rounds stop after the bounded file edits plus the canonical `/work` closeout. The implement owner must not commit, push, publish a branch, or open a PR from the implement lane.
+- watcher should auto-route that `implement_blocked` sentinel to verify/handoff-owner triage instead of opening an operator stop directly.
+- `.pipeline/gemini_request.md` is the current verify/handoff-owner -> advisory-owner arbitration slot.
 - `.pipeline/gemini_request.md` should declare `STATUS: request_open` and should include `CONTROL_SEQ` while pending.
-- `.pipeline/gemini_advice.md` is the current Gemini -> Codex advisory slot.
+- `.pipeline/gemini_advice.md` is the current advisory-owner -> verify/handoff-owner advisory slot.
 - `.pipeline/gemini_advice.md` should declare `STATUS: advice_ready` and should include `CONTROL_SEQ` while pending.
 - `.pipeline/session_arbitration_draft.md` is an optional watcher-generated non-canonical draft slot.
 - `.pipeline/session_arbitration_draft.md` should declare `STATUS: draft_only` only, and must not be treated as a stop/go execution signal.
@@ -203,31 +206,31 @@ Current source-of-truth docs live in the root `docs/` directory.
   - it should prefer file edit/write tools for advisory output instead of shell heredoc or shell redirection
   - watcher prompts for Gemini should prefer explicit `@path` file mentions and exact advisory output paths over loose path prose
   - pane-only answers do not close the advisory round; the round is complete only after both `report/gemini/...md` and `.pipeline/gemini_advice.md` are written
-  - if the advice is answering an active Claude session's side question, Codex should relay that answer as a short lane reply and keep `.pipeline/claude_handoff.md` unchanged until the session boundary or next round handoff
+  - if the advice is answering an active implement-owner session's side question, the verify/handoff owner should relay that answer as a short lane reply and keep `.pipeline/claude_handoff.md` unchanged until the session boundary or next round handoff
 - `.pipeline/codex_feedback.md` may still exist as optional scratch, but Claude should not rely on it as a direct execution slot.
 - In automation, the newest valid control file wins by `CONTROL_SEQ` first and `mtime` only as a fallback, and stale control files are excluded from dispatch:
-  - `.pipeline/claude_handoff.md` → Claude 실행
-  - `.pipeline/gemini_request.md` → Gemini 실행
-  - `.pipeline/gemini_advice.md` → Codex follow-up
+  - `.pipeline/claude_handoff.md` → implement owner 실행
+  - `.pipeline/gemini_request.md` → advisory owner 실행
+  - `.pipeline/gemini_advice.md` → verify/handoff-owner follow-up
   - `.pipeline/operator_request.md` → 자동 진행 중단, operator 대기
-- `.pipeline/session_arbitration_draft.md` is not a control file. watcher may write it as a draft only after an active Claude session shows the escalation pattern and the lanes are settled enough for arbitration: Codex/Gemini panes must be idle, and Claude must be either idle or stably showing the escalation text for a short settle window. watcher should clear that draft again when Claude activity resumes or canonical Gemini/operator control opens, and should suppress immediate same-fingerprint rewrites for a short cooldown. Codex must explicitly decide whether to ignore it, answer Claude directly, or promote it into `.pipeline/gemini_request.md`.
+- `.pipeline/session_arbitration_draft.md` is not a control file. watcher may write it as a draft only after an active implement-owner session shows the escalation pattern and the lanes are settled enough for arbitration: verify/advisory panes must be idle, and the implement owner must be either idle or stably showing the escalation text for a short settle window. watcher should clear that draft again when implement-owner activity resumes or canonical Gemini/operator control opens, and should suppress immediate same-fingerprint rewrites for a short cooldown. The verify/handoff owner must explicitly decide whether to ignore it, answer the implement owner directly, or promote it into `.pipeline/gemini_request.md`.
 - `.pipeline/gpt_prompt.md` may remain as an optional or legacy scratch slot, but it is no longer required for the canonical flow.
 - Persistent records in `/work`, `/verify`, and `report/` should default to Korean unless the user explicitly asks otherwise.
 - Execution-facing rolling slots in `.pipeline/` should default to concise English-led instructions so Claude, Codex, and Gemini can execute exact slices without translation drift.
 - File paths, test names, selectors, field names, and literal code identifiers should stay in their original form even inside Korean records or English execution slots.
 - Persistent truth still lives in `/work` and `/verify`; if `.pipeline` disagrees with them, trust the latest `/work` and `/verify`.
-- watcher guarantees file-detection and pane-delivery only. If Claude or Codex is busy, interrupted, or not actually ready to receive input, that is a lane/session-state issue rather than a `.pipeline` contract issue.
-- `.pipeline/claude_handoff.md` is the round-start execution contract, not a live side-channel. Mid-session Gemini arbitration answers should normally return to Claude as a short lane reply so later troubleshooting can still compare the finished work against the unchanged handoff that started the round.
+- watcher guarantees file-detection and pane-delivery only. If the implement owner or verify/handoff owner is busy, interrupted, or not actually ready to receive input, that is a lane/session-state issue rather than a `.pipeline` contract issue.
+- `.pipeline/claude_handoff.md` is the round-start execution contract, not a live side-channel. Mid-session Gemini arbitration answers should normally return to the implement owner as a short lane reply so later troubleshooting can still compare the finished work against the unchanged handoff that started the round.
 
 ## Codex Review Scope
 
 - In the canonical flow, Codex is not the default whole-project auditor for every round.
-- Codex should first verify whether the latest Claude `/work` note is truthful:
+- Codex should first verify whether the latest implement-owner `/work` note is truthful:
   - the claimed code changes are actually present
   - the claimed docs changes match implementation
   - the claimed checks were actually rerun when required
   - the round did not widen scope away from current MVP priorities
-- Treat `/verify` as the review report for the latest Claude round plus a narrow direction guard, not as a mandatory full-repository diagnosis.
+- Treat `/verify` as the review report for the latest implement-owner round plus a narrow direction guard, not as a mandatory full-repository diagnosis.
 - After that review, Codex should either:
   - choose one exact next slice and write `STATUS: implement` to `.pipeline/claude_handoff.md`, or
   - write `.pipeline/gemini_request.md` when the only blocker is next-slice ambiguity, overlapping candidates, or a low-confidence tie-break, or
@@ -329,8 +332,8 @@ Current source-of-truth docs live in the root `docs/` directory.
    - long-term north star
 13. Use `trace-implementer` for small additive grounded-brief trace or memory-foundation implementation slices that must keep current UI stable while moving code, tests, and docs together.
 14. Use `round-handoff` when a Codex round is complete and you need to re-check the latest `/work` note, rerun honest verification, leave or update a `/verify` note, and draft the next operator prompt without overstating progress.
-15. In the single-Codex tmux flow, keep Codex responsible for rerun verification and next-Claude feedback together; do not reintroduce a second canonical Codex lane unless the docs are updated again.
-16. In automation handoff, Claude should implement only `.pipeline/claude_handoff.md` when it says `STATUS: implement`. If that slice is blocked, Claude should emit the `STATUS: implement_blocked` sentinel with `BLOCK_REASON_CODE` and `ESCALATION_CLASS` instead of asking the operator to choose. Gemini와 operator stop files must not be routed to Claude.
+15. In the single tmux flow, keep the active verify/handoff owner responsible for rerun verification and next-implement feedback together; do not reintroduce a second canonical reviewer lane unless the docs are updated again.
+16. In automation handoff, the active implement owner should implement only `.pipeline/claude_handoff.md` when it says `STATUS: implement`. If that slice is blocked, the implement owner should emit the `STATUS: implement_blocked` sentinel with `BLOCK_REASON_CODE` and `ESCALATION_CLASS` instead of asking the operator to choose. Gemini와 operator stop files must not be routed to the implement owner.
 17. Prefer extending existing shared helpers, queries, scripts, and prompts over adding near-copy code paths. If temporary duplication is unavoidable, say why and leave a clear cleanup path.
 18. Do not split one coherent task into many ultra-small slices just to keep rounds tiny. Prefer the smallest coherent reviewable slice that closes meaningful progress when the files and verification path naturally belong together.
 
@@ -356,15 +359,15 @@ Current source-of-truth docs live in the root `docs/` directory.
 - Rolling execution slots under `.pipeline/` should default to English-led execution prompts.
 - `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, `.pipeline/gemini_advice.md`, `.pipeline/operator_request.md`, and optional scratch files like `.pipeline/codex_feedback.md` never replace the persistent `/work` and `/verify` notes.
 - `.pipeline/gpt_prompt.md` may remain as an optional or legacy scratch slot, but it is not required in the canonical single-Codex flow.
-- In the current stage-3 single-Codex flow:
-  - Claude finishes implementation and leaves `/work`
-  - Codex reruns verification and leaves `/verify`
-  - Codex then writes `.pipeline/claude_handoff.md` for the next Claude round when one exact slice is fixed
-  - if Codex cannot narrow one exact slice yet, Codex writes `.pipeline/gemini_request.md`
-  - Gemini writes `.pipeline/gemini_advice.md` plus `report/gemini/...md`
-  - Codex then writes the final `.pipeline/claude_handoff.md` or `.pipeline/operator_request.md`
-  - if automation must stop, Codex writes `.pipeline/operator_request.md`
-- `/verify` should stay tied to the latest Claude round. Do not turn every verification note into a whole-project audit.
+- In the current stage-3 single-runtime flow:
+  - the active implement owner finishes implementation and leaves `/work`
+  - the active verify/handoff owner reruns verification and leaves `/verify`
+  - the active verify/handoff owner then writes `.pipeline/claude_handoff.md` for the next implement round when one exact slice is fixed
+  - if the active verify/handoff owner cannot narrow one exact slice yet, it writes `.pipeline/gemini_request.md`
+  - the active advisory owner writes `.pipeline/gemini_advice.md` plus `report/gemini/...md`
+  - the active verify/handoff owner then writes the final `.pipeline/claude_handoff.md` or `.pipeline/operator_request.md`
+  - if automation must stop, the active verify/handoff owner writes `.pipeline/operator_request.md`
+- `/verify` should stay tied to the latest implement-owner round. Do not turn every verification note into a whole-project audit.
 - Before starting a new meaningful round, check the newest note in today's `work/<month>/<day>/` folder. If there is no note for today, read the newest note from the previous day.
 - Before starting a verification-backed handoff round, read the newest `work/<month>/<day>/` note first and then the newest note in today's `verify/<month>/<day>/` folder if one exists.
 - New `work/` closeout notes and new `verify/` verification notes should use these sections in order unless the user explicitly asks for another format:

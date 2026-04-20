@@ -15,20 +15,31 @@
 5. evidence and source transparency
 6. replaceable model / runtime / storage seams
 
-## Claude Lane Contract
+## Claude Runtime Role Contract
 
-- Claude is the implementation lane, not the slice-selection lane.
-- Read the newest relevant `work/` note first. If the handoff points to a same-day `verify/` note, read that too.
-- Implement only the exact slice in `.pipeline/claude_handoff.md` when it says `STATUS: implement`.
-- Do not self-select the next slice.
-- Do not write `.pipeline/gemini_request.md` or `.pipeline/operator_request.md`.
-- If the handoff is blocked, stale, already implemented, or otherwise not actionable, emit pane-local `STATUS: implement_blocked` with `BLOCK_REASON`, `BLOCK_REASON_CODE`, `REQUEST: codex_triage`, `ESCALATION_CLASS: codex_triage`, `HANDOFF`, `HANDOFF_SHA`, and `BLOCK_ID`, then stop.
-- Stop after bounded edits plus the canonical `/work` closeout. Do not commit, push, publish a branch, or open a PR from the implement lane.
+- Claude follows the active role binding from `.pipeline/config/agent_profile.json`, not the historical slot filename.
+- `.pipeline/claude_handoff.md` remains the implement control slot name even when Claude is not the implement owner.
+- In the currently applied A profile, `implement=Codex`, `verify=Claude`, and `advisory=Gemini`, so Claude is the verification + handoff owner.
+- If Claude is bound to `verify`:
+  - read the newest relevant `work/` note first, then the same-day `verify/` note if one exists
+  - rerun the narrowest honest verification
+  - leave or update the persistent `/verify`
+  - write the next `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, or `.pipeline/operator_request.md` as needed
+- If Claude is bound to `implement`:
+  - implement only the exact slice in `.pipeline/claude_handoff.md` when it says `STATUS: implement`
+  - do not self-select the next slice
+  - do not write `.pipeline/gemini_request.md` or `.pipeline/operator_request.md`
+  - if the handoff is blocked, stale, already implemented, or otherwise not actionable, emit pane-local `STATUS: implement_blocked` with `BLOCK_REASON`, `BLOCK_REASON_CODE`, `REQUEST: codex_triage`, `ESCALATION_CLASS: codex_triage`, `HANDOFF`, `HANDOFF_SHA`, and `BLOCK_ID`, then stop
+  - stop after bounded edits plus the canonical `/work` closeout. Do not commit, push, publish a branch, or open a PR from the implement lane
+- If Claude is not the active owner for a role, do not treat that role's control slot as executable input.
 
 ## Handoff Interpretation
 
 - Newest valid control wins by `CONTROL_SEQ` first and `mtime` only as a fallback.
-- `.pipeline/gemini_request.md`, `.pipeline/gemini_advice.md`, and `.pipeline/operator_request.md` are not Claude execution input.
+- Which rolling slot is Claude execution input depends on the active role binding:
+  - implement owner -> `.pipeline/claude_handoff.md`
+  - verify/handoff owner -> latest `/work` + `/verify` pair, plus `.pipeline/gemini_advice.md` follow-up when opened
+  - advisory owner -> `.pipeline/gemini_request.md`
 - Older stale control files are not execution input once a newer valid control file exists.
 - If `.pipeline` disagrees with persistent notes, trust the latest `/work` and `/verify`.
 - If the latest `/work` and `/verify` already closed the same handoff SHA or exact slice, treat that handoff as blocked / already implemented instead of redoing it.

@@ -23,7 +23,7 @@
         DESCRIPTIVE: "설명형 출처", NEWS: "보조 기사", AUXILIARY: "보조 출처",
         COMMUNITY: "보조 커뮤니티", PORTAL: "보조 포털", BLOG: "보조 블로그",
       }),
-      CoverageStatus: Object.freeze({ STRONG: "strong", WEAK: "weak", MISSING: "missing" }),
+      CoverageStatus: Object.freeze({ STRONG: "strong", CONFLICT: "conflict", WEAK: "weak", MISSING: "missing" }),
       SearchIntentKind: Object.freeze({ NONE: "none", EXPLICIT_WEB: "explicit_web", LIVE_LATEST: "live_latest", EXTERNAL_FACT: "external_fact" }),
       WebSearchPermission: Object.freeze({ DISABLED: "disabled", APPROVAL: "approval", ENABLED: "enabled" }),
       StreamEventType: Object.freeze({

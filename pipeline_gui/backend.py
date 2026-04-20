@@ -660,6 +660,47 @@ _TURN_STATE_LABELS: dict[str, str] = {
     "GEMINI_ADVISORY": "Gemini 자문 중",
     "OPERATOR_WAIT": "운영자 결정 대기",
 }
+_TURN_STATE_FALLBACK_LANES: dict[str, str] = {
+    "CLAUDE_ACTIVE": "Claude",
+    "CODEX_VERIFY": "Codex",
+    "CODEX_FOLLOWUP": "Codex",
+    "GEMINI_ADVISORY": "Gemini",
+}
+_TURN_STATE_ROLES: dict[str, str] = {
+    "CLAUDE_ACTIVE": "implement",
+    "CODEX_VERIFY": "verify",
+    "CODEX_FOLLOWUP": "verify",
+    "GEMINI_ADVISORY": "advisory",
+    "OPERATOR_WAIT": "operator",
+}
+
+
+def describe_turn_state(turn_state: dict[str, object] | None) -> dict[str, str]:
+    state_value = str((turn_state or {}).get("state") or "IDLE")
+    active_lane = str((turn_state or {}).get("active_lane") or "").strip()
+    active_role = str((turn_state or {}).get("active_role") or "").strip()
+    if not active_lane:
+        active_lane = _TURN_STATE_FALLBACK_LANES.get(state_value, "")
+    if not active_role:
+        active_role = _TURN_STATE_ROLES.get(state_value, "")
+
+    if state_value == "CLAUDE_ACTIVE" and active_lane:
+        label = f"{active_lane} 실행 중"
+    elif state_value == "CODEX_VERIFY" and active_lane:
+        label = f"{active_lane} 검증 중"
+    elif state_value == "CODEX_FOLLOWUP" and active_lane:
+        label = f"{active_lane} 후속 판단 중"
+    elif state_value == "GEMINI_ADVISORY" and active_lane:
+        label = f"{active_lane} 자문 중"
+    else:
+        label = _TURN_STATE_LABELS.get(state_value, state_value)
+
+    return {
+        "state": state_value,
+        "active_lane": active_lane,
+        "active_role": active_role,
+        "label": label,
+    }
 
 
 def _slot_provenance(entry: dict[str, object]) -> str:
@@ -682,8 +723,8 @@ def format_control_summary(
     Do not mix turn_state with legacy slot parsing.
     """
     if turn_state is not None:
-        state_value = str(turn_state.get("state") or "IDLE")
-        label = _TURN_STATE_LABELS.get(state_value, state_value)
+        turn_desc = describe_turn_state(turn_state)
+        label = turn_desc["label"]
         control_file = str(turn_state.get("active_control_file") or "")
         seq = turn_state.get("active_control_seq")
         parts = [f"활성 제어: {label}"]

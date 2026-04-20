@@ -599,6 +599,10 @@ body.sidebar-collapsed .chat-main {
   background: rgba(22, 163, 74, 0.10);
   color: #15803d;
 }
+.fact-strength-bar .fact-count.conflict {
+  background: rgba(234, 88, 12, 0.10);
+  color: #c2410c;
+}
 .fact-strength-bar .fact-count.weak {
   background: rgba(202, 138, 4, 0.10);
   color: #a16207;

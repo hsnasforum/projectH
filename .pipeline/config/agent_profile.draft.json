@@ -6,8 +6,8 @@
     "Gemini"
   ],
   "role_bindings": {
-    "implement": "Claude",
-    "verify": "Codex",
+    "implement": "Codex",
+    "verify": "Claude",
     "advisory": "Gemini"
   },
   "role_options": {
@@ -22,7 +22,7 @@
   },
   "executor_override": "auto",
   "metadata": {
-    "draft_saved_at": "2026-04-09T18:20:57.512999+00:00",
+    "draft_saved_at": "2026-04-19T10:52:39.942695+00:00",
     "saved_by": "launcher"
   }
 }

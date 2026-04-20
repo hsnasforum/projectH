@@ -1,22 +1,24 @@
 {
   "status": "preview_ready",
-  "setup_id": "setup-20260410-032059-905058",
+  "setup_id": "setup-20260419-195239-7007a0",
   "schema_version": 1,
-  "generated_at": "2026-04-09T18:21:00.394062+00:00",
-  "draft_fingerprint": "sha256:a63e9b18ef5222121a7f5e9217a40714507f068ea97425c4b2b88663d332a831",
-  "preview_fingerprint": "sha256:3dd83882b6d270746faa4aef68232a57dac68a55a4fe7734295d0c71dace969e",
-  "effective_executor": "Codex",
-  "support_level": "supported",
+  "generated_at": "2026-04-19T10:52:39.943140+00:00",
+  "draft_fingerprint": "sha256:c7f68be32534241711a9f30b865ef1bd23989fa4c0beeaa5acdcc03ce192ea18",
+  "preview_fingerprint": "sha256:d2d90b60ad62e238a3bc04c40afe1cd6e6533c59dbcdbd45c2025ff71c0cbbe3",
+  "effective_executor": "Claude",
+  "support_level": "experimental",
   "controls": {
     "preview_allowed": true,
     "apply_allowed": true,
     "launch_allowed": true,
-    "banner_required": false,
+    "banner_required": true,
     "advisory_enabled": true,
     "operator_stop_enabled": true,
     "session_arbitration_enabled": true
   },
-  "messages": [],
+  "messages": [
+    "Profile is experimental and requires extra operator attention."
+  ],
   "effective_runtime_plan": {
     "enabled_lanes": [
       "Claude",
@@ -24,8 +26,8 @@
       "Gemini"
     ],
     "role_owners": {
-      "implement": "Claude",
-      "verify": "Codex",
+      "implement": "Codex",
+      "verify": "Claude",
       "advisory": "Gemini"
     },
     "prompt_owners": {
@@ -37,7 +39,7 @@
       "preview_allowed": true,
       "apply_allowed": true,
       "launch_allowed": true,
-      "banner_required": false,
+      "banner_required": true,
       "advisory_enabled": true,
       "operator_stop_enabled": true,
       "session_arbitration_enabled": true
@@ -45,7 +47,7 @@
   },
   "warnings": [],
   "infos": [
-    "설정 실행자는 Codex로 자동 선택됩니다.",
+    "설정 실행자는 Claude로 자동 선택됩니다.",
     "적용 전까지 runtime은 active config만 사용합니다."
   ],
   "planned_changes": {
@@ -58,7 +60,7 @@
     ]
   },
   "diff_summary": [
-    "에이전트 Claude, Codex, Gemini / 구현 Claude / 검증 Codex / 자문 Gemini",
+    "에이전트 Claude, Codex, Gemini / 구현 Codex / 검증 Claude / 자문 Gemini",
     "옵션 자문=켜짐 · operator 중지=켜짐 · 세션 중재=켜짐"
   ],
   "restart_required": true

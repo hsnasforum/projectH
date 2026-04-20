@@ -1,8 +1,8 @@
 {
   "status": "apply_requested",
-  "setup_id": "setup-20260410-032059-905058",
+  "setup_id": "setup-20260419-195239-7007a0",
   "schema_version": 1,
-  "approved_at": "2026-04-09T18:21:14.103857+00:00",
-  "approved_preview_fingerprint": "sha256:3dd83882b6d270746faa4aef68232a57dac68a55a4fe7734295d0c71dace969e",
-  "executor": "Codex"
+  "approved_at": "2026-04-19T10:52:39.943148+00:00",
+  "approved_preview_fingerprint": "sha256:d2d90b60ad62e238a3bc04c40afe1cd6e6533c59dbcdbd45c2025ff71c0cbbe3",
+  "executor": "Claude"
 }

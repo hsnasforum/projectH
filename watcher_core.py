@@ -100,6 +100,7 @@ from verify_fsm import (
 from watcher_dispatch import DispatchIntent, WatcherDispatchQueue
 from watcher_prompt_assembly import (
     DEFAULT_ADVISORY_PROMPT,
+    DEFAULT_ADVISORY_RECOVERY_PROMPT,
     DEFAULT_CONTROL_RECOVERY_PROMPT,
     DEFAULT_FOLLOWUP_PROMPT,
     DEFAULT_IMPLEMENT_PROMPT,
@@ -1429,6 +1430,10 @@ class WatcherCore:
             or config.get("codex_followup_prompt")
             or DEFAULT_FOLLOWUP_PROMPT
         )
+        self.advisory_recovery_prompt = _normalize_prompt_text(
+            config.get("advisory_recovery_prompt")
+            or DEFAULT_ADVISORY_RECOVERY_PROMPT
+        )
         self.control_recovery_prompt = _normalize_prompt_text(
             config.get("control_recovery_prompt")
             or DEFAULT_CONTROL_RECOVERY_PROMPT
@@ -1479,11 +1484,16 @@ class WatcherCore:
         self.gemini_advisory_retry_sec: float = float(
             config.get("gemini_advisory_retry_sec", 30.0)
         )
+        self.gemini_advisory_recovery_sec: float = float(
+            config.get("gemini_advisory_recovery_sec", 900.0)
+        )
         self.operator_retriage_no_control_sec: float = float(
             config.get("operator_retriage_no_control_sec", 45.0)
         )
         self._last_gemini_advisory_retry_sig: str = ""
         self._last_gemini_advisory_retry_at: float = 0.0
+        self._last_gemini_advisory_recovery_sig: str = ""
+        self._last_gemini_advisory_recovery_at: float = 0.0
         self._runtime_export_enabled: bool = os.environ.get("PIPELINE_RUNTIME_DISABLE_EXPORTER", "").strip().lower() not in {
             "1",
             "true",
@@ -1559,6 +1569,7 @@ class WatcherCore:
             implement_prompt=self.implement_prompt,
             advisory_prompt=self.advisory_prompt,
             followup_prompt=self.followup_prompt,
+            advisory_recovery_prompt=self.advisory_recovery_prompt,
             control_recovery_prompt=self.control_recovery_prompt,
             operator_retriage_prompt=self.operator_retriage_prompt,
             verify_triage_prompt=self.verify_triage_prompt,
@@ -2249,6 +2260,8 @@ class WatcherCore:
         if not self._advisory_enabled():
             return False
         if self._is_active_control(self.operator_request_path, "needs_operator"):
+            return False
+        if self._is_active_control(self.gemini_request_path, "request_open"):
             return False
         if self._control_seq_age_cycles < (
             STALE_CONTROL_CYCLE_THRESHOLD + STALE_ADVISORY_GRACE_CYCLES
@@ -2964,6 +2977,83 @@ class WatcherCore:
         self._notify_gemini("gemini_advisory_idle_retry")
 
     # ------------------------------------------------------------------
+    def _stale_gemini_advisory_recovery_marker(self) -> Optional[dict[str, object]]:
+        if self._current_turn_state != WatcherTurnState.ADVISORY_ACTIVE:
+            return None
+        if self._get_pending_operator_mtime() > 0.0:
+            return None
+        if not self._is_active_control(self.gemini_request_path, "request_open"):
+            return None
+
+        request_sig = self._get_path_sig(self.gemini_request_path)
+        if not request_sig:
+            return None
+        if request_sig == self._last_gemini_advisory_recovery_sig:
+            return None
+
+        request_seq = self._read_control_seq_from_path(self.gemini_request_path)
+        if request_seq >= 0 and request_seq < self._turn_active_control_seq:
+            return None
+        if self._gemini_advice_is_current_for_request(request_seq):
+            return None
+
+        now = time.time()
+        request_started_at = max(self._turn_entered_at, self._get_path_mtime(self.gemini_request_path))
+        pending_age = now - request_started_at
+        if pending_age < self.gemini_advisory_recovery_sec:
+            return None
+
+        if any(
+            str(pending.get("notify_kind") or "") == "gemini_advisory_recovery"
+            for pending in self.dispatch_queue.pending_notifications.values()
+        ):
+            return None
+
+        target = self._prompt_pane_target("verify")
+        if not target:
+            return None
+        ready, defer_reason = self.dispatch_queue.lane_prompt_readiness(target)
+        if not ready:
+            return None
+
+        return {
+            "reason": "gemini_advisory_recovery",
+            "control_file": "gemini_request.md",
+            "control_seq": request_seq,
+            "request_sig": request_sig,
+            "advisory_pending_age_sec": int(pending_age),
+            "verify_lane_ready": True,
+            "verify_lane_ready_reason": defer_reason,
+        }
+
+    # ------------------------------------------------------------------
+    def _recover_stale_gemini_advisory(self) -> bool:
+        marker = self._stale_gemini_advisory_recovery_marker()
+        if marker is None:
+            return False
+
+        request_seq = int(marker.get("control_seq") or -1)
+        request_sig = str(marker.get("request_sig") or "")
+        self._last_gemini_advisory_recovery_sig = request_sig
+        self._last_gemini_advisory_recovery_at = time.time()
+        self._clear_claude_blocked_state("gemini_advisory_recovery")
+        self._log_raw(
+            "gemini_advisory_recovery",
+            str(self.gemini_request_path),
+            "turn_signal",
+            marker,
+        )
+        self._append_runtime_event("gemini_advisory_recovery", marker)
+        self._transition_turn(
+            WatcherTurnState.VERIFY_FOLLOWUP,
+            "gemini_advisory_recovery",
+            active_control_file="gemini_request.md",
+            active_control_seq=request_seq,
+        )
+        self._notify_verify_advisory_recovery("gemini_advisory_recovery", marker)
+        return True
+
+    # ------------------------------------------------------------------
     def _operator_blocks_handoff(self, handoff_mtime: float) -> bool:
         del handoff_mtime
         return self._get_pending_operator_mtime() > 0.0
@@ -3658,6 +3748,13 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _notify_codex_followup(self, reason: str) -> None:
         self._notify_verify_followup(reason)
+
+    # ------------------------------------------------------------------
+    def _notify_verify_advisory_recovery(self, reason: str, marker: dict[str, object]) -> None:
+        self._dispatch_notify_spec(
+            spec=self.prompt_assembler.build_advisory_recovery_dispatch_spec(marker, reason),
+            reason=reason,
+        )
 
     # ------------------------------------------------------------------
     def _notify_control_recovery(self, reason: str, marker: dict[str, object]) -> None:
@@ -4388,7 +4485,18 @@ class WatcherCore:
                 )
                 return
             if turn == "advisory":
-                self._transition_turn(WatcherTurnState.ADVISORY_ACTIVE, "startup_turn_gemini")
+                active_control = self._get_active_control_signal()
+                advisory_seq = (
+                    active_control.control_seq
+                    if active_control is not None and active_control.path == self.gemini_request_path
+                    else self._read_control_seq_from_path(self.gemini_request_path)
+                )
+                self._transition_turn(
+                    WatcherTurnState.ADVISORY_ACTIVE,
+                    "startup_turn_gemini",
+                    active_control_file="gemini_request.md",
+                    active_control_seq=advisory_seq,
+                )
                 self._notify_gemini("startup_turn_gemini")
                 return
             if turn == "verify_followup":
@@ -4470,6 +4578,8 @@ class WatcherCore:
         if pending_verify_jobs:
             if gemini_control_pending or self._control_resolution_turn_active():
                 if gemini_control_pending:
+                    if self._recover_stale_gemini_advisory():
+                        return
                     self._retry_gemini_advisory_if_idle()
                     self._clear_session_arbitration_draft("canonical_gemini_pending")
                 return
@@ -4482,6 +4592,8 @@ class WatcherCore:
 
         # --- advisory arbitration이 pending이면 다른 자동 진행을 잠시 멈춤 ---
         if gemini_control_pending:
+            if self._recover_stale_gemini_advisory():
+                return
             self._retry_gemini_advisory_if_idle()
             self._clear_session_arbitration_draft("canonical_gemini_pending")
             return

@@ -117,6 +117,9 @@ class PipelineRuntimeAutomationHealthTest(unittest.TestCase):
         self.assertEqual(health["stale_advisory_grace_cycles"], STALE_ADVISORY_GRACE_CYCLES)
         self.assertTrue(health["stale_control_seq"])
         self.assertTrue(health["stale_advisory_pending"])
+        self.assertEqual(health["automation_health"], "attention")
+        self.assertEqual(health["automation_reason_code"], "stale_control_advisory")
+        self.assertEqual(health["automation_next_action"], "advisory_followup")
 
     def test_stale_control_seq_label_appears_in_health_detail(self) -> None:
         health = derive_automation_health(

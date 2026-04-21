@@ -3052,6 +3052,45 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
             self.assertEqual(args[0], "gemini-pane")
             self.assertEqual(kwargs.get("pane_type"), "gemini")
 
+    def test_startup_advisory_turn_records_active_gemini_request_control(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir = root / ".pipeline"
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+            (base_dir / "gemini_request.md").write_text(
+                "STATUS: request_open\nCONTROL_SEQ: 41\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "startup_grace_sec": 0.0,
+                }
+            )
+            core.started_at = time.time() - 1.0
+
+            with mock.patch.object(core, "_notify_gemini") as notify:
+                core._poll()
+
+            notify.assert_called_once_with("startup_turn_gemini")
+            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.ADVISORY_ACTIVE)
+            self.assertEqual(core._turn_active_control_file, "gemini_request.md")
+            self.assertEqual(core._turn_active_control_seq, 41)
+
+            turn_state = json.loads((base_dir / "state" / "turn_state.json").read_text(encoding="utf-8"))
+            self.assertEqual(turn_state["state"], "ADVISORY_ACTIVE")
+            self.assertEqual(turn_state["active_control_file"], "gemini_request.md")
+            self.assertEqual(turn_state["active_control_seq"], 41)
+            self.assertEqual(turn_state["active_role"], "advisory")
+            self.assertEqual(turn_state["active_lane"], "Gemini")
+
     def test_operator_request_disabled_is_not_active_control(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4667,6 +4706,27 @@ class ControlSeqAgeTrackerTest(unittest.TestCase):
             self.assertFalse((base_dir / "gemini_request.md").exists())
             self.assertEqual(operator_path.read_text(encoding="utf-8"), operator_text)
 
+    def test_stale_control_advisory_skips_when_gemini_request_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            core = self._make_core(root)
+            base_dir = root / ".pipeline"
+            request_path = base_dir / "gemini_request.md"
+            request_text = "STATUS: request_open\nCONTROL_SEQ: 31\n"
+            request_path.write_text(request_text, encoding="utf-8")
+
+            core._last_seen_control_seq = 31
+            core._control_seq_age_cycles = (
+                STALE_CONTROL_CYCLE_THRESHOLD + STALE_ADVISORY_GRACE_CYCLES
+            )
+
+            with mock.patch.object(core, "_notify_gemini") as notify:
+                wrote = core._maybe_write_stale_control_advisory_request()
+
+            self.assertFalse(wrote)
+            notify.assert_not_called()
+            self.assertEqual(request_path.read_text(encoding="utf-8"), request_text)
+
     def test_stale_control_advisory_preserves_current_existing_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -5779,6 +5839,111 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                 core._poll()
 
             send_prompt.assert_not_called()
+
+    def test_stale_gemini_advisory_recovers_to_verify_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            request_path = base_dir / "gemini_request.md"
+            request_path.write_text("STATUS: request_open\nCONTROL_SEQ: 18\n", encoding="utf-8")
+            old = time.time() - 20.0
+            os.utime(request_path, (old, old))
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                    "gemini_pane_target": "gemini-pane",
+                    "gemini_advisory_recovery_sec": 5.0,
+                }
+            )
+            core._initial_turn_checked = True
+            core._last_gemini_request_sig = core._get_path_sig(request_path)
+            core._transition_turn(
+                watcher_core.WatcherTurnState.ADVISORY_ACTIVE,
+                "test_setup_gemini",
+                active_control_file="gemini_request.md",
+                active_control_seq=18,
+            )
+            core._turn_entered_at = time.time() - 20.0
+
+            with (
+                mock.patch("watcher_core._capture_pane_text", return_value="openai codex\n› "),
+                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+            ):
+                recovered = core._recover_stale_gemini_advisory()
+
+            self.assertTrue(recovered)
+            send_prompt.assert_called_once()
+            args, kwargs = send_prompt.call_args
+            self.assertEqual(args[0], "codex-pane")
+            self.assertEqual(kwargs.get("pane_type"), "codex")
+            self.assertIn("ROLE: advisory_recovery", args[1])
+            self.assertIn("REQUEST_SEQ: 18", args[1])
+            self.assertIn("write exactly one next control", args[1])
+            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
+            self.assertEqual(core._turn_active_control_file, "gemini_request.md")
+            self.assertEqual(core._turn_active_control_seq, 18)
+            events = [
+                json.loads(line)
+                for line in core.run_events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(any(event.get("event_type") == "gemini_advisory_recovery" for event in events))
+
+    def test_stale_gemini_advisory_recovery_skips_when_current_advice_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            request_path = base_dir / "gemini_request.md"
+            advice_path = base_dir / "gemini_advice.md"
+            request_path.write_text("STATUS: request_open\nCONTROL_SEQ: 18\n", encoding="utf-8")
+            advice_path.write_text("STATUS: advice_ready\nCONTROL_SEQ: 18\n", encoding="utf-8")
+            old = time.time() - 20.0
+            os.utime(request_path, (old, old))
+            os.utime(advice_path, (old, old))
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                    "gemini_advisory_recovery_sec": 5.0,
+                }
+            )
+            core._initial_turn_checked = True
+            core._transition_turn(
+                watcher_core.WatcherTurnState.ADVISORY_ACTIVE,
+                "test_setup_gemini",
+                active_control_file="gemini_request.md",
+                active_control_seq=18,
+            )
+            core._turn_entered_at = time.time() - 20.0
+
+            with (
+                mock.patch("watcher_core._capture_pane_text", return_value="openai codex\n› "),
+                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+            ):
+                recovered = core._recover_stale_gemini_advisory()
+
+            self.assertFalse(recovered)
+            send_prompt.assert_not_called()
+            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.ADVISORY_ACTIVE)
 
     def test_gemini_advice_followup_defers_until_codex_prompt_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

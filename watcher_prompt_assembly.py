@@ -83,6 +83,35 @@ DEFAULT_FOLLOWUP_PROMPT = (
     "- after Gemini advice, use .pipeline/operator_request.md only if it recommends a real operator decision or no truthful exact slice remains"
 )
 
+DEFAULT_ADVISORY_RECOVERY_PROMPT = (
+    "ROLE: advisory_recovery\n"
+    "OWNER: {runtime_verify_owner}\n"
+    "REQUEST: .pipeline/gemini_request.md\n"
+    "REQUEST_SEQ: {stale_control_seq}\n"
+    "PENDING_AGE_SEC: {advisory_pending_age_sec}\n"
+    "NEXT_CONTROL_SEQ: {next_control_seq}\n"
+    "WORK: {latest_work_path}\n"
+    "VERIFY: {latest_verify_path}\n"
+    "GOAL:\n"
+    "- recover a stale advisory request that did not produce a current `.pipeline/gemini_advice.md`\n"
+    "- inspect the request and write exactly one next control so automation keeps moving\n"
+    "READ_FIRST:\n"
+    "- {runtime_verify_read_first_doc}\n"
+    "- .pipeline/gemini_request.md\n"
+    "- {latest_work_path}\n"
+    "- {latest_verify_path}\n"
+    "OUTPUTS:\n"
+    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/claude_handoff.md [implement] | .pipeline/gemini_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
+    "RULES:\n"
+    "- keep `READ_FIRST` to the listed verify-owner root doc only\n"
+    "- write exactly one next control\n"
+    "- do not write `.pipeline/gemini_advice.md` on behalf of the advisory owner\n"
+    "- if advisory is still needed, write a newer, narrower `.pipeline/gemini_request.md`\n"
+    "- if you write `.pipeline/claude_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
+    "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
+    "- use `.pipeline/operator_request.md` only for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, auth/credential blocker, or external publication boundary"
+)
+
 DEFAULT_CONTROL_RECOVERY_PROMPT = (
     "ROLE: control_recovery\n"
     "OWNER: {runtime_verify_owner}\n"
@@ -245,6 +274,7 @@ class WatcherPromptAssembler:
         implement_prompt: str,
         advisory_prompt: str,
         followup_prompt: str,
+        advisory_recovery_prompt: str,
         control_recovery_prompt: str,
         operator_retriage_prompt: str,
         verify_triage_prompt: str,
@@ -273,6 +303,7 @@ class WatcherPromptAssembler:
         self.implement_prompt = implement_prompt
         self.advisory_prompt = advisory_prompt
         self.followup_prompt = followup_prompt
+        self.advisory_recovery_prompt = advisory_recovery_prompt
         self.control_recovery_prompt = control_recovery_prompt
         self.operator_retriage_prompt = operator_retriage_prompt
         self.verify_triage_prompt = verify_triage_prompt
@@ -466,6 +497,14 @@ class WatcherPromptAssembler:
         }
         return self._finalize_prompt_text(self.operator_retriage_prompt.format(**context))
 
+    def format_advisory_recovery_prompt(self, marker: Mapping[str, object]) -> str:
+        context = {
+            **self.build_runtime_prompt_context(),
+            "stale_control_seq": str(marker.get("control_seq") or "none"),
+            "advisory_pending_age_sec": str(marker.get("advisory_pending_age_sec") or "0"),
+        }
+        return self._finalize_prompt_text(self.advisory_recovery_prompt.format(**context))
+
     def format_session_arbitration_draft(self, signal: Mapping[str, object]) -> str:
         context = self.build_runtime_prompt_context()
         reasons = [str(reason) for reason in signal.get("reasons", [])]
@@ -611,6 +650,46 @@ class WatcherPromptAssembler:
 
     def build_codex_followup_dispatch_spec(self, reason: str) -> PromptDispatchSpec:
         return self.build_verify_followup_dispatch_spec(reason)
+
+    def build_advisory_recovery_dispatch_spec(
+        self,
+        marker: Mapping[str, object],
+        reason: str,
+    ) -> PromptDispatchSpec:
+        control_seq = int(marker.get("control_seq") or -1)
+        identity = self._lane_identity(
+            functional_role="verify",
+            notify_kind="gemini_advisory_recovery",
+            control_seq=control_seq,
+        )
+        return PromptDispatchSpec(
+            pending_key=str(identity["pending_key"]),
+            notify_kind="gemini_advisory_recovery",
+            lane_role="verify",
+            functional_role="verify",
+            lane_id=str(identity["lane_id"]),
+            agent_kind=str(identity["agent_kind"]),
+            model_alias=None,
+            prompt=self.format_advisory_recovery_prompt(marker),
+            prompt_path=self.gemini_request_path,
+            notify_label="notify_verify_advisory_recovery",
+            raw_event="verify_advisory_recovery_notify",
+            raw_payload={
+                "reason": reason,
+                **marker,
+                **self._identity_payload(
+                    functional_role="verify",
+                    lane_id=str(identity["lane_id"]),
+                    agent_kind=str(identity["agent_kind"]),
+                    model_alias=None,
+                ),
+            },
+            control_seq=control_seq,
+            expected_control_path=str(self.gemini_request_path.name),
+            expected_control_seq=control_seq,
+            expected_status="request_open",
+            require_active_control=True,
+        )
 
     def build_control_recovery_dispatch_spec(
         self,

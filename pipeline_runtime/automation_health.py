@@ -43,6 +43,7 @@ ADVISORY_FOLLOWUP_REASONS = frozenset({
     "session_rollover",
     "continue_vs_switch",
     "operator_retriage_no_next_control",
+    "stale_control_advisory",
 })
 
 VERIFY_FOLLOWUP_REASONS = frozenset({
@@ -295,6 +296,13 @@ def derive_automation_health(status: Mapping[str, Any] | None) -> dict[str, obje
             health="attention",
             reason_code="runtime_stopped",
             next_action="operator_required",
+        )
+
+    if control_age_cycles >= STALE_CONTROL_CYCLE_THRESHOLD + STALE_ADVISORY_GRACE_CYCLES:
+        return payload(
+            health="attention",
+            reason_code="stale_control_advisory",
+            next_action="advisory_followup",
         )
 
     return payload(health="ok")

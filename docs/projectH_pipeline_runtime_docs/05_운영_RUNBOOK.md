@@ -110,6 +110,7 @@ launcher live stability gate는 아래를 현재 통과 기준으로 둡니다.
 
 real-risk action, auth/credential, destructive write, approval-record repair, truth-sync blocker, merge/destructive publication boundary는 여전히 explicit approval과 audit trail을 요구합니다.
 - `pr_creation_gate + gate_24h + release_gate`는 승인된 큰 묶음의 draft PR 생성 follow-up이므로 operator wait가 아니라 verify/handoff-owner triage로 흐르고 `automation_health=attention`, `automation_next_action=verify_followup`으로 확인합니다.
+- `gemini_request.md`가 오래 열려 있는데 같은 `CONTROL_SEQ`의 `gemini_advice.md`가 없으면 watcher가 `gemini_advisory_recovery` event를 남기고 verify/handoff-owner에게 recovery prompt를 보낼 수 있습니다. 이때 정상 목표는 advisory 대필이 아니라 더 높은 `CONTROL_SEQ`의 다음 control 하나로 회수하는 것입니다.
 - thin client drift triage는 runtime `status.json` / `events.jsonl` 기준으로만 하고, pane/log/file scan은 current truth 재판정이 아니라 mismatch evidence로만 사용할 것
 - current `accepted_task`가 살아 있는 lane은 tail prompt가 보여도 `READY`로 내리지 말고 `WORKING`으로 유지할 것. verify lane이 이미 `TASK_DONE` 뒤 receipt close만 기다리는 경우는 launcher snapshot에 `active_round.state`, `dispatch_id`, `completion_stage`, `Receipt: pending close`로 그대로 드러나야 합니다.
 - pane busy/ready marker는 `pipeline_runtime/lane_surface.py` shared helper/profile을 single source로 유지할 것. watcher, supervisor, cli wrapper가 각자 marker 확장을 따로 들고 있으면 READY/WORKING drift triage가 다시 흔들립니다.

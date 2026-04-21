@@ -20,6 +20,7 @@
 - `PROJECT_CUSTOM_INSTRUCTIONS.md`
 - `work/README.md`
 - `verify/README.md`
+- `report/gemini/2026-04-21-automation-axis-closure-and-pr-transition.md`
 - `work/4/21/2026-04-21-pr-creation-gate-visible-boundary.md`
 - `work/4/21/2026-04-21-pr-creation-auto-followup-routing.md`
 
@@ -27,6 +28,7 @@
 - `security-gate`: draft PR 생성은 외부 publication surface라서 merge/destructive/auth/truth-sync 경계와 분리해 감사 가능하게 유지했습니다.
 - `doc-sync`: runtime docs, pipeline README, agent/operator rules, work/verify README를 새 자동 PR follow-up 계약에 맞췄습니다.
 - `work-log-closeout`: 실제 변경 파일, 실행한 검증, 남은 리스크를 이 closeout에 기록했습니다.
+- `github:yeet`: 커밋, 푸시, draft PR 생성 경로를 확인하고 PR #25를 만들었습니다.
 
 ## 변경 이유
 - 사용자가 PR 생성까지 자동화하라고 명시했으므로, 이전의 `pr_creation_gate = operator boundary` 결론을 유지하면 automation 목표와 충돌합니다.
@@ -51,9 +53,13 @@
 - `python3 -m unittest tests.test_watcher_core` -> 181 tests OK
 - `python3 -m unittest tests.test_pipeline_gui_home_presenter` -> 18 tests OK
 - `git diff --check -- pipeline_runtime/operator_autonomy.py pipeline_runtime/automation_health.py pipeline_runtime/status_labels.py pipeline_runtime/supervisor.py watcher_prompt_assembly.py watcher_core.py tests/test_operator_request_schema.py tests/test_pipeline_runtime_automation_health.py tests/test_pipeline_runtime_supervisor.py tests/test_watcher_core.py tests/test_pipeline_gui_home_presenter.py AGENTS.md CLAUDE.md PROJECT_CUSTOM_INSTRUCTIONS.md work/README.md verify/README.md .pipeline/README.md docs/projectH_pipeline_runtime_docs/03_기술설계_명세서.md docs/projectH_pipeline_runtime_docs/04_QA_시험계획서.md docs/projectH_pipeline_runtime_docs/05_운영_RUNBOOK.md` -> 통과
+- `git diff --cached --check` -> 통과
+- `git commit -m "Route PR creation gates to publish follow-up"` -> `c82eeea`
+- `git push -u origin feat/watcher-turn-state` -> 통과
+- GitHub draft PR 생성 -> `https://github.com/hsnasforum/projectH/pull/25`
 - live status 확인 전: 이전 supervisor/watcher 프로세스는 아직 old code를 물고 있어 `.pipeline/operator_request.md` seq 717을 `needs_operator`로 보고 있었습니다. 이 closeout 이후 runtime restart로 새 routing을 확인해야 합니다.
 
 ## 남은 리스크
 - 이번 변경은 watcher가 직접 `gh pr create`를 실행하는 구현이 아니라, verify/handoff owner가 자동 publish follow-up으로 draft PR을 만들도록 라우팅하는 단계입니다.
-- 현재 branch에는 이전 merged PR #24가 이미 있으므로, 이 변경을 포함하려면 새 commit/push 후 새 draft PR을 만들거나 기존 open PR이 있으면 재사용해야 합니다.
+- 현재 변경은 draft PR #25로 올라갔습니다. merge는 자동화하지 않았고, operator/release boundary로 남깁니다.
 - auth/credential 실패, base/head 불명확, merge 또는 milestone 전환까지 요구되는 경우는 여전히 operator/advisory follow-up으로 남겨야 합니다.

@@ -4241,6 +4241,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
 
             self.assertIn("next-slice ambiguity", prompt)
             self.assertIn(".pipeline/gemini_request.md before .pipeline/operator_request.md", prompt)
+            self.assertIn("do not route commit/push publish work to `.pipeline/claude_handoff.md`", prompt)
             self.assertIn("real operator-only decision", prompt)
             self.assertIn("after 3+ same-day same-family docs-only truth-sync rounds", prompt)
 
@@ -4253,6 +4254,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             prompt = supervisor._prompt_templates()["followup"]
 
             self.assertIn("after Gemini advice", prompt)
+            self.assertIn("do not route commit/push publish work to `.pipeline/claude_handoff.md`", prompt)
             self.assertIn(".pipeline/operator_request.md", prompt)
             self.assertIn("no truthful exact slice", prompt)
 
@@ -4284,6 +4286,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertIn("- CLAUDE.md", verify_prompt)
             self.assertIn("keep `READ_FIRST` to the listed verify-owner root doc only", verify_prompt)
             self.assertIn("keep its `READ_FIRST` to the implement-owner root doc only", verify_prompt)
+            self.assertIn("do not route commit/push publish work to `.pipeline/claude_handoff.md`", verify_prompt)
             self.assertIn("verify the latest `/work`, update `/verify`, then write exactly one next control", verify_prompt)
             self.assertNotIn("work/README.md", verify_prompt)
             self.assertNotIn("verify/README.md", verify_prompt)
@@ -4291,6 +4294,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertIn("- CLAUDE.md", followup_prompt)
             self.assertIn("keep `READ_FIRST` to the listed verify-owner root doc only", followup_prompt)
             self.assertIn("keep its `READ_FIRST` to the implement-owner root doc only", followup_prompt)
+            self.assertIn("do not route commit/push publish work to `.pipeline/claude_handoff.md`", followup_prompt)
             self.assertIn("turn the advisory into exactly one next control", followup_prompt)
             self.assertNotIn("verify/README.md", followup_prompt)
             self.assertIn("OWNER: Gemini", advisory_prompt)

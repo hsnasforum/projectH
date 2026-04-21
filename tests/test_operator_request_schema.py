@@ -5,6 +5,7 @@ import unittest
 from pipeline_runtime.control_writers import validate_operator_request_headers
 from pipeline_runtime.operator_autonomy import (
     COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+    PUBLICATION_BOUNDARY_REASON_CODES,
     PR_CREATION_GATE_REASON,
     SUPPORTED_DECISION_CLASSES,
     SUPPORTED_OPERATOR_POLICIES,
@@ -201,6 +202,36 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
         self.assertEqual(decision["operator_policy"], "gate_24h")
         self.assertEqual(decision["decision_class"], "release_gate")
         self.assertFalse(decision["operator_eligible"])
+
+    def test_external_publication_boundary_stays_operator_visible(self) -> None:
+        for reason in PUBLICATION_BOUNDARY_REASON_CODES:
+            with self.subTest(reason=reason):
+                self.assertIn(reason, SUPPORTED_REASON_CODES)
+
+                decision = classify_operator_candidate(
+                    "STATUS: needs_operator\n"
+                    f"REASON_CODE: {reason}\n"
+                    "OPERATOR_POLICY: gate_24h\n"
+                    "DECISION_CLASS: release_gate\n"
+                    "DECISION_REQUIRED: approve merge of draft PR\n",
+                    control_meta={
+                        "status": "needs_operator",
+                        "reason_code": reason,
+                        "operator_policy": "gate_24h",
+                        "decision_class": "release_gate",
+                        "decision_required": "approve merge of draft PR",
+                    },
+                    idle_stable=True,
+                    control_mtime=1_000.0,
+                    now_ts=1_000.0,
+                )
+
+                self.assertEqual(decision["mode"], "needs_operator")
+                self.assertEqual(decision["suppressed_mode"], "needs_operator")
+                self.assertEqual(decision["routed_to"], "operator")
+                self.assertEqual(decision["operator_policy"], "gate_24h")
+                self.assertEqual(decision["decision_class"], "release_gate")
+                self.assertTrue(decision["operator_eligible"])
 
     def test_seq617_raw_operator_headers_normalize_to_canonical_metadata(self) -> None:
         self.assertEqual(

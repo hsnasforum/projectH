@@ -161,6 +161,29 @@ class PipelineRuntimeAutomationHealthTest(unittest.TestCase):
         self.assertEqual(health["automation_reason_code"], "approval_required")
         self.assertEqual(health["automation_next_action"], "operator_required")
 
+    def test_hibernating_publication_boundary_is_not_silent_ok(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "autonomy": {
+                    "mode": "hibernate",
+                    "reason_code": "external_publication_boundary",
+                    "operator_policy": "gate_24h",
+                    "decision_class": "release_gate",
+                },
+                "turn_state": {
+                    "state": "OPERATOR_WAIT",
+                    "active_control_file": "operator_request.md",
+                    "active_control_seq": 722,
+                },
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "needs_operator")
+        self.assertEqual(health["automation_reason_code"], "external_publication_boundary")
+        self.assertEqual(health["automation_incident_family"], "external_publication_boundary")
+        self.assertEqual(health["automation_next_action"], "pr_boundary")
+
     def test_pr_creation_gate_maps_to_verify_followup_attention(self) -> None:
         health = derive_automation_health(
             {

@@ -3590,6 +3590,53 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(status["automation_reason_code"], "pr_creation_gate")
             self.assertEqual(status["automation_next_action"], "verify_followup")
 
+    def test_write_status_keeps_external_publication_boundary_operator_visible(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "operator_request.md").write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 722\n"
+                "REASON_CODE: external_publication_boundary\n"
+                "OPERATOR_POLICY: gate_24h\n"
+                "DECISION_CLASS: release_gate\n"
+                "DECISION_REQUIRED: approve merge of draft PR #25\n",
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                            {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["control"]["active_control_status"], "needs_operator")
+            self.assertEqual(status["autonomy"]["mode"], "needs_operator")
+            self.assertEqual(status["autonomy"]["reason_code"], "external_publication_boundary")
+            self.assertEqual(status["automation_health"], "needs_operator")
+            self.assertEqual(status["automation_reason_code"], "external_publication_boundary")
+            self.assertEqual(status["automation_next_action"], "pr_boundary")
+
     def test_write_status_preserves_operator_gate_first_seen_across_seq_only_bump(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

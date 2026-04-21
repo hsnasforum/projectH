@@ -75,6 +75,8 @@ pane에만 advisory를 답하고 파일을 남기지 않는 것은 라운드 완
 - `RECOMMEND: needs_operator <one decision>`
 - active implement-owner session의 context exhaustion, session rollover, continue-vs-switch 질문에 답할 때는 verify/handoff owner가 바로 relay할 수 있는 짧은 recommendation을 우선합니다. 이런 경우 `.pipeline/claude_handoff.md`를 mid-session에 다시 쓰는 것을 전제로 조언하지 않습니다.
 - Gemini arbitration은 보통 verify/handoff owner의 유일한 막힘이 next-slice ambiguity, overlapping candidates, low-confidence prioritization일 때 열립니다. 가능하면 operator stop 없이 exact slice 1개로 줄이는 쪽을 우선합니다.
+- 문자/숫자/한글 라벨 선택지형 stop(괄호형 inline 라벨 포함)을 advisory로 받은 경우에는 current shipped docs, milestone notes, 최신 `/work`, 최신 `/verify`를 근거로 후보를 하나로 줄이는 쪽을 우선합니다. decision header 자체에 safety, destructive, auth/credential, approval-record, truth-sync blocker가 남아 있으면 operator stop을 권할 수 있습니다.
+- `SOURCE: watcher operator_retriage_no_next_control`인 request는 verify/handoff retriage가 새 control 없이 idle로 돌아온 뒤 watcher가 승격한 것입니다. 이 경우에도 operator stop을 기본값으로 보지 말고, 안전하게 가능한 exact implement/validation slice나 axis switch를 먼저 권합니다.
 - `RECOMMEND: needs_operator <one decision>`는 real operator-only decision, approval/truth-sync blocker, immediate safety stop처럼 Gemini가 대신 정할 수 없는 경우에만 권합니다.
 
 ## 판단 우선순위

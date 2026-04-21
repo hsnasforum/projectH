@@ -56,6 +56,21 @@ _CODEX_UPDATE_SKIP_MARKERS = (
     "update available",
     "skip until next version",
 )
+_RUNTIME_RELOAD_SOURCE_NAMES = (
+    "watcher_core.py",
+    "watcher_dispatch.py",
+    "watcher_prompt_assembly.py",
+    "verify_fsm.py",
+    "pipeline_runtime/cli.py",
+    "pipeline_runtime/supervisor.py",
+    "pipeline_runtime/tmux_adapter.py",
+    "pipeline_runtime/lane_surface.py",
+    "pipeline_runtime/lane_catalog.py",
+    "pipeline_runtime/operator_autonomy.py",
+    "pipeline_runtime/schema.py",
+    "pipeline_runtime/turn_arbitration.py",
+    "pipeline_runtime/wrapper_events.py",
+)
 
 
 def _project_root(value: str | None) -> Path:
@@ -90,6 +105,36 @@ def _supervisor_running(project_root: Path) -> int | None:
         return pid
     except (OSError, ValueError):
         return None
+
+
+def _runtime_reload_source_paths(project_root: Path) -> list[Path]:
+    sources: list[Path] = []
+    source_root = Path(__file__).resolve().parent.parent
+    for name in _RUNTIME_RELOAD_SOURCE_NAMES:
+        candidates = [
+            project_root / name,
+            source_root / name,
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                sources.append(candidate.resolve())
+                break
+    return sources
+
+
+def _runtime_source_newer_than_supervisor_pidfile(project_root: Path) -> bool:
+    pid_path = _supervisor_pid_path(project_root)
+    try:
+        pid_mtime = pid_path.stat().st_mtime
+    except OSError:
+        return False
+    for source_path in _runtime_reload_source_paths(project_root):
+        try:
+            if source_path.stat().st_mtime > pid_mtime + 0.001:
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def _command_arg_value(argv: list[str], flag: str) -> str:
@@ -349,9 +394,19 @@ def _current_run_matches(project_root: Path, run_id: str) -> bool:
 def _spawn_supervisor(args: argparse.Namespace) -> int:
     project_root, mode = _normalize_project_and_mode(args)
     session_name = args.session or _session_name_for(project_root)
+    reload_live_supervisor = _runtime_source_newer_than_supervisor_pidfile(project_root)
     pid = _reconcile_supervisors(project_root, session_name)
     if pid is not None:
-        return 0
+        reload_live_supervisor = (
+            reload_live_supervisor
+            or _runtime_source_newer_than_supervisor_pidfile(project_root)
+        )
+        if not reload_live_supervisor:
+            return 0
+        stop_code = _stop_supervisor(args)
+        if stop_code != 0:
+            return stop_code
+        time.sleep(1.0)
     run_id = RuntimeSupervisor(project_root, session_name=args.session, mode=mode, start_runtime=False).run_id
     log_dir = project_root / ".pipeline" / "runs" / run_id / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)

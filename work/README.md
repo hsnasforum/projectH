@@ -62,6 +62,8 @@
 - `STATUS: needs_operator` stop request는 bare stop line 하나로 끝내지 않는 편이 맞습니다. 최소한 `CONTROL_SEQ`, `REASON_CODE`, `OPERATOR_POLICY`, `DECISION_CLASS`, `DECISION_REQUIRED`, `BASED_ON_WORK`, `BASED_ON_VERIFY`와 함께 왜 멈췄는지, operator가 다음에 무엇을 정해야 하는지는 `.pipeline/operator_request.md`에 남겨야 automation이 멈춘 이유를 나중에 다시 추적할 수 있습니다.
 - Codex는 latest `/work`와 `/verify`가 한 family를 truthfully 닫았을 때 같은 family의 가장 작은 current-risk reduction을 먼저 자동 확정할 수 있습니다. 다음 슬라이스를 매번 operator가 직접 고를 필요는 없습니다.
 - 다만 Codex가 next-slice ambiguity, overlapping candidates, low-confidence prioritization 때문에 바로 확정하지 못한 경우에는 `.pipeline/operator_request.md`보다 `.pipeline/gemini_request.md`를 먼저 여는 편이 맞습니다.
+- 문자/숫자/한글 라벨 선택지형 stop(괄호형 inline 라벨 포함)도 current docs, milestone, 최신 `/work`, 최신 `/verify`로 에이전트끼리 먼저 좁힐 수 있으면 `.pipeline/gemini_request.md`를 우선합니다. decision header 자체의 안전/파괴/auth/credential/approval-record/truth-sync blocker는 예외입니다.
+- watcher가 gated operator retriage를 보냈는데 verify/handoff lane이 새 control 없이 idle로 돌아온 경우에는 `operator_retriage_no_next_control` incident와 machine-written `.pipeline/gemini_request.md` 승격이 생길 수 있습니다. 이때 `/work` closeout은 해당 runtime/operator-flow 변경 사실과 검증을 남깁니다.
 - 따라서 `.pipeline/operator_request.md`는 단순한 우선순위 망설임이 아니라 real operator-only decision, approval/truth-sync blocker, immediate safety stop, 또는 Gemini advice 이후에도 exact slice를 못 좁힌 경우를 의미하는 편이 맞습니다.
 - 따라서 `/work` closeout도 다음 우선순위를 설명할 때는 같은 family 안의 더 작은 risk를 먼저 닫는지, 아니면 왜 새 quality axis로 넘어가야 하는지를 짧게 드러내는 편이 좋습니다.
 - 다만 같은 날 same-family docs-only truth-sync가 이미 3회 이상 반복된 상태라면, 다음 `/work` closeout은 또 하나의 더 작은 docs-only micro-slice보다 남은 drift를 한 번에 닫는 bounded bundle이나 escalation 문맥을 반영하는 편이 맞습니다.

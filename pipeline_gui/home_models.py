@@ -35,6 +35,10 @@ class RuntimeLaunchSnapshot:
 class HomeSnapshot:
     runtime_state: str
     degraded_reason: str
+    automation_health: str
+    automation_reason_code: str
+    automation_incident_family: str
+    automation_next_action: str
     session_ok: bool
     watcher_alive: bool
     watcher_pid: int | None

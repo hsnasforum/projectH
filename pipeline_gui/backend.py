@@ -13,6 +13,7 @@ from pathlib import Path, PurePosixPath
 from pipeline_runtime.schema import parse_iso_utc, read_jsonl_tail
 from pipeline_runtime.tmux_adapter import TmuxAdapter
 from pipeline_runtime.turn_arbitration import canonical_turn_state_name, turn_state_role
+from pipeline_runtime.automation_health import derive_automation_health
 
 from . import legacy_backend_debug
 from .platform import (
@@ -115,6 +116,7 @@ def _apply_supervisor_missing_status(
                 }
                 for lane in lanes
             ]
+    status.update(derive_automation_health(status))
     return status
 
 
@@ -223,6 +225,7 @@ def normalize_runtime_status(value: object | None, project: Path | None = None) 
                 }
                 for lane in lanes
             ]
+        status.update(derive_automation_health(status))
         return status
     return {}
 

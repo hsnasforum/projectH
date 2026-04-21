@@ -47,6 +47,7 @@ from .home_presenter import (
     build_console_presentation,
     build_control_presentation,
     build_empty_agent_card_presentation,
+    build_pipeline_status_presentation,
 )
 from .agents import (
     format_elapsed,
@@ -798,6 +799,7 @@ class PipelineGUI:
         self._last_snapshot = snapshot
         self._last_poll_at = float(snapshot.get("polled_at") or time.time())
         runtime_state_value = str(snapshot.get("runtime_state") or "STOPPED")
+        automation_health = str(snapshot.get("automation_health") or "ok")
         session_ok = runtime_state_value != "STOPPED"
         w_alive = bool(snapshot["watcher_alive"])
         w_pid = snapshot["watcher_pid"]
@@ -806,31 +808,14 @@ class PipelineGUI:
         token_dashboard = snapshot.get("token_dashboard")
 
         # Pipeline status
-        if runtime_state_value == "RUNNING":
-            self._set_var_if_changed(self.pipeline_var, "파이프라인: ● 실행 중")
-            self._set_var_if_changed(self.status_var, "실행 중")
-            self._configure_widget_if_changed(self.status_label, fg="#4ade80", bg="#0a2a18")
-            self._configure_widget_if_changed(self.pipeline_state_label, fg="#4ade80")
-        elif runtime_state_value == "STARTING":
-            self._set_var_if_changed(self.pipeline_var, "파이프라인: ◐ 기동 중")
-            self._set_var_if_changed(self.status_var, "기동 중")
-            self._configure_widget_if_changed(self.status_label, fg="#fbbf24", bg="#2b2110")
-            self._configure_widget_if_changed(self.pipeline_state_label, fg="#fbbf24")
-        elif runtime_state_value == "DEGRADED":
-            self._set_var_if_changed(self.pipeline_var, "파이프라인: ▲ 부분 장애")
-            self._set_var_if_changed(self.status_var, "부분 장애")
-            self._configure_widget_if_changed(self.status_label, fg="#fb923c", bg="#2a160f")
-            self._configure_widget_if_changed(self.pipeline_state_label, fg="#fb923c")
-        elif runtime_state_value == "BROKEN":
-            self._set_var_if_changed(self.pipeline_var, "파이프라인: ✗ 장애")
-            self._set_var_if_changed(self.status_var, "장애")
-            self._configure_widget_if_changed(self.status_label, fg="#f87171", bg="#2a1015")
-            self._configure_widget_if_changed(self.pipeline_state_label, fg="#f87171")
-        else:
-            self._set_var_if_changed(self.pipeline_var, "파이프라인: ■ 중지됨")
-            self._set_var_if_changed(self.status_var, "중지됨")
-            self._configure_widget_if_changed(self.status_label, fg="#f87171", bg="#2a1015")
-            self._configure_widget_if_changed(self.pipeline_state_label, fg="#f87171")
+        pipeline_status = build_pipeline_status_presentation(
+            runtime_state=runtime_state_value,
+            automation_health=automation_health,
+        )
+        self._set_var_if_changed(self.pipeline_var, pipeline_status.pipeline_text)
+        self._set_var_if_changed(self.status_var, pipeline_status.status_text)
+        self._configure_widget_if_changed(self.status_label, fg=pipeline_status.fg, bg=pipeline_status.bg)
+        self._configure_widget_if_changed(self.pipeline_state_label, fg=pipeline_status.fg)
 
         # Watcher
         if w_alive:

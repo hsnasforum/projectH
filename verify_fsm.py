@@ -446,6 +446,28 @@ class StateMachine:
         job.save(self.state_dir)
         return True
 
+    def _mark_task_done_from_completed_outputs(
+        self,
+        job: JobState,
+        *,
+        current_pane: str,
+        reason: str,
+    ) -> None:
+        now = time.time()
+        job.done_dispatch_id = job.dispatch_id
+        job.done_at = now
+        job.last_activity_at = now
+        job.last_pane_snapshot = current_pane
+        job.history.append(
+            {
+                "from": job.status.value,
+                "to": job.status.value,
+                "at": now,
+                "reason": reason,
+            }
+        )
+        job.save(self.state_dir)
+
     def _failed_dispatch_snapshot_for_pane(self, current_pane: str) -> str:
         snapshot = (current_pane or "").rstrip()
         if not snapshot:
@@ -909,34 +931,51 @@ class StateMachine:
                         job.save(self.state_dir)
                     return job
                 if job.done_deadline_at > 0.0 and now_value >= job.done_deadline_at:
-                    log.warning(
-                        "verify done deadline exceeded: job=%s total=%.0fs deadline=%.0fs",
-                        job.job_id,
-                        elapsed,
-                        self.verify_done_deadline_sec,
-                    )
-                    return self._record_completion_stall(
-                        job,
-                        current_pane=current_pane,
-                        reason=(
-                            f"completion stall after {elapsed:.0f}s total with no TASK_DONE "
-                            f"after TASK_ACCEPTED before {self.verify_done_deadline_sec:.0f}s deadline"
-                        ),
-                        stage="task_done_missing",
-                        lane_note="waiting_task_done_after_accept",
-                    )
-                if outputs_complete:
+                    if outputs_complete and codex_idle:
+                        log.warning(
+                            "verify outputs closed before TASK_DONE; inferring task done from receipt/control close: job=%s total=%.0fs",
+                            job.job_id,
+                            elapsed,
+                        )
+                        self._mark_task_done_from_completed_outputs(
+                            job,
+                            current_pane=current_pane,
+                            reason=(
+                                "inferred TASK_DONE from current-round verify receipt + control close "
+                                f"after {self.verify_done_deadline_sec:.0f}s deadline"
+                            ),
+                        )
+                        waiting_for_done = False
+                        waiting_for_receipt_close = False
+                    else:
+                        log.warning(
+                            "verify done deadline exceeded: job=%s total=%.0fs deadline=%.0fs",
+                            job.job_id,
+                            elapsed,
+                            self.verify_done_deadline_sec,
+                        )
+                        return self._record_completion_stall(
+                            job,
+                            current_pane=current_pane,
+                            reason=(
+                                f"completion stall after {elapsed:.0f}s total with no TASK_DONE "
+                                f"after TASK_ACCEPTED before {self.verify_done_deadline_sec:.0f}s deadline"
+                            ),
+                            stage="task_done_missing",
+                            lane_note="waiting_task_done_after_accept",
+                        )
+                if waiting_for_done:
                     log.info(
                         "current-round verify/control/receipt changed before TASK_DONE, keeping verify open: job=%s",
                         job.job_id,
                     )
-                if codex_idle and elapsed_since_dispatch > 15:
-                    log.info(
-                        "codex idle observed after TASK_ACCEPTED but TASK_DONE is still missing: job=%s elapsed=%.0fs",
-                        job.job_id,
-                        elapsed_since_dispatch,
-                    )
-                return job
+                    if codex_idle and elapsed_since_dispatch > 15:
+                        log.info(
+                            "codex idle observed after TASK_ACCEPTED but TASK_DONE is still missing: job=%s elapsed=%.0fs",
+                            job.job_id,
+                            elapsed_since_dispatch,
+                        )
+                    return job
 
             if outputs_complete:
                 log.info(

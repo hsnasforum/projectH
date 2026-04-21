@@ -51,7 +51,13 @@ class PipelineGuiHomeControllerTest(unittest.TestCase):
                         "watcher": {"alive": True, "pid": 321},
                         "lanes": [
                             {"name": "Claude", "state": "READY", "attachable": True},
-                            {"name": "Codex", "state": "WORKING", "attachable": True, "note": "verify"},
+                            {
+                                "name": "Codex",
+                                "state": "WORKING",
+                                "attachable": True,
+                                "note": "verify",
+                                "progress_phase": "running_verification",
+                            },
                         ],
                         "artifacts": {
                             "latest_work": {"path": "4/11/work.md", "mtime": 10.0},
@@ -83,8 +89,10 @@ class PipelineGuiHomeControllerTest(unittest.TestCase):
         self.assertEqual(snapshot.verify_activity["status"], "VERIFY_RUNNING")
         self.assertEqual(snapshot.verify_activity["label"], "Claude 검증 실행 중")
         self.assertEqual(snapshot.run_summary["turn"], "Claude 검증 중")
-        self.assertEqual(snapshot.agents[1], ("Codex", "WORKING", "verify", ""))
+        self.assertEqual(snapshot.agents[1], ("Codex", "WORKING", "progress:running_verification", ""))
         self.assertTrue(snapshot.lane_details["Codex"]["attachable"])
+        self.assertEqual(snapshot.lane_details["Codex"]["note"], "verify")
+        self.assertEqual(snapshot.lane_details["Codex"]["progress_phase"], "running_verification")
 
     def test_build_snapshot_prefers_verify_role_owner_when_turn_lane_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

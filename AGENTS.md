@@ -247,6 +247,8 @@ Current source-of-truth docs live in the root `docs/` directory.
   - choose one exact next slice and write `STATUS: implement` to `.pipeline/claude_handoff.md`, or
   - write `.pipeline/gemini_request.md` when the only blocker is next-slice ambiguity, overlapping candidates, or a low-confidence tie-break, or
   - explicitly stop automation with `.pipeline/operator_request.md` only when a real operator-only decision remains, approval-record/truth-sync work must happen first, immediate safety requires a stop, or Gemini was already unavailable/inconclusive
+- If a stop request presents labeled choices, such as lettered, numbered, inline parenthesized, or Korean `n안` options, that can be narrowed from current `docs/`, milestones, latest `/work`, and latest `/verify`, treat it as next-slice ambiguity and route advisory-first instead of holding for the operator, unless the decision header itself includes safety, destructive, auth/credential, approval-record, or truth-sync blockers.
+- If watcher has already routed such a gated operator request to verify/handoff retriage and that lane returns to an idle prompt without writing a newer control slot, watcher may record `operator_retriage_no_next_control` and machine-write the next `.pipeline/gemini_request.md` so the agents arbitrate before asking the operator.
 - In the canonical flow, Codex should not close a verification round with pane-only reasoning or a control-slot rewrite alone. Codex must leave or update `/verify` before writing the next control slot.
 - When the latest `/work` and `/verify` already closed one family truthfully, prefer automatic next-slice selection over `needs_operator` if one smaller same-family follow-up remains.
 - Default automatic tie-break order is:

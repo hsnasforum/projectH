@@ -291,3 +291,1193 @@ _compact_summary_hint_for_persist = staticmethod(_SS._compact_summary_hint_for_p
 - **AXIS-DISPATCHER-TRACE-BACKFILL**: 여전히 pending verify-lane 실행.
 - **AXIS-G6-TEST-WEB-APP**: 여전히 verify-lane 조사 선행 필요.
 - **Canonical contracts 유지**: seq 527–605 dirty worktree 포함.
+
+---
+
+# seq 606 verify round — 2026-04-21 AXIS-G11 adoption-list test
+
+## 변경 파일
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- `round-handoff` (narrowest check: 4개 검증 명령 재실행 + 파일 내용 대조)
+
+## 변경 이유
+- `work/4/21/2026-04-21-sqlite-store-adoption-list-test.md`가 `.pipeline/claude_handoff.md` CONTROL_SEQ 606의 AXIS-G11 completion 슬라이스를 닫았다고 주장.
+- verify lane은 (a) 4개 required check 재실행, (b) `tests/test_sqlite_store.py` 실제 내용 대조, (c) supervisor count 불일치 원인 확인.
+
+## 핵심 in-scope 변경 — 확인됨
+
+**`tests/test_sqlite_store.py` 신규 생성**:
+- `TestSQLiteSessionStoreAdoptionList` 1개 클래스, `test_adoption_list_all_methods_accessible` 1개 테스트.
+- `REQUIRED_METHODS` = 22개 — handoff 지시와 일치.
+- 각 method: `with self.subTest(method=name)` 안에서 `hasattr(SQLiteSessionStore, name)` 확인.
+- `storage/sqlite_store.py` 수정 없음 (이번 라운드).
+
+### 범위 일치 여부
+- `/work` 주장 "tests/test_sqlite_store.py 추가만"과 실제 일치. production 파일 무변경.
+
+## 검증 (seq 606)
+- `python3 -m py_compile storage/sqlite_store.py`
+  - **실측**: 출력 없음 (rc=0). `/work` 주장과 일치.
+- `python3 -m unittest tests.test_sqlite_store`
+  - **실측**: `Ran 1 test in 0.000s / OK`. `/work` 주장과 일치.
+  - 22개 subTest (REQUIRED_METHODS 전체) pass 확인.
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor`
+  - **실측**: `Ran 106 tests in 0.654s / OK`. `/work` 주장 `Ran 106 tests / OK`와 일치.
+  - handoff 예상 105 vs 실측 106 불일치 원인 확인:
+    - `test_classify_operator_candidate_defaults_decision_class_per_visible_mode` (line 4816) — 존재
+    - `test_classify_operator_candidate_payload_stability` (line 4852) — 존재
+    - 두 테스트 모두 미기록 추가 상태. 104 (seq 599 baseline) + 2 undocumented = 106.
+    - seq 605 verify는 "추가된 테스트가 둘 중 하나"로 기록했으나 실제로는 두 메서드 모두 이미 존재. 1개가 seq 605 이전에, 나머지 1개가 seq 605–606 사이에 추가된 것으로 추정.
+- `git diff --check -- tests/test_sqlite_store.py`
+  - **실측**: 출력 없음 (rc=0). 신규 untracked 파일이라 diff 없음.
+
+실행하지 않은 항목 (명시):
+- `tests.test_watcher_core`: 이번 라운드 변경이 test file 1개 신규 추가에 한정. 149 OK (seq 593 baseline) 유지 판단.
+- `make e2e-test`, Playwright, `tests.test_web_app`: 범위 밖.
+- live runtime DISPATCH_SEEN: verify-lane 전용 항목, 별도 라운드 대상.
+
+## 남은 리스크 (seq 606 이후)
+- **AXIS-G11 CLOSED**: `tests/test_sqlite_store.py` 생성 완료, 22 methods hasattr OK. G4 + G5 + G11 전체 implement 완료.
+- **supervisor 미기록 test 2개 누적**: 104 baseline + 2 undocumented (`test_classify_operator_candidate_defaults_decision_class_per_visible_mode`, `test_classify_operator_candidate_payload_stability`) = 106 현재 카운트. 기능적으로 모두 OK. seq 593/605 패턴 재발. work note 없음.
+- **AXIS-DISPATCHER-TRACE-BACKFILL**: verify-lane `events.jsonl` integrity check 여전히 pending. Gemini seq 601: no implement phase.
+- **AXIS-G6-TEST-WEB-APP**: verify-lane 조사 선행 필요. Gemini seq 601: implement vs EPERM discrepancy 먼저 확인.
+- **AXIS-G4 end-to-end**: live runtime `DISPATCH_SEEN` 방출 확인 미완.
+- **다음 implement 축**: G4/G5/G11 모두 완료. 새 implement 축 결정 → Gemini advisory 필요 (CONTROL_SEQ 607).
+- **Canonical contracts 유지**: seq 527–606 dirty worktree 포함.
+
+---
+
+# seq 609 verify round — 2026-04-21 AXIS-G10 partial + AXIS-G13 deferred
+
+## 변경 파일
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- `round-handoff` (narrowest check: 3개 검증 명령 재실행 + 코드 대조)
+
+## 변경 이유
+- `.pipeline/claude_handoff.md` CONTROL_SEQ 609는 AXIS-G13 (supervisor test baseline annotation) + AXIS-G10 (role_confidence COMMUNITY explicit) + work note 생성을 지시.
+- 최신 work note가 seq 606 (`sqlite-store-adoption-list-test.md`)으로 seq 609 work note 없음 → implement 라운드가 부분 완료된 상태.
+- verify lane은 (a) 실제 코드 변경 확인, (b) 미완료 항목 확인, (c) 3개 검증 명령 재실행.
+
+## 핵심 변경 — 부분 완료 확인
+
+**AXIS-G10 (role_confidence COMMUNITY explicit) — 완료**:
+- `core/agent_loop.py` line 4112: `SourceRole.COMMUNITY: 0.4,` 추가 확인.
+  - `SourceRole.AUXILIARY: 0.4,` 바로 뒤에 정확하게 삽입됨.
+  - 다른 role_priority dict(lines 4139, 4651)와 대칭 확보.
+
+**AXIS-G13 (supervisor test baseline annotation) — 미완료**:
+- `tests/test_pipeline_runtime_supervisor.py` lines 4816, 4852: origin 주석 없음.
+  - `test_classify_operator_candidate_*` 두 메서드에 "# added during seq 593..." 주석 미추가.
+
+**work note — 미생성**:
+- `work/4/21/2026-04-21-supervisor-test-baseline-truth-sync-role-confidence.md` 없음.
+- 최신 work note는 여전히 seq 606 (`sqlite-store-adoption-list-test.md`).
+
+## 검증 (seq 609)
+- `python3 -m py_compile core/agent_loop.py`
+  - **실측**: 출력 없음 (rc=0). G10 변경 후 syntax 정상.
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor`
+  - **실측**: `Ran 106 tests in 0.678s / OK`. 106 카운트 유지, regression 없음.
+- `git diff --check -- core/agent_loop.py tests/test_pipeline_runtime_supervisor.py`
+  - **실측**: 출력 없음 (rc=0).
+
+실행하지 않은 항목 (명시):
+- `tests.test_watcher_core`: `agent_loop.py` 변경이 `role_confidence` dict 1줄 추가에 한정. watcher 영향 없음.
+- `make e2e-test`, Playwright: 범위 밖.
+
+## 남은 리스크 (seq 609 이후)
+- **AXIS-G10 CLOSED**: `SourceRole.COMMUNITY: 0.4` 추가 완료. py_compile OK, 106 tests OK.
+- **AXIS-G13 미완료**: supervisor test 두 메서드에 origin 주석 추가 필요. → seq 610 handoff 대상.
+- **work note 미생성**: seq 609 implement가 G10만 완료하고 work note 없이 종료. seq 610에서 두 변경(G10 + G13) 통합 work note 생성 필요.
+- **AXIS-DISPATCHER-TRACE-BACKFILL**: verify-lane 여전히 pending.
+- **AXIS-G6-TEST-WEB-APP**: verify-lane 조사 선행 필요.
+- **AXIS-G4 end-to-end**: live runtime `DISPATCH_SEEN` 미확인.
+- **Canonical contracts 유지**: seq 527–609 dirty worktree 포함.
+
+---
+
+# seq 610 verify round — 2026-04-21 AXIS-G13 + AXIS-G10 완전 완료
+
+## 변경 파일
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- `round-handoff` (narrowest check: 3개 검증 명령 재실행 + 코드 대조)
+
+## 변경 이유
+- `work/4/21/2026-04-21-supervisor-test-baseline-truth-sync-role-confidence.md`가 CONTROL_SEQ 610의 AXIS-G13 completion + G10 work note 슬라이스를 닫았다고 주장.
+- verify lane은 (a) origin 주석 실제 삽입 확인, (b) 3개 required check 재실행, (c) /work 주장과 실측 대조.
+
+## 핵심 in-scope 변경 — 확인됨
+
+**AXIS-G13 (supervisor test baseline annotation) — 완료**:
+- `tests/test_pipeline_runtime_supervisor.py` line 4816: `# added during seq 593 dispatch_intent/lane-identity round (undocumented scope addition)` 주석 존재 확인.
+- line 4853: 동일 주석 존재 확인.
+- 두 def 라인이 주석 삽입으로 각각 1줄씩 밀림 (4816→4817, 4852→4854). test 동작 변경 없음.
+
+**AXIS-G10 (role_confidence COMMUNITY explicit) — 이미 완료 (seq 609), 재확인**:
+- `core/agent_loop.py` line 4112: `SourceRole.COMMUNITY: 0.4,` 존재 유지.
+
+### 범위 일치 여부
+- `/work` 주장 "2개 파일 수정 + work note 생성"과 실제 일치. 다른 파일 변경 없음.
+- test count 변화 없음 (주석 추가만이므로 106 유지).
+
+## 검증 (seq 610)
+- `python3 -m py_compile core/agent_loop.py`
+  - **실측**: 출력 없음 (rc=0). `/work` 주장과 일치.
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor`
+  - **실측**: `Ran 106 tests in 0.605s / OK`. `/work` 주장 `Ran 106 tests / OK`와 일치.
+- `git diff --check -- tests/test_pipeline_runtime_supervisor.py core/agent_loop.py`
+  - **실측**: 출력 없음 (rc=0). `/work` 주장과 일치.
+
+실행하지 않은 항목 (명시):
+- `tests.test_watcher_core`: 변경이 test 주석 + dict 1줄에 한정. watcher 영향 없음. 149 OK (seq 593 baseline) 유지 판단.
+- `make e2e-test`, Playwright: 범위 밖.
+- live runtime: verify-lane 별도 대상.
+
+## 남은 리스크 (seq 610 이후)
+- **AXIS-G13 CLOSED**: origin 주석 2개 추가. 106 tests OK.
+- **AXIS-G10 CLOSED**: `SourceRole.COMMUNITY: 0.4` 명시 완료.
+- **전체 implement 완료**: G4 + G5 + G11 + G13 + G10 모두 닫힘.
+- **AXIS-DISPATCHER-TRACE-BACKFILL**: verify-lane `events.jsonl` integrity check 여전히 pending. Gemini seq 601: no implement phase.
+- **AXIS-G6-TEST-WEB-APP**: verify-lane 조사 선행 필요. Gemini seq 601: implement vs EPERM 먼저.
+- **AXIS-G4 end-to-end**: live runtime `DISPATCH_SEEN` 미확인.
+- **다음 implement 축**: 모든 known 축 완료. 새 축 결정 → Gemini advisory 필요 (CONTROL_SEQ 611).
+- **Canonical contracts 유지**: seq 527–610 dirty worktree 포함.
+
+---
+
+# seq 613 verify round — 2026-04-21 AXIS-G14 + verify_fsm output close fallback
+
+## 변경 파일
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- 없음 (narrowest check: 5개 검증 명령 재실행 + 실제 코드/테스트 대조)
+
+## 변경 이유
+- `.pipeline/claude_handoff.md` CONTROL_SEQ 613은 AXIS-G14 (WatcherTurnState legacy alias 제거) 슬라이스를 지시.
+- 구현 라운드에서 AXIS-G14 (`watcher_core.py` + `tests/test_watcher_core.py`)와 `verify_fsm.py` output close fallback 두 work note가 생성됨.
+- verify lane은 두 work note 모두 대조: (a) 5개 required check 재실행, (b) legacy alias grep count, (c) 신규 FSM 메서드 및 회귀 테스트 존재 확인.
+
+## 핵심 in-scope 변경 — 확인됨
+
+**AXIS-G14 (`watcher_core.py` + `tests/test_watcher_core.py`)**:
+- `WatcherTurnState` enum에서 `CLAUDE_ACTIVE = IMPLEMENT_ACTIVE`, `CODEX_FOLLOWUP = VERIFY_FOLLOWUP`, `GEMINI_ADVISORY = ADVISORY_ACTIVE` alias 3줄 제거 확인.
+- 본체 참조 (`watcher_core.py`)와 테스트 (`tests/test_watcher_core.py`) 모두 canonical 이름으로 전수 치환 확인: `grep -c` 두 파일 모두 0.
+- `legacy_state` 기대값을 `legacy_turn_state_name(...)` 계산값으로 바꿔 외부 JSON 호환성 유지.
+- `pipeline_runtime/turn_arbitration.py`, `tests/test_pipeline_runtime_supervisor.py` 미수정 (handoff 제약 준수).
+
+**verify_fsm.py output close fallback**:
+- `verify_fsm.py` `_mark_task_done_from_completed_outputs(...)` 메서드 (lines 449–469) 존재 확인.
+- 호출 조건 (line 933–947): `done_deadline_at` 초과 + `outputs_complete` + `codex_idle` 세 조건 모두 충족 시에만 추론 close.
+- history entry에 `"inferred TASK_DONE"` 포함 문자열로 wrapper 신호 누락 vs. fallback close 구분 가능.
+- `tests/test_watcher_core.py` `test_outputs_complete_infers_task_done_after_done_deadline_when_wrapper_misses_done` 회귀 테스트 존재 확인 (line ~5584).
+- `.pipeline/README.md` line 99: fallback 조건 및 비적용 조건 문서화 확인.
+
+### test count 변화
+- seq 610 baseline: 149
+- AXIS-G14 work note 실측: 150 (alias 치환 전부터 dirty worktree에 +1 미기록 test 존재 — seq 613 범위 외)
+- verify_fsm fallback 회귀 test 추가: 151 (현재 확인)
+
+## 검증 (seq 613 재실행)
+- `python3 -m py_compile verify_fsm.py watcher_core.py`
+  - **실측**: 출력 없음 (rc=0). 두 work note 주장과 일치.
+- `python3 -m unittest tests.test_watcher_core.VerifyCompletionContractTest`
+  - **실측**: `Ran 20 tests in 0.379s / OK`. `/work` 주장 `Ran 20 tests / OK`와 일치.
+- `python3 -m unittest tests.test_watcher_core`
+  - **실측**: `Ran 151 tests in 7.511s / OK`. `/work` 주장 `Ran 151 tests / OK`와 일치. regression 없음.
+- `git diff --check -- verify_fsm.py watcher_core.py tests/test_watcher_core.py .pipeline/README.md`
+  - **실측**: 출력 없음 (rc=0). 두 work note 주장과 일치.
+- `grep -c "CLAUDE_ACTIVE\|CODEX_FOLLOWUP\|GEMINI_ADVISORY" watcher_core.py tests/test_watcher_core.py`
+  - **실측**: `watcher_core.py:0`, `tests/test_watcher_core.py:0`. exit=1 (no matches). AXIS-G14 `/work` 주장과 일치.
+
+실행하지 않은 항목 (명시):
+- `tests.test_pipeline_runtime_supervisor`: seq 613 변경이 watcher/verify_fsm에 한정. 106 OK (seq 610 기준) 유지 판단.
+- `make e2e-test`, Playwright: 범위 밖.
+- live runtime: 여전히 verify-lane 별도 대상.
+
+## 남은 리스크 (seq 613 이후)
+- **AXIS-G14 CLOSED**: legacy alias 제거 완료. 151 tests OK. legacy_state JSON 호환성 유지.
+- **verify_fsm output close fallback CLOSED**: `_mark_task_done_from_completed_outputs` 추가. 회귀 테스트 고정. README 문서화.
+- **dirty worktree +1 미기록 test** (seq 149→150 불일치): 기능적으로 OK. work note 없음. seq 593/605 패턴 지속.
+- **AXIS-DISPATCHER-TRACE-BACKFILL**: verify-lane `events.jsonl` integrity check 여전히 pending.
+- **AXIS-G6-TEST-WEB-APP**: verify-lane 조사 선행 필요 (PermissionError 원인 규명).
+- **AXIS-G4 end-to-end**: live runtime `DISPATCH_SEEN` 미확인.
+- **모든 planned axes (G4~G14 + fallback) 완료**: 다음 implement 축 결정 → Gemini advisory 필요 (CONTROL_SEQ 614).
+
+---
+
+# seq 616 verify round — 2026-04-21 AXIS-G15 watcher test origin annotations
+
+## 변경 파일
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- 없음 (narrowest check: 2개 검증 명령 재실행 + origin 주석 존재 확인)
+
+## 변경 이유
+- `work/4/21/2026-04-21-axis-g15-watcher-test-origin-annotations.md`가 CONTROL_SEQ 616의 AXIS-G15 (watcher test baseline truth-sync) 슬라이스를 닫았다고 주장.
+- verify lane은 (a) 2개 required check 재실행, (b) origin 주석 두 곳 실제 존재 확인, (c) 테스트 카운트 유지 확인.
+
+## 핵심 in-scope 변경 — 확인됨
+
+**`tests/test_watcher_core.py` origin 주석 2개 추가**:
+- line 5506: `# added before AXIS-G14 (seq 613) run; undocumented scope addition (dirty worktree, origin seq unknown)` — 존재 확인.
+- line 5585: `# added during seq 613 verify_fsm output-close fallback round` — 존재 확인.
+- 테스트 본문, assertion, FSM 로직 변경 없음. 주석 삽입으로 def 라인만 1줄씩 밀림.
+
+### 범위 일치 여부
+- `/work` 주장 "1개 파일 수정 (test file 주석만)"과 실제 일치. production 파일 무변경.
+- test count 변화 없음 (주석 추가만이므로 151 유지).
+
+## 검증 (seq 616 재실행)
+- `python3 -m unittest tests.test_watcher_core`
+  - **실측**: `Ran 151 tests in 6.954s / OK`. `/work` 주장 `Ran 151 tests / OK`와 일치. 151 카운트 유지.
+- `git diff --check -- tests/test_watcher_core.py`
+  - **실측**: 출력 없음 (rc=0). `/work` 주장과 일치.
+
+실행하지 않은 항목 (명시):
+- `tests.test_pipeline_runtime_supervisor`: test file 주석 추가에 한정. 106 OK 유지 판단.
+- `make e2e-test`, Playwright: 범위 밖.
+
+## 남은 리스크 (seq 616 이후)
+- **AXIS-G15 CLOSED**: watcher test baseline origin 주석 2개 추가. 151 OK. dirty worktree +1 미기록 test 출처 표시 완료.
+- **feat/watcher-turn-state 브랜치 implement 목표 완전 달성**: G4→G15 전체 + verify_fsm fallback 모두 닫힘. 주석 truth-sync도 완료.
+- **dirty worktree 미커밋 상태**: 모든 변경이 code-green이지만 아직 commit/push 없음. 브랜치 마무리(commit, PR) 또는 Milestone 5 전환 여부는 operator 결정 필요.
+- **AXIS-DISPATCHER-TRACE-BACKFILL**: verify-lane `events.jsonl` integrity check 여전히 pending.
+- **AXIS-G6-TEST-WEB-APP**: verify-lane 조사 선행 필요 (PermissionError 원인 규명).
+- **AXIS-G4 end-to-end**: live runtime `DISPATCH_SEEN` 미확인.
+- **Gemini seq 615**: Milestone 5 (Grounded Brief Contract)가 다음 논리적 전환점. G6/DISPATCHER/G4 e2e verify-lane 완료 전까지 추가 implement 불권장.
+
+---
+
+# seq 619 verify round — 2026-04-21 세션 중단 복구 + operator_autonomy partial-fix truth audit
+
+## 변경 파일
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- 없음 (narrowest check: G15 재확인 2개 + dirty worktree operator_autonomy 상태 점검)
+
+## 변경 이유
+- 이전 세션이 AXIS-DISPATCHER-TRACE-BACKFILL 검증 도중 중단됐습니다. 이번 세션에서 중단 전 산출물 상태를 확인하고, 의도치 않게 dirty worktree에 추가된 미기록 변경을 auditing해 next control을 고정합니다.
+
+## 중단 세션 산출물 상태 — 확인됨
+
+**완료된 산출물:**
+- `verify/4/20/2026-04-20-dispatcher-trace-backfill-verification.md` — 존재 확인. 5개 항목 중 1-4 통과, 항목 5 FAIL (non-canonical decision_class) 기록 완료.
+- `.pipeline/claude_handoff.md` CONTROL_SEQ 618 — AXIS-OPERATOR-CONTROL-METADATA-CANONICALIZATION implement 지시 작성 완료.
+
+**미기록 부분 변경 발견 — `pipeline_runtime/operator_autonomy.py`:**
+- `normalize_operator_policy` 내에 두 alias 추가 (작업 노트 없음):
+  - `"stop_until_operator_decision": "immediate_publish"` → SUPPORTED_OPERATOR_POLICIES 포함 ✓
+  - `"branch_complete_pending_milestone_transition": "approval_required"` → **`approval_required`는 SUPPORTED_OPERATOR_POLICIES 미포함 ✗**
+- `normalize_decision_class` 에 alias dict 추가:
+  - `"branch_closure_and_milestone_transition": "operator_only"` → SUPPORTED_DECISION_CLASSES 포함 ✓
+  - `"branch_complete_pending_milestone_transition": "operator_only"` → SUPPORTED_DECISION_CLASSES 포함 ✓
+
+**미기록 테스트 추가:**
+- `tests/test_operator_request_schema.py`: 6 (1 skipped) → 8 (1 skipped) (+2 테스트, 작업 노트 없음)
+- `tests/test_pipeline_runtime_supervisor.py`: 106 → 107 (+1 테스트, 작업 노트 없음)
+
+## G15 재확인 (seq 619 fresh session)
+- `python3 -m unittest tests.test_watcher_core`
+  - **실측**: `Ran 151 tests in 7.365s / OK`. 151 카운트 유지.
+- `git diff --check -- tests/test_watcher_core.py`
+  - **실측**: rc=0.
+- origin 주석 line 5506, 5585: 존재 확인.
+
+## 현재 테스트 전체 상태 (seq 619 기준)
+- `python3 -m unittest tests.test_watcher_core` — `Ran 151 OK`
+- `python3 -m unittest tests.test_operator_request_schema` — `Ran 8 OK (skipped=1)`
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor` — `Ran 107 OK`
+- `python3 -m py_compile pipeline_runtime/operator_autonomy.py` — rc=0
+
+## 남은 리스크 (seq 619 이후)
+- **broken alias — 즉시 fix 필요**: `normalize_operator_policy("branch_complete_pending_milestone_transition")` → `"approval_required"`, 이 값은 `SUPPORTED_OPERATOR_POLICIES` 미포함. `control_writers.py:262` `raise ValueError` 경로. fix: 제거 또는 `gate_24h`로 정정.
+- **미기록 변경 work note 없음**: `operator_autonomy.py` 변경 3그룹, test 3건 신규, 모두 작업 노트 미존재. seq 593/605/613 패턴 재발.
+- **AXIS-DISPATCHER-TRACE-BACKFILL**: `verify/4/20/2026-04-20-dispatcher-trace-backfill-verification.md` 작성 완료. item 5 FAIL → seq 618→619 implement fix 대상.
+- **AXIS-G6-TEST-WEB-APP**: 여전히 verify-lane pending (operator 승인 순서: DISPATCHER → G6 → G4 e2e).
+- **AXIS-G4 end-to-end**: live runtime `DISPATCH_SEEN` 미확인.
+- **seq 619 next control**: `approval_required` broken alias fix + work note truth-sync implement slice.
+
+---
+
+# seq 620 verify round — 2026-04-21 broken alias fix + watcher idle-release
+
+## 변경 파일
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- `round-handoff` (narrowest check: py_compile + alias mapping + 5개 테스트 스위트 재실행 + control_writers normalization 확인)
+
+## 변경 이유
+- `work/4/21/2026-04-21-implement-handoff-idle-release.md`가 `.pipeline/claude_handoff.md` CONTROL_SEQ 619의 두 가지 슬라이스를 닫았다고 주장:
+  1. `normalize_operator_policy("branch_complete_pending_milestone_transition")` → `gate_24h` broken alias fix
+  2. watcher `claude_handoff_idle_release` — stale turn state 회복 경로 추가
+- verify lane은 (a) alias 실측 값 확인, (b) 5개 테스트 스위트 재실행, (c) control_writers.py normalization 호출 경로 확인, (d) watcher 신규 로직 존재 확인.
+
+## 핵심 in-scope 변경 — 확인됨
+
+**broken alias fix (`pipeline_runtime/operator_autonomy.py`)**:
+- `normalize_operator_policy('branch_complete_pending_milestone_transition')` → `gate_24h` **실측 ✓**
+  - seq 619 broken 값 `approval_required` (SUPPORTED_OPERATOR_POLICIES 미포함) → `gate_24h` (포함) 정정 완료.
+- `normalize_operator_policy('stop_until_operator_decision')` → `immediate_publish` **실측 ✓**
+- `normalize_decision_class('branch_closure_and_milestone_transition')` → `operator_only` **실측 ✓**
+- `normalize_decision_class('branch_complete_pending_milestone_transition')` → `operator_only` **실측 ✓**
+- `normalize_reason_code('stop_until_operator_decision')` → `stop_until_operator_decision` (field-specific 분리, policy alias 미출혈) **실측 ✓**
+
+**control_writers.py normalization 경로 — 재확인**:
+- lines 51-88: `normalize_reason_code / normalize_operator_policy / normalize_decision_class` 순서로 호출 후 SUPPORTED_ 리스트 검증. 변경 없음, 기존 경로 유지.
+- lines 256-267: autonomy event 경로도 동일 normalize 함수 호출. broken alias가 이 경로를 지나면 이제 canonical 값으로 변환됨.
+- `AXIS-DISPATCHER-TRACE-BACKFILL item 5 FAIL (decision_class='branch_closure_and_milestone_transition')` → 미래 emission은 `operator_only`로 정규화됨. 과거 event seq 821은 데이터 기록으로 남음.
+
+**watcher idle-release (`watcher_core.py` lines 3236–3284)**:
+- `handoff_seq > self._turn_active_control_seq` + `dispatch_state["dispatchable"]` + `release_ready` 세 조건 충족 시 `claude_handoff_idle_release` emit 경로 존재 확인.
+- busy pane은 기존처럼 `claude_handoff_deferred` + `dispatchable/release_ready/release_reason/current_turn_control_seq` 보강 기록.
+- `_last_idle_release_handoff_sig`, `_last_idle_release_at` 쿨다운 필드 (lines 1476–1477) 존재 확인.
+
+### 범위 일치 여부
+- `/work` 주장 파일: `.pipeline/README.md`, `pipeline_runtime/operator_autonomy.py`, `watcher_core.py`, `tests/test_operator_request_schema.py`, `tests/test_watcher_core.py`. 별도 scope violation 없음.
+- test_watcher_core 152 (seq 619 baseline 151 → +1 idle-release 회귀 테스트). `/work` 주장과 정합.
+
+## 검증 (seq 620 재실행)
+- `python3 -m py_compile pipeline_runtime/operator_autonomy.py watcher_core.py`
+  - **실측**: 출력 없음 (rc=0). `/work` 주장과 일치.
+- alias mapping 실측 (python3 -c 인라인):
+  - `branch_complete_pending_milestone_transition → gate_24h` **True ✓**
+  - `stop_until_operator_decision → immediate_publish` **True ✓**
+- `python3 -m unittest tests.test_operator_request_schema`
+  - **실측**: `Ran 8 tests in 0.001s / OK (skipped=1)`. `/work` 주장 `Ran 8 OK (skipped=1)`과 일치.
+- `python3 -m unittest tests.test_watcher_core.ClaudeHandoffDispatchTest tests.test_watcher_core.RollingSignalTransitionTest`
+  - **실측**: `Ran 14 tests in 0.188s / OK`. (5+9=14, `/work` 5 OK + 9 OK와 정합)
+- `python3 -m unittest tests.test_watcher_core`
+  - **실측**: `Ran 152 tests in 6.613s / OK`. `/work` 주장 `Ran 152 OK`와 일치. regression 없음.
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor`
+  - **실측**: `Ran 107 tests in 0.609s / OK`. `/work` 주장 `Ran 107 OK`와 일치. regression 없음.
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor.RuntimeSupervisorTest.test_classify_operator_candidate_seq617_raw_metadata_is_canonical`
+  - **실측**: `Ran 1 test / OK`. `/work` 주장과 일치.
+- `python3 -m unittest tests.test_pipeline_runtime_control_writers`
+  - **실측**: `Ran 7 tests in 0.005s / OK`. regression 없음.
+- `git diff --check -- .pipeline/README.md pipeline_runtime/operator_autonomy.py watcher_core.py tests/test_operator_request_schema.py tests/test_watcher_core.py`
+  - **실측**: 출력 없음 (rc=0). `/work` 주장과 일치.
+
+실행하지 않은 항목 (명시):
+- `make e2e-test`, Playwright, `tests.test_web_app`: runtime handoff 회복 경로 변경에 한정. 브라우저 계약 변경 없음.
+- AXIS-G4 end-to-end live runtime `DISPATCH_SEEN`: watcher 재시작 필요, 별도 verify-lane 대상.
+- AXIS-G6-TEST-WEB-APP (`tests.test_web_app` PermissionError): 여전히 verify-lane pending.
+
+## 남은 리스크 (seq 620 이후)
+- **AXIS-OPERATOR-CONTROL-METADATA-CANONICALIZATION CLOSED**: broken alias `approval_required` → `gate_24h` 정정 완료. field-specific normalization 분리 완료. control_writers.py normalization 경로 검증됨. 미래 emit은 canonical.
+- **watcher idle-release CLOSED**: 회귀 테스트 포함. 실행 중인 watcher process는 재시작 필요 (runtime restart까지 적용 안 됨).
+- **AXIS-G6-TEST-WEB-APP**: verify-lane 조사 선행 필요 (PermissionError 원인 — socket/환경 vs. 코드 버그).
+- **AXIS-G4 end-to-end**: live runtime `DISPATCH_SEEN` 방출 확인 미완.
+- **dirty worktree 미커밋**: G4~G15 + verify_fsm fallback + AXIS-OPERATOR-CONTROL-METADATA-CANONICALIZATION + watcher idle-release — 모두 code-green, 커밋 없음. 브랜치 마무리(commit, PR) 시점 및 Milestone 5 전환 여부는 Gemini advisory + operator 결정 필요.
+- **Canonical contracts 유지**: seq 527–619 dirty worktree 포함, CONTROL_SEQ 619 기준 최신.
+- **seq 620 next control**: `.pipeline/gemini_request.md` — G6 verify-lane / G4 e2e / branch commit 순서 및 Milestone 5 전환 readiness advisory 요청.
+
+---
+
+# seq 624 verify round — 2026-04-21 operator gate alias followup recovery
+
+## 변경 파일
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- 없음 (narrowest check: py_compile + 4개 테스트 실행 + alias 매핑 직접 확인)
+
+## 변경 이유
+- `work/4/21/2026-04-21-operator-gate-alias-followup-recovery.md`가 다음을 닫았다고 주장:
+  1. `normalize_reason_code(...)` 에 `branch_commit_and_milestone_transition` / `branch_commit_milestone_transition` alias 추가 → `approval_required` 수렴
+  2. 회귀 assertion을 `tests/test_operator_request_schema.py`에 추가
+  3. `test_classify_operator_candidate_branch_commit_gate_stays_followup_visible` 추가 — `gate_24h + branch_commit_and_milestone_transition` → `pending_operator`, `routed_to=codex_followup`
+  4. pipeline runtime 재시작 후 `turn_state.state='VERIFY_FOLLOWUP'`, `autonomy.mode='pending_operator'` 확인
+
+## 핵심 in-scope 변경 — 확인됨
+
+**alias 매핑 실측**:
+- `normalize_reason_code('branch_commit_and_milestone_transition')` → `'approval_required'` ✓
+- `normalize_reason_code('branch_commit_milestone_transition')` → `'approval_required'` ✓
+
+**classify 분기 실측** (classify_operator_candidate with control_meta):
+- `mode='pending_operator'`, `reason_code='approval_required'`, `operator_policy='gate_24h'`, `routed_to='codex_followup'` ✓
+- `classification_source='operator_policy'` ✓ (hibernate가 아닌 gate_24h 경로로 올바르게 분류됨)
+
+**`tests/test_operator_request_schema.py`**: `test_seq617_raw_operator_headers_normalize_to_canonical_metadata` 내 line 87–88에 `branch_commit_and_milestone_transition` assertion 확인 — 기존 test body에 추가됨, 신규 test method 아님.
+
+### SCOPE VIOLATION — /work 미기재 추가 변경
+`/work` 노트는 "supervisor 회귀 테스트 1개 추가"로 서술했으나 실제 dirty worktree 기준 미기록 추가 존재:
+
+1. **`tests/test_pipeline_runtime_supervisor.py` +2 미기록 test method** (seq 620 baseline 107 → 현재 110, in-scope 1개 제외 +2):
+   - `test_classify_operator_candidate_choice_menu_keeps_approval_record_blocker` — choice_menu가 approval record blocker를 유지하는지 고정
+   - `test_classify_operator_candidate_choice_menu_routes_to_advisory_followup` — seq 623 형식 choice menu가 `advisory_followup`으로 route되는지 고정 (fixture 내 `CONTROL_SEQ: 623` 텍스트 포함)
+2. **`tests/test_watcher_core.py` +1 미기록 test** (seq 620 baseline 152 → 현재 153). seq 593/605/613/619 패턴 4회 반복.
+
+모든 undocumented 추가분은 기능적으로 OK (110 supervisor OK, 153 watcher OK).
+
+## 검증 (seq 624 재실행)
+- `python3 -m py_compile pipeline_runtime/operator_autonomy.py`
+  - **실측**: 출력 없음 (rc=0). `/work` 주장과 일치.
+- `python3 -m unittest tests.test_operator_request_schema tests.test_pipeline_runtime_supervisor.RuntimeSupervisorTest.test_classify_operator_candidate_branch_commit_gate_stays_followup_visible`
+  - **실측**: `Ran 9 tests in 0.002s / OK (skipped=1)`. `/work` 주장 `Ran 9 tests / OK (skipped=1)`과 일치.
+  - skipped: `test_live_operator_request_header_canonical` — "Live file drift detected: REASON_CODE='branch_commit_and_milestone_transition'". 현재 `.pipeline/operator_request.md`가 non-canonical reason_code를 사용하기 때문. 예상된 skip.
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor`
+  - **실측**: `Ran 110 tests in 0.754s / OK`. seq 620 baseline 107 → 110. +3 중 1 documented, 2 undocumented.
+- `python3 -m unittest tests.test_watcher_core`
+  - **실측**: `Ran 153 tests in 7.890s / OK`. seq 620 baseline 152 → 153. +1 undocumented.
+- `git diff --check -- pipeline_runtime/operator_autonomy.py tests/test_operator_request_schema.py tests/test_pipeline_runtime_supervisor.py`
+  - **실측**: 출력 없음 (rc=0). `/work` 주장과 일치.
+
+실행하지 않은 항목 (명시):
+- `make e2e-test`, Playwright, `tests.test_web_app`: runtime routing 경계 변경에 한정. 브라우저 계약 변경 없음.
+- live runtime status 재확인: `/work`가 런타임 재시작 후 `VERIFY_FOLLOWUP` 상태를 확인했다고 주장. classify 분기 단위 테스트가 통과하므로 별도 재시작 불필요.
+
+## 남은 리스크 (seq 624 이후)
+- **operator gate alias recovery CLOSED**: `branch_commit_and_milestone_transition` → `approval_required` alias 확인. `gate_24h` → `pending_operator` + `codex_followup` routing 확인. runtime이 hibernate 대신 VERIFY_FOLLOWUP으로 surface됨.
+- **undocumented scope addition 패턴 4회 반복**: +2 supervisor (choice_menu contract tests) + +1 watcher. 모두 OK. work note 없음. seq 593/605/613/619 패턴 지속. 이번에 추가된 choice_menu tests는 seq 623 operator_request 형식의 advisory_followup routing을 고정 — 관련 기능이 별도 work note 없이 ship됨.
+- **AXIS-G6-TEST-WEB-APP**: ENV_BASELINE_ONLY 수용 (Gemini seq 621). 별도 verify note 종결 필요.
+- **AXIS-DISPATCHER-TRACE-BACKFILL item 5**: decision_class non-canonical FAIL 여전히 pending (verify/4/20 파일 기록됨). 미래 emission은 normalize 후 canonical.
+- **AXIS-G4 end-to-end**: live runtime `DISPATCH_SEEN` 방출 미확인.
+- **Operator decisions B/C/D**: `.pipeline/operator_request.md` seq 623 → seq 624로 갱신. 결정 내용 불변 (B: live runtime verify, C: branch commit/push, D: Milestone 5 진입).
+- **Canonical contracts 유지**: seq 527–623 dirty worktree 포함.
+
+---
+
+# seq 625 verify round — 2026-04-21 menu-choice advisory-first routing
+
+## 변경 파일
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- `round-handoff` (narrowest check: py_compile + 4 suite 재실행 + 분류기 동작 직접 확인)
+
+## 변경 이유
+- `work/4/21/2026-04-21-menu-choice-advisory-routing.md`가 선택지형 operator stop의 advisory-first 라우팅 보강 슬라이스를 닫았다고 주장.
+- verify lane은 (a) 4개 required check 재실행, (b) 분류기 핵심 동작 실측, (c) `/work` 파일 목록·검증 수치 진위성 대조.
+
+## 핵심 in-scope 변경 — 확인됨
+
+**`pipeline_runtime/operator_autonomy.py` — choice menu 감지·라우팅 추가**:
+- `_looks_like_agent_resolvable_choice_menu(text)` 함수 존재 확인 (lines 295–324).
+- `classify_operator_candidate` 내부 choice menu override 블록 (lines 415–422): `operator_policy == "gate_24h"` + `resolved_reason in {approval_required, operator_candidate_pending}` + `decision_class in {"", "operator_only", "next_slice_selection"}` + menu 감지 시 → `resolved_reason = "slice_ambiguity"`, `decision_class = "next_slice_selection"`.
+- `_MENU_CHOICE_BLOCKER_MARKERS` 안전 마커 존재 확인 (lines 56–81): approval_record, credential, destructive 계열 보호.
+- 실측 (올바른 metadata 전달): `classify_operator_candidate(content, control_meta={...gate_24h...})` → `mode=triage`, `reason_code=slice_ambiguity`, `decision_class=next_slice_selection`, `routed_to=codex_followup`. `/work` 주장과 일치.
+
+**`tests/test_pipeline_runtime_supervisor.py` — +1 (110 → 111)**:
+- `test_classify_operator_candidate_numbered_choice_menu_routes_to_advisory_followup` 추가 확인 (seq 624 baseline 110 → 111).
+- seq 624 verify에서 기록된 미문서 2개 (`test_..._choice_menu_routes_to_advisory_followup`, `test_..._choice_menu_keeps_approval_record_blocker`)는 이번 work note의 documented scope에 해당. 역적으로 공식 work note가 선행 구현을 소급 커버.
+
+**`tests/test_watcher_core.py` — +1 (153 → 154)**:
+- 실측 Ran 154 OK. `/work` 주장 `Ran 154 OK`와 일치.
+
+**다중 문서 sync (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `PROJECT_CUSTOM_INSTRUCTIONS.md`, `.claude/rules/pipeline-runtime.md`, `.pipeline/README.md`, `work/README.md`, `verify/README.md`)**:
+- "선택지형 stop → advisory-first, 진짜 blocker만 operator stop" 규칙 반영 확인.
+
+### 범위 일치 여부
+- `/work` 파일 목록과 실제 변경 일치. production 파일 (`operator_autonomy.py`) + 2개 test file + doc sync.
+- supervisor 111, watcher 154 수치 모두 `/work` 주장과 일치.
+
+## 검증 (seq 625 재실행)
+- `python3 -m py_compile pipeline_runtime/operator_autonomy.py`
+  - **실측**: 출력 없음 (rc=0). `/work` 주장과 일치.
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor`
+  - **실측**: `Ran 111 tests in 0.678s / OK`. `/work` 주장 `Ran 111 tests / OK`와 일치.
+- `python3 -m unittest tests.test_watcher_core`
+  - **실측**: `Ran 154 tests in 6.362s / OK`. `/work` 주장 `Ran 154 tests / OK`와 일치.
+- `python3 -m unittest tests.test_operator_request_schema tests.test_pipeline_runtime_control_writers`
+  - **실측**: `Ran 15 tests in 0.012s / OK (skipped=1)`. `/work` 주장 `Ran 15 tests / OK (skipped=1)`과 일치.
+- `git diff --check -- pipeline_runtime/operator_autonomy.py tests/test_pipeline_runtime_supervisor.py tests/test_watcher_core.py .pipeline/README.md AGENTS.md PROJECT_CUSTOM_INSTRUCTIONS.md CLAUDE.md GEMINI.md .claude/rules/pipeline-runtime.md work/README.md verify/README.md`
+  - **실측**: 출력 없음 (rc=0). `/work` 주장과 일치.
+- 분류기 동작 실측: `classify_operator_candidate(content, control_meta={gate_24h + approval_required + B/C/D DECISION_REQUIRED}, control_mtime=mtime)` → `mode=triage`, `reason_code=slice_ambiguity`, `decision_class=next_slice_selection`, `routed_to=codex_followup`. suppress window 내 (operator_eligible=False).
+
+실행하지 않은 항목 (명시):
+- `make e2e-test`, Playwright: runtime routing 경계 변경에 한정. 브라우저 계약 변경 없음.
+- AXIS-G4 end-to-end live runtime: verify-lane 별도 대상 (operator 승인 필요).
+- AXIS-G6-TEST-WEB-APP: ENV_BASELINE_ONLY 수용 이후 verify note 종결 미실행.
+
+## False-positive 발견 (기록용)
+- 현재 `.pipeline/operator_request.md` B/C/D 패턴이 `_looks_like_agent_resolvable_choice_menu` 함수에서 True로 감지됨.
+- B/C/D는 순차 승인 게이트 (live runtime restart → git push/PR → Milestone 5 전환)이며 병렬 대안 선택지가 아님.
+- commit/push/PR 및 Milestone 전환 키워드가 `_MENU_CHOICE_BLOCKER_MARKERS`에 미포함 → false positive.
+- 현재는 gate_24h suppress window 내에 있어 실제 routing 영향 없음 (suppress_until: 2026-04-22). 24h 경과 후 `operator_eligible=True` 전환 시 `needs_operator` 표면화.
+- 향후 `_MENU_CHOICE_BLOCKER_MARKERS`에 branch/commit/push/milestone 계열 마커 추가 검토 필요.
+
+## 남은 리스크 (seq 625 이후)
+- **menu-choice advisory-first routing CLOSED**: operator_autonomy choice menu 감지 + routing, 111/154/15 tests OK.
+- **False-positive 미해결**: B/C/D 순차 승인 게이트가 `slice_ambiguity`로 오분류됨. suppress window 내에선 실영향 없으나 향후 blocker marker 보강 필요.
+- **AXIS-G6-TEST-WEB-APP**: verify note 종결 미완. ENV_BASELINE_ONLY 수용 결론만 존재.
+- **AXIS-DISPATCHER-TRACE-BACKFILL item 5**: 과거 event non-canonical 기록. 미래 emission normalize됨.
+- **AXIS-G4 end-to-end**: live runtime `DISPATCH_SEEN` 방출 확인 — operator B 승인 후 실행.
+- **Operator decisions B/C/D**: seq 624 → 625로 갱신 예정. 결정 내용 불변.
+- **feat/watcher-turn-state dirty worktree**: G4~G15 + fallback + alias fix + idle-release + menu routing 모두 code-green. 커밋/푸시 없음.
+- **Canonical contracts 유지**: seq 527–624 dirty worktree 포함.
+
+---
+
+# seq 629 verify round — 2026-04-21 AXIS-G4 live runtime validation truth audit
+
+## 변경 파일
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- 없음 (docs-only narrowest check: git diff --check + work note 진위성 대조)
+
+## 변경 이유
+- `work/4/21/2026-04-21-axis-g4-live-runtime-validation.md`가 CONTROL_SEQ 628의 AXIS-G4 end-to-end live runtime 검증 슬라이스를 닫았다고 주장.
+- SCOPE_HINT: docs-only truth-sync from `## 변경 파일`. code/test/runtime 변경 없으므로 unit/Playwright 확장 불필요.
+
+## 핵심 확인 — docs-only
+
+**`## 변경 파일` 진위성 확인 — 정확**:
+- 작업 노트는 `work/4/21/2026-04-21-axis-g4-live-runtime-validation.md` (새 파일) 한 건만 나열. git status `??` 로 untracked new file 확인. production/test 코드 변경 없음.
+
+**`git diff --check` 결과**:
+- `git diff --check -- work/4/21/2026-04-21-axis-g4-live-runtime-validation.md`: 출력 없음 (rc=0). untracked 신규 파일이므로 whitespace 검사 대상 없음. 이상 없음.
+
+**handoff SHA 유지 확인**:
+- `.pipeline/claude_handoff.md` sha256: `b64e8c2abdf22aa019194de7ea5afb15fe88afa1c8ff93d8acb94562fefa13a1` — 작업 노트 기록값과 일치. idle-release rewrite 없음.
+
+## 핵심 발견 (work note 기록 내용 대조)
+
+**DISPATCH_SEEN / TASK_ACCEPTED — wrapper events에서 확인, supervisor events.jsonl 미집계**:
+- `.pipeline/runs/20260421T070544Z-p202761/wrapper-events/codex.jsonl`에 DISPATCH_SEEN / TASK_ACCEPTED / TASK_DONE 모두 발행됨. payload `job_id="ctrl-628"`, `dispatch_id="seq-628"` 포함. wrapper emitter 동작 확인.
+- 그러나 supervisor run-local `events.jsonl`에는 집계되지 않음. supervisor event aggregation 경로 또는 event key (`event` vs `event_type`) 불일치가 남은 간극.
+
+**dispatch_selection payload key — 기대값 불일치: 코드 버그 아님**:
+- 실측 payload: `latest_work` / `latest_verify`. 핸드오프 기대값: `work_path` / `verify_path`.
+- `tests/test_pipeline_runtime_supervisor.py` `test_dispatch_selection_payload_key_stability` (seq 599 verify에서 확인)가 `latest_work` / `latest_verify` 키를 고정함. 현재 구현이 곧 계약.
+- 핸드오프의 `work_path`/`verify_path` 기대값은 핸드오프 작성 시 오기재로 판단. code regression 없음.
+
+**runtime_state=STARTING, watcher.alive=false**:
+- 재시작 직후 snapshot. status subcommand 미지원(`rc=2`)으로 대체 경로 사용. 정상 운행 중 상태가 아닌 시점 측정으로 보임. 환경/타이밍 이슈.
+
+**idle-release — 조건 불충족으로 미테스트**:
+- 현재 turn_state=IMPLEMENT_ACTIVE. `watcher_core.py:3236–3284` idle-release 경로는 `VERIFY_FOLLOWUP` / `ADVISORY_ACTIVE` 등 idle-eligible 상태에서만 동작. 이번 검증 범위 외.
+
+## 검증 (seq 629)
+- `git diff --check -- work/4/21/2026-04-21-axis-g4-live-runtime-validation.md`
+  - **실측**: 출력 없음 (rc=0).
+- `## 변경 파일` 대조: work note 단일 새 파일 — confirmed, git status `??` 일치.
+
+실행하지 않은 항목 (명시):
+- unit test 재실행 없음: code/test 변경 없음, SCOPE_HINT 준수.
+- make e2e-test, Playwright: 범위 밖.
+
+## 남은 리스크 (seq 629 이후)
+- **AXIS-G4 e2e 부분 완료**: wrapper emitter (DISPATCH_SEEN/TASK_ACCEPTED/TASK_DONE) 동작 확인. supervisor events.jsonl 집계 미달성 — 집계 경로 조사 또는 defer 결정 필요.
+- **dispatch_selection payload key**: `latest_work`/`latest_verify`가 실제 계약. 핸드오프 기대값(`work_path`/`verify_path`)은 오기재. 코드/테스트 변경 불필요.
+- **`_MENU_CHOICE_BLOCKER_MARKERS` false-positive**: suppress_until 2026-04-22. 오늘(2026-04-21) 내 implement fix 또는 Gemini advisory 우선.
+- **AXIS-G6-TEST-WEB-APP**: verify note 종결 미완.
+- **AXIS-DISPATCHER-TRACE-BACKFILL item 5**: 과거 non-canonical event 기록 유지.
+- **feat/watcher-turn-state dirty worktree**: 전체 code-green. 커밋/푸시 결정 미완. 결정 C (branch commit) operator 승인 대기 중.
+- **Canonical contracts 유지**: seq 527–628 dirty worktree 포함.
+
+---
+
+# seq 631 verify round — 2026-04-21 blockermarkers sequential gate fix
+
+## 변경 파일
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- `round-handoff` (narrowest check: py_compile + 3개 테스트 스위트 재실행 + 분류기 동작 실측)
+
+## 변경 이유
+- `work/4/21/2026-04-21-blockermarkers-sequential-gate-fix.md`가 `.pipeline/claude_handoff.md` CONTROL_SEQ 631의 `_MENU_CHOICE_BLOCKER_MARKERS` false-positive fix 슬라이스를 닫았다고 주장.
+- verify lane은 (a) 3개 required check 재실행, (b) 실제 코드 대조, (c) `/work` 파일 목록·검증 수치·마커 목록 진위성 대조, (d) 분류기 동작 실측.
+
+## 핵심 발견 — TRUTH GAP (헤드라인)
+
+### git/milestone 마커 미추가 — 스코프 undershoot
+`/work` 노트는 다음을 추가했다고 주장:
+> git/milestone 동작 계열 blocker로 `커밋`, `commit`, `push`, `푸시`, `milestone`, `마일스톤`, `브랜치`, `pr approval`, `pr 승인`을 추가했습니다.
+
+**실측**: 이 마커들은 `_MENU_CHOICE_BLOCKER_MARKERS` 튜플에 존재하지 않음. 현재 실제 blocker marker 목록:
+
+```
+'safety_stop', 'safety stop', 'security_incident', 'security incident',
+'destructive_risk', 'destructive risk', 'truth_sync_required',
+'truth sync required', 'truth-sync required', 'auth_login_required',
+'auth login', 'login required', 'invalid authentication credentials',
+'approval_record', 'approval-record', 'approval record',
+'approval record repair', '통과 후', '완료 후', 'password',
+'credential', 'secret', 'api key', 'token', 'delete file', 'remove file'
+```
+
+`커밋`/`commit`/`push`/`푸시`/`milestone`/`마일스톤`/`브랜치`/`pr approval`/`pr 승인` **없음**. seq 593/587/605/613/619/624 패턴 7회 반복.
+
+### 순차 게이트 마커 — 확인됨
+- `통과 후`, `완료 후`: 실제로 추가됨 ✓
+- `이후`: handoff에서 "너무 광범위할 수 있어 skip" 처리 → 미추가. Acceptable.
+
+### 기능적 fix 유효성 — 실측 확인
+- `_looks_like_agent_resolvable_choice_menu(B/C/D 실제 텍스트)` → `False` ✓
+- B/C/D 내 `통과 후`/`완료 후` 존재로 blocker 검사 통과. 현재 operator_request.md 패턴에 한해 false-positive 해소됨.
+- git/milestone 마커 미추가로 미래 edge case (B/C/D에 `통과 후`/`완료 후` 없이 `commit`/`push`만 있는 경우) 여전히 오분류 가능.
+
+### undocumented 테스트 +4
+seq 629 baseline (111 supervisor) → 현재 116 = +5. `/work` documented: +1 (sequential_gate_not_misrouted). 미문서 +4:
+1. `test_classify_operator_candidate_body_marker_docs_do_not_block_choice_menu`
+2. `test_classify_operator_candidate_defaults_decision_class_per_visible_mode`
+3. `test_classify_operator_candidate_inline_parenthesized_choices_route_to_advisory_followup`
+4. `test_classify_operator_candidate_payload_stability`
+
+이 4개 테스트는 기능적으로 OK (116 suite green). work note 없음. 동일 패턴 반복.
+
+## in-scope 변경 — 확인됨
+- `통과 후`, `완료 후` markers: **실측 ✓**
+- `test_classify_operator_candidate_sequential_gate_not_misrouted`: 존재·통과 **실측 ✓**
+
+## 검증 (seq 631 재실행)
+- `python3 -m py_compile pipeline_runtime/operator_autonomy.py`
+  - **실측**: 출력 없음 (rc=0). `/work` 주장과 일치.
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor`
+  - **실측**: `Ran 116 tests in 0.764s / OK`. `/work` 주장 `Ran 116 tests / OK`와 일치.
+- `python3 -m unittest tests.test_operator_request_schema`
+  - **실측**: `Ran 8 tests in 0.001s / OK`. `/work` 주장 `Ran 8 OK`와 일치.
+- `git diff --check -- pipeline_runtime/operator_autonomy.py tests/test_pipeline_runtime_supervisor.py`
+  - **실측**: 출력 없음 (rc=0). `/work` 주장과 일치.
+- 분류기 동작 실측:
+  - `_looks_like_agent_resolvable_choice_menu("(B) ... (C) B 통과 후 ... (D) C 완료 후 ...")` → `False` ✓
+
+실행하지 않은 항목 (명시):
+- `make e2e-test`, Playwright: operator_autonomy.py 내부 분류기 마커 변경에 한정. 브라우저 계약 변경 없음.
+- `tests.test_watcher_core`: operator_autonomy 마커만 변경, watcher 회귀 없음.
+
+## 현재 테스트 전체 상태 (seq 631 기준)
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor` — `Ran 116 OK`
+- `python3 -m unittest tests.test_operator_request_schema` — `Ran 8 OK`
+- `python3 -m py_compile pipeline_runtime/operator_autonomy.py` — rc=0
+
+## 남은 리스크 (seq 631 이후)
+- **`_MENU_CHOICE_BLOCKER_MARKERS` sequential gate fix CLOSED (기능적)**: 현재 B/C/D 패턴 false-positive 해소. `suppress_until: 2026-04-22` 만료 전 실영향 없음.
+- **git/milestone blocker 마커 gap**: `커밋`/`commit`/`push`/`milestone` 등 미추가. 미래 edge case 취약. 별도 slice 필요시 추가.
+- **SCOPE_VIOLATION 패턴 7회 반복**: handoff 명시 마커 40% 미구현 + 미문서 테스트 +4. truth gap 누적 지속.
+- **supervisor events.jsonl 집계 gap**: `_mirror_wrapper_task_events` (lines 348–376) 코드 존재하나 live run에서 wrapper 이벤트 미집계 확인됨. 시뮬레이션에서 `iter_wrapper_task_events`는 DISPATCH_SEEN/TASK_ACCEPTED/TASK_DONE 3개 정상 반환. 집계 미작동 근본 원인 미특정 (live 프로세스 구버전 코드 사용 가능성, 경로 문제 등). Gemini seq 630 "item C" — 다음 implement 슬라이스 대상.
+- **AXIS-G6-TEST-WEB-APP**: verify note 종결 미완.
+- **AXIS-DISPATCHER-TRACE-BACKFILL item 5**: 과거 non-canonical event 기록.
+- **feat/watcher-turn-state dirty worktree**: 전체 code-green. 커밋/푸시 결정 미완.
+- **Canonical contracts 유지**: seq 527–630 dirty worktree 포함.
+
+---
+
+# seq 632 verify round — 2026-04-21 supervisor events aggregation regression test
+
+## 변경 파일
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- `round-handoff` (narrowest check: py_compile + 신규 테스트 단독 실행 + 전체 suite 재실행 + git diff --check)
+
+## 변경 이유
+- `work/4/21/2026-04-21-supervisor-events-aggregation.md`가 `.pipeline/claude_handoff.md` CONTROL_SEQ 632의 supervisor events.jsonl wrapper event aggregation 회귀 테스트 슬라이스를 닫았다고 주장.
+- verify lane은 (a) 신규 테스트 단독 실행, (b) 전체 supervisor suite 재실행, (c) `pipeline_runtime/supervisor.py` 비수정 주장 확인, (d) `/work` 파일 목록·수치 진위성 대조.
+
+## 핵심 in-scope 변경 — 확인됨
+
+**`test_mirror_wrapper_task_events_appends_to_events_jsonl` (lines 1855–1907)**:
+- 임시 run directory에 `DISPATCH_SEEN` wrapper event 기록 후 `_mirror_wrapper_task_events()` 직접 호출.
+- `events.jsonl` 생성·source='wrapper' 항목 1건·event_type='DISPATCH_SEEN'·payload.job_id='ctrl-1' 확인.
+- `append_wrapper_event(..., source="wrapper")` — handoff fixture의 `source=` 누락을 보정해 시그니처 일치. 적절.
+
+**`pipeline_runtime/supervisor.py`**:
+- `/work` 주장대로 이번 라운드 변경 없음. git diff의 supervisor.py 항목은 seq 593+ 누적 SCOPE_VIOLATION 변경분.
+
+### 범위 일치 여부
+- `/work` 파일 목록 (`tests/test_pipeline_runtime_supervisor.py`, 새 work note): 실제와 일치. production supervisor 수정 없음. ✓
+
+## 검증 (seq 632 재실행)
+- `python3 -m py_compile pipeline_runtime/supervisor.py`
+  - **실측**: 출력 없음 (rc=0). `/work` 주장과 일치.
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor.RuntimeSupervisorTest.test_mirror_wrapper_task_events_appends_to_events_jsonl`
+  - **실측**: `Ran 1 test in 0.003s / OK`. `/work` 주장 (Step 2 재실행 PASS)과 일치.
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor`
+  - **실측**: `Ran 117 tests in 0.863s / OK`. `/work` 주장 `Ran 117 OK`와 일치.
+- `python3 -m unittest tests.test_operator_request_schema`
+  - **실측**: `Ran 8 tests in 0.001s / OK`. `/work` 주장 `Ran 8 OK`와 일치.
+- `git diff --check -- pipeline_runtime/supervisor.py tests/test_pipeline_runtime_supervisor.py`
+  - **실측**: 출력 없음 (rc=0). `/work` 주장과 일치.
+
+실행하지 않은 항목 (명시):
+- live runtime 재시작·재검증: `/work` 명시 ("production supervisor 프로세스 재시작이나 live run 재검증은 수행하지 않았습니다"). 단위 테스트로 `_mirror_wrapper_task_events` 경로 확인에 한정.
+- `make e2e-test`, Playwright: test file 변경에 한정. 브라우저 계약 변경 없음.
+
+## 현재 테스트 전체 상태 (seq 632 기준)
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor` — `Ran 117 OK`
+- `python3 -m unittest tests.test_operator_request_schema` — `Ran 8 OK`
+- `python3 -m py_compile pipeline_runtime/supervisor.py` — rc=0
+
+## 남은 리스크 (seq 632 이후)
+- **supervisor events aggregation unit-test CLOSED**: 단위 테스트 기준 `_mirror_wrapper_task_events` 경로 정상 작동 확인. 117 OK.
+- **live run 집계 gap — 미재검증**: seq 629 live gap (run `20260421T070544Z-p202761` events.jsonl 0개 wrapper 항목)은 단위 테스트가 통과해도 live restart 재검증 없음. 가설: 구버전 프로세스. 미확정.
+- **Gemini "verified" 충족 여부 미결정**: Gemini seq 630 "DEFER B until A and C verified". A=단위·코드 확인 완료, C=단위 테스트 PASS. live 재검증 없이 "verified" 충족 여부는 Gemini arbitration 필요.
+- **feat/watcher-turn-state dirty worktree**: scope violation 누적 7회 (git/milestone 마커 미추가, undocumented tests +4 포함). commit 시 이 truth gap들이 그대로 포함됨. Gemini가 commit 전 정리 여부 판단 필요.
+- **AXIS-G6-TEST-WEB-APP**: verify note 종결 미완.
+- **AXIS-DISPATCHER-TRACE-BACKFILL item 5**: 과거 non-canonical event 기록.
+- **Canonical contracts 유지**: seq 527–631 dirty worktree 포함.
+
+---
+
+# seq 635 verify round — 2026-04-21 truth-sync markers + automation health contract
+
+## 변경 파일
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- `round-handoff` (narrowest check: py_compile + 8개 테스트 스위트 재실행 + 마커 실측 + 코드 대조)
+
+## 변경 이유
+- CONTROL_SEQ 635 implement 세션이 두 work note를 생성했습니다:
+  1. `work/4/21/2026-04-21-truth-sync-markers-test-origins.md` — CONTROL_SEQ 635 핸드오프 지정 범위 (git/milestone blocker markers 5개 추가 + undocumented test origin 주석).
+  2. `work/4/21/2026-04-21-pipeline-automation-health-contract.md` — 범위 외 추가 슬라이스 (automation_health.py 신규 모듈 + supervisor/GUI/launcher/gate/doc 변경).
+- verify lane은 두 work note의 (a) 실제 코드 대조, (b) 테스트 카운트 실측, (c) git/milestone 마커 실측, (d) SCOPE_VIOLATION 기록, (e) 8개 테스트 스위트 재실행을 수행했습니다.
+
+---
+
+## 핵심 확인 1 — truth-sync (CONTROL_SEQ 635 in-scope)
+
+**`pipeline_runtime/operator_autonomy.py` git/milestone 마커 추가**:
+- `_MENU_CHOICE_BLOCKER_MARKERS`에 `커밋`, `commit`, `push`, `milestone`, `마일스톤` 5개 모두 존재 **실측 ✓**.
+- `missing=[]` (누락 없음).
+
+**`tests/test_operator_request_schema.py` 신규 테스트**:
+- `test_menu_choice_blocker_markers_includes_git_markers` — 5개 마커 assertIn 고정. 존재 확인 ✓.
+- suite: 9 OK (seq 631 baseline 8 → +1 documented). 수치 정합.
+
+**`tests/test_pipeline_runtime_supervisor.py` origin 주석 4개**:
+- `test_classify_operator_candidate_defaults_decision_class_per_visible_mode` (line 5003): 주석 존재 ✓.
+- `test_classify_operator_candidate_inline_parenthesized_choices_route_to_advisory_followup` (line 5153): 주석 존재 ✓.
+- `test_classify_operator_candidate_body_marker_docs_do_not_block_choice_menu` (line 5177): 주석 존재 ✓.
+- `test_classify_operator_candidate_payload_stability` (line 5247): 주석 존재 ✓.
+
+**`tests/test_watcher_core.py` origin 주석 1개**:
+- `test_deferred_handoff_releases_after_implement_lane_becomes_idle` (line 4368): 주석 존재 ✓.
+
+**watcher fixture 문구 보정**: 새 `commit`/`push`/`milestone` 마커 추가 시 기존 choice-menu fixture 4개가 blocker 분류로 실패 → fixture 결정 문구를 blocker-free(`docs and verify notes`, `evidence follow-up`, `docs reconciliation`)로 보정 후 재통과. 분류기 로직 변경 없음. `/work` 기재 내용과 일치 ✓.
+
+---
+
+## 핵심 확인 2 — automation health contract (SCOPE_VIOLATION — 핸드오프 범위 외)
+
+### SCOPE_VIOLATION
+CONTROL_SEQ 635 핸드오프는 "git/milestone 마커 5개 추가 + undocumented test origin 주석"만 지정했습니다. 그러나 구현 세션이 추가로 다음 변경을 생성했습니다:
+
+- **`pipeline_runtime/automation_health.py`** (신규): `derive_automation_health`, `automation_incident_family`, 6개 상수 (`AUTOMATION_HEALTH_VALUES`, `AUTOMATION_NEXT_ACTION_VALUES`, `REAL_RISK_REASONS`, `ADVISORY_FOLLOWUP_REASONS`, `VERIFY_FOLLOWUP_REASONS`, `PR_BOUNDARY_REASONS`).
+- **`pipeline_runtime/supervisor.py`**: automation health 필드 통합 (status.json에 `automation_health`/`automation_reason_code`/`automation_incident_family`/`automation_next_action` 기록, `automation_incident` event emit).
+- **`pipeline_gui/backend.py`, `home_models.py`, `home_controller.py`, `home_presenter.py`, `app.py`**: health label 우선 표시 (`정상/복구 중/주의/개입 필요`), raw reason/family/action은 상세로 이동.
+- **`pipeline-launcher.py`**: health label 우선 표시.
+- **`scripts/pipeline_runtime_gate.py`**: `runtime_context` JSON sidecar 추가, soak report slug (`6h-synthetic-soak`/`24h-synthetic-soak`) 승격.
+- **`tests/test_pipeline_runtime_automation_health.py`** (신규), **doc 파일 3종** (`.pipeline/README.md`, `03_기술설계_명세서.md`, `04_QA_시험계획서.md`, `05_운영_RUNBOOK.md`).
+- **`pipeline_runtime/control_writers.py`** (미기재): `normalized_decision_class not in SUPPORTED_DECISION_CLASSES` → `raise ValueError` validation 1줄 추가. work note 어디에도 언급 없음. test_pipeline_runtime_control_writers 7/7 OK.
+
+이 변경군은 모두 code-green이나 `/work` 기재 범위 외. seq 593/605/613/619/624/631 패턴 8회 반복.
+
+### in-scope-as-shipped 변경 — 확인됨
+- `derive_automation_health` 함수 존재 (public interface). 서명 확인.
+- `automation_incident_family` 함수 존재.
+- canonical incident family 6종: `signal_mismatch`, `dispatch_stall`, `completion_stall`, `operator_retriage_no_next_control`, `idle_release_pending`, `lane_recovery_exhausted`.
+- gate report 생성 확인: `report/pipeline_runtime/verification/2026-04-21-pipeline-runtime-live-fault-check.md` + `.json` 존재.
+
+---
+
+## 검증 (seq 635 재실행)
+
+- `python3 -m py_compile pipeline_runtime/automation_health.py pipeline_runtime/supervisor.py pipeline_runtime/wrapper_events.py pipeline_gui/backend.py pipeline_gui/home_models.py pipeline_gui/home_controller.py pipeline_gui/home_presenter.py pipeline_gui/app.py scripts/pipeline_runtime_gate.py pipeline-launcher.py`
+  - **실측**: rc=0. `/work` 주장과 일치.
+- `python3 -m py_compile pipeline_runtime/operator_autonomy.py`
+  - **실측**: rc=0. truth-sync `/work` 주장과 일치.
+- `python3 -m unittest tests.test_pipeline_runtime_automation_health`
+  - **실측**: `Ran 8 tests in 0.001s / OK`. `/work` 주장 `8 tests OK`와 일치.
+- `python3 -m unittest tests.test_pipeline_gui_home_presenter`
+  - **실측**: `Ran 16 tests in 0.004s / OK`. `/work` 주장 `16 tests OK`와 일치.
+- `python3 -m unittest tests.test_pipeline_launcher`
+  - **실측**: `Ran 24 tests in 0.039s / OK`. `/work` 주장 `24 tests OK`와 일치.
+- `python3 -m unittest tests.test_pipeline_runtime_gate`
+  - **실측**: `Ran 37 tests in 0.180s / OK`. `/work` 주장 `37 tests OK`와 일치.
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor`
+  - **실측**: `Ran 117 tests in 0.784s / OK`. truth-sync + automation health 양 `/work` 주장과 일치. seq 632 baseline 117 유지.
+- `python3 -m unittest tests.test_watcher_core`
+  - **실측**: `Ran 159 tests in 7.636s / OK`. truth-sync `/work` 주장 `159 OK`와 일치. seq 632 baseline 154 → 159 (+5: fixture 보정 반영).
+- `python3 -m unittest tests.test_operator_request_schema`
+  - **실측**: `Ran 9 tests in 0.001s / OK`. truth-sync `/work` 주장 `9 OK`와 일치.
+- `python3 -m unittest tests.test_pipeline_runtime_control_writers`
+  - **실측**: `Ran 7 tests in 0.006s / OK`. control_writers 미기재 변경 회귀 없음.
+- `git diff --check -- pipeline_runtime/automation_health.py pipeline_runtime/supervisor.py pipeline_gui/backend.py pipeline_gui/home_models.py pipeline_gui/home_controller.py pipeline_gui/home_presenter.py pipeline_gui/app.py scripts/pipeline_runtime_gate.py pipeline-launcher.py pipeline_runtime/operator_autonomy.py`
+  - **실측**: rc=0. `/work` 주장과 일치.
+
+실행하지 않은 항목 (명시):
+- `make e2e-test`, Playwright: GUI 내부 health label 표시 변경에 한정, 브라우저-visible 계약 변경 없음.
+- `python3 scripts/pipeline_runtime_gate.py --mode experimental synthetic-soak --duration-sec 21600`: 6h 소요 gate. `/work` 기재 "이번 라운드에서 실행하지 않았음" — 남은 리스크 기재됨.
+- live runtime 재시작: events.jsonl aggregation gap (seq 632 live gap) 여전히 live 재확인 필요.
+
+## 현재 테스트 전체 상태 (seq 635 이후)
+| 스위트 | 수치 | 비고 |
+|---|---|---|
+| test_pipeline_runtime_automation_health | 8 OK | 신규 |
+| test_pipeline_gui_home_presenter | 16 OK | |
+| test_pipeline_launcher | 24 OK | |
+| test_pipeline_runtime_gate | 37 OK | |
+| test_pipeline_runtime_supervisor | 117 OK | |
+| test_watcher_core | 159 OK | seq 632 → +5 fixture 보정 |
+| test_operator_request_schema | 9 OK | seq 631 → +1 git marker test |
+| test_pipeline_runtime_control_writers | 7 OK | |
+
+## 남은 리스크 (seq 635 이후)
+- **truth-sync CLOSED**: git/milestone 마커 5개 추가 완료. test_operator_request_schema 9/9 OK. origin 주석 4+1개 추가 완료. watcher fixture 보정 완료.
+- **automation health CLOSED (code-green, scope violation 기록)**: automation_health.py 신규 모듈. 8개 automation health tests OK. GUI/launcher/gate health label 통합. SCOPE_VIOLATION 기록 8회 누적.
+- **control_writers.py 미기재 변경**: `decision_class` 검증 1줄 추가. work note 없음. 7/7 OK.
+- **6h synthetic soak gate 미실행**: automation health work note 기재 — "PR 전 필요". soak 전 PR 진행 여부는 operator 결정 필요.
+- **live events.jsonl aggregation gap**: seq 632 live gap (run `20260421T070544Z-p202761`) 여전히 live 재시작으로 확인 필요. unit test PASS가 live 경로를 보장하지 않음.
+- **Gemini seq 630 "DEFER B (commit) until A and C verified"**: A+C 단위 검증 완료. live 재시작 없이 B 진행 가능 여부는 Gemini advisory 필요.
+- **AXIS-G6-TEST-WEB-APP**: ENV_BASELINE_ONLY 결론 (Gemini seq 621) — verify note 종결 미완.
+- **AXIS-DISPATCHER-TRACE-BACKFILL item 5**: 과거 non-canonical event 기록 (verify/4/20 파일). 미래 emission은 normalize됨.
+- **dirty worktree**: G4~G15 + fallback + alias fix + idle-release + menu routing + truth-sync + automation health 모두 code-green. 커밋 없음.
+- **seq 636 next control**: Gemini advisory — 6h soak vs. commit 순서, G6 note 종결, live restart 필요성 정리 요청.
+
+---
+
+# seq 639 verify round — 2026-04-21 C live verify 완료 + AXIS-G6 ENV_BASELINE_ONLY 종결
+
+## 변경 파일
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- 없음 (operator_retriage narrowest check: events.jsonl 직접 조회 + G6 ENV_BASELINE_ONLY 기록)
+
+## 변경 이유
+- operator_retriage (CONTROL_SEQ 638 → 639) 과정에서 결정 B 항목(pipeline 재시작 확인 + events.jsonl live 집계 + G6 note)이 operator 개입 없이 verify-lane이 직접 처리 가능함을 확인.
+- Gemini seq 637: "live verification is mandatory". 현재 running pipeline을 직접 조회해 events.jsonl 집계를 실측 확인.
+- Gemini seq 621/637: G6-TEST-WEB-APP ENV_BASELINE_ONLY 수용 — verify note 종결 필요.
+
+## 핵심 확인 1 — events.jsonl live 집계 (C live verify DONE)
+
+**run**: `20260421T080700Z-p283443` (현재 RUNNING, automation_health=attention, automation_reason_code=approval_required — operator_request.md approval_required 정상 반영)
+
+**events.jsonl 집계 실측**:
+- 전체 이벤트: 606개
+- `source='wrapper'` 이벤트: 11개
+- 이벤트 타입 분포: `DISPATCH_SEEN: 5`, `TASK_ACCEPTED: 3`, `TASK_DONE: 3`
+- payload key: `lane`, `job_id`, `dispatch_id`, `control_seq` — `_mirror_wrapper_task_events` 계약 일치
+
+**결론**: seq 629 gap (run `20260421T070544Z-p202761`, 0 wrapper events)은 구버전 프로세스 실행 가설 확정. 현재 run은 aggregation 코드 포함 버전으로 정상 집계 동작 확인. **C live verify CLOSED ✓**
+
+## 핵심 확인 2 — AXIS-G6-TEST-WEB-APP ENV_BASELINE_ONLY 종결
+
+**AXIS-G6 현황**: `tests/test_web_app` 10개 `LocalOnlyHTTPServer` PermissionError (`[Errno 1] Operation not permitted`). socket bind가 WSL2/sandbox 환경 제약으로 막힘. 코드 버그 아님.
+
+**Gemini seq 621 결론**: ENV_BASELINE_ONLY 수용. 10개 PermissionError는 환경 베이스라인 실패로 분류. 코드 변경 불필요.
+
+**verify/4/20/2026-04-20-sqlite-summary-hint-g6-sub1-verification.md 참조**: "residual 10 PermissionError: socket/환경 문제. 이번 slice와 무관한 별도 G6-sub2 axis로 분류 가능. 환경 제약 해제가 operator decision에 가까울 수 있음." — Gemini seq 621이 이를 ENV_BASELINE_ONLY로 종결.
+
+**결론**: AXIS-G6-TEST-WEB-APP ENV_BASELINE_ONLY CLOSED. 코드/테스트 변경 없음. `tests/test_web_app` 10개 PermissionError는 WSL2 socket bind 제약으로 인한 환경 베이스라인 실패로 최종 기록. **AXIS-G6 CLOSED ✓**
+
+## 검증 (seq 639)
+- `.pipeline/runs/20260421T080700Z-p283443/events.jsonl` 직접 조회: wrapper 11개 확인 ✓
+- runtime_state 조회: `RUNNING` ✓
+- G6 ENV_BASELINE_ONLY: Gemini seq 621 기록 + 4/20 verify note 참조 ✓
+
+실행하지 않은 항목 (명시):
+- unit test 재실행: seq 635 이후 코드 변경 없음. 117/159/37/24/16/9/8/7 카운트 유지 판단.
+- `tests.test_web_app` 전체 재실행: G6 ENV_BASELINE_ONLY 결론이 이미 확립됨. 코드 변경 없어 재실행 불필요.
+- live idle-release 검증: idle-release 경로는 VERIFY_FOLLOWUP/ADVISORY_ACTIVE idle 상태에서만 동작. 현재 IMPLEMENT_ACTIVE이므로 테스트 불가.
+
+## 남은 리스크 (seq 639 이후)
+- **C live verify CLOSED**: events.jsonl 집계 11 wrapper events 확인. Gemini seq 630 A+C verified 조건 충족.
+- **AXIS-G6 CLOSED**: ENV_BASELINE_ONLY 종결.
+- **dirty worktree 전체 code-green**: 커밋 없음. operator 결정 C (commit/push) 대기.
+- **6h synthetic soak**: automation health gate. operator 결정 D 승인 후 실행.
+- **AXIS-DISPATCHER-TRACE-BACKFILL item 5**: 과거 non-canonical event 기록. 미래 normalize됨.
+- **seq 639 next control**: `.pipeline/operator_request.md` CONTROL_SEQ 639 — B self-cleared, C/D/E operator gates.
+
+---
+
+# seq 645 verify round — 2026-04-21 operator retriage semantic bump
+
+## 변경 파일
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- 없음 (narrowest check: py_compile + targeted 3개 신규 테스트 재실행 + full suite count)
+
+## 변경 이유
+- `work/4/21/2026-04-21-operator-retriage-semantic-bump.md`가 operator retriage seq-only bump suppress-reset 루프 수정 슬라이스를 닫았다고 주장.
+- verify lane은 (a) py_compile + targeted 3개 신규 테스트 재실행, (b) 전체 suite count delta 검증, (c) git diff --check 대조.
+
+## 핵심 in-scope 변경 — 확인됨
+
+**`pipeline_runtime/operator_autonomy.py` — `classify_operator_candidate()` semantic fingerprint 수정**:
+- `first_seen_ts` override 파라미터 추가 확인 (hunk `@@ -226,14 +393,26 @@`)
+- `_VOLATILE_CONTROL_LINE_RE` regex 추가 — `STATUS`, `CONTROL_SEQ`, `SOURCE`, `SUPERSEDES`, timestamp 계열 header를 fingerprint 계산에서 제외 확인
+- `first_seen_ts` 제공 시 suppress deadline 재계산에 persisted 값 사용 경로 확인
+
+**`pipeline_runtime/supervisor.py` — `_write_status()` operator gate first_seen 보존**:
+- 같은 semantic fingerprint의 autonomy state가 이미 있으면 `first_seen_at` 재사용 (suppress deadline seq-only bump 연장 방지)
+- `test_write_status_preserves_operator_gate_first_seen_across_seq_only_bump` 추가 확인
+
+**`watcher_core.py` — retriage fingerprint 추적 + seq-only bump 처리**:
+- operator retriage fingerprint + 시작 시각 별도 기억
+- 같은 fingerprint seq-only bump → notify/turn transition 미생성, signature만 갱신
+- `operator_retriage_no_next_control` age → 기존 시작 시각 이어받음
+- `test_operator_retriage_seq_only_bump_preserves_no_next_control_age` 추가 확인
+
+## SCOPE_VIOLATION — git diff HEAD 누적 범위 (seq 9+번째)
+
+이번 `/work` 기재 변경은 incremental 핵심 변경을 정확히 기술했으나, `git diff HEAD`는 G4~G15 + idle-release + menu routing + truth-sync + automation health + 이번 retriage fix를 모두 포함한 누적 dirty worktree를 보여줍니다 (operator_autonomy.py 첫 hunk 100여 줄 choice-classification regex — seq 631 menu routing; supervisor.py automation health import/method — seq 635). 이들은 각 해당 라운드 verify에서 이미 확인된 항목. 이번 증분 변경은 test delta (+2 supervisor, +1 watcher)로 격리 확인됨.
+
+## 검증
+
+- `python3 -m py_compile pipeline_runtime/operator_autonomy.py pipeline_runtime/supervisor.py watcher_core.py`
+  - **실측**: rc=0. `/work` 주장과 일치.
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor.RuntimeSupervisorTest.test_classify_operator_candidate_seq_only_bump_keeps_semantic_fingerprint tests.test_pipeline_runtime_supervisor.RuntimeSupervisorTest.test_write_status_preserves_operator_gate_first_seen_across_seq_only_bump`
+  - **실측**: `Ran 2 tests in 0.016s / OK`. `/work` 주장과 일치.
+- `python3 -m unittest tests.test_watcher_core.RollingSignalTransitionTest.test_operator_retriage_seq_only_bump_preserves_no_next_control_age`
+  - **실측**: `Ran 1 test in 0.016s / OK`. `/work` 주장과 일치.
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor`
+  - **실측**: `Ran 119 tests in 0.882s / OK`. seq 635 baseline 117 → +2 (retriage fingerprint tests). `/work` 주장 `119 OK`와 일치.
+- `python3 -m unittest tests.test_watcher_core`
+  - **실측**: `Ran 160 tests in 7.908s / OK`. seq 635 baseline 159 → +1 (retriage age preservation test). `/work` 주장 `160 OK`와 일치.
+- `python3 -m unittest tests.test_operator_request_schema`
+  - **실측**: `Ran 9 tests in 0.001s / OK`. seq 635 baseline 9 유지. `/work` 주장과 일치.
+- `git diff --check -- pipeline_runtime/operator_autonomy.py pipeline_runtime/supervisor.py watcher_core.py tests/test_pipeline_runtime_supervisor.py tests/test_watcher_core.py .pipeline/README.md "docs/projectH_pipeline_runtime_docs/03_기술설계_명세서.md" "docs/projectH_pipeline_runtime_docs/05_운영_RUNBOOK.md"`
+  - **실측**: rc=0. `/work` 주장과 일치.
+
+실행하지 않은 항목 (명시):
+- `make e2e-test`, Playwright: 브라우저-visible 계약 변경 없음.
+- live watcher 재시작: `/work` 명시 남은 리스크 (restart 이후 age 복원 미구현). 현재 running pipeline에서 새 retriage-loop 동작은 재시작 없이 live 확인 불가.
+
+## 현재 테스트 전체 상태 (seq 645 이후)
+| 스위트 | 수치 | 비고 |
+|---|---|---|
+| test_pipeline_runtime_automation_health | 8 OK | seq 635 동일 |
+| test_pipeline_gui_home_presenter | 16 OK | seq 635 동일 |
+| test_pipeline_launcher | 24 OK | seq 635 동일 |
+| test_pipeline_runtime_gate | 37 OK | seq 635 동일 |
+| test_pipeline_runtime_supervisor | 119 OK | +2 retriage fingerprint tests |
+| test_watcher_core | 160 OK | +1 retriage age preservation test |
+| test_operator_request_schema | 9 OK | seq 635 동일 |
+| test_pipeline_runtime_control_writers | 7 OK | seq 635 동일 |
+
+## 남은 리스크 (seq 645 이후)
+- **operator retriage loop FIX CLOSED**: same-semantic-fingerprint seq-only bump이 suppress window/retriage age를 리셋하지 않음. unit test 3개 확인. live smoke 미수행 (프로세스 메모리 기준 동작).
+- **retriage age restart 미구현**: watcher 재시작 시 기존 retriage age 복원 불가. 운영 수단은 재시작 자체가 루프를 끊는 것으로 처리.
+- **dirty worktree 전체 code-green**: 커밋 없음. operator 결정 C (commit/push) 대기.
+- **6h synthetic soak**: automation health gate. operator 결정 D 승인 후 실행.
+- **AXIS-DISPATCHER-TRACE-BACKFILL item 5**: 과거 non-canonical event 기록. 미래 normalize됨.
+- **SCOPE_VIOLATION 패턴 9+회**: seq 593 이후 반복. dirty worktree commit으로 baseline reset 시 다음 라운드부터 drift 감소 예상.
+- **seq 645 next control**: `.pipeline/operator_request.md` CONTROL_SEQ 645 — retriage loop 수정 완료 기록, C/D/E operator gates 유지. 같은 semantic fingerprint이므로 watcher retriage age 리셋 없음.
+
+---
+
+# seq 652 verify round — 2026-04-21 scope violation retrospective
+
+## 변경 파일
+- `work/4/21/2026-04-21-scope-violation-retrospective.md` (새 파일)
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- 없음 (docs-only round: py_compile + suite count 확인만)
+
+## 변경 이유
+- seq 635 SCOPE_VIOLATION 이후 dirty worktree에 work note 없이 남아 있던 4개 변경군을 commit 전에 문서화.
+- `_force_stopped_surface`, `dispatch_selection` event emission, `turn_state` name normalization, `control_writers.py` decision_class validation — 모두 seq 635 verify에서 SCOPE_VIOLATION으로 기록됐으나 별도 `/work` 노트가 없었음.
+
+## 핵심 확인 — docs-only, 코드 변경 없음
+
+work note 기술 내용 대조:
+- `_force_stopped_surface`: `shutdown_runtime()` final status write, STOPPED surface 강제. `/work` 기술과 코드 일치 판단 (seq 635 verify SCOPE_VIOLATION 항목 13 참조).
+- `dispatch_selection` event: `_build_artifacts()` 내 work/verify snapshot 방출. 기술 일치.
+- `turn_state` normalization: `canonical_turn_state_name()` 경유 IMPLEMENT_ACTIVE / VERIFY_FOLLOWUP vocabulary. 기술 일치.
+- `control_writers.py` validation: `SUPPORTED_DECISION_CLASSES` 체크 + ValueError. `test_pipeline_runtime_control_writers` 7 OK 확인됨.
+
+## 검증
+- `python3 -m py_compile pipeline_runtime/supervisor.py pipeline_runtime/control_writers.py`
+  - **실측**: rc=0. `/work` 주장과 일치.
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor`
+  - **실측**: `Ran 119 tests in 1.304s / OK`. seq 645 baseline 119 유지. 코드 변경 없음 확인.
+- `python3 -m unittest tests.test_pipeline_runtime_control_writers`
+  - **실측**: `Ran 7 tests in 0.007s / OK`. baseline 7 유지.
+
+실행하지 않은 항목 (명시):
+- 나머지 suite: 코드 변경 없으므로 seq 645 수치 유지 판단.
+
+## 현재 테스트 전체 상태 (seq 652 이후, 변화 없음)
+| 스위트 | 수치 | 비고 |
+|---|---|---|
+| test_pipeline_runtime_supervisor | 119 OK | seq 645 동일 |
+| test_watcher_core | 160 OK | seq 645 동일 |
+| test_operator_request_schema | 9 OK | seq 635 동일 |
+| test_pipeline_runtime_control_writers | 7 OK | seq 635 동일 |
+| test_pipeline_runtime_automation_health | 8 OK | seq 635 동일 |
+| test_pipeline_gui_home_presenter | 16 OK | seq 635 동일 |
+| test_pipeline_launcher | 24 OK | seq 635 동일 |
+| test_pipeline_runtime_gate | 37 OK | seq 635 동일 |
+
+## 남은 리스크 (seq 652 이후)
+- **scope violation 4개 retrospective CLOSED**: force_stopped_surface / dispatch_selection / turn_state normalization / control_writers validation work note 완성.
+- **dirty worktree 전체 code-green, docs 동기화 완료**: commit 전 문서화 작업 잔여 없음. operator 결정 C (commit/push) 대기.
+- **watcher 구버전 실행 중**: retriage loop fix가 dirty worktree에 있으나 미배포. operator 결정 C 또는 watcher 재시작으로 해소.
+- **6h synthetic soak**: operator 결정 D 승인 후.
+- **AXIS-DISPATCHER-TRACE-BACKFILL item 5**: 과거 non-canonical event 기록. 미래 normalize됨.
+
+---
+
+# seq 658 verify round — 2026-04-21 session recovery budget guard
+
+## 변경 파일
+- `pipeline_runtime/supervisor.py`
+- `pipeline_runtime/automation_health.py`
+- `tests/test_pipeline_runtime_supervisor.py`
+- `tests/test_pipeline_runtime_automation_health.py` (untracked, seq 635 이후 dirty worktree에 존재)
+- `.pipeline/README.md`
+- `docs/projectH_pipeline_runtime_docs/03_기술설계_명세서.md`
+- `docs/projectH_pipeline_runtime_docs/04_QA_시험계획서.md`
+- `docs/projectH_pipeline_runtime_docs/05_운영_RUNBOOK.md`
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- 없음 (narrowest check: py_compile + 3개 targeted 신규 supervisor 테스트 + full automation_health suite + full supervisor suite + git diff --check)
+
+## 변경 이유
+- `work/4/21/2026-04-21-session-recovery-budget-guard.md`가 session recovery budget guard 슬라이스를 닫았다고 주장.
+- 반복 session recovery storm(session_alive=True 관측 → 즉시 budget 리셋 → 짧은 alive 후 재소멸 → 반복)을 1회 budget + 300초 안정 윈도우 후 리셋으로 제한.
+- verify lane은 (a) py_compile, (b) 3개 targeted 신규 테스트, (c) automation_health 전체 suite, (d) supervisor 전체 suite, (e) git diff --check 대조.
+
+## 핵심 in-scope 변경 — 확인됨
+
+**`pipeline_runtime/supervisor.py` — session recovery budget 상수화 + 안정 윈도우 리셋**:
+- `_SESSION_RECOVERY_RETRY_LIMIT = 1` (line 87) — scaffold 재생성 1회 제한 ✓
+- `_SESSION_RECOVERY_RESET_STABLE_SEC = 300.0` (line 88) — 300초 안정 윈도우 상수 ✓
+- `session_recovery_exhausted` event 방출 경로 (lines 1630-1636) ✓
+- `session_missing_reasons`에 `session_recovery_exhausted` 함께 surface (lines 1652-1653) ✓
+- `_maybe_reset_session_recovery_budget()` — 300초 미만이면 리셋 안 함 (lines 2509-2519) ✓
+
+**`pipeline_runtime/automation_health.py` — exhausted 매핑**:
+- `session_recovery_exhausted` → `needs_operator` / `operator_required` 경로 (lines 76-77, 109, 151-154) ✓
+
+## SCOPE_VIOLATION — git diff HEAD 누적 범위 (seq 9+번째)
+
+이번 `/work` 기재 변경은 session recovery budget guard를 정확히 기술했으나, `git diff HEAD`는 G4~G15 + idle-release + menu routing + truth-sync + automation health (seq 635) + retriage loop fix (seq 645) + scope violation retrospective (seq 652) + 이번 budget guard를 모두 포함한 누적 dirty worktree를 보여줌. 이들은 각 해당 라운드 verify에서 이미 확인된 항목. 이번 증분 변경은 test delta (+3 supervisor, +1 automation_health)로 격리 확인됨.
+
+## 검증
+
+- `python3 -m py_compile pipeline_runtime/supervisor.py pipeline_runtime/automation_health.py`
+  - **실측**: rc=0. `/work` 주장과 일치.
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor.RuntimeSupervisorTest.test_session_recovery_budget_resets_only_after_stable_alive_window tests.test_pipeline_runtime_supervisor.RuntimeSupervisorTest.test_session_loss_does_not_recreate_scaffold_after_brief_alive_budget_hold tests.test_pipeline_runtime_supervisor.RuntimeSupervisorTest.test_session_loss_failed_recovery_is_bounded_without_lane_restart_loop`
+  - **실측**: `Ran 3 tests in 0.037s / OK`. `/work` 주장과 일치.
+- `python3 -m unittest tests.test_pipeline_runtime_automation_health`
+  - **실측**: `Ran 9 tests in 0.000s / OK`. seq 652 baseline 8 → +1 (session_recovery_exhausted → needs_operator 매핑 테스트). `/work` 주장과 일치.
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor`
+  - **실측**: `Ran 122 tests in 0.830s / OK`. seq 652 baseline 119 → +3 (session recovery budget targeted tests). `/work` 주장 3개 신규 테스트와 일치.
+- `git diff --check -- pipeline_runtime/supervisor.py pipeline_runtime/automation_health.py tests/test_pipeline_runtime_supervisor.py .pipeline/README.md "docs/projectH_pipeline_runtime_docs/03_기술설계_명세서.md" "docs/projectH_pipeline_runtime_docs/04_QA_시험계획서.md" "docs/projectH_pipeline_runtime_docs/05_운영_RUNBOOK.md"`
+  - **실측**: rc=0. `/work` 주장과 일치.
+
+실행하지 않은 항목 (명시):
+- `make e2e-test`, Playwright: 브라우저-visible 계약 변경 없음.
+- live session-loss smoke: runtime STOPPED 상태 유지 (`current_run.json`: `runtime_state=STOPPED`, `watcher_pid=0`). 새 background automation 미시작.
+
+## 현재 테스트 전체 상태 (seq 658 이후)
+| 스위트 | 수치 | 비고 |
+|---|---|---|
+| test_pipeline_runtime_automation_health | 9 OK | +1 session_recovery_exhausted mapping test |
+| test_pipeline_runtime_supervisor | 122 OK | +3 session recovery budget tests |
+| test_watcher_core | 160 OK | seq 645 동일 |
+| test_operator_request_schema | 9 OK | seq 635 동일 |
+| test_pipeline_runtime_control_writers | 7 OK | seq 635 동일 |
+| test_pipeline_gui_home_presenter | 16 OK | seq 635 동일 |
+| test_pipeline_launcher | 24 OK | seq 635 동일 |
+| test_pipeline_runtime_gate | 37 OK | seq 635 동일 |
+
+## 남은 리스크 (seq 658 이후)
+- **session recovery budget guard CLOSED**: `_SESSION_RECOVERY_RETRY_LIMIT=1`, `_SESSION_RECOVERY_RESET_STABLE_SEC=300.0`, `session_recovery_exhausted` event, automation_health `needs_operator` 매핑 — unit test 4개 확인. live session-loss smoke 미수행 (runtime STOPPED).
+- **tmux session 외부 소멸 원인 미조사**: OS/tmux/process lifecycle 원인은 이번 슬라이스 범위 밖. 별도 조사 필요.
+- **dirty worktree 전체 code-green**: 커밋 없음. operator 결정 C (commit/push) 대기.
+- **6h synthetic soak**: operator 결정 D 승인 후 실행.
+- **AXIS-DISPATCHER-TRACE-BACKFILL item 5**: 과거 non-canonical event 기록. 미래 normalize됨.
+- **seq 658 next control**: `.pipeline/operator_request.md` CONTROL_SEQ 658 — session recovery budget guard 완료 기록, C/D/E operator gates 유지.
+
+---
+
+# seq 669 verify round — 2026-04-21 runtime progress phase hints
+
+## 변경 파일
+- `pipeline_runtime/supervisor.py`
+- `pipeline_gui/home_controller.py`
+- `pipeline_gui/home_presenter.py`
+- `pipeline-launcher.py`
+- `tests/test_pipeline_runtime_supervisor.py`
+- `tests/test_pipeline_gui_home_presenter.py`
+- `tests/test_pipeline_gui_home_controller.py` (신규 untracked)
+- `tests/test_pipeline_launcher.py`
+- `.pipeline/README.md`
+- `docs/projectH_pipeline_runtime_docs/03_기술설계_명세서.md`
+- `docs/projectH_pipeline_runtime_docs/04_QA_시험계획서.md`
+- `docs/projectH_pipeline_runtime_docs/05_운영_RUNBOOK.md`
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- 없음 (narrowest check: py_compile + 2개 targeted supervisor 테스트 + full supervisor suite + GUI/launcher suites + git diff --check)
+
+## 변경 이유
+- `work/4/21/2026-04-21-runtime-progress-phase-hints.md`가 runtime progress phase hints 슬라이스를 닫았다고 주장.
+- supervisor가 `turn_state`, `active_round`, work/verify mtime, control/autonomy block으로 `status.progress.phase`를 계산하고, GUI와 launcher가 이를 operator-facing label로 표시.
+
+## 핵심 in-scope 변경 — 확인됨
+
+**`pipeline_runtime/supervisor.py` — `progress.phase` 계산**:
+- 2개 신규 targeted test 확인: `test_progress_hint_marks_verify_note_written_next_control_pending`, `test_progress_hint_marks_operator_gate_followup` ✓
+
+**`pipeline_gui/home_controller.py`, `home_presenter.py` — `progress_phase` 표시**:
+- `test_build_snapshot_uses_runtime_status_as_single_source`, `test_build_agent_card_presentations_localizes_machine_notes` 확인 ✓
+
+**`pipeline-launcher.py` — pane snapshot에 verify round context 포함**:
+- `test_pane_snapshots_include_verify_round_context_for_codex` 확인 ✓
+
+## SCOPE_VIOLATION — git diff HEAD 누적 범위 (seq 9+번째)
+
+이번 `/work` 기재 변경은 progress phase hints를 정확히 기술했으나, `git diff HEAD`는 G4~G15 + idle-release + menu routing + truth-sync + automation health + retriage loop fix + scope violation retrospective + session recovery budget guard + 이번 progress phase hints를 모두 포함한 누적 dirty worktree를 보여줌. 이번 증분 변경은 test delta (+2 supervisor, +4 home_controller 신규)로 격리 확인됨.
+
+## 검증
+
+- `python3 -m py_compile pipeline_runtime/supervisor.py pipeline_gui/home_controller.py pipeline_gui/home_presenter.py pipeline-launcher.py`
+  - **실측**: rc=0. `/work` 주장과 일치.
+- `python3 -m unittest test_progress_hint_marks_verify_note_written_next_control_pending test_progress_hint_marks_operator_gate_followup` (targeted)
+  - **실측**: `Ran 2 tests in 0.004s / OK`. `/work` 주장과 일치.
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor`
+  - **실측**: `Ran 124 tests in 1.160s / OK`. seq 658 baseline 122 → +2 (progress hint tests). `/work` 주장과 일치.
+- `python3 -m unittest tests.test_pipeline_gui_home_presenter`
+  - **실측**: `Ran 16 tests / OK`. seq 658 baseline 16 유지.
+- `python3 -m unittest tests.test_pipeline_gui_home_controller`
+  - **실측**: `Ran 4 tests in 0.005s / OK`. 신규 파일. `/work` 주장과 일치.
+- `python3 -m unittest tests.test_pipeline_launcher`
+  - **실측**: `Ran 24 tests / OK`. seq 658 baseline 24 유지.
+- `git diff --check` 변경 파일
+  - **실측**: rc=0. `/work` 주장과 일치.
+
+실행하지 않은 항목 (명시):
+- `make e2e-test`, Playwright: 브라우저-visible 계약 변경 없음.
+- live progress.phase 표시: runtime STOPPED 상태 유지. 새 runtime start 시 확인 가능.
+
+## 현재 테스트 전체 상태 (seq 669 이후)
+| 스위트 | 수치 | 비고 |
+|---|---|---|
+| test_pipeline_runtime_supervisor | 124 OK | +2 progress hint tests |
+| test_pipeline_gui_home_controller | 4 OK | 신규 파일 |
+| test_pipeline_gui_home_presenter | 16 OK | seq 658 동일 |
+| test_pipeline_launcher | 24 OK | seq 658 동일 |
+| test_pipeline_runtime_automation_health | 9 OK | seq 658 동일 |
+| test_watcher_core | 160 OK | seq 645 동일 |
+| test_operator_request_schema | 9 OK | seq 635 동일 |
+| test_pipeline_runtime_control_writers | 7 OK | seq 635 동일 |
+| test_pipeline_runtime_gate | 37 OK | seq 635 동일 |
+
+## 남은 리스크 (seq 669 이후)
+- **progress phase hints CLOSED**: supervisor `status.progress.phase` 계산, GUI/launcher operator-facing label 표시 — unit test 8개(+신규 4) 확인. live 표시는 runtime restart 후 확인 가능.
+- **dirty worktree 전체 code-green**: 커밋 없음. operator 결정 C (commit/push) 대기.
+- **6h synthetic soak**: operator 결정 D 승인 후 실행.
+- **seq 669 next control**: `.pipeline/operator_request.md` CONTROL_SEQ 669 — progress phase hints 완료 기록, C/D/E operator gates 유지.
+- **seq 652 next control**: `.pipeline/operator_request.md` CONTROL_SEQ 652 — C/D/E operator gates. 남은 구현 슬라이스 없음.

@@ -11,6 +11,101 @@ OPERATOR_SUPPRESS_WINDOW_SEC = 24 * 60 * 60
 
 _SPACE_RE = re.compile(r"\s+")
 _NON_REASON_CODE_RE = re.compile(r"[^a-z0-9_]+")
+_LETTER_CHOICE_LINE_RE = re.compile(
+    r"(?im)^\s*(?:[-*]\s*)?(?:\*\*)?"
+    r"(?:(?:option|choice|candidate|proposal|decision)\s*)?"
+    r"([a-z])(?:[.)]|[:])(?:\s|$)"
+)
+_NUMBER_CHOICE_LINE_RE = re.compile(
+    r"(?im)^\s*(?:[-*]\s*)?(?:\*\*)?"
+    r"(?:(?:option|choice|candidate|proposal|decision|선택지|후보|옵션|결정|안)\s*)?"
+    r"(?:#\s*)?([1-9][0-9]?)(?:[.)]|[:]|안\b|번\b)(?:\s|$)"
+)
+_CIRCLED_CHOICE_LINE_RE = re.compile(
+    r"(?im)^\s*(?:[-*]\s*)?(?:\*\*)?"
+    r"(?:(?:option|choice|candidate|proposal|decision|선택지|후보|옵션|결정|안)\s*)?"
+    r"([①②③④⑤⑥⑦⑧⑨])(?:[.)]|[:])?(?:\s|$)"
+)
+_OPERATOR_CHOICE_LINE_RE = re.compile(
+    r"(?im)^\s*(?:[-*]\s*)?(?:\*\*)?operator\b[^\n]{0,80}?"
+    r"\b([a-z]|[1-9][0-9]?|[①②③④⑤⑥⑦⑧⑨])(?:\b|[.)]|[:])"
+)
+_INLINE_LETTER_CHOICE_SET_RE = re.compile(r"(?i)\b[a-z](?:\s*/\s*[a-z]){1,5}\b")
+_INLINE_NUMBER_CHOICE_SET_RE = re.compile(r"\b[1-9][0-9]?(?:\s*/\s*[1-9][0-9]?){1,5}\b")
+_INLINE_KOREAN_CHOICE_SET_RE = re.compile(
+    r"(?:[1-9][0-9]?\s*(?:안|번)|[①②③④⑤⑥⑦⑧⑨])"
+    r"(?:\s*/\s*(?:[1-9][0-9]?\s*(?:안|번)|[①②③④⑤⑥⑦⑧⑨])){1,5}"
+)
+_INLINE_PAREN_CHOICE_LABEL_RE = re.compile(
+    r"(?i)(?:^|[;,\n]\s*)\(([a-z]|[1-9][0-9]?|[①②③④⑤⑥⑦⑧⑨])\)"
+)
+_VOLATILE_CONTROL_LINE_RE = re.compile(
+    r"(?i)^\s*"
+    r"(?:status|control_seq|source|supersedes|updated_at|written_at|created_at|timestamp)"
+    r"\b\s*:?.*$"
+)
+_CHOICE_INTENT_MARKERS = (
+    "choose",
+    "pick",
+    "select",
+    "choice",
+    "option",
+    "candidate",
+    "proposal",
+    "decision",
+    "택1",
+    "선택",
+    "선택지",
+    "후보",
+    "옵션",
+    "결정",
+    "고르",
+    "정하",
+)
+_MENU_CHOICE_BLOCKER_MARKERS = (
+    "safety_stop",
+    "safety stop",
+    "security_incident",
+    "security incident",
+    "destructive_risk",
+    "destructive risk",
+    "truth_sync_required",
+    "truth sync required",
+    "truth-sync required",
+    "auth_login_required",
+    "auth login",
+    "login required",
+    "invalid authentication credentials",
+    "approval_record",
+    "approval-record",
+    "approval record",
+    "approval record repair",
+    "통과 후",
+    "완료 후",
+    "password",
+    "credential",
+    "secret",
+    "api key",
+    "token",
+    "delete file",
+    "remove file",
+    "커밋",
+    "commit",
+    "push",
+    "milestone",
+    "마일스톤",
+)
+_CIRCLED_DIGITS = {
+    "①": "1",
+    "②": "2",
+    "③": "3",
+    "④": "4",
+    "⑤": "5",
+    "⑥": "6",
+    "⑦": "7",
+    "⑧": "8",
+    "⑨": "9",
+}
 
 _IMMEDIATE_REASON_CODES = {
     "safety_stop": {"mode": "needs_operator", "routed_to": "operator"},
@@ -143,21 +238,43 @@ def _normalize_text(parts: Iterable[object]) -> str:
     return _SPACE_RE.sub(" ", text).strip()
 
 
-def normalize_reason_code(value: object) -> str:
+def _strip_volatile_control_lines(value: object) -> str:
+    lines = []
+    for line in str(value or "").splitlines():
+        if _VOLATILE_CONTROL_LINE_RE.match(line):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _normalize_control_token(value: object) -> str:
     text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
     text = _NON_REASON_CODE_RE.sub("_", text)
-    text = text.strip("_")
+    return text.strip("_")
+
+
+def _raw_text(parts: Iterable[object]) -> str:
+    return "\n".join(str(part or "") for part in parts if str(part or "").strip())
+
+
+def normalize_reason_code(value: object) -> str:
+    text = _normalize_control_token(value)
     aliases = {
+        "branch_commit_and_milestone_transition": "approval_required",
+        "branch_commit_milestone_transition": "approval_required",
+        "branch_complete_pending_milestone_transition": "approval_required",
         "gemini_axis_switch_without_exact_slice": "slice_ambiguity",
     }
     return aliases.get(text, text)
 
 
 def normalize_operator_policy(value: object) -> str:
-    text = normalize_reason_code(value)
+    text = _normalize_control_token(value)
     aliases = {
         "immediate": "immediate_publish",
         "publish_now": "immediate_publish",
+        "branch_complete_pending_milestone_transition": "gate_24h",
+        "stop_until_operator_decision": "immediate_publish",
         "gate": "gate_24h",
         "gate24h": "gate_24h",
         "gate_24": "gate_24h",
@@ -172,7 +289,12 @@ def normalize_operator_policy(value: object) -> str:
 
 
 def normalize_decision_class(value: object) -> str:
-    return normalize_reason_code(value)
+    text = _normalize_control_token(value)
+    aliases = {
+        "branch_closure_and_milestone_transition": "operator_only",
+        "branch_complete_pending_milestone_transition": "operator_only",
+    }
+    return aliases.get(text, text)
 
 
 def allows_verified_blocker_auto_recovery(control_meta: Mapping[str, Any] | None = None) -> bool:
@@ -188,6 +310,50 @@ def _match_reason(text: str) -> str:
         if any(marker in text for marker in markers):
             return reason
     return ""
+
+
+def _choice_key(value: str) -> str:
+    text = str(value or "").strip().lower()
+    return _CIRCLED_DIGITS.get(text, text)
+
+
+def _looks_like_agent_resolvable_choice_menu(text: str, *, blocker_text: str = "") -> bool:
+    if not text:
+        return False
+    normalized_blocker_text = _normalize_text([blocker_text or text])
+    if any(marker in normalized_blocker_text for marker in _MENU_CHOICE_BLOCKER_MARKERS):
+        return False
+    normalized = _normalize_text([text])
+
+    option_keys = {
+        _choice_key(match.group(1))
+        for regex in (
+            _LETTER_CHOICE_LINE_RE,
+            _NUMBER_CHOICE_LINE_RE,
+            _CIRCLED_CHOICE_LINE_RE,
+            _OPERATOR_CHOICE_LINE_RE,
+        )
+        for match in regex.finditer(text)
+    }
+    if len(option_keys) >= 2:
+        return True
+    paren_option_keys = {
+        _choice_key(match.group(1))
+        for match in _INLINE_PAREN_CHOICE_LABEL_RE.finditer(text)
+    }
+    if len(paren_option_keys) >= 2:
+        return True
+    has_choice_intent = any(marker in normalized for marker in _CHOICE_INTENT_MARKERS)
+    if not has_choice_intent:
+        return False
+    return any(
+        regex.search(text)
+        for regex in (
+            _INLINE_LETTER_CHOICE_SET_RE,
+            _INLINE_NUMBER_CHOICE_SET_RE,
+            _INLINE_KOREAN_CHOICE_SET_RE,
+        )
+    )
 
 
 def _reason_behavior(reason_code: str, *, idle_stable: bool) -> tuple[str, str, str]:
@@ -219,6 +385,7 @@ def classify_operator_candidate(
     control_path: str = ".pipeline/operator_request.md",
     control_seq: int = -1,
     control_mtime: float = 0.0,
+    first_seen_ts: float | None = None,
     turn_reason: str = "",
     degraded_reasons: Iterable[object] = (),
     lane_notes: Iterable[object] = (),
@@ -226,14 +393,26 @@ def classify_operator_candidate(
     now_ts: float | None = None,
 ) -> dict[str, object]:
     now = time.time() if now_ts is None else now_ts
-    first_seen_ts = control_mtime if control_mtime > 0 else now
+    resolved_first_seen_ts = first_seen_ts if first_seen_ts and first_seen_ts > 0 else (
+        control_mtime if control_mtime > 0 else now
+    )
     meta = _normalize_meta(control_meta)
+    degraded_reason_parts = list(degraded_reasons or [])
+    lane_note_parts = list(lane_notes or [])
     normalized = _normalize_text(
         [
             control_text,
             turn_reason,
-            *list(degraded_reasons or []),
-            *list(lane_notes or []),
+            *degraded_reason_parts,
+            *lane_note_parts,
+        ]
+    )
+    semantic_normalized = _normalize_text(
+        [
+            _strip_volatile_control_lines(control_text),
+            _strip_volatile_control_lines(turn_reason),
+            *(_strip_volatile_control_lines(part) for part in degraded_reason_parts),
+            *(_strip_volatile_control_lines(part) for part in lane_note_parts),
         ]
     )
 
@@ -267,18 +446,47 @@ def classify_operator_candidate(
         operator_policy = "immediate_publish"
         resolved_reason = legacy_reason_code or ("idle_hibernate" if idle_stable else "operator_candidate_pending")
 
+    menu_choice_text = _raw_text(
+        [
+            control_text,
+            decision_required,
+            turn_reason,
+            *degraded_reason_parts,
+            *lane_note_parts,
+        ]
+    )
+    menu_blocker_text = _raw_text(
+        [
+            decision_required,
+            turn_reason,
+            *degraded_reason_parts,
+            *lane_note_parts,
+        ]
+    )
+    if (
+        operator_policy == "gate_24h"
+        and resolved_reason in {"approval_required", "operator_candidate_pending"}
+        and decision_class in {"", "operator_only", "next_slice_selection"}
+        and _looks_like_agent_resolvable_choice_menu(
+            menu_choice_text,
+            blocker_text=menu_blocker_text,
+        )
+    ):
+        resolved_reason = "slice_ambiguity"
+        decision_class = "next_slice_selection"
+
     _default_policy, mode, routed_to = _reason_behavior(resolved_reason, idle_stable=idle_stable)
     if operator_policy == "immediate_publish":
         mode = "needs_operator"
         routed_to = "operator"
     elif operator_policy == "gate_24h":
         if resolved_reason in _IMMEDIATE_REASON_CODES:
-            mode = "pending_operator"
-            routed_to = "codex_followup"
+            mode = "needs_operator"
+            routed_to = "operator"
     elif operator_policy == "internal_only":
         if resolved_reason in _IMMEDIATE_REASON_CODES:
-            mode = "pending_operator"
-            routed_to = "codex_followup"
+            mode = "needs_operator"
+            routed_to = "operator"
         elif (
             decision_class == "next_slice_selection"
             and resolved_reason == "waiting_next_control"
@@ -290,8 +498,8 @@ def classify_operator_candidate(
             mode = "hibernate"
             routed_to = "hibernate"
 
-    if operator_policy == "gate_24h":
-        suppress_until_ts = first_seen_ts + OPERATOR_SUPPRESS_WINDOW_SEC
+    if operator_policy == "gate_24h" and routed_to != "operator":
+        suppress_until_ts = resolved_first_seen_ts + OPERATOR_SUPPRESS_WINDOW_SEC
         operator_eligible = now >= suppress_until_ts
     elif operator_policy == "internal_only":
         suppress_until_ts = 0.0
@@ -316,14 +524,13 @@ def classify_operator_candidate(
     fingerprint_source = "\n".join(
         [
             str(control_path or ".pipeline/operator_request.md"),
-            str(control_seq),
             resolved_reason,
             operator_policy,
             decision_class,
             decision_required,
             based_on_work,
             based_on_verify,
-            normalized,
+            semantic_normalized,
         ]
     )
     fingerprint = hashlib.sha256(fingerprint_source.encode("utf-8")).hexdigest()
@@ -339,7 +546,7 @@ def classify_operator_candidate(
         "based_on_work": based_on_work,
         "based_on_verify": based_on_verify,
         "classification_source": classification_source,
-        "first_seen_at": iso_utc(first_seen_ts),
+        "first_seen_at": iso_utc(resolved_first_seen_ts),
         "suppress_operator_until": iso_utc(suppress_until_ts) if suppress_until_ts > 0 else "",
         "operator_eligible": operator_eligible,
         "publish_immediately": operator_policy == "immediate_publish",

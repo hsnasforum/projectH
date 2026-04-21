@@ -18,6 +18,8 @@
 6. fresh `needs_operator`는 즉시 stop slot current truth가 아니라 24시간 gate 후보일 수 있으므로, `status.control`보다 `status.autonomy`를 먼저 확인합니다.
 7. operator stop 판정은 free-form prose가 아니라 `OPERATOR_POLICY` 우선, `REASON_CODE` 다음 순서로 봅니다. 구조화 metadata가 없거나 알 수 없으면 fail-safe로 즉시 publish합니다.
 8. runtime/script가 `operator_request.md`나 `implement_blocked` sentinel을 machine-write해야 할 때는 `pipeline_runtime.control_writers` helper와 classification-source 검사를 우선 사용합니다.
+9. launcher/GUI는 자동화 상태를 `automation_health = 정상|복구 중|주의|개입 필요`로 표시하고, 원인/incident family/raw machine note는 상세 console과 `events.jsonl`에서 확인합니다.
+10. active lane이 애매해 보이면 먼저 `status.progress.phase`와 lane `progress_phase`를 확인합니다. 이 값은 `turn_state`, `active_round`, artifact mtime, control/autonomy에서 계산한 진행 힌트이며, pane transcript는 debug 보조로만 봅니다.
 
 ## 3. 일상 운영 절차
 
@@ -56,6 +58,8 @@
 - degraded reason
 - recent events
 - 마지막 receipt 시각
+- automation health / reason / next action
+- `OPERATOR_WAIT`인데 이전 `.pipeline/gemini_request.md` / `.pipeline/gemini_advice.md`가 화면에 남아 보이면 current `status.control`의 `CONTROL_SEQ`를 먼저 확인합니다. 최신 watcher는 더 낮은 seq의 advisory 슬롯을 `STATUS: superseded`로 중립화하므로, superseded 슬롯은 pending arbitration으로 보지 않습니다.
 
 ## 3.4 정상 종료
 1. stop 요청
@@ -64,12 +68,13 @@
 4. `STOPPED` 및 final receipt flush 확인
 5. run 종료 보고 작성
 - stop 성공은 supervisor pid 소멸만으로 판단하지 않습니다. final status에 `runtime_state=STOPPED`, `control=none`, `active_round=null`, watcher dead, lane inactive가 함께 flush되었는지 확인합니다.
+- final `STOPPED` status는 active incident를 비우더라도 `automation_health=attention`, `automation_reason_code=runtime_stopped`, `automation_next_action=operator_required`를 남겨야 합니다. `STOPPED + ok + continue`는 silent stall 표면 회귀입니다.
 - 최신 CLI stop은 먼저 graceful flush를 기다리고, timeout 뒤에만 강제 종료 fallback을 사용합니다. `STOPPING`이 오래 남았는데 supervisor가 이미 사라졌다면 graceful flush miss 가능성을 먼저 의심합니다.
 - supervisor가 이미 죽었지만 watcher/tmux session 같은 orphan runtime이 남아 있으면, stop CLI는 orphan cleanup 뒤 `status.json`을 `STOPPED + inactive truth`로 보정합니다.
 - controller가 오래된 `STOPPING` run을 다시 읽더라도 supervisor PID가 이미 없으면 UI는 이를 `STOPPED`로 정규화하고 `Control=none`, `Round=IDLE`로 보여야 합니다. 이 reader 정규화는 graceful flush 실패에 대비한 fallback safety net입니다.
 
 ## 3.5 현재 검증 원칙
-runtime long soak는 baseline evidence로 유지하되, 기본 검증 메뉴는 아닙니다.
+runtime long soak는 baseline evidence로 유지하되, 기본 검증 메뉴는 아닙니다. 현재 1차 automation milestone은 PR/publication 전 operator boundary를 유지한 채 6시간 synthetic soak를 통과하는 것입니다.
 
 현재 기본 검증은 아래 세 축이며, thin-client/UI current-truth read-model 회귀의 focused baseline으로 `python3 -m unittest tests.test_pipeline_gui_backend` 46 green을 함께 유지합니다.
 
@@ -118,6 +123,7 @@ synthetic soak는 아래처럼 채택용 보조 게이트로만 남깁니다.
 - readiness barrier timeout 시 report에는 마지막 status snapshot을 남깁니다. 최소 덤프 항목은 `runtime_state`, `watcher.alive/pid`, lane별 `state/attachable/pid/note/last_event_at/last_heartbeat_at`, `control.active_control_status`, `active_round.state`입니다.
 - report에는 `receipt_count`, `duplicate_dispatch_count`, `control_mismatch_samples`, `control_mismatch_max_streak`, `orphan_session`를 함께 남깁니다.
 - report/check에는 `classification_gate_failures`와 `classification_fallback_detected` 여부도 함께 남깁니다.
+- JSON sidecar의 `summary.runtime_context`에는 latest status snapshot, recent events, current run id, open control, active round, `automation_health`, `automation_reason_code`, `automation_incident_family`, `automation_next_action`이 함께 남아야 합니다. 실패 분석은 markdown 문장 scraping보다 이 structured payload를 우선합니다.
 - `control_mismatch_samples`는 transition 시점에 1회 관측될 수 있으므로, 채택 판단은 persistent mismatch(`control_mismatch_max_streak > 1`) 기준으로 봅니다.
 - 현재 실전 로그는 장시간 샘플링보다 상태 전이 이벤트 위주로 남기는 편이 맞습니다. 최소 이벤트는 `handoff_dispatch`, `TASK_ACCEPTED`, `TASK_DONE`, `receipt_close`, `dispatch_stall_detected`, `completion_stall_detected`, `stale_cleanup`, `lane_broken`입니다.
 
@@ -218,6 +224,9 @@ synthetic soak는 아래처럼 채택용 보조 게이트로만 남깁니다.
 - 같은 fingerprint에서 post-accept completion wait가 한 번 더 반복되면 runtime은 이를 `post_accept_completion_stall` incident로 승격하고, 추가 자동 재큐잉 대신 `degraded_reason=post_accept_completion_stall`과 lane note(`waiting_task_done_after_accept` 또는 `waiting_receipt_close_after_task_done`)를 남기는 편이 맞습니다.
 - 이 incident는 supervisor events에 `dispatch_stall_detected` 또는 `completion_stall_detected`로 기록되고 launcher recent log에도 그대로 보여야 합니다. long soak를 다시 기본 게이트로 돌리기보다, live launcher session에서 이 이벤트가 0회인지와 실제 재발 replay가 막히는지를 우선 확인합니다.
 - follow-up/advisory/operator/blocked-triage notify가 lane busy 때문에 바로 못 들어가면 watcher는 silent retry 대신 `lane_input_deferred`를 남기고 prompt-ready가 확인될 때까지 pending defer로 유지해야 합니다. launcher recent log는 이 named event를 그대로 보여줘 queued paste contamination과 normal dispatch를 구분해야 합니다.
+- pane tail에서 단순 `Working (...)` busy marker 뒤에 `❯` / `›` / `>` 입력 prompt가 다시 보이면 prompt-ready로 취급합니다. 다만 `background terminal`, `thinking with ...`, `esc to interrupt/cancel` 같은 active busy marker가 같은 tail에 남아 있으면 아직 busy입니다. ready로 풀린 경우에는 이후 `TASK_ACCEPTED` / `TASK_DONE` / receipt-close chain이 이어지는지를 확인합니다.
+- watcher 코드나 watcher가 직접 import하는 runtime helper 변경 후 old watcher가 계속 떠 있으면 supervisor가 source mtime과 `.pipeline/experimental.pid` mtime을 비교해 experimental watcher만 self-restart합니다. 운영자는 `watcher_self_restart_started` / `watcher_self_restart_completed` / `watcher_self_restart_failed` event를 확인하면 되고, 이 restart는 operator decision이나 PR 전 boundary가 아닙니다.
+- old supervisor가 계속 떠 있어 watcher self-restart 코드 자체를 아직 import하지 못한 경우에도 `pipeline_runtime.cli start`는 runtime source mtime이 `.pipeline/supervisor.pid`보다 새로우면 supervisor를 graceful stop 후 새 daemon으로 교체합니다. launcher에서 Start/Restart를 누르는 것은 이 안전망을 통과하므로 별도 operator 결정 파일을 만들 필요가 없습니다.
 - 이때 queue/defer/flush/drop 처리는 `watcher_dispatch.py`가 single implementation이 되는 편이 맞습니다. `watcher_core.py`가 notify family마다 별도 send branch를 다시 들고 있으면 같은 busy-lane contamination replay가 반복됩니다.
 - verify round 전이와 incident 승격은 `verify_fsm.py` single implementation으로 유지하는 편이 맞습니다. 운영 triage는 watcher core loop보다 FSM state/receipt-close chain 기준으로 읽어야 재시도와 실제 멈춤을 구분하기 쉽습니다.
 - turn drift triage도 `turn_arbitration.py` single implementation을 기준으로 읽는 편이 맞습니다. watcher와 supervisor가 각자 `RECEIPT_PENDING`, follow-up, operator gate를 다시 해석하기 시작하면 READY/WORKING drift와 stale verify surface가 다시 생기기 쉽습니다.
@@ -241,6 +250,9 @@ synthetic soak는 아래처럼 채택용 보조 게이트로만 남깁니다.
 
 메모:
 
+- supervisor는 tmux session loss를 먼저 `session_missing`으로 표시하고 scaffold 재생성을 1회 자동 시도합니다.
+- 복구 후 transient `session_alive`만 보인 상태에서는 recovery budget을 즉시 리셋하지 않습니다. 같은 session이 300초 이상 안정적으로 살아 있을 때만 budget을 다시 채웁니다.
+- 안정 윈도우 전에 session이 다시 사라지면 supervisor는 두 번째 scaffold 재생성 대신 `session_recovery_exhausted` event와 `automation_health=needs_operator`, `automation_next_action=operator_required`를 남깁니다. 이 상태는 반복 재시작 storm을 막기 위한 안전 정지이며, 원인은 recent `events.jsonl`의 `session_recovery_started` / `session_recovery_completed` / `session_recovery_exhausted` 순서로 확인합니다.
 - supervisor pid 가 이미 없고 recent status 안의 watcher/lane pid 도 모두 dead 로 확인되면, browser/controller 는 stale timeout 을 기다리지 않고 runtime 을 즉시 `BROKEN(supervisor_missing)` 으로 강등할 수 있습니다.
 - pid 가 비어 있더라도 recent status 가 이미 `control=none`, `active_round=null`, watcher dead, lane inactive 로 정리돼 있으면 같은 fast-path 를 적용할 수 있습니다.
 - recent status 이고 supervisor 는 없지만 `control != none`, `active_round != null`, active lane state 같은 activity claim 이 남아 있고 watcher/active lane pid 로 live identity 를 증명하지 못하면, browser/controller 는 이를 `DEGRADED(supervisor_missing_recent_ambiguous)` uncertain runtime 으로 먼저 surface 합니다.
@@ -317,7 +329,7 @@ controller browser UI의 active runtime contract는 아래로 제한합니다.
 
 - `.pipeline/operator_request.md`는 존재하고 valid `STATUS: needs_operator` + `CONTROL_SEQ`를 가진다.
 - runtime `status.control`은 `none`이다.
-- runtime `status.autonomy.mode`가 `recovery`, `triage`, `hibernate`, `pending_operator` 중 하나다.
+- runtime `status.autonomy.mode`가 `recovery`, `triage`, `hibernate` 중 하나다. 오래된 status에서는 `pending_operator`가 보일 수 있지만 현재 계약에서는 real-risk approval/safety/truth-sync stop을 gate 뒤에 숨기지 않는다.
 - recent events에 `control_operator_gated` 또는 `autonomy_changed`가 보인다.
 
 이 상태의 의미:
@@ -326,7 +338,8 @@ controller browser UI의 active runtime contract는 아래로 제한합니다.
 - `status.autonomy.block_reason`과 `suppress_operator_until`이 24시간 gate의 이유와 deadline입니다.
 - `recovery`면 lane/session/receipt/auth 계열 자가복구가 먼저이고, `triage`면 verify/handoff-owner와 advisory owner 판단이 먼저이며, `hibernate`면 현재는 idle stable이라 operator 호출 없이 unattended로 유지하는 편이 맞습니다.
 - 예외적으로 `internal_only + next_slice_selection + waiting_next_control` 조합은 idle hibernate가 아니라 `triage`로 보고 verify/handoff-owner follow-up을 다시 여는 편이 맞습니다. genuine `idle_hibernate + internal_only`만 unattended idle로 남깁니다.
-- `pending_operator`는 immediate safety/approval/truth-sync는 아니지만 아직 exact self-route가 닫히지 않은 후보라는 뜻입니다.
+- `pending_operator`가 보이면 legacy/전환기 surface로 보고 `reason_code`를 먼저 확인합니다. `approval_required`, `safety_stop`, `truth_sync_required` 같은 real-risk reason은 즉시 `needs_operator` current truth여야 하며, 반복 advisory로 재승격되면 operator gate 회귀로 봅니다.
+- 같은 결정을 `CONTROL_SEQ`만 올려 다시 쓴 경우에는 suppress deadline과 retriage age가 이어져야 합니다. seq-only bump가 보이는데 `operator_retriage_no_next_control` age가 0초로 돌아가면 watcher/supervisor semantic fingerprint 회귀로 봅니다.
 - 이 상태에서 operator는 stop 파일만 보고 즉시 재기동/강제 attach하지 말고, verify follow-up 또는 gate window 경과 여부를 먼저 확인해야 합니다.
 
 ## 6.11 duplicate supervisor

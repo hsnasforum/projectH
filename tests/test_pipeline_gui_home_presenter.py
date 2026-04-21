@@ -8,12 +8,17 @@ from pipeline_gui.home_presenter import (
     build_console_presentation,
     build_control_presentation,
     build_empty_agent_card_presentation,
+    build_pipeline_status_presentation,
 )
 
 
 def _base_snapshot() -> dict[str, object]:
     return {
         "runtime_state": "STOPPED",
+        "automation_health": "ok",
+        "automation_reason_code": "",
+        "automation_incident_family": "",
+        "automation_next_action": "continue",
         "degraded_reason": "",
         "session_ok": False,
         "watcher_alive": False,
@@ -37,6 +42,25 @@ def _base_snapshot() -> dict[str, object]:
 
 
 class PipelineGuiHomePresenterTest(unittest.TestCase):
+    def test_build_pipeline_status_presentation_prefers_automation_health_label(self) -> None:
+        presentation = build_pipeline_status_presentation(
+            runtime_state="RUNNING",
+            automation_health="attention",
+        )
+
+        self.assertEqual(presentation.pipeline_text, "파이프라인: ▲ 주의")
+        self.assertEqual(presentation.status_text, "주의")
+        self.assertEqual(presentation.fg, "#fb923c")
+
+    def test_build_pipeline_status_presentation_uses_runtime_state_when_health_ok(self) -> None:
+        presentation = build_pipeline_status_presentation(
+            runtime_state="RUNNING",
+            automation_health="ok",
+        )
+
+        self.assertEqual(presentation.pipeline_text, "파이프라인: ● 실행 중")
+        self.assertEqual(presentation.status_text, "실행 중")
+
     def test_build_control_presentation_normal_active(self) -> None:
         presentation = build_control_presentation(
             {
@@ -171,6 +195,25 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
         self.assertIn("short", presentation.log_text)
         self.assertTrue(presentation.log_text.endswith("…"))
 
+    def test_build_console_presentation_keeps_raw_automation_note_in_details(self) -> None:
+        snapshot = _base_snapshot()
+        snapshot.update(
+            {
+                "runtime_state": "RUNNING",
+                "automation_health": "attention",
+                "automation_reason_code": "dispatch_stall",
+                "automation_incident_family": "dispatch_stall",
+                "automation_next_action": "verify_followup",
+            }
+        )
+
+        presentation = build_console_presentation(selected_agent="Codex", snapshot=snapshot)
+
+        self.assertIn("automation_health: attention", presentation.focus_text)
+        self.assertIn("automation_reason_code: dispatch_stall", presentation.focus_text)
+        self.assertIn("automation_incident_family: dispatch_stall", presentation.focus_text)
+        self.assertIn("automation_next_action: verify_followup", presentation.focus_text)
+
     def test_build_console_presentation_distinguishes_current_round_work_gap(self) -> None:
         snapshot = _base_snapshot()
         snapshot.update(
@@ -240,6 +283,23 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
         self.assertEqual(presentations[1].status_text, "대기")
         self.assertEqual(presentations[1].note_text, "대기 중")
         self.assertEqual(presentations[1].card_border, "#1e1e2e")
+
+    def test_build_agent_card_presentations_localizes_machine_notes(self) -> None:
+        presentations, _working_since = build_agent_card_presentations(
+            agents=[
+                ("Codex", "READY", "signal_mismatch", ""),
+                ("Claude", "READY", "waiting_next_control", ""),
+                ("Gemini", "READY", "progress:operator_gate_followup", ""),
+            ],
+            selected_agent="Codex",
+            token_usage={},
+            working_since={},
+            now=100.0,
+        )
+
+        self.assertEqual(presentations[0].note_text, "상태 확인 필요")
+        self.assertEqual(presentations[1].note_text, "다음 지시 대기")
+        self.assertEqual(presentations[2].note_text, "operator gate 후속 처리")
 
     def test_build_agent_card_presentations_reuses_anchor_and_prefers_usage_note(self) -> None:
         presentations, working_since = build_agent_card_presentations(

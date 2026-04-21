@@ -113,6 +113,8 @@
   - active advisory owner가 `.pipeline/gemini_advice.md`와 `report/gemini/...md`를 남깁니다.
   - active verify/handoff owner가 Gemini advice를 읽고 최종 `.pipeline/claude_handoff.md` 또는 `.pipeline/operator_request.md`를 씁니다.
   - real operator-only decision, approval/truth-sync blocker, immediate safety stop, 또는 Gemini advice 이후에도 exact slice가 안 좁혀질 때만 `.pipeline/operator_request.md`를 씁니다.
+- 문자/숫자/한글 라벨 선택지 stop(괄호형 inline 라벨 포함)이 current `docs/`, milestones, 최신 `/work`, 최신 `/verify` 근거로 좁힐 수 있는 문제라면 active verify/handoff owner는 operator에게 바로 멈추기보다 `.pipeline/gemini_request.md`를 먼저 열어 advisory-first로 줄이는 편이 맞습니다. decision header 자체의 safety, destructive, auth/credential, approval-record, truth-sync blocker는 예외입니다.
+- watcher가 그런 gated operator request를 verify/handoff retriage로 이미 보냈고 verify lane이 새 control 없이 idle로 돌아오면, watcher는 `operator_retriage_no_next_control`을 기록하고 다음 `CONTROL_SEQ`의 `.pipeline/gemini_request.md`를 machine-write해 advisory-first arbitration으로 승격할 수 있습니다.
 - 다만 active implement owner가 이미 session 안에서 context exhaustion, session rollover, continue-vs-switch 같은 live side question을 던진 경우에는 active verify/handoff owner가 Gemini advice를 짧은 lane reply로만 relay하고, `.pipeline/claude_handoff.md`는 그 세션이 끝날 때까지 다시 쓰지 않는 편이 맞습니다.
 - `.pipeline/claude_handoff.md`는 `STATUS: implement`만 담는 실행 슬롯입니다.
 - `.pipeline/gemini_request.md`는 `STATUS: request_open`만 담는 arbitration 요청 슬롯입니다.

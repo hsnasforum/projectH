@@ -76,6 +76,8 @@
 - 다만 같은 날 same-family docs-only truth-sync가 이미 3회 이상 반복됐다면, `/verify`는 또 하나의 더 작은 docs-only micro-slice를 기본 제안으로 내지 않는 편이 맞습니다. 이 경우 남은 drift를 한 번에 닫는 bounded bundle이나 Gemini/operator escalation을 먼저 검토합니다.
 - 따라서 `/verify`에서 바로 다음 단일 슬라이스를 고르지 못했다면, implement owner에게 선택권을 넘기지 않습니다.
 - 다음 막힘이 next-slice ambiguity, overlapping candidates, low-confidence prioritization이라면 `.pipeline/operator_request.md`보다 `.pipeline/gemini_request.md`를 먼저 열고 Gemini recommendation을 받은 뒤 active verify/handoff owner가 다시 한 번 exact slice를 좁히는 편이 맞습니다.
+- 문자/숫자/한글 라벨 선택지형 stop(괄호형 inline 라벨 포함)도 current docs, milestone, 최신 `/work`, 최신 `/verify`로 좁힐 수 있는 문제라면 먼저 Gemini recommendation을 받아 에이전트끼리 줄이고, decision header 자체가 safety/destructive/auth/credential/approval-record/truth-sync blocker일 때만 operator stop을 유지합니다.
+- watcher가 operator retriage prompt 이후 verify/handoff lane의 idle return과 no-next-control 상태를 감지해 `operator_retriage_no_next_control`로 `.pipeline/gemini_request.md`를 승격했다면, `/verify`는 그 원 operator slot과 승격된 request를 같이 확인하고 같은 blocker가 반복되지 않는지 검증합니다.
 - `.pipeline/operator_request.md`는 real operator-only decision, approval/truth-sync blocker, immediate safety stop, 또는 Gemini advice 이후에도 exact slice를 못 좁힌 경우에만 `STATUS: needs_operator`로 남기는 편이 맞습니다.
 - 다만 그 Gemini arbitration이 active implement-owner session의 context exhaustion, session rollover, continue-vs-switch 같은 side question을 다루는 경우에는, active verify/handoff owner가 그 답을 implement owner에게 짧은 lane reply로만 relay하고 `.pipeline/claude_handoff.md`는 session boundary 전까지 그대로 두는 편이 맞습니다.
 - 다만 그 경우에도 `.pipeline/operator_request.md`는 빈 정지 신호가 아니라, 사람이 다시 읽었을 때 즉시 맥락을 복원할 수 있는 stop handoff여야 합니다.

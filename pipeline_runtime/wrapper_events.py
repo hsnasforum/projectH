@@ -6,6 +6,13 @@ from typing import Any
 
 from .schema import append_jsonl, iso_utc, parse_iso_utc
 
+TASK_EVENT_TYPES = frozenset({
+    "DISPATCH_SEEN",
+    "TASK_ACCEPTED",
+    "TASK_DONE",
+    "BRIDGE_DIAGNOSTIC",
+})
+
 
 def lane_event_path(wrapper_events_dir: Path, lane_name: str) -> Path:
     return wrapper_events_dir / f"{lane_name.strip().lower()}.jsonl"
@@ -94,6 +101,19 @@ def _load_lane_events(path: Path) -> list[dict[str, Any]]:
             continue
         if isinstance(data, dict):
             events.append(data)
+    return events
+
+
+def iter_wrapper_task_events(wrapper_events_dir: Path) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    if not wrapper_events_dir.exists():
+        return events
+    for path in sorted(wrapper_events_dir.glob("*.jsonl")):
+        for event in _load_lane_events(path):
+            event_type = str(event.get("event_type") or "")
+            if event_type in TASK_EVENT_TYPES:
+                lane = str(event.get("lane") or path.stem.capitalize())
+                events.append({**event, "lane": lane})
     return events
 
 

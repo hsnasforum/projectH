@@ -52,6 +52,8 @@ build/
 .pipeline/runs/
 .pipeline/gui-runtime/
 .pipeline/live-arb-smoke-*/
+.pipeline/live-blocked-smoke-*/
+ .pipeline/
 .pipeline/archive/
 .pipeline/usage/
 .pipeline/usage-bench/
@@ -73,4 +75,7 @@ pipeline-gui-monolith.py.bak
 ab_results_backup.txt
 pipeline.zip
 projectH.zip
+projectH-selected-files-*.zip
+tmp/
+errlog/
 NUL

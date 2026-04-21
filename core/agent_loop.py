@@ -4109,6 +4109,7 @@ class AgentLoop:
                 SourceRole.PORTAL: 0.45,
                 SourceRole.BLOG: 0.35,
                 SourceRole.AUXILIARY: 0.4,
+                SourceRole.COMMUNITY: 0.4,
             }.get(source_role, 0.4)
             for bullet in self._extract_entity_source_fact_bullets(query=query, source=source):
                 parsed = self._split_entity_fact_bullet(bullet)

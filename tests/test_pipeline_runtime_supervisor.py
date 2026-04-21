@@ -1783,6 +1783,186 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertTrue(models["Codex"]["done_at"])
             self.assertEqual(models["Codex"]["note"], "waiting_next_control")
 
+    def test_supervisor_mirrors_task_wrapper_events_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            wrapper_dir = supervisor.wrapper_events_dir
+            append_wrapper_event(
+                wrapper_dir,
+                "Codex",
+                "HEARTBEAT",
+                {},
+                source="wrapper",
+                derived_from="process_alive",
+            )
+            append_wrapper_event(
+                wrapper_dir,
+                "Codex",
+                "DISPATCH_SEEN",
+                {"job_id": "ctrl-628", "dispatch_id": "seq-628", "control_seq": 628, "attempt": 1},
+                source="wrapper",
+                derived_from="task_hint",
+            )
+            append_wrapper_event(
+                wrapper_dir,
+                "Codex",
+                "TASK_ACCEPTED",
+                {"job_id": "ctrl-628", "dispatch_id": "seq-628", "control_seq": 628, "attempt": 1},
+                source="wrapper",
+                derived_from="vendor_output",
+            )
+            append_wrapper_event(
+                wrapper_dir,
+                "Codex",
+                "TASK_DONE",
+                {"job_id": "ctrl-628", "dispatch_id": "seq-628", "control_seq": 628},
+                source="wrapper",
+                derived_from="vendor_output",
+            )
+
+            supervisor._mirror_wrapper_task_events()
+            supervisor._mirror_wrapper_task_events()
+
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual([event["event_type"] for event in events], ["DISPATCH_SEEN", "TASK_ACCEPTED", "TASK_DONE"])
+            self.assertTrue(all(event["source"] == "wrapper" for event in events))
+            self.assertEqual(events[0]["payload"]["lane"], "Codex")
+            self.assertEqual(events[0]["payload"]["job_id"], "ctrl-628")
+            self.assertEqual(events[0]["payload"]["dispatch_id"], "seq-628")
+            self.assertEqual(events[0]["payload"]["control_seq"], 628)
+            self.assertEqual(events[0]["payload"]["attempt"], 1)
+            self.assertEqual(events[0]["payload"]["derived_from"], "task_hint")
+            self.assertTrue(events[0]["payload"]["wrapper_ts"])
+
+            restarted = RuntimeSupervisor(root, run_id=supervisor.run_id, start_runtime=False)
+            restarted._mirror_wrapper_task_events()
+            after_restart_events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(
+                [event["event_type"] for event in after_restart_events],
+                ["DISPATCH_SEEN", "TASK_ACCEPTED", "TASK_DONE"],
+            )
+
+    def test_mirror_wrapper_task_events_appends_to_events_jsonl(self) -> None:
+        """_mirror_wrapper_task_events가 wrapper-events/*.jsonl 이벤트를
+        supervisor events.jsonl에 source='wrapper'로 실제 기록해야 함"""
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from pipeline_runtime.supervisor import RuntimeSupervisor
+        from pipeline_runtime.wrapper_events import append_wrapper_event
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            run_id = "test-run-001"
+            run_dir = base / "runs" / run_id
+            run_dir.mkdir(parents=True)
+            wrapper_dir = run_dir / "wrapper-events"
+            wrapper_dir.mkdir()
+
+            # Write a DISPATCH_SEEN event into wrapper-events/codex.jsonl
+            append_wrapper_event(
+                wrapper_dir,
+                "codex",
+                "DISPATCH_SEEN",
+                {
+                    "job_id": "ctrl-1",
+                    "dispatch_id": "seq-1",
+                    "control_seq": 1,
+                    "attempt": 1,
+                },
+                source="wrapper",
+                derived_from="task_hint",
+            )
+
+            sup = RuntimeSupervisor.__new__(RuntimeSupervisor)
+            sup.base_dir = base
+            sup.run_id = run_id
+            sup.run_dir = run_dir
+            sup.wrapper_events_dir = wrapper_dir
+            sup.events_path = run_dir / "events.jsonl"
+            sup._mirrored_wrapper_event_keys = set()
+            sup._mirrored_wrapper_event_keys_seeded = False
+            sup._event_seq = 0
+
+            sup._mirror_wrapper_task_events()
+
+            # events.jsonl must contain exactly one wrapper-source entry
+            assert sup.events_path.exists(), "events.jsonl was not created"
+            lines = [json.loads(l) for l in sup.events_path.read_text().splitlines()]
+            wrapper_entries = [e for e in lines if e.get("source") == "wrapper"]
+            self.assertEqual(len(wrapper_entries), 1)
+            self.assertEqual(wrapper_entries[0]["event_type"], "DISPATCH_SEEN")
+            payload = wrapper_entries[0].get("payload", {})
+            self.assertEqual(payload.get("job_id"), "ctrl-1")
+
+    def test_progress_hint_marks_verify_note_written_next_control_pending(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor.runtime_state = "RUNNING"
+
+            progress = supervisor._build_progress_hint(
+                active_lane="Claude",
+                active_round={"state": "VERIFYING", "job_id": "job-1"},
+                turn_state={
+                    "state": "VERIFY_ACTIVE",
+                    "entered_at": 100.0,
+                    "active_role": "verify",
+                    "active_lane": "Claude",
+                },
+                control={"active_control_status": "none", "active_control_file": ""},
+                autonomy={"mode": "normal"},
+                artifacts={
+                    "latest_work": {"path": "work.md", "mtime": 90.0},
+                    "latest_verify": {"path": "verify.md", "mtime": 101.0},
+                },
+            )
+            lanes = [{"name": "Claude", "state": "WORKING", "note": "followup"}]
+            supervisor._annotate_lane_progress(lanes, progress)
+
+            self.assertEqual(progress["phase"], "verify_note_written_next_control_pending")
+            self.assertEqual(progress["lane"], "Claude")
+            self.assertEqual(lanes[0]["progress_phase"], "verify_note_written_next_control_pending")
+
+    def test_progress_hint_marks_operator_gate_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor.runtime_state = "RUNNING"
+
+            progress = supervisor._build_progress_hint(
+                active_lane="Claude",
+                active_round=None,
+                turn_state={
+                    "state": "VERIFY_FOLLOWUP",
+                    "entered_at": 100.0,
+                    "active_role": "verify",
+                    "active_lane": "Claude",
+                },
+                control={"active_control_status": "none", "active_control_file": ""},
+                autonomy={"mode": "pending_operator", "reason_code": "approval_required"},
+                artifacts={
+                    "latest_work": {"path": "work.md", "mtime": 90.0},
+                    "latest_verify": {"path": "verify.md", "mtime": 95.0},
+                },
+            )
+
+            self.assertEqual(progress["phase"], "operator_gate_followup")
+            self.assertEqual(progress["reason"], "approval_required")
+
     def test_active_verify_round_keeps_codex_surface_working_even_if_wrapper_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1912,10 +2092,15 @@ class RuntimeSupervisorTest(unittest.TestCase):
                 if line.strip()
             ]
             stall_events = [event for event in events if event.get("event_type") == "dispatch_stall_detected"]
+            automation_events = [event for event in events if event.get("event_type") == "automation_incident"]
 
             self.assertEqual(status["runtime_state"], "DEGRADED")
             self.assertEqual(status["degraded_reason"], "dispatch_stall")
             self.assertIn("dispatch_stall", list(status.get("degraded_reasons") or []))
+            self.assertEqual(status["automation_health"], "attention")
+            self.assertEqual(status["automation_reason_code"], "dispatch_stall")
+            self.assertEqual(status["automation_incident_family"], "dispatch_stall")
+            self.assertEqual(status["automation_next_action"], "verify_followup")
             self.assertEqual(status["active_round"]["state"], "VERIFY_PENDING")
             self.assertEqual(status["active_round"]["note"], "waiting_task_accept_after_dispatch")
             self.assertEqual(status["active_round"]["dispatch_stage"], "task_accept_missing")
@@ -1925,6 +2110,11 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(stall_events[0]["payload"]["action"], "degraded")
             self.assertEqual(stall_events[0]["payload"]["lane"], "Codex")
             self.assertEqual(stall_events[0]["payload"]["stage"], "task_accept_missing")
+            self.assertEqual(len(automation_events), 1)
+            self.assertEqual(automation_events[0]["payload"]["automation_health"], "attention")
+            self.assertEqual(automation_events[0]["payload"]["reason_code"], "dispatch_stall")
+            self.assertEqual(automation_events[0]["payload"]["incident_family"], "dispatch_stall")
+            self.assertEqual(automation_events[0]["payload"]["next_action"], "verify_followup")
 
     def test_write_status_ignores_old_legacy_dispatch_stall_from_previous_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2128,10 +2318,15 @@ class RuntimeSupervisorTest(unittest.TestCase):
                 if line.strip()
             ]
             stall_events = [event for event in events if event.get("event_type") == "completion_stall_detected"]
+            automation_events = [event for event in events if event.get("event_type") == "automation_incident"]
 
             self.assertEqual(status["runtime_state"], "DEGRADED")
             self.assertEqual(status["degraded_reason"], "post_accept_completion_stall")
             self.assertIn("post_accept_completion_stall", list(status.get("degraded_reasons") or []))
+            self.assertEqual(status["automation_health"], "attention")
+            self.assertEqual(status["automation_reason_code"], "post_accept_completion_stall")
+            self.assertEqual(status["automation_incident_family"], "completion_stall")
+            self.assertEqual(status["automation_next_action"], "verify_followup")
             self.assertEqual(status["active_round"]["state"], "VERIFY_PENDING")
             self.assertEqual(status["active_round"]["note"], "waiting_task_done_after_accept")
             self.assertEqual(status["active_round"]["completion_stage"], "task_done_missing")
@@ -2141,6 +2336,11 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(stall_events[0]["payload"]["action"], "degraded")
             self.assertEqual(stall_events[0]["payload"]["lane"], "Codex")
             self.assertEqual(stall_events[0]["payload"]["stage"], "task_done_missing")
+            self.assertEqual(len(automation_events), 1)
+            self.assertEqual(automation_events[0]["payload"]["automation_health"], "attention")
+            self.assertEqual(automation_events[0]["payload"]["reason_code"], "post_accept_completion_stall")
+            self.assertEqual(automation_events[0]["payload"]["incident_family"], "completion_stall")
+            self.assertEqual(automation_events[0]["payload"]["next_action"], "verify_followup")
 
     def test_idle_verify_round_keeps_codex_ready_even_if_round_is_running(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2495,6 +2695,50 @@ class RuntimeSupervisorTest(unittest.TestCase):
             codex = next(lane for lane in lanes if lane["name"] == "Codex")
             self.assertEqual(codex["state"], "READY")
             self.assertEqual(codex["note"], "signal_mismatch")
+
+    def test_build_lane_statuses_uses_matching_task_done_over_stale_busy_tail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root, implement="Codex", verify="Claude")
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    return_value={"alive": True, "pid": 31337, "attachable": True, "pane_id": "%1"},
+                ),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "capture_tail",
+                    side_effect=lambda lane_name, lines=80: (
+                        "• Working (12s • esc to interrupt)\n"
+                        if lane_name == "Codex"
+                        else ""
+                    ),
+                ),
+            ):
+                lanes, _models = supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Codex": {
+                            "state": "READY",
+                            "note": "",
+                            "done_task": {
+                                "job_id": "ctrl-205",
+                                "dispatch_id": "seq-205",
+                                "control_seq": 205,
+                            },
+                            "last_event_at": "2026-04-21T09:00:00.000000Z",
+                            "last_heartbeat_at": "2026-04-21T09:00:01.000000Z",
+                        }
+                    },
+                    active_lane="",
+                    active_round=None,
+                    turn_state={"state": "IDLE"},
+                    control={"active_control_status": "implement", "active_control_seq": 205},
+                )
+            codex = next(lane for lane in lanes if lane["name"] == "Codex")
+            self.assertEqual(codex["state"], "READY")
+            self.assertEqual(codex["note"], "waiting_next_control")
 
     def test_active_implement_control_keeps_claude_working_even_during_verify_follow_on(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3193,6 +3437,68 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertTrue(status["autonomy"]["suppress_operator_until"])
             self.assertEqual(len(gated_events), 1)
             self.assertEqual(gated_events[0]["payload"]["reason"], "slice_ambiguity")
+
+    def test_write_status_preserves_operator_gate_first_seen_across_seq_only_bump(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            operator_path = pipeline_dir / "operator_request.md"
+
+            def write_operator_request(seq: int, mtime: float) -> None:
+                operator_path.write_text(
+                    "STATUS: needs_operator\n"
+                    f"CONTROL_SEQ: {seq}\n"
+                    "REASON_CODE: slice_ambiguity\n"
+                    "OPERATOR_POLICY: gate_24h\n"
+                    "DECISION_CLASS: operator_only\n"
+                    "DECISION_REQUIRED: choose exact next slice\n",
+                    encoding="utf-8",
+                )
+                os.utime(operator_path, (mtime, mtime))
+
+            base_now = time.time()
+            write_operator_request(188, base_now)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            def write_status() -> dict[str, object]:
+                with (
+                    mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                    mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                    mock.patch.object(
+                        supervisor,
+                        "_build_lane_statuses",
+                        return_value=(
+                            [
+                                {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                                {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                                {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": ""},
+                            ],
+                            {"Claude": {}, "Codex": {}, "Gemini": {}},
+                        ),
+                    ),
+                    mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                    mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+                ):
+                    return supervisor._write_status()
+
+            first_status = write_status()
+            first_autonomy = first_status["autonomy"]
+
+            write_operator_request(189, base_now + 10.0)
+            second_status = write_status()
+            second_autonomy = second_status["autonomy"]
+
+            self.assertEqual(second_autonomy["mode"], "triage")
+            self.assertEqual(second_autonomy["block_reason"], "slice_ambiguity")
+            self.assertEqual(second_autonomy["first_seen_at"], first_autonomy["first_seen_at"])
+            self.assertEqual(
+                second_autonomy["suppress_operator_until"],
+                first_autonomy["suppress_operator_until"],
+            )
 
     def test_write_status_normalizes_next_slice_aliases_to_gated_operator_stop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4043,6 +4349,97 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertIn("session_recovery_started", event_types)
             self.assertIn("session_recovery_completed", event_types)
 
+    def test_session_recovery_budget_resets_only_after_stable_alive_window(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._session_recovery_attempts = 1
+            supervisor._session_recovery_last_started_at = 100.0
+
+            with mock.patch("pipeline_runtime.supervisor.time.time", return_value=399.0):
+                supervisor._maybe_reset_session_recovery_budget(True)
+
+            self.assertEqual(supervisor._session_recovery_attempts, 1)
+
+            with mock.patch("pipeline_runtime.supervisor.time.time", return_value=401.0):
+                supervisor._maybe_reset_session_recovery_budget(True)
+
+            self.assertEqual(supervisor._session_recovery_attempts, 0)
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(events[-1]["event_type"], "session_recovery_budget_reset")
+
+    def test_session_loss_does_not_recreate_scaffold_after_brief_alive_budget_hold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+            pane_ids = {"Claude": "%1", "Codex": "%2", "Gemini": "%3"}
+            broken_lanes = (
+                [
+                    {"name": "Claude", "state": "BROKEN", "attachable": False, "pid": None, "note": "pane_dead"},
+                    {"name": "Codex", "state": "BROKEN", "attachable": False, "pid": None, "note": "pane_dead"},
+                    {"name": "Gemini", "state": "BROKEN", "attachable": False, "pid": None, "note": "pane_dead"},
+                ],
+                {"Claude": {}, "Codex": {}, "Gemini": {}},
+            )
+            ready_lanes = (
+                [
+                    {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                    {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                    {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": ""},
+                ],
+                {"Claude": {}, "Codex": {}, "Gemini": {}},
+            )
+            with (
+                mock.patch.object(supervisor, "_find_cli_bin", side_effect=lambda name: f"/usr/bin/{name}"),
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": False, "pid": None}),
+                mock.patch.object(supervisor.adapter, "session_exists", side_effect=[False, True, False]),
+                mock.patch.object(supervisor.adapter, "kill_session", return_value=True),
+                mock.patch.object(supervisor.adapter, "create_scaffold", return_value=pane_ids) as create_scaffold,
+                mock.patch.object(supervisor.adapter, "spawn_lane", return_value=True),
+                mock.patch.object(supervisor.adapter, "pane_for_lane", side_effect=lambda lane: {"pane_id": pane_ids[lane]}),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "spawn_watcher",
+                    return_value={"pane_id": "%9", "pid": 12345, "window_name": "watcher-exp"},
+                ),
+                mock.patch.object(supervisor.adapter, "restart_lane", return_value=False),
+                mock.patch.object(supervisor, "_start_token_collector"),
+                mock.patch.object(supervisor, "_terminate_repo_watchers"),
+                mock.patch.object(supervisor, "_build_lane_statuses", side_effect=[broken_lanes, ready_lanes, broken_lanes]),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+                mock.patch(
+                    "pipeline_runtime.supervisor.resolve_project_runtime_file",
+                    side_effect=lambda _project, name: root / name,
+                ),
+            ):
+                first_status = supervisor._write_status()
+                alive_status = supervisor._write_status()
+                second_missing_status = supervisor._write_status()
+
+            self.assertEqual(first_status["degraded_reason"], "session_missing")
+            self.assertEqual(alive_status["degraded_reason"], "")
+            self.assertEqual(second_missing_status["degraded_reason"], "session_missing")
+            self.assertIn("session_recovery_exhausted", list(second_missing_status.get("degraded_reasons") or []))
+            self.assertEqual(second_missing_status["automation_health"], "needs_operator")
+            create_scaffold.assert_called_once()
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            event_types = [event.get("event_type") for event in events]
+            self.assertEqual(event_types.count("session_recovery_started"), 1)
+            self.assertEqual(event_types.count("session_recovery_completed"), 1)
+            self.assertEqual(event_types.count("session_recovery_exhausted"), 1)
+
     def test_session_loss_failed_recovery_is_bounded_without_lane_restart_loop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4421,6 +4818,47 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(
                 canonical_status["active_round"]["state"], "VERIFY_PENDING"
             )
+
+    def test_watcher_source_change_restarts_watcher_without_operator_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            pid_path = pipeline_dir / "experimental.pid"
+            pid_path.write_text(str(os.getpid()), encoding="utf-8")
+            os.utime(pid_path, (1.0, 1.0))
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_terminate_pid_file") as terminate_pid,
+                mock.patch.object(
+                    supervisor,
+                    "_spawn_experimental_watcher",
+                    return_value={"pid": 9999, "pane_id": "%99", "window_name": "watcher-exp"},
+                ) as spawn_watcher,
+                mock.patch.object(supervisor, "_write_current_run_pointer") as write_pointer,
+            ):
+                self.assertTrue(supervisor._maybe_restart_watcher_for_source_change())
+                self.assertFalse(supervisor._maybe_restart_watcher_for_source_change())
+
+            terminate_pid.assert_called_once_with(pid_path)
+            spawn_watcher.assert_called_once()
+            write_pointer.assert_called_once()
+
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+            ]
+            event_types = [event.get("event_type") for event in events]
+            self.assertIn("watcher_self_restart_started", event_types)
+            self.assertIn("watcher_self_restart_completed", event_types)
+            completed = next(
+                event for event in events if event.get("event_type") == "watcher_self_restart_completed"
+            )
+            self.assertEqual(completed["payload"]["reason"], "watcher_source_updated")
+            self.assertEqual(completed["payload"]["new_pid"], 9999)
 
     def test_supervisor_skips_run_id_inheritance_when_watcher_pid_is_dead(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4813,6 +5251,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertIn("watcher_fingerprint", current_run)
             self.assertEqual(current_run["watcher_fingerprint"], "")
 
+    # origin: seq 593 dispatch_intent/lane-identity default decision-class guard (출처 work note 미기록)
     def test_classify_operator_candidate_defaults_decision_class_per_visible_mode(self) -> None:
         scenarios = [
             (
@@ -4831,7 +5270,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
                 "internal_only",
             ),
             (
-                "pending_operator",
+                "needs_operator",
                 {"reason_code": "safety_stop", "operator_policy": "gate_24h"},
                 "operator_only",
             ),
@@ -4849,6 +5288,258 @@ class RuntimeSupervisorTest(unittest.TestCase):
                 self.assertIn(result["decision_class"], SUPPORTED_DECISION_CLASSES)
                 self.assertEqual(result["decision_class"], expected_decision_class)
 
+    def test_classify_operator_candidate_seq617_raw_metadata_is_canonical(self) -> None:
+        result = classify_operator_candidate(
+            "",
+            control_meta={
+                "reason_code": "branch_complete_pending_milestone_transition",
+                "operator_policy": "stop_until_operator_decision",
+                "decision_class": "branch_closure_and_milestone_transition",
+                "decision_required": "close branch and decide milestone transition",
+                "based_on_work": "work/4/21/2026-04-21-axis-g15-watcher-test-origin-annotations.md",
+                "based_on_verify": "verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md",
+            },
+            now_ts=1_000.0,
+        )
+
+        self.assertEqual(result["mode"], "needs_operator")
+        self.assertEqual(result["reason_code"], "approval_required")
+        self.assertEqual(result["operator_policy"], "immediate_publish")
+        self.assertEqual(result["decision_class"], "operator_only")
+        self.assertEqual(result["classification_source"], "operator_policy")
+        self.assertIn(result["decision_class"], SUPPORTED_DECISION_CLASSES)
+
+    def test_classify_operator_candidate_branch_commit_gate_stays_operator_visible(self) -> None:
+        result = classify_operator_candidate(
+            "",
+            control_meta={
+                "reason_code": "branch_commit_and_milestone_transition",
+                "operator_policy": "gate_24h",
+                "decision_class": "operator_only",
+                "decision_required": "approve branch commit and milestone transition",
+            },
+            idle_stable=True,
+            control_mtime=1_000.0,
+            now_ts=1_000.0,
+        )
+
+        self.assertEqual(result["mode"], "needs_operator")
+        self.assertEqual(result["reason_code"], "approval_required")
+        self.assertEqual(result["operator_policy"], "gate_24h")
+        self.assertEqual(result["decision_class"], "operator_only")
+        self.assertEqual(result["classification_source"], "operator_policy")
+        self.assertEqual(result["routed_to"], "operator")
+        self.assertTrue(result["operator_eligible"])
+        self.assertEqual(result["suppress_operator_until"], "")
+
+    def test_classify_operator_candidate_choice_menu_routes_to_advisory_followup(self) -> None:
+        control_text = "\n".join(
+            [
+                "STATUS: needs_operator",
+                "CONTROL_SEQ: 623",
+                "REASON_CODE: branch_commit_and_milestone_transition",
+                "OPERATOR_POLICY: gate_24h",
+                "DECISION_CLASS: operator_only",
+                "",
+                "**Operator decision A (choose one):** continue same-family runtime follow-up.",
+                "**Operator decision B (choose one):** ask advisory owner to choose next slice.",
+                "**Operator decision C (choose one):** pause for milestone transition.",
+            ]
+        )
+
+        result = classify_operator_candidate(
+            control_text,
+            control_meta={
+                "reason_code": "branch_commit_and_milestone_transition",
+                "operator_policy": "gate_24h",
+                "decision_class": "operator_only",
+                "decision_required": "choose A/B/C from current docs and verification notes",
+            },
+            idle_stable=True,
+            control_mtime=1_000.0,
+            now_ts=1_000.0,
+        )
+
+        self.assertEqual(result["mode"], "triage")
+        self.assertEqual(result["suppressed_mode"], "triage")
+        self.assertEqual(result["reason_code"], "slice_ambiguity")
+        self.assertEqual(result["operator_policy"], "gate_24h")
+        self.assertEqual(result["decision_class"], "next_slice_selection")
+        self.assertEqual(result["classification_source"], "operator_policy")
+        self.assertEqual(result["routed_to"], "codex_followup")
+        self.assertFalse(result["operator_eligible"])
+
+    def test_classify_operator_candidate_numbered_choice_menu_routes_to_advisory_followup(self) -> None:
+        control_text = "\n".join(
+            [
+                "STATUS: needs_operator",
+                "CONTROL_SEQ: 624",
+                "REASON_CODE: branch_commit_and_milestone_transition",
+                "OPERATOR_POLICY: gate_24h",
+                "DECISION_CLASS: operator_only",
+                "",
+                "1안: continue same-family runtime follow-up.",
+                "2안: ask advisory owner to choose next slice.",
+                "3안: pause for milestone transition.",
+            ]
+        )
+
+        result = classify_operator_candidate(
+            control_text,
+            control_meta={
+                "reason_code": "branch_commit_and_milestone_transition",
+                "operator_policy": "gate_24h",
+                "decision_class": "operator_only",
+                "decision_required": "선택지 1/2/3 중 current docs and verification notes로 고르기",
+            },
+            idle_stable=True,
+            control_mtime=1_000.0,
+            now_ts=1_000.0,
+        )
+
+        self.assertEqual(result["mode"], "triage")
+        self.assertEqual(result["reason_code"], "slice_ambiguity")
+        self.assertEqual(result["operator_policy"], "gate_24h")
+        self.assertEqual(result["decision_class"], "next_slice_selection")
+        self.assertEqual(result["routed_to"], "codex_followup")
+
+    # origin: choice-menu inline parenthesized advisory follow-up guard (출처 work note 미기록)
+    def test_classify_operator_candidate_inline_parenthesized_choices_route_to_advisory_followup(self) -> None:
+        result = classify_operator_candidate(
+            "",
+            control_meta={
+                "reason_code": "approval_required",
+                "operator_policy": "gate_24h",
+                "decision_class": "operator_only",
+                "decision_required": (
+                    "(B) pipeline runtime live validation; "
+                    "(C) evidence follow-up; "
+                    "(D) docs reconciliation"
+                ),
+            },
+            idle_stable=True,
+            control_mtime=1_000.0,
+            now_ts=1_000.0,
+        )
+
+        self.assertEqual(result["mode"], "triage")
+        self.assertEqual(result["reason_code"], "slice_ambiguity")
+        self.assertEqual(result["decision_class"], "next_slice_selection")
+        self.assertEqual(result["routed_to"], "codex_followup")
+
+    # origin: choice-menu explanatory blocker marker scope guard (출처 work note 미기록)
+    def test_classify_operator_candidate_body_marker_docs_do_not_block_choice_menu(self) -> None:
+        control_text = "\n".join(
+            [
+                "STATUS: needs_operator",
+                "CONTROL_SEQ: 625",
+                "REASON_CODE: approval_required",
+                "OPERATOR_POLICY: gate_24h",
+                "DECISION_CLASS: operator_only",
+                (
+                    "DECISION_REQUIRED: (B) live validation; "
+                    "(C) evidence check; "
+                    "(D) docs sync"
+                ),
+                "",
+                "---",
+                "",
+                "- approval_record/safety/destructive/auth/credential/git/milestone marker docs are explanatory.",
+            ]
+        )
+
+        result = classify_operator_candidate(
+            control_text,
+            control_meta={
+                "reason_code": "approval_required",
+                "operator_policy": "gate_24h",
+                "decision_class": "operator_only",
+                "decision_required": "(B) live validation; (C) evidence check; (D) docs sync",
+            },
+            idle_stable=True,
+            control_mtime=1_000.0,
+            now_ts=1_000.0,
+        )
+
+        self.assertEqual(result["mode"], "triage")
+        self.assertEqual(result["reason_code"], "slice_ambiguity")
+        self.assertEqual(result["decision_class"], "next_slice_selection")
+
+    def test_classify_operator_candidate_seq_only_bump_keeps_semantic_fingerprint(self) -> None:
+        control_text_template = "\n".join(
+            [
+                "STATUS: needs_operator",
+                "CONTROL_SEQ: {seq}",
+                "REASON_CODE: approval_required",
+                "OPERATOR_POLICY: gate_24h",
+                "DECISION_CLASS: operator_only",
+                "DECISION_REQUIRED: (B) live validation; (C) commit approval",
+                "",
+                "- Runtime validation and commit approval remain the same menu.",
+            ]
+        )
+        control_meta = {
+            "reason_code": "approval_required",
+            "operator_policy": "gate_24h",
+            "decision_class": "operator_only",
+            "decision_required": "(B) live validation; (C) commit approval",
+        }
+
+        first = classify_operator_candidate(
+            control_text_template.format(seq=644),
+            control_meta=control_meta,
+            control_seq=644,
+            control_mtime=2_000.0,
+            first_seen_ts=1_000.0,
+            now_ts=2_100.0,
+        )
+        bumped = classify_operator_candidate(
+            control_text_template.format(seq=645),
+            control_meta=control_meta,
+            control_seq=645,
+            control_mtime=3_000.0,
+            first_seen_ts=1_000.0,
+            now_ts=2_100.0,
+        )
+
+        self.assertEqual(bumped["fingerprint"], first["fingerprint"])
+        self.assertEqual(bumped["first_seen_at"], first["first_seen_at"])
+        self.assertEqual(bumped["suppress_operator_until"], first["suppress_operator_until"])
+
+    def test_classify_operator_candidate_sequential_gate_not_misrouted(self) -> None:
+        content = (
+            "DECISION_REQUIRED: (B) runtime 재시작 승인; (C) B 통과 후 commit/push/PR 승인; "
+            "(D) C 완료 후 Milestone 5 진입 승인"
+        )
+        control_meta = {
+            "OPERATOR_POLICY": "gate_24h",
+            "REASON_CODE": "approval_required",
+            "DECISION_CLASS": "operator_only",
+        }
+        result = classify_operator_candidate(content, control_meta=control_meta)
+        self.assertNotEqual(result.get("reason_code"), "slice_ambiguity")
+        self.assertNotEqual(result.get("decision_class"), "next_slice_selection")
+
+    def test_classify_operator_candidate_choice_menu_keeps_approval_record_blocker(self) -> None:
+        result = classify_operator_candidate(
+            "A: rewrite approval record\nB: continue without approval record repair",
+            control_meta={
+                "reason_code": "approval_required",
+                "operator_policy": "gate_24h",
+                "decision_class": "operator_only",
+                "decision_required": "approval-record repair must happen before new work",
+            },
+            idle_stable=True,
+            control_mtime=1_000.0,
+            now_ts=1_000.0,
+        )
+
+        self.assertEqual(result["mode"], "needs_operator")
+        self.assertEqual(result["reason_code"], "approval_required")
+        self.assertEqual(result["decision_class"], "operator_only")
+        self.assertEqual(result["routed_to"], "operator")
+
+    # origin: seq 593 dispatch_intent/lane-identity payload stability guard (출처 work note 미기록)
     def test_classify_operator_candidate_payload_stability(self) -> None:
         expected_keys = [
             "mode",
@@ -4880,7 +5571,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
         invariant_scenarios = [
             ("needs_operator", {"reason_code": "truth_sync_required"}),
             (
-                "pending_operator",
+                "needs_operator",
                 {"reason_code": "safety_stop", "operator_policy": "gate_24h"},
             ),
             ("triage", {"reason_code": "slice_ambiguity"}),

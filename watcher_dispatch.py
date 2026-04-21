@@ -12,6 +12,8 @@ from pipeline_runtime.lane_surface import (
     pane_text_is_idle,
 )
 
+SIGNAL_MISMATCH_DROP_NOTIFY_KINDS = frozenset({"claude_handoff"})
+
 
 @dataclass(frozen=True)
 class DispatchIntent:
@@ -232,6 +234,10 @@ class WatcherDispatchQueue:
         return None
 
     def _pending_signal_mismatch_reason(self, pending: dict[str, object]) -> str | None:
+        notify_kind = str(pending.get("notify_kind") or "").strip()
+        if notify_kind not in SIGNAL_MISMATCH_DROP_NOTIFY_KINDS:
+            return None
+
         prompt_path_raw = str(pending.get("prompt_path") or "").strip()
         if not prompt_path_raw:
             return None

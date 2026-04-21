@@ -20,6 +20,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from pipeline_gui.project import _session_name_for
+from pipeline_runtime.automation_health import derive_automation_health
 from pipeline_runtime.control_writers import validate_operator_candidate_status
 from pipeline_runtime.lane_catalog import (
     build_agent_profile_payload,
@@ -283,6 +284,10 @@ def _status_readiness_snapshot(status: dict[str, Any] | None) -> dict[str, Any]:
         )
     return {
         "runtime_state": str(status.get("runtime_state") or ""),
+        "automation_health": str(status.get("automation_health") or ""),
+        "automation_reason_code": str(status.get("automation_reason_code") or ""),
+        "automation_incident_family": str(status.get("automation_incident_family") or ""),
+        "automation_next_action": str(status.get("automation_next_action") or ""),
         "watcher": {
             "alive": bool(watcher.get("alive")),
             "pid": watcher.get("pid"),
@@ -294,6 +299,30 @@ def _status_readiness_snapshot(status: dict[str, Any] | None) -> dict[str, Any]:
         "active_round": {
             "state": str(active_round.get("state") or ""),
         },
+    }
+
+
+def _soak_runtime_context(project_root: Path, status: dict[str, Any] | None) -> dict[str, Any]:
+    snapshot = dict(status or _read_status(project_root) or {})
+    if snapshot:
+        snapshot.update(derive_automation_health(snapshot))
+    control = dict(snapshot.get("control") or {})
+    active_round = dict(snapshot.get("active_round") or {})
+    events = _read_events(project_root)[-12:]
+    return {
+        "current_run_id": str(snapshot.get("current_run_id") or snapshot.get("run_id") or ""),
+        "automation_health": str(snapshot.get("automation_health") or ""),
+        "automation_reason_code": str(snapshot.get("automation_reason_code") or ""),
+        "automation_incident_family": str(snapshot.get("automation_incident_family") or ""),
+        "automation_next_action": str(snapshot.get("automation_next_action") or ""),
+        "open_control": {
+            "active_control_file": str(control.get("active_control_file") or ""),
+            "active_control_seq": int(control.get("active_control_seq") or -1),
+            "active_control_status": str(control.get("active_control_status") or "none"),
+        },
+        "active_round": active_round,
+        "latest_status": _status_readiness_snapshot(snapshot),
+        "recent_events": events,
     }
 
 
@@ -401,12 +430,28 @@ def _soak_summary_fields(summary: dict[str, Any], *, base: dict[str, Any]) -> di
     )
     if summary.get("readiness_snapshot"):
         fields["readiness_snapshot"] = summary.get("readiness_snapshot")
+    runtime_context = dict(summary.get("runtime_context") or {})
+    if runtime_context:
+        fields["runtime_context"] = runtime_context
+        fields["incident_family"] = str(runtime_context.get("automation_incident_family") or "")
+        fields["automation_health"] = str(runtime_context.get("automation_health") or "")
+        fields["automation_reason_code"] = str(runtime_context.get("automation_reason_code") or "")
+        fields["automation_next_action"] = str(runtime_context.get("automation_next_action") or "")
+        fields["current_run_id"] = str(runtime_context.get("current_run_id") or "")
     return fields
 
 
 def _default_report_path(project_root: Path, slug: str) -> Path:
     date_prefix = dt.datetime.now().strftime("%Y-%m-%d")
     return project_root / "report" / "pipeline_runtime" / "verification" / f"{date_prefix}-{slug}.md"
+
+
+def _synthetic_soak_report_slug(duration_sec: float) -> str:
+    if duration_sec >= 24 * 60 * 60:
+        return "24h-synthetic-soak"
+    if duration_sec >= 6 * 60 * 60:
+        return "6h-synthetic-soak"
+    return "pipeline-runtime-synthetic-soak"
 
 
 def _schedule_workspace_cleanup(workspace: Path) -> tuple[bool, str]:
@@ -976,13 +1021,37 @@ def run_soak(
     receipt_pending_samples = 0
     classification_gate_failures = 0
     classification_gate_details: set[str] = set()
+    latest_status: dict[str, Any] | None = None
     try:
         if not started:
-            return False, {"start_detail": detail, "samples": 0, "state_counts": {}, "degraded_counts": {}}
+            return False, {
+                "start_detail": detail,
+                "ready_ok": False,
+                "ready_wait_sec": 0.0,
+                "ready_timeout_sec": ready_timeout_sec,
+                "samples": 0,
+                "state_counts": {},
+                "degraded_counts": {},
+                "degraded_seen": False,
+                "broken_seen": False,
+                "duration_sec": duration_sec,
+                "receipt_count": 0,
+                "control_change_count": 0,
+                "control_mismatch_samples": 0,
+                "control_mismatch_max_streak": 0,
+                "receipt_pending_samples": 0,
+                "classification_gate_failures": 0,
+                "classification_gate_details": [],
+                "dispatch_count": 0,
+                "duplicate_dispatch_count": 0,
+                "orphan_session": False,
+                "runtime_context": _soak_runtime_context(project_root, None),
+            }
         ready_ok, ready_status, ready_wait_sec = _wait_for_runtime_readiness(
             project_root,
             timeout_sec=ready_timeout_sec,
         )
+        latest_status = ready_status if isinstance(ready_status, dict) else None
         readiness_snapshot = _status_readiness_snapshot(ready_status)
         if not ready_ok:
             return False, {
@@ -1007,11 +1076,13 @@ def run_soak(
                 "dispatch_count": 0,
                 "duplicate_dispatch_count": 0,
                 "orphan_session": False,
+                "runtime_context": _soak_runtime_context(project_root, latest_status),
             }
         deadline = time.time() + duration_sec
         while time.time() < deadline:
             status = _read_status(project_root)
             if isinstance(status, dict):
+                latest_status = status
                 samples += 1
                 gate_detail = _operator_classification_gate_detail(status)
                 if gate_detail:
@@ -1054,6 +1125,7 @@ def run_soak(
     degraded_seen = bool(degraded_counts)
     artifact_summary = _analyze_run_artifacts(project_root, session)
     receipt_count = len(receipt_ids)
+    runtime_context = _soak_runtime_context(project_root, latest_status)
     return (
         (not broken_seen)
         and (not degraded_seen)
@@ -1081,6 +1153,7 @@ def run_soak(
         "receipt_pending_samples": receipt_pending_samples,
         "classification_gate_failures": classification_gate_failures,
         "classification_gate_details": sorted(classification_gate_details),
+        "runtime_context": runtime_context,
         **artifact_summary,
     }
 
@@ -1311,6 +1384,19 @@ def main(argv: list[str] | None = None) -> int:
             f"workspace_retained={workspace_retained}",
             f"workspace_cleanup={cleanup_mode}",
         ]
+        runtime_context = dict(summary.get("runtime_context") or {})
+        if runtime_context:
+            lines.extend(
+                [
+                    f"current_run_id={runtime_context.get('current_run_id') or ''}",
+                    f"automation_health={runtime_context.get('automation_health') or ''}",
+                    f"automation_reason_code={runtime_context.get('automation_reason_code') or ''}",
+                    f"incident_family={runtime_context.get('automation_incident_family') or ''}",
+                    f"automation_next_action={runtime_context.get('automation_next_action') or ''}",
+                    "open_control="
+                    + json.dumps(runtime_context.get("open_control") or {}, ensure_ascii=False, sort_keys=True),
+                ]
+            )
         if summary.get("readiness_snapshot"):
             lines.append(
                 "readiness_snapshot="
@@ -1376,7 +1462,8 @@ def main(argv: list[str] | None = None) -> int:
             summary=lines,
             checks=checks,
         )
-        report_path = Path(args.report).resolve() if args.report else _default_report_path(project_root, "pipeline-runtime-synthetic-soak")
+        report_slug = _synthetic_soak_report_slug(float(args.duration_sec))
+        report_path = Path(args.report).resolve() if args.report else _default_report_path(project_root, report_slug)
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(report_text, encoding="utf-8")
         synthetic_summary_fields = _soak_summary_fields(
@@ -1457,6 +1544,19 @@ def main(argv: list[str] | None = None) -> int:
         f"orphan_session={bool(summary.get('orphan_session'))}",
         f"broken_seen={bool(summary.get('broken_seen'))}",
     ]
+    runtime_context = dict(summary.get("runtime_context") or {})
+    if runtime_context:
+        lines.extend(
+            [
+                f"current_run_id={runtime_context.get('current_run_id') or ''}",
+                f"automation_health={runtime_context.get('automation_health') or ''}",
+                f"automation_reason_code={runtime_context.get('automation_reason_code') or ''}",
+                f"incident_family={runtime_context.get('automation_incident_family') or ''}",
+                f"automation_next_action={runtime_context.get('automation_next_action') or ''}",
+                "open_control="
+                + json.dumps(runtime_context.get("open_control") or {}, ensure_ascii=False, sort_keys=True),
+            ]
+        )
     if summary.get("readiness_snapshot"):
         lines.append(
             "readiness_snapshot="

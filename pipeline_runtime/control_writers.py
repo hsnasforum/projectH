@@ -59,6 +59,8 @@ def validate_operator_request_headers(
     normalized_decision_class = normalize_decision_class(decision_class)
     if not normalized_decision_class:
         raise ValueError("decision_class is required")
+    if normalized_decision_class not in SUPPORTED_DECISION_CLASSES:
+        raise ValueError(f"unsupported decision_class: {decision_class}")
 
     validated_extra_headers: dict[str, str] = {}
     reserved = {

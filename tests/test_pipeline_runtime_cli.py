@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import signal
 import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pipeline_runtime.cli as runtime_cli
 from pipeline_runtime.cli import _WrapperEmitter
@@ -470,6 +471,71 @@ class SupervisorCliTest(unittest.TestCase):
 
             self.assertEqual(live_pid, 1234)
             self.assertEqual(pid_path.read_text(encoding="utf-8").strip(), "1234")
+
+    def test_runtime_source_newer_than_supervisor_pidfile_requests_reload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            pid_path = project_root / ".pipeline" / "supervisor.pid"
+            source_path = project_root / "watcher_core.py"
+            pid_path.parent.mkdir(parents=True, exist_ok=True)
+            pid_path.write_text("1234", encoding="utf-8")
+            source_path.write_text("# updated watcher\n", encoding="utf-8")
+            old_ts = 10.0
+            new_ts = 20.0
+            os.utime(pid_path, (old_ts, old_ts))
+            os.utime(source_path, (new_ts, new_ts))
+
+            self.assertTrue(runtime_cli._runtime_source_newer_than_supervisor_pidfile(project_root))
+
+    def test_spawn_supervisor_replaces_live_daemon_when_runtime_source_changed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            args = Namespace(
+                project_root=str(project_root),
+                legacy_mode="",
+                mode="experimental",
+                session="aip-projectH",
+            )
+            process = Mock()
+            process.poll.return_value = None
+            process.returncode = None
+
+            with (
+                patch.object(runtime_cli, "_runtime_source_newer_than_supervisor_pidfile", return_value=True),
+                patch.object(runtime_cli, "_reconcile_supervisors", return_value=1234),
+                patch.object(runtime_cli, "_stop_supervisor", return_value=0) as stop_supervisor,
+                patch.object(runtime_cli.time, "sleep", return_value=None),
+                patch.object(runtime_cli, "RuntimeSupervisor", return_value=Mock(run_id="run-fresh")),
+                patch.object(runtime_cli.subprocess, "Popen", return_value=process) as popen,
+                patch.object(runtime_cli, "_current_run_matches", return_value=True),
+            ):
+                code = runtime_cli._spawn_supervisor(args)
+
+            self.assertEqual(code, 0)
+            stop_supervisor.assert_called_once_with(args)
+            popen.assert_called_once()
+
+    def test_spawn_supervisor_keeps_live_daemon_when_runtime_source_is_not_newer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            args = Namespace(
+                project_root=str(project_root),
+                legacy_mode="",
+                mode="experimental",
+                session="aip-projectH",
+            )
+
+            with (
+                patch.object(runtime_cli, "_runtime_source_newer_than_supervisor_pidfile", return_value=False),
+                patch.object(runtime_cli, "_reconcile_supervisors", return_value=1234),
+                patch.object(runtime_cli, "_stop_supervisor") as stop_supervisor,
+                patch.object(runtime_cli.subprocess, "Popen") as popen,
+            ):
+                code = runtime_cli._spawn_supervisor(args)
+
+            self.assertEqual(code, 0)
+            stop_supervisor.assert_not_called()
+            popen.assert_not_called()
 
     def test_stop_supervisor_signals_duplicate_live_daemons_and_waits_for_flush(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

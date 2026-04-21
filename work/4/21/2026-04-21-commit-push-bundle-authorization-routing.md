@@ -62,12 +62,14 @@
 - `python3 -m unittest tests.test_pipeline_runtime_supervisor.RuntimeSupervisorTest.test_verify_prompt_prefers_gemini_before_operator_for_slice_ambiguity tests.test_pipeline_runtime_supervisor.RuntimeSupervisorTest.test_followup_prompt_only_uses_operator_after_inconclusive_gemini_advice tests.test_pipeline_runtime_supervisor.RuntimeSupervisorTest.test_prompt_templates_follow_role_bound_prompt_owners_when_lanes_exist` -> 3 tests OK
 - `python3 -m unittest tests.test_watcher_core` -> 180 tests OK
 - `python3 -m unittest tests.test_pipeline_runtime_supervisor` -> 127 tests OK
-- `git diff --check -- watcher_prompt_assembly.py tests/test_watcher_core.py .pipeline/README.md docs/projectH_pipeline_runtime_docs/03_기술설계_명세서.md docs/projectH_pipeline_runtime_docs/05_운영_RUNBOOK.md AGENTS.md CLAUDE.md PROJECT_CUSTOM_INSTRUCTIONS.md work/README.md verify/README.md` -> 통과
+- `git diff --check -- pipeline_runtime/operator_autonomy.py pipeline_runtime/automation_health.py pipeline_runtime/status_labels.py pipeline_runtime/supervisor.py watcher_prompt_assembly.py tests/test_operator_request_schema.py tests/test_watcher_core.py tests/test_pipeline_runtime_automation_health.py tests/test_pipeline_runtime_supervisor.py .pipeline/README.md docs/projectH_pipeline_runtime_docs/03_기술설계_명세서.md docs/projectH_pipeline_runtime_docs/05_운영_RUNBOOK.md AGENTS.md CLAUDE.md GEMINI.md PROJECT_CUSTOM_INSTRUCTIONS.md work/README.md verify/README.md work/4/21/2026-04-21-commit-push-bundle-authorization-routing.md` -> 통과
 - live runtime 확인: `.pipeline/logs/experimental/raw.jsonl`에 seq 713 operator gate가 기존 `mode=hibernate`에서 새 watcher restart 후 `mode=triage`, `routed_to=codex_followup`으로 재분류됐고, `verify_operator_retriage_notify`가 기록됐습니다.
 - live runtime 확인: verify/handoff owner가 `.pipeline/claude_handoff.md` `CONTROL_SEQ: 714`, `REASON_CODE: commit_push_bundle_authorization` implement handoff를 작성했습니다.
 - live runtime 확인: seq 714는 implement lane 규칙과 충돌해 `commit_push_forbidden_by_lane_rules` / `handoff_requires_commit_push_but_rules_forbid_commit_push` sentinel로 되돌아왔습니다. 이 충돌을 기준으로 blocked triage prompt가 같은 commit/push handoff를 implement lane에 다시 발행하지 않도록 회귀 테스트를 추가했습니다.
+- live runtime 확인: source 변경 뒤 watcher가 pid `692053`, fingerprint `3180825`로 재시작됐고 `runtime_state=RUNNING`, `watcher_alive=true`, 현재 round는 이 closeout의 `VERIFY_ACTIVE` 상태입니다.
+- live git 확인: 자동화가 `f7efc61 Add commit/push routing guard rules to prompt templates`를 `origin/feat/watcher-turn-state`까지 push했습니다.
 
 ## 남은 리스크
 - 이번 변경은 watcher/supervisor가 commit/push를 직접 shell로 실행하는 기능을 추가하지 않았습니다. 자동화는 "operator 재호출 없이 verify/handoff owner가 auditable publish follow-up handoff를 열도록 라우팅"하는 단계입니다.
-- live seq 714 handoff는 prompt 보강 전에 이미 작성된 stale handoff입니다. 이후 watcher prompt 계약은 같은 commit/push 요청을 implement lane에 재발행하지 않도록 바뀌었지만, 실제 commit/push 완료 여부는 이 round에서 확인되지 않았습니다.
-- worktree에는 여러 라운드 변경이 섞여 있으므로, seq 714 실행자는 handoff에 적힌 stage 목록과 현재 dirty tree를 다시 대조해야 합니다.
+- live seq 714 handoff는 prompt 보강 전에 이미 작성된 stale handoff입니다. 이후 watcher prompt 계약은 같은 commit/push 요청을 implement lane에 재발행하지 않도록 바뀌었고, commit/push는 `f7efc61`로 완료됐습니다.
+- commit/push 이후 이 closeout에 최신 확인 결과를 덧붙였기 때문에 현재 worktree에는 `work/4/21/2026-04-21-commit-push-bundle-authorization-routing.md` 한 파일만 dirty로 남아 있습니다. 작은 기록 보정이므로 별도 자동 publish 대상은 아닙니다.

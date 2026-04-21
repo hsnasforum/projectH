@@ -6,6 +6,7 @@ from typing import Any
 from .operator_autonomy import (
     COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
     OPERATOR_APPROVAL_COMPLETED_REASON,
+    PR_CREATION_GATE_REASON,
 )
 
 # The watcher normally polls once per second. Keep this well above a typical
@@ -58,6 +59,7 @@ VERIFY_FOLLOWUP_REASONS = frozenset({
     "verified_blockers_resolved",
     OPERATOR_APPROVAL_COMPLETED_REASON,
     COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+    PR_CREATION_GATE_REASON,
     "newer_unverified_work_present",
 })
 

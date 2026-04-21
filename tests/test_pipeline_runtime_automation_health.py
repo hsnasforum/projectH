@@ -10,6 +10,7 @@ from pipeline_runtime.automation_health import (
 from pipeline_runtime.operator_autonomy import (
     COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
     OPERATOR_APPROVAL_COMPLETED_REASON,
+    PR_CREATION_GATE_REASON,
 )
 
 
@@ -159,6 +160,21 @@ class PipelineRuntimeAutomationHealthTest(unittest.TestCase):
         self.assertEqual(health["automation_health"], "needs_operator")
         self.assertEqual(health["automation_reason_code"], "approval_required")
         self.assertEqual(health["automation_next_action"], "operator_required")
+
+    def test_pr_creation_gate_maps_to_verify_followup_attention(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "autonomy": {
+                    "mode": "triage",
+                    "reason_code": PR_CREATION_GATE_REASON,
+                },
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "attention")
+        self.assertEqual(health["automation_reason_code"], PR_CREATION_GATE_REASON)
+        self.assertEqual(health["automation_next_action"], "verify_followup")
 
     def test_recovery_exhaustion_requires_operator(self) -> None:
         health = derive_automation_health(

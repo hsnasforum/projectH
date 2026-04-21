@@ -108,7 +108,8 @@ launcher live stability gate는 아래를 현재 통과 기준으로 둡니다.
 진화적 탐색은 current evidence와 milestone에 묶인 bounded candidate comparison이며, broad random exploration이나 사용자에게 선택지를 되돌리는 방식이 아닙니다.
 하드코딩, near-copy 중복, 과도한 파일/함수 집중은 runtime 유지보수 리스크입니다. current branch/SHA/seq/pane/prose/label 의존 대신 structured metadata와 shared helper를 사용하고, 같은 truth가 반복되면 owning boundary로 올립니다.
 
-real-risk action, auth/credential, destructive write, approval-record repair, truth-sync blocker, publication boundary는 여전히 explicit approval과 audit trail을 요구합니다.
+real-risk action, auth/credential, destructive write, approval-record repair, truth-sync blocker, merge/destructive publication boundary는 여전히 explicit approval과 audit trail을 요구합니다.
+- `pr_creation_gate + gate_24h + release_gate`는 승인된 큰 묶음의 draft PR 생성 follow-up이므로 operator wait가 아니라 verify/handoff-owner triage로 흐르고 `automation_health=attention`, `automation_next_action=verify_followup`으로 확인합니다.
 - thin client drift triage는 runtime `status.json` / `events.jsonl` 기준으로만 하고, pane/log/file scan은 current truth 재판정이 아니라 mismatch evidence로만 사용할 것
 - current `accepted_task`가 살아 있는 lane은 tail prompt가 보여도 `READY`로 내리지 말고 `WORKING`으로 유지할 것. verify lane이 이미 `TASK_DONE` 뒤 receipt close만 기다리는 경우는 launcher snapshot에 `active_round.state`, `dispatch_id`, `completion_stage`, `Receipt: pending close`로 그대로 드러나야 합니다.
 - pane busy/ready marker는 `pipeline_runtime/lane_surface.py` shared helper/profile을 single source로 유지할 것. watcher, supervisor, cli wrapper가 각자 marker 확장을 따로 들고 있으면 READY/WORKING drift triage가 다시 흔들립니다.
@@ -350,6 +351,7 @@ controller browser UI의 active runtime contract는 아래로 제한합니다.
 - `recovery`면 lane/session/receipt/auth 계열 자가복구가 먼저이고, `triage`면 verify/handoff-owner와 advisory owner 판단이 먼저이며, `hibernate`면 현재는 idle stable이라 operator 호출 없이 unattended로 유지하는 편이 맞습니다.
 - 예외적으로 `internal_only + next_slice_selection + waiting_next_control` 조합은 idle hibernate가 아니라 `triage`로 보고 verify/handoff-owner follow-up을 다시 여는 편이 맞습니다. genuine `idle_hibernate + internal_only`만 unattended idle로 남깁니다.
 - `pending_operator`가 보이면 legacy/전환기 surface로 보고 `reason_code`를 먼저 확인합니다. `approval_required`, `safety_stop`, `truth_sync_required` 같은 real-risk reason은 즉시 `needs_operator` current truth여야 하며, 반복 advisory로 재승격되면 operator gate 회귀로 봅니다.
+- `pr_creation_gate + gate_24h + release_gate`는 operator publication boundary가 아니라 draft PR 생성 publish follow-up입니다. 이 reason이 `needs_operator` 또는 `hibernate + ok`로 보이면 자동 PR 라우팅 회귀입니다.
 - 같은 결정을 `CONTROL_SEQ`만 올려 다시 쓴 경우에는 suppress deadline과 retriage age가 이어져야 합니다. seq-only bump가 보이는데 `operator_retriage_no_next_control` age가 0초로 돌아가면 watcher/supervisor semantic fingerprint 회귀로 봅니다.
 - 이 상태에서 operator는 stop 파일만 보고 즉시 재기동/강제 attach하지 말고, verify follow-up 또는 gate window 경과 여부를 먼저 확인해야 합니다.
 

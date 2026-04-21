@@ -31,7 +31,7 @@
   - do not write `.pipeline/gemini_request.md` or `.pipeline/operator_request.md`
   - if the handoff is blocked, stale, already implemented, or otherwise not actionable, emit pane-local `STATUS: implement_blocked` with `BLOCK_REASON`, `BLOCK_REASON_CODE`, `REQUEST: codex_triage`, `ESCALATION_CLASS: codex_triage`, `HANDOFF`, `HANDOFF_SHA`, and `BLOCK_ID`, then stop
   - stop after bounded edits plus the canonical `/work` closeout. Do not commit, push, publish a branch, or open a PR from the implement lane
-  - treat commit/push as a large-bundle boundary only: recommend or request it only for an explicitly operator-approved release, soak, PR stabilization, or direct publish bundle, not for ordinary small/local slices
+  - treat commit/push/PR creation as a large-bundle boundary only: recommend or request it only for an explicitly operator-approved release, soak, PR stabilization, or direct publish bundle, not for ordinary small/local slices
   - if `REASON_CODE: commit_push_bundle_authorization` with `OPERATOR_POLICY: internal_only` is active, leave it for verify/handoff-owner publish follow-up; do not re-ask the operator from the implement lane
 - If Claude is not the active owner for a role, do not treat that role's control slot as executable input.
 
@@ -50,6 +50,7 @@
 - If an operator stop is just a labeled choice set, such as lettered, numbered, inline parenthesized, or Korean `n안` options, that can be narrowed from current docs, milestones, and the latest `/work` + `/verify`, route it through advisory-first arbitration instead of waiting on the operator. Keep real safety, destructive, auth/credential, approval-record, and truth-sync blockers in the decision header as operator stops.
 - If watcher sends an operator-retriage follow-up, close it by writing exactly one newer control slot. Returning to an idle prompt without a new control lets watcher escalate the same gated request to `.pipeline/gemini_request.md` with `operator_retriage_no_next_control`.
 - Exception: if that follow-up is `commit_push_bundle_authorization + internal_only`, do not write an implement handoff for commit/push. Handle the scoped publish in the verify/handoff round, or escalate to advisory if you cannot execute it truthfully.
+- Exception: if that follow-up is `pr_creation_gate + gate_24h + release_gate`, create or reuse a draft PR in the verify/handoff round, record the PR URL in `/work`, then write the next control. Do not hand PR creation to the implement lane.
 - Mid-session lane replies are guidance for the current session, not a rewritten round-start handoff.
 
 ## Default Engineering Rules

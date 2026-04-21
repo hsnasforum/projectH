@@ -5,6 +5,7 @@ import unittest
 from pipeline_runtime.control_writers import validate_operator_request_headers
 from pipeline_runtime.operator_autonomy import (
     COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+    PR_CREATION_GATE_REASON,
     SUPPORTED_DECISION_CLASSES,
     SUPPORTED_OPERATOR_POLICIES,
     SUPPORTED_REASON_CODES,
@@ -169,6 +170,35 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
         self.assertEqual(decision["mode"], "triage")
         self.assertEqual(decision["routed_to"], "codex_followup")
         self.assertEqual(decision["operator_policy"], "internal_only")
+        self.assertEqual(decision["decision_class"], "release_gate")
+        self.assertFalse(decision["operator_eligible"])
+
+    def test_pr_creation_gate_routes_to_verify_publish_followup(self) -> None:
+        self.assertIn(PR_CREATION_GATE_REASON, SUPPORTED_REASON_CODES)
+        self.assertIn("release_gate", SUPPORTED_DECISION_CLASSES)
+
+        decision = classify_operator_candidate(
+            "STATUS: needs_operator\n"
+            f"REASON_CODE: {PR_CREATION_GATE_REASON}\n"
+            "OPERATOR_POLICY: gate_24h\n"
+            "DECISION_CLASS: release_gate\n"
+            "DECISION_REQUIRED: create PR feat/example -> main\n",
+            control_meta={
+                "status": "needs_operator",
+                "reason_code": PR_CREATION_GATE_REASON,
+                "operator_policy": "gate_24h",
+                "decision_class": "release_gate",
+                "decision_required": "create PR feat/example -> main",
+            },
+            idle_stable=True,
+            control_mtime=1_000.0,
+            now_ts=1_000.0,
+        )
+
+        self.assertEqual(decision["mode"], "triage")
+        self.assertEqual(decision["suppressed_mode"], "triage")
+        self.assertEqual(decision["routed_to"], "codex_followup")
+        self.assertEqual(decision["operator_policy"], "gate_24h")
         self.assertEqual(decision["decision_class"], "release_gate")
         self.assertFalse(decision["operator_eligible"])
 

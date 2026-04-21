@@ -10,6 +10,7 @@ from .schema import iso_utc
 OPERATOR_SUPPRESS_WINDOW_SEC = 24 * 60 * 60
 OPERATOR_APPROVAL_COMPLETED_REASON = "operator_approval_completed"
 COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON = "commit_push_bundle_authorization"
+PR_CREATION_GATE_REASON = "pr_creation_gate"
 
 _SPACE_RE = re.compile(r"\s+")
 _NON_REASON_CODE_RE = re.compile(r"[^a-z0-9_]+")
@@ -140,6 +141,10 @@ _GATED_REASON_CODES = {
 _INTERNAL_REASON_CODES = {
     "codex_triage_only": {"mode": "triage", "routed_to": "codex_followup"},
     COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON: {
+        "mode": "triage",
+        "routed_to": "codex_followup",
+    },
+    PR_CREATION_GATE_REASON: {
         "mode": "triage",
         "routed_to": "codex_followup",
     },

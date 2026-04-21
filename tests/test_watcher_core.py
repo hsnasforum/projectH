@@ -16,6 +16,7 @@ from pipeline_runtime.automation_health import (
 from pipeline_runtime.operator_autonomy import (
     COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
     OPERATOR_APPROVAL_COMPLETED_REASON,
+    PR_CREATION_GATE_REASON,
 )
 from pipeline_runtime.wrapper_events import append_wrapper_event
 
@@ -1305,7 +1306,47 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
 
             self.assertIn("commit_push_bundle_authorization + internal_only", prompt)
             self.assertIn("perform the scoped commit/push in this verify/handoff round", prompt)
-            self.assertIn("do not hand commit/push work to the implement lane", prompt)
+            self.assertIn("do not hand commit/push/PR work to the implement lane", prompt)
+
+    def test_pr_creation_gate_routes_to_verify_owner_publish_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            operator_path = base_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 52\n"
+                f"REASON_CODE: {PR_CREATION_GATE_REASON}\n"
+                "OPERATOR_POLICY: gate_24h\n"
+                "DECISION_CLASS: release_gate\n"
+                "DECISION_REQUIRED: create PR feat/example -> main\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+
+            marker = core._operator_gate_marker()
+            self.assertIsNotNone(marker)
+            self.assertEqual(marker["reason"], PR_CREATION_GATE_REASON)
+            self.assertEqual(marker["mode"], "triage")
+            self.assertEqual(marker["routed_to"], "codex_followup")
+            self.assertEqual(core._resolve_turn(), "codex_followup")
+
+            prompt = core.prompt_assembler.format_operator_retriage_prompt(marker or {})
+            self.assertIn("pr_creation_gate + gate_24h + release_gate", prompt)
+            self.assertIn("create or reuse a draft PR", prompt)
 
     def test_blocked_triage_prompt_rejects_commit_push_reissue_to_implement(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2925,7 +2966,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
             self.assertIn("verify the latest `/work`, update `/verify`, then write exactly one next control", verify_prompt)
             self.assertIn("keep `READ_FIRST` to the listed verify-owner root doc only", verify_prompt)
             self.assertIn("after 3+ same-day same-family docs-only truth-sync rounds", verify_prompt)
-            self.assertIn("do not route commit/push publish work to `.pipeline/claude_handoff.md`", verify_prompt)
+            self.assertIn("do not route commit/push/PR publish work to `.pipeline/claude_handoff.md`", verify_prompt)
             self.assertIn("keep its `READ_FIRST` to the implement-owner root doc only", verify_prompt)
             self.assertNotIn("work/README.md", verify_prompt)
             self.assertNotIn("verify/README.md", verify_prompt)
@@ -2952,7 +2993,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
             self.assertNotIn("codex_followup", followup_prompt)
             self.assertIn("CLAUDE.md", followup_prompt)
             self.assertIn("keep `READ_FIRST` to the listed verify-owner root doc only", followup_prompt)
-            self.assertIn("do not route commit/push publish work to `.pipeline/claude_handoff.md`", followup_prompt)
+            self.assertIn("do not route commit/push/PR publish work to `.pipeline/claude_handoff.md`", followup_prompt)
             self.assertIn("keep its `READ_FIRST` to the implement-owner root doc only", followup_prompt)
             self.assertNotIn("verify/README.md", followup_prompt)
             self.assertIn("GOAL:", followup_prompt)

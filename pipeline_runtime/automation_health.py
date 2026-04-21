@@ -6,6 +6,8 @@ from typing import Any
 from .operator_autonomy import (
     COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
     OPERATOR_APPROVAL_COMPLETED_REASON,
+    PUBLICATION_BOUNDARY_REASON_CODES,
+    PR_CREATION_GATE_REASON,
 )
 
 # The watcher normally polls once per second. Keep this well above a typical
@@ -33,11 +35,7 @@ REAL_RISK_REASONS = frozenset({
     "auth_login_required",
 })
 
-PR_BOUNDARY_REASONS = frozenset({
-    "pr_boundary",
-    "publication_boundary",
-    "external_publication_boundary",
-})
+PR_BOUNDARY_REASONS = PUBLICATION_BOUNDARY_REASON_CODES
 
 ADVISORY_FOLLOWUP_REASONS = frozenset({
     "slice_ambiguity",
@@ -58,6 +56,7 @@ VERIFY_FOLLOWUP_REASONS = frozenset({
     "verified_blockers_resolved",
     OPERATOR_APPROVAL_COMPLETED_REASON,
     COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+    PR_CREATION_GATE_REASON,
     "newer_unverified_work_present",
 })
 
@@ -265,6 +264,12 @@ def derive_automation_health(status: Mapping[str, Any] | None) -> dict[str, obje
     if autonomy_mode == "pending_operator":
         reason = autonomy_reason or "operator_candidate_pending"
         return payload(health="attention", reason_code=reason, next_action="advisory_followup")
+
+    if autonomy_mode == "hibernate":
+        reason = autonomy_reason or degraded_reason or "idle_hibernate"
+        if _is_real_risk_reason(reason) or _is_pr_boundary_reason(reason):
+            action = "pr_boundary" if _is_pr_boundary_reason(reason) else "operator_required"
+            return payload(health="needs_operator", reason_code=reason, next_action=action)
 
     note_reason = _lane_note_reason(status)
     if note_reason:

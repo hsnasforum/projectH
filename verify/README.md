@@ -79,9 +79,10 @@
 - 문자/숫자/한글 라벨 선택지형 stop(괄호형 inline 라벨 포함)도 current docs, milestone, 최신 `/work`, 최신 `/verify`로 좁힐 수 있는 문제라면 먼저 Gemini recommendation을 받아 에이전트끼리 줄이고, decision header 자체가 safety/destructive/auth/credential/approval-record/truth-sync blocker일 때만 operator stop을 유지합니다.
 - watcher가 operator retriage prompt 이후 verify/handoff lane의 idle return과 no-next-control 상태를 감지해 `operator_retriage_no_next_control`로 `.pipeline/gemini_request.md`를 승격했다면, `/verify`는 그 원 operator slot과 승격된 request를 같이 확인하고 같은 blocker가 반복되지 않는지 검증합니다.
 - `.pipeline/operator_request.md`는 real operator-only decision, approval/truth-sync blocker, immediate safety stop, 또는 Gemini advice 이후에도 exact slice를 못 좁힌 경우에만 `STATUS: needs_operator`로 남기는 편이 맞습니다.
-- commit/push는 release, soak, PR stabilization, direct publish처럼 operator가 명시 승인한 큰 검증 묶음 경계에서만 next action으로 제안합니다. small/local slice의 dirty state만으로 commit/push operator stop을 만들지 않습니다.
+- commit/push/PR 생성은 release, soak, PR stabilization, direct publish처럼 operator가 명시 승인한 큰 검증 묶음 경계에서만 next action으로 제안합니다. small/local slice의 dirty state만으로 commit/push/PR operator stop을 만들지 않습니다.
 - `commit_push_bundle_authorization + internal_only`는 이미 큰 묶음 승인 follow-up이므로 `/verify`는 operator 재호출보다 verify/handoff-owner publish follow-up 또는 완료된 publish의 `operator_approval_completed` recovery를 우선 확인합니다.
-- 이 follow-up을 implement handoff로 넘기면 implement lane의 commit/push 금지 규칙과 충돌하므로, verify/handoff owner가 직접 처리하거나 advisory escalation으로 닫는지 확인합니다.
+- `pr_creation_gate + gate_24h + release_gate`는 draft PR 생성까지 자동 follow-up으로 확인합니다. `/verify`는 PR URL, base/head, 기존 PR 재사용 여부, 실패 시 auth/credential 또는 scope blocker가 `/work`에 남았는지 확인합니다.
+- 이 follow-up을 implement handoff로 넘기면 implement lane의 commit/push/PR 금지 규칙과 충돌하므로, verify/handoff owner가 직접 처리하거나 advisory escalation으로 닫는지 확인합니다.
 - 자동화 완성 목표는 ordinary next-step, ambiguity, stall, rollover, recovery 상황에서 사용자를 호출하지 않는 것입니다. `/verify`는 에이전트 논의와 evidence로 exact next control을 좁히고, 재귀학습은 incident family/replay/shared helper/runtime surface 같은 repo-local operational memory로 기록합니다.
 - `/verify`는 하드코딩된 branch/SHA/seq/pane/prose 의존, near-copy 중복, 한 파일/함수로 과도하게 몰린 책임을 current-risk로 다룹니다. 같은 truth가 반복되면 shared helper나 owning boundary로 올리는 next control을 우선합니다.
 - 다만 그 Gemini arbitration이 active implement-owner session의 context exhaustion, session rollover, continue-vs-switch 같은 side question을 다루는 경우에는, active verify/handoff owner가 그 답을 implement owner에게 짧은 lane reply로만 relay하고 `.pipeline/claude_handoff.md`는 session boundary 전까지 그대로 두는 편이 맞습니다.

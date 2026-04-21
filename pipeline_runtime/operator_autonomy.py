@@ -10,6 +10,12 @@ from .schema import iso_utc
 OPERATOR_SUPPRESS_WINDOW_SEC = 24 * 60 * 60
 OPERATOR_APPROVAL_COMPLETED_REASON = "operator_approval_completed"
 COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON = "commit_push_bundle_authorization"
+PR_CREATION_GATE_REASON = "pr_creation_gate"
+PUBLICATION_BOUNDARY_REASON_CODES = frozenset({
+    "pr_boundary",
+    "publication_boundary",
+    "external_publication_boundary",
+})
 
 _SPACE_RE = re.compile(r"\s+")
 _NON_REASON_CODE_RE = re.compile(r"[^a-z0-9_]+")
@@ -120,6 +126,10 @@ _IMMEDIATE_REASON_CODES = {
     "truth_sync_required": {"mode": "needs_operator", "routed_to": "operator"},
     "security_incident": {"mode": "needs_operator", "routed_to": "operator"},
     "destructive_risk": {"mode": "needs_operator", "routed_to": "operator"},
+    **{
+        reason: {"mode": "needs_operator", "routed_to": "operator"}
+        for reason in PUBLICATION_BOUNDARY_REASON_CODES
+    },
 }
 
 _GATED_REASON_CODES = {
@@ -140,6 +150,10 @@ _GATED_REASON_CODES = {
 _INTERNAL_REASON_CODES = {
     "codex_triage_only": {"mode": "triage", "routed_to": "codex_followup"},
     COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON: {
+        "mode": "triage",
+        "routed_to": "codex_followup",
+    },
+    PR_CREATION_GATE_REASON: {
         "mode": "triage",
         "routed_to": "codex_followup",
     },
@@ -171,6 +185,18 @@ SUPPORTED_DECISION_CLASSES: frozenset[str] = frozenset(
 _REASON_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("safety_stop", ("safety_stop", "safety stop", "immediate safety stop")),
     ("approval_required", ("approval_required", "approval required", "approval blocker")),
+    (
+        "external_publication_boundary",
+        (
+            "external_publication_boundary",
+            "external publication boundary",
+            "external publish boundary",
+            "publication boundary",
+            "pr boundary",
+            "merge pr",
+            "merge draft pr",
+        ),
+    ),
     (
         "truth_sync_required",
         (

@@ -3539,6 +3539,104 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(len(gated_events), 1)
             self.assertEqual(gated_events[0]["payload"]["reason"], "slice_ambiguity")
 
+    def test_write_status_routes_pr_creation_gate_to_verify_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "operator_request.md").write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 717\n"
+                "REASON_CODE: pr_creation_gate\n"
+                "OPERATOR_POLICY: gate_24h\n"
+                "DECISION_CLASS: release_gate\n"
+                "DECISION_REQUIRED: create PR feat/example -> main\n",
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                            {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["control"]["active_control_status"], "none")
+            self.assertEqual(status["compat"]["control_slots"]["active"]["file"], "operator_request.md")
+            self.assertEqual(status["compat"]["control_slots"]["active"]["status"], "needs_operator")
+            self.assertEqual(status["autonomy"]["mode"], "triage")
+            self.assertEqual(status["autonomy"]["reason_code"], "pr_creation_gate")
+            self.assertEqual(status["autonomy"]["operator_policy"], "gate_24h")
+            self.assertEqual(status["autonomy"]["decision_class"], "release_gate")
+            self.assertEqual(status["automation_health"], "attention")
+            self.assertEqual(status["automation_reason_code"], "pr_creation_gate")
+            self.assertEqual(status["automation_next_action"], "verify_followup")
+
+    def test_write_status_keeps_external_publication_boundary_operator_visible(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "operator_request.md").write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 722\n"
+                "REASON_CODE: external_publication_boundary\n"
+                "OPERATOR_POLICY: gate_24h\n"
+                "DECISION_CLASS: release_gate\n"
+                "DECISION_REQUIRED: approve merge of draft PR #25\n",
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                            {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["control"]["active_control_status"], "needs_operator")
+            self.assertEqual(status["autonomy"]["mode"], "needs_operator")
+            self.assertEqual(status["autonomy"]["reason_code"], "external_publication_boundary")
+            self.assertEqual(status["automation_health"], "needs_operator")
+            self.assertEqual(status["automation_reason_code"], "external_publication_boundary")
+            self.assertEqual(status["automation_next_action"], "pr_boundary")
+
     def test_write_status_preserves_operator_gate_first_seen_across_seq_only_bump(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4241,7 +4339,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
 
             self.assertIn("next-slice ambiguity", prompt)
             self.assertIn(".pipeline/gemini_request.md before .pipeline/operator_request.md", prompt)
-            self.assertIn("do not route commit/push publish work to `.pipeline/claude_handoff.md`", prompt)
+            self.assertIn("do not route commit/push/PR publish work to `.pipeline/claude_handoff.md`", prompt)
             self.assertIn("real operator-only decision", prompt)
             self.assertIn("after 3+ same-day same-family docs-only truth-sync rounds", prompt)
 
@@ -4254,7 +4352,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             prompt = supervisor._prompt_templates()["followup"]
 
             self.assertIn("after Gemini advice", prompt)
-            self.assertIn("do not route commit/push publish work to `.pipeline/claude_handoff.md`", prompt)
+            self.assertIn("do not route commit/push/PR publish work to `.pipeline/claude_handoff.md`", prompt)
             self.assertIn(".pipeline/operator_request.md", prompt)
             self.assertIn("no truthful exact slice", prompt)
 
@@ -4286,7 +4384,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertIn("- CLAUDE.md", verify_prompt)
             self.assertIn("keep `READ_FIRST` to the listed verify-owner root doc only", verify_prompt)
             self.assertIn("keep its `READ_FIRST` to the implement-owner root doc only", verify_prompt)
-            self.assertIn("do not route commit/push publish work to `.pipeline/claude_handoff.md`", verify_prompt)
+            self.assertIn("do not route commit/push/PR publish work to `.pipeline/claude_handoff.md`", verify_prompt)
             self.assertIn("verify the latest `/work`, update `/verify`, then write exactly one next control", verify_prompt)
             self.assertNotIn("work/README.md", verify_prompt)
             self.assertNotIn("verify/README.md", verify_prompt)
@@ -4294,7 +4392,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertIn("- CLAUDE.md", followup_prompt)
             self.assertIn("keep `READ_FIRST` to the listed verify-owner root doc only", followup_prompt)
             self.assertIn("keep its `READ_FIRST` to the implement-owner root doc only", followup_prompt)
-            self.assertIn("do not route commit/push publish work to `.pipeline/claude_handoff.md`", followup_prompt)
+            self.assertIn("do not route commit/push/PR publish work to `.pipeline/claude_handoff.md`", followup_prompt)
             self.assertIn("turn the advisory into exactly one next control", followup_prompt)
             self.assertNotIn("verify/README.md", followup_prompt)
             self.assertIn("OWNER: Gemini", advisory_prompt)

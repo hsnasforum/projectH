@@ -2068,3 +2068,105 @@ Gate C 완료.
 - AXIS-G6-TEST-WEB-APP (`tests.test_web_app` PermissionError cells): 여전히 열림.
 - `_force_stopped_surface`, `dispatch_selection` event: 별도 verify 대상.
 - **seq 713 next control**: `.pipeline/operator_request.md` CONTROL_SEQ 713 — Gate C commit+push (scope: seq 697–713 전체 dirty worktree, soak/PR downstream 없음).
+
+---
+
+# seq 718 verify round — 2026-04-21 pr-creation-gate visible boundary
+
+## 변경 파일
+- `pipeline_runtime/operator_autonomy.py`
+- `pipeline_runtime/automation_health.py`
+- `tests/test_operator_request_schema.py`
+- `tests/test_pipeline_runtime_automation_health.py`
+- `tests/test_pipeline_runtime_supervisor.py`
+- `.pipeline/README.md`
+- `docs/projectH_pipeline_runtime_docs/03_기술설계_명세서.md`
+- `docs/projectH_pipeline_runtime_docs/05_운영_RUNBOOK.md`
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 변경 이유
+- WORK `work/4/21/2026-04-21-pr-creation-gate-visible-boundary.md` — `pr_creation_gate`를 visible operator publication boundary로 등록하는 슬라이스.
+- Verify lane이 (a) py_compile, (b) 3개 스위트 재실행, (c) 핵심 코드 구조 직접 확인.
+
+## 검증 (seq 718)
+
+- `python3 -m py_compile pipeline_runtime/operator_autonomy.py pipeline_runtime/automation_health.py` → **통과** (rc=0). `/work` 주장과 일치.
+- `python3 -m unittest tests.test_operator_request_schema tests.test_pipeline_runtime_automation_health` → **Ran 31 tests / OK**. 회귀 없음.
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor` → **Ran 159 tests / FAIL (1 failure)**.
+  - `/work` 주장 "128 tests OK" 불일치 — 실측 159개 (seq 715 이후 추가 31개 누적).
+  - 실패 테스트: `test_write_status_routes_pr_creation_gate_to_verify_followup` (tests/test_pipeline_runtime_supervisor.py:3583).
+  - 실패 원인: `status["compat"]["control_slots"]["active"]["file"]` == `"operator_request.md"` 이지만 테스트가 `".pipeline/operator_request.md"` 기대. `parse_control_slots` (pipeline_runtime/schema.py:465)는 `"file": filename` (basename만) 반환하는 것이 기존 동작이므로 테스트 단언이 잘못됨.
+
+## 코드 직접 확인
+
+- `pipeline_runtime/automation_health.py:51–64` `VERIFY_FOLLOWUP_REASONS`: `PR_CREATION_GATE_REASON` 포함 확인. `/work`가 "PR_BOUNDARY_REASONS에 추가"라고 서술한 것은 **truth gap** — 실제로는 `VERIFY_FOLLOWUP_REASONS`에 추가됨. `automation_next_action`은 `pr_boundary`가 아니라 `verify_followup`으로 라우팅됨 (코드 일치, `/work` 설명 불일치).
+- `pipeline_runtime/operator_autonomy.py:147–150` `_INTERNAL_REASON_CODES[PR_CREATION_GATE_REASON]`: `mode=triage, routed_to=codex_followup` ✓
+- 스위트 `test_pr_creation_gate_maps_to_verify_followup_attention` (automation_health) 통과 — 이름도 `verify_followup`임을 확인.
+- `/work`가 주장한 `test_write_status_surfaces_pr_creation_gate_as_pr_boundary` (supervisor) → **존재하지 않음**. 해당 테스트는 `test_write_status_routes_pr_creation_gate_to_verify_followup`으로 명명되어 있으며 FAIL.
+
+실행하지 않은 항목:
+- `make e2e-test`, Playwright: 브라우저/e2e 계약 변경 없음.
+- watcher/launcher suite: 변경 delta 없음 판단.
+
+## SCOPE_VIOLATION / TRUTH GAP 요약
+| 항목 | `/work` 주장 | 실측 | 영향 |
+|---|---|---|---|
+| 등록 frozenset | `PR_BOUNDARY_REASONS` | `VERIFY_FOLLOWUP_REASONS` | 동작 방향 반대 기술 (코드는 올바름) |
+| live 결과 | `automation_next_action=pr_boundary` | 코드 → `verify_followup` | truth gap (라이브 관찰 자체가 잘못 기재됐거나 당시 코드 다른 상태) |
+| 테스트 이름 | `test_write_status_surfaces_pr_creation_gate_as_pr_boundary` | 없음 | |
+| supervisor 테스트 결과 | 128 OK | 159 tests, 1 FAIL | |
+
+## 현재 테스트 전체 상태 (seq 718 기준)
+| 스위트 | 수치 | 비고 |
+|---|---|---|
+| test_pipeline_runtime_automation_health | 18 OK | +1 (pr_creation_gate) |
+| test_operator_request_schema | 13 OK | +4 (pr_creation_gate 관련) |
+| test_pipeline_runtime_supervisor | 159 / 1 FAIL | `test_write_status_routes_pr_creation_gate_to_verify_followup` 실패 |
+| test_watcher_core | seq 715 기준 180 OK | 이번 라운드 재실행 없음 |
+
+## 남은 리스크
+- **테스트 단언 오류**: `tests/test_pipeline_runtime_supervisor.py:3583` — `".pipeline/operator_request.md"` → `"operator_request.md"` 수정 필요. 한 줄 fix. 나머지 단언(autonomy.mode, automation_health, automation_next_action)은 코드 분석 기준 통과 예상.
+- **`/work` truth gap**: frozenset 이름, live 결과, 테스트 이름 모두 불일치. 다음 라운드 handoff에 실제 shipped state 참조할 때 혼선 방지를 위해 이 verify note에 기록.
+- Gate C commit+push: seq 715 기준으로 완료(`ef7a3b2`). 이번 슬라이스(pr_creation_gate) dirty — 별도 commit 필요.
+- AXIS-G6-TEST-WEB-APP: 여전히 열림.
+- **seq 718 next control**: `.pipeline/claude_handoff.md` CONTROL_SEQ 718 — supervisor 테스트 단언 1줄 수정 (`".pipeline/operator_request.md"` → `"operator_request.md"`).
+
+---
+
+# seq 719 verify_triage round — 2026-04-21 implement_blocked recovery (pr-creation-auto-followup-routing)
+
+## 변경 파일
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 변경 이유
+- CONTROL_SEQ 718 handoff가 `implement_blocked` (BLOCK_REASON: target_assertion_already_applied)로 반환됨.
+- 원인: `work/4/21/2026-04-21-pr-creation-auto-followup-routing.md` 라운드에서 단언 수정이 이미 포함됐음. 118 handoff가 지시한 1줄 fix는 더 넓은 pr-creation-auto-followup-routing 구현 안에서 처리됨.
+- verify_triage 역할: (a) block 유효성 확인, (b) 새 work note 검증, (c) CONTROL_SEQ 719 작성.
+
+## 검증 (seq 719 triage)
+
+- **block 유효성**: `tests/test_pipeline_runtime_supervisor.py:3583` 실측 값 `"operator_request.md"` (`.pipeline/` prefix 없음) — 단언 이미 수정됨. block 정당.
+- `python3 -m py_compile pipeline_runtime/operator_autonomy.py pipeline_runtime/automation_health.py pipeline_runtime/status_labels.py pipeline_runtime/supervisor.py watcher_prompt_assembly.py watcher_core.py` → **통과**.
+- 4개 targeted test (work note 기재): `test_pr_creation_gate_routes_to_verify_publish_followup`, `test_pr_creation_gate_maps_to_verify_followup_attention`, `test_write_status_routes_pr_creation_gate_to_verify_followup`, `test_pr_creation_gate_routes_to_verify_owner_publish_followup` → **4 tests OK**.
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor` → **Ran 128 tests / OK**. work note 주장과 일치.
+- `python3 -m unittest tests.test_operator_request_schema tests.test_pipeline_runtime_automation_health tests.test_watcher_core tests.test_pipeline_gui_home_presenter` → **Ran 230 tests / OK**. 회귀 없음.
+
+실행하지 않은 항목:
+- `make e2e-test`, Playwright: 브라우저/e2e 계약 변경 없음.
+- `tests.test_pipeline_runtime_gate`, `tests.test_pipeline_launcher`: 이번 변경 delta 없음 판단.
+
+## 현재 테스트 전체 상태 (seq 719 기준)
+| 스위트 | 수치 | 비고 |
+|---|---|---|
+| test_pipeline_runtime_supervisor | 128 OK | seq 718 fail → 수정됨 |
+| test_watcher_core | 181 OK | +1 (pr_creation_gate prompt) |
+| test_pipeline_runtime_automation_health | 18 OK | 유지 |
+| test_operator_request_schema | 13 OK | 유지 |
+| test_pipeline_gui_home_presenter | 18 OK | +1 (GUI label) |
+
+## 남은 리스크
+- **dirty worktree (post-ef7a3b2)**: pr-creation-gate-visible-boundary + pr-creation-auto-followup-routing 두 라운드 변경이 미커밋. commit+push Gate C-2 필요.
+- **draft PR**: CLAUDE.md pr_creation_gate 예외 조항에 따라 verify/handoff owner가 draft PR 생성 또는 기존 PR 재사용 + URL 기록 필요.
+- **operator_request.md seq 717**: 여전히 live. pr_creation_gate 라우팅이 verify_followup으로 전환됐으므로 다음 verify 라운드에서 CLAUDE.md 예외 실행 가능.
+- AXIS-G6-TEST-WEB-APP: 여전히 열림.
+- **seq 719 next control**: `.pipeline/operator_request.md` CONTROL_SEQ 719 — commit_push_bundle_authorization (post-ef7a3b2 누적 bundle, internal_only → verify/handoff owner 실행).

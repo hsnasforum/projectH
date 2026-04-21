@@ -31,6 +31,8 @@
   - do not write `.pipeline/gemini_request.md` or `.pipeline/operator_request.md`
   - if the handoff is blocked, stale, already implemented, or otherwise not actionable, emit pane-local `STATUS: implement_blocked` with `BLOCK_REASON`, `BLOCK_REASON_CODE`, `REQUEST: codex_triage`, `ESCALATION_CLASS: codex_triage`, `HANDOFF`, `HANDOFF_SHA`, and `BLOCK_ID`, then stop
   - stop after bounded edits plus the canonical `/work` closeout. Do not commit, push, publish a branch, or open a PR from the implement lane
+  - treat commit/push as a large-bundle boundary only: recommend or request it only for an explicitly operator-approved release, soak, PR stabilization, or direct publish bundle, not for ordinary small/local slices
+  - if `REASON_CODE: commit_push_bundle_authorization` with `OPERATOR_POLICY: internal_only` is active, leave it for verify/handoff-owner publish follow-up; do not re-ask the operator from the implement lane
 - If Claude is not the active owner for a role, do not treat that role's control slot as executable input.
 
 ## Handoff Interpretation
@@ -43,15 +45,20 @@
 - Older stale control files are not execution input once a newer valid control file exists.
 - If `.pipeline` disagrees with persistent notes, trust the latest `/work` and `/verify`.
 - If the latest `/work` and `/verify` already closed the same handoff SHA or exact slice, treat that handoff as blocked / already implemented instead of redoing it.
+- Automation completion target: do not call the user for ordinary next-step, ambiguity, stall, rollover, or recovery choices. Use implement / verify-handoff / advisory discussion first, grounded in `/work`, `/verify`, current docs, and runtime evidence.
 - When opening `.pipeline/gemini_request.md` for advisory arbitration, keep the ask anchored to the named shipped docs/code paths first; do not send Gemini into `docs/superpowers/**`, `plandoc/**`, or other historical planning docs unless the current `/work` or `/verify` explicitly cites them as the evidence source.
 - If an operator stop is just a labeled choice set, such as lettered, numbered, inline parenthesized, or Korean `n안` options, that can be narrowed from current docs, milestones, and the latest `/work` + `/verify`, route it through advisory-first arbitration instead of waiting on the operator. Keep real safety, destructive, auth/credential, approval-record, and truth-sync blockers in the decision header as operator stops.
 - If watcher sends an operator-retriage follow-up, close it by writing exactly one newer control slot. Returning to an idle prompt without a new control lets watcher escalate the same gated request to `.pipeline/gemini_request.md` with `operator_retriage_no_next_control`.
+- Exception: if that follow-up is `commit_push_bundle_authorization + internal_only`, do not write an implement handoff for commit/push. Handle the scoped publish in the verify/handoff round, or escalate to advisory if you cannot execute it truthfully.
 - Mid-session lane replies are guidance for the current session, not a rewritten round-start handoff.
 
 ## Default Engineering Rules
 
 - Prefer the smallest coherent reviewable change that closes real progress.
 - Reuse existing helpers, queries, scripts, prompts, and local patterns before adding near-copy code paths.
+- Do not hardcode current branch names, commit SHAs, `CONTROL_SEQ` values, pane ids, Korean display strings, exact operator prose, or one-off control-file bodies in runtime logic. Use shared parsers, schema helpers, fixtures, and status-label helpers.
+- Do not duplicate near-copy watcher/supervisor/launcher/controller logic. If the same truth is needed in two places, move it to the owning module or a shared helper.
+- Do not keep growing one function or file with unrelated branches. Extract parsing, labeling, control writing, lane-surface, or event-contract responsibilities when that makes the next fix smaller and clearer.
 - Keep writes explicit and approval-aware.
 - Do not widen scope from the current document-first MVP into generic web chatbot or autonomous tool-operation behavior.
 - If docs and implementation disagree, make docs match implementation or mark the gap as `TODO` / `OPEN QUESTION`.
@@ -61,6 +68,8 @@
 - 런타임/런처/워처 문제를 고칠 때 재귀개선은 "같은 종류의 다음 수정 범위를 더 작게 만드는 것"을 뜻합니다.
 - 같은 incident family가 다시 나왔으면 조건문을 하나 더 얹기보다, 그 incident의 owner인 boundary/helper/module을 먼저 고칩니다.
 - 새 incident family면 먼저 named incident, focused replay test, truthful runtime surface를 추가하고 그 다음 구현을 좁힙니다.
+- 재귀학습은 현재 단계에서 모델 학습이 아니라 repo-local operational learning입니다. `/work`/`/verify`, incident family, replay test, shared helper, runtime surface가 다음 판단을 더 작게 만드는 근거입니다.
+- 진화적 탐색은 current evidence와 milestone에 묶인 bounded candidate comparison입니다. broad random exploration이나 사용자가 고를 수밖에 없는 메뉴를 되돌리는 방식이 아닙니다.
 - `pipeline-launcher.py`나 controller/browser 쪽에 추가 추론을 얹어 runtime drift를 가리려 하지 않습니다. thin client는 계속 runtime truth를 읽는 쪽에 둡니다.
 - long soak 재실행은 기본 증명이 아닙니다. runtime contract 자체를 크게 바꾼 경우가 아니면 launcher live stability gate + incident replay를 우선합니다.
 - 수정이 끝났을 때 "다음 같은 버그가 나와도 어디를 고쳐야 하는지 더 분명해졌는가"를 기준으로 결과를 점검합니다.

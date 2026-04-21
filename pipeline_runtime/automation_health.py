@@ -3,6 +3,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from .operator_autonomy import (
+    COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+    OPERATOR_APPROVAL_COMPLETED_REASON,
+)
+
+# The watcher normally polls once per second. Keep this well above a typical
+# verify/handoff round pause so the flag means "stuck for a long time", not
+# "an agent is still working through a normal round".
+STALE_CONTROL_CYCLE_THRESHOLD = 900
+STALE_ADVISORY_GRACE_CYCLES = 60
+
 AUTOMATION_HEALTH_VALUES = frozenset({"ok", "recovering", "attention", "needs_operator"})
 AUTOMATION_NEXT_ACTION_VALUES = frozenset({
     "continue",
@@ -45,6 +56,8 @@ VERIFY_FOLLOWUP_REASONS = frozenset({
     "duplicate_handoff",
     "waiting_next_control",
     "verified_blockers_resolved",
+    OPERATOR_APPROVAL_COMPLETED_REASON,
+    COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
     "newer_unverified_work_present",
 })
 
@@ -57,6 +70,30 @@ RECOVERY_REASONS = frozenset({
 
 def _clean(value: object) -> str:
     return str(value or "").strip()
+
+
+def _nonnegative_int(value: object, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
+    try:
+        normalized = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    return normalized if normalized >= 0 else default
+
+
+def advance_control_seq_age(
+    *,
+    last_seen_control_seq: int | None,
+    control_seq_age_cycles: int,
+    current_control_seq: int | None,
+) -> tuple[int | None, int]:
+    """Advance consecutive-cycle age for the currently highest CONTROL_SEQ."""
+    if current_control_seq is None:
+        return None, 0
+    if current_control_seq == last_seen_control_seq:
+        return current_control_seq, _nonnegative_int(control_seq_age_cycles) + 1
+    return current_control_seq, 0
 
 
 def automation_incident_family(reason_code: object) -> str:
@@ -119,8 +156,20 @@ def _payload(
     health: str,
     reason_code: str = "",
     next_action: str = "continue",
-) -> dict[str, str]:
+    control_age_cycles: int = 0,
+) -> dict[str, object]:
     family = automation_incident_family(reason_code)
+    normalized_control_age = _nonnegative_int(control_age_cycles)
+    stale_control_seq = normalized_control_age >= STALE_CONTROL_CYCLE_THRESHOLD
+    stale_advisory_pending = (
+        normalized_control_age
+        >= STALE_CONTROL_CYCLE_THRESHOLD + STALE_ADVISORY_GRACE_CYCLES
+    )
+    health_detail = (
+        f"제어 슬롯 고착 감지됨 ({normalized_control_age} 사이클)"
+        if stale_control_seq
+        else ""
+    )
     return {
         "automation_health": health if health in AUTOMATION_HEALTH_VALUES else "attention",
         "automation_reason_code": reason_code,
@@ -128,12 +177,43 @@ def _payload(
         "automation_next_action": (
             next_action if next_action in AUTOMATION_NEXT_ACTION_VALUES else "verify_followup"
         ),
+        "control_age_cycles": normalized_control_age,
+        "stale_control_seq": stale_control_seq,
+        "stale_control_cycle_threshold": STALE_CONTROL_CYCLE_THRESHOLD,
+        "stale_advisory_grace_cycles": STALE_ADVISORY_GRACE_CYCLES,
+        "stale_advisory_pending": stale_advisory_pending,
+        "automation_health_detail": health_detail,
     }
 
 
-def derive_automation_health(status: Mapping[str, Any] | None) -> dict[str, str]:
+def _control_age_from_status(status: Mapping[str, Any]) -> int:
+    top_level_age = status.get("control_age_cycles")
+    if top_level_age is not None:
+        return _nonnegative_int(top_level_age)
+    control = status.get("control")
+    if isinstance(control, Mapping):
+        return _nonnegative_int(control.get("control_age_cycles"))
+    return 0
+
+
+def derive_automation_health(status: Mapping[str, Any] | None) -> dict[str, object]:
     if not isinstance(status, Mapping):
         return _payload(health="ok")
+
+    control_age_cycles = _control_age_from_status(status)
+
+    def payload(
+        *,
+        health: str,
+        reason_code: str = "",
+        next_action: str = "continue",
+    ) -> dict[str, object]:
+        return _payload(
+            health=health,
+            reason_code=reason_code,
+            next_action=next_action,
+            control_age_cycles=control_age_cycles,
+        )
 
     runtime_state = _clean(status.get("runtime_state")) or "STOPPED"
     degraded_reasons = [_clean(item) for item in list(status.get("degraded_reasons") or []) if _clean(item)]
@@ -151,11 +231,11 @@ def derive_automation_health(status: Mapping[str, Any] | None) -> dict[str, str]
     if control_status == "needs_operator" or autonomy_mode == "needs_operator":
         reason = autonomy_reason or degraded_reason or "operator_required"
         next_action = "pr_boundary" if _is_pr_boundary_reason(reason) else "operator_required"
-        return _payload(health="needs_operator", reason_code=reason, next_action=next_action)
+        return payload(health="needs_operator", reason_code=reason, next_action=next_action)
 
     exhausted = _first_recovery_exhaustion(degraded_reasons)
     if exhausted:
-        return _payload(
+        return payload(
             health="needs_operator",
             reason_code=exhausted,
             next_action="operator_required",
@@ -163,10 +243,10 @@ def derive_automation_health(status: Mapping[str, Any] | None) -> dict[str, str]
 
     if _is_real_risk_reason(degraded_reason) or _is_pr_boundary_reason(degraded_reason):
         next_action = "pr_boundary" if _is_pr_boundary_reason(degraded_reason) else "operator_required"
-        return _payload(health="needs_operator", reason_code=degraded_reason, next_action=next_action)
+        return payload(health="needs_operator", reason_code=degraded_reason, next_action=next_action)
 
     if runtime_state == "BROKEN":
-        return _payload(
+        return payload(
             health="needs_operator",
             reason_code=degraded_reason or "runtime_broken",
             next_action="operator_required",
@@ -175,41 +255,41 @@ def derive_automation_health(status: Mapping[str, Any] | None) -> dict[str, str]
     if autonomy_mode == "triage":
         reason = autonomy_reason or "operator_candidate_pending"
         action = "verify_followup" if reason in VERIFY_FOLLOWUP_REASONS else "advisory_followup"
-        return _payload(health="attention", reason_code=reason, next_action=action)
+        return payload(health="attention", reason_code=reason, next_action=action)
 
     if autonomy_mode == "recovery":
         reason = autonomy_reason or "runtime_recovery"
         action = "verify_followup" if reason in VERIFY_FOLLOWUP_REASONS else "retrying"
-        return _payload(health="recovering", reason_code=reason, next_action=action)
+        return payload(health="recovering", reason_code=reason, next_action=action)
 
     if autonomy_mode == "pending_operator":
         reason = autonomy_reason or "operator_candidate_pending"
-        return _payload(health="attention", reason_code=reason, next_action="advisory_followup")
+        return payload(health="attention", reason_code=reason, next_action="advisory_followup")
 
     note_reason = _lane_note_reason(status)
     if note_reason:
         action = "retrying" if note_reason == "idle_release_pending" else "verify_followup"
         health = "recovering" if note_reason == "idle_release_pending" else "attention"
-        return _payload(health=health, reason_code=note_reason, next_action=action)
+        return payload(health=health, reason_code=note_reason, next_action=action)
 
     if degraded_reason:
         if degraded_reason in RECOVERY_REASONS:
-            return _payload(health="recovering", reason_code=degraded_reason, next_action="retrying")
+            return payload(health="recovering", reason_code=degraded_reason, next_action="retrying")
         if degraded_reason in VERIFY_FOLLOWUP_REASONS or degraded_reason.startswith("receipt_"):
             action = "verify_followup"
         else:
             action = "advisory_followup"
-        return _payload(health="attention", reason_code=degraded_reason, next_action=action)
+        return payload(health="attention", reason_code=degraded_reason, next_action=action)
 
     if runtime_state in {"STARTING", "STOPPING"}:
         reason = "runtime_starting" if runtime_state == "STARTING" else "runtime_stopping"
-        return _payload(health="recovering", reason_code=reason, next_action="retrying")
+        return payload(health="recovering", reason_code=reason, next_action="retrying")
 
     if runtime_state == "STOPPED":
-        return _payload(
+        return payload(
             health="attention",
             reason_code="runtime_stopped",
             next_action="operator_required",
         )
 
-    return _payload(health="ok")
+    return payload(health="ok")

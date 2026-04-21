@@ -1327,7 +1327,10 @@ class TestRuntimeStatusRead(unittest.TestCase):
     def test_normalize_runtime_status_drops_non_mapping_payload(self) -> None:
         self.assertEqual(normalize_runtime_status("broken-payload"), {})
         self.assertEqual(normalize_runtime_status(None), {})
-        self.assertEqual(normalize_runtime_status({"runtime_state": "RUNNING"}), {"runtime_state": "RUNNING"})
+        normalized = normalize_runtime_status({"runtime_state": "RUNNING"})
+        self.assertEqual(normalized["runtime_state"], "RUNNING")
+        self.assertEqual(normalized["automation_health"], "ok")
+        self.assertFalse(normalized["stale_control_seq"])
 
     def test_normalize_runtime_status_converts_inactive_degraded_snapshot_to_stopped(self) -> None:
         result = normalize_runtime_status(

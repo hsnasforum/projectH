@@ -24,6 +24,16 @@ Long term, `projectH` aims to become a **teachable local personal agent**:
 
 This north star is **not** the current shipped contract. The current shipped contract remains a document-first MVP.
 
+## Automation Completion Target
+
+The pipeline automation north star is:
+- do not call the user for ordinary next-step, ambiguity, stall, rollover, or recovery choices
+- when problems occur, route them through implement / verify-handoff / advisory owner discussion first, using `/work`, `/verify`, current docs, and runtime evidence as the shared record
+- make each repeated failure produce recursive improvement: a named incident, focused replay, clearer owner boundary, shared helper, or runtime surface that makes the next fix smaller
+- treat "recursive learning" and "evolutionary exploration" as repo-local operational learning for now: persistent notes, tests, incident families, and bounded candidate comparison, not model-weight learning or autonomous risky action
+
+Until the safety model evolves, real-risk actions such as destructive writes, credential/auth work, approval-record repair, truth-sync blockers, and publication boundaries remain explicit and auditable.
+
 ## Current Product Slice
 
 The repository currently implements a Python-based local web shell with:
@@ -197,6 +207,9 @@ Current source-of-truth docs live in the root `docs/` directory.
 - `.pipeline/claude_handoff.md` should declare `STATUS: implement` and should include `CONTROL_SEQ`.
 - When `STATUS: implement` is active, the implement owner may only implement that exact slice or emit a pane-local `STATUS: implement_blocked` sentinel with `BLOCK_REASON`, `BLOCK_REASON_CODE`, `REQUEST: codex_triage`, `ESCALATION_CLASS: codex_triage`, `HANDOFF`, `HANDOFF_SHA`, and `BLOCK_ID`.
 - Implement-owner rounds stop after the bounded file edits plus the canonical `/work` closeout. The implement owner must not commit, push, publish a branch, or open a PR from the implement lane.
+- Commit/push automation is a large-bundle boundary only. Use it only when the operator explicitly approves a verified bundle such as release, soak, PR stabilization, or direct publish work; small/local slices stop at `/work` and remain local instead of opening commit/push operator stops.
+- If a verified large bundle already carries `REASON_CODE: commit_push_bundle_authorization` with `OPERATOR_POLICY: internal_only`, automation should route it to verify/handoff-owner publish follow-up instead of hibernating or asking the user again. The follow-up must still scope the dirty tree and keep the action auditable.
+- Do not hand that commit/push work to the implement owner. The implement lane still forbids commit, push, branch/PR publish, so publish follow-up belongs to the verify/handoff owner or to an advisory escalation if the verify/handoff owner cannot execute it truthfully.
 - watcher should auto-route that `implement_blocked` sentinel to verify/handoff-owner triage instead of opening an operator stop directly.
 - `.pipeline/gemini_request.md` is the current verify/handoff-owner -> advisory-owner arbitration slot.
 - `.pipeline/gemini_request.md` should declare `STATUS: request_open` and should include `CONTROL_SEQ` while pending.
@@ -290,6 +303,11 @@ Current source-of-truth docs live in the root `docs/` directory.
 
 - In runtime / launcher / watcher / supervisor work, "recursive improvement" means each fix should make the next fix smaller, more local, and easier to verify.
 - Do not treat recursive improvement as repeated patch layering. If the same incident family recurs, prefer tightening the owning boundary or shared helper over appending another file-local special case.
+- Recursive learning is implemented as persistent operational memory: `/work` and `/verify` notes, incident families, replay tests, docs, and shared helpers. Do not claim model learning unless a real learning pipeline exists.
+- Evolutionary exploration means bounded candidate comparison by current evidence and milestones, followed by one exact control. It does not mean broad random exploration or asking the user to choose between options the agents can narrow themselves.
+- Do not hardcode the current branch, commit SHA, `CONTROL_SEQ`, pane id, Korean display text, exact operator prose, or one-off file body in runtime logic. Put policy in structured metadata, shared parsers, status-label helpers, fixtures, or docs.
+- Do not duplicate near-copy logic across watcher, supervisor, launcher, controller, or tests. If two layers need the same truth, move it to the owning module or a shared helper and make thin clients consume that surface.
+- Do not pile unrelated responsibilities into one large function or file just because it is convenient. Keep the smallest coherent owner, and extract parsing, labeling, control writing, lane-surface, or event-contract logic when concentration starts making future fixes harder.
 - First classify whether a problem is:
   - an existing named incident family, or
   - a genuinely new incident family.

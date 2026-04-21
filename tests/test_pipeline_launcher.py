@@ -7,6 +7,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from pipeline_runtime.automation_health import STALE_CONTROL_CYCLE_THRESHOLD
+from pipeline_runtime.operator_autonomy import OPERATOR_APPROVAL_COMPLETED_REASON
+from pipeline_runtime.status_labels import operator_facing_reason_label
 from pipeline_gui.project import _session_name_for
 
 
@@ -653,6 +656,136 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                 for line in lines
             )
         )
+
+    def test_build_snapshot_localizes_operator_approval_completed_reason(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-operator-approval-completed-") as tmp:
+            project = Path(tmp).resolve()
+            session = _session_name_for(project)
+            approval_label = operator_facing_reason_label(OPERATOR_APPROVAL_COMPLETED_REASON)
+
+            lines = pipeline_launcher.build_snapshot(
+                project,
+                session,
+                runtime_view={
+                    "runtime_state": "RUNNING",
+                    "watcher_alive": True,
+                    "watcher_pid": 2020,
+                    "work_name": "—",
+                    "work_mtime": 0.0,
+                    "verify_name": "—",
+                    "verify_mtime": 0.0,
+                    "control_file": "",
+                    "control_seq": -1,
+                    "control_status": "none",
+                    "autonomy_mode": "recovery",
+                    "autonomy_reason": OPERATOR_APPROVAL_COMPLETED_REASON,
+                    "automation_health": "recovering",
+                    "automation_reason_code": OPERATOR_APPROVAL_COMPLETED_REASON,
+                    "automation_incident_family": OPERATOR_APPROVAL_COMPLETED_REASON,
+                    "automation_next_action": "verify_followup",
+                    "active_round": {"state": "IDLE"},
+                    "progress": {"phase": OPERATOR_APPROVAL_COMPLETED_REASON, "lane": "Codex"},
+                    "lanes": [],
+                    "event_lines": [f"{approval_label} seq=44 main"],
+                    "events": [],
+                },
+            )
+
+        self.assertTrue(any(f"Automation: 복구 중 / {approval_label}" in line for line in lines))
+        self.assertTrue(
+            any(
+                f"Automation detail: reason={OPERATOR_APPROVAL_COMPLETED_REASON} / action=verify_followup / family={OPERATOR_APPROVAL_COMPLETED_REASON}"
+                in line
+                for line in lines
+            )
+        )
+        self.assertTrue(
+            any(
+                f"Progress: {approval_label} / phase={OPERATOR_APPROVAL_COMPLETED_REASON} / lane=Codex"
+                in line
+                for line in lines
+            )
+        )
+        self.assertTrue(any(f"{approval_label} seq=44 main" in line for line in lines))
+
+    def test_build_snapshot_surfaces_stale_control_detail(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-stale-control-detail-") as tmp:
+            project = Path(tmp).resolve()
+            session = _session_name_for(project)
+
+            lines = pipeline_launcher.build_snapshot(
+                project,
+                session,
+                runtime_view={
+                    "runtime_state": "RUNNING",
+                    "watcher_alive": True,
+                    "watcher_pid": 2020,
+                    "work_name": "—",
+                    "work_mtime": 0.0,
+                    "verify_name": "—",
+                    "verify_mtime": 0.0,
+                    "control_file": ".pipeline/claude_handoff.md",
+                    "control_seq": 697,
+                    "control_status": "implement",
+                    "autonomy_mode": "normal",
+                    "autonomy_reason": "",
+                    "automation_health": "ok",
+                    "automation_reason_code": "",
+                    "automation_incident_family": "",
+                    "automation_next_action": "continue",
+                    "automation_health_detail": f"제어 슬롯 고착 감지됨 ({STALE_CONTROL_CYCLE_THRESHOLD} 사이클)",
+                    "control_age_cycles": STALE_CONTROL_CYCLE_THRESHOLD,
+                    "stale_control_seq": True,
+                    "stale_control_cycle_threshold": STALE_CONTROL_CYCLE_THRESHOLD,
+                    "active_round": {"state": "IDLE"},
+                    "lanes": [],
+                    "event_lines": [],
+                    "events": [],
+                },
+            )
+
+        self.assertTrue(any("제어 슬롯 고착 감지됨" in line for line in lines))
+        self.assertTrue(any(f"control_age_cycles={STALE_CONTROL_CYCLE_THRESHOLD}" in line for line in lines))
+
+    def test_build_snapshot_surfaces_stale_advisory_pending_detail(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-stale-advisory-detail-") as tmp:
+            project = Path(tmp).resolve()
+            session = _session_name_for(project)
+
+            lines = pipeline_launcher.build_snapshot(
+                project,
+                session,
+                runtime_view={
+                    "runtime_state": "RUNNING",
+                    "watcher_alive": True,
+                    "watcher_pid": 2020,
+                    "work_name": "—",
+                    "work_mtime": 0.0,
+                    "verify_name": "—",
+                    "verify_mtime": 0.0,
+                    "control_file": ".pipeline/claude_handoff.md",
+                    "control_seq": 700,
+                    "control_status": "implement",
+                    "autonomy_mode": "normal",
+                    "autonomy_reason": "",
+                    "automation_health": "ok",
+                    "automation_reason_code": "",
+                    "automation_incident_family": "",
+                    "automation_next_action": "continue",
+                    "automation_health_detail": f"제어 슬롯 고착 감지됨 ({STALE_CONTROL_CYCLE_THRESHOLD} 사이클)",
+                    "control_age_cycles": STALE_CONTROL_CYCLE_THRESHOLD,
+                    "stale_control_seq": True,
+                    "stale_control_cycle_threshold": STALE_CONTROL_CYCLE_THRESHOLD,
+                    "stale_advisory_pending": True,
+                    "active_round": {"state": "IDLE"},
+                    "lanes": [],
+                    "event_lines": [],
+                    "events": [],
+                },
+            )
+
+        self.assertTrue(any("어드바이저리 요청 대기 중" in line for line in lines))
+        self.assertTrue(any("stale_advisory_pending=true" in line for line in lines))
 
     def test_build_snapshot_surfaces_role_owners_from_runtime_adapter(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-role-owners-") as tmp:

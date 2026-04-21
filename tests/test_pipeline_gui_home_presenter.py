@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
+from pipeline_runtime.automation_health import STALE_CONTROL_CYCLE_THRESHOLD
 from pipeline_gui.home_presenter import (
     build_agent_card_presentations,
     build_console_presentation,
@@ -213,6 +214,46 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
         self.assertIn("automation_reason_code: dispatch_stall", presentation.focus_text)
         self.assertIn("automation_incident_family: dispatch_stall", presentation.focus_text)
         self.assertIn("automation_next_action: verify_followup", presentation.focus_text)
+
+    def test_build_console_presentation_surfaces_stale_control_detail(self) -> None:
+        snapshot = _base_snapshot()
+        snapshot.update(
+            {
+                "runtime_state": "RUNNING",
+                "automation_health_detail": f"제어 슬롯 고착 감지됨 ({STALE_CONTROL_CYCLE_THRESHOLD} 사이클)",
+                "control_age_cycles": STALE_CONTROL_CYCLE_THRESHOLD,
+                "stale_control_seq": True,
+                "stale_control_cycle_threshold": STALE_CONTROL_CYCLE_THRESHOLD,
+            }
+        )
+
+        presentation = build_console_presentation(selected_agent="Codex", snapshot=snapshot)
+
+        self.assertIn("automation_health_detail: 제어 슬롯 고착 감지됨", presentation.focus_text)
+        self.assertIn(f"control_age_cycles: {STALE_CONTROL_CYCLE_THRESHOLD}", presentation.focus_text)
+        self.assertIn("stale_control_seq: true", presentation.focus_text)
+        self.assertIn(
+            f"stale_control_cycle_threshold: {STALE_CONTROL_CYCLE_THRESHOLD}",
+            presentation.focus_text,
+        )
+
+    def test_build_console_presentation_surfaces_stale_advisory_pending_detail(self) -> None:
+        snapshot = _base_snapshot()
+        snapshot.update(
+            {
+                "runtime_state": "RUNNING",
+                "control_age_cycles": STALE_CONTROL_CYCLE_THRESHOLD,
+                "stale_control_seq": True,
+                "stale_advisory_pending": True,
+            }
+        )
+
+        presentation = build_console_presentation(selected_agent="Codex", snapshot=snapshot)
+
+        self.assertIn(
+            "stale_advisory_pending: true (어드바이저리 요청 대기 중)",
+            presentation.focus_text,
+        )
 
     def test_build_console_presentation_distinguishes_current_round_work_gap(self) -> None:
         snapshot = _base_snapshot()

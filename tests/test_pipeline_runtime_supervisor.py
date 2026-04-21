@@ -10,7 +10,12 @@ from pathlib import Path
 from unittest import mock
 
 from pipeline_runtime.cli import build_parser
-from pipeline_runtime.operator_autonomy import SUPPORTED_DECISION_CLASSES, classify_operator_candidate
+from pipeline_runtime.operator_autonomy import (
+    COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+    OPERATOR_APPROVAL_COMPLETED_REASON,
+    SUPPORTED_DECISION_CLASSES,
+    classify_operator_candidate,
+)
 from pipeline_runtime.supervisor import RuntimeSupervisor
 from pipeline_runtime.wrapper_events import append_wrapper_event, build_lane_read_models
 
@@ -1962,6 +1967,102 @@ class RuntimeSupervisorTest(unittest.TestCase):
 
             self.assertEqual(progress["phase"], "operator_gate_followup")
             self.assertEqual(progress["reason"], "approval_required")
+
+    def test_progress_hint_marks_operator_approval_completed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor.runtime_state = "RUNNING"
+
+            progress = supervisor._build_progress_hint(
+                active_lane="Codex",
+                active_round=None,
+                turn_state={
+                    "state": "VERIFY_FOLLOWUP",
+                    "entered_at": 100.0,
+                    "active_role": "verify",
+                    "active_lane": "Codex",
+                },
+                control={"active_control_status": "none", "active_control_file": ""},
+                autonomy={"mode": "recovery", "reason_code": OPERATOR_APPROVAL_COMPLETED_REASON},
+                artifacts={
+                    "latest_work": {"path": "work.md", "mtime": 90.0},
+                    "latest_verify": {"path": "verify.md", "mtime": 95.0},
+                },
+            )
+
+            self.assertEqual(progress["phase"], OPERATOR_APPROVAL_COMPLETED_REASON)
+            self.assertEqual(progress["reason"], OPERATOR_APPROVAL_COMPLETED_REASON)
+
+    def test_operator_approval_completed_turn_suppresses_active_operator_control(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            base_dir = root / ".pipeline"
+            operator_path = base_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 44\n"
+                "REASON_CODE: approval_required\n"
+                "DECISION_REQUIRED: approve completed commit and remote push follow-up\n",
+                encoding="utf-8",
+            )
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            marker = supervisor._stale_operator_control_marker(
+                {
+                    "active_control_file": ".pipeline/operator_request.md",
+                    "active_control_status": "needs_operator",
+                    "active_control_seq": 44,
+                },
+                [],
+                {
+                    "state": "VERIFY_FOLLOWUP",
+                    "reason": OPERATOR_APPROVAL_COMPLETED_REASON,
+                    "active_control_seq": 44,
+                },
+            )
+
+            self.assertIsNotNone(marker)
+            self.assertEqual(marker["reason"], OPERATOR_APPROVAL_COMPLETED_REASON)
+            self.assertEqual(marker["control_seq"], 44)
+
+    def test_commit_push_bundle_authorization_operator_gate_routes_to_triage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            operator_path = pipeline_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 713\n"
+                f"REASON_CODE: {COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON}\n"
+                "OPERATOR_POLICY: internal_only\n"
+                "DECISION_CLASS: release_gate\n"
+                "DECISION_REQUIRED: automation axis commit and push authorization\n",
+                encoding="utf-8",
+            )
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            marker, autonomy = supervisor._operator_gate_marker(
+                {
+                    "active_control_file": ".pipeline/operator_request.md",
+                    "active_control_status": "needs_operator",
+                    "active_control_seq": 713,
+                    "mtime": operator_path.stat().st_mtime,
+                },
+                turn_state={"state": "IDLE", "reason": "operator_request_updated"},
+                active_round={"state": "CLOSED"},
+                wrapper_models={},
+            )
+
+            self.assertIsNotNone(marker)
+            self.assertEqual(marker["reason"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+            self.assertEqual(marker["mode"], "triage")
+            self.assertEqual(marker["routed_to"], "codex_followup")
+            self.assertEqual(autonomy["mode"], "triage")
+            self.assertEqual(autonomy["decision_class"], "release_gate")
 
     def test_active_verify_round_keeps_codex_surface_working_even_if_wrapper_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4140,6 +4241,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
 
             self.assertIn("next-slice ambiguity", prompt)
             self.assertIn(".pipeline/gemini_request.md before .pipeline/operator_request.md", prompt)
+            self.assertIn("do not route commit/push publish work to `.pipeline/claude_handoff.md`", prompt)
             self.assertIn("real operator-only decision", prompt)
             self.assertIn("after 3+ same-day same-family docs-only truth-sync rounds", prompt)
 
@@ -4152,6 +4254,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             prompt = supervisor._prompt_templates()["followup"]
 
             self.assertIn("after Gemini advice", prompt)
+            self.assertIn("do not route commit/push publish work to `.pipeline/claude_handoff.md`", prompt)
             self.assertIn(".pipeline/operator_request.md", prompt)
             self.assertIn("no truthful exact slice", prompt)
 
@@ -4183,6 +4286,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertIn("- CLAUDE.md", verify_prompt)
             self.assertIn("keep `READ_FIRST` to the listed verify-owner root doc only", verify_prompt)
             self.assertIn("keep its `READ_FIRST` to the implement-owner root doc only", verify_prompt)
+            self.assertIn("do not route commit/push publish work to `.pipeline/claude_handoff.md`", verify_prompt)
             self.assertIn("verify the latest `/work`, update `/verify`, then write exactly one next control", verify_prompt)
             self.assertNotIn("work/README.md", verify_prompt)
             self.assertNotIn("verify/README.md", verify_prompt)
@@ -4190,6 +4294,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertIn("- CLAUDE.md", followup_prompt)
             self.assertIn("keep `READ_FIRST` to the listed verify-owner root doc only", followup_prompt)
             self.assertIn("keep its `READ_FIRST` to the implement-owner root doc only", followup_prompt)
+            self.assertIn("do not route commit/push publish work to `.pipeline/claude_handoff.md`", followup_prompt)
             self.assertIn("turn the advisory into exactly one next control", followup_prompt)
             self.assertNotIn("verify/README.md", followup_prompt)
             self.assertIn("OWNER: Gemini", advisory_prompt)

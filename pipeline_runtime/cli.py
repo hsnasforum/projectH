@@ -303,7 +303,9 @@ def _coerce_status_to_stopped(project_root: Path) -> None:
         "active_control_seq": -1,
         "active_control_status": "none",
         "active_control_updated_at": "",
+        "control_age_cycles": 0,
     }
+    status["control_age_cycles"] = 0
     status["active_round"] = None
     status["watcher"] = {"alive": False, "pid": None}
     status["lanes"] = lanes

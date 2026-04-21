@@ -57,8 +57,13 @@
 - active implement-owner session에서 context exhaustion, session rollover, continue-vs-switch 같은 side question 때문에 Gemini arbitration이 열리더라도, active verify/handoff owner는 답을 짧은 lane reply로만 relay하고 `.pipeline/claude_handoff.md`는 그 세션이 끝날 때까지 유지하는 편이 맞습니다. 그래야 나중에 실제 구현 결과를 round-start handoff와 다시 대조할 수 있습니다.
 - active implement owner는 보통 `.pipeline/claude_handoff.md`가 `STATUS: implement`일 때만 새 구현 `/work`를 남깁니다. 최신 control 파일이 `.pipeline/operator_request.md`라면 새 `/work` closeout을 억지로 만들지 않습니다.
 - implement-owner round는 bounded 파일 수정과 `/work` closeout에서 끝나는 편이 맞습니다. implement lane에서 commit, push, branch publish, PR 생성까지 같이 진행하지 않습니다.
+- commit/push 자동화는 operator가 명시 승인한 큰 검증 묶음, 예를 들어 release, soak, PR stabilization, direct publish bundle일 때만 기록합니다. small/local slice closeout은 commit/push operator stop을 새로 만들지 말고 local dirty state를 남긴 채 다음 검증이나 handoff로 넘깁니다.
+- `commit_push_bundle_authorization + internal_only`는 이미 큰 묶음 승인 follow-up이므로 새 operator 호출로 기록하지 말고, verify/handoff-owner가 범위 확인과 auditable publish 정리를 이어가야 합니다.
+- 이 publish follow-up은 implement-owner `/work` handoff로 넘기지 않습니다. implement lane은 commit/push 금지이므로 verify/handoff owner가 직접 처리하거나 advisory escalation으로 닫아야 합니다.
 - 최신 control 파일이 `.pipeline/gemini_request.md` 또는 `.pipeline/gemini_advice.md`라면, 그 arbitration이 끝날 때까지 새 `/work` closeout을 억지로 만들지 않습니다.
 - active `STATUS: implement` handoff가 blocked라면 active implement owner는 새 `/work` closeout 대신 pane-local `STATUS: implement_blocked` + `BLOCK_REASON_CODE` + `ESCALATION_CLASS` sentinel로 verify/handoff-owner triage를 기다리는 편이 맞습니다.
+- 자동화 완성 목표는 ordinary next-step, ambiguity, stall, rollover, recovery 상황에서 사용자를 호출하지 않고 에이전트들이 먼저 논의해 닫는 것입니다. `/work` closeout은 반복 문제가 다음에 더 작게 닫히도록 incident family, owning boundary, replay/helper 필요성을 남기는 편이 좋습니다.
+- `/work` closeout은 하드코딩 금지, near-copy 중복 금지, 과도한 파일/함수 집중 방지 여부를 짧게 드러내는 편이 좋습니다. 예외적으로 임시 중복이나 큰 파일 수정이 필요했다면 이유와 후속 cleanup path를 남깁니다.
 - `STATUS: needs_operator` stop request는 bare stop line 하나로 끝내지 않는 편이 맞습니다. 최소한 `CONTROL_SEQ`, `REASON_CODE`, `OPERATOR_POLICY`, `DECISION_CLASS`, `DECISION_REQUIRED`, `BASED_ON_WORK`, `BASED_ON_VERIFY`와 함께 왜 멈췄는지, operator가 다음에 무엇을 정해야 하는지는 `.pipeline/operator_request.md`에 남겨야 automation이 멈춘 이유를 나중에 다시 추적할 수 있습니다.
 - Codex는 latest `/work`와 `/verify`가 한 family를 truthfully 닫았을 때 같은 family의 가장 작은 current-risk reduction을 먼저 자동 확정할 수 있습니다. 다음 슬라이스를 매번 operator가 직접 고를 필요는 없습니다.
 - 다만 Codex가 next-slice ambiguity, overlapping candidates, low-confidence prioritization 때문에 바로 확정하지 못한 경우에는 `.pipeline/operator_request.md`보다 `.pipeline/gemini_request.md`를 먼저 여는 편이 맞습니다.

@@ -48,6 +48,12 @@ if _PROJECT_IMPORT_ROOT:
         sys.path.insert(0, project_import_path)
 
 from pipeline_gui.setup_profile import resolve_project_runtime_adapter
+from pipeline_runtime.automation_health import (
+    STALE_ADVISORY_GRACE_CYCLES,
+    STALE_CONTROL_CYCLE_THRESHOLD,
+    advance_control_seq_age,
+    derive_automation_health,
+)
 from pipeline_runtime.lane_surface import (
     capture_pane_text as _shared_capture_pane_text,
     pane_text_has_busy_indicator as _shared_pane_text_has_busy_indicator,
@@ -59,8 +65,10 @@ from pipeline_runtime.lane_surface import (
     wait_for_pane_settle as _shared_wait_for_pane_settle,
 )
 from pipeline_runtime.operator_autonomy import (
+    OPERATOR_APPROVAL_COMPLETED_REASON,
     allows_verified_blocker_auto_recovery,
     classify_operator_candidate,
+    is_commit_push_approval_stop,
     normalize_reason_code,
 )
 from pipeline_runtime.schema import (
@@ -114,6 +122,25 @@ except ImportError:
 # Session name — pipeline-gui.py / start-pipeline.sh와 동일 규칙
 # ---------------------------------------------------------------------------
 _SESSION_PREFIX = "aip"
+_ROLLING_PIPELINE_PATHS = frozenset(
+    {
+        ".pipeline/claude_handoff.md",
+        ".pipeline/gemini_request.md",
+        ".pipeline/gemini_advice.md",
+        ".pipeline/operator_request.md",
+        ".pipeline/session_arbitration_draft.md",
+        ".pipeline/codex_feedback.md",
+        ".pipeline/gpt_prompt.md",
+        ".pipeline/current_run.json",
+    }
+)
+_ROLLING_PIPELINE_PREFIXES = (
+    ".pipeline/runs/",
+    ".pipeline/state/",
+    ".pipeline/logs/",
+    ".pipeline/receipts/",
+    ".pipeline/wrapper-events/",
+)
 
 
 def _session_name_for_project(project_path: str) -> str:
@@ -147,6 +174,7 @@ WORK_PATH_RE = re.compile(r"(work/\d+/\d+/[^\s`]+\.md)")
 _DISPATCH_LOCKS_GUARD = threading.Lock()
 _DISPATCH_LOCKS: dict[str, threading.Lock] = {}
 _DISPATCH_LOCK_TIMEOUT_SEC = 30.0
+_MATCHING_VERIFY_PENDING_ARCHIVE_REASON = "matching_verify_already_exists"
 
 
 class WatcherTurnState(str, Enum):
@@ -1420,6 +1448,8 @@ class WatcherCore:
         self._last_gemini_request_sig: str = self._get_path_sig(self.gemini_request_path)
         self._last_gemini_advice_sig: str = self._get_path_sig(self.gemini_advice_path)
         self._last_operator_request_sig: str = self._get_path_sig(self.operator_request_path)
+        self._last_seen_control_seq: int | None = None
+        self._control_seq_age_cycles: int = 0
         self._last_operator_retriage_sig: str = ""
         self._last_operator_retriage_fingerprint: str = ""
         self._operator_retriage_started_at: float = 0.0
@@ -1921,12 +1951,15 @@ class WatcherCore:
                 "active_control_seq": control_seq,
                 "active_control_status": control_status,
                 "active_control_updated_at": control_updated_at,
+                "control_age_cycles": self._control_seq_age_cycles,
             },
+            "control_age_cycles": self._control_seq_age_cycles,
             "lanes": self._build_lane_statuses(now_iso),
             "last_receipt_id": "",
             "last_heartbeat_at": now_iso,
             "updated_at": now_iso,
         }
+        data.update(derive_automation_health(data))
         tmp_path = self.run_status_path.with_suffix(".json.tmp")
         tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
         tmp_path.replace(self.run_status_path)
@@ -2099,6 +2132,36 @@ class WatcherCore:
         )
 
     # ------------------------------------------------------------------
+    def _highest_control_seq_for_age(self) -> int | None:
+        candidates = [
+            self._get_valid_control_signal(self.claude_handoff_path, "implement", "claude_handoff"),
+            self._get_valid_control_signal(self.gemini_request_path, "request_open", "gemini_request"),
+            self._get_valid_control_signal(self.operator_request_path, "needs_operator", "operator_request"),
+        ]
+        seqs = [
+            candidate.control_seq
+            for candidate in candidates
+            if candidate is not None and candidate.control_seq >= 0
+        ]
+        if not seqs:
+            return None
+        return max(seqs)
+
+    # ------------------------------------------------------------------
+    def _refresh_control_seq_age(self) -> int:
+        try:
+            current_seq = self._highest_control_seq_for_age()
+        except Exception as exc:
+            log.warning("failed to read control seq age: %s", exc)
+            current_seq = None
+        self._last_seen_control_seq, self._control_seq_age_cycles = advance_control_seq_age(
+            last_seen_control_seq=self._last_seen_control_seq,
+            control_seq_age_cycles=self._control_seq_age_cycles,
+            current_control_seq=current_seq,
+        )
+        return self._control_seq_age_cycles
+
+    # ------------------------------------------------------------------
     def _get_next_control_seq(self) -> int:
         candidates = [
             self._get_valid_control_signal(self.claude_handoff_path, "implement", "claude_handoff"),
@@ -2110,6 +2173,136 @@ class WatcherCore:
         if not seqs:
             return 1
         return max(seqs) + 1
+
+    # ------------------------------------------------------------------
+    def _existing_stale_control_advisory_current(self, control_seq: int) -> bool:
+        meta = read_control_meta(self.gemini_request_path)
+        existing_seq = meta.get("control_seq")
+        return (
+            str(meta.get("status") or "").strip().lower() == "request_open"
+            and str(meta.get("reason_code") or "").strip().lower() == "stale_control_advisory"
+            and isinstance(existing_seq, int)
+            and existing_seq >= control_seq
+        )
+
+    # ------------------------------------------------------------------
+    def _render_stale_control_advisory_request(
+        self,
+        *,
+        current_control_seq: int,
+        next_control_seq: int,
+    ) -> str:
+        context = self.prompt_assembler.build_runtime_prompt_context()
+        based_on_work = str(context["latest_work_path"])
+        based_on_verify = str(context["latest_verify_path"])
+        active_control = self._get_active_control_signal()
+        active_control_file = (
+            f".pipeline/{active_control.path.name}"
+            if active_control is not None
+            else ".pipeline/control slot"
+        )
+        active_control_seq = (
+            active_control.control_seq
+            if active_control is not None and active_control.control_seq >= 0
+            else current_control_seq
+        )
+        read_first = [
+            self._prompt_read_first_doc("advisory"),
+            active_control_file,
+        ]
+        for path in (based_on_work, based_on_verify):
+            if path and path != "없음" and path not in read_first:
+                read_first.append(path)
+        read_first_lines = "\n".join(f"- {path}" for path in read_first)
+        return (
+            "STATUS: request_open\n"
+            f"CONTROL_SEQ: {next_control_seq}\n"
+            "REASON_CODE: stale_control_advisory\n"
+            "\n"
+            "REQUEST: advisory-first routing for persistent stale control detection\n"
+            "SOURCE: watcher stale_control_seq grace gate\n"
+            f"SUPERSEDES: {active_control_file} CONTROL_SEQ {active_control_seq}\n"
+            "\n"
+            f"BASED_ON_WORK: {based_on_work}\n"
+            f"BASED_ON_VERIFY: {based_on_verify}\n"
+            "\n"
+            "READ_FIRST:\n"
+            f"{read_first_lines}\n"
+            "\n"
+            "---\n"
+            "\n"
+            "CONTEXT:\n"
+            f"- `stale_control_seq=true` persisted for {self._control_seq_age_cycles} watcher cycles.\n"
+            f"- Detection threshold: {STALE_CONTROL_CYCLE_THRESHOLD} cycles.\n"
+            f"- Advisory grace: {STALE_ADVISORY_GRACE_CYCLES} additional cycles.\n"
+            "- The watcher did not modify `.pipeline/claude_handoff.md` or `.pipeline/operator_request.md`.\n"
+            "\n"
+            "QUESTION:\n"
+            "- Inspect the stale control state and recommend one exact next control action.\n"
+        )
+
+    # ------------------------------------------------------------------
+    def _maybe_write_stale_control_advisory_request(self) -> bool:
+        current_control_seq = self._last_seen_control_seq
+        if current_control_seq is None or current_control_seq < 0:
+            return False
+        if not self._advisory_enabled():
+            return False
+        if self._is_active_control(self.operator_request_path, "needs_operator"):
+            return False
+        if self._control_seq_age_cycles < (
+            STALE_CONTROL_CYCLE_THRESHOLD + STALE_ADVISORY_GRACE_CYCLES
+        ):
+            return False
+        if self._existing_stale_control_advisory_current(current_control_seq):
+            return False
+
+        next_control_seq = max(self._get_next_control_seq(), current_control_seq + 1)
+        request_text = self._render_stale_control_advisory_request(
+            current_control_seq=current_control_seq,
+            next_control_seq=next_control_seq,
+        )
+        payload = {
+            "reason_code": "stale_control_advisory",
+            "tracked_control_seq": current_control_seq,
+            "request_control_file": "gemini_request.md",
+            "request_control_seq": next_control_seq,
+            "control_age_cycles": self._control_seq_age_cycles,
+            "stale_control_cycle_threshold": STALE_CONTROL_CYCLE_THRESHOLD,
+            "stale_advisory_grace_cycles": STALE_ADVISORY_GRACE_CYCLES,
+        }
+        try:
+            atomic_write_text(self.gemini_request_path, request_text)
+        except Exception as exc:
+            log.warning("failed to write stale control advisory request: %s", exc)
+            try:
+                self._log_raw(
+                    "stale_control_advisory_write_failed",
+                    str(self.gemini_request_path),
+                    "turn_signal",
+                    {**payload, "error": str(exc)},
+                )
+            except Exception as log_exc:
+                log.warning("failed to log stale control advisory write failure: %s", log_exc)
+            return False
+
+        self._last_gemini_request_sig = self._get_path_sig(self.gemini_request_path)
+        self._clear_claude_blocked_state("stale_control_advisory")
+        self._log_raw(
+            "stale_control_advisory_written",
+            str(self.gemini_request_path),
+            "turn_signal",
+            payload,
+        )
+        self._append_runtime_event("stale_control_advisory_written", payload)
+        self._transition_turn(
+            WatcherTurnState.ADVISORY_ACTIVE,
+            "stale_control_advisory",
+            active_control_file="gemini_request.md",
+            active_control_seq=next_control_seq,
+        )
+        self._notify_gemini("stale_control_advisory")
+        return True
 
     # ------------------------------------------------------------------
     def _is_active_control(self, path: Path, expected_status: str) -> bool:
@@ -2230,6 +2423,106 @@ class WatcherCore:
         }
 
     # ------------------------------------------------------------------
+    def _git_read(self, args: list[str]) -> Optional[str]:
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(self.repo_root), *args],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip()
+
+    # ------------------------------------------------------------------
+    def _git_exit_ok(self, args: list[str]) -> bool:
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(self.repo_root), *args],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return result.returncode == 0
+
+    # ------------------------------------------------------------------
+    def _is_allowed_rolling_pipeline_dirty_path(self, path_text: str) -> bool:
+        normalized = path_text.replace("\\", "/").strip().strip('"')
+        if not normalized:
+            return False
+        if " -> " in normalized:
+            return all(
+                self._is_allowed_rolling_pipeline_dirty_path(part)
+                for part in normalized.split(" -> ", 1)
+            )
+        if normalized in _ROLLING_PIPELINE_PATHS:
+            return True
+        return any(normalized.startswith(prefix) for prefix in _ROLLING_PIPELINE_PREFIXES)
+
+    # ------------------------------------------------------------------
+    def _worktree_clean_except_rolling_pipeline(self) -> bool:
+        status_text = self._git_read(["status", "--porcelain=v1", "--untracked-files=all"])
+        if status_text is None:
+            return False
+        for raw_line in status_text.splitlines():
+            line = raw_line.rstrip()
+            if not line:
+                continue
+            path_text = line[3:] if len(line) > 3 else line
+            if not self._is_allowed_rolling_pipeline_dirty_path(path_text):
+                return False
+        return True
+
+    # ------------------------------------------------------------------
+    def _satisfied_operator_approval_marker(self) -> Optional[dict[str, object]]:
+        if not self._is_active_control(self.operator_request_path, "needs_operator"):
+            return None
+        try:
+            control_text = self.operator_request_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        control_meta = read_control_meta(self.operator_request_path)
+        if not is_commit_push_approval_stop(control_meta, control_text=control_text):
+            return None
+
+        branch = self._git_read(["branch", "--show-current"])
+        if not branch or branch == "HEAD":
+            return None
+        upstream = self._git_read(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+        if not upstream:
+            return None
+        head_sha = self._git_read(["rev-parse", "HEAD"])
+        upstream_sha = self._git_read(["rev-parse", "@{u}"])
+        if not head_sha or not upstream_sha:
+            return None
+        upstream_contains_head = head_sha == upstream_sha or self._git_exit_ok(
+            ["merge-base", "--is-ancestor", "HEAD", "@{u}"]
+        )
+        if not upstream_contains_head:
+            return None
+        if not self._worktree_clean_except_rolling_pipeline():
+            return None
+
+        return {
+            "control_file": "operator_request.md",
+            "control_seq": self._read_control_seq_from_path(self.operator_request_path),
+            "reason": OPERATOR_APPROVAL_COMPLETED_REASON,
+            "branch": branch,
+            "head_sha": head_sha,
+            "upstream": upstream,
+            "upstream_sha": upstream_sha,
+            "operator_request": "operator_request.md",
+            "resolved_work_paths": [],
+        }
+
+    # ------------------------------------------------------------------
     def _mark_operator_retriage_started(self, operator_sig: str, marker: dict[str, object]) -> None:
         fingerprint = str(marker.get("fingerprint") or "")
         if (
@@ -2273,6 +2566,9 @@ class WatcherCore:
 
     # ------------------------------------------------------------------
     def _operator_control_recovery_marker(self) -> Optional[dict[str, object]]:
+        satisfied = self._satisfied_operator_approval_marker()
+        if satisfied is not None:
+            return satisfied
         stale = self._stale_operator_control_marker()
         if stale is not None:
             return stale
@@ -2564,6 +2860,8 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _get_pending_operator_mtime(self) -> float:
         """operator_request가 실제 pending stop이면 mtime을 반환한다."""
+        if self._satisfied_operator_approval_marker() is not None:
+            return 0.0
         if self._stale_operator_control_marker() is not None:
             return 0.0
         if self._operator_gate_marker() is not None:
@@ -2872,6 +3170,53 @@ class WatcherCore:
             reverse=True,
         )
         return jobs
+
+    # ------------------------------------------------------------------
+    def _archive_current_run_job(self, job: JobState, *, reason: str) -> bool:
+        archived = False
+        source_run_id = job.run_id or self.run_id
+        for path in iter_job_state_paths(self.state_dir):
+            if path.stem != job.job_id:
+                continue
+            self._archive_job_state_file(path, source_run_id=source_run_id, reason=reason)
+            archived = True
+        return archived
+
+    # ------------------------------------------------------------------
+    def _archive_matching_verified_pending_jobs(self, jobs: list[JobState]) -> list[JobState]:
+        """Drop stale current-run VERIFY_PENDING jobs that already have a matching /verify note."""
+        active_jobs: list[JobState] = []
+        for job in jobs:
+            if job.status != JobStatus.VERIFY_PENDING:
+                active_jobs.append(job)
+                continue
+            artifact_path = Path(job.artifact_path)
+            if not self._work_has_matching_verify(artifact_path):
+                active_jobs.append(job)
+                continue
+            self.stabilizer.clear(job.job_id)
+            self.lease.release("slot_verify")
+            if job.artifact_hash:
+                self.dedupe.forget(job.job_id, job.round, job.artifact_hash, "slot_verify")
+            archived = self._archive_current_run_job(
+                job,
+                reason=_MATCHING_VERIFY_PENDING_ARCHIVE_REASON,
+            )
+            payload = {
+                "job_id": job.job_id,
+                "artifact_path": self._normalize_artifact_path(artifact_path) or str(artifact_path),
+                "status": job.status.value,
+                "reason": _MATCHING_VERIFY_PENDING_ARCHIVE_REASON,
+                "archived": archived,
+            }
+            self._log_raw(
+                "stale_verify_pending_archived",
+                str(artifact_path),
+                job.job_id,
+                payload,
+            )
+            self._append_runtime_event("stale_verify_pending_archived", payload)
+        return active_jobs
 
     # ------------------------------------------------------------------
     def _resolve_canonical_turn(self) -> str:
@@ -3327,6 +3672,43 @@ class WatcherCore:
         self._notify_control_recovery(reason, marker)
 
     # ------------------------------------------------------------------
+    def _record_operator_recovery_marker(
+        self,
+        *,
+        recovery_reason: str,
+        status: str,
+        marker: dict[str, object],
+        source: str,
+    ) -> str:
+        event_name = (
+            OPERATOR_APPROVAL_COMPLETED_REASON
+            if recovery_reason == OPERATOR_APPROVAL_COMPLETED_REASON
+            else "operator_request_stale_ignored"
+        )
+        payload = {"status": status, **marker}
+        self._log_raw(
+            event_name,
+            str(self.operator_request_path),
+            source,
+            payload,
+        )
+        if event_name == OPERATOR_APPROVAL_COMPLETED_REASON:
+            self._append_runtime_event(
+                event_name,
+                {
+                    "control_file": "operator_request.md",
+                    "control_seq": int(marker.get("control_seq") or -1),
+                    "branch": str(marker.get("branch") or ""),
+                    "head_sha": str(marker.get("head_sha") or ""),
+                    "upstream": str(marker.get("upstream") or ""),
+                    "upstream_sha": str(marker.get("upstream_sha") or ""),
+                    "operator_request": "operator_request.md",
+                    "reason": recovery_reason,
+                },
+            )
+        return event_name
+
+    # ------------------------------------------------------------------
     def _notify_operator_retriage(self, reason: str, marker: dict[str, object]) -> None:
         self._dispatch_notify_spec(
             spec=self.prompt_assembler.build_operator_retriage_dispatch_spec(marker, reason),
@@ -3439,20 +3821,21 @@ class WatcherCore:
                     self._transition_turn(
                         WatcherTurnState.VERIFY_FOLLOWUP,
                         recovery_reason,
+                        active_control_file="operator_request.md",
                         active_control_seq=active_control.control_seq,
                     )
                     if recovery_reason == "operator_wait_idle_retriage":
                         self._mark_operator_retriage_started(operator_sig, operator_recovery)
-                    self._log_raw(
-                        "operator_request_stale_ignored",
-                        str(self.operator_request_path),
-                        "turn_signal",
-                        {"status": status, **operator_recovery},
+                    recovery_event = self._record_operator_recovery_marker(
+                        recovery_reason=recovery_reason,
+                        status=status,
+                        marker=operator_recovery,
+                        source="turn_signal",
                     )
                     if recovery_reason == "operator_wait_idle_retriage":
                         self._notify_codex_operator_retriage(recovery_reason, operator_recovery)
                     else:
-                        self._notify_codex_control_recovery("operator_request_stale_ignored", operator_recovery)
+                        self._notify_codex_control_recovery(recovery_event, operator_recovery)
                     return
                 if operator_gate is not None:
                     gate_reason = str(operator_gate.get("reason") or "operator_candidate_pending")
@@ -3948,6 +4331,11 @@ class WatcherCore:
         if not self.watch_dir.exists():
             return
 
+        self._refresh_control_seq_age()
+        self._write_runtime_status()
+        if self._maybe_write_stale_control_advisory_request():
+            return
+
         # 새 tmux lane이 막 떠 있는 동안 초기 dispatch가 삼켜지지 않도록
         # startup grace가 끝날 때까지 초기 turn 판정을 보류한다.
         if not self._initial_turn_checked:
@@ -4004,27 +4392,33 @@ class WatcherCore:
                 self._notify_gemini("startup_turn_gemini")
                 return
             if turn == "verify_followup":
-                self._transition_turn(WatcherTurnState.VERIFY_FOLLOWUP, "startup_turn_codex_followup")
                 operator_recovery = self._operator_control_recovery_marker()
                 operator_gate = self._operator_gate_marker()
                 if operator_recovery is not None:
                     recovery_reason = str(operator_recovery.get("reason") or "verified_blockers_resolved")
+                    self._transition_turn(
+                        WatcherTurnState.VERIFY_FOLLOWUP,
+                        recovery_reason,
+                        active_control_file="operator_request.md",
+                        active_control_seq=int(operator_recovery.get("control_seq") or -1),
+                    )
                     if recovery_reason == "operator_wait_idle_retriage":
                         self._mark_operator_retriage_started(
                             self._get_path_sig(self.operator_request_path),
                             operator_recovery,
                         )
-                    self._log_raw(
-                        "operator_request_stale_ignored",
-                        str(self.operator_request_path),
-                        "startup",
-                        operator_recovery,
+                    recovery_event = self._record_operator_recovery_marker(
+                        recovery_reason=recovery_reason,
+                        status="needs_operator",
+                        marker=operator_recovery,
+                        source="startup",
                     )
                     if recovery_reason == "operator_wait_idle_retriage":
                         self._notify_codex_operator_retriage("startup_turn_operator_idle_retriage", operator_recovery)
                     else:
-                        self._notify_codex_control_recovery("startup_turn_stale_operator", operator_recovery)
+                        self._notify_codex_control_recovery(recovery_event, operator_recovery)
                 elif operator_gate is not None:
+                    self._transition_turn(WatcherTurnState.VERIFY_FOLLOWUP, "startup_turn_codex_followup")
                     self._mark_operator_retriage_started(
                         self._get_path_sig(self.operator_request_path),
                         operator_gate,
@@ -4037,6 +4431,7 @@ class WatcherCore:
                     )
                     self._notify_codex_operator_retriage("startup_turn_operator_gated", operator_gate)
                 else:
+                    self._transition_turn(WatcherTurnState.VERIFY_FOLLOWUP, "startup_turn_codex_followup")
                     self._notify_codex_followup("startup_turn_codex_followup")
                 return
             if turn == "verify":
@@ -4071,6 +4466,7 @@ class WatcherCore:
         )
 
         pending_verify_jobs = self._get_current_run_jobs(statuses={JobStatus.VERIFY_PENDING})
+        pending_verify_jobs = self._archive_matching_verified_pending_jobs(pending_verify_jobs)
         if pending_verify_jobs:
             if gemini_control_pending or self._control_resolution_turn_active():
                 if gemini_control_pending:

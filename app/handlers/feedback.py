@@ -88,6 +88,7 @@ class FeedbackHandlerMixin:
                 action="corrected_outcome_recorded",
                 detail={
                     "outcome": corrected_outcome.get("outcome"),
+                    "reason_label": corrected_outcome.get("reason_label"),
                     "recorded_at": corrected_outcome.get("recorded_at"),
                     "artifact_id": corrected_outcome.get("artifact_id"),
                     "source_message_id": corrected_outcome.get("source_message_id"),
@@ -192,6 +193,7 @@ class FeedbackHandlerMixin:
                 action="corrected_outcome_recorded",
                 detail={
                     "outcome": corrected_outcome.get("outcome"),
+                    "reason_label": corrected_outcome.get("reason_label"),
                     "recorded_at": corrected_outcome.get("recorded_at"),
                     "artifact_id": corrected_outcome.get("artifact_id"),
                     "source_message_id": corrected_outcome.get("source_message_id"),

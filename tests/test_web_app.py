@@ -380,6 +380,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(payload["artifact_id"], "artifact-correction")
             self.assertEqual(payload["corrected_text"], "수정한 요약입니다.\n핵심만 다시 적었습니다.")
             self.assertEqual(payload["corrected_outcome"]["outcome"], "corrected")
+            self.assertEqual(payload["corrected_outcome"]["reason_label"], "explicit_correction_submitted")
             self.assertEqual(payload["corrected_outcome"]["artifact_id"], "artifact-correction")
             self.assertEqual(payload["corrected_outcome"]["source_message_id"], stored_message["message_id"])
 
@@ -387,6 +388,10 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(session_message["artifact_id"], "artifact-correction")
             self.assertEqual(session_message["corrected_text"], "수정한 요약입니다.\n핵심만 다시 적었습니다.")
             self.assertEqual(session_message["corrected_outcome"]["outcome"], "corrected")
+            self.assertEqual(
+                session_message["corrected_outcome"]["reason_label"],
+                "explicit_correction_submitted",
+            )
             self.assertEqual(session_message["corrected_outcome"]["source_message_id"], stored_message["message_id"])
             self.assertEqual(session_message["original_response_snapshot"]["draft_text"], "원본 요약입니다.")
 
@@ -395,6 +400,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("corrected_outcome_recorded", log_text)
             self.assertIn("artifact-correction", log_text)
             self.assertIn("corrected", log_text)
+            self.assertIn("explicit_correction_submitted", log_text)
 
     def test_submit_correction_serializes_active_context_summary_hint_basis(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -1024,6 +1030,10 @@ class WebAppServiceTest(unittest.TestCase):
             source_message = source_messages[-1]
             self.assertEqual(source_message["corrected_text"], "수정본 B입니다.\n다시 손봤습니다.")
             self.assertEqual(source_message["corrected_outcome"]["outcome"], "corrected")
+            self.assertEqual(
+                source_message["corrected_outcome"]["reason_label"],
+                "explicit_correction_submitted",
+            )
             self.assertEqual(source_message["corrected_outcome"]["approval_id"], approval_id)
             self.assertEqual(source_message["corrected_outcome"]["saved_note_path"], str(note_path))
             self.assertEqual(source_message["corrected_outcome"]["source_message_id"], source_message_id)
@@ -1033,6 +1043,89 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(saved_message["source_message_id"], source_message_id)
             self.assertEqual(saved_message["save_content_source"], "corrected_text")
             self.assertEqual(approved["session"]["pending_approvals"], [])
+
+    def test_handle_chat_corrected_save_reissue_uses_scoped_reason_label(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            first_note_path = tmp_path / "notes" / "source-summary.md"
+            second_note_path = tmp_path / "notes" / "source-summary-v2.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            initial = service.handle_chat(
+                {
+                    "session_id": "corrected-save-reissue-session",
+                    "source_path": str(source_path),
+                    "provider": "mock",
+                }
+            )
+            source_message_id = initial["response"]["source_message_id"]
+            artifact_id = initial["response"]["artifact_id"]
+
+            service.submit_correction(
+                {
+                    "session_id": "corrected-save-reissue-session",
+                    "message_id": source_message_id,
+                    "corrected_text": "수정본입니다.",
+                }
+            )
+            bridge = service.handle_chat(
+                {
+                    "session_id": "corrected-save-reissue-session",
+                    "corrected_save_message_id": source_message_id,
+                    "note_path": str(first_note_path),
+                }
+            )
+            first_approval_id = bridge["response"]["approval"]["approval_id"]
+
+            reissued = service.handle_chat(
+                {
+                    "session_id": "corrected-save-reissue-session",
+                    "reissue_approval_id": first_approval_id,
+                    "note_path": str(second_note_path),
+                }
+            )
+
+            self.assertTrue(reissued["ok"])
+            self.assertEqual(reissued["response"]["status"], "needs_approval")
+            self.assertEqual(reissued["response"]["artifact_id"], artifact_id)
+            self.assertEqual(reissued["response"]["source_message_id"], source_message_id)
+            self.assertEqual(reissued["response"]["save_content_source"], "corrected_text")
+            self.assertEqual(reissued["response"]["approval"]["requested_path"], str(second_note_path))
+            self.assertEqual(reissued["response"]["approval"]["save_content_source"], "corrected_text")
+            approval_reason_record = reissued["response"]["approval_reason_record"]
+            self.assertIsNotNone(approval_reason_record)
+            self.assertEqual(approval_reason_record["reason_scope"], "approval_reissue")
+            self.assertEqual(approval_reason_record["reason_label"], "corrected_text_reissue")
+            self.assertEqual(approval_reason_record["artifact_id"], artifact_id)
+            self.assertEqual(approval_reason_record["source_message_id"], source_message_id)
+            self.assertEqual(
+                approval_reason_record["approval_id"],
+                reissued["response"]["approval"]["approval_id"],
+            )
+            self.assertEqual(
+                reissued["response"]["approval"]["approval_reason_record"]["reason_label"],
+                "corrected_text_reissue",
+            )
+            self.assertEqual(len(reissued["session"]["pending_approvals"]), 1)
+            self.assertEqual(
+                reissued["session"]["pending_approvals"][0]["approval_reason_record"]["reason_label"],
+                "corrected_text_reissue",
+            )
+            self.assertFalse(first_note_path.exists())
+            self.assertFalse(second_note_path.exists())
+
+            log_text = Path(settings.task_log_path).read_text(encoding="utf-8")
+            self.assertIn("approval_reissued", log_text)
+            self.assertIn("corrected_text_reissue", log_text)
 
     def test_source_message_session_local_memory_signal_separates_content_approval_and_save_axes(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -1068,14 +1161,7 @@ class WebAppServiceTest(unittest.TestCase):
                 for message in initial["session"]["messages"]
                 if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
             ][-1]
-            initial_signal = initial_source_message["session_local_memory_signal"]
-            self.assertEqual(initial_signal["signal_scope"], "session_local")
-            self.assertEqual(initial_signal["artifact_id"], artifact_id)
-            self.assertEqual(initial_signal["source_message_id"], source_message_id)
-            self.assertIsNone(initial_signal["content_signal"]["latest_corrected_outcome"])
-            self.assertFalse(initial_signal["content_signal"]["has_corrected_text"])
-            self.assertNotIn("approval_signal", initial_signal)
-            self.assertNotIn("save_signal", initial_signal)
+            self.assertNotIn("session_local_memory_signal", initial_source_message)
             self.assertNotIn("superseded_reject_signal", initial_source_message)
 
             rejected_approval = service.handle_chat(
@@ -1091,6 +1177,11 @@ class WebAppServiceTest(unittest.TestCase):
                 if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
             ][-1]
             rejected_signal = rejected_source_message["session_local_memory_signal"]
+            self.assertEqual(rejected_signal["signal_version"], "session_local_memory_signal_v1")
+            self.assertEqual(rejected_signal["signal_scope"], "session_local")
+            self.assertEqual(rejected_signal["artifact_id"], artifact_id)
+            self.assertEqual(rejected_signal["source_message_id"], source_message_id)
+            self.assertTrue(rejected_signal["derived_at"])
             self.assertEqual(
                 rejected_signal["approval_signal"]["latest_approval_reason_record"]["reason_scope"],
                 "approval_reject",
@@ -1133,12 +1224,18 @@ class WebAppServiceTest(unittest.TestCase):
                 if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
             ][-1]
             signal = source_message["session_local_memory_signal"]
+            self.assertEqual(signal["signal_version"], "session_local_memory_signal_v1")
             self.assertEqual(signal["signal_scope"], "session_local")
             self.assertEqual(signal["artifact_id"], artifact_id)
             self.assertEqual(signal["source_message_id"], source_message_id)
-            self.assertEqual(signal["content_signal"]["latest_corrected_outcome"]["outcome"], "corrected")
-            self.assertTrue(signal["content_signal"]["has_corrected_text"])
-            self.assertNotIn("content_reason_record", signal["content_signal"])
+            self.assertTrue(signal["derived_at"])
+            self.assertEqual(signal["correction_signal"]["corrected_outcome"]["outcome"], "corrected")
+            self.assertEqual(
+                signal["correction_signal"]["corrected_outcome"]["reason_label"],
+                "explicit_correction_submitted",
+            )
+            self.assertTrue(signal["correction_signal"]["has_corrected_text"])
+            self.assertNotIn("content_signal", signal)
             self.assertEqual(
                 signal["approval_signal"]["latest_approval_reason_record"]["approval_id"],
                 original_approval_id,
@@ -1211,7 +1308,7 @@ class WebAppServiceTest(unittest.TestCase):
             ][-1]
             candidate = source_message["session_local_candidate"]
             recurrence_key = source_message["candidate_recurrence_key"]
-            corrected_outcome = source_message["session_local_memory_signal"]["content_signal"]["latest_corrected_outcome"]
+            corrected_outcome = source_message["session_local_memory_signal"]["correction_signal"]["corrected_outcome"]
             self.assertEqual(
                 candidate["candidate_id"],
                 f"session-local-candidate:{artifact_id}:{source_message_id}:correction_rewrite_preference",
@@ -1228,7 +1325,7 @@ class WebAppServiceTest(unittest.TestCase):
                 candidate["supporting_signal_refs"],
                 [
                     {
-                        "signal_name": "session_local_memory_signal.content_signal",
+                        "signal_name": "session_local_memory_signal.correction_signal",
                         "relationship": "primary_basis",
                     }
                 ],
@@ -1249,7 +1346,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(recurrence_key["stability"], "deterministic_local")
             self.assertEqual(recurrence_key["derived_at"], candidate["updated_at"])
             self.assertEqual(
-                source_message["session_local_memory_signal"]["content_signal"]["latest_corrected_outcome"]["outcome"],
+                source_message["session_local_memory_signal"]["correction_signal"]["corrected_outcome"]["outcome"],
                 "corrected",
             )
             self.assertIn("superseded_reject_signal", source_message)
@@ -1314,7 +1411,7 @@ class WebAppServiceTest(unittest.TestCase):
                 supported_candidate["supporting_signal_refs"],
                 [
                     {
-                        "signal_name": "session_local_memory_signal.content_signal",
+                        "signal_name": "session_local_memory_signal.correction_signal",
                         "relationship": "primary_basis",
                     },
                     {
@@ -1345,14 +1442,14 @@ class WebAppServiceTest(unittest.TestCase):
             ][-1]
             candidate = source_message["session_local_candidate"]
             recurrence_key = source_message["candidate_recurrence_key"]
-            corrected_outcome = source_message["session_local_memory_signal"]["content_signal"]["latest_corrected_outcome"]
+            corrected_outcome = source_message["session_local_memory_signal"]["correction_signal"]["corrected_outcome"]
             self.assertEqual(candidate["candidate_family"], "correction_rewrite_preference")
             self.assertEqual(candidate["evidence_strength"], "explicit_single_artifact")
             self.assertEqual(
                 candidate["supporting_signal_refs"],
                 [
                     {
-                        "signal_name": "session_local_memory_signal.content_signal",
+                        "signal_name": "session_local_memory_signal.correction_signal",
                         "relationship": "primary_basis",
                     }
                 ],
@@ -5497,7 +5594,7 @@ class WebAppServiceTest(unittest.TestCase):
                 approved_source_message["session_local_candidate"]["supporting_signal_refs"],
                 [
                     {
-                        "signal_name": "session_local_memory_signal.content_signal",
+                        "signal_name": "session_local_memory_signal.correction_signal",
                         "relationship": "primary_basis",
                     },
                     {
@@ -5555,7 +5652,19 @@ class WebAppServiceTest(unittest.TestCase):
                     "candidate_id": candidate["candidate_id"],
                     "candidate_scope": "durable_candidate",
                     "candidate_family": "correction_rewrite_preference",
+                    "artifact_id": artifact_id,
+                    "source_message_id": source_message_id,
                     "statement": "explicit rewrite correction recorded for this grounded brief",
+                    "derived_from": {
+                        "record_type": "candidate_confirmation_record",
+                        "artifact_id": artifact_id,
+                        "source_message_id": source_message_id,
+                        "candidate_id": candidate["candidate_id"],
+                        "candidate_updated_at": candidate["updated_at"],
+                        "confirmation_label": "explicit_reuse_confirmation",
+                        "recorded_at": payload["candidate_confirmation_record"]["recorded_at"],
+                    },
+                    "derived_at": payload["candidate_confirmation_record"]["recorded_at"],
                     "supporting_artifact_ids": [artifact_id],
                     "supporting_source_message_ids": [source_message_id],
                     "supporting_signal_refs": approved_source_message["session_local_candidate"]["supporting_signal_refs"],
@@ -5581,9 +5690,21 @@ class WebAppServiceTest(unittest.TestCase):
                 payload["session"]["review_queue_items"],
                 [
                     {
+                        "item_type": "durable_candidate",
                         "candidate_id": candidate["candidate_id"],
+                        "candidate_scope": "durable_candidate",
                         "candidate_family": "correction_rewrite_preference",
                         "statement": "explicit rewrite correction recorded for this grounded brief",
+                        "derived_from": {
+                            "record_type": "candidate_confirmation_record",
+                            "artifact_id": artifact_id,
+                            "source_message_id": source_message_id,
+                            "candidate_id": candidate["candidate_id"],
+                            "candidate_updated_at": candidate["updated_at"],
+                            "confirmation_label": "explicit_reuse_confirmation",
+                            "recorded_at": payload["candidate_confirmation_record"]["recorded_at"],
+                        },
+                        "derived_at": payload["candidate_confirmation_record"]["recorded_at"],
                         "promotion_basis": "explicit_confirmation",
                         "promotion_eligibility": "eligible_for_review",
                         "artifact_id": artifact_id,
@@ -7112,10 +7233,10 @@ class WebAppServiceTest(unittest.TestCase):
                 if message.get("artifact_id") == "artifact-same-text" and message.get("original_response_snapshot")
             ][-1]
             self.assertEqual(
-                source_message["session_local_memory_signal"]["content_signal"]["latest_corrected_outcome"]["outcome"],
+                source_message["session_local_memory_signal"]["correction_signal"]["corrected_outcome"]["outcome"],
                 "corrected",
             )
-            self.assertTrue(source_message["session_local_memory_signal"]["content_signal"]["has_corrected_text"])
+            self.assertTrue(source_message["session_local_memory_signal"]["correction_signal"]["has_corrected_text"])
             self.assertNotIn("session_local_candidate", source_message)
             self.assertNotIn("candidate_recurrence_key", source_message)
 
@@ -7158,10 +7279,9 @@ class WebAppServiceTest(unittest.TestCase):
                 for message in approved["session"]["messages"]
                 if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
             ][-1]
-            self.assertEqual(
-                source_message["session_local_memory_signal"]["content_signal"]["latest_corrected_outcome"]["outcome"],
-                "accepted_as_is",
-            )
+            signal = source_message["session_local_memory_signal"]
+            self.assertNotIn("correction_signal", signal)
+            self.assertEqual(signal["save_signal"]["latest_approval_id"], approval_id)
             self.assertNotIn("session_local_candidate", source_message)
             self.assertNotIn("candidate_recurrence_key", source_message)
 
@@ -7203,6 +7323,13 @@ class WebAppServiceTest(unittest.TestCase):
                 if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
             ][-1]
             self.assertEqual(rejected_source_message["corrected_outcome"]["outcome"], "rejected")
+            rejected_signal = rejected_source_message["session_local_memory_signal"]
+            self.assertEqual(rejected_signal["signal_version"], "session_local_memory_signal_v1")
+            self.assertEqual(
+                rejected_signal["content_signal"]["content_reason_record"]["reason_label"],
+                "explicit_content_rejection",
+            )
+            self.assertNotIn("correction_signal", rejected_signal)
             self.assertNotIn("superseded_reject_signal", rejected_source_message)
 
             noted = service.submit_content_reason_note(
@@ -7228,9 +7355,9 @@ class WebAppServiceTest(unittest.TestCase):
                 if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
             ][-1]
             current_signal = source_message["session_local_memory_signal"]
-            self.assertEqual(current_signal["content_signal"]["latest_corrected_outcome"]["outcome"], "corrected")
-            self.assertTrue(current_signal["content_signal"]["has_corrected_text"])
-            self.assertNotIn("content_reason_record", current_signal["content_signal"])
+            self.assertEqual(current_signal["correction_signal"]["corrected_outcome"]["outcome"], "corrected")
+            self.assertTrue(current_signal["correction_signal"]["has_corrected_text"])
+            self.assertNotIn("content_signal", current_signal)
 
             superseded_signal = source_message["superseded_reject_signal"]
             self.assertEqual(superseded_signal["artifact_id"], artifact_id)
@@ -7332,8 +7459,8 @@ class WebAppServiceTest(unittest.TestCase):
             ][-1]
 
             current_signal = source_message["session_local_memory_signal"]
-            self.assertEqual(current_signal["content_signal"]["latest_corrected_outcome"]["outcome"], "corrected")
-            self.assertNotIn("content_reason_record", current_signal["content_signal"])
+            self.assertEqual(current_signal["correction_signal"]["corrected_outcome"]["outcome"], "corrected")
+            self.assertNotIn("content_signal", current_signal)
 
             superseded_signal = source_message["superseded_reject_signal"]
             self.assertEqual(superseded_signal["corrected_outcome"]["outcome"], "rejected")
@@ -7670,14 +7797,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(payload["session"]["messages"][-1]["artifact_kind"], "grounded_brief")
             self.assertEqual(payload["session"]["messages"][-1]["response_origin"]["provider"], "mock")
             self.assertGreaterEqual(len(payload["session"]["messages"][-1]["evidence"]), 1)
-            signal = payload["session"]["messages"][-1]["session_local_memory_signal"]
-            self.assertEqual(signal["signal_scope"], "session_local")
-            self.assertEqual(signal["artifact_id"], payload["response"]["artifact_id"])
-            self.assertEqual(signal["source_message_id"], payload["response"]["source_message_id"])
-            self.assertIsNone(signal["content_signal"]["latest_corrected_outcome"])
-            self.assertFalse(signal["content_signal"]["has_corrected_text"])
-            self.assertNotIn("approval_signal", signal)
-            self.assertNotIn("save_signal", signal)
+            self.assertNotIn("session_local_memory_signal", payload["session"]["messages"][-1])
             self.assertEqual(
                 payload["session"]["messages"][-1]["original_response_snapshot"]["artifact_id"],
                 payload["response"]["artifact_id"],
@@ -9549,6 +9669,13 @@ class WebAppServiceTest(unittest.TestCase):
                 if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
             ][-1]
             self.assertEqual(rejected_source_message["corrected_outcome"]["outcome"], "rejected")
+            rejected_signal = rejected_source_message["session_local_memory_signal"]
+            self.assertEqual(rejected_signal["signal_version"], "session_local_memory_signal_v1")
+            self.assertEqual(
+                rejected_signal["content_signal"]["content_reason_record"]["reason_label"],
+                "explicit_content_rejection",
+            )
+            self.assertNotIn("correction_signal", rejected_signal)
             self.assertNotIn("superseded_reject_signal", rejected_source_message)
 
             noted = service.submit_content_reason_note(
@@ -9574,9 +9701,9 @@ class WebAppServiceTest(unittest.TestCase):
                 if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
             ][-1]
             current_signal = source_message["session_local_memory_signal"]
-            self.assertEqual(current_signal["content_signal"]["latest_corrected_outcome"]["outcome"], "corrected")
-            self.assertTrue(current_signal["content_signal"]["has_corrected_text"])
-            self.assertNotIn("content_reason_record", current_signal["content_signal"])
+            self.assertEqual(current_signal["correction_signal"]["corrected_outcome"]["outcome"], "corrected")
+            self.assertTrue(current_signal["correction_signal"]["has_corrected_text"])
+            self.assertNotIn("content_signal", current_signal)
 
             superseded_signal = source_message["superseded_reject_signal"]
             self.assertEqual(superseded_signal["artifact_id"], artifact_id)
@@ -9681,8 +9808,8 @@ class WebAppServiceTest(unittest.TestCase):
             ][-1]
 
             current_signal = source_message["session_local_memory_signal"]
-            self.assertEqual(current_signal["content_signal"]["latest_corrected_outcome"]["outcome"], "corrected")
-            self.assertNotIn("content_reason_record", current_signal["content_signal"])
+            self.assertEqual(current_signal["correction_signal"]["corrected_outcome"]["outcome"], "corrected")
+            self.assertNotIn("content_signal", current_signal)
 
             superseded_signal = source_message["superseded_reject_signal"]
             self.assertEqual(superseded_signal["corrected_outcome"]["outcome"], "rejected")
@@ -9893,14 +10020,7 @@ class WebAppServiceTest(unittest.TestCase):
                 for message in initial["session"]["messages"]
                 if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
             ][-1]
-            initial_signal = initial_source_message["session_local_memory_signal"]
-            self.assertEqual(initial_signal["signal_scope"], "session_local")
-            self.assertEqual(initial_signal["artifact_id"], artifact_id)
-            self.assertEqual(initial_signal["source_message_id"], source_message_id)
-            self.assertIsNone(initial_signal["content_signal"]["latest_corrected_outcome"])
-            self.assertFalse(initial_signal["content_signal"]["has_corrected_text"])
-            self.assertNotIn("approval_signal", initial_signal)
-            self.assertNotIn("save_signal", initial_signal)
+            self.assertNotIn("session_local_memory_signal", initial_source_message)
             self.assertNotIn("superseded_reject_signal", initial_source_message)
 
             rejected_approval = service.handle_chat(
@@ -9916,6 +10036,11 @@ class WebAppServiceTest(unittest.TestCase):
                 if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
             ][-1]
             rejected_signal = rejected_source_message["session_local_memory_signal"]
+            self.assertEqual(rejected_signal["signal_version"], "session_local_memory_signal_v1")
+            self.assertEqual(rejected_signal["signal_scope"], "session_local")
+            self.assertEqual(rejected_signal["artifact_id"], artifact_id)
+            self.assertEqual(rejected_signal["source_message_id"], source_message_id)
+            self.assertTrue(rejected_signal["derived_at"])
             self.assertEqual(
                 rejected_signal["approval_signal"]["latest_approval_reason_record"]["reason_scope"],
                 "approval_reject",
@@ -9958,12 +10083,18 @@ class WebAppServiceTest(unittest.TestCase):
                 if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
             ][-1]
             signal = source_message["session_local_memory_signal"]
+            self.assertEqual(signal["signal_version"], "session_local_memory_signal_v1")
             self.assertEqual(signal["signal_scope"], "session_local")
             self.assertEqual(signal["artifact_id"], artifact_id)
             self.assertEqual(signal["source_message_id"], source_message_id)
-            self.assertEqual(signal["content_signal"]["latest_corrected_outcome"]["outcome"], "corrected")
-            self.assertTrue(signal["content_signal"]["has_corrected_text"])
-            self.assertNotIn("content_reason_record", signal["content_signal"])
+            self.assertTrue(signal["derived_at"])
+            self.assertEqual(signal["correction_signal"]["corrected_outcome"]["outcome"], "corrected")
+            self.assertEqual(
+                signal["correction_signal"]["corrected_outcome"]["reason_label"],
+                "explicit_correction_submitted",
+            )
+            self.assertTrue(signal["correction_signal"]["has_corrected_text"])
+            self.assertNotIn("content_signal", signal)
             self.assertEqual(
                 signal["approval_signal"]["latest_approval_reason_record"]["approval_id"],
                 original_approval_id,
@@ -10039,7 +10170,7 @@ class WebAppServiceTest(unittest.TestCase):
             ][-1]
             candidate = source_message["session_local_candidate"]
             recurrence_key = source_message["candidate_recurrence_key"]
-            corrected_outcome = source_message["session_local_memory_signal"]["content_signal"]["latest_corrected_outcome"]
+            corrected_outcome = source_message["session_local_memory_signal"]["correction_signal"]["corrected_outcome"]
             self.assertEqual(
                 candidate["candidate_id"],
                 f"session-local-candidate:{artifact_id}:{source_message_id}:correction_rewrite_preference",
@@ -10056,7 +10187,7 @@ class WebAppServiceTest(unittest.TestCase):
                 candidate["supporting_signal_refs"],
                 [
                     {
-                        "signal_name": "session_local_memory_signal.content_signal",
+                        "signal_name": "session_local_memory_signal.correction_signal",
                         "relationship": "primary_basis",
                     }
                 ],
@@ -10077,7 +10208,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(recurrence_key["stability"], "deterministic_local")
             self.assertEqual(recurrence_key["derived_at"], candidate["updated_at"])
             self.assertEqual(
-                source_message["session_local_memory_signal"]["content_signal"]["latest_corrected_outcome"]["outcome"],
+                source_message["session_local_memory_signal"]["correction_signal"]["corrected_outcome"]["outcome"],
                 "corrected",
             )
             self.assertIn("superseded_reject_signal", source_message)
@@ -10145,7 +10276,7 @@ class WebAppServiceTest(unittest.TestCase):
                 supported_candidate["supporting_signal_refs"],
                 [
                     {
-                        "signal_name": "session_local_memory_signal.content_signal",
+                        "signal_name": "session_local_memory_signal.correction_signal",
                         "relationship": "primary_basis",
                     },
                     {
@@ -10176,14 +10307,14 @@ class WebAppServiceTest(unittest.TestCase):
             ][-1]
             candidate = source_message["session_local_candidate"]
             recurrence_key = source_message["candidate_recurrence_key"]
-            corrected_outcome = source_message["session_local_memory_signal"]["content_signal"]["latest_corrected_outcome"]
+            corrected_outcome = source_message["session_local_memory_signal"]["correction_signal"]["corrected_outcome"]
             self.assertEqual(candidate["candidate_family"], "correction_rewrite_preference")
             self.assertEqual(candidate["evidence_strength"], "explicit_single_artifact")
             self.assertEqual(
                 candidate["supporting_signal_refs"],
                 [
                     {
-                        "signal_name": "session_local_memory_signal.content_signal",
+                        "signal_name": "session_local_memory_signal.correction_signal",
                         "relationship": "primary_basis",
                     }
                 ],
@@ -10262,10 +10393,10 @@ class WebAppServiceTest(unittest.TestCase):
                 if message.get("artifact_id") == "artifact-same-text-sqlite" and message.get("original_response_snapshot")
             ][-1]
             self.assertEqual(
-                source_message["session_local_memory_signal"]["content_signal"]["latest_corrected_outcome"]["outcome"],
+                source_message["session_local_memory_signal"]["correction_signal"]["corrected_outcome"]["outcome"],
                 "corrected",
             )
-            self.assertTrue(source_message["session_local_memory_signal"]["content_signal"]["has_corrected_text"])
+            self.assertTrue(source_message["session_local_memory_signal"]["correction_signal"]["has_corrected_text"])
             self.assertNotIn("session_local_candidate", source_message)
             self.assertNotIn("candidate_recurrence_key", source_message)
 
@@ -10311,10 +10442,9 @@ class WebAppServiceTest(unittest.TestCase):
                 for message in approved["session"]["messages"]
                 if message.get("artifact_id") == artifact_id and message.get("original_response_snapshot")
             ][-1]
-            self.assertEqual(
-                source_message["session_local_memory_signal"]["content_signal"]["latest_corrected_outcome"]["outcome"],
-                "accepted_as_is",
-            )
+            signal = source_message["session_local_memory_signal"]
+            self.assertNotIn("correction_signal", signal)
+            self.assertEqual(signal["save_signal"]["latest_approval_id"], approval_id)
             self.assertNotIn("session_local_candidate", source_message)
             self.assertNotIn("candidate_recurrence_key", source_message)
 

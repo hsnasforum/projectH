@@ -41,6 +41,13 @@ ALLOWED_SAVE_CONTENT_SOURCES = frozenset(SaveContentSource)
 
 
 # ---------------------------------------------------------------------------
+# Session-local memory signal
+# ---------------------------------------------------------------------------
+
+SESSION_LOCAL_MEMORY_SIGNAL_VERSION = "session_local_memory_signal_v1"
+
+
+# ---------------------------------------------------------------------------
 # Reviewed-memory transition lifecycle (record_stage)
 # ---------------------------------------------------------------------------
 
@@ -192,6 +199,15 @@ class CorrectedOutcome(StrEnum):
 ALLOWED_CORRECTED_OUTCOMES = frozenset(CorrectedOutcome)
 
 
+class CorrectedOutcomeReasonLabel(StrEnum):
+    EXPLICIT_CORRECTION_SUBMITTED = "explicit_correction_submitted"
+
+
+ALLOWED_CORRECTED_OUTCOME_REASON_LABELS: dict[str, frozenset[str]] = {
+    CorrectedOutcome.CORRECTED: frozenset({CorrectedOutcomeReasonLabel.EXPLICIT_CORRECTION_SUBMITTED}),
+}
+
+
 # ---------------------------------------------------------------------------
 # Content verdict
 # ---------------------------------------------------------------------------
@@ -211,7 +227,7 @@ class ApprovalReasonScope(StrEnum):
 
 ALLOWED_APPROVAL_REASON_LABELS: dict[str, frozenset[str]] = {
     ApprovalReasonScope.APPROVAL_REJECT: frozenset({"explicit_rejection"}),
-    ApprovalReasonScope.APPROVAL_REISSUE: frozenset({"path_change"}),
+    ApprovalReasonScope.APPROVAL_REISSUE: frozenset({"path_change", "corrected_text_reissue"}),
 }
 
 

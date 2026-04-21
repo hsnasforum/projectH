@@ -180,15 +180,15 @@
 10. Minimum `corrected_outcome` capture now records `accepted_as_is` on the original grounded-brief source message when save completion is explicit and successful.
 11. Direct approved save responses can expose that same normalized `corrected_outcome` only when the response itself is the original grounded-brief source message.
 12. Approval-execute system responses keep linkage-only behavior, while the original grounded-brief message receives the persisted `corrected_outcome`.
-13. Reject / reissue approval traces now record one normalized `approval_reason_record` on approval-linked surfaces, while leaving `corrected_outcome` content-only.
+13. Reject / reissue approval traces now record one normalized `approval_reason_record` on approval-linked surfaces, while leaving `corrected_outcome` content-only; corrected-save approval reissue uses `reason_label = corrected_text_reissue` while ordinary reissue keeps `path_change`.
 14. Reissued pending approvals can expose the same `approval_reason_record` on the live approval payload, and task-log audit events mirror the same record.
 15. Grounded-brief response surfaces now expose one multiline correction editor seeded with the current draft text.
-16. Explicit correction submit now persists `corrected_text` and `corrected_outcome.outcome = corrected` on the original grounded-brief source message.
+16. Explicit correction submit now persists `corrected_text`, `corrected_outcome.outcome = corrected`, and `corrected_outcome.reason_label = explicit_correction_submitted` on the original grounded-brief source message.
 17. Unchanged correction submit is rejected as a no-op, and save approval remains a separate flow.
 18. Current original-draft save approvals, approval execution, direct approved saves, and save/write traces now expose `save_content_source = original_draft` plus explicit `source_message_id`.
 19. The correction area now also exposes a minimum corrected-save bridge action that stays always visible, remains disabled with helper copy until recorded `corrected_text` exists, consumes recorded `corrected_text` only, and issues a fresh approval with `save_content_source = corrected_text`.
-20. Corrected-save approval execution now reuses the same `artifact_id` / `source_message_id` trace contract while preserving `corrected_outcome.outcome = corrected` on the source message, and approval/save-result wording now describes the body as the request-time frozen snapshot.
-21. Focused service and smoke regression now cover message / approval / task-log linkage plus snapshot normalization, minimum accepted-as-is capture, minimum approval-reason capture, explicit corrected-text submission, the save-target discriminator, the save-trace source-message anchor, the first corrected-save bridge path, the corrected-save snapshot wording contract, the shipped `내용 거절` content-verdict browser path including same-card reject-note update, the late-flip-after-save browser path where saved history remains while the latest content verdict changes, and the longer corrected-save history chain where a saved corrected snapshot remains while later reject and re-correct move the latest state separately.
+20. Corrected-save approval execution now reuses the same `artifact_id` / `source_message_id` trace contract while preserving `corrected_outcome.outcome = corrected` and `reason_label = explicit_correction_submitted` on the source message, and approval/save-result wording now describes the body as the request-time frozen snapshot.
+21. Focused service and smoke regression now cover message / approval / task-log linkage plus snapshot normalization, minimum accepted-as-is capture, minimum approval-reason capture including `corrected_text_reissue`, explicit corrected-text submission with `explicit_correction_submitted`, the save-target discriminator, the save-trace source-message anchor, the first corrected-save bridge path, the corrected-save snapshot wording contract, the shipped `내용 거절` content-verdict browser path including same-card reject-note update, the late-flip-after-save browser path where saved history remains while the latest content verdict changes, and the longer corrected-save history chain where a saved corrected snapshot remains while later reject and re-correct move the latest state separately.
 22. Grounded-brief source messages can now also persist one candidate-linked `candidate_confirmation_record`, and the response card can record it through one small explicit reuse-confirmation action that stays separate from save approval and from the current `session_local_candidate` object itself.
 23. Current session payloads can now also expose one pending `review_queue_items` list, the existing shell can render it as one compact `검토 후보` section, and `accept`/`reject`/`defer` actions can record source-message `candidate_review_record` while leaving the result reviewed-but-not-applied.
 24. Current session payloads can now also expose one optional top-level read-only `recurrence_aggregate_candidates` projection derived only from current same-session serialized source-message `candidate_recurrence_key` records, emitted only for exact identity matches across at least two distinct grounded-brief anchors, and kept separate from `review_queue_items`, promotion, and user-level memory. Aggregates are current-version only: if any supporting correction is superseded by a newer correction version before transition emit, the aggregate is retired entirely from `recurrence_aggregate_candidates` rather than showing a stale badge. Aggregates with a record-backed lifecycle (stored transition records) survive supporting correction supersession so lifecycle controls remain visible and active effects are not orphaned.
@@ -215,17 +215,18 @@
 12. Keep blank note submit invalid and do not reinterpret it as clear while the current shipped note surface stays add/update-only.
 13. If a later manual clear refinement is needed, keep it inside the same response-card content-verdict box, show it only when a non-empty note exists, and make it clear only `content_reason_record.reason_note` rather than revoking `rejected`.
 14. If that future clear lands, keep the same `content_reason_record` object with scope / label / anchor fields, refresh `content_reason_record.recorded_at`, preserve `corrected_outcome.recorded_at`, and append a separate content-linked clear event such as `content_reason_note_cleared`.
-15. Keep the shipped first `session_local_memory_signal` as one read-only, source-message-anchored working summary keyed by `artifact_id` + `source_message_id`.
+15. Keep the shipped first `session_local_memory_signal` as one optional read-only, source-message-anchored working summary keyed by `artifact_id` + `source_message_id`, with fixed `signal_version = session_local_memory_signal_v1`.
 16. Keep that first signal derived from current persisted session state rather than a separate memory store or task-log replay.
 17. Keep the shipped signal axes separate:
-  - latest content state from `corrected_outcome`, current `corrected_text`, and current `content_reason_record`
+  - correction state from `corrected_outcome.outcome = corrected`, current `corrected_text`, and `reason_label`
+  - current content reason from `content_reason_record`
   - latest approval friction from approval-linked `approval_reason_record`
-  - latest save linkage from `save_content_source`, optional `approval_id`, and optional `saved_note_path`
+  - latest save linkage from `save_content_source`, optional `approval_id`, optional `saved_note_path`, and optional save timestamp
 18. Keep the first shipped signal thin and linkage-oriented:
   - no saved body copy
   - no inferred preference statement
   - no cross-artifact aggregation
-19. Keep the shipped `superseded_reject_signal` read-only, source-message-anchored, and separate from `session_local_memory_signal.content_signal`.
+19. Keep the shipped `superseded_reject_signal` read-only, source-message-anchored, and separate from `session_local_memory_signal.correction_signal`.
 20. Keep that helper audit-derived only from same-anchor `content_verdict_recorded` and `content_reason_note_recorded` traces.
 21. Keep that helper narrow:
   - no saved body copy
@@ -280,7 +281,11 @@
   - `candidate_id`
   - `candidate_scope = durable_candidate`
   - `candidate_family`
+  - `artifact_id`
+  - `source_message_id`
   - `statement`
+  - `derived_from`
+  - `derived_at`
   - `supporting_artifact_ids`
   - `supporting_source_message_ids`
   - `supporting_signal_refs`
@@ -289,7 +294,7 @@
   - `promotion_basis`
   - `promotion_eligibility`
   - `has_explicit_confirmation`
-  - timestamps only
+  - timestamps / derived timestamp only
 38. Keep the first explicit-confirmation promotion path source-message-anchored and read-only:
   - same source message only
   - same `candidate_id` and `candidate_updated_at` only
@@ -327,6 +332,8 @@
   - queue presence alone must not replace the recurrence key
   - the first same-session aggregate may consume it only as confidence support, not as identity basis
 43. Keep the shipped local read-only review queue fed only by `promotion_eligibility = eligible_for_review` durable candidates and do not widen it into a second canonical durable surface.
+  - queue items carry `item_type = durable_candidate`
+  - queue items carry `derived_from` / `derived_at` from the source-message projection
 44. Reuse the current source-message anchor for the first review-outcome trace through one optional `candidate_review_record`:
   - same `artifact_id`
   - same `source_message_id`
@@ -794,11 +801,12 @@
 6. Web investigation traces when the secondary mode is used
 7. Grounded-brief artifact trace anchors on assistant messages
 8. Artifact-linked approval, write, and feedback-related trace detail when applicable
+9. Read-only `session_local_memory_signal` projections derived from the existing grounded-brief source-message anchor and current correction/content/approval/save traces
 
 ### Next To Add
 1. More corrected output pairs from repeated explicit corrected-text submission and corrected-save execution
 2. More optional reject-note records from repeated use of the shipped same-card content-verdict note surface
-3. Read-only `session_local_memory_signal` projections derived from the existing grounded-brief source-message anchor and linked approval/save traces
+3. Additional explicit trace types can extend the existing read-only `session_local_memory_signal` projection later without adding a memory store
 4. Richer scoped reason records for correction / reject / reissue outcomes beyond the current minimum labels
 5. Reviewable durable-candidate queue items
 6. Source-message `candidate_review_record` traces before any reviewed-memory or user-level-memory store

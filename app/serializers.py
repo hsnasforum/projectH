@@ -21,6 +21,7 @@ from core.contracts import (
     RecordStage,
     ResponseOriginKind,
     ResponseOriginProvider,
+    SESSION_LOCAL_MEMORY_SIGNAL_VERSION,
     WebSearchPermission,
     sanitize_supporting_review_refs,
 )
@@ -377,6 +378,7 @@ class SerializerMixin:
             return None
         return {
             "outcome": str(corrected_outcome.get("outcome") or "").strip(),
+            "reason_label": str(corrected_outcome.get("reason_label") or "").strip() or None,
             "recorded_at": str(corrected_outcome.get("recorded_at") or ""),
             "artifact_id": str(corrected_outcome.get("artifact_id") or "").strip(),
             "source_message_id": str(corrected_outcome.get("source_message_id") or "").strip(),
@@ -442,27 +444,46 @@ class SerializerMixin:
         if not isinstance(session_local_memory_signal, dict):
             return None
 
+        signal_version = str(session_local_memory_signal.get("signal_version") or "").strip()
         signal_scope = str(session_local_memory_signal.get("signal_scope") or "").strip()
         artifact_id = str(session_local_memory_signal.get("artifact_id") or "").strip()
         source_message_id = self._serialize_source_message_id(session_local_memory_signal.get("source_message_id"))
-        content_signal = session_local_memory_signal.get("content_signal")
-        if not signal_scope or not artifact_id or source_message_id is None or not isinstance(content_signal, dict):
+        derived_at = str(session_local_memory_signal.get("derived_at") or "").strip()
+        if (
+            signal_version != SESSION_LOCAL_MEMORY_SIGNAL_VERSION
+            or signal_scope != "session_local"
+            or not artifact_id
+            or source_message_id is None
+            or not derived_at
+        ):
             return None
 
         serialized: dict[str, Any] = {
+            "signal_version": signal_version,
             "signal_scope": signal_scope,
             "artifact_id": artifact_id,
             "source_message_id": source_message_id,
-            "content_signal": {
-                "latest_corrected_outcome": self._serialize_corrected_outcome(
-                    content_signal.get("latest_corrected_outcome")
-                ),
-                "has_corrected_text": bool(content_signal.get("has_corrected_text")),
-            },
+            "derived_at": derived_at,
         }
-        serialized_content_reason_record = self._serialize_content_reason_record(content_signal.get("content_reason_record"))
-        if serialized_content_reason_record is not None:
-            serialized["content_signal"]["content_reason_record"] = serialized_content_reason_record
+
+        correction_signal = session_local_memory_signal.get("correction_signal")
+        if isinstance(correction_signal, dict):
+            corrected_outcome = self._serialize_corrected_outcome(correction_signal.get("corrected_outcome"))
+            if isinstance(corrected_outcome, dict) and corrected_outcome.get("outcome") == CorrectedOutcome.CORRECTED:
+                serialized["correction_signal"] = {
+                    "corrected_outcome": corrected_outcome,
+                    "has_corrected_text": bool(correction_signal.get("has_corrected_text")),
+                }
+
+        content_signal = session_local_memory_signal.get("content_signal")
+        if isinstance(content_signal, dict):
+            serialized_content_reason_record = self._serialize_content_reason_record(
+                content_signal.get("content_reason_record")
+            )
+            if serialized_content_reason_record is not None:
+                serialized["content_signal"] = {
+                    "content_reason_record": serialized_content_reason_record,
+                }
 
         approval_signal = session_local_memory_signal.get("approval_signal")
         if isinstance(approval_signal, dict):
@@ -486,9 +507,17 @@ class SerializerMixin:
             latest_saved_note_path = str(save_signal.get("latest_saved_note_path") or "").strip() or None
             if latest_saved_note_path is not None:
                 serialized_save_signal["latest_saved_note_path"] = latest_saved_note_path
+            latest_saved_at = str(save_signal.get("latest_saved_at") or "").strip() or None
+            if latest_saved_at is not None:
+                serialized_save_signal["latest_saved_at"] = latest_saved_at
             if serialized_save_signal:
                 serialized["save_signal"] = serialized_save_signal
 
+        if not any(
+            key in serialized
+            for key in ("correction_signal", "content_signal", "approval_signal", "save_signal")
+        ):
+            return None
         return serialized
 
     def _serialize_superseded_reject_signal(
@@ -807,12 +836,38 @@ class SerializerMixin:
             or confirmation_ref["source_message_id"] not in supporting_source_message_ids
         ):
             return None
+        artifact_id = str(durable_candidate.get("artifact_id") or confirmation_ref["artifact_id"]).strip()
+        source_message_id = self._serialize_source_message_id(
+            durable_candidate.get("source_message_id") or confirmation_ref["source_message_id"]
+        )
+        derived_at = str(durable_candidate.get("derived_at") or confirmation_ref["recorded_at"]).strip()
+        if (
+            not artifact_id
+            or source_message_id is None
+            or artifact_id != confirmation_ref["artifact_id"]
+            or source_message_id != confirmation_ref["source_message_id"]
+            or not derived_at
+        ):
+            return None
+        derived_from = {
+            "record_type": "candidate_confirmation_record",
+            "artifact_id": confirmation_ref["artifact_id"],
+            "source_message_id": confirmation_ref["source_message_id"],
+            "candidate_id": confirmation_ref["candidate_id"],
+            "candidate_updated_at": confirmation_ref["candidate_updated_at"],
+            "confirmation_label": confirmation_ref["confirmation_label"],
+            "recorded_at": confirmation_ref["recorded_at"],
+        }
 
         return {
             "candidate_id": candidate_id,
             "candidate_scope": candidate_scope,
             "candidate_family": candidate_family,
+            "artifact_id": artifact_id,
+            "source_message_id": source_message_id,
             "statement": statement,
+            "derived_from": derived_from,
+            "derived_at": derived_at,
             "supporting_artifact_ids": supporting_artifact_ids,
             "supporting_source_message_ids": supporting_source_message_ids,
             "supporting_signal_refs": supporting_signal_refs,
@@ -4367,9 +4422,13 @@ class SerializerMixin:
 
             review_queue_items.append(
                 {
+                    "item_type": "durable_candidate",
                     "candidate_id": durable_candidate["candidate_id"],
+                    "candidate_scope": durable_candidate["candidate_scope"],
                     "candidate_family": durable_candidate["candidate_family"],
                     "statement": durable_candidate["statement"],
+                    "derived_from": dict(durable_candidate["derived_from"]),
+                    "derived_at": durable_candidate["derived_at"],
                     "promotion_basis": durable_candidate["promotion_basis"],
                     "promotion_eligibility": durable_candidate["promotion_eligibility"],
                     "artifact_id": artifact_id,
@@ -4535,7 +4594,19 @@ class SerializerMixin:
             "candidate_id": candidate_id,
             "candidate_scope": "durable_candidate",
             "candidate_family": candidate_family,
+            "artifact_id": confirmation_artifact_id,
+            "source_message_id": confirmation_source_message_id,
             "statement": session_local_candidate.get("statement"),
+            "derived_from": {
+                "record_type": "candidate_confirmation_record",
+                "artifact_id": confirmation_artifact_id,
+                "source_message_id": confirmation_source_message_id,
+                "candidate_id": candidate_id,
+                "candidate_updated_at": candidate_updated_at,
+                "confirmation_label": candidate_confirmation_record.get("confirmation_label"),
+                "recorded_at": confirmation_recorded_at,
+            },
+            "derived_at": confirmation_recorded_at,
             "supporting_artifact_ids": list(artifact_ids),
             "supporting_source_message_ids": list(source_message_ids),
             "supporting_signal_refs": [
@@ -4575,15 +4646,15 @@ class SerializerMixin:
             return None
         artifact_id, source_message_id = anchor
 
-        content_signal = session_local_memory_signal.get("content_signal")
-        if not isinstance(content_signal, dict):
+        correction_signal = session_local_memory_signal.get("correction_signal")
+        if not isinstance(correction_signal, dict):
             return None
-        latest_corrected_outcome = content_signal.get("latest_corrected_outcome")
+        latest_corrected_outcome = correction_signal.get("corrected_outcome")
         if not isinstance(latest_corrected_outcome, dict):
             return None
         if str(latest_corrected_outcome.get("outcome") or "").strip() != CorrectedOutcome.CORRECTED:
             return None
-        if not bool(content_signal.get("has_corrected_text")):
+        if not bool(correction_signal.get("has_corrected_text")):
             return None
 
         original_response_snapshot = message.get("original_response_snapshot")
@@ -4600,7 +4671,7 @@ class SerializerMixin:
 
         supporting_signal_refs = [
             {
-                "signal_name": "session_local_memory_signal.content_signal",
+                "signal_name": "session_local_memory_signal.correction_signal",
                 "relationship": "primary_basis",
             }
         ]
@@ -4920,10 +4991,7 @@ class SerializerMixin:
         if not isinstance(session_local_memory_signal, dict):
             return None
 
-        content_signal = session_local_memory_signal.get("content_signal")
-        if not isinstance(content_signal, dict):
-            return None
-        latest_corrected_outcome = content_signal.get("latest_corrected_outcome")
+        latest_corrected_outcome = self._serialize_corrected_outcome(message.get("corrected_outcome"))
         if isinstance(latest_corrected_outcome, dict):
             if str(latest_corrected_outcome.get("outcome") or "").strip() == CorrectedOutcome.REJECTED:
                 return None

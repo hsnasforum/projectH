@@ -691,7 +691,7 @@ test("candidate confirmation path는 save support와 분리되어 기록되고 l
   expect(sourceMessage.candidate_confirmation_record).toBeUndefined();
   expect(sourceMessage.session_local_candidate.supporting_signal_refs).toEqual([
     {
-      signal_name: "session_local_memory_signal.content_signal",
+      signal_name: "session_local_memory_signal.correction_signal",
       relationship: "primary_basis",
     },
   ]);
@@ -726,7 +726,7 @@ test("candidate confirmation path는 save support와 분리되어 기록되고 l
   expect(sourceMessage.candidate_confirmation_record).toBeUndefined();
   expect(sourceMessage.session_local_candidate.supporting_signal_refs).toEqual([
     {
-      signal_name: "session_local_memory_signal.content_signal",
+      signal_name: "session_local_memory_signal.correction_signal",
       relationship: "primary_basis",
     },
     {
@@ -757,6 +757,13 @@ test("candidate confirmation path는 save support와 분리되어 기록되고 l
   const reviewDeferButton = reviewQueueBox.getByTestId("review-queue-defer");
   await expect(reviewDeferButton).toHaveCount(1);
   await expect(reviewDeferButton).toHaveText("보류");
+
+  const preAcceptPayload = await fetchSessionPayload(page, sessionId);
+  expect(preAcceptPayload.session.review_queue_items).toHaveLength(1);
+  expect(preAcceptPayload.session.review_queue_items[0].item_type).toBe("durable_candidate");
+  expect(preAcceptPayload.session.review_queue_items[0].derived_from.record_type).toBe("candidate_confirmation_record");
+  expect(typeof preAcceptPayload.session.review_queue_items[0].derived_at).toBe("string");
+  expect(preAcceptPayload.session.review_queue_items[0].derived_at.length).toBeGreaterThan(0);
   await reviewAcceptButton.click();
 
   await expect(page.locator("#notice-box")).toHaveText("검토 후보를 수락했습니다. 아직 적용되지는 않았습니다.");
@@ -770,7 +777,7 @@ test("candidate confirmation path는 save support와 분리되어 기록되고 l
   expect(sourceMessage.candidate_confirmation_record.candidate_id).toBe(sourceMessage.session_local_candidate.candidate_id);
   expect(sourceMessage.session_local_candidate.supporting_signal_refs).toEqual([
     {
-      signal_name: "session_local_memory_signal.content_signal",
+      signal_name: "session_local_memory_signal.correction_signal",
       relationship: "primary_basis",
     },
     {
@@ -796,6 +803,10 @@ test("candidate confirmation path는 save support와 분리되어 기록되고 l
       recorded_at: sourceMessage.candidate_confirmation_record.recorded_at,
     },
   ]);
+  expect(typeof sourceMessage.durable_candidate.derived_at).toBe("string");
+  expect(sourceMessage.durable_candidate.derived_at.length).toBeGreaterThan(0);
+  expect(sourceMessage.durable_candidate.derived_from.record_type).toBe("candidate_confirmation_record");
+  expect(sourceMessage.durable_candidate.derived_from.candidate_id).toBe(sourceMessage.session_local_candidate.candidate_id);
   expect(sourceMessage.candidate_review_record).toEqual({
     candidate_id: sourceMessage.session_local_candidate.candidate_id,
     candidate_updated_at: sourceMessage.session_local_candidate.updated_at,

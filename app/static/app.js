@@ -1344,6 +1344,12 @@
       return "";
     }
 
+    function formatReviewItemTypeLabel(value) {
+      const normalized = String(value || "").trim().toLowerCase();
+      if (normalized === "durable_candidate") return "durable_candidate";
+      return normalized || "";
+    }
+
     function formatAggregateCandidateFamilyLabel(value) {
       const normalized = String(value || "").trim().toLowerCase();
       if (normalized === C.CandidateFamily.CORRECTION_REWRITE) return "반복 교정 묶음";
@@ -1372,7 +1378,7 @@
 
     function formatSignalRefLabel(signalName) {
       const normalized = String(signalName || "").trim();
-      if (normalized === "session_local_memory_signal.content_signal") return "content_signal";
+      if (normalized === "session_local_memory_signal.correction_signal") return "correction_signal";
       if (normalized === "session_local_memory_signal.save_signal") return "save_signal";
       return normalized || "signal";
     }
@@ -2614,6 +2620,7 @@
 
         const meta = document.createElement("span");
         meta.textContent = [
+          formatReviewItemTypeLabel(item.item_type) ? `유형 ${formatReviewItemTypeLabel(item.item_type)}` : "",
           `기준 ${formatPromotionBasisLabel(item.promotion_basis)}`,
           `상태 ${formatPromotionEligibilityLabel(item.promotion_eligibility)}`,
           item.updated_at ? `업데이트 ${formatWhen(item.updated_at)}` : "",

@@ -85,7 +85,7 @@ Current implementation note:
 - `app/templates/index.html` now consumes current `recurrence_aggregate_candidates` as one separate aggregate-level `검토 메모 적용 후보` section adjacent to `검토 후보`; the `검토 메모 적용 시작` submit boundary is now enabled when `capability_outcome = unblocked_all_required` and the user has entered a non-empty reason note (visible but disabled while blocked or while the note is empty); clicking the enabled submit now emits one `reviewed_memory_transition_record` with `record_stage = emitted_record_only_not_applied` and persists it under `reviewed_memory_emitted_transition_records`; after emission the same aggregate card shows `검토 메모 적용 실행`, and clicking that apply boundary POSTs to `/api/aggregate-transition-apply` which changes `record_stage` to `applied_pending_result` with `applied_at` added; after the apply boundary the card shows `결과 확정`, and clicking it changes `record_stage` to `applied_with_result` and creates `apply_result` with `result_version = first_reviewed_memory_apply_result_v1`, `applied_effect_kind = reviewed_memory_correction_pattern`, `result_stage = effect_active`, and `result_at`; the memory effect on future responses is now active (`result_stage = effect_active`); active effects are stored on the session as `reviewed_memory_active_effects`; future responses include a `[검토 메모 활성]` prefix with the operator's reason and pattern fingerprint; stop-apply: after the effect is active the aggregate card shows `적용 중단`; clicking it changes `record_stage` to `stopped`, sets `apply_result.result_stage` to `effect_stopped`, and removes the effect from `reviewed_memory_active_effects`; reversal: after stop the card shows `적용 되돌리기`; clicking it changes `record_stage` to `reversed`, sets `apply_result.result_stage` to `effect_reversed`, and adds `reversed_at`; conflict-visibility: after reversal the card shows `충돌 확인`; clicking it creates a separate `reviewed_memory_conflict_visibility_record` with `transition_action = future_reviewed_memory_conflict_visibility`, `record_stage = conflict_visibility_checked`, `source_apply_transition_ref`, evaluated `conflict_entries`, and `conflict_entry_count`
 - `app/web.py` now also resolves one internal `boundary_source_ref` backer for the same exact aggregate, truthfully mints one exact payload-hidden canonical local proof-record/store entry for the current exact aggregate state inside one same-session internal `reviewed_memory_local_effect_presence_proof_record_store` boundary while keeping `first_seen_at` alone, source-message review acceptance, review-queue presence, approval-backed save support, historical adjuncts, and `task_log` replay outside that lower proof-record layer, materializes one internal `reviewed_memory_local_effect_presence_proof_boundary` helper result only from that exact same-aggregate lower entry while reusing the same `applied_effect_id` and `present_locally_at`, materializes one internal `reviewed_memory_local_effect_presence_fact_source_instance` helper result only from that exact same-aggregate proof-boundary result while reusing the same `applied_effect_id` and `present_locally_at`, materializes one internal `reviewed_memory_local_effect_presence_fact_source` helper result only from that exact same-aggregate fact-source-instance result while reusing the same `applied_effect_id` and `present_locally_at`, materializes one internal `reviewed_memory_local_effect_presence_event` helper result only from that exact same-aggregate fact-source result while reusing the same `applied_effect_id` and `present_locally_at`, materializes one internal `reviewed_memory_local_effect_presence_event_producer` helper result only from that exact same-aggregate event result while reusing the same `applied_effect_id` and `present_locally_at`, materializes one internal `reviewed_memory_local_effect_presence_event_source` helper result only from that exact same-aggregate producer result while reusing the same `applied_effect_id` and `present_locally_at`, materializes one internal `reviewed_memory_local_effect_presence_record` helper result only from that exact same-aggregate event-source result while reusing the same `applied_effect_id` and `present_locally_at`, materializes one internal `reviewed_memory_applied_effect_target` helper result only from that exact same-aggregate source-consumer result while reusing the same `applied_effect_id` and `present_locally_at`, materializes one internal `reviewed_memory_reversible_effect_handle` helper result only from that exact same-aggregate shared target plus the current exact rollback contract, and resolves one internal `rollback_source_ref` only as one exact ref to that same handle; none of these helpers is a payload field or a `task_log` mirror
 - current save-note approvals also carry one explicit `save_content_source = original_draft | corrected_text` plus `source_message_id`, and save-related assistant/system messages may mirror those same fields only on approval/write trace surfaces
-- `task_log` already persists request, approval, write, feedback, minimum corrected-outcome events, content-verdict events, dedicated reject-note update events, candidate-confirmation events, candidate-review events, and minimum approval-linked reason records, with additive `artifact_id`, `source_message_id`, and `save_content_source` detail on grounded-brief save-related traces when applicable
+- `task_log` already persists request, approval, write, feedback, minimum corrected-outcome events, content-verdict events, dedicated reject-note update events, candidate-confirmation events, candidate-review events, and minimum approval-linked reason records, with additive `artifact_id`, `source_message_id`, `save_content_source`, and scoped reason-label detail on grounded-brief save/correction traces when applicable
 
 ### 5. Model Adapter Layer
 - `model_adapter/base.py`
@@ -265,7 +265,7 @@ Current task log is append-only JSONL and already records actions such as:
 - `write_note` — detail: `{artifact_id, source_message_id, note_path, save_content_source}` plus optional `approval_id`, `source_paths`, and optional `source_path` (file/source summary) or `search_query` (search summary)
 - `response_feedback_recorded` — detail: `{message_id, artifact_id, artifact_kind, feedback_label, feedback_reason}`
 - `correction_submitted` — detail: `{message_id, artifact_id, artifact_kind, source_message_id, corrected_text_length}`
-- `corrected_outcome_recorded` — detail: `{outcome, recorded_at, artifact_id, source_message_id}` plus optional `approval_id`, `saved_note_path`, `corrected_text_length` (correction path), or `content_reason_record` (reject path); emitted from both feedback handler and save/write paths
+- `corrected_outcome_recorded` — detail: `{outcome, reason_label, recorded_at, artifact_id, source_message_id}` plus optional `approval_id`, `saved_note_path`, `corrected_text_length` (correction path), or `content_reason_record` (reject path); emitted from both feedback handler and save/write paths
 - `content_verdict_recorded` — detail: `{message_id, artifact_id, artifact_kind, source_message_id, content_verdict, content_reason_record}`
 - `content_reason_note_recorded` — detail: `{message_id, artifact_id, artifact_kind, source_message_id, reason_scope, reason_label, reason_note, content_reason_record}`
 - `candidate_confirmation_recorded` — detail: `{message_id, artifact_id, source_message_id, candidate_id, candidate_family, candidate_updated_at, confirmation_scope, confirmation_label}`
@@ -408,6 +408,7 @@ The next phase should standardize one `grounded brief` artifact.
   - `artifact_kind`
   - `source_message_id`
   - `approval_id`
+- current reissue labels are scoped by save target: ordinary original-draft reissue uses `path_change`, while corrected-save reissue uses `corrected_text_reissue`
 - source-of-truth layering:
   - original grounded-brief assistant messages remain the content/source surface
   - assistant system messages created by reject / reissue persist the approval-linked reason trace in session JSON
@@ -417,6 +418,7 @@ The next phase should standardize one `grounded brief` artifact.
 #### 4. Corrected Outcome
 - implemented minimum record now:
   - `outcome = accepted_as_is | corrected | rejected`
+  - optional `reason_label` (`explicit_correction_submitted` on explicit correction submit)
   - `recorded_at`
   - `artifact_id`
   - `source_message_id`
@@ -424,6 +426,7 @@ The next phase should standardize one `grounded brief` artifact.
   - optional `saved_note_path`
 - explicit correction submit also persists:
   - `corrected_text`
+  - `corrected_outcome.reason_label = explicit_correction_submitted`
 - current source-of-truth layering:
   - the original grounded-brief assistant message keeps the corrected-outcome record on the same message that already owns `artifact_id` and `original_response_snapshot`
   - when the user explicitly submits edited text, that same message also stores `corrected_text`
@@ -455,7 +458,7 @@ The next phase should standardize one `grounded brief` artifact.
   - the approval object, approval-request audit detail, approval-granted audit detail, and write-note detail all expose the same explicit save-target discriminator, i.e. `save_content_source = corrected_text`
   - the same corrected-save trace also carries `source_message_id` because the corrected text still lives on the original grounded-brief source message
   - `approval_id` acts as the immutable approval-snapshot identity in the first corrected-save slice; do not add a separate `snapshot_id` unless approval records stop storing the frozen body snapshot
-  - corrected-save approval execution keeps the source message as the content surface, so `corrected_outcome.outcome` remains `corrected` while optional `approval_id` / `saved_note_path` linkage is added there
+  - corrected-save approval execution keeps the source message as the content surface, so `corrected_outcome.outcome` remains `corrected` and `corrected_outcome.reason_label` remains `explicit_correction_submitted` while optional `approval_id` / `saved_note_path` linkage is added there
   - `rejected` is now persisted only from the distinct content-verdict action `내용 거절` on that same grounded-brief response surface
   - that action stays separate from `수정본 기록`, corrected-save bridge, and approval-surface approve / reject / reissue controls
   - that action records verdict immediately on the content trace path rather than creating or cancelling an approval
@@ -501,10 +504,10 @@ The next phase should standardize one `grounded brief` artifact.
   - `reason_label`
   - `reason_note`
 - `storage/session_store.py` already normalizes correction reasons through `feedback.reason`
-- approval reject and reissue reasons should use distinct label sets rather than reusing correction labels
+- approval reject and reissue reasons should use distinct label sets rather than reusing correction labels; `corrected_text_reissue` is approval-linked and must not be copied into `content_reason_record`
 - current implemented minimum labels stay intentionally narrow until a truthful reason-input surface exists:
   - `approval_reject -> explicit_rejection`
-  - `approval_reissue -> path_change`
+  - `approval_reissue -> path_change | corrected_text_reissue`
 - the current first content-level reject label stays equally narrow:
   - `content_reject -> explicit_content_rejection`
   - `reason_note` remains optional and can stay absent, or be recorded only through the same response-card note surface
@@ -523,12 +526,13 @@ The next phase should standardize one `grounded brief` artifact.
   - one original grounded-brief source message
   - one `artifact_id`
   - one `source_message_id`
-- the signal should keep three separate axes instead of collapsing approval friction, content verdict, and save history into one label:
+- the signal should keep separate axes instead of collapsing correction, approval friction, content verdict, and save history into one label:
+  - `correction_signal`
   - `content_signal`
   - `approval_signal`
   - `save_signal`
 - canonical input locations for that first signal should stay inside the current persisted session state:
-  - source message fields for the content axis:
+  - source message fields for the correction/content axes:
     - `original_response_snapshot`
     - `corrected_text`
     - `corrected_outcome`
@@ -549,24 +553,27 @@ The next phase should standardize one `grounded brief` artifact.
   - if later explicit correction submit or explicit save clears `rejected` from the source message, the superseded reject or reject-note may disappear from the first signal while still remaining in task-log audit
 - current implementation:
   - `storage/session_store.py` now computes one optional `session_local_memory_signal` from the current normalized session object without adding a separate memory store
-  - `app/web.py` now attaches that read-only projection only to serialized grounded-brief source messages
+  - `app/serializers.py` now attaches that read-only projection only to serialized grounded-brief source messages that have at least one current correction, content reason, approval reason, or completed save signal
   - the projection currently resolves:
-    - `content_signal` from the source message itself
+    - fixed `signal_version = session_local_memory_signal_v1`
+    - `derived_at` from the latest relevant current field
+    - `correction_signal` from current corrected outcomes only when `corrected_outcome.outcome = corrected`
+    - `content_signal` from current `content_reason_record`
     - `approval_signal` from matching approval-linked session messages and pending approvals
     - `save_signal` from matching saved response messages plus any still-visible save linkage on the source message
   - because the first slice stays current-state-only, fields such as stale reject-note or an old save approval ID may fall out once later explicit actions clear them from the current session state
-  - `app/web.py` now also attaches one optional `superseded_reject_signal` only on serialized grounded-brief source messages
+  - `app/serializers.py` now also attaches one optional `superseded_reject_signal` only on serialized grounded-brief source messages
   - that helper remains source-message-anchored and historical:
     - it reads only same-anchor content-side audit traces needed to restore the latest superseded reject + optional reject-note
-    - it stays absent while the current `content_signal` still shows `rejected`
-    - it never merges its replayed state back into `content_signal`
+    - it stays absent while the current source message still shows `rejected`
+    - it never merges its replayed state back into `session_local_memory_signal`
     - it selects at most one latest superseded reject entry in the first slice rather than building a mini-history list
     - it omits a replayed note when same-anchor note association is ambiguous
   - task-log replay remains helper-only:
     - it should not scan task-log as a new canonical state store
     - it should not reconstruct approval/save history into that helper
   - save-axis gaps such as later `latest_approval_id` loss remain separate from the content-side replay helper
-  - `app/web.py` now also attaches one optional `historical_save_identity_signal` to the same grounded-brief source-message serialization
+  - `app/serializers.py` now also attaches one optional `historical_save_identity_signal` to the same grounded-brief source-message serialization
   - that adjunct stays historical and narrow:
     - it should not overwrite `save_signal`
     - it should replay at most one latest approval-backed save identity for the same anchor
@@ -619,7 +626,7 @@ The next phase should standardize one `grounded brief` artifact.
 - the first extraction rule stays conservative:
   - one eligible corrected pair may emit one `session_local_candidate` draft
   - the shipped first candidate currently references only current-state signal support:
-    - `session_local_memory_signal.content_signal` as primary basis
+    - `session_local_memory_signal.correction_signal` as primary basis
     - `session_local_memory_signal.save_signal` only when the same current anchor still exposes `latest_approval_id`
   - replay helpers remain supporting-context-only follow-up territory:
     - `superseded_reject_signal` should not become a primary extraction source
@@ -683,7 +690,11 @@ The next phase should standardize one `grounded brief` artifact.
   - `candidate_id`
   - `candidate_scope = durable_candidate`
   - `candidate_family`
+  - `artifact_id`
+  - `source_message_id`
   - `statement`
+  - `derived_from` with `record_type = candidate_confirmation_record`
+  - `derived_at`
   - `supporting_artifact_ids`
   - `supporting_source_message_ids`
   - `supporting_signal_refs`
@@ -701,13 +712,13 @@ The next phase should standardize one `grounded brief` artifact.
   - set `has_explicit_confirmation = true`
   - set `promotion_basis = explicit_confirmation`
   - set `promotion_eligibility = eligible_for_review`
-  - set `created_at` / `updated_at` from `candidate_confirmation_record.recorded_at`
+  - set `created_at` / `updated_at` / `derived_at` from `candidate_confirmation_record.recorded_at`
 - keep the first guardrail narrower than the later review layer:
   - no suggested scope fields at the promotion step
   - no review queue semantics beyond `promotion_eligibility = eligible_for_review`
   - no automatic promotion to user-level memory
 - current practical next path:
-  - the shipped read-only review queue consumes those `durable_candidate` records; the reviewed-memory apply / stop-apply / reversal / conflict-visibility lifecycle is now also shipped above the aggregate path; user-level memory still remains later
+  - the shipped read-only review queue consumes those `durable_candidate` records and marks each queue entry with `item_type = durable_candidate`; the reviewed-memory apply / stop-apply / reversal / conflict-visibility lifecycle is now also shipped above the aggregate path; user-level memory still remains later
   - repeated-signal promotion remains blocked until a truthful recurrence key exists beyond family alone
 
 ### First Truthful Recurrence-Key Contract

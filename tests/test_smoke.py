@@ -6544,6 +6544,7 @@ class SmokeTest(unittest.TestCase):
             self.assertIsNotNone(updated)
             self.assertEqual(updated["corrected_text"], "수정한 요약입니다.\n핵심만 남겼습니다.")
             self.assertEqual(updated["corrected_outcome"]["outcome"], "corrected")
+            self.assertEqual(updated["corrected_outcome"]["reason_label"], "explicit_correction_submitted")
             self.assertEqual(updated["corrected_outcome"]["artifact_id"], "artifact-correction")
             self.assertEqual(updated["corrected_outcome"]["source_message_id"], stored_message["message_id"])
             self.assertEqual(updated["original_response_snapshot"]["draft_text"], "원본 요약입니다.")
@@ -6557,6 +6558,10 @@ class SmokeTest(unittest.TestCase):
             self.assertTrue(source_messages)
             self.assertEqual(source_messages[-1]["corrected_text"], "수정한 요약입니다.\n핵심만 남겼습니다.")
             self.assertEqual(source_messages[-1]["corrected_outcome"]["outcome"], "corrected")
+            self.assertEqual(
+                source_messages[-1]["corrected_outcome"]["reason_label"],
+                "explicit_correction_submitted",
+            )
             self.assertEqual(source_messages[-1]["corrected_outcome"]["source_message_id"], stored_message["message_id"])
 
     def test_correction_updates_active_context_summary_hint(self) -> None:
@@ -7059,9 +7064,9 @@ class SmokeTest(unittest.TestCase):
             self.assertEqual(signal["signal_scope"], "session_local")
             self.assertEqual(signal["artifact_id"], "artifact-session-signal")
             self.assertEqual(signal["source_message_id"], source_message["message_id"])
-            self.assertEqual(signal["content_signal"]["latest_corrected_outcome"]["outcome"], "corrected")
-            self.assertTrue(signal["content_signal"]["has_corrected_text"])
-            self.assertNotIn("content_reason_record", signal["content_signal"])
+            self.assertEqual(signal["correction_signal"]["corrected_outcome"]["outcome"], "corrected")
+            self.assertTrue(signal["correction_signal"]["has_corrected_text"])
+            self.assertNotIn("content_signal", signal)
             self.assertEqual(signal["save_signal"]["latest_save_content_source"], "corrected_text")
             self.assertEqual(signal["save_signal"]["latest_saved_note_path"], str(note_path))
             self.assertNotIn("latest_approval_id", signal["save_signal"])
@@ -7090,7 +7095,7 @@ class SmokeTest(unittest.TestCase):
                     "supporting_source_message_ids": [source_message_id],
                     "supporting_signal_refs": [
                         {
-                            "signal_name": "session_local_memory_signal.content_signal",
+                            "signal_name": "session_local_memory_signal.correction_signal",
                             "relationship": "primary_basis",
                         }
                     ],
@@ -7339,7 +7344,7 @@ class SmokeTest(unittest.TestCase):
                             "supporting_source_message_ids": ["msg-d"],
                             "supporting_signal_refs": [
                                 {
-                                    "signal_name": "session_local_memory_signal.content_signal",
+                                    "signal_name": "session_local_memory_signal.correction_signal",
                                     "relationship": "primary_basis",
                                 }
                             ],
@@ -9616,6 +9621,10 @@ class SmokeTest(unittest.TestCase):
             source_message = source_messages[-1]
             self.assertEqual(source_message["corrected_text"], "수정본 B입니다.\n다시 손봤습니다.")
             self.assertEqual(source_message["corrected_outcome"]["outcome"], "corrected")
+            self.assertEqual(
+                source_message["corrected_outcome"]["reason_label"],
+                "explicit_correction_submitted",
+            )
             self.assertEqual(source_message["corrected_outcome"]["artifact_id"], artifact_id)
             self.assertEqual(source_message["corrected_outcome"]["approval_id"], approval_id)
             self.assertEqual(source_message["corrected_outcome"]["saved_note_path"], str(note_path))
@@ -9666,9 +9675,110 @@ class SmokeTest(unittest.TestCase):
             self.assertEqual(write_note["detail"]["source_message_id"], source_message_id)
             self.assertEqual(write_note["detail"]["save_content_source"], "corrected_text")
             self.assertEqual(corrected_outcome_recorded["detail"]["outcome"], "corrected")
+            self.assertEqual(
+                corrected_outcome_recorded["detail"]["reason_label"],
+                "explicit_correction_submitted",
+            )
             self.assertEqual(corrected_outcome_recorded["detail"]["artifact_id"], artifact_id)
             self.assertEqual(corrected_outcome_recorded["detail"]["approval_id"], approval_id)
             self.assertEqual(corrected_outcome_recorded["detail"]["saved_note_path"], str(note_path))
+
+    def test_corrected_save_reissue_uses_corrected_text_reason_label(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            first_note_path = tmp_path / "notes" / "source-summary.md"
+            second_note_path = tmp_path / "notes" / "source-summary-v2.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+            )
+
+            initial = loop.handle(
+                UserRequest(
+                    user_text=f"Summarize {source_path}",
+                    session_id="corrected-save-reissue-session",
+                    metadata={"source_path": str(source_path)},
+                )
+            )
+            source_message_id = initial.source_message_id
+            artifact_id = initial.artifact_id
+            self.assertIsNotNone(source_message_id)
+
+            updated_source = loop.session_store.record_correction_for_message(
+                "corrected-save-reissue-session",
+                message_id=source_message_id or "",
+                corrected_text="수정본입니다.",
+            )
+            self.assertIsNotNone(updated_source)
+            bridge = loop.handle(
+                UserRequest(
+                    user_text="",
+                    session_id="corrected-save-reissue-session",
+                    metadata={
+                        "corrected_save_message_id": source_message_id,
+                        "note_path": str(first_note_path),
+                    },
+                )
+            )
+            first_approval_id = bridge.approval["approval_id"] if bridge.approval else ""
+            self.assertTrue(first_approval_id)
+
+            reissued = loop.handle(
+                UserRequest(
+                    user_text="",
+                    session_id="corrected-save-reissue-session",
+                    reissue_approval_id=first_approval_id,
+                    metadata={"note_path": str(second_note_path)},
+                )
+            )
+
+            self.assertEqual(reissued.status, "needs_approval")
+            self.assertTrue(reissued.requires_approval)
+            self.assertEqual(reissued.artifact_id, artifact_id)
+            self.assertEqual(reissued.source_message_id, source_message_id)
+            self.assertEqual(reissued.save_content_source, "corrected_text")
+            self.assertIsNotNone(reissued.approval)
+            self.assertEqual(reissued.approval["requested_path"], str(second_note_path))
+            self.assertEqual(reissued.approval["save_content_source"], "corrected_text")
+            self.assertIsNotNone(reissued.approval_reason_record)
+            self.assertEqual(reissued.approval_reason_record["reason_scope"], "approval_reissue")
+            self.assertEqual(reissued.approval_reason_record["reason_label"], "corrected_text_reissue")
+            self.assertEqual(reissued.approval_reason_record["artifact_id"], artifact_id)
+            self.assertEqual(reissued.approval_reason_record["source_message_id"], source_message_id)
+            self.assertEqual(
+                reissued.approval_reason_record["approval_id"],
+                reissued.approval["approval_id"],
+            )
+
+            session = loop.session_store.get_session("corrected-save-reissue-session")
+            self.assertEqual(len(session["pending_approvals"]), 1)
+            self.assertEqual(
+                session["pending_approvals"][0]["approval_reason_record"]["reason_label"],
+                "corrected_text_reissue",
+            )
+            self.assertFalse(first_note_path.exists())
+            self.assertFalse(second_note_path.exists())
+
+            log_records = [
+                json.loads(line)
+                for line in (tmp_path / "task_log.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            approval_reissued = next(record for record in log_records if record["action"] == "approval_reissued")
+            self.assertEqual(approval_reissued["detail"]["save_content_source"], "corrected_text")
+            self.assertEqual(
+                approval_reissued["detail"]["approval_reason_record"]["reason_label"],
+                "corrected_text_reissue",
+            )
 
     def test_scanned_pdf_returns_helpful_ocr_message(self) -> None:
         with TemporaryDirectory() as tmp_dir:

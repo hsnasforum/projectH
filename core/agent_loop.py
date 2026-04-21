@@ -256,6 +256,7 @@ class AgentLoop:
             action="corrected_outcome_recorded",
             detail={
                 "outcome": corrected_outcome.get("outcome"),
+                "reason_label": corrected_outcome.get("reason_label"),
                 "recorded_at": corrected_outcome.get("recorded_at"),
                 "artifact_id": corrected_outcome.get("artifact_id"),
                 "source_message_id": corrected_outcome.get("source_message_id"),
@@ -7593,7 +7594,11 @@ class AgentLoop:
             approval_id=reissued.approval_id,
             source_message_id=reissued.source_message_id,
             reason_scope="approval_reissue",
-            reason_label="path_change",
+            reason_label=(
+                "corrected_text_reissue"
+                if (approval.save_content_source or "").strip() == SAVE_CONTENT_SOURCE_CORRECTED_TEXT
+                else "path_change"
+            ),
         )
         reissued.approval_reason_record = approval_reason_record
         self.session_store.pop_pending_approval(request.session_id, approval.approval_id)

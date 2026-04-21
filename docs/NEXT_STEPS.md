@@ -47,11 +47,11 @@
   - reject and reissue traces can persist `approval_reason_record` with `reason_scope`, `reason_label`, optional `reason_note`, `recorded_at`, `artifact_id`, `artifact_kind`, `source_message_id`, and `approval_id`
   - current truthful labels are intentionally minimal:
     - `approval_reject -> explicit_rejection`
-    - `approval_reissue -> path_change`
+    - `approval_reissue -> path_change | corrected_text_reissue`
   - the original grounded-brief assistant message remains the content source of truth, while approval/system responses, pending approvals, and task-log entries carry the approval-linked reason trace
 - The next truthful content slice is now also in place:
   - the grounded-brief response surface now exposes one multiline correction editor seeded with the current draft text
-  - explicit correction submit persists `corrected_text` and `corrected_outcome.outcome = corrected` on the original grounded-brief source message
+  - explicit correction submit persists `corrected_text`, `corrected_outcome.outcome = corrected`, and `corrected_outcome.reason_label = explicit_correction_submitted` on the original grounded-brief source message
   - unchanged submit is rejected as validation rather than being inferred as `accepted_as_is`
   - correction submit stays separate from save approval, and current pending approval previews still point at the original draft
 - Corrected-save reconciliation is now shipped in the first bridge slice:
@@ -445,8 +445,8 @@
     - `defer` is later revisit, not candidate-basis invalidation
 3. Keep the shipped save-axis adjunct narrow:
   - keep `session_local_memory_signal` itself as the current-state-only summary
-  - keep `superseded_reject_signal` separate from `content_signal`
-  - keep `historical_save_identity_signal` separate from `save_signal`
+  - keep `superseded_reject_signal` separate from `session_local_memory_signal`
+  - keep `historical_save_identity_signal` separate from `session_local_memory_signal.save_signal`
   - keep that helper narrow and read-only:
     - at most one latest historical approval-backed save identity
     - no saved body replay

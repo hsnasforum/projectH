@@ -49,7 +49,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
   - grounded-brief trace anchors on summary responses, save approvals, and relevant trace logs
   - small grounded-brief correction editor seeded with the current draft text
   - explicit correction submit with source-message `corrected_text` persistence
-  - minimum `accepted_as_is` / `corrected` / `rejected` corrected-outcome capture on grounded-brief source messages
+  - minimum `accepted_as_is` / `corrected` / `rejected` corrected-outcome capture on grounded-brief source messages, with explicit correction submissions labeled as `reason_label = explicit_correction_submitted`
   - one distinct response-card `내용 거절` content-verdict action with same-card optional reject-note updates on `content_reason_record`
   - one small candidate-linked response-card action such as `이 수정 방향 재사용 확인` that appears only when the current source message exposes `session_local_candidate`
   - one separate source-message `candidate_confirmation_record` for that same positive reuse confirmation, kept outside save approval and outside the candidate object itself
@@ -59,7 +59,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
   - one optional top-level session read-only `recurrence_aggregate_candidates` projection derived only from current same-session serialized source-message `candidate_recurrence_key` records and emitted only when at least two distinct grounded-brief source-message anchors share the same exact recurrence identity; aggregates are current-version only and retired automatically when any supporting correction is superseded by a newer correction before transition emit; aggregates with a record-backed lifecycle (stored transition records) survive supporting correction supersession so the lifecycle controls remain visible
   - one separate existing-shell aggregate-level `검토 메모 적용 후보` section fed only by current `recurrence_aggregate_candidates`, rendered adjacent to `검토 후보` only when one or more aggregates exist; each aggregate card shows a visible review-support line (`검토 수락 N건 / 교정 M건 (거절·보류는 감사 기록만)`) derived from accept-only `supporting_review_refs` count vs `recurrence_count`, making clear that reject/defer stay audit-only and do not count as aggregate support; transition-backed aggregate cards prefix the review-support line with `[기록된 기준]` to indicate the displayed counts describe the persisted recorded basis behind the lifecycle card rather than freshly derived live support; the `검토 메모 적용 시작` submit boundary is now enabled when `capability_outcome = unblocked_all_required` and the user has entered a non-empty reason note (visible but disabled while blocked or while note is empty); clicking the enabled submit now emits one `reviewed_memory_transition_record` with `record_stage = emitted_record_only_not_applied` and persists it under `reviewed_memory_emitted_transition_records`; after emission the same aggregate card shows `검토 메모 적용 실행`, and clicking that apply boundary POSTs to `/api/aggregate-transition-apply` which changes `record_stage` to `applied_pending_result` with `applied_at` added; after the apply boundary the card shows `결과 확정`, and clicking it changes `record_stage` to `applied_with_result` and creates `apply_result` with `result_version = first_reviewed_memory_apply_result_v1`, `applied_effect_kind = reviewed_memory_correction_pattern`, `result_stage = effect_active`, and `result_at`; the memory effect on future responses is now active (`result_stage = effect_active`); active effects are stored on the session as `reviewed_memory_active_effects`; future responses include a `[검토 메모 활성]` prefix with the operator's reason and pattern fingerprint; stop-apply: after the effect is active the aggregate card shows `적용 중단`; clicking it changes `record_stage` to `stopped`, sets `apply_result.result_stage` to `effect_stopped`, and removes the effect from `reviewed_memory_active_effects`; reversal: after stop the card shows `적용 되돌리기`; clicking it changes `record_stage` to `reversed`, sets `apply_result.result_stage` to `effect_reversed`, and adds `reversed_at`; conflict-visibility: after reversal the card shows `충돌 확인`; clicking it creates a separate `reviewed_memory_conflict_visibility_record` with `transition_action = future_reviewed_memory_conflict_visibility`, `record_stage = conflict_visibility_checked`, `source_apply_transition_ref`, evaluated `conflict_entries`, and `conflict_entry_count`
 - each current `recurrence_aggregate_candidates` item now also exposes deterministic read-only projections (`aggregate_promotion_marker`, `reviewed_memory_precondition_status`, `reviewed_memory_boundary_draft`, `reviewed_memory_rollback_contract`, `reviewed_memory_disable_contract`, `reviewed_memory_conflict_contract`, `reviewed_memory_transition_audit_contract`, `reviewed_memory_unblock_contract`, `reviewed_memory_capability_status`, `reviewed_memory_planning_target_ref`), one conditional `reviewed_memory_capability_basis` (present only when `capability_outcome = unblocked_all_required`), and lifecycle records: one conditional `reviewed_memory_transition_record` (emitted / applied / stopped / reversed) and one optional `reviewed_memory_conflict_visibility_record` (conflict_visibility_checked)
-  - minimum `approval_reason_record` capture on grounded-brief reject / reissue approval traces
+  - minimum `approval_reason_record` capture on grounded-brief reject / reissue approval traces, including `corrected_text_reissue` for corrected-save approval reissue
   - explicit `save_content_source = original_draft | corrected_text` plus `source_message_id` on current save-note approvals and related save/write traces
   - minimum corrected-save bridge action that issues a fresh approval from recorded `corrected_text` with `save_content_source = corrected_text`
 - partially supporting:
@@ -116,7 +116,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - response metadata including evidence/source with trust labels, summary chunks with applied-range, response origin (badge/answer-mode/verification/source-role), claim coverage with status tags and fact-strength summary, feedback with label + optional reason, and optional source-message `candidate_confirmation_record` / `candidate_recurrence_key` / `durable_candidate` / `candidate_review_record` / grounded-brief trace fields
 - current session payload can also expose one computed top-level `recurrence_aggregate_candidates` list derived from current same-session serialized source-message `candidate_recurrence_key` records
 - current session payload can also expose one computed top-level `review_queue_items` list derived from eligible current source-message `durable_candidate` records
-- additive JSONL task log for requests, approvals, writes, rejects, reissues, cancels, feedback, corrections, verdicts, candidate events, stream-cancel (`stream_cancel_requested`), permission updates (`web_search_permission_updated`, `permissions_updated`), OCR guidance (`ocr_not_supported`), web-search history reload (`web_search_record_loaded`), web-search retry (`web_search_retried`), active-context follow-up (`answer_with_active_context`), reviewed-memory transitions (`reviewed_memory_transition_emitted`, `reviewed_memory_transition_applied`, `reviewed_memory_transition_result_confirmed`, `reviewed_memory_transition_stopped`, `reviewed_memory_transition_reversed`, `reviewed_memory_conflict_visibility_checked`), response finalization (`agent_response`), error fallback (`agent_error`), admin session management (`session_deleted`, `all_sessions_deleted`), and system preference maintenance (`preference_activated`, `preference_paused`, `preference_rejected`); save-note actions (`approval_requested`, `approval_granted`, `approval_rejected`, `approval_reissued`, `write_note`) carry per-action detail with core fields `artifact_id`, `source_message_id`, `save_content_source` plus action-specific keys and optional mode addenda such as `source_path` or `search_query` (see ARCHITECTURE for full detail shapes); feedback/correction/verdict actions (`response_feedback_recorded`, `correction_submitted`, `content_verdict_recorded`, `content_reason_note_recorded`) carry per-action detail with `message_id`, `artifact_id`, `artifact_kind` core fields; `corrected_outcome_recorded` uses a distinct multi-path shape with `outcome`, `recorded_at`, `artifact_id`, `source_message_id` core fields; candidate actions (`candidate_confirmation_recorded`, `candidate_review_recorded`) carry per-action detail with `message_id`, `artifact_id`, `source_message_id`, `candidate_id`, `candidate_family`, `candidate_updated_at` core fields; web-search/follow-up actions (`web_search_record_loaded`, `web_search_retried`, `answer_with_active_context`) singleton actions (`stream_cancel_requested`, `web_search_permission_updated`, `permissions_updated`, `ocr_not_supported`), reviewed-memory transition actions, request plumbing actions (`request_received`, `request_cancelled`, `document_context_updated`), and document-loop actions (`request_intent_classified`, `read_search_results`, `summarize_search_results`, `read_uploaded_file`, `summarize_uploaded_file`, `read_file`, `summarize_file`) all carry per-action detail (see ARCHITECTURE for full detail shapes)
+- additive JSONL task log for requests, approvals, writes, rejects, reissues, cancels, feedback, corrections, verdicts, candidate events, stream-cancel (`stream_cancel_requested`), permission updates (`web_search_permission_updated`, `permissions_updated`), OCR guidance (`ocr_not_supported`), web-search history reload (`web_search_record_loaded`), web-search retry (`web_search_retried`), active-context follow-up (`answer_with_active_context`), reviewed-memory transitions (`reviewed_memory_transition_emitted`, `reviewed_memory_transition_applied`, `reviewed_memory_transition_result_confirmed`, `reviewed_memory_transition_stopped`, `reviewed_memory_transition_reversed`, `reviewed_memory_conflict_visibility_checked`), response finalization (`agent_response`), error fallback (`agent_error`), admin session management (`session_deleted`, `all_sessions_deleted`), and system preference maintenance (`preference_activated`, `preference_paused`, `preference_rejected`); save-note actions (`approval_requested`, `approval_granted`, `approval_rejected`, `approval_reissued`, `write_note`) carry per-action detail with core fields `artifact_id`, `source_message_id`, `save_content_source` plus action-specific keys and optional mode addenda such as `source_path` or `search_query` (see ARCHITECTURE for full detail shapes); feedback/correction/verdict actions (`response_feedback_recorded`, `correction_submitted`, `content_verdict_recorded`, `content_reason_note_recorded`) carry per-action detail with `message_id`, `artifact_id`, `artifact_kind` core fields; `corrected_outcome_recorded` uses a distinct multi-path shape with `outcome`, optional `reason_label`, `recorded_at`, `artifact_id`, `source_message_id` core fields; candidate actions (`candidate_confirmation_recorded`, `candidate_review_recorded`) carry per-action detail with `message_id`, `artifact_id`, `source_message_id`, `candidate_id`, `candidate_family`, `candidate_updated_at` core fields; web-search/follow-up actions (`web_search_record_loaded`, `web_search_retried`, `answer_with_active_context`) singleton actions (`stream_cancel_requested`, `web_search_permission_updated`, `permissions_updated`, `ocr_not_supported`), reviewed-memory transition actions, request plumbing actions (`request_received`, `request_cancelled`, `document_context_updated`), and document-loop actions (`request_intent_classified`, `read_search_results`, `summarize_search_results`, `read_uploaded_file`, `summarize_uploaded_file`, `read_file`, `summarize_file`) all carry per-action detail (see ARCHITECTURE for full detail shapes)
 - local web-search history JSON with answer-mode/verification/source-role badges when the secondary mode is used
 
 ### Why The Current Phase Must Stay Document-First
@@ -204,7 +204,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - `source_paths`
 - `created_at`
 - `save_content_source = original_draft | corrected_text` for the current shipped save-note flow
-- optional `approval_reason_record` on rejected or reissued approvals
+- optional `approval_reason_record` on rejected or reissued approvals (`approval_reissue` uses `path_change` for ordinary path changes and `corrected_text_reissue` when reissuing a corrected-save approval)
 
 ### Current Approval Request Paths
 - `approved_approval_id`
@@ -459,7 +459,7 @@ The first official artifact is the `grounded brief`.
   - `artifact_id` and `artifact_kind = grounded_brief`
   - normalized `original_response_snapshot` on original grounded-brief assistant messages
   - explicit `corrected_text` submit on the grounded-brief response surface
-  - minimum `corrected_outcome` capture for `accepted_as_is | corrected | rejected`
+  - minimum `corrected_outcome` capture for `accepted_as_is | corrected | rejected`; explicit correction submit records `reason_label = explicit_correction_submitted`
   - one source-message `content_reason_record` for explicit `내용 거절` plus optional same-card reject-note updates
   - minimum `approval_reason_record` capture for `approval_reject` and `approval_reissue`
   - minimum corrected-save bridge action that creates a fresh approval from recorded `corrected_text`
@@ -483,6 +483,7 @@ The first official artifact is the `grounded brief`.
 - explicit correction submit on the grounded-brief response now also persists:
   - `corrected_text`
   - `corrected_outcome.outcome = corrected`
+  - `corrected_outcome.reason_label = explicit_correction_submitted`
 - direct approved save responses can expose the same `corrected_outcome` only because that response is itself the original grounded-brief source message
 - approval-execute system responses keep anchor linkage and saved-path status, but do not become the corrected-outcome source-of-truth surface
 - correction-submit responses and session serialization expose the updated `corrected_text` on that same original grounded-brief source message
@@ -504,13 +505,14 @@ The first official artifact is the `grounded brief`.
   - `reason_label`
   - optional `reason_note`
   - `recorded_at`
+- ordinary reissue keeps `reason_label = path_change`; corrected-save approval reissue uses `reason_label = corrected_text_reissue`
   - `artifact_id`
   - `artifact_kind`
   - `source_message_id`
   - `approval_id`
 - current truthful labels stay intentionally narrow until a real reason-input surface exists:
   - `approval_reject -> explicit_rejection`
-  - `approval_reissue -> path_change`
+  - `approval_reissue -> path_change | corrected_text_reissue`
 - the original grounded-brief assistant message remains the content source of truth; approval reason records live on approval/system responses, reissued pending approvals, and task-log entries instead
 - no separate artifact store or corrected-text store was introduced in this round, and the later read-only review queue still stays outside the canonical source-message durable record
 
@@ -549,6 +551,7 @@ The first official artifact is the `grounded brief`.
 #### 3. Corrected Outcome
 - implemented minimum contract now:
   - `outcome = accepted_as_is | corrected | rejected`
+  - optional `reason_label` (`explicit_correction_submitted` on explicit correction submit)
   - `recorded_at`
   - `artifact_id`
   - `source_message_id`
@@ -556,6 +559,7 @@ The first official artifact is the `grounded brief`.
   - optional `saved_note_path`
 - explicit correction submit also persists:
   - `corrected_text`
+  - `corrected_outcome.reason_label = explicit_correction_submitted`
 - explicit content verdict also persists:
   - `content_reason_record`
 - current source of truth:
@@ -595,6 +599,7 @@ The first official artifact is the `grounded brief`.
   - approval reject, save omission, retry, or feedback `incorrect` must not be mapped into `rejected`
   - the current source-of-truth contract stays on the original grounded-brief assistant message by widening the existing content-outcome envelope:
     - `corrected_outcome.outcome = accepted_as_is | corrected | rejected`
+    - optional `reason_label` for the explicit correction-submit path
     - `recorded_at`
     - `artifact_id`
     - `source_message_id`
@@ -665,6 +670,7 @@ The first official artifact is the `grounded brief`.
   - the first corrected-save slice should treat `approval_id` itself as the immutable snapshot identity; it should not add a separate `snapshot_id` unless approval records stop carrying the saved-body snapshot
 - corrected-save approval execution keeps the original grounded-brief source message as the content source of truth:
   - `corrected_outcome.outcome` stays `corrected`
+  - `corrected_outcome.reason_label` stays `explicit_correction_submitted`
   - the same source message may later add optional `approval_id` and `saved_note_path`
   - the saved approval snapshot is still read from the frozen approval body, not from the current `corrected_text` field
 - reissue should preserve the same artifact identity while linking old and new approval objects
@@ -693,7 +699,7 @@ The first official artifact is the `grounded brief`.
   - current implemented minimum: `explicit_rejection`
   - richer labels such as `content_needs_fix`, `save_not_needed`, and `path_not_acceptable` remain future until the UI can truthfully collect that intent
 - approval reissue reasons should remain separate from reject reasons:
-  - current implemented minimum: `path_change`
+  - current implemented minimum: `path_change` for ordinary reissue, `corrected_text_reissue` for corrected-save reissue
   - richer labels such as `filename_preference` and `directory_preference` remain future until the UI can truthfully distinguish them
 - content-level `rejected` reasons now start from one explicit label tied to the content-verdict action itself:
   - `content_reject -> explicit_content_rejection`
@@ -723,6 +729,7 @@ The first official artifact is the `grounded brief`.
     - `saved_note_path`
     - `save_content_source = original_draft | corrected_text`
 - the first signal should keep its axes separate instead of collapsing them into one preference statement:
+  - `correction_signal`
   - `content_signal`
   - `approval_signal`
   - `save_signal`
@@ -740,24 +747,27 @@ The first official artifact is the `grounded brief`.
   - if later explicit correction submit or explicit save supersedes `rejected`, the source message clears stale `content_reason_record`
   - in that first slice, a superseded reject or reject-note may remain audit-only in task-log rather than being replayed back into the signal summary
 - current implementation:
-  - serialized grounded-brief source messages now expose one computed optional `session_local_memory_signal`
+  - serialized grounded-brief source messages now expose one computed optional `session_local_memory_signal` only when the current persisted session has a correction, content reason, approval reason, or completed save signal for the same source-message anchor
   - the projection stays source-message-anchored and read-only:
+    - `signal_version = session_local_memory_signal_v1`
     - `signal_scope = session_local`
     - `artifact_id`
     - `source_message_id`
-  - `content_signal` currently includes:
-    - `latest_corrected_outcome`
+    - `derived_at`
+  - `correction_signal` currently appears only when the current `corrected_outcome.outcome = corrected` and includes:
+    - `corrected_outcome`
     - `has_corrected_text`
-    - optional current `content_reason_record`
+  - `content_signal` currently appears only when the current source message has a `content_reason_record` and includes that reason record
   - `approval_signal` currently includes:
     - optional `latest_approval_reason_record` resolved from matching approval-linked session messages and pending approvals in the same session
   - `save_signal` currently includes:
     - optional `latest_save_content_source`
     - optional `latest_approval_id`
     - optional `latest_saved_note_path`
+    - optional `latest_saved_at`
   - the first slice still avoids a separate memory store and still does not copy saved file bodies or approval preview bodies into the signal itself
   - serialized grounded-brief source messages may now also expose one optional `superseded_reject_signal`
-  - that adjunct remains separate from `session_local_memory_signal.content_signal`
+  - that adjunct remains separate from `session_local_memory_signal.correction_signal`
   - it replays only the latest superseded content-side `rejected` verdict plus its optional reject-note for the same `artifact_id` / `source_message_id`
   - it appears only when the current content signal no longer shows `rejected`
   - it remains audit-derived and narrow:
@@ -833,14 +843,14 @@ The first official artifact is the `grounded brief`.
   - the statement should describe only the reusable rewrite preference signal, not copy the entire corrected body as the candidate itself
 - the shipped first extraction rule stays conservative:
   - primary basis:
-    - same source message with `content_signal.latest_corrected_outcome.outcome = corrected`
-    - `content_signal.has_corrected_text = true`
+    - same source message with `correction_signal.corrected_outcome.outcome = corrected`
+    - `correction_signal.has_corrected_text = true`
     - same source message still keeps the original response snapshot needed to compare the original draft and the explicit correction
   - one eligible artifact may emit only one `session_local_candidate` draft in the current slice
   - that draft stays `session_local_candidate`, not `durable_candidate`
   - `supporting_signal_refs` should point back to source-message-anchored projections rather than copying their bodies into the candidate
   - the current shipped `supporting_signal_refs` set is intentionally narrower than the full contract:
-    - `session_local_memory_signal.content_signal` is always the primary basis
+    - `session_local_memory_signal.correction_signal` is always the primary basis
     - `session_local_memory_signal.save_signal` may appear only when the same current anchor still exposes `latest_approval_id`
   - replay adjuncts remain supporting-context-only follow-up territory:
     - `superseded_reject_signal` does not become a primary extraction source
@@ -941,7 +951,11 @@ The first official artifact is the `grounded brief`.
   - `candidate_id`
   - `candidate_scope = durable_candidate`
   - `candidate_family`
+  - `artifact_id`
+  - `source_message_id`
   - `statement`
+  - `derived_from` with one `record_type = candidate_confirmation_record` reference to the matching confirmation trace
+  - `derived_at`
   - `supporting_artifact_ids`
   - `supporting_source_message_ids`
   - `supporting_signal_refs`
@@ -1570,6 +1584,8 @@ The first official artifact is the `grounded brief`.
   - the existing shell may render that list as one compact `검토 후보` section
   - only current `durable_candidate` items with `promotion_eligibility = eligible_for_review` may enter
   - each queue item is only a repackaging of the current source-message `durable_candidate`, not a second canonical durable object
+  - each queue item carries `item_type = durable_candidate` so it remains distinguishable from any future queue item family
+  - queue items also carry the source-message projection's `derived_from` and `derived_at`
   - the current queue supports three review actions:
     - `accept` / `reject` / `defer`
     - all three remain reviewed-but-not-applied only

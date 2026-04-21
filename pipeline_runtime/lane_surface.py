@@ -16,6 +16,13 @@ _BASE_BUSY_MARKERS = (
     "germinating",
     "flumoxing",
 )
+_ACTIVE_BUSY_MARKERS = (
+    "waiting for background",
+    "background terminal",
+    "esc to interrupt",
+    "esc to cancel",
+    "thinking with ",
+)
 
 LANE_SURFACE_PROFILES = {
     "Claude": {
@@ -136,10 +143,27 @@ def pane_text_has_gemini_ready_prompt(text: str) -> bool:
 
 
 def pane_text_has_busy_indicator(text: str, lane_name: str | None = None) -> bool:
-    lower = "\n".join(_recent_nonempty_lines(text, limit=18))
-    if not lower.strip():
+    window = _recent_nonempty_lines(text, limit=18)
+    if not window:
         return False
-    return any(marker in lower for marker in busy_markers_for_lane(lane_name))
+    busy_markers = tuple(marker.lower() for marker in busy_markers_for_lane(lane_name))
+    busy_indices = [
+        index
+        for index, line in enumerate(window)
+        if any(marker in line for marker in busy_markers)
+    ]
+    if not busy_indices:
+        return False
+    if any(any(marker in line for marker in _ACTIVE_BUSY_MARKERS) for line in window):
+        return True
+    prompt_indices = [
+        index
+        for index, line in enumerate(window)
+        if line_looks_like_input_prompt(line)
+    ]
+    if prompt_indices and prompt_indices[-1] > busy_indices[-1]:
+        return False
+    return True
 
 
 def pane_text_has_input_cursor(text: str) -> bool:

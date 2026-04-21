@@ -7,6 +7,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from pipeline_runtime.lane_catalog import lane_token_source_map
+
 from .formatting import format_compact_count
 from .platform import IS_WINDOWS, _run, _windows_to_wsl_mount, resolve_project_runtime_file
 from .token_usage_shared import (
@@ -20,11 +22,7 @@ from .token_usage_shared import (
 _CACHE_TTL_SECONDS = 30.0
 _TOKEN_CACHE_MAX_SIZE = 8
 _TOKEN_CACHE: dict[str, tuple[float, dict[str, dict[str, object]]]] = {}
-_DEFAULT_USAGE_SOURCES = {
-    "Claude": "~/.claude/projects",
-    "Codex": "~/.codex/sessions",
-    "Gemini": "~/.gemini/tmp",
-}
+_DEFAULT_USAGE_SOURCES = lane_token_source_map()
 
 
 def _project_agnostic_reader(

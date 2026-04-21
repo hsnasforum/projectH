@@ -214,7 +214,7 @@ class PipelineGuiTokensTest(unittest.TestCase):
                 "reset_at": "03:00",
             }
         )
-        self.assertEqual(note, "14% used · Sess 42.1k · Today 108.2k")
+        self.assertEqual(note, "14% 사용 · 세션 42.1k · 오늘 108.2k")
 
     def test_collect_token_usage_via_wsl_uses_shared_reader_script(self) -> None:
         token_module._TOKEN_CACHE.clear()

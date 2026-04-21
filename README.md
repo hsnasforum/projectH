@@ -109,6 +109,7 @@ repo 안의 internal/operator tooling은 릴리즈 게이트 밖이지만 계속
   - canonical runtime API는 `/api/runtime/status`, `/api/runtime/start|stop|restart`, `/api/runtime/capture-tail?lane=`, `/api/runtime/send-input`입니다.
   - controller/browser UI는 supervisor가 쓴 run-scoped runtime status만 읽고, direct pane/log/file scan을 current truth로 사용하지 않습니다.
   - Office View의 desk label과 agent home zone은 `/api/runtime/status`의 `role_owners`를 따릅니다. `claude_desk` / `codex_desk` / `gemini_desk` 키는 각각 implement / verify / advisory role anchor 이름일 뿐, Claude / Codex / Gemini의 고정 소유권을 뜻하지 않습니다.
+  - sidebar는 `Party Roster`와 별도로 `Role Binding` 섹션을 렌더링해 현재 `implement` / `verify` / `advisory` owner를 명시적으로 보여 줍니다.
   - Quest Log는 `/api/runtime/status` fetch 실패를 같은 오류 메시지 기준으로 1회만 기록하고, polling이 다시 성공하면 `상태 조회 복구: ...`를 1회 남겨 네트워크/서버 단절 동안 같은 에러가 매 poll마다 누적되지 않게 합니다.
   - stop은 graceful flush 우선입니다. CLI/controller는 먼저 final `STOPPED` status flush를 기다리고, timeout 뒤에만 강제 종료 fallback을 사용합니다. supervisor가 이미 사라진 orphan watcher/session만 남아 있으면 stop이 이를 정리하고 `status.json`을 `control=none`, `active_round=null`, watcher dead, lane `OFF`로 보정합니다.
   - 이미 receipt로 닫힌 duplicate `STATUS: implement` handoff는 debug용 `compat.control_slots`에는 남아도, canonical `control` block에서는 `none`으로 내려 controller가 `implement + all READY` 같은 stale 표기를 하지 않게 합니다.

@@ -49,6 +49,11 @@ const ROLE_ICONS = Object.freeze({
   verify: '📘',
   advisory: '✨',
 });
+const ROLE_OWNER_LABELS = Object.freeze({
+  implement: 'Implement owner',
+  verify: 'Verify owner',
+  advisory: 'Advisory owner',
+});
 const LANE_META = {
   Claude: { role: 'implement', zone: 'claude_desk', color: '#5c9a4a' },
   Codex: { role: 'verify', zone: 'codex_desk', color: '#6aa7c9' },
@@ -126,6 +131,12 @@ function roleForAgent(name, data = runtimeStateStore.data) {
     if (owners[role] === name) return role;
   }
   return LANE_META[name]?.role || '';
+}
+
+function currentTurnState(data = runtimeStateStore.data) {
+  if (data && data.turn_state && typeof data.turn_state === 'object') return data.turn_state;
+  if (data && data.compat && data.compat.turn_state && typeof data.compat.turn_state === 'object') return data.compat.turn_state;
+  return {};
 }
 
 function zoneKeyForRole(role) {
@@ -3084,13 +3095,14 @@ function getPresentation(data) {
   const control = payload.control || {};
   const watcher = payload.watcher || {};
   const round = payload.active_round || {};
+  const turn = currentTurnState(payload);
   const degradedReasons = (payload.degraded_reasons || []).filter(Boolean);
   const degradedReason = degradedReasons[0] || String(payload.degraded_reason || '').trim();
   const uncertain = runtimeState === 'DEGRADED' && degradedReasons.some((reason) => UNCERTAIN_RUNTIME_REASONS.has(reason));
   const inactive = INACTIVE_RUNTIME_STATES.has(runtimeState);
   const showLive = !inactive && !uncertain;
   const controlStatus = showLive ? (control.active_control_status || 'none') : (uncertain ? 'uncertain' : 'none');
-  const roundState = showLive ? (round.state || 'IDLE') : (uncertain ? 'uncertain' : 'IDLE');
+  const roundState = showLive ? (turn.state || round.state || 'IDLE') : (uncertain ? 'uncertain' : 'IDLE');
   let watcherStatus = 'Dead';
   let watcherClass = 'dim';
   if (uncertain) {
@@ -3270,6 +3282,15 @@ function syncAgentsFromRuntime(data) {
   }
 }
 
+function roleOwnerRows(data = runtimeStateStore.data) {
+  const owners = currentRoleOwners(data);
+  return ROLE_NAMES.map((role) => {
+    const title = ROLE_OWNER_LABELS[role] || `${role} owner`;
+    const owner = owners[role] || 'Unassigned';
+    return `<div class="info-row"><span class="info-label">${esc(title)}</span><span class="info-value neutral">${esc(owner)}</span></div>`;
+  }).join('');
+}
+
 function renderSidebar() {
   const container = document.getElementById('tab-content');
   if (!container) return;
@@ -3300,6 +3321,10 @@ function renderSidebar() {
     <div class="sidebar-section">
       <div class="sidebar-section-title">Party Roster</div>
       ${laneCards}
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Role Binding</div>
+      ${roleOwnerRows(data)}
     </div>
     <div class="sidebar-section">
       <div class="sidebar-section-title">Current Round</div>
@@ -3560,6 +3585,7 @@ window.getSceneDebug = function() {
     hasOwlCourier: typeof sendOwl === 'function',
     hasAudio8: typeof window.Audio8?.meow === 'function',
     catState: cat.state,
+    roleOwners: currentRoleOwners(),
     tube: { ...TUBE },
   };
 };

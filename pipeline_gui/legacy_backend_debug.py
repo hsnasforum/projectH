@@ -199,8 +199,11 @@ def watcher_start_observed(
         "WatcherCore v2.1 started",
         "initial turn:",
         "notify_claude:",
+        "notify_implement_owner:",
         "notify_gemini:",
+        "notify_advisory_owner:",
         "notify_codex_followup:",
+        "notify_verify_followup:",
         "waiting_for_claude:",
     )
     return any(any(marker in line for marker in markers) for line in lines)

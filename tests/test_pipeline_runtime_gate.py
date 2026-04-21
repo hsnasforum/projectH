@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -316,10 +317,48 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             workspace, env = pipeline_runtime_gate.prepare_synthetic_workspace(Path(tmp))
 
-            self.assertTrue((workspace / ".pipeline" / "config" / "agent_profile.json").exists())
+            profile_path = workspace / ".pipeline" / "config" / "agent_profile.json"
+            self.assertTrue(profile_path.exists())
+            profile = json.loads(profile_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                profile["role_bindings"],
+                {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"},
+            )
             self.assertTrue(any((workspace / "work").rglob("*.md")))
             self.assertIn("PIPELINE_RUNTIME_LANE_COMMAND_CODEX", env)
             self.assertEqual(env["PIPELINE_RUNTIME_DISABLE_TOKEN_COLLECTOR"], "1")
+
+    def test_prepare_synthetic_workspace_accepts_legacy_role_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, _env = pipeline_runtime_gate.prepare_synthetic_workspace(
+                Path(tmp),
+                role_bindings={"implement": "Claude", "verify": "Codex", "advisory": "Gemini"},
+            )
+
+            profile_path = workspace / ".pipeline" / "config" / "agent_profile.json"
+            profile = json.loads(profile_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(
+                profile["role_bindings"],
+                {"implement": "Claude", "verify": "Codex", "advisory": "Gemini"},
+            )
+
+    def test_write_active_profile_accepts_legacy_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pipeline_runtime_gate._write_active_profile(
+                root,
+                role_bindings={"implement": "Claude", "verify": "Codex", "advisory": "Gemini"},
+            )
+
+            profile = json.loads(
+                (root / ".pipeline" / "config" / "agent_profile.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(
+            profile["role_bindings"],
+            {"implement": "Claude", "verify": "Codex", "advisory": "Gemini"},
+        )
 
     def test_finalize_synthetic_workspace_keeps_failed_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1538,6 +1577,23 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
             "classification_gate_details": [],
             "orphan_session": False,
             "readiness_snapshot": {"runtime_state": "RUNNING", "lanes": []},
+            "runtime_context": {
+                "current_run_id": "run-synthetic-1",
+                "automation_health": "attention",
+                "automation_reason_code": "dispatch_stall",
+                "automation_incident_family": "dispatch_stall",
+                "automation_next_action": "verify_followup",
+                "open_control": {
+                    "active_control_file": ".pipeline/claude_handoff.md",
+                    "active_control_seq": 17,
+                    "active_control_status": "implement",
+                },
+                "active_round": {"state": "VERIFY_PENDING", "job_id": "job-1"},
+                "latest_status": {"runtime_state": "DEGRADED"},
+                "recent_events": [
+                    {"event_type": "automation_incident", "payload": {"reason_code": "dispatch_stall"}}
+                ],
+            },
         }
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -1591,6 +1647,8 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
             self.assertIn("`PASS` runtime ready barrier", report_text)
             self.assertIn("`PASS` classification_fallback_detected", report_text)
             self.assertIn("`PASS` stop left no orphan session", report_text)
+            self.assertIn("current_run_id=run-synthetic-1", report_text)
+            self.assertIn("incident_family=dispatch_stall", report_text)
 
             payload = _json.loads(expected_json_path.read_text(encoding="utf-8"))
             self.assertEqual(payload.get("title"), "Pipeline Runtime synthetic soak sample")
@@ -1606,6 +1664,15 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
             self.assertEqual(summary.get("classification_gate_details"), [])
             self.assertEqual(summary.get("orphan_session"), False)
             self.assertEqual(summary.get("readiness_snapshot"), {"runtime_state": "RUNNING", "lanes": []})
+            self.assertEqual(summary.get("current_run_id"), "run-synthetic-1")
+            self.assertEqual(summary.get("automation_health"), "attention")
+            self.assertEqual(summary.get("automation_reason_code"), "dispatch_stall")
+            self.assertEqual(summary.get("incident_family"), "dispatch_stall")
+            self.assertEqual(summary.get("automation_next_action"), "verify_followup")
+            runtime_context = summary.get("runtime_context") or {}
+            self.assertEqual(runtime_context.get("open_control", {}).get("active_control_seq"), 17)
+            self.assertEqual(runtime_context.get("active_round", {}).get("job_id"), "job-1")
+            self.assertEqual((runtime_context.get("recent_events") or [])[0]["event_type"], "automation_incident")
             names = {str(item.get("name") or "") for item in payload.get("checks") or []}
             for expected_name in (
                 "runtime start",
@@ -1644,6 +1711,21 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
             "classification_gate_details": [],
             "orphan_session": False,
             "readiness_snapshot": {"runtime_state": "RUNNING", "lanes": []},
+            "runtime_context": {
+                "current_run_id": "run-soak-1",
+                "automation_health": "ok",
+                "automation_reason_code": "",
+                "automation_incident_family": "",
+                "automation_next_action": "continue",
+                "open_control": {
+                    "active_control_file": "",
+                    "active_control_seq": -1,
+                    "active_control_status": "none",
+                },
+                "active_round": {"state": "IDLE"},
+                "latest_status": {"runtime_state": "RUNNING"},
+                "recent_events": [],
+            },
         }
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -1688,6 +1770,9 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
             self.assertEqual(summary.get("mode"), "experimental")
             self.assertEqual(summary.get("receipt_count"), 5)
             self.assertEqual(summary.get("duplicate_dispatch_count"), 0)
+            self.assertEqual(summary.get("current_run_id"), "run-soak-1")
+            self.assertEqual(summary.get("automation_health"), "ok")
+            self.assertEqual(summary.get("automation_next_action"), "continue")
             self.assertNotIn("workspace_retained", summary)
             self.assertNotIn("workspace_cleanup", summary)
             names = {str(item.get("name") or "") for item in payload.get("checks") or []}
@@ -1707,6 +1792,20 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
         self.assertEqual(
             pipeline_runtime_gate._report_json_sidecar_path(Path("/tmp/foo")),
             Path("/tmp/foo.json"),
+        )
+
+    def test_synthetic_soak_report_slug_promotes_six_hour_baseline(self) -> None:
+        self.assertEqual(
+            pipeline_runtime_gate._synthetic_soak_report_slug(21600),
+            "6h-synthetic-soak",
+        )
+        self.assertEqual(
+            pipeline_runtime_gate._synthetic_soak_report_slug(86400),
+            "24h-synthetic-soak",
+        )
+        self.assertEqual(
+            pipeline_runtime_gate._synthetic_soak_report_slug(60),
+            "pipeline-runtime-synthetic-soak",
         )
 
     def test_run_fault_check_surfaces_degraded_precedence_probes_before_live_checks(self) -> None:

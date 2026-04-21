@@ -18,9 +18,22 @@ from pipeline_gui.platform import resolve_project_runtime_file
 from pipeline_gui.project import _session_name_for
 from pipeline_gui.setup_profile import resolve_project_runtime_adapter
 
+from .automation_health import derive_automation_health
+from .lane_catalog import (
+    build_lane_configs,
+    default_role_bindings,
+    lane_vendor_command_parts,
+    read_first_doc_for_owner,
+)
 from .lane_surface import tail_has_busy_indicator, tail_has_ready_indicator, tail_surface_state
 from .operator_autonomy import allows_verified_blocker_auto_recovery, classify_operator_candidate
-from .receipts import build_receipt, receipt_path, validate_manifest, write_receipt
+from .receipts import (
+    build_receipt,
+    manifest_feedback_path,
+    receipt_path,
+    validate_manifest,
+    write_receipt,
+)
 from .schema import (
     RUNTIME_LANE_ORDER,
     atomic_write_json,
@@ -38,8 +51,12 @@ from .schema import (
     repo_relative,
 )
 from .tmux_adapter import TmuxAdapter
-from .turn_arbitration import active_lane_for_runtime, suppress_active_round_for_turn
-from .wrapper_events import append_wrapper_event, build_lane_read_models
+from .turn_arbitration import (
+    active_lane_for_runtime,
+    canonical_turn_state_name,
+    suppress_active_round_for_turn,
+)
+from .wrapper_events import append_wrapper_event, build_lane_read_models, iter_wrapper_task_events
 
 _DEFAULT_TOKEN_SINCE_DAYS = 7
 _WORK_PATH_RE = re.compile(r"(work/\d+/\d+/[^\s`]+\.md)")
@@ -55,6 +72,20 @@ _AUTH_LOGIN_PATTERNS = (
 # ``heartbeat_timeout``) are recoverable pre-accept breakage and must consume
 # retry budget instead of short-circuiting as terminal.
 _TERMINAL_LANE_FAILURE_REASONS = frozenset({_AUTH_LOGIN_REASON})
+_WATCHER_SELF_RESTART_SOURCE_NAMES = (
+    "watcher_core.py",
+    "watcher_dispatch.py",
+    "watcher_prompt_assembly.py",
+    "verify_fsm.py",
+    "pipeline_runtime/lane_surface.py",
+    "pipeline_runtime/schema.py",
+    "pipeline_runtime/turn_arbitration.py",
+    "pipeline_runtime/operator_autonomy.py",
+    "pipeline_runtime/wrapper_events.py",
+)
+_WATCHER_SELF_RESTART_COOLDOWN_SEC = 10.0
+_SESSION_RECOVERY_RETRY_LIMIT = 1
+_SESSION_RECOVERY_RESET_STABLE_SEC = 300.0
 
 class RuntimeSupervisor:
     def __init__(
@@ -109,11 +140,14 @@ class RuntimeSupervisor:
         self._last_operator_gate_key = ""
         self._last_dispatch_stall_key = ""
         self._last_completion_stall_key = ""
+        self._last_automation_incident_key = ""
         self._last_autonomy_key = ""
         self._last_lane_states: dict[str, str] = {}
         self._last_degraded_reason = ""
         self._lane_restart_counts: dict[str, int] = {}
         self._session_recovery_attempts = 0
+        self._session_recovery_last_started_at = 0.0
+        self._last_session_recovery_exhausted_key = ""
         self._start_runtime = start_runtime
         self._launch_failed_reason = ""
         self._current_duplicate_control_marker: dict[str, Any] | None = None
@@ -122,6 +156,11 @@ class RuntimeSupervisor:
         self._current_dispatch_stall_marker: dict[str, Any] | None = None
         self._current_completion_stall_marker: dict[str, Any] | None = None
         self._current_autonomy: dict[str, Any] | None = None
+        self._force_stopped_surface = False
+        self._mirrored_wrapper_event_keys: set[str] = set()
+        self._mirrored_wrapper_event_keys_seeded = False
+        self._last_watcher_source_restart_key = ""
+        self._last_watcher_source_restart_at = 0.0
 
     def _make_run_id(self) -> str:
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -267,7 +306,7 @@ class RuntimeSupervisor:
             },
         )
 
-    def _append_event(self, event_type: str, payload: dict[str, Any]) -> None:
+    def _append_event(self, event_type: str, payload: dict[str, Any], *, source: str = "supervisor") -> None:
         self._event_seq += 1
         append_jsonl(
             self.events_path,
@@ -276,10 +315,85 @@ class RuntimeSupervisor:
                 "ts": iso_utc(),
                 "run_id": self.run_id,
                 "event_type": event_type,
-                "source": "supervisor",
+                "source": source,
                 "payload": payload,
             },
         )
+
+    @staticmethod
+    def _wrapper_task_event_key(event: dict[str, Any]) -> str:
+        payload = dict(event.get("payload") or {})
+        return "|".join(
+            [
+                str(event.get("lane") or payload.get("lane") or ""),
+                str(event.get("event_type") or ""),
+                str(event.get("ts") or payload.get("wrapper_ts") or ""),
+                str(payload.get("job_id") or ""),
+                str(payload.get("dispatch_id") or ""),
+                str(payload.get("control_seq") or ""),
+                str(payload.get("code") or ""),
+                str(payload.get("reason") or ""),
+            ]
+        )
+
+    def _seed_mirrored_wrapper_event_keys(self) -> None:
+        if self._mirrored_wrapper_event_keys_seeded:
+            return
+        self._mirrored_wrapper_event_keys_seeded = True
+        if not self.events_path.exists():
+            return
+        try:
+            raw_lines = self.events_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return
+        for raw_line in raw_lines:
+            try:
+                entry = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+            if str(entry.get("source") or "") != "wrapper":
+                continue
+            payload = dict(entry.get("payload") or {})
+            key = self._wrapper_task_event_key(
+                {
+                    "lane": payload.get("lane"),
+                    "event_type": entry.get("event_type"),
+                    "ts": payload.get("wrapper_ts"),
+                    "payload": payload,
+                }
+            )
+            if key:
+                self._mirrored_wrapper_event_keys.add(key)
+
+    def _mirror_wrapper_task_events(self) -> None:
+        self._seed_mirrored_wrapper_event_keys()
+        for event in iter_wrapper_task_events(self.wrapper_events_dir):
+            key = self._wrapper_task_event_key(event)
+            if not key or key in self._mirrored_wrapper_event_keys:
+                continue
+            self._mirrored_wrapper_event_keys.add(key)
+            raw_payload = dict(event.get("payload") or {})
+            payload: dict[str, Any] = {
+                "lane": str(event.get("lane") or raw_payload.get("lane") or ""),
+                "job_id": str(raw_payload.get("job_id") or ""),
+                "dispatch_id": str(raw_payload.get("dispatch_id") or ""),
+                "control_seq": int(raw_payload.get("control_seq") or -1),
+                "derived_from": str(event.get("derived_from") or ""),
+                "wrapper_ts": str(event.get("ts") or ""),
+            }
+            if raw_payload.get("attempt") is not None:
+                payload["attempt"] = int(raw_payload.get("attempt") or 0)
+            if raw_payload.get("reason"):
+                payload["reason"] = str(raw_payload.get("reason") or "")
+            if raw_payload.get("code"):
+                payload["code"] = str(raw_payload.get("code") or "")
+            if raw_payload.get("detail"):
+                payload["detail"] = str(raw_payload.get("detail") or "")
+            self._append_event(
+                str(event.get("event_type") or ""),
+                payload,
+                source="wrapper",
+            )
 
     def _watcher_status(self) -> dict[str, Any]:
         pid_path = self.base_dir / "experimental.pid"
@@ -291,6 +405,56 @@ class RuntimeSupervisor:
             return {"alive": True, "pid": pid}
         except (OSError, ValueError):
             return {"alive": False, "pid": None}
+
+    def _watcher_reload_sources(self) -> list[Path]:
+        sources: list[Path] = []
+        for name in _WATCHER_SELF_RESTART_SOURCE_NAMES:
+            try:
+                path = resolve_project_runtime_file(self.project_root, name)
+            except FileNotFoundError:
+                path = (Path(__file__).resolve().parent.parent / name).resolve()
+            if path.exists():
+                sources.append(path)
+        return sources
+
+    def _watcher_source_restart_marker(self) -> dict[str, Any] | None:
+        pid = self._live_experimental_watcher_pid()
+        if pid <= 0:
+            return None
+        pid_path = self.base_dir / "experimental.pid"
+        try:
+            pid_mtime = pid_path.stat().st_mtime
+        except OSError:
+            return None
+        sources = self._watcher_reload_sources()
+        if not sources:
+            return None
+        source_mtimes: list[tuple[float, Path]] = []
+        for source_path in sources:
+            try:
+                source_mtimes.append((source_path.stat().st_mtime, source_path))
+            except OSError:
+                continue
+        if not source_mtimes:
+            return None
+        newest_mtime, newest_path = max(source_mtimes, key=lambda item: item[0])
+        if newest_mtime <= pid_mtime + 0.001:
+            return None
+        fingerprint = self._watcher_process_fingerprint(pid)
+        key = f"{pid}|{fingerprint}|{newest_path}|{newest_mtime:.6f}"
+        if key == self._last_watcher_source_restart_key:
+            return None
+        if time.time() - self._last_watcher_source_restart_at < _WATCHER_SELF_RESTART_COOLDOWN_SEC:
+            return None
+        return {
+            "pid": pid,
+            "watcher_fingerprint": fingerprint,
+            "source_path": str(newest_path),
+            "source_mtime": newest_mtime,
+            "pidfile_mtime": pid_mtime,
+            "restart_key": key,
+            "reason": "watcher_source_updated",
+        }
 
     def _control_path(self, control: dict[str, Any]) -> Path | None:
         control_file = str(control.get("active_control_file") or control.get("file") or "").strip()
@@ -364,9 +528,12 @@ class RuntimeSupervisor:
                 "routed_to": "codex_triage",
                 "source_event": str(entry.get("event") or ""),
             }
-            if marker["source_event"] == "codex_blocked_triage_notify":
+            if marker["source_event"] in {"verify_blocked_triage_notify", "codex_blocked_triage_notify"}:
                 return marker
-            if fallback is None and marker["source_event"] == "claude_blocked_detected":
+            if fallback is None and marker["source_event"] in {
+                "implement_blocked_detected",
+                "claude_blocked_detected",
+            }:
                 fallback = marker
         return fallback
 
@@ -431,8 +598,6 @@ class RuntimeSupervisor:
         if control_path is None or not control_path.exists():
             return None
         control_meta = read_control_meta(control_path)
-        if not allows_verified_blocker_auto_recovery(control_meta):
-            return None
         try:
             control_text = control_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -450,8 +615,17 @@ class RuntimeSupervisor:
             )
         reason = str((turn_state or {}).get("reason") or "")
         retriage_active = (
-            str((turn_state or {}).get("state") or "") == "CODEX_FOLLOWUP"
+            canonical_turn_state_name(
+                (turn_state or {}).get("state"),
+                legacy_state=(turn_state or {}).get("legacy_state"),
+            )
+            == "VERIFY_FOLLOWUP"
             and reason == "operator_wait_idle_retriage"
+        )
+        auto_recovery_allowed = allows_verified_blocker_auto_recovery(control_meta)
+        has_structured_operator_contract = any(
+            str(control_meta.get(key) or "").strip()
+            for key in ("reason_code", "operator_policy", "decision_class", "based_on_work")
         )
         if not referenced_work_paths:
             if retriage_active:
@@ -461,6 +635,10 @@ class RuntimeSupervisor:
                     "reason": "operator_wait_idle_retriage",
                     "resolved_work_paths": [],
                 }
+            if not auto_recovery_allowed:
+                return None
+            return None
+        if has_structured_operator_contract and not auto_recovery_allowed and not retriage_active:
             return None
         verified_work_paths = {
             self._normalize_artifact_path(job_state.get("artifact_path"))
@@ -507,22 +685,33 @@ class RuntimeSupervisor:
         except OSError:
             control_mtime = 0.0
 
-        decision = classify_operator_candidate(
-            self._control_text(control),
-            control_meta=control_meta,
-            control_path=str(control_path),
-            control_seq=int(control.get("active_control_seq") or control.get("control_seq") or -1),
-            control_mtime=control_mtime,
-            turn_reason=str((turn_state or {}).get("reason") or ""),
-            lane_notes=[
+        classify_kwargs = {
+            "control_meta": control_meta,
+            "control_path": str(control_path),
+            "control_seq": int(control.get("active_control_seq") or control.get("control_seq") or -1),
+            "control_mtime": control_mtime,
+            "turn_reason": str((turn_state or {}).get("reason") or ""),
+            "lane_notes": [
                 str(model.get("failure_reason") or model.get("note") or "")
                 for model in wrapper_models.values()
             ],
-            idle_stable=not active_round or str((active_round or {}).get("state") or "") == "CLOSED",
-        )
+            "idle_stable": not active_round or str((active_round or {}).get("state") or "") == "CLOSED",
+        }
+        control_text = self._control_text(control)
+        decision = classify_operator_candidate(control_text, **classify_kwargs)
         persisted = self._load_autonomy_state()
         fingerprint = str(decision.get("fingerprint") or "")
         same_fingerprint = fingerprint and fingerprint == str(persisted.get("fingerprint") or "")
+        if same_fingerprint:
+            persisted_first_seen_ts = parse_iso_utc(str(persisted.get("first_seen_at") or ""))
+            if persisted_first_seen_ts > 0:
+                decision = classify_operator_candidate(
+                    control_text,
+                    **classify_kwargs,
+                    first_seen_ts=persisted_first_seen_ts,
+                )
+                fingerprint = str(decision.get("fingerprint") or "")
+                same_fingerprint = fingerprint and fingerprint == str(persisted.get("fingerprint") or "")
         retries = int(persisted.get("same_fingerprint_retries") or 0) if same_fingerprint else 0
         autonomy = {
             "mode": str(decision.get("mode") or "normal"),
@@ -776,13 +965,51 @@ class RuntimeSupervisor:
             "lane": self._prompt_owner("verify"),
         }
 
-    def _build_artifacts(self) -> dict[str, Any]:
+    def _latest_verify_done_job_for_work(
+        self,
+        job_states: list[dict[str, Any]],
+        work_value: str | Path | None,
+    ) -> dict[str, Any] | None:
+        normalized_work = self._normalize_artifact_path(work_value)
+        if not normalized_work:
+            return None
+        candidates = [
+            job_state
+            for job_state in job_states
+            if str(job_state.get("status") or "") == "VERIFY_DONE"
+            and self._normalize_artifact_path(job_state.get("artifact_path")) == normalized_work
+        ]
+        if not candidates:
+            return None
+        return max(
+            candidates,
+            key=lambda item: (
+                float(item.get("verify_completed_at") or 0.0),
+                float(item.get("updated_at") or 0.0),
+                int(item.get("round") or 0),
+                str(item.get("job_id") or ""),
+            ),
+        )
+
+    def _verify_artifact_path_for_job(self, job_state: dict[str, Any]) -> Path | None:
+        verify_path = manifest_feedback_path(job_state, repo_root=self.project_root)
+        if verify_path is not None:
+            return verify_path
+        return self._matching_verify_path_for_work(job_state.get("artifact_path"))
+
+    def _build_artifacts(self, *, job_states: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         work_rel, work_mtime = latest_round_markdown(self.project_root / "work")
         verify_rel = "—"
         verify_mtime = 0.0
+        current_job_states = list(job_states or [])
         if work_rel != "—":
             work_path = self.project_root / "work" / work_rel
-            verify_path = self._matching_verify_path_for_work(work_path)
+            verify_path = None
+            matching_job = self._latest_verify_done_job_for_work(current_job_states, work_path)
+            if matching_job is not None:
+                verify_path = self._verify_artifact_path_for_job(matching_job)
+            if verify_path is None:
+                verify_path = self._matching_verify_path_for_work(work_path)
             if verify_path is not None:
                 verify_rel = repo_relative(verify_path, self.project_root / "verify")
                 try:
@@ -792,6 +1019,23 @@ class RuntimeSupervisor:
                     verify_mtime = 0.0
         else:
             verify_rel, verify_mtime = latest_round_markdown(self.project_root / "verify")
+        work_date_key = ""
+        if work_rel and work_rel != "—":
+            work_date_key = Path(work_rel).name[:10]
+        verify_date_key = ""
+        if verify_rel and verify_rel != "—":
+            verify_date_key = Path(verify_rel).name[:10]
+        self._append_event(
+            "dispatch_selection",
+            {
+                "latest_work": work_rel,
+                "latest_verify": verify_rel,
+                "date_key": work_date_key,
+                "latest_work_mtime": work_mtime,
+                "latest_verify_date_key": verify_date_key,
+                "latest_verify_mtime": verify_mtime,
+            },
+        )
         return {
             "latest_work": {"path": work_rel, "mtime": work_mtime},
             "latest_verify": {"path": verify_rel, "mtime": verify_mtime},
@@ -814,7 +1058,10 @@ class RuntimeSupervisor:
         active_dispatch_id = str((active_round or {}).get("dispatch_id") or "")
         active_dispatch_control_seq = int((active_round or {}).get("dispatch_control_seq") or -1)
         active_control_seq = int(control.get("active_control_seq") or -1)
-        turn_state_name = str((turn_state or {}).get("state") or "")
+        turn_state_name = canonical_turn_state_name(
+            (turn_state or {}).get("state"),
+            legacy_state=(turn_state or {}).get("legacy_state"),
+        )
         implement_owner = self._prompt_owner("implement")
         verify_owner = self._prompt_owner("verify")
         for lane_name in RUNTIME_LANE_ORDER:
@@ -823,7 +1070,7 @@ class RuntimeSupervisor:
                 and lane_name == active_lane
                 and bool(active_job_id)
                 and bool(active_dispatch_id)
-                and turn_state_name not in {"CODEX_FOLLOWUP", "GEMINI_ADVISORY", "OPERATOR_WAIT"}
+                and turn_state_name not in {"VERIFY_FOLLOWUP", "ADVISORY_ACTIVE", "OPERATOR_WAIT"}
             )
             active = lane_name == active_lane and (
                 use_verify_round_hint
@@ -834,6 +1081,12 @@ class RuntimeSupervisor:
                 if use_verify_round_hint
                 else active_control_seq
             )
+            if lane_name == implement_owner and active and active_control_seq >= 0:
+                hint_job_id = active_job_id or f"ctrl-{active_control_seq}"
+                hint_dispatch_id = active_dispatch_id or f"seq-{active_control_seq}"
+            else:
+                hint_job_id = active_job_id if use_verify_round_hint else ""
+                hint_dispatch_id = active_dispatch_id if use_verify_round_hint else ""
             inactive_reason = ""
             if not active:
                 if duplicate_control is not None and lane_name == implement_owner:
@@ -843,8 +1096,8 @@ class RuntimeSupervisor:
             payload = {
                 "lane": lane_name,
                 "active": active,
-                "job_id": active_job_id if use_verify_round_hint else "",
-                "dispatch_id": active_dispatch_id if use_verify_round_hint else "",
+                "job_id": hint_job_id,
+                "dispatch_id": hint_dispatch_id,
                 "control_seq": hint_control_seq if active else -1,
                 "attempt": self._lane_restart_counts.get(lane_name, 0) + 1,
                 "inactive_reason": inactive_reason,
@@ -862,10 +1115,13 @@ class RuntimeSupervisor:
     ) -> bool:
         if lane_name != active_lane:
             return False
-        turn_state_name = str((turn_state or {}).get("state") or "")
-        if turn_state_name == "CLAUDE_ACTIVE":
+        turn_state_name = canonical_turn_state_name(
+            (turn_state or {}).get("state"),
+            legacy_state=(turn_state or {}).get("legacy_state"),
+        )
+        if turn_state_name == "IMPLEMENT_ACTIVE":
             return True
-        if turn_state_name == "CODEX_FOLLOWUP":
+        if turn_state_name == "VERIFY_FOLLOWUP":
             return True
         if not active_round:
             return False
@@ -904,6 +1160,92 @@ class RuntimeSupervisor:
     def _tail_surface_state(self, lane_name: str, text: str) -> str:
         return tail_surface_state(lane_name, text)
 
+    def _build_progress_hint(
+        self,
+        *,
+        active_lane: str,
+        active_round: dict[str, Any] | None,
+        turn_state: dict[str, Any] | None,
+        control: dict[str, Any],
+        autonomy: dict[str, Any],
+        artifacts: dict[str, Any],
+    ) -> dict[str, Any]:
+        if self.runtime_state in {"STOPPED", "STOPPING", "BROKEN"}:
+            return {}
+        turn_state = turn_state if isinstance(turn_state, dict) else {}
+        turn_name = canonical_turn_state_name(
+            turn_state.get("state"),
+            legacy_state=turn_state.get("legacy_state"),
+        )
+        if not turn_name or turn_name == "IDLE":
+            return {}
+        lane = str(turn_state.get("active_lane") or active_lane or "").strip()
+        role = str(turn_state.get("active_role") or "").strip()
+        entered_at = float(turn_state.get("entered_at") or 0.0)
+        latest_work = dict((artifacts.get("latest_work") or {}) if isinstance(artifacts, dict) else {})
+        latest_verify = dict((artifacts.get("latest_verify") or {}) if isinstance(artifacts, dict) else {})
+        work_mtime = float(latest_work.get("mtime") or 0.0)
+        verify_mtime = float(latest_verify.get("mtime") or 0.0)
+        work_current = bool(entered_at and work_mtime and work_mtime >= entered_at)
+        verify_current = bool(entered_at and verify_mtime and verify_mtime >= entered_at)
+        control_status = str(control.get("active_control_status") or "none")
+        control_file = str(control.get("active_control_file") or "")
+        autonomy_mode = str(autonomy.get("mode") or "normal")
+        autonomy_reason = str(autonomy.get("reason_code") or autonomy.get("block_reason") or "")
+        round_state = str((active_round or {}).get("state") or "")
+        phase = ""
+        reason = ""
+
+        if turn_name == "IMPLEMENT_ACTIVE":
+            phase = "work_closeout_written" if work_current else "implementing"
+        elif turn_name == "VERIFY_ACTIVE":
+            if verify_current:
+                phase = "verify_note_written_next_control_pending"
+            elif round_state == "VERIFY_PENDING":
+                phase = "verify_dispatch_pending"
+            elif round_state == "RECEIPT_PENDING":
+                phase = "receipt_close_pending"
+            else:
+                phase = "running_verification"
+        elif turn_name == "VERIFY_FOLLOWUP":
+            if control_status == "needs_operator" or autonomy_mode in {"pending_operator", "needs_operator"}:
+                phase = "operator_gate_followup"
+                reason = autonomy_reason or control_status
+            elif control_status in {"implement", "request_open", "advice_ready"}:
+                phase = "next_control_written"
+            else:
+                phase = "next_control_pending"
+        elif turn_name == "ADVISORY_ACTIVE":
+            phase = "advisory_running"
+        elif turn_name in {"OPERATOR_WAIT", "NEEDS_OPERATOR"}:
+            phase = "operator_boundary"
+            reason = autonomy_reason or control_status
+
+        if not phase:
+            return {}
+        return {
+            "phase": phase,
+            "lane": lane,
+            "role": role,
+            "turn_state": turn_name,
+            "reason": reason,
+            "control_file": control_file,
+            "control_status": control_status,
+        }
+
+    @staticmethod
+    def _annotate_lane_progress(lanes: list[dict[str, Any]], progress: dict[str, Any]) -> None:
+        phase = str(progress.get("phase") or "")
+        lane_name = str(progress.get("lane") or "")
+        if not phase or not lane_name:
+            return
+        for lane in lanes:
+            if str(lane.get("name") or "") != lane_name:
+                continue
+            lane["progress_phase"] = phase
+            lane["progress_reason"] = str(progress.get("reason") or "")
+            break
+
     def _build_lane_statuses(
         self,
         *,
@@ -919,10 +1261,10 @@ class RuntimeSupervisor:
         implement_owner = self._prompt_owner("implement")
         verify_owner = self._prompt_owner("verify")
         control = control or {}
-        lane_configs = self.runtime_lane_configs or [
-            {"name": lane, "enabled": lane in self.enabled_lanes}
-            for lane in RUNTIME_LANE_ORDER
-        ]
+        lane_configs = self.runtime_lane_configs or build_lane_configs(
+            enabled_lanes=self.enabled_lanes,
+            role_owners=self.role_owners,
+        )
         for lane_cfg in lane_configs:
             lane_name = str(lane_cfg.get("name") or "").strip()
             if not lane_name:
@@ -931,6 +1273,7 @@ class RuntimeSupervisor:
             model = dict(wrapper_models.get(lane_name) or {})
             lane_models[lane_name] = model
             accepted_task = dict(model.get("accepted_task") or {})
+            done_task = dict(model.get("done_task") or {})
             has_accepted_task = bool(str(accepted_task.get("job_id") or ""))
             health = self.adapter.lane_health(lane_name) if enabled else {
                 "alive": False,
@@ -1007,9 +1350,31 @@ class RuntimeSupervisor:
                     and str(control.get("active_control_status") or "") == "implement"
                     and tail_surface == "WORKING"
                 ):
-                    state = "WORKING"
-                    if note in {"", "prompt_visible"}:
-                        note = "implement"
+                    seen_task = dict(model.get("seen_task") or {})
+                    active_control_seq = int(control.get("active_control_seq") or -1)
+                    if active_control_seq < 0:
+                        state = "WORKING"
+                        if note in {"", "prompt_visible"}:
+                            note = "implement"
+                    else:
+                        activity_reason = str((turn_state or {}).get("reason") or "")
+                        done_correlated = int(done_task.get("control_seq") or -1) == active_control_seq
+                        dispatch_correlated = (
+                            int(seen_task.get("control_seq") or -1) == active_control_seq
+                            or int(accepted_task.get("control_seq") or -1) == active_control_seq
+                            or done_correlated
+                            or activity_reason == f"{lane_name.lower()}_activity_detected"
+                        )
+                        if done_correlated:
+                            state = "READY"
+                            note = note or "waiting_next_control"
+                        elif dispatch_correlated:
+                            state = "WORKING"
+                            if note in {"", "prompt_visible"}:
+                                note = "implement"
+                        else:
+                            state = model_state if model_state and model_state != "WORKING" else "READY"
+                            note = "signal_mismatch"
                 elif surface_working and tail_surface == "READY":
                     state = "READY"
                     if lane_name == verify_owner and active_round_note:
@@ -1023,10 +1388,13 @@ class RuntimeSupervisor:
                     if lane_name == verify_owner and active_round_note:
                         note = active_round_note
                     elif note in {"", "prompt_visible"}:
-                        turn_state_name = str((turn_state or {}).get("state") or "")
-                        if turn_state_name == "CLAUDE_ACTIVE":
+                        turn_state_name = canonical_turn_state_name(
+                            (turn_state or {}).get("state"),
+                            legacy_state=(turn_state or {}).get("legacy_state"),
+                        )
+                        if turn_state_name == "IMPLEMENT_ACTIVE":
                             note = "implement"
-                        elif turn_state_name == "CODEX_FOLLOWUP":
+                        elif turn_state_name == "VERIFY_FOLLOWUP":
                             note = "followup"
                         else:
                             note = str((active_round or {}).get("state") or "").lower() or "active_round"
@@ -1044,6 +1412,9 @@ class RuntimeSupervisor:
                             note = str((active_round or {}).get("state") or "").lower() or "working"
                         else:
                             note = "working"
+                elif model_state == "READY" and tail_surface == "READY" and note.startswith("dispatch_seen"):
+                    state = "READY"
+                    note = "prompt_visible"
                 elif model_state in {"READY", "WORKING", "BROKEN"}:
                     state = model_state
                 elif model_state == "BOOTING" or not model_state:
@@ -1113,7 +1484,7 @@ class RuntimeSupervisor:
             if not valid:
                 degraded_reason = f"receipt_manifest:{job_id}:{reason}"
                 continue
-            verify_path = self._matching_verify_path_for_work(job_state.get("artifact_path"))
+            verify_path = self._verify_artifact_path_for_job(job_state)
             if verify_path is None or not verify_path.exists():
                 degraded_reason = f"receipt_verify_missing:{job_id}"
                 continue
@@ -1208,6 +1579,8 @@ class RuntimeSupervisor:
             legacy_not_before=self.started_at - 5.0,
         )
         wrapper_models = build_lane_read_models(self.wrapper_events_dir)
+        self._mirror_wrapper_task_events()
+        force_stopped_surface = bool(self._force_stopped_surface)
         active_round_preview = self._build_active_round(job_states, latest_receipt(self.receipts_dir))
         stale_operator_control = self._stale_operator_control_marker(active_control, job_states, turn_state)
         operator_gate, autonomy = (
@@ -1293,8 +1666,7 @@ class RuntimeSupervisor:
         )
         watcher = self._watcher_status()
         session_alive = self.adapter.session_exists()
-        if session_alive:
-            self._session_recovery_attempts = 0
+        self._maybe_reset_session_recovery_budget(session_alive)
         if not self._runtime_started and not session_alive and not watcher.get("alive"):
             lanes = [
                 {
@@ -1306,11 +1678,11 @@ class RuntimeSupervisor:
                 }
                 for lane in lanes
             ]
-        artifacts = self._build_artifacts()
-        lane_configs = self.runtime_lane_configs or [
-            {"name": lane, "enabled": lane in self.enabled_lanes}
-            for lane in RUNTIME_LANE_ORDER
-        ]
+        artifacts = self._build_artifacts(job_states=job_states)
+        lane_configs = self.runtime_lane_configs or build_lane_configs(
+            enabled_lanes=self.enabled_lanes,
+            role_owners=self.role_owners,
+        )
         configured_enabled_lanes = [
             lane_cfg
             for lane_cfg in lane_configs
@@ -1341,6 +1713,13 @@ class RuntimeSupervisor:
         )
         session_recovery_needed = session_missing and any(str(lane.get("state") or "") == "BROKEN" for lane in lanes)
         session_recovered = self._recover_missing_session() if session_recovery_needed else False
+        session_recovery_exhausted = bool(
+            session_missing
+            and not session_recovered
+            and self._session_recovery_attempts >= _SESSION_RECOVERY_RETRY_LIMIT
+        )
+        if session_recovery_exhausted:
+            self._record_session_recovery_exhausted()
         lane_recover_reasons: list[str] = []
         if not session_recovered:
             for lane in lanes:
@@ -1356,6 +1735,8 @@ class RuntimeSupervisor:
         session_missing_reasons: list[str] = []
         if session_missing:
             session_missing_reasons.append("session_missing")
+            if session_recovery_exhausted:
+                session_missing_reasons.append("session_recovery_exhausted")
         if runtime_inactive and not self._launch_failed_reason:
             # Clean inactive runtime clears stale job-state reasons but keeps active
             # receipt / lane breakage visible so `runtime_state` does not drop to STOPPED
@@ -1374,13 +1755,18 @@ class RuntimeSupervisor:
             )
         self.degraded_reasons = list(dict.fromkeys(item for item in degraded_reasons if item))
         self.degraded_reason = self.degraded_reasons[0] if self.degraded_reasons else ""
+        if force_stopped_surface:
+            self.degraded_reasons = []
+            self.degraded_reason = ""
 
         ready_lanes = [
             lane
             for lane in enabled_lanes
             if str(lane.get("state") or "") in {"READY", "WORKING"}
         ]
-        if self._stop_requested:
+        if force_stopped_surface:
+            self.runtime_state = "STOPPED"
+        elif self._stop_requested:
             self.runtime_state = "STOPPING"
         elif self._launch_failed_reason:
             self.runtime_state = "BROKEN"
@@ -1435,7 +1821,43 @@ class RuntimeSupervisor:
         if desired_autonomy_state != persisted_autonomy:
             self._save_autonomy_state(desired_autonomy_state)
 
-        if self.runtime_state in {"STOPPING", "STOPPED", "BROKEN"}:
+        if force_stopped_surface:
+            turn_state = {
+                "state": "IDLE",
+                "legacy_state": "IDLE",
+                "entered_at": time.time(),
+                "reason": "runtime_stopped",
+                "active_control_file": "",
+                "active_control_seq": -1,
+                "active_role": "",
+                "active_lane": "",
+            }
+            control_block = {
+                "active_control_file": "",
+                "active_control_seq": -1,
+                "active_control_status": "none",
+                "active_control_updated_at": "",
+            }
+            surfaced_active_round = None
+            watcher = {"alive": False, "pid": None}
+            lanes = [
+                {
+                    **lane,
+                    "state": "OFF",
+                    "attachable": False,
+                    "pid": None,
+                    "note": "",
+                }
+                for lane in lanes
+            ]
+            self._write_task_hints(
+                active_lane="",
+                active_round=None,
+                turn_state=turn_state,
+                control=control_block,
+                duplicate_control=duplicate_control,
+            )
+        elif self.runtime_state in {"STOPPING", "STOPPED", "BROKEN"}:
             control_block = {
                 "active_control_file": "",
                 "active_control_seq": -1,
@@ -1462,6 +1884,15 @@ class RuntimeSupervisor:
         self._current_dispatch_stall_marker = dispatch_stall_marker
         completion_stall_marker = self._completion_stall_marker(job_states, active_round=surfaced_active_round)
         self._current_completion_stall_marker = completion_stall_marker
+        progress = self._build_progress_hint(
+            active_lane=active_lane,
+            active_round=surfaced_active_round,
+            turn_state=turn_state if isinstance(turn_state, dict) else None,
+            control=control_block,
+            autonomy=autonomy,
+            artifacts=artifacts,
+        )
+        self._annotate_lane_progress(lanes, progress)
 
         status = {
             "schema_version": 1,
@@ -1475,6 +1906,8 @@ class RuntimeSupervisor:
             "control": control_block,
             "lanes": lanes,
             "active_round": surfaced_active_round,
+            "turn_state": turn_state if isinstance(turn_state, dict) else None,
+            "progress": progress,
             "last_receipt": last_receipt,
             "last_receipt_id": str((last_receipt or {}).get("receipt_id") or ""),
             "watcher": watcher,
@@ -1486,6 +1919,7 @@ class RuntimeSupervisor:
             "last_heartbeat_at": iso_utc(),
             "updated_at": iso_utc(),
         }
+        status.update(derive_automation_health(status))
         atomic_write_json(self.status_path, status)
         self._write_current_run_pointer()
         self._write_compat_files(status)
@@ -1616,6 +2050,33 @@ class RuntimeSupervisor:
             self._last_completion_stall_key = completion_stall_key
             if completion_stall:
                 self._append_event("completion_stall_detected", completion_stall)
+
+        automation_health = str(status.get("automation_health") or "ok")
+        automation_reason_code = str(status.get("automation_reason_code") or "")
+        automation_incident_family = str(status.get("automation_incident_family") or "")
+        automation_next_action = str(status.get("automation_next_action") or "")
+        automation_key = "|".join(
+            [
+                automation_health,
+                automation_reason_code,
+                automation_incident_family,
+                automation_next_action,
+            ]
+        )
+        if automation_key != self._last_automation_incident_key:
+            self._last_automation_incident_key = automation_key
+            if automation_health != "ok" and (automation_reason_code or automation_incident_family):
+                self._append_event(
+                    "automation_incident",
+                    {
+                        "automation_health": automation_health,
+                        "reason_code": automation_reason_code,
+                        "incident_family": automation_incident_family,
+                        "next_action": automation_next_action,
+                        "control": dict(status.get("control") or {}),
+                        "active_round": dict(status.get("active_round") or {}),
+                    },
+                )
 
         current_degraded = str(status.get("degraded_reason") or "")
         if current_degraded != self._last_degraded_reason:
@@ -1754,12 +2215,13 @@ class RuntimeSupervisor:
         override = self._lane_command_override(lane_name)
         if override:
             return override
-        if lane_name == "Claude":
-            return f'exec "{self._find_cli_bin("claude")}" --dangerously-skip-permissions'
-        if lane_name == "Codex":
-            return f'exec "{self._find_cli_bin("codex")}" --ask-for-approval never --disable apps'
-        if lane_name == "Gemini":
-            return f'exec "{self._find_cli_bin("gemini")}" --yolo'
+        command_parts = lane_vendor_command_parts(lane_name)
+        if command_parts:
+            binary = self._find_cli_bin(command_parts[0])
+            args = " ".join(shlex.quote(part) for part in command_parts[1:])
+            if args:
+                return f'exec "{binary}" {args}'
+            return f'exec "{binary}"'
         return "exec bash"
 
     def _lane_shell_command(self, lane_name: str) -> str:
@@ -1799,30 +2261,17 @@ class RuntimeSupervisor:
         return f"printf '%s\\n' {shlex.quote(message)}; exec bash"
 
     def _role_owner(self, role_name: str) -> str:
-        return str(self.role_owners.get(role_name) or "").strip() or {
-            "implement": "Claude",
-            "verify": "Codex",
-            "advisory": "Gemini",
-        }[role_name]
+        fallback = default_role_bindings()
+        return str(self.role_owners.get(role_name) or "").strip() or str(fallback.get(role_name) or "").strip()
 
     def _prompt_owner(self, role_name: str) -> str:
         return str(self.prompt_owners.get(role_name) or "").strip() or self._role_owner(role_name)
 
     def _prompt_read_first_doc(self, role_name: str) -> str:
-        owner = self._prompt_owner(role_name)
-        if owner == "Claude":
-            return "CLAUDE.md"
-        if owner == "Gemini":
-            return "GEMINI.md"
-        return "AGENTS.md"
+        return read_first_doc_for_owner(self._prompt_owner(role_name))
 
     def _role_read_first_doc(self, role_name: str) -> str:
-        owner = self._role_owner(role_name)
-        if owner == "Claude":
-            return "CLAUDE.md"
-        if owner == "Gemini":
-            return "GEMINI.md"
-        return "AGENTS.md"
+        return read_first_doc_for_owner(self._role_owner(role_name))
 
     def _prompt_templates(self) -> dict[str, str]:
         return {
@@ -1833,26 +2282,24 @@ class RuntimeSupervisor:
                 "VERIFY: {latest_verify_path}\n"
                 "NEXT_CONTROL_SEQ: {next_control_seq}\n"
                 "GOAL:\n"
-                "- verify the latest `/work` truthfully\n"
-                "- leave or update `/verify` before any next control slot\n"
-                "- then write exactly one next control outcome\n"
+                "- verify the latest `/work`, update `/verify`, then write exactly one next control\n"
                 "SCOPE_HINT:\n"
                 "{verify_scope_hint}\n"
                 "READ_FIRST:\n"
                 f"- {self._prompt_read_first_doc('verify')}\n"
-                "- work/README.md\n"
-                "- verify/README.md\n"
+                "- {latest_work_path}\n"
+                "- {latest_verify_path}\n"
                 "OUTPUTS:\n"
                 "- /verify note first\n"
-                "- .pipeline/claude_handoff.md (STATUS: implement, CONTROL_SEQ: {next_control_seq})\n"
-                "- .pipeline/gemini_request.md (STATUS: request_open, CONTROL_SEQ: {next_control_seq})\n"
-                "- .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: {next_control_seq})\n"
+                "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/claude_handoff.md [implement] | .pipeline/gemini_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
                 "RULES:\n"
-                "- keep one exact next slice or one exact operator decision only\n"
-                "- if you write .pipeline/operator_request.md, keep STATUS/CONTROL_SEQ in the first 12 lines and also include REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, and BASED_ON_VERIFY near the top\n"
-                "- if the only blocker is next-slice ambiguity, overlapping candidates, or low-confidence prioritization, open .pipeline/gemini_request.md before .pipeline/operator_request.md\n"
-                "- use .pipeline/operator_request.md without Gemini only for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, or when Gemini is unavailable/already inconclusive\n"
-                "- if same-day same-family docs-only truth-sync already repeated 3+ times, do not choose another narrower docs-only micro-slice; choose one bounded docs bundle or escalate"
+                "- keep `READ_FIRST` to the listed verify-owner root doc only\n"
+                "- choose one exact next slice or one exact operator decision\n"
+                "- if you write `.pipeline/claude_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
+                "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
+                "- for next-slice ambiguity / overlap / low-confidence prioritization, open .pipeline/gemini_request.md before .pipeline/operator_request.md\n"
+                "- skip Gemini only for a real operator-only decision, approval/truth-sync, immediate safety, or unavailable/inconclusive Gemini\n"
+                "- after 3+ same-day same-family docs-only truth-sync rounds, choose one bounded docs bundle or escalate"
             ),
             "implement": (
                 "ROLE: implement\n"
@@ -1860,14 +2307,12 @@ class RuntimeSupervisor:
                 "HANDOFF: {active_handoff_path}\n"
                 "HANDOFF_SHA: {active_handoff_sha}\n"
                 "GOAL:\n"
-                "- implement only the exact slice in the handoff\n"
-                "- if finished, leave one `/work` closeout and stop\n"
+                "- do only the handoff; if done, leave one `/work` closeout and stop\n"
                 "READ_FIRST:\n"
                 f"- {self._prompt_read_first_doc('implement')}\n"
-                "- work/README.md\n"
                 "- {active_handoff_path}\n"
                 "RULES:\n"
-                "- do not commit, push, publish a branch/PR, or choose the next slice\n"
+                "- no commit, push, branch/PR publish, or next-slice choice\n"
                 "- do not write .pipeline/gemini_request.md or .pipeline/operator_request.md yourself\n"
                 "- if the handoff is blocked or not actionable, emit the exact sentinel below and stop\n"
                 "BLOCKED_SENTINEL:\n"
@@ -1895,11 +2340,14 @@ class RuntimeSupervisor:
                 "- {latest_work_mention}\n"
                 "- {latest_verify_mention}\n"
                 "OUTPUTS:\n"
-                "- advisory log: {gemini_report_path}\n"
-                "- recommendation slot: {gemini_advice_path} (STATUS: advice_ready, CONTROL_SEQ: {next_control_seq})\n"
+                "- log: {gemini_report_path}\n"
+                "- advice slot: {gemini_advice_path} (STATUS: advice_ready, CONTROL_SEQ: {next_control_seq})\n"
                 "RULES:\n"
+                "- keep `READ_FIRST` to the listed advisory-owner root doc only\n"
+                "- if the request cites exact shipped docs or a current runtime-doc family, inspect those first\n"
+                "- do not widen to `docs/superpowers/**`, `plandoc/**`, or historical planning docs unless the request, latest `/work`, or latest `/verify` cites them as current evidence\n"
                 "- pane-only answer is not completion\n"
-                "- use edit/write tools only; no shell heredoc or shell redirection\n"
+                "- use edit/write tools only; no shell heredoc or redirection\n"
                 "- do not modify other repo files\n"
                 "- keep the recommendation short and exact"
             ),
@@ -1912,19 +2360,19 @@ class RuntimeSupervisor:
                 "WORK: {latest_work_path}\n"
                 "VERIFY: {latest_verify_path}\n"
                 "GOAL:\n"
-                "- convert the advisory into exactly one next control outcome\n"
+                "- turn the advisory into exactly one next control\n"
                 "READ_FIRST:\n"
                 f"- {self._prompt_read_first_doc('verify')}\n"
-                "- verify/README.md\n"
                 "- .pipeline/gemini_request.md\n"
                 "- .pipeline/gemini_advice.md\n"
                 "OUTPUTS:\n"
-                "- .pipeline/claude_handoff.md (STATUS: implement, CONTROL_SEQ: {next_control_seq})\n"
-                "- .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: {next_control_seq})\n"
+                "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/claude_handoff.md [implement] | .pipeline/operator_request.md [needs_operator]\n"
                 "RULES:\n"
-                "- write exactly one next control outcome\n"
-                "- if you write .pipeline/operator_request.md, keep STATUS/CONTROL_SEQ in the first 12 lines and also include REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, and BASED_ON_VERIFY near the top\n"
-                "- after Gemini advice, write .pipeline/operator_request.md only if the advice itself recommends a real operator decision or still leaves no truthful exact slice"
+                "- keep `READ_FIRST` to the listed verify-owner root doc only\n"
+                "- write exactly one next control\n"
+                "- if you write `.pipeline/claude_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
+                "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
+                "- after Gemini advice, use .pipeline/operator_request.md only if it recommends a real operator decision or no truthful exact slice remains"
             ),
         }
 
@@ -1977,22 +2425,7 @@ class RuntimeSupervisor:
             except FileNotFoundError:
                 pass
 
-    def _spawn_runtime_session(self) -> None:
-        self.adapter.create_scaffold()
-
-        lane_configs = self.runtime_lane_configs or [
-            {"name": lane, "enabled": lane in self.enabled_lanes}
-            for lane in RUNTIME_LANE_ORDER
-        ]
-        for lane_cfg in lane_configs:
-            lane_name = str(lane_cfg.get("name") or "").strip()
-            if not lane_name:
-                continue
-            enabled = bool(lane_cfg.get("enabled", lane_name in self.enabled_lanes))
-            command = self._lane_shell_command(lane_name) if enabled else self._disabled_lane_command(lane_name)
-            if not self.adapter.spawn_lane(lane_name, command):
-                raise RuntimeError(f"lane spawn failed: {lane_name}")
-
+    def _watcher_shell_command(self) -> str:
         templates = self._prompt_templates()
         watcher_core_path = resolve_project_runtime_file(self.project_root, "watcher_core.py")
         watcher_log = self.base_dir / "logs" / "experimental" / "watcher.log"
@@ -2032,9 +2465,70 @@ class RuntimeSupervisor:
             "--lease-ttl",
             "600",
         ]
-        watcher_command = f"exec {shlex.join(watcher_args)} > {shlex.quote(str(watcher_log))} 2>&1"
-        watcher_info = self.adapter.spawn_watcher(window_name="watcher-exp", shell_command=watcher_command)
-        self.base_dir.joinpath("experimental.pid").write_text(str(watcher_info.get("pid") or ""), encoding="utf-8")
+        return f"exec {shlex.join(watcher_args)} > {shlex.quote(str(watcher_log))} 2>&1"
+
+    def _spawn_experimental_watcher(self) -> dict[str, Any]:
+        watcher_info = self.adapter.spawn_watcher(
+            window_name="watcher-exp",
+            shell_command=self._watcher_shell_command(),
+        )
+        self.base_dir.joinpath("experimental.pid").write_text(
+            str(watcher_info.get("pid") or ""),
+            encoding="utf-8",
+        )
+        return watcher_info
+
+    def _maybe_restart_watcher_for_source_change(self) -> bool:
+        if self._stop_requested or not self._runtime_started:
+            return False
+        marker = self._watcher_source_restart_marker()
+        if marker is None:
+            return False
+        restart_key = str(marker.get("restart_key") or "")
+        self._last_watcher_source_restart_key = restart_key
+        self._last_watcher_source_restart_at = time.time()
+        payload = {key: value for key, value in marker.items() if key != "restart_key"}
+        self._append_event("watcher_self_restart_started", payload)
+        try:
+            self._terminate_pid_file(self.base_dir / "experimental.pid")
+            watcher_info = self._spawn_experimental_watcher()
+        except Exception as exc:
+            self._append_event(
+                "watcher_self_restart_failed",
+                {
+                    **payload,
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+            )
+            return False
+        self._write_current_run_pointer()
+        self._append_event(
+            "watcher_self_restart_completed",
+            {
+                **payload,
+                "new_pid": int(watcher_info.get("pid") or 0),
+                "result": "restarted",
+            },
+        )
+        return True
+
+    def _spawn_runtime_session(self) -> None:
+        self.adapter.create_scaffold()
+
+        lane_configs = self.runtime_lane_configs or build_lane_configs(
+            enabled_lanes=self.enabled_lanes,
+            role_owners=self.role_owners,
+        )
+        for lane_cfg in lane_configs:
+            lane_name = str(lane_cfg.get("name") or "").strip()
+            if not lane_name:
+                continue
+            enabled = bool(lane_cfg.get("enabled", lane_name in self.enabled_lanes))
+            command = self._lane_shell_command(lane_name) if enabled else self._disabled_lane_command(lane_name)
+            if not self.adapter.spawn_lane(lane_name, command):
+                raise RuntimeError(f"lane spawn failed: {lane_name}")
+
+        self._spawn_experimental_watcher()
 
         if self.mode in {"baseline", "both"}:
             baseline_script = resolve_project_runtime_file(self.project_root, "pipeline-watcher-v3-logged.sh")
@@ -2064,12 +2558,14 @@ class RuntimeSupervisor:
         if self._stop_requested or not self._runtime_started:
             return False
         retries = self._session_recovery_attempts
-        retry_limit = 1
+        retry_limit = _SESSION_RECOVERY_RETRY_LIMIT
         if retries >= retry_limit:
+            self._record_session_recovery_exhausted(retry_limit=retry_limit)
             return False
         attempt = retries + 1
         self._session_recovery_attempts = attempt
-        self._append_event("session_recovery_started", {"attempt": attempt})
+        self._session_recovery_last_started_at = time.time()
+        self._append_event("session_recovery_started", {"attempt": attempt, "retry_limit": retry_limit})
         try:
             self.adapter.kill_session()
             self._terminate_pid_file(self.base_dir / "baseline.pid")
@@ -2083,12 +2579,47 @@ class RuntimeSupervisor:
                 "session_recovery_failed",
                 {
                     "attempt": attempt,
+                    "retry_limit": retry_limit,
                     "error": f"{type(exc).__name__}: {exc}",
                 },
             )
             return False
         self._append_event("session_recovery_completed", {"attempt": attempt, "result": "recreated"})
         return True
+
+    def _record_session_recovery_exhausted(self, *, retry_limit: int = _SESSION_RECOVERY_RETRY_LIMIT) -> None:
+        attempts = self._session_recovery_attempts
+        key = f"{attempts}|{retry_limit}"
+        if key == self._last_session_recovery_exhausted_key:
+            return
+        self._last_session_recovery_exhausted_key = key
+        self._append_event(
+            "session_recovery_exhausted",
+            {
+                "attempts": attempts,
+                "retry_limit": retry_limit,
+                "reset_after_stable_sec": _SESSION_RECOVERY_RESET_STABLE_SEC,
+            },
+        )
+
+    def _maybe_reset_session_recovery_budget(self, session_alive: bool) -> None:
+        if not session_alive or self._session_recovery_attempts <= 0:
+            return
+        if self._session_recovery_last_started_at <= 0:
+            return
+        stable_sec = time.time() - self._session_recovery_last_started_at
+        if stable_sec < _SESSION_RECOVERY_RESET_STABLE_SEC:
+            return
+        self._session_recovery_attempts = 0
+        self._session_recovery_last_started_at = 0.0
+        self._last_session_recovery_exhausted_key = ""
+        self._append_event(
+            "session_recovery_budget_reset",
+            {
+                "stable_sec": round(stable_sec, 3),
+                "reset_after_stable_sec": _SESSION_RECOVERY_RESET_STABLE_SEC,
+            },
+        )
 
     def _stop_runtime(self) -> None:
         self._stop_token_collector()
@@ -2120,6 +2651,7 @@ class RuntimeSupervisor:
 
         try:
             while True:
+                self._maybe_restart_watcher_for_source_change()
                 status = self._write_status()
                 self._record_status_events(status)
                 if self._stop_requested:
@@ -2136,7 +2668,11 @@ class RuntimeSupervisor:
             self._runtime_started = False
             self._stop_requested = False
             self.runtime_state = "STOPPED"
-            final_status = self._write_status()
+            self._force_stopped_surface = True
+            try:
+                final_status = self._write_status()
+            finally:
+                self._force_stopped_surface = False
             self._record_status_events(final_status)
             self._append_event("runtime_stopped", {"runtime_state": "STOPPED"})
             try:

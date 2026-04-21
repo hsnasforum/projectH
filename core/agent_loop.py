@@ -4101,13 +4101,15 @@ class AgentLoop:
             source_title = str(source.get("title") or source.get("result_title") or "").strip()
             source_role = self._entity_source_role_label(query=query, source=source)
             role_confidence = {
-                SourceRole.WIKI: 0.95,
-                SourceRole.OFFICIAL: 0.9,
+                SourceRole.OFFICIAL: 0.95,
+                SourceRole.WIKI: 0.9,
+                SourceRole.DATABASE: 0.9,
                 SourceRole.DESCRIPTIVE: 0.75,
                 SourceRole.NEWS: 0.55,
                 SourceRole.PORTAL: 0.45,
                 SourceRole.BLOG: 0.35,
                 SourceRole.AUXILIARY: 0.4,
+                SourceRole.COMMUNITY: 0.4,
             }.get(source_role, 0.4)
             for bullet in self._extract_entity_source_fact_bullets(query=query, source=source):
                 parsed = self._split_entity_fact_bullet(bullet)
@@ -4405,6 +4407,19 @@ class AgentLoop:
         slot = self._entity_slot_from_probe_text(query)
         return bool(slot)
 
+    def _claim_coverage_non_focus_summary_label(
+        self,
+        default_label: str,
+        status: str,
+        support_plurality: str,
+        trust_tier: str,
+    ) -> str:
+        if status == CoverageStatus.WEAK and support_plurality == "multiple":
+            return "여러 출처 확인"
+        if status == CoverageStatus.STRONG and trust_tier == "mixed":
+            return "교차 확인(출처 약함)"
+        return default_label
+
     def _build_claim_coverage_progress_summary(
         self,
         *,
@@ -4428,13 +4443,24 @@ class AgentLoop:
             for item in canonical_current
             if str(item.get("slot") or "").strip()
         }
+        current_support_plurality_map = {
+            str(item.get("slot") or "").strip(): str(item.get("support_plurality") or "").strip()
+            for item in canonical_current
+            if str(item.get("slot") or "").strip()
+        }
+        current_trust_tier_map = {
+            str(item.get("slot") or "").strip(): str(item.get("trust_tier") or "").strip()
+            for item in canonical_current
+            if str(item.get("slot") or "").strip()
+        }
         if not previous_map or not current_map:
             return None
 
         focus_slot = self._entity_slot_from_probe_text(query)
         improved_slots: list[tuple[str, str, str, str, str]] = []
         regressed_slots: list[tuple[str, str, str, str, str]] = []
-        unresolved_slots: list[tuple[str, str, str]] = []
+        unresolved_slots: list[tuple[str, str, str, str, str]] = []
+        mixed_trust_slots: list[tuple[str, str, str, str, str]] = []
         for slot in CORE_ENTITY_SLOTS:
             current_status = current_map.get(slot, "")
             if not current_status:
@@ -4468,7 +4494,26 @@ class AgentLoop:
                 CoverageStatus.MISSING,
             }:
                 unresolved_slots.append(
-                    (slot, self._claim_coverage_status_label(current_status), current_status)
+                    (
+                        slot,
+                        self._claim_coverage_status_label(current_status),
+                        current_status,
+                        current_support_plurality_map.get(slot, ""),
+                        current_trust_tier_map.get(slot, ""),
+                    )
+                )
+            if (
+                current_status == CoverageStatus.STRONG
+                and current_trust_tier_map.get(slot, "") == "mixed"
+            ):
+                mixed_trust_slots.append(
+                    (
+                        slot,
+                        self._claim_coverage_status_label(current_status),
+                        current_status,
+                        current_support_plurality_map.get(slot, ""),
+                        current_trust_tier_map.get(slot, ""),
+                    )
                 )
 
         if focus_slot:
@@ -4481,6 +4526,12 @@ class AgentLoop:
                     # wording, to stay coherent with the shipped
                     # summarize_slot_coverage rule.
                     if cur_status == CoverageStatus.STRONG:
+                        focus_trust_tier = current_trust_tier_map.get(focus_slot, "")
+                        if focus_trust_tier == "mixed":
+                            return (
+                                f"재조사 결과 {slot}{focus_particle} {previous_label}에서 "
+                                f"{current_label}{directional} 보강되었으나 공식/위키/데이터 소스가 약합니다."
+                            )
                         return (
                             f"재조사 결과 {slot}{focus_particle} {previous_label}에서 "
                             f"{current_label}{directional} 보강되어 신뢰할 만한 출처들의 "
@@ -4512,7 +4563,7 @@ class AgentLoop:
                         f"재조사 결과 {slot}{focus_particle} {previous_label}에서 "
                         f"{current_label}{directional} 약해졌습니다."
                     )
-            for slot, current_label, cur_status in unresolved_slots:
+            for slot, current_label, cur_status, cur_support_plurality, _cur_trust_tier in unresolved_slots:
                 if slot == focus_slot:
                     if cur_status == CoverageStatus.CONFLICT:
                         return (
@@ -4520,6 +4571,11 @@ class AgentLoop:
                             "출처들이 서로 어긋난 채 남아 있습니다."
                         )
                     if cur_status == CoverageStatus.WEAK:
+                        if cur_support_plurality == "multiple":
+                            return (
+                                f"재조사했지만 {slot}{focus_particle} "
+                                "아직 여러 출처가 확인되었으나 교차 확인 기준에는 미달합니다."
+                            )
                         return (
                             f"재조사했지만 {slot}{focus_particle} "
                             "아직 한 가지 출처의 정보로만 확인됩니다."
@@ -4528,22 +4584,34 @@ class AgentLoop:
                         f"재조사했지만 {slot}{focus_particle} "
                         "아직 관련 정보를 찾지 못했습니다."
                     )
+            if (
+                current_map.get(focus_slot, "") == CoverageStatus.STRONG
+                and current_trust_tier_map.get(focus_slot, "") == "mixed"
+            ):
+                return (
+                    f"재조사했지만 {focus_slot}{focus_particle} "
+                    "교차 확인 기준은 충족하지만 공식/위키/데이터 소스가 약합니다."
+                )
 
         if improved_slots:
             improved_summary = ", ".join(
                 f"{slot} {before}->{after}"
                 for slot, before, after, _prev_status, _cur_status in improved_slots[:3]
             )
-            if unresolved_slots:
+            combined_unresolved_slots = unresolved_slots + mixed_trust_slots
+            if combined_unresolved_slots:
                 unresolved_summary = ", ".join(
-                    f"{slot} {label}" for slot, label, _status in unresolved_slots[:2]
+                    f"{slot} {self._claim_coverage_non_focus_summary_label(label, status, plurality, trust_tier)}"
+                    for slot, label, status, plurality, trust_tier in combined_unresolved_slots[:2]
                 )
                 return f"재조사 결과 {improved_summary}로 보강되었습니다. 아직 {unresolved_summary} 상태의 슬롯이 남아 있습니다."
             return f"재조사 결과 {improved_summary}로 보강되었습니다."
 
-        if unresolved_slots:
+        combined_unresolved_slots = unresolved_slots + mixed_trust_slots
+        if combined_unresolved_slots:
             unresolved_summary = ", ".join(
-                f"{slot} {label}" for slot, label, _status in unresolved_slots[:3]
+                f"{slot} {self._claim_coverage_non_focus_summary_label(label, status, plurality, trust_tier)}"
+                for slot, label, status, plurality, trust_tier in combined_unresolved_slots[:3]
             )
             return f"재조사했지만 아직 {unresolved_summary} 상태입니다."
         return None

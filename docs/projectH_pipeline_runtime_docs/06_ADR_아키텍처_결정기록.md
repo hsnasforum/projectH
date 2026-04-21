@@ -190,7 +190,7 @@ receipt authority가 lane이나 watcher 쪽으로 분산되면 `/verify`와 runt
 
 ### 결정
 round-close receipt는 supervisor만 생성한다.  
-watcher, wrapper, Codex/Gemini lane은 completion fact만 보고한다.
+watcher, wrapper, verify/advisory owner lane은 completion fact만 보고한다.
 
 ### 이유
 - single writer 원칙 유지
@@ -210,7 +210,7 @@ vendor UI 문자열을 여러 레이어가 재해석하면 readiness와 recovery
 
 ### 결정
 wrapper 최소 이벤트는 `READY`, `HEARTBEAT`, `DISPATCH_SEEN`, `TASK_ACCEPTED`, `TASK_DONE`, `BROKEN`으로 고정한다.
-Claude는 post-accept blind replay를 금지하고, Codex/Gemini는 bounded auto-retry를 허용한다.
+implement owner는 post-accept blind replay를 금지하고, verify/advisory owner는 bounded auto-retry를 허용한다.
 
 ### 이유
 - readiness/recovery/receipt/UI 상태를 같은 경계 위에 올리기 위함

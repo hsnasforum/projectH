@@ -5,12 +5,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from pipeline_gui import setup as setup_module
+from pipeline_gui import setup as setup_gui_module
 
 
 class PipelineGuiSetupTest(unittest.TestCase):
     def test_soft_warnings_include_token_runtime_assets(self) -> None:
-        labels = [label for label, _check_type, _target in setup_module._SOFT_WARNINGS]
+        labels = [label for label, _check_type, _target in setup_gui_module._SOFT_WARNINGS]
         self.assertIn("token_collector.py", labels)
         self.assertIn("token_schema.sql", labels)
 
@@ -22,8 +22,8 @@ class PipelineGuiSetupTest(unittest.TestCase):
             def _fake_exists(_base: Path, rel: str) -> bool:
                 return rel not in missing_targets
 
-            with mock.patch.object(setup_module, "_file_exists", side_effect=_fake_exists):
-                warnings = setup_module._check_soft_warnings(project)
+            with mock.patch.object(setup_gui_module, "_file_exists", side_effect=_fake_exists):
+                warnings = setup_gui_module._check_soft_warnings(project)
 
         self.assertIn("token_collector.py", warnings)
         self.assertIn("token_schema.sql", warnings)
@@ -36,10 +36,18 @@ class PipelineGuiSetupTest(unittest.TestCase):
             script = bundle_root / "token_collector.py"
             script.write_text("# stub\n", encoding="utf-8")
             with (
-                mock.patch.object(setup_module, "APP_ROOT", app_root),
-                mock.patch.object(setup_module, "resolve_packaged_file", return_value=script),
+                mock.patch.object(setup_gui_module, "APP_ROOT", app_root),
+                mock.patch.object(setup_gui_module, "resolve_packaged_file", return_value=script),
             ):
-                self.assertTrue(setup_module._file_exists(app_root, "token_collector.py"))
+                self.assertTrue(setup_gui_module._file_exists(app_root, "token_collector.py"))
+
+    def test_agents_template_mentions_turbo_lite_wrapper_order(self) -> None:
+        template = setup_gui_module._TMPL_AGENTS
+        self.assertIn("Turbo-lite Wrappers", template)
+        self.assertIn("`onboard-lite`", template)
+        self.assertIn("`finalize-lite`", template)
+        self.assertIn("`round-handoff`", template)
+        self.assertIn("`next-slice-triage`", template)
 
 
 if __name__ == "__main__":

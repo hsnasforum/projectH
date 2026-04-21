@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from .agents import STATUS_COLORS, _parse_elapsed, format_elapsed
 from .backend import format_control_summary, time_ago
 from .tokens import format_token_usage_note
+from pipeline_runtime.turn_arbitration import canonical_turn_state_name
 
 _AGENT_STATUS_LABELS = {
     "READY": "대기",
@@ -13,6 +14,41 @@ _AGENT_STATUS_LABELS = {
     "DEAD": "종료됨",
     "BOOTING": "기동 중",
 }
+
+_AGENT_NOTE_LABELS = {
+    "prompt_visible": "대기 중",
+    "waiting_next_control": "다음 지시 대기",
+    "signal_mismatch": "상태 확인 필요",
+    "verify_pending": "검증 대기",
+    "followup": "후속 처리",
+    "implement": "구현 중",
+    "progress:implementing": "구현 진행 중",
+    "progress:work_closeout_written": "work 작성 완료",
+    "progress:verify_dispatch_pending": "검증 준비 중",
+    "progress:running_verification": "검증 실행 중",
+    "progress:verify_note_written_next_control_pending": "verify 작성 완료, 다음 지시 정리",
+    "progress:receipt_close_pending": "receipt 마감 대기",
+    "progress:operator_gate_followup": "operator gate 후속 처리",
+    "progress:next_control_pending": "다음 control 정리 중",
+    "progress:next_control_written": "다음 control 작성 완료",
+    "progress:advisory_running": "자문 진행 중",
+    "progress:operator_boundary": "operator 경계 대기",
+}
+
+_AUTOMATION_HEALTH_LABELS = {
+    "ok": "정상",
+    "recovering": "복구 중",
+    "attention": "주의",
+    "needs_operator": "개입 필요",
+}
+
+
+@dataclass(frozen=True)
+class PipelineStatusPresentation:
+    pipeline_text: str
+    status_text: str
+    fg: str
+    bg: str
 
 
 @dataclass(frozen=True)
@@ -55,6 +91,32 @@ class AgentCardPresentation:
     card_border: str
     card_thickness: int
     card_bg: str
+
+
+def build_pipeline_status_presentation(
+    *,
+    runtime_state: str,
+    automation_health: str = "ok",
+) -> PipelineStatusPresentation:
+    health = str(automation_health or "ok")
+    if health != "ok":
+        label = _AUTOMATION_HEALTH_LABELS.get(health, health)
+        if health == "needs_operator":
+            return PipelineStatusPresentation(f"파이프라인: ! {label}", label, "#f87171", "#2a1015")
+        if health == "attention":
+            return PipelineStatusPresentation(f"파이프라인: ▲ {label}", label, "#fb923c", "#2a160f")
+        return PipelineStatusPresentation(f"파이프라인: ◐ {label}", label, "#fbbf24", "#2b2110")
+
+    state = str(runtime_state or "STOPPED")
+    if state == "RUNNING":
+        return PipelineStatusPresentation("파이프라인: ● 실행 중", "실행 중", "#4ade80", "#0a2a18")
+    if state == "STARTING":
+        return PipelineStatusPresentation("파이프라인: ◐ 기동 중", "기동 중", "#fbbf24", "#2b2110")
+    if state == "DEGRADED":
+        return PipelineStatusPresentation("파이프라인: ▲ 부분 장애", "부분 장애", "#fb923c", "#2a160f")
+    if state == "BROKEN":
+        return PipelineStatusPresentation("파이프라인: ✗ 장애", "장애", "#f87171", "#2a1015")
+    return PipelineStatusPresentation("파이프라인: ■ 중지됨", "중지됨", "#f87171", "#2a1015")
 
 
 def build_control_presentation(
@@ -112,6 +174,10 @@ def build_control_presentation(
 def build_console_presentation(*, selected_agent: str, snapshot: object) -> ConsolePresentation:
     runtime_state = str(_snapshot_get(snapshot, "runtime_state", "STOPPED") or "STOPPED")
     degraded_reason = str(_snapshot_get(snapshot, "degraded_reason", "") or "")
+    automation_health = str(_snapshot_get(snapshot, "automation_health", "ok") or "ok")
+    automation_reason = str(_snapshot_get(snapshot, "automation_reason_code", "") or "")
+    automation_family = str(_snapshot_get(snapshot, "automation_incident_family", "") or "")
+    automation_action = str(_snapshot_get(snapshot, "automation_next_action", "continue") or "continue")
     is_live = runtime_state in {"STARTING", "RUNNING", "DEGRADED"}
     lane_details = _snapshot_get(snapshot, "lane_details", {}) or {}
     run = _snapshot_get(snapshot, "run_summary", {}) or {}
@@ -124,6 +190,14 @@ def build_console_presentation(*, selected_agent: str, snapshot: object) -> Cons
     log_lines = list(_snapshot_get(snapshot, "log_lines", []) or [])
 
     focus_lines: list[str] = [f"runtime: {runtime_state}"]
+    if automation_health != "ok" or automation_reason:
+        focus_lines.append(f"automation_health: {automation_health}")
+        if automation_reason:
+            focus_lines.append(f"automation_reason_code: {automation_reason}")
+        if automation_family:
+            focus_lines.append(f"automation_incident_family: {automation_family}")
+        if automation_action:
+            focus_lines.append(f"automation_next_action: {automation_action}")
     selected_lane = dict(lane_details.get(selected_agent) or {}) if isinstance(lane_details, dict) else {}
     selected_state = str(selected_lane.get("state") or "")
     if selected_state:
@@ -139,6 +213,12 @@ def build_console_presentation(*, selected_agent: str, snapshot: object) -> Cons
     note = str(selected_lane.get("note") or "")
     if note:
         focus_lines.append(f"note: {note}")
+    progress_phase = str(selected_lane.get("progress_phase") or "")
+    if progress_phase:
+        focus_lines.append(f"progress_phase: {progress_phase}")
+    progress_reason = str(selected_lane.get("progress_reason") or "")
+    if progress_reason:
+        focus_lines.append(f"progress_reason: {progress_reason}")
     if "attachable" in selected_lane:
         focus_lines.append(f"attachable: {'true' if bool(selected_lane.get('attachable')) else 'false'}")
     pid_value = selected_lane.get("pid")
@@ -158,6 +238,7 @@ def build_console_presentation(*, selected_agent: str, snapshot: object) -> Cons
 
     run_turn = str(run.get("turn", "") or "") if isinstance(run, dict) else ""
     run_phase = str(run.get("phase", "") or "") if isinstance(run, dict) else ""
+    run_phase_label = _format_progress_phase(run_phase)
     run_job = str(run.get("job", "") or "") if isinstance(run, dict) else ""
     if run_turn:
         focus_lines.append(f"active_turn: {run_turn}")
@@ -182,7 +263,7 @@ def build_console_presentation(*, selected_agent: str, snapshot: object) -> Cons
         if run_turn:
             parts.append(f"턴: {run_turn}")
         if run_phase:
-            parts.append(f"단계: {run_phase}")
+            parts.append(f"단계: {run_phase_label}")
         if run_job:
             short_job = run_job.split("-", 1)[1][:50] if "-" in run_job else run_job[:50]
             parts.append(f"작업: {short_job}")
@@ -209,7 +290,7 @@ def build_console_presentation(*, selected_agent: str, snapshot: object) -> Cons
     if run_turn:
         log_hint_parts.append(run_turn)
     if run_phase:
-        log_hint_parts.append(run_phase)
+        log_hint_parts.append(run_phase_label)
     log_hint = f" • {' → '.join(log_hint_parts)}" if log_hint_parts else ""
     if is_live:
         log_title = f"Runtime 이벤트{log_hint}"
@@ -256,7 +337,10 @@ def _build_round_record_lines(
             _format_record_line("마지막 verify", verify_name, verify_mtime),
         )
 
-    state_value = str(turn_state.get("state") or "")
+    state_value = canonical_turn_state_name(
+        turn_state.get("state"),
+        legacy_state=turn_state.get("legacy_state"),
+    )
     entered_at = float(turn_state.get("entered_at") or 0.0)
     work_is_current = bool(work_mtime and entered_at and work_mtime >= entered_at)
     verify_is_current = bool(verify_mtime and entered_at and verify_mtime >= entered_at)
@@ -264,7 +348,7 @@ def _build_round_record_lines(
     latest_work_text = _format_record_line("최신 work", work_name, work_mtime)
     latest_verify_text = _format_record_line("최신 verify", verify_name, verify_mtime)
 
-    if state_value == "CLAUDE_ACTIVE":
+    if state_value == "IMPLEMENT_ACTIVE":
         if work_is_current:
             work_text = _format_record_line("현재 라운드 work", work_name, work_mtime)
         elif work_name == "—":
@@ -273,7 +357,7 @@ def _build_round_record_lines(
             work_text = f"현재 라운드 work: 아직 기록되지 않음 · {latest_work_text}"
         return work_text, latest_verify_text
 
-    if state_value in {"CODEX_VERIFY", "CODEX_FOLLOWUP"}:
+    if state_value in {"VERIFY_ACTIVE", "VERIFY_FOLLOWUP"}:
         if work_name == "—":
             work_text = "검증 기준 work: 아직 확인되지 않음"
         else:
@@ -306,7 +390,7 @@ def build_agent_card_presentations(
             if label not in updated_working_since:
                 elapsed = _parse_elapsed(note)
                 updated_working_since[label] = now - elapsed if elapsed > 0 else now
-                note_text = note or format_elapsed(0)
+                note_text = _format_agent_card_note(note) or format_elapsed(0)
             else:
                 elapsed = _parse_elapsed(note)
                 if elapsed > 0:
@@ -316,7 +400,7 @@ def build_agent_card_presentations(
                 note_text = None
         else:
             updated_working_since.pop(label, None)
-            note_text = note or "대기 중"
+            note_text = _format_agent_card_note(note) or "대기 중"
 
         usage_quota = ""
         if isinstance(token_usage, dict):
@@ -352,6 +436,22 @@ def build_agent_card_presentations(
             )
         )
     return presentations, updated_working_since
+
+
+def _format_agent_card_note(note: str) -> str:
+    text = str(note or "").strip()
+    if not text:
+        return ""
+    if _parse_elapsed(text) > 0:
+        return text
+    return _AGENT_NOTE_LABELS.get(text, text)
+
+
+def _format_progress_phase(phase: str) -> str:
+    text = str(phase or "").strip()
+    if not text:
+        return ""
+    return _AGENT_NOTE_LABELS.get(f"progress:{text}", text)
 
 
 def build_empty_agent_card_presentation() -> AgentCardPresentation:

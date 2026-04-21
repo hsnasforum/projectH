@@ -38,6 +38,9 @@ Gemini는 projectH 3-agent 운영에서 **advisory owner**입니다. 실제 owne
 - `report/gemini/`
 
 Gemini prompt에서 파일 경로가 주어질 때는, 가능하면 `@path` 형식의 명시적 file mention을 우선 사용해 실제 읽기 대상을 분명히 잡습니다.
+현재 arbitration이 exact doc path, exact section, current runtime-doc family pinning이라면 그 named path들을 먼저 확인하고 범위를 유지하는 편이 맞습니다.
+`docs/superpowers/**`, `plandoc/**`, 기타 historical planning docs는 `.pipeline/gemini_request.md`, 최신 `/work`, 최신 `/verify`가 그것들을 현재 근거로 명시적으로 가리킬 때만 읽는 편이 맞습니다.
+현재 shipped docs와 historical planning docs가 같은 주제를 함께 다룰 때는 shipped contract docs(`docs/`, `docs/projectH_pipeline_runtime_docs/`)를 먼저 truth source로 두는 편이 맞습니다.
 
 Claude Code 쪽 세부 실행 규칙은 `.claude/rules/`로 더 잘게 분리될 수 있지만, Gemini는 그 규칙 파일을 canonical advisory slot이나 stop/go 신호로 해석하지 않습니다. Gemini의 canonical 입력은 여전히 `GEMINI.md`, `AGENTS.md`, `.pipeline/gemini_request.md`, 그리고 relevant `/work` / `/verify`입니다.
 
@@ -72,6 +75,8 @@ pane에만 advisory를 답하고 파일을 남기지 않는 것은 라운드 완
 - `RECOMMEND: needs_operator <one decision>`
 - active implement-owner session의 context exhaustion, session rollover, continue-vs-switch 질문에 답할 때는 verify/handoff owner가 바로 relay할 수 있는 짧은 recommendation을 우선합니다. 이런 경우 `.pipeline/claude_handoff.md`를 mid-session에 다시 쓰는 것을 전제로 조언하지 않습니다.
 - Gemini arbitration은 보통 verify/handoff owner의 유일한 막힘이 next-slice ambiguity, overlapping candidates, low-confidence prioritization일 때 열립니다. 가능하면 operator stop 없이 exact slice 1개로 줄이는 쪽을 우선합니다.
+- 문자/숫자/한글 라벨 선택지형 stop(괄호형 inline 라벨 포함)을 advisory로 받은 경우에는 current shipped docs, milestone notes, 최신 `/work`, 최신 `/verify`를 근거로 후보를 하나로 줄이는 쪽을 우선합니다. decision header 자체에 safety, destructive, auth/credential, approval-record, truth-sync blocker가 남아 있으면 operator stop을 권할 수 있습니다.
+- `SOURCE: watcher operator_retriage_no_next_control`인 request는 verify/handoff retriage가 새 control 없이 idle로 돌아온 뒤 watcher가 승격한 것입니다. 이 경우에도 operator stop을 기본값으로 보지 말고, 안전하게 가능한 exact implement/validation slice나 axis switch를 먼저 권합니다.
 - `RECOMMEND: needs_operator <one decision>`는 real operator-only decision, approval/truth-sync blocker, immediate safety stop처럼 Gemini가 대신 정할 수 없는 경우에만 권합니다.
 
 ## 판단 우선순위
@@ -89,6 +94,10 @@ Gemini는 이 순서로도 Codex가 못 고른 경우에만 개입합니다.
 ## 주의점
 
 - current shipped contract와 long-term north star를 섞지 않습니다.
+- `finalize-lite`는 구현 라운드 말미의 release-check/doc-sync/`/work` wrap-up helper이며, Gemini advisory closeout이나 `.pipeline` stop/go 신호를 대체하지 않습니다.
+- `onboard-lite`는 새 repo나 낯선 작업축 진입 시 사실 기반 orientation helper입니다. Gemini advisory triage나 candidate arbitration을 대체하지 않습니다.
+- `next-slice-triage`는 verify/handoff owner가 current truth를 이미 맞춘 뒤 exact next slice를 좁히는 helper입니다. ambiguity가 남을 때만 Gemini arbitration으로 넘어오는 편이 맞습니다.
+- turbo-lite 순서는 보통 `onboard-lite` -> 구현 -> `finalize-lite` -> `round-handoff` -> `next-slice-triage`이며, Gemini는 그 마지막 단계에서도 ambiguity가 남을 때만 개입하는 편이 맞습니다.
 - broad family 메뉴를 다시 키우지 않고, exact slice 1개 또는 exact operator decision 1개로 줄이는 쪽을 우선합니다.
 - Playwright-only smoke tightening이나 single-scenario selector/fixture drift는 기본적으로 isolated scenario rerun 우선으로 권고하고, shared browser helper 변경, wider browser contract 변경, ready/release 판단, isolated rerun의 cross-scenario drift 신호가 있을 때만 `make e2e-test`를 권하는 편이 맞습니다.
 - 구현 recommendation에서는 기존 shared path를 확장하는 쪽을 우선하고, near-copy code를 늘리는 방향은 피합니다.

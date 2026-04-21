@@ -8,12 +8,17 @@ from pipeline_gui.home_presenter import (
     build_console_presentation,
     build_control_presentation,
     build_empty_agent_card_presentation,
+    build_pipeline_status_presentation,
 )
 
 
 def _base_snapshot() -> dict[str, object]:
     return {
         "runtime_state": "STOPPED",
+        "automation_health": "ok",
+        "automation_reason_code": "",
+        "automation_incident_family": "",
+        "automation_next_action": "continue",
         "degraded_reason": "",
         "session_ok": False,
         "watcher_alive": False,
@@ -37,16 +42,35 @@ def _base_snapshot() -> dict[str, object]:
 
 
 class PipelineGuiHomePresenterTest(unittest.TestCase):
+    def test_build_pipeline_status_presentation_prefers_automation_health_label(self) -> None:
+        presentation = build_pipeline_status_presentation(
+            runtime_state="RUNNING",
+            automation_health="attention",
+        )
+
+        self.assertEqual(presentation.pipeline_text, "파이프라인: ▲ 주의")
+        self.assertEqual(presentation.status_text, "주의")
+        self.assertEqual(presentation.fg, "#fb923c")
+
+    def test_build_pipeline_status_presentation_uses_runtime_state_when_health_ok(self) -> None:
+        presentation = build_pipeline_status_presentation(
+            runtime_state="RUNNING",
+            automation_health="ok",
+        )
+
+        self.assertEqual(presentation.pipeline_text, "파이프라인: ● 실행 중")
+        self.assertEqual(presentation.status_text, "실행 중")
+
     def test_build_control_presentation_normal_active(self) -> None:
         presentation = build_control_presentation(
             {
-                "active": {"file": "claude_handoff.md", "status": "implement", "label": "Claude 실행", "mtime": 1.0},
-                "stale": [{"file": "operator_request.md", "status": "needs_operator", "label": "operator 대기", "mtime": 0.5}],
+                "active": {"file": "claude_handoff.md", "status": "implement", "label": "implement handoff", "mtime": 1.0},
+                "stale": [{"file": "operator_request.md", "status": "needs_operator", "label": "operator wait", "mtime": 0.5}],
             },
             None,
         )
 
-        self.assertIn("Claude 실행", presentation.active_text)
+        self.assertIn("implement handoff", presentation.active_text)
         self.assertIn("mtime fallback", presentation.active_text)
         self.assertIn("operator_request.md", presentation.stale_text)
         self.assertEqual(presentation.active_fg, "#93c5fd")
@@ -57,13 +81,13 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
     def test_build_control_presentation_needs_operator_is_red(self) -> None:
         presentation = build_control_presentation(
             {
-                "active": {"file": "operator_request.md", "status": "needs_operator", "label": "operator 대기", "mtime": 1.0},
+                "active": {"file": "operator_request.md", "status": "needs_operator", "label": "operator wait", "mtime": 1.0},
                 "stale": [],
             },
             None,
         )
 
-        self.assertIn("operator 대기", presentation.active_text)
+        self.assertIn("operator wait", presentation.active_text)
         self.assertEqual(presentation.active_fg, "#fca5a5")
         self.assertEqual(presentation.active_box_bg, "#2a1015")
         self.assertEqual(presentation.active_box_border, "#7f1d1d")
@@ -82,8 +106,8 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
     def test_build_control_presentation_preserves_seq_provenance(self) -> None:
         presentation = build_control_presentation(
             {
-                "active": {"file": "claude_handoff.md", "status": "implement", "label": "Claude 실행", "mtime": 1.0, "control_seq": 7},
-                "stale": [{"file": "gemini_request.md", "status": "request_open", "label": "Gemini 실행", "mtime": 0.5, "control_seq": 5}],
+                "active": {"file": "claude_handoff.md", "status": "implement", "label": "implement handoff", "mtime": 1.0, "control_seq": 7},
+                "stale": [{"file": "gemini_request.md", "status": "request_open", "label": "advisory request", "mtime": 0.5, "control_seq": 5}],
             },
             None,
         )
@@ -95,17 +119,17 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
     def test_build_control_presentation_prefers_verify_activity_over_handoff_label(self) -> None:
         presentation = build_control_presentation(
             {
-                "active": {"file": "claude_handoff.md", "status": "implement", "label": "Claude 실행", "mtime": 1.0, "control_seq": 8},
+                "active": {"file": "claude_handoff.md", "status": "implement", "label": "implement handoff", "mtime": 1.0, "control_seq": 8},
                 "stale": [],
             },
             {
                 "status": "VERIFY_RUNNING",
-                "label": "Codex 검증 실행 중",
+                "label": "verify 실행 중",
                 "artifact_name": "2026-04-09-docs-response-origin-summary-richness-family-closure.md",
             },
         )
 
-        self.assertIn("Codex 검증 실행 중", presentation.active_text)
+        self.assertIn("verify 실행 중", presentation.active_text)
         self.assertIn("family-closure.md", presentation.active_text)
         self.assertIn("claude_handoff.md", presentation.active_text)
         self.assertEqual(presentation.active_fg, "#93c5fd")
@@ -113,7 +137,7 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
     def test_build_control_presentation_mtime_fallback_without_seq(self) -> None:
         presentation = build_control_presentation(
             {
-                "active": {"file": "gemini_advice.md", "status": "advice_ready", "label": "Codex follow-up", "mtime": 2.0},
+                "active": {"file": "gemini_advice.md", "status": "advice_ready", "label": "verify follow-up", "mtime": 2.0},
                 "stale": [],
             },
             None,
@@ -171,6 +195,25 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
         self.assertIn("short", presentation.log_text)
         self.assertTrue(presentation.log_text.endswith("…"))
 
+    def test_build_console_presentation_keeps_raw_automation_note_in_details(self) -> None:
+        snapshot = _base_snapshot()
+        snapshot.update(
+            {
+                "runtime_state": "RUNNING",
+                "automation_health": "attention",
+                "automation_reason_code": "dispatch_stall",
+                "automation_incident_family": "dispatch_stall",
+                "automation_next_action": "verify_followup",
+            }
+        )
+
+        presentation = build_console_presentation(selected_agent="Codex", snapshot=snapshot)
+
+        self.assertIn("automation_health: attention", presentation.focus_text)
+        self.assertIn("automation_reason_code: dispatch_stall", presentation.focus_text)
+        self.assertIn("automation_incident_family: dispatch_stall", presentation.focus_text)
+        self.assertIn("automation_next_action: verify_followup", presentation.focus_text)
+
     def test_build_console_presentation_distinguishes_current_round_work_gap(self) -> None:
         snapshot = _base_snapshot()
         snapshot.update(
@@ -182,7 +225,7 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
                 "work_mtime": 10.0,
                 "verify_name": "verify.md",
                 "verify_mtime": 15.0,
-                "turn_state": {"state": "CLAUDE_ACTIVE", "entered_at": 20.0},
+                "turn_state": {"state": "IMPLEMENT_ACTIVE", "legacy_state": "CLAUDE_ACTIVE", "entered_at": 20.0},
             }
         )
 
@@ -207,7 +250,7 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
                 "work_mtime": 10.0,
                 "verify_name": "verify.md",
                 "verify_mtime": 15.0,
-                "turn_state": {"state": "CODEX_VERIFY", "entered_at": 20.0},
+                "turn_state": {"state": "VERIFY_ACTIVE", "legacy_state": "CODEX_VERIFY", "entered_at": 20.0},
             }
         )
 
@@ -240,6 +283,23 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
         self.assertEqual(presentations[1].status_text, "대기")
         self.assertEqual(presentations[1].note_text, "대기 중")
         self.assertEqual(presentations[1].card_border, "#1e1e2e")
+
+    def test_build_agent_card_presentations_localizes_machine_notes(self) -> None:
+        presentations, _working_since = build_agent_card_presentations(
+            agents=[
+                ("Codex", "READY", "signal_mismatch", ""),
+                ("Claude", "READY", "waiting_next_control", ""),
+                ("Gemini", "READY", "progress:operator_gate_followup", ""),
+            ],
+            selected_agent="Codex",
+            token_usage={},
+            working_since={},
+            now=100.0,
+        )
+
+        self.assertEqual(presentations[0].note_text, "상태 확인 필요")
+        self.assertEqual(presentations[1].note_text, "다음 지시 대기")
+        self.assertEqual(presentations[2].note_text, "operator gate 후속 처리")
 
     def test_build_agent_card_presentations_reuses_anchor_and_prefers_usage_note(self) -> None:
         presentations, working_since = build_agent_card_presentations(

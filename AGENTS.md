@@ -154,8 +154,11 @@ Current source-of-truth docs live in the root `docs/` directory.
     - `approval-flow-audit`
     - `doc-sync`
     - `e2e-smoke-triage`
+    - `finalize-lite`
     - `investigation-quality-audit`
     - `mvp-scope`
+    - `onboard-lite`
+    - `next-slice-triage`
     - `release-check`
     - `round-handoff`
     - `security-gate`
@@ -163,6 +166,14 @@ Current source-of-truth docs live in the root `docs/` directory.
 - `.claude/rules/`
   - Claude Code path-scoped instruction files for heavier file-family guidance
   - use these when detailed pipeline/browser/doc-sync rules should not bloat Claude startup memory
+
+## Turbo-lite Wrapper Order
+
+- Use `onboard-lite` first when the repo or subsystem is unfamiliar and you need actual run/test entrypoints plus immediate ownership boundaries before planning or implementation.
+- Use `finalize-lite` after a meaningful implementation round to close focused verification truth, doc-sync requirements, and `/work` closeout readiness on the implementation side.
+- Use `round-handoff` when verification truth still needs rerun/reconciliation and a `/verify`-backed handoff is required.
+- Use `next-slice-triage` only after `/work` and `/verify` truth is already current and the remaining task is picking one exact next slice or the correct Gemini/operator escalation.
+- Do not collapse these wrappers into one broad workflow. Each wrapper should stop at its own boundary.
 
 ## Single Codex Pipeline Convention
 
@@ -205,6 +216,7 @@ Current source-of-truth docs live in the root `docs/` directory.
   - it must not directly write `.pipeline/claude_handoff.md` or `.pipeline/operator_request.md`
   - it should prefer file edit/write tools for advisory output instead of shell heredoc or shell redirection
   - watcher prompts for Gemini should prefer explicit `@path` file mentions and exact advisory output paths over loose path prose
+  - when arbitration already names exact shipped docs or a current runtime-doc family, Gemini should inspect those paths first and avoid widening into `docs/superpowers/**`, `plandoc/**`, or other historical planning docs unless the request or latest persistent notes explicitly cite them as current evidence
   - pane-only answers do not close the advisory round; the round is complete only after both `report/gemini/...md` and `.pipeline/gemini_advice.md` are written
   - if the advice is answering an active implement-owner session's side question, the verify/handoff owner should relay that answer as a short lane reply and keep `.pipeline/claude_handoff.md` unchanged until the session boundary or next round handoff
 - `.pipeline/codex_feedback.md` may still exist as optional scratch, but Claude should not rely on it as a direct execution slot.
@@ -235,6 +247,8 @@ Current source-of-truth docs live in the root `docs/` directory.
   - choose one exact next slice and write `STATUS: implement` to `.pipeline/claude_handoff.md`, or
   - write `.pipeline/gemini_request.md` when the only blocker is next-slice ambiguity, overlapping candidates, or a low-confidence tie-break, or
   - explicitly stop automation with `.pipeline/operator_request.md` only when a real operator-only decision remains, approval-record/truth-sync work must happen first, immediate safety requires a stop, or Gemini was already unavailable/inconclusive
+- If a stop request presents labeled choices, such as lettered, numbered, inline parenthesized, or Korean `n안` options, that can be narrowed from current `docs/`, milestones, latest `/work`, and latest `/verify`, treat it as next-slice ambiguity and route advisory-first instead of holding for the operator, unless the decision header itself includes safety, destructive, auth/credential, approval-record, or truth-sync blockers.
+- If watcher has already routed such a gated operator request to verify/handoff retriage and that lane returns to an idle prompt without writing a newer control slot, watcher may record `operator_retriage_no_next_control` and machine-write the next `.pipeline/gemini_request.md` so the agents arbitrate before asking the operator.
 - In the canonical flow, Codex should not close a verification round with pane-only reasoning or a control-slot rewrite alone. Codex must leave or update `/verify` before writing the next control slot.
 - When the latest `/work` and `/verify` already closed one family truthfully, prefer automatic next-slice selection over `needs_operator` if one smaller same-family follow-up remains.
 - Default automatic tie-break order is:
@@ -331,11 +345,14 @@ Current source-of-truth docs live in the root `docs/` directory.
    - next phase design target
    - long-term north star
 13. Use `trace-implementer` for small additive grounded-brief trace or memory-foundation implementation slices that must keep current UI stable while moving code, tests, and docs together.
-14. Use `round-handoff` when a Codex round is complete and you need to re-check the latest `/work` note, rerun honest verification, leave or update a `/verify` note, and draft the next operator prompt without overstating progress.
-15. In the single tmux flow, keep the active verify/handoff owner responsible for rerun verification and next-implement feedback together; do not reintroduce a second canonical reviewer lane unless the docs are updated again.
-16. In automation handoff, the active implement owner should implement only `.pipeline/claude_handoff.md` when it says `STATUS: implement`. If that slice is blocked, the implement owner should emit the `STATUS: implement_blocked` sentinel with `BLOCK_REASON_CODE` and `ESCALATION_CLASS` instead of asking the operator to choose. Gemini와 operator stop files must not be routed to the implement owner.
-17. Prefer extending existing shared helpers, queries, scripts, and prompts over adding near-copy code paths. If temporary duplication is unavoidable, say why and leave a clear cleanup path.
-18. Do not split one coherent task into many ultra-small slices just to keep rounds tiny. Prefer the smallest coherent reviewable slice that closes meaningful progress when the files and verification path naturally belong together.
+14. Use `finalize-lite` when a meaningful implementation round is ending and you need one narrow wrapper to confirm focused verification, required doc sync, and truthful `/work` closeout readiness without adding commit/PR, `/verify`, or next-slice work.
+15. Use `next-slice-triage` when current `/work` and `/verify` truth is already reconciled and the remaining job is choosing one exact next slice or deciding whether ambiguity should go to Gemini or operator escalation.
+16. Use `onboard-lite` when you are entering an unfamiliar repo or subsystem and need the minimum run/test entrypoints, ownership boundaries, and current risks before planning or implementation, without widening into a whole-project audit.
+17. Use `round-handoff` when a Codex round is complete and you need to re-check the latest `/work` note, rerun honest verification, leave or update a `/verify` note, and draft the next operator prompt without overstating progress.
+18. In the single tmux flow, keep the active verify/handoff owner responsible for rerun verification and next-implement feedback together; do not reintroduce a second canonical reviewer lane unless the docs are updated again.
+19. In automation handoff, the active implement owner should implement only `.pipeline/claude_handoff.md` when it says `STATUS: implement`. If that slice is blocked, the implement owner should emit the `STATUS: implement_blocked` sentinel with `BLOCK_REASON_CODE` and `ESCALATION_CLASS` instead of asking the operator to choose. Gemini와 operator stop files must not be routed to the implement owner.
+20. Prefer extending existing shared helpers, queries, scripts, and prompts over adding near-copy code paths. If temporary duplication is unavoidable, say why and leave a clear cleanup path.
+21. Do not split one coherent task into many ultra-small slices just to keep rounds tiny. Prefer the smallest coherent reviewable slice that closes meaningful progress when the files and verification path naturally belong together.
 
 ## Personalization / Learning Rules
 

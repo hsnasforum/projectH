@@ -316,11 +316,11 @@ class TestFormatControlSummary(unittest.TestCase):
 
     def test_active_with_stale(self):
         parsed = {
-            "active": {"file": "claude_handoff.md", "status": "implement", "label": "Claude 실행", "mtime": 1.0},
-            "stale": [{"file": "operator_request.md", "status": "needs_operator", "label": "operator 대기", "mtime": 0.5}],
+            "active": {"file": "claude_handoff.md", "status": "implement", "label": "implement handoff", "mtime": 1.0},
+            "stale": [{"file": "operator_request.md", "status": "needs_operator", "label": "operator wait", "mtime": 0.5}],
         }
         active_text, stale_text = format_control_summary(parsed)
-        self.assertIn("Claude 실행", active_text)
+        self.assertIn("implement handoff", active_text)
         self.assertIn("claude_handoff.md", active_text)
         self.assertIn("mtime fallback", active_text)
         self.assertIn("operator_request.md", stale_text)
@@ -329,7 +329,7 @@ class TestFormatControlSummary(unittest.TestCase):
 
     def test_active_with_control_seq_shows_seq(self):
         parsed = {
-            "active": {"file": "claude_handoff.md", "status": "implement", "label": "Claude 실행", "mtime": 1.0, "control_seq": 5},
+            "active": {"file": "claude_handoff.md", "status": "implement", "label": "implement handoff", "mtime": 1.0, "control_seq": 5},
             "stale": [],
         }
         active_text, _ = format_control_summary(parsed)
@@ -338,10 +338,10 @@ class TestFormatControlSummary(unittest.TestCase):
 
     def test_stale_with_mixed_provenance(self):
         parsed = {
-            "active": {"file": "claude_handoff.md", "status": "implement", "label": "Claude 실행", "mtime": 1.0, "control_seq": 3},
+            "active": {"file": "claude_handoff.md", "status": "implement", "label": "implement handoff", "mtime": 1.0, "control_seq": 3},
             "stale": [
-                {"file": "operator_request.md", "status": "needs_operator", "label": "operator 대기", "mtime": 0.5, "control_seq": 2},
-                {"file": "gemini_request.md", "status": "request_open", "label": "Gemini 실행", "mtime": 0.3},
+                {"file": "operator_request.md", "status": "needs_operator", "label": "operator wait", "mtime": 0.5, "control_seq": 2},
+                {"file": "gemini_request.md", "status": "request_open", "label": "advisory request", "mtime": 0.3},
             ],
         }
         active_text, stale_text = format_control_summary(parsed)
@@ -351,7 +351,7 @@ class TestFormatControlSummary(unittest.TestCase):
 
     def test_active_only_no_stale_text(self):
         parsed = {
-            "active": {"file": "gemini_advice.md", "status": "advice_ready", "label": "Codex follow-up", "mtime": 1.0},
+            "active": {"file": "gemini_advice.md", "status": "advice_ready", "label": "verify follow-up", "mtime": 1.0},
             "stale": [],
         }
         _, stale_text = format_control_summary(parsed)
@@ -359,16 +359,16 @@ class TestFormatControlSummary(unittest.TestCase):
 
     def test_verify_activity_overrides_active_slot_display(self):
         parsed = {
-            "active": {"file": "claude_handoff.md", "status": "implement", "label": "Claude 실행", "mtime": 1.0, "control_seq": 8},
+            "active": {"file": "claude_handoff.md", "status": "implement", "label": "implement handoff", "mtime": 1.0, "control_seq": 8},
             "stale": [],
         }
         verify_activity = {
             "status": "VERIFY_RUNNING",
-            "label": "Codex 검증 실행 중",
+            "label": "verify 실행 중",
             "artifact_name": "2026-04-09-docs-response-origin-summary-richness-family-closure.md",
         }
         active_text, stale_text = format_control_summary(parsed, verify_activity=verify_activity)
-        self.assertIn("Codex 검증 실행 중", active_text)
+        self.assertIn("verify 실행 중", active_text)
         self.assertIn("family-closure.md", active_text)
         self.assertIn("claude_handoff.md", active_text)
         self.assertIn("seq 8", active_text)
@@ -407,7 +407,7 @@ class TestPipelineStartDiagnostics(unittest.TestCase):
             raw_lines = [
                 "2026-04-10T15:31:00 [INFO] watcher_core: WatcherCore v2.1 started",
                 "2026-04-10T15:31:01 [INFO] watcher_core: initial turn: claude",
-                "2026-04-10T15:31:02 [INFO] watcher_core: notify_claude: seq=17",
+                "2026-04-10T15:31:02 [INFO] watcher_core: notify_implement_owner: seq=17",
                 "2026-04-10T15:31:03 [INFO] watcher_core: suppressed duplicate line",
                 "2026-04-10T15:31:04 [INFO] watcher_core: waiting_for_claude: baseline_files=980",
             ]
@@ -418,7 +418,7 @@ class TestPipelineStartDiagnostics(unittest.TestCase):
             self.assertEqual(
                 snapshot["display_lines"],
                 [
-                    "2026-04-10T15:31:02 [INFO] watcher_core: notify_claude: seq=17",
+                    "2026-04-10T15:31:02 [INFO] watcher_core: notify_implement_owner: seq=17",
                     "2026-04-10T15:31:04 [INFO] watcher_core: waiting_for_claude: baseline_files=980",
                 ],
             )
@@ -461,6 +461,23 @@ class TestPipelineStartDiagnostics(unittest.TestCase):
             os.utime(log_path, (now, now))
             self.assertTrue(watcher_start_observed(project, not_before=now - 1.0))
             self.assertFalse(watcher_start_observed(project, not_before=now + 5.0))
+
+    def test_watcher_start_observed_accepts_canonical_notify_markers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            log_dir = project / ".pipeline" / "logs" / "experimental"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / "watcher.log"
+            log_path.write_text(
+                (
+                    "2026-04-09T20:52:57 [INFO] watcher_core: WatcherCore v2.1 started\n"
+                    "2026-04-09T20:53:05 [INFO] watcher_core: notify_advisory_owner: reason=startup_turn_gemini\n"
+                ),
+                encoding="utf-8",
+            )
+            now = time.time()
+            os.utime(log_path, (now, now))
+            self.assertTrue(watcher_start_observed(project, not_before=now - 1.0))
 
     def test_confirm_pipeline_start_accepts_runtime_ready_status(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -541,7 +558,8 @@ class TestTurnStateRead(unittest.TestCase):
             state_dir.mkdir(parents=True, exist_ok=True)
             turn_state = state_dir / "turn_state.json"
             turn_state.write_text(json.dumps({
-                "state": "CODEX_VERIFY",
+                "state": "VERIFY_ACTIVE",
+                "legacy_state": "CODEX_VERIFY",
                 "entered_at": 1744300000.0,
                 "reason": "work_needs_verify",
                 "active_control_file": "claude_handoff.md",
@@ -553,7 +571,8 @@ class TestTurnStateRead(unittest.TestCase):
             from pipeline_gui.backend import read_turn_state
             result = read_turn_state(root)
             self.assertIsNotNone(result)
-            self.assertEqual(result["state"], "CODEX_VERIFY")
+            self.assertEqual(result["state"], "VERIFY_ACTIVE")
+            self.assertEqual(result["legacy_state"], "CODEX_VERIFY")
 
     def test_read_turn_state_returns_none_when_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -569,7 +588,8 @@ class TestTurnStateRead(unittest.TestCase):
             state_dir = root / ".pipeline" / "state"
             state_dir.mkdir(parents=True, exist_ok=True)
             (state_dir / "turn_state.json").write_text(json.dumps({
-                "state": "CODEX_VERIFY",
+                "state": "VERIFY_ACTIVE",
+                "legacy_state": "CODEX_VERIFY",
                 "entered_at": 1744300000.0,
                 "reason": "work_needs_verify",
                 "active_control_file": "claude_handoff.md",

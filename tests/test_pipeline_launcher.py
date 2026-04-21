@@ -365,6 +365,10 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
 
             self.assertEqual(runtime_view["runtime_state"], "DEGRADED")
             self.assertEqual(runtime_view["degraded_reason"], "dispatch_stall")
+            self.assertEqual(runtime_view["automation_health"], "attention")
+            self.assertEqual(runtime_view["automation_reason_code"], "dispatch_stall")
+            self.assertEqual(runtime_view["automation_incident_family"], "dispatch_stall")
+            self.assertEqual(runtime_view["automation_next_action"], "verify_followup")
             self.assertTrue(
                 any(
                     "dispatch_stall_detected Codex degraded waiting_task_accept_after_dispatch" in line
@@ -408,9 +412,53 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
 
             self.assertEqual(runtime_view["runtime_state"], "DEGRADED")
             self.assertEqual(runtime_view["degraded_reason"], "post_accept_completion_stall")
+            self.assertEqual(runtime_view["automation_health"], "attention")
+            self.assertEqual(runtime_view["automation_reason_code"], "post_accept_completion_stall")
+            self.assertEqual(runtime_view["automation_incident_family"], "completion_stall")
+            self.assertEqual(runtime_view["automation_next_action"], "verify_followup")
             self.assertTrue(
                 any(
                     "completion_stall_detected Codex degraded waiting_task_done_after_accept" in line
+                    for line in runtime_view["event_lines"]
+                )
+            )
+
+    def test_runtime_view_surfaces_automation_incident_event_lines(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-automation-incident-") as tmp:
+            project = Path(tmp).resolve()
+
+            with mock.patch.object(
+                pipeline_launcher,
+                "read_runtime_status",
+                return_value={
+                    "runtime_state": "DEGRADED",
+                    "degraded_reason": "dispatch_stall",
+                    "degraded_reasons": ["dispatch_stall"],
+                    "lanes": [],
+                    "watcher": {"alive": True, "pid": 1234},
+                    "control": {"active_control_status": "implement"},
+                    "autonomy": {"mode": "normal"},
+                },
+            ), mock.patch.object(
+                pipeline_launcher,
+                "read_runtime_event_tail",
+                return_value=[
+                    {
+                        "event_type": "automation_incident",
+                        "payload": {
+                            "automation_health": "attention",
+                            "reason_code": "dispatch_stall",
+                            "incident_family": "dispatch_stall",
+                            "next_action": "verify_followup",
+                        },
+                    }
+                ],
+            ):
+                runtime_view = pipeline_launcher._runtime_view(project)
+
+            self.assertTrue(
+                any(
+                    "automation_incident attention dispatch_stall verify_followup dispatch_stall" in line
                     for line in runtime_view["event_lines"]
                 )
             )
@@ -506,6 +554,7 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                         "attachable": True,
                         "pid": 222,
                         "note": "waiting_receipt_close_after_task_done",
+                        "progress_phase": "receipt_close_pending",
                         "last_event_at": "2026-04-17T08:17:39Z",
                     }
                 ],
@@ -524,6 +573,8 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                 snapshots = pipeline_launcher.pane_snapshots(project, runtime_view)
 
             self.assertEqual(len(snapshots), 1)
+            self.assertEqual(snapshots[0].status_note, "receipt 마감 대기")
+            self.assertIn("progress=receipt_close_pending", snapshots[0].detail)
             self.assertIn("round=RECEIPT_PENDING", snapshots[0].detail)
             self.assertIn("job=job-verify-77", snapshots[0].detail)
             self.assertIn("dispatch=dispatch-verify-77", snapshots[0].detail)
@@ -584,6 +635,10 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                     "control_status": "none",
                     "autonomy_mode": "triage",
                     "autonomy_reason": "slice_ambiguity",
+                    "automation_health": "attention",
+                    "automation_reason_code": "slice_ambiguity",
+                    "automation_incident_family": "slice_ambiguity",
+                    "automation_next_action": "advisory_followup",
                     "active_round": {"state": "IDLE"},
                     "lanes": [],
                     "event_lines": [],
@@ -592,6 +647,45 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
             )
 
         self.assertTrue(any("Autonomy: triage / slice_ambiguity" in line for line in lines))
+        self.assertTrue(
+            any(
+                "Automation: 주의 / slice_ambiguity / advisory_followup / family=slice_ambiguity" in line
+                for line in lines
+            )
+        )
+
+    def test_build_snapshot_surfaces_role_owners_from_runtime_adapter(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-role-owners-") as tmp:
+            project = Path(tmp).resolve()
+            session = _session_name_for(project)
+
+            with mock.patch.object(
+                pipeline_launcher,
+                "resolve_project_runtime_adapter",
+                return_value={"role_owners": {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"}},
+            ):
+                lines = pipeline_launcher.build_snapshot(
+                    project,
+                    session,
+                    runtime_view={
+                        "runtime_state": "RUNNING",
+                        "watcher_alive": True,
+                        "watcher_pid": 2020,
+                        "work_name": "—",
+                        "work_mtime": 0.0,
+                        "verify_name": "—",
+                        "verify_mtime": 0.0,
+                        "control_file": "",
+                        "control_seq": -1,
+                        "control_status": "none",
+                        "active_round": {"state": "IDLE"},
+                        "lanes": [],
+                        "event_lines": [],
+                        "events": [],
+                    },
+                )
+
+        self.assertTrue(any("Role owners : implement=Codex / verify=Claude / advisory=Gemini" in line for line in lines))
 
     def test_launcher_source_keeps_runtime_wording_for_attach_and_start_pending(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "pipeline-launcher.py").read_text(encoding="utf-8")
@@ -624,6 +718,39 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                 [(snap.label, snap.status) for snap in snapshots],
                 [("Claude", "OFF"), ("Codex", "BOOTING"), ("Gemini", "OFF")],
             )
+
+    def test_pane_snapshots_include_role_context_for_swapped_verify_owner(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-swapped-verify-") as tmp:
+            project = Path(tmp).resolve()
+            runtime_view = {
+                "lanes": [
+                    {
+                        "name": "Claude",
+                        "state": "READY",
+                        "attachable": True,
+                        "pid": 111,
+                        "note": "waiting_receipt_close_after_task_done",
+                        "last_event_at": "2026-04-17T08:17:39Z",
+                    }
+                ],
+                "active_round": {
+                    "state": "RECEIPT_PENDING",
+                    "job_id": "job-verify-88",
+                    "dispatch_id": "dispatch-verify-88",
+                },
+            }
+
+            with mock.patch.object(
+                pipeline_launcher,
+                "resolve_project_runtime_adapter",
+                return_value={"role_owners": {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"}},
+            ):
+                snapshots = pipeline_launcher.pane_snapshots(project, runtime_view)
+
+        self.assertEqual(len(snapshots), 1)
+        self.assertIn("role=verify", snapshots[0].detail)
+        self.assertIn("round=RECEIPT_PENDING", snapshots[0].detail)
+        self.assertIn("job=job-verify-88", snapshots[0].detail)
 
     def test_follow_view_builds_snapshot_with_resolved_session(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-follow-") as tmp:

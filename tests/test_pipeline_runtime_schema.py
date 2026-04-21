@@ -98,6 +98,26 @@ class RuntimeSchemaTest(unittest.TestCase):
             self.assertEqual(rel, "4/16/2026-04-16-real-round.md")
             self.assertEqual(mtime, round_mtime)
 
+    def test_latest_round_markdown_prefers_newer_date_over_newer_mtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            older_date = root / "4" / "18" / "2026-04-18-older-date.md"
+            newer_date = root / "4" / "20" / "2026-04-20-newer-date.md"
+            older_date.parent.mkdir(parents=True, exist_ok=True)
+            newer_date.parent.mkdir(parents=True, exist_ok=True)
+            older_date.write_text("# older\n", encoding="utf-8")
+            newer_date.write_text("# newer\n", encoding="utf-8")
+
+            newer_mtime = newer_date.stat().st_mtime
+            spoofed_older_mtime = newer_mtime + 100.0
+            os.utime(older_date, (spoofed_older_mtime, spoofed_older_mtime))
+            os.utime(newer_date, (newer_mtime, newer_mtime))
+
+            rel, mtime = latest_round_markdown(root)
+
+            self.assertEqual(rel, "4/20/2026-04-20-newer-date.md")
+            self.assertEqual(mtime, newer_mtime)
+
 
 class LoadJobStatesSharedFilesTest(unittest.TestCase):
     def test_shared_state_files_cover_turn_and_autonomy(self) -> None:
@@ -399,7 +419,7 @@ class LatestVerifyNoteForWorkTest(unittest.TestCase):
 
             self.assertEqual(resolved, cross_day_verify)
 
-    def test_falls_back_to_single_same_day_verify_without_reference(self) -> None:
+    def test_returns_none_when_single_same_day_verify_has_no_reference(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             work_root = root / "work"
@@ -418,7 +438,7 @@ class LatestVerifyNoteForWorkTest(unittest.TestCase):
                 repo_root=root,
             )
 
-            self.assertEqual(resolved, verify_path)
+            self.assertIsNone(resolved)
 
     def test_returns_none_when_multiple_same_day_verifies_do_not_reference_work(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -443,7 +463,7 @@ class LatestVerifyNoteForWorkTest(unittest.TestCase):
 
             self.assertIsNone(resolved)
 
-    def test_cross_day_unrelated_verify_does_not_replace_same_day_fallback_rule(self) -> None:
+    def test_returns_none_when_same_day_unreferenced_and_cross_day_unrelated_both_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             work_root = root / "work"
@@ -468,7 +488,7 @@ class LatestVerifyNoteForWorkTest(unittest.TestCase):
                 repo_root=root,
             )
 
-            self.assertEqual(resolved, same_day_verify)
+            self.assertIsNone(resolved)
 
     def test_returns_none_when_single_same_day_verify_references_other_work(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -482,6 +502,35 @@ class LatestVerifyNoteForWorkTest(unittest.TestCase):
             work_path.write_text("# work\n", encoding="utf-8")
             verify_path.write_text(
                 "Based on `work/4/18/2026-04-18-other.md`\n",
+                encoding="utf-8",
+            )
+
+            resolved = latest_verify_note_for_work(
+                work_root,
+                verify_root,
+                work_path,
+                repo_root=root,
+            )
+
+            self.assertIsNone(resolved)
+
+    def test_returns_none_when_lone_unrelated_same_day_verify_mimics_manual_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work_root = root / "work"
+            verify_root = root / "verify"
+            work_path = work_root / "4" / "18" / "2026-04-18-slice.md"
+            manual_cleanup = (
+                verify_root
+                / "4"
+                / "18"
+                / "2026-04-18-manual-cleanup-keep-recent-zero-failsafe-verification.md"
+            )
+            work_path.parent.mkdir(parents=True, exist_ok=True)
+            manual_cleanup.parent.mkdir(parents=True, exist_ok=True)
+            work_path.write_text("# work\n", encoding="utf-8")
+            manual_cleanup.write_text(
+                "Based on `work/4/18/2026-04-18-other-slice.md`\n",
                 encoding="utf-8",
             )
 

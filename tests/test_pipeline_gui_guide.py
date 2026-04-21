@@ -24,12 +24,18 @@ class TestGuideNewestValidControl(unittest.TestCase):
     def test_implement_blocked_mentioned(self):
         self.assertIn("implement_blocked", DEFAULT_GUIDE)
 
-    def test_implement_blocked_auto_routes_to_codex(self):
-        """implement_blocked should auto-route to Codex triage, not operator."""
+    def test_implement_blocked_auto_routes_to_verify_owner(self):
+        """implement_blocked should auto-route to verify/handoff owner triage, not operator."""
         idx_blocked = DEFAULT_GUIDE.find("implement_blocked")
         self.assertNotEqual(idx_blocked, -1)
-        # There must be a passage connecting implement_blocked to Codex triage
-        self.assertIn("Codex triage", DEFAULT_GUIDE)
+        self.assertIn("verify/handoff owner triage", DEFAULT_GUIDE)
+
+    def test_turbo_lite_wrapper_order_is_documented(self):
+        self.assertIn("turbo-lite wrapper 순서", DEFAULT_GUIDE)
+        self.assertIn("`onboard-lite`", DEFAULT_GUIDE)
+        self.assertIn("`finalize-lite`", DEFAULT_GUIDE)
+        self.assertIn("`round-handoff`", DEFAULT_GUIDE)
+        self.assertIn("`next-slice-triage`", DEFAULT_GUIDE)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +11,8 @@ from pipeline_runtime.lane_surface import (
     pane_text_has_input_cursor,
     pane_text_is_idle,
 )
+
+SIGNAL_MISMATCH_DROP_NOTIFY_KINDS = frozenset({"claude_handoff"})
 
 
 @dataclass(frozen=True)
@@ -22,6 +25,10 @@ class DispatchIntent:
     prompt_path: Path
     target: str
     pane_type: str
+    functional_role: str = ""
+    lane_id: str = ""
+    agent_kind: str = ""
+    model_alias: str | None = None
     control_seq: int = -1
     expected_status: str = ""
     expected_control_path: str = ""
@@ -75,6 +82,10 @@ class WatcherDispatchQueue:
         *,
         key: str,
         lane: str,
+        lane_id: str,
+        functional_role: str,
+        agent_kind: str,
+        model_alias: str | None,
         path: Path,
         reason: str,
         defer_reason: str,
@@ -87,6 +98,11 @@ class WatcherDispatchQueue:
         self.last_lane_input_defer_at[key] = now
         payload = {
             "lane": lane,
+            "lane_id": lane_id,
+            "functional_role": functional_role,
+            "agent_kind": agent_kind,
+            "model_alias": model_alias,
+            "lane_role": functional_role,
             "reason": reason,
             "defer_reason": defer_reason,
             "control_file": str(path.name),
@@ -100,6 +116,10 @@ class WatcherDispatchQueue:
         return {
             "notify_kind": intent.notify_kind,
             "lane_role": intent.lane_role,
+            "functional_role": intent.functional_role or intent.lane_role,
+            "lane_id": intent.lane_id,
+            "agent_kind": intent.agent_kind,
+            "model_alias": intent.model_alias,
             "reason": intent.reason,
             "prompt": intent.prompt,
             "prompt_path": str(intent.prompt_path),
@@ -122,6 +142,14 @@ class WatcherDispatchQueue:
             pending_key=pending_key,
             notify_kind=str(pending.get("notify_kind") or ""),
             lane_role=str(pending.get("lane_role") or ""),
+            functional_role=str(pending.get("functional_role") or pending.get("lane_role") or ""),
+            lane_id=str(pending.get("lane_id") or ""),
+            agent_kind=str(pending.get("agent_kind") or ""),
+            model_alias=(
+                str(pending.get("model_alias"))
+                if pending.get("model_alias") is not None
+                else None
+            ),
             reason=str(pending.get("reason") or ""),
             prompt=str(pending.get("prompt") or ""),
             prompt_path=Path(str(pending.get("prompt_path") or "")),
@@ -140,7 +168,11 @@ class WatcherDispatchQueue:
             self.pending_notifications[intent.pending_key] = self._pending_record(intent)
             self.emit_lane_input_deferred(
                 key=intent.pending_key,
-                lane=self._role_owner(intent.lane_role) or intent.lane_role,
+                lane=self._role_owner(intent.functional_role or intent.lane_role) or intent.lane_role,
+                lane_id=intent.lane_id,
+                functional_role=intent.functional_role or intent.lane_role,
+                agent_kind=intent.agent_kind,
+                model_alias=intent.model_alias,
                 path=intent.prompt_path,
                 reason=intent.reason,
                 defer_reason=defer_reason,
@@ -159,7 +191,11 @@ class WatcherDispatchQueue:
             self.pending_notifications[intent.pending_key] = self._pending_record(intent)
         self.emit_lane_input_deferred(
             key=intent.pending_key,
-            lane=self._role_owner(intent.lane_role) or intent.lane_role,
+            lane=self._role_owner(intent.functional_role or intent.lane_role) or intent.lane_role,
+            lane_id=intent.lane_id,
+            functional_role=intent.functional_role or intent.lane_role,
+            agent_kind=intent.agent_kind,
+            model_alias=intent.model_alias,
             path=intent.prompt_path,
             reason=intent.reason,
             defer_reason="dispatch_window_blocked",
@@ -193,6 +229,118 @@ class WatcherDispatchQueue:
             return "control_status_drift"
         if expected_control_seq >= 0 and active_control.control_seq != expected_control_seq:
             return "control_seq_drift"
+        if self._pending_signal_mismatch_reason(pending) is not None:
+            return "signal_mismatch"
+        return None
+
+    def _pending_signal_mismatch_reason(self, pending: dict[str, object]) -> str | None:
+        notify_kind = str(pending.get("notify_kind") or "").strip()
+        if notify_kind not in SIGNAL_MISMATCH_DROP_NOTIFY_KINDS:
+            return None
+
+        prompt_path_raw = str(pending.get("prompt_path") or "").strip()
+        if not prompt_path_raw:
+            return None
+        control_seq = int(pending.get("expected_control_seq") or pending.get("control_seq") or -1)
+        if control_seq < 0:
+            return None
+
+        lane_hint = str(pending.get("agent_kind") or "").strip().lower()
+        if not lane_hint:
+            lane_hint = {
+                "implement": "claude",
+                "verify": "codex",
+                "advisory": "gemini",
+            }.get(str(pending.get("functional_role") or pending.get("lane_role") or "").strip(), "")
+        if not lane_hint:
+            return None
+
+        prompt_path = Path(prompt_path_raw)
+        base_dir = prompt_path.parent
+        current_run_path = base_dir / "current_run.json"
+        try:
+            current_run = json.loads(current_run_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+        events_path_raw = str(current_run.get("events_path") or "").strip()
+        if not events_path_raw:
+            return None
+        events_path = Path(events_path_raw)
+        if not events_path.is_absolute():
+            events_path = base_dir.parent / events_path
+
+        lane_name = lane_hint.capitalize()
+        latest_lane_signal = ""
+        lane_signal_at = ""
+        try:
+            event_lines = events_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return None
+        for raw in reversed(event_lines):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                event = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if str(event.get("source") or "") != "supervisor":
+                continue
+            payload = dict(event.get("payload") or {})
+            if str(payload.get("lane") or "") != lane_name:
+                continue
+            event_type = str(event.get("event_type") or "")
+            if event_type not in {
+                "lane_working",
+                "lane_ready",
+                "lane_broken",
+                "lane_booting",
+                "lane_spawned",
+            }:
+                continue
+            latest_lane_signal = event_type
+            lane_signal_at = str(event.get("ts") or "")
+            break
+        if latest_lane_signal != "lane_working":
+            return None
+
+        wrapper_path = events_path.parent / "wrapper-events" / f"{lane_name.lower()}.jsonl"
+        try:
+            wrapper_lines = wrapper_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return None
+
+        heartbeat_count = 0
+        dispatch_seen_count = 0
+        task_accepted_count = 0
+        # Treat the current control_seq as the dispatch-cycle window for queue-side corroboration.
+        for raw in wrapper_lines:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                event = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if str(event.get("lane") or lane_name) != lane_name:
+                continue
+            event_ts = str(event.get("ts") or "")
+            if lane_signal_at and event_ts and event_ts < lane_signal_at:
+                continue
+            event_type = str(event.get("event_type") or "")
+            if event_type == "HEARTBEAT":
+                heartbeat_count += 1
+                continue
+            payload = dict(event.get("payload") or {})
+            if int(payload.get("control_seq") or -1) != control_seq:
+                continue
+            if event_type == "DISPATCH_SEEN":
+                dispatch_seen_count += 1
+            elif event_type == "TASK_ACCEPTED":
+                task_accepted_count += 1
+        if heartbeat_count and dispatch_seen_count == 0 and task_accepted_count == 0:
+            return "signal_mismatch"
         return None
 
     def _control_mismatch_payload(
@@ -207,6 +355,11 @@ class WatcherDispatchQueue:
             "notify_kind": str(pending.get("notify_kind") or ""),
             "reason": "control_mismatch",
             "reason_code": reason_code,
+            "functional_role": str(pending.get("functional_role") or pending.get("lane_role") or ""),
+            "lane_role": str(pending.get("lane_role") or ""),
+            "lane_id": str(pending.get("lane_id") or ""),
+            "agent_kind": str(pending.get("agent_kind") or ""),
+            "model_alias": pending.get("model_alias"),
             "expected_control_seq": int(pending.get("expected_control_seq") or -1),
             "active_control_seq": int(active_control.control_seq) if active_control else -1,
             "expected_prompt_path": str(prompt_path),

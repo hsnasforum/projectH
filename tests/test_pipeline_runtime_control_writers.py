@@ -104,6 +104,61 @@ class ControlWritersTest(unittest.TestCase):
             }
         )
 
+    def test_validate_operator_candidate_status_rejects_unsupported_reason_code_and_operator_policy_literals(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported reason_code"):
+            validate_operator_candidate_status(
+                {
+                    "control": {
+                        "active_control_file": ".pipeline/operator_request.md",
+                        "active_control_status": "needs_operator",
+                    },
+                    "autonomy": {
+                        "mode": "needs_operator",
+                        "reason_code": "not_a_real_reason_code_literal",
+                        "operator_policy": "gate_24h",
+                        "classification_source": "reason_code",
+                    },
+                }
+            )
+
+        with self.assertRaisesRegex(ValueError, "unsupported operator_policy"):
+            validate_operator_candidate_status(
+                {
+                    "control": {
+                        "active_control_file": ".pipeline/operator_request.md",
+                        "active_control_status": "needs_operator",
+                    },
+                    "autonomy": {
+                        "mode": "needs_operator",
+                        "reason_code": "slice_ambiguity",
+                        "operator_policy": "not_a_real_policy_literal",
+                        "classification_source": "operator_policy",
+                    },
+                }
+            )
+
+    def test_validate_operator_candidate_status_rejects_unsupported_decision_class_literal(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported decision_class"):
+            validate_operator_candidate_status(
+                {
+                    "control": {
+                        "active_control_file": ".pipeline/operator_request.md",
+                        "active_control_status": "needs_operator",
+                    },
+                    "autonomy": {
+                        "mode": "needs_operator",
+                        "reason_code": "slice_ambiguity",
+                        "operator_policy": "gate_24h",
+                        "classification_source": "reason_code",
+                        "decision_class": "not_a_real_decision_class_literal",
+                    },
+                }
+            )
+
     def test_no_non_test_direct_writes_for_operator_or_implement_blocked(self) -> None:
         root = Path(__file__).resolve().parent.parent
         targets = [

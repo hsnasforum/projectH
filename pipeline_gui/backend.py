@@ -10,8 +10,10 @@ import time
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
-from pipeline_runtime.schema import read_jsonl_tail
+from pipeline_runtime.schema import parse_iso_utc, read_jsonl_tail
 from pipeline_runtime.tmux_adapter import TmuxAdapter
+from pipeline_runtime.turn_arbitration import canonical_turn_state_name, turn_state_role
+from pipeline_runtime.automation_health import derive_automation_health
 
 from . import legacy_backend_debug
 from .platform import (
@@ -28,9 +30,11 @@ DEFAULT_TOKEN_SINCE_DAYS = 7
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _VERIFY_ACTIVE_STATUSES = {"VERIFY_PENDING", "VERIFY_RUNNING"}
 _VERIFY_ACTIVITY_LABELS = {
-    "VERIFY_PENDING": "Codex 검증 준비 중",
-    "VERIFY_RUNNING": "Codex 검증 실행 중",
+    "VERIFY_PENDING": "verify 준비 중",
+    "VERIFY_RUNNING": "verify 실행 중",
 }
+
+SNAPSHOT_STALE_THRESHOLD = 15.0
 
 
 def _read_log_lines(path: Path, *, tail_count: int) -> list[str]:
@@ -68,7 +72,55 @@ def _read_json_file(path: Path) -> dict[str, object] | None:
     return data if isinstance(data, dict) else None
 
 
-def normalize_runtime_status(value: object | None) -> dict[str, object]:
+def _apply_supervisor_missing_status(
+    status: dict[str, object],
+    lanes: list[dict[str, object]],
+    *,
+    state: str,
+    reason: str,
+    shutdown: bool = True,
+) -> dict[str, object]:
+    """Rewrite status fields for a supervisor-missing dispatch outcome."""
+    status["runtime_state"] = state
+    status["degraded_reason"] = reason
+    status["degraded_reasons"] = [reason] if reason else []
+    if shutdown:
+        status["control"] = {
+            "active_control_file": "",
+            "active_control_seq": -1,
+            "active_control_status": "none",
+            "active_control_updated_at": "",
+        }
+        status["active_round"] = None
+        status["watcher"] = {"alive": False, "pid": None}
+        note = reason or "stopped"
+        if state == "STOPPED":
+            status["lanes"] = [
+                {
+                    **lane,
+                    "state": "OFF",
+                    "attachable": False,
+                    "pid": None,
+                    "note": note,
+                }
+                for lane in lanes
+            ]
+        else:
+            status["lanes"] = [
+                {
+                    **lane,
+                    "state": lane.get("state") if str(lane.get("state") or "") == "OFF" else "BROKEN",
+                    "attachable": False,
+                    "pid": None,
+                    "note": note,
+                }
+                for lane in lanes
+            ]
+    status.update(derive_automation_health(status))
+    return status
+
+
+def normalize_runtime_status(value: object | None, project: Path | None = None) -> dict[str, object]:
     """Coerce runtime status payloads to a dict for UI callers."""
     if isinstance(value, dict):
         status = json.loads(json.dumps(value))
@@ -87,6 +139,64 @@ def normalize_runtime_status(value: object | None) -> dict[str, object]:
             active_round is None
             or str((active_round or {}).get("state") or "") in {"", "CLOSED"}
         )
+        supervisor_missing = project is not None and not supervisor_alive(project)[0]
+        updated_at_raw = str(status.get("updated_at") or "")
+        snapshot_ts = parse_iso_utc(updated_at_raw)
+        snapshot_age = (time.time() - snapshot_ts) if snapshot_ts > 0 else None
+        if supervisor_missing and runtime_state == "STOPPING":
+            return _apply_supervisor_missing_status(
+                status,
+                lanes,
+                state="STOPPED",
+                reason="",
+                shutdown=True,
+            )
+        if supervisor_missing and runtime_state == "BROKEN":
+            return _apply_supervisor_missing_status(
+                status,
+                lanes,
+                state="BROKEN",
+                reason="supervisor_missing",
+                shutdown=True,
+            )
+        if (
+            supervisor_missing
+            and runtime_state == "RUNNING"
+            and (
+                snapshot_age is None
+                or snapshot_age <= SNAPSHOT_STALE_THRESHOLD
+            )
+            and (
+                (
+                    not watcher.get("alive")
+                    and any(str(lane.get("state") or "") != "OFF" for lane in lanes)
+                )
+                or (
+                    watcher.get("alive")
+                    and not watcher.get("pid")
+                )
+            )
+        ):
+            reason = (
+                "supervisor_missing_snapshot_undated"
+                if snapshot_age is None
+                else "supervisor_missing_recent_ambiguous"
+            )
+            return _apply_supervisor_missing_status(
+                status,
+                lanes,
+                state="DEGRADED",
+                reason=reason,
+                shutdown=False,
+            )
+        if supervisor_missing and runtime_state == "RUNNING":
+            return _apply_supervisor_missing_status(
+                status,
+                lanes,
+                state="BROKEN",
+                reason="supervisor_missing",
+                shutdown=True,
+            )
         if (
             has_quiescent_evidence
             and runtime_state in {"RUNNING", "DEGRADED", "STARTING", "STOPPING"}
@@ -115,6 +225,7 @@ def normalize_runtime_status(value: object | None) -> dict[str, object]:
                 }
                 for lane in lanes
             ]
+        status.update(derive_automation_health(status))
         return status
     return {}
 
@@ -364,10 +475,10 @@ _CONTROL_SLOTS = {
 }
 
 _SLOT_LABELS = {
-    "claude_handoff.md": "Claude 실행",
-    "gemini_request.md": "Gemini 실행",
-    "gemini_advice.md": "Codex follow-up",
-    "operator_request.md": "operator 대기",
+    "claude_handoff.md": "implement handoff",
+    "gemini_request.md": "advisory request",
+    "gemini_advice.md": "verify follow-up",
+    "operator_request.md": "operator wait",
 }
 
 
@@ -503,7 +614,7 @@ def current_verify_activity(project: Path) -> dict[str, object] | None:
             best_entry = {
                 "job_id": str(data.get("job_id") or ""),
                 "status": status,
-                "label": _VERIFY_ACTIVITY_LABELS.get(status, "Codex 검증"),
+                "label": _VERIFY_ACTIVITY_LABELS.get(status, "verify 진행 중"),
                 "artifact_path": artifact_path,
                 "artifact_name": artifact_name,
                 "last_dispatch_at": dispatch_at,
@@ -530,16 +641,19 @@ def read_runtime_status(project: Path) -> dict[str, object] | None:
     if not current_run:
         return None
     status_path_value = str(current_run.get("status_path") or "").strip()
+    data: dict[str, object] | None = None
     if status_path_value:
         status_path = project / status_path_value
         data = _read_json_file(status_path)
-        if data is not None:
-            return data
-    run_id = str(current_run.get("run_id") or "").strip()
-    if not run_id:
+    if data is None:
+        run_id = str(current_run.get("run_id") or "").strip()
+        if not run_id:
+            return None
+        status_path = project / ".pipeline" / "runs" / run_id / "status.json"
+        data = _read_json_file(status_path)
+    if data is None:
         return None
-    status_path = project / ".pipeline" / "runs" / run_id / "status.json"
-    return _read_json_file(status_path)
+    return normalize_runtime_status(data, project=project)
 
 
 def read_runtime_event_tail(project: Path, *, max_lines: int = 14) -> list[dict[str, object]]:
@@ -557,31 +671,46 @@ def read_runtime_event_tail(project: Path, *, max_lines: int = 14) -> list[dict[
     return [dict(item) for item in read_jsonl_tail(events_path, max_lines=max_lines)]
 
 
-def supervisor_alive(project: Path) -> tuple[bool, int | None]:
-    """Return whether the run supervisor PID is still live."""
+def _supervisor_pid(project: Path) -> int | None:
+    """Read the run supervisor PID from ``.pipeline/supervisor.pid``."""
     pid_path = project / ".pipeline" / "supervisor.pid"
     if IS_WINDOWS:
         code, content = _run(["cat", _wsl_path_str(pid_path)], timeout=FILE_QUERY_TIMEOUT)
         if code != 0 or not content.strip():
-            return False, None
+            return None
         try:
-            pid = int(content.strip().splitlines()[-1].strip())
+            return int(content.strip().splitlines()[-1].strip())
         except ValueError:
-            return False, None
-        code, _ = _run(["kill", "-0", str(pid)], timeout=2.0)
-        return code == 0, pid if code == 0 else None
+            return None
 
     if not pid_path.exists():
-        return False, None
+        return None
     try:
-        pid = int(pid_path.read_text(encoding="utf-8").strip())
+        return int(pid_path.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
-        return False, None
+        return None
+
+
+def _pid_is_alive(pid: int) -> bool:
+    """Return whether the given PID is currently alive."""
+    if IS_WINDOWS:
+        code, _ = _run(["kill", "-0", str(pid)], timeout=2.0)
+        return code == 0
     try:
         os.kill(pid, 0)
     except OSError:
+        return False
+    return True
+
+
+def supervisor_alive(project: Path) -> tuple[bool, int | None]:
+    """Return whether the run supervisor PID is still live."""
+    pid = _supervisor_pid(project)
+    if pid is None:
         return False, None
-    return True, pid
+    if _pid_is_alive(pid):
+        return True, pid
+    return False, None
 
 
 def runtime_state(project: Path) -> str:
@@ -654,49 +783,46 @@ def runtime_send_input(project: Path, session: str = "", lane: str | None = None
 
 _TURN_STATE_LABELS: dict[str, str] = {
     "IDLE": "대기",
-    "CLAUDE_ACTIVE": "Claude 실행 중",
-    "CODEX_VERIFY": "Codex 검증 중",
-    "CODEX_FOLLOWUP": "Codex 후속 판단 중",
-    "GEMINI_ADVISORY": "Gemini 자문 중",
-    "OPERATOR_WAIT": "운영자 결정 대기",
-}
-_TURN_STATE_FALLBACK_LANES: dict[str, str] = {
-    "CLAUDE_ACTIVE": "Claude",
-    "CODEX_VERIFY": "Codex",
-    "CODEX_FOLLOWUP": "Codex",
-    "GEMINI_ADVISORY": "Gemini",
+    "IMPLEMENT_ACTIVE": "implement 진행 중",
+    "VERIFY_ACTIVE": "verify 진행 중",
+    "VERIFY_FOLLOWUP": "verify follow-up 중",
+    "ADVISORY_ACTIVE": "advisory 진행 중",
+    "OPERATOR_WAIT": "operator wait",
 }
 _TURN_STATE_ROLES: dict[str, str] = {
-    "CLAUDE_ACTIVE": "implement",
-    "CODEX_VERIFY": "verify",
-    "CODEX_FOLLOWUP": "verify",
-    "GEMINI_ADVISORY": "advisory",
+    "IMPLEMENT_ACTIVE": "implement",
+    "VERIFY_ACTIVE": "verify",
+    "VERIFY_FOLLOWUP": "verify",
+    "ADVISORY_ACTIVE": "advisory",
     "OPERATOR_WAIT": "operator",
 }
 
 
 def describe_turn_state(turn_state: dict[str, object] | None) -> dict[str, str]:
-    state_value = str((turn_state or {}).get("state") or "IDLE")
+    state_value = canonical_turn_state_name(
+        (turn_state or {}).get("state"),
+        legacy_state=(turn_state or {}).get("legacy_state"),
+    )
+    legacy_state = str((turn_state or {}).get("legacy_state") or "").strip()
     active_lane = str((turn_state or {}).get("active_lane") or "").strip()
     active_role = str((turn_state or {}).get("active_role") or "").strip()
-    if not active_lane:
-        active_lane = _TURN_STATE_FALLBACK_LANES.get(state_value, "")
     if not active_role:
-        active_role = _TURN_STATE_ROLES.get(state_value, "")
+        active_role = turn_state_role(state_value) or _TURN_STATE_ROLES.get(state_value, "")
 
-    if state_value == "CLAUDE_ACTIVE" and active_lane:
+    if state_value == "IMPLEMENT_ACTIVE" and active_lane:
         label = f"{active_lane} 실행 중"
-    elif state_value == "CODEX_VERIFY" and active_lane:
+    elif state_value == "VERIFY_ACTIVE" and active_lane:
         label = f"{active_lane} 검증 중"
-    elif state_value == "CODEX_FOLLOWUP" and active_lane:
+    elif state_value == "VERIFY_FOLLOWUP" and active_lane:
         label = f"{active_lane} 후속 판단 중"
-    elif state_value == "GEMINI_ADVISORY" and active_lane:
+    elif state_value == "ADVISORY_ACTIVE" and active_lane:
         label = f"{active_lane} 자문 중"
     else:
         label = _TURN_STATE_LABELS.get(state_value, state_value)
 
     return {
         "state": state_value,
+        "legacy_state": legacy_state,
         "active_lane": active_lane,
         "active_role": active_role,
         "label": label,
@@ -752,7 +878,7 @@ def format_control_summary(
     active = parsed.get("active")
     if verify_activity is not None:
         artifact_name = str(verify_activity.get("artifact_name") or "latest /work")
-        phase_label = str(verify_activity.get("label") or "Codex 검증")
+        phase_label = str(verify_activity.get("label") or "verify 진행 중")
         active_text = f"활성 제어: {phase_label} ({artifact_name})"
         if active is not None:
             prov = _slot_provenance(active)  # type: ignore[arg-type]

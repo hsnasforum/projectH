@@ -28,19 +28,27 @@ class _PipelineState {
     this._notify('event', { type, msg, time: t });
   }
 
+  _currentTurn(data) {
+    const d = data || this.data || {};
+    if (d.turn_state && typeof d.turn_state === 'object') return d.turn_state;
+    if (d.compat && d.compat.turn_state && typeof d.compat.turn_state === 'object') return d.compat.turn_state;
+    return {};
+  }
+
   getPresentation(data) {
     const d = data || this.data || {};
     const runtimeState = String(d.runtime_state || 'STOPPED').toUpperCase();
     const control = d.control || {};
     const watcher = d.watcher || {};
     const round = d.active_round || {};
+    const turn = this._currentTurn(d);
     const degradedReasons = (d.degraded_reasons || []).filter(Boolean);
     const degradedReason = degradedReasons[0] || String(d.degraded_reason || '').trim();
     const uncertain = runtimeState === 'DEGRADED' && degradedReasons.some(r => UNCERTAIN_RUNTIME_REASONS.has(r));
     const inactive = INACTIVE_RUNTIME_STATES.has(runtimeState);
     const showLive = !inactive && !uncertain;
     const controlStatus = showLive ? (control.active_control_status || 'none') : (uncertain ? 'uncertain' : 'none');
-    const roundState = showLive ? (round.state || 'IDLE') : (uncertain ? 'uncertain' : 'IDLE');
+    const roundState = showLive ? (turn.state || round.state || 'IDLE') : (uncertain ? 'uncertain' : 'IDLE');
     let watcherStatus = 'Dead', watcherClass = 'dim';
     if (uncertain) { watcherStatus = 'Unknown'; watcherClass = 'warn'; }
     else if (watcher.alive) { watcherStatus = 'Alive'; watcherClass = 'ok'; }

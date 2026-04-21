@@ -62,6 +62,10 @@
 - 새 skill은 `.agents/skills/`와 `.claude/skills/`에 거울처럼 유지하고, Codex 기본 사용 대상이면 `.codex/config.toml`에도 등록합니다.
 - 웹 조사 품질, 승인 플로우, 문서 동기화, `/work` closeout처럼 현재 저장소의 실제 문제 축에 맞는 skill을 우선합니다.
 - 최신 `/work` closeout 재검증과 다음 라운드 지시사항 작성처럼 반복되는 handoff 정리는 `round-handoff` 같은 좁은 skill로 표준화하고, 기존 `documenter` 역할과 중복되는 새 agent는 쉽게 늘리지 않습니다.
+- 구현 라운드 말미의 focused verification 확인, 필요한 doc sync 확인, `/work` closeout readiness 정리는 `finalize-lite` 같은 얇은 wrapper skill로 표준화하되, commit/PR, `/verify`, next-slice 선정까지 한 번에 묶지 않습니다.
+- 새 repo나 낯선 작업축에 붙을 때는 `onboard-lite` 같은 얇은 orientation wrapper로 실제 run/test entrypoint, ownership boundary, current risk만 먼저 파악하고, broad audit로 바로 확장하지 않습니다.
+- current truth가 이미 맞춰진 뒤 exact next slice만 좁히는 단계는 `next-slice-triage` 같은 좁은 wrapper skill로 표준화하되, verification rerun이나 whole-project audit까지 다시 끌어오지 않습니다.
+- 권장 사용 순서는 `onboard-lite`(필요 시) -> 구현 -> `finalize-lite` -> `round-handoff` -> `next-slice-triage`입니다. wrapper 하나가 다른 wrapper의 책임까지 먹지 않게 경계를 유지합니다.
 - 장기 방향을 다루는 planning 계열 문서는 “지금 구현된 것”과 “장기 북극성”을 섞지 않게 설계합니다.
 - `trace-implementer`는 grounded-brief trace anchor, snapshot normalization, corrected-outcome linkage 같은 작은 구현 슬라이스를 맡기되, review queue나 user-level memory 같은 다음 단계 범위를 끌어오지 않도록 제한합니다.
 - 구현이나 제안 전에 기존 shared helper, query, formatter, prompt가 있는지 먼저 보고, 같은 책임의 near-copy 코드를 새로 늘리지 않습니다.
@@ -89,6 +93,7 @@
 - `.pipeline/session_arbitration_draft.md`는 watcher가 active implement-owner session side-question을 감지했을 때 verify/advisory lanes가 idle이고 implement owner가 idle이거나 같은 escalation text에 짧게 안정돼 있을 때만 남길 수 있는 non-canonical draft 슬롯입니다. implement-owner activity resume, canonical Gemini/operator open 같은 resolved 조건이 생기면 watcher가 다시 정리하고, 같은 fingerprint는 짧은 cooldown 동안 바로 재생성하지 않는 편이 맞습니다.
 - Gemini advisory 출력은 shell heredoc/redirection보다 file edit/write tool을 우선 사용합니다.
 - Gemini arbitration prompt는 일반 경로 나열보다 `@path` file mention과 exact output path를 우선 사용합니다.
+- Gemini arbitration이 exact doc path, exact section, current runtime-doc family를 좁히는 일이라면 named shipped docs를 먼저 보게 하고, `docs/superpowers/**`, `plandoc/**`, 기타 historical planning docs는 최신 `/work` / `/verify`나 request가 명시적으로 근거로 들 때만 읽는 편이 맞습니다.
 - `.pipeline/codex_feedback.md`는 optional scratch 또는 legacy compatibility text일 뿐이며, 실행 경로나 `/work`와 `/verify`를 대체하지 않습니다.
 - `.pipeline/gpt_prompt.md`는 optional/legacy scratch 슬롯로 남길 수 있지만 canonical single-Codex 흐름의 필수 단계는 아닙니다.
 - 새 라운드를 시작할 때는 오늘 폴더의 최신 메모를 먼저 보고, 없으면 전날 최신 메모를 이어받습니다.

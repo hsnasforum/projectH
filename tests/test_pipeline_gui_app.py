@@ -13,6 +13,7 @@ from pipeline_gui.setup_controller import SetupController
 from pipeline_gui.setup_executor import FaultInjectingSetupExecutorAdapter, LocalSetupExecutorAdapter
 from pipeline_gui.setup_models import SetupActionState
 from pipeline_gui.setup_profile import build_last_applied_record
+from pipeline_runtime.lane_catalog import default_role_bindings
 from storage.json_store_base import read_json
 
 
@@ -115,9 +116,10 @@ def _make_setup_gui(project: Path, *, adapter=None) -> PipelineGUI:
     )
     gui._home_controller = HomeController(project, gui._session_name)
     gui._setup_agent_vars = {name: _Var(True) for name in ("Claude", "Codex", "Gemini")}
-    gui._setup_implement_var = _Var("Claude")
-    gui._setup_verify_var = _Var("Codex")
-    gui._setup_advisory_var = _Var("Gemini")
+    default_bindings = default_role_bindings()
+    gui._setup_implement_var = _Var(default_bindings["implement"])
+    gui._setup_verify_var = _Var(default_bindings["verify"])
+    gui._setup_advisory_var = _Var(default_bindings["advisory"])
     gui._setup_advisory_enabled_var = _Var(True)
     gui._setup_operator_stop_enabled_var = _Var(True)
     gui._setup_session_arbitration_var = _Var(True)

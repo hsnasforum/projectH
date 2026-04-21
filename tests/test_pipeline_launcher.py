@@ -593,6 +593,39 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
 
         self.assertTrue(any("Autonomy: triage / slice_ambiguity" in line for line in lines))
 
+    def test_build_snapshot_surfaces_role_owners_from_runtime_adapter(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-role-owners-") as tmp:
+            project = Path(tmp).resolve()
+            session = _session_name_for(project)
+
+            with mock.patch.object(
+                pipeline_launcher,
+                "resolve_project_runtime_adapter",
+                return_value={"role_owners": {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"}},
+            ):
+                lines = pipeline_launcher.build_snapshot(
+                    project,
+                    session,
+                    runtime_view={
+                        "runtime_state": "RUNNING",
+                        "watcher_alive": True,
+                        "watcher_pid": 2020,
+                        "work_name": "—",
+                        "work_mtime": 0.0,
+                        "verify_name": "—",
+                        "verify_mtime": 0.0,
+                        "control_file": "",
+                        "control_seq": -1,
+                        "control_status": "none",
+                        "active_round": {"state": "IDLE"},
+                        "lanes": [],
+                        "event_lines": [],
+                        "events": [],
+                    },
+                )
+
+        self.assertTrue(any("Role owners : implement=Codex / verify=Claude / advisory=Gemini" in line for line in lines))
+
     def test_launcher_source_keeps_runtime_wording_for_attach_and_start_pending(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "pipeline-launcher.py").read_text(encoding="utf-8")
         self.assertNotIn("def tmux_attach", source)
@@ -624,6 +657,39 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                 [(snap.label, snap.status) for snap in snapshots],
                 [("Claude", "OFF"), ("Codex", "BOOTING"), ("Gemini", "OFF")],
             )
+
+    def test_pane_snapshots_include_role_context_for_swapped_verify_owner(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-swapped-verify-") as tmp:
+            project = Path(tmp).resolve()
+            runtime_view = {
+                "lanes": [
+                    {
+                        "name": "Claude",
+                        "state": "READY",
+                        "attachable": True,
+                        "pid": 111,
+                        "note": "waiting_receipt_close_after_task_done",
+                        "last_event_at": "2026-04-17T08:17:39Z",
+                    }
+                ],
+                "active_round": {
+                    "state": "RECEIPT_PENDING",
+                    "job_id": "job-verify-88",
+                    "dispatch_id": "dispatch-verify-88",
+                },
+            }
+
+            with mock.patch.object(
+                pipeline_launcher,
+                "resolve_project_runtime_adapter",
+                return_value={"role_owners": {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"}},
+            ):
+                snapshots = pipeline_launcher.pane_snapshots(project, runtime_view)
+
+        self.assertEqual(len(snapshots), 1)
+        self.assertIn("role=verify", snapshots[0].detail)
+        self.assertIn("round=RECEIPT_PENDING", snapshots[0].detail)
+        self.assertIn("job=job-verify-88", snapshots[0].detail)
 
     def test_follow_view_builds_snapshot_with_resolved_session(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-follow-") as tmp:

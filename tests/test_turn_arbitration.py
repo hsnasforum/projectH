@@ -81,6 +81,9 @@ class RuntimeTurnArbitrationTest(unittest.TestCase):
                 "state": "RECEIPT_PENDING",
                 "completion_stage": "receipt_close_pending",
             },
+            implement_owner="Claude",
+            verify_owner="Codex",
+            advisory_owner="Gemini",
         )
         self.assertEqual(active_lane, "")
 
@@ -91,6 +94,9 @@ class RuntimeTurnArbitrationTest(unittest.TestCase):
                 "state": "RECEIPT_PENDING",
                 "completion_stage": "receipt_close_pending",
             },
+            implement_owner="Claude",
+            verify_owner="Codex",
+            advisory_owner="Gemini",
         )
         self.assertEqual(active_lane, "Codex")
 
@@ -99,6 +105,14 @@ class RuntimeTurnArbitrationTest(unittest.TestCase):
             suppress_active_round_for_turn(
                 turn_state={"state": "CODEX_FOLLOWUP"},
                 active_round={"state": "VERIFYING"},
+            )
+        )
+
+    def test_implement_turn_suppresses_stale_verify_active_round(self) -> None:
+        self.assertTrue(
+            suppress_active_round_for_turn(
+                turn_state={"state": "IMPLEMENT_ACTIVE"},
+                active_round={"state": "VERIFY_PENDING"},
             )
         )
 

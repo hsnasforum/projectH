@@ -8591,7 +8591,10 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(second["response"]["response_origin"]["provider"], "web")
             self.assertEqual(second["response"]["response_origin"]["answer_mode"], "entity_card")
             self.assertIn("이용 형태", second["response"]["claim_coverage_progress_summary"])
-            self.assertIn("단일 출처 상태", second["response"]["claim_coverage_progress_summary"])
+            self.assertIn(
+                "한 가지 출처의 정보로만 확인됩니다",
+                second["response"]["claim_coverage_progress_summary"],
+            )
             self.assertIn("웹 검색 요약: 붉은사막", second["response"]["text"])
             coverage_by_slot = {
                 str(item.get("slot") or ""): dict(item)
@@ -14988,7 +14991,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("재조사했지만", summary)
             self.assertIn("이용 형태", summary)
             self.assertIn("아직", summary)
-            self.assertIn("단일 출처 상태", summary)
+            self.assertIn("한 가지 출처의 정보로만 확인됩니다", summary)
             self.assertNotIn("보강", summary)
             self.assertNotIn("미확인에서", summary)
 

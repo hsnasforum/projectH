@@ -231,7 +231,7 @@ def _build_gemini_notify_links(conn: sqlite3.Connection) -> dict[str, list[tuple
         """
         SELECT event_key, ts
         FROM pipeline_event
-        WHERE event_type = 'gemini_notify'
+        WHERE event_type IN ('gemini_notify', 'advisory_notify')
         ORDER BY ts ASC, raw_line_no ASC
         """
     ).fetchall()

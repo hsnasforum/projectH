@@ -14,6 +14,8 @@ from tkinter import (
 )
 from tkinter.ttk import Scrollbar as TtkScrollbar, Style as TtkStyle, Combobox as TtkCombobox
 
+from pipeline_runtime.lane_catalog import physical_lane_order
+
 # ── Ops Console color scheme ──
 BG = "#101014"
 FG = "#d8dae0"
@@ -332,7 +334,7 @@ def build_agent_cards(app: PipelineGUI, content: Frame) -> None:
     cards_row.pack(fill=X)
 
     app.agent_labels = []
-    for idx, name in enumerate(["Claude", "Codex", "Gemini"]):
+    for idx, name in enumerate(physical_lane_order()):
         card = Frame(cards_row, bg=AGENT_CARD_BG, padx=10, pady=8,
                      highlightthickness=2, highlightbackground="#1e1e2e")
         card.grid(row=0, column=idx, sticky="nsew",
@@ -523,7 +525,7 @@ def build_setup_panels(app: PipelineGUI) -> None:
     Label(left, text="에이전트 선택", font=f["section"], bg=CARD_BG, fg="#8fa0b8").pack(anchor="w")
     agent_row = Frame(left, bg=CARD_BG)
     agent_row.pack(fill=X, pady=(4, 0))
-    for idx, name in enumerate(("Claude", "Codex", "Gemini")):
+    for idx, name in enumerate(physical_lane_order()):
         cb = Checkbutton(
             agent_row,
             text=name,

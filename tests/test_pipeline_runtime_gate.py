@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -316,10 +317,48 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             workspace, env = pipeline_runtime_gate.prepare_synthetic_workspace(Path(tmp))
 
-            self.assertTrue((workspace / ".pipeline" / "config" / "agent_profile.json").exists())
+            profile_path = workspace / ".pipeline" / "config" / "agent_profile.json"
+            self.assertTrue(profile_path.exists())
+            profile = json.loads(profile_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                profile["role_bindings"],
+                {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"},
+            )
             self.assertTrue(any((workspace / "work").rglob("*.md")))
             self.assertIn("PIPELINE_RUNTIME_LANE_COMMAND_CODEX", env)
             self.assertEqual(env["PIPELINE_RUNTIME_DISABLE_TOKEN_COLLECTOR"], "1")
+
+    def test_prepare_synthetic_workspace_accepts_legacy_role_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, _env = pipeline_runtime_gate.prepare_synthetic_workspace(
+                Path(tmp),
+                role_bindings={"implement": "Claude", "verify": "Codex", "advisory": "Gemini"},
+            )
+
+            profile_path = workspace / ".pipeline" / "config" / "agent_profile.json"
+            profile = json.loads(profile_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(
+                profile["role_bindings"],
+                {"implement": "Claude", "verify": "Codex", "advisory": "Gemini"},
+            )
+
+    def test_write_active_profile_accepts_legacy_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pipeline_runtime_gate._write_active_profile(
+                root,
+                role_bindings={"implement": "Claude", "verify": "Codex", "advisory": "Gemini"},
+            )
+
+            profile = json.loads(
+                (root / ".pipeline" / "config" / "agent_profile.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(
+            profile["role_bindings"],
+            {"implement": "Claude", "verify": "Codex", "advisory": "Gemini"},
+        )
 
     def test_finalize_synthetic_workspace_keeps_failed_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

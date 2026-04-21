@@ -17,6 +17,12 @@ from tkinter import PanedWindow, VERTICAL
 from tkinter.ttk import Scrollbar as TtkScrollbar
 from uuid import uuid4
 
+from pipeline_runtime.lane_catalog import (
+    default_role_bindings,
+    default_selected_agent,
+    lane_support_rank_map,
+    physical_lane_order,
+)
 from .formatting import format_compact_count
 from .platform import (
     IS_WINDOWS, APP_ROOT, TMUX_QUERY_TIMEOUT, WSL_DISTRO,
@@ -72,7 +78,7 @@ from .token_presenter import build_token_panel_presentation
 from .setup_executor import LocalSetupExecutorAdapter
 from storage.json_store_base import utc_now_iso
 
-_SETUP_AGENT_ORDER = ("Claude", "Codex", "Gemini")
+_SETUP_AGENT_ORDER = physical_lane_order()
 _SETUP_STATE_ORDER = (
     "InvalidConfig",
     "ApplyPending",
@@ -83,11 +89,7 @@ _SETUP_STATE_ORDER = (
     "PreviewWaiting",
     "DraftOnly",
 )
-_SETUP_AGENT_SUPPORT_RANK = {
-    "Codex": 3,
-    "Claude": 2,
-    "Gemini": 1,
-}
+_SETUP_AGENT_SUPPORT_RANK = lane_support_rank_map()
 _SETUP_DEFAULT_APPLY_RESULT_MESSAGE = "설정 적용 결과가 도착했습니다."
 _SETUP_DETAIL_PENDING_TEXT = "갱신 중..."
 
@@ -96,7 +98,7 @@ class PipelineGUI:
     def __init__(self, project: Path) -> None:
         self.project = project
         self._session_name = _session_name_for(project)
-        self.selected_agent = "Claude"
+        self.selected_agent = default_selected_agent()
         self._auto_focus_agent = True
         self._poll_in_flight = False
         self._last_snapshot: dict[str, object] | None = None
@@ -160,9 +162,10 @@ class PipelineGUI:
         self._setup_agent_vars = {
             name: BooleanVar(value=True) for name in _SETUP_AGENT_ORDER
         }
-        self._setup_implement_var = StringVar(value="Claude")
-        self._setup_verify_var = StringVar(value="Codex")
-        self._setup_advisory_var = StringVar(value="Gemini")
+        default_bindings = default_role_bindings()
+        self._setup_implement_var = StringVar(value=default_bindings["implement"])
+        self._setup_verify_var = StringVar(value=default_bindings["verify"])
+        self._setup_advisory_var = StringVar(value=default_bindings["advisory"])
         self._setup_advisory_enabled_var = BooleanVar(value=True)
         self._setup_operator_stop_enabled_var = BooleanVar(value=True)
         self._setup_session_arbitration_var = BooleanVar(value=True)
@@ -443,7 +446,7 @@ class PipelineGUI:
     def _tick_elapsed(self) -> None:
         """Lightweight tick — updates WORKING elapsed note aligned to second boundaries."""
         now = time.time()
-        for i, name in enumerate(("Claude", "Codex", "Gemini")):
+        for i, name in enumerate(_SETUP_AGENT_ORDER):
             since = self._working_since.get(name)
             if since is not None and i < len(self.agent_labels):
                 new_text = format_elapsed(now - since)
@@ -785,7 +788,7 @@ class PipelineGUI:
     def _build_snapshot(self) -> dict[str, object]:
         controller = self._ensure_home_controller()
         snapshot = controller.build_snapshot(
-            selected_agent=getattr(self, "selected_agent", "Claude"),
+            selected_agent=getattr(self, "selected_agent", default_selected_agent()),
             on_token_usage_refresh=self._queue_token_usage_refresh,
             on_token_dashboard_refresh=self._queue_token_dashboard_refresh,
         )
@@ -845,7 +848,7 @@ class PipelineGUI:
 
         working_labels = [label for label, status, _note, _quota in agents if status == "WORKING"]
         if self.selected_agent not in {label for label, _s, _n, _q in agents}:
-            self.selected_agent = working_labels[0] if working_labels else "Claude"
+            self.selected_agent = working_labels[0] if working_labels else default_selected_agent()
         elif self._auto_focus_agent and working_labels:
             self.selected_agent = working_labels[0]
 

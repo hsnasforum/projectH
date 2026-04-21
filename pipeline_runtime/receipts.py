@@ -23,6 +23,17 @@ def receipt_path(receipts_dir: Path, job_id: str, round_number: int) -> Path:
     return receipts_dir / f"{receipt_id(job_id, round_number)}.json"
 
 
+def load_verify_manifest(job_state: dict[str, Any]) -> dict[str, Any] | None:
+    manifest_value = str(job_state.get("verify_manifest_path") or "").strip()
+    if not manifest_value:
+        return None
+    manifest_path = Path(manifest_value)
+    if not manifest_path.exists():
+        return None
+    manifest = read_json(manifest_path)
+    return manifest if isinstance(manifest, dict) else None
+
+
 def validate_manifest(job_state: dict[str, Any]) -> tuple[bool, str]:
     manifest_value = str(job_state.get("verify_manifest_path") or "").strip()
     if not manifest_value:
@@ -30,7 +41,7 @@ def validate_manifest(job_state: dict[str, Any]) -> tuple[bool, str]:
     manifest_path = Path(manifest_value)
     if not manifest_path.exists():
         return False, "missing_manifest_file"
-    manifest = read_json(manifest_path)
+    manifest = load_verify_manifest(job_state)
     if not manifest:
         return False, "invalid_manifest_json"
     missing = sorted(_MANIFEST_REQUIRED_FIELDS.difference(manifest.keys()))
@@ -45,6 +56,21 @@ def validate_manifest(job_state: dict[str, Any]) -> tuple[bool, str]:
     if str(manifest.get("artifact_hash") or "") != str(job_state.get("artifact_hash") or ""):
         return False, "artifact_hash_mismatch"
     return True, ""
+
+
+def manifest_feedback_path(job_state: dict[str, Any], *, repo_root: Path) -> Path | None:
+    manifest = load_verify_manifest(job_state)
+    if not manifest:
+        return None
+    feedback_value = str(manifest.get("feedback_path") or "").strip()
+    if not feedback_value:
+        return None
+    feedback_path = Path(feedback_value)
+    if not feedback_path.is_absolute():
+        feedback_path = repo_root / feedback_path
+    if not feedback_path.exists():
+        return None
+    return feedback_path
 
 
 def build_receipt(

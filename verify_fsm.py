@@ -446,6 +446,52 @@ class StateMachine:
         job.save(self.state_dir)
         return True
 
+    def _failed_dispatch_snapshot_for_pane(self, current_pane: str) -> str:
+        snapshot = (current_pane or "").rstrip()
+        if not snapshot:
+            return ""
+        if "[Pasted Content" in snapshot:
+            return snapshot
+        if self.pane_text_is_idle(snapshot):
+            return ""
+        return snapshot
+
+    def _build_verify_prompt(self, job: JobState) -> tuple[dict[str, str], str]:
+        prompt_context = {
+            "job_id": job.job_id,
+            "round": job.round,
+            "artifact_path": job.artifact_path,
+            "latest_work_path": job.artifact_path,
+            "latest_verify_path": "없음",
+        }
+        if self.verify_context_builder:
+            prompt_context.update(self.verify_context_builder(job))
+        prompt = self.normalize_prompt_text(self.verify_prompt_template.format(**prompt_context))
+        return prompt_context, prompt
+
+    def _prompt_marker_map(self, prompt: str) -> dict[str, str]:
+        markers: dict[str, str] = {}
+        for raw_line in prompt.splitlines():
+            line = raw_line.strip()
+            if not line or ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            key = key.strip()
+            value = value.strip()
+            if not value:
+                continue
+            if key in {"ROLE", "OWNER", "NEXT_CONTROL_SEQ", "WORK", "VERIFY"}:
+                markers[key] = f"{key}: {value}"
+        return markers
+
+    def _pane_contains_prompt_markers(self, current_pane: str, prompt: str) -> bool:
+        pane_text = (current_pane or "").replace("\r\n", "\n")
+        markers = self._prompt_marker_map(prompt)
+        required = [markers.get("ROLE"), markers.get("OWNER"), markers.get("NEXT_CONTROL_SEQ")]
+        if not all(marker and marker in pane_text for marker in required):
+            return False
+        return True
+
     def _record_dispatch_stall(
         self,
         job: JobState,
@@ -473,7 +519,7 @@ class StateMachine:
         self.dedupe.forget(job.job_id, job.round, job.artifact_hash, "slot_verify")
         job.last_failed_dispatch_at = now
         job.dispatch_fail_count += 1
-        job.last_failed_dispatch_snapshot = "" if self.pane_text_is_idle(current_pane) else current_pane
+        job.last_failed_dispatch_snapshot = self._failed_dispatch_snapshot_for_pane(current_pane)
         job.last_dispatch_slot = ""
         job.dispatch_id = ""
         job.seen_dispatch_id = ""
@@ -514,7 +560,7 @@ class StateMachine:
         self.dedupe.forget(job.job_id, job.round, job.artifact_hash, "slot_verify")
         job.last_failed_dispatch_at = now
         job.dispatch_fail_count += 1
-        job.last_failed_dispatch_snapshot = "" if self.pane_text_is_idle(current_pane) else current_pane
+        job.last_failed_dispatch_snapshot = self._failed_dispatch_snapshot_for_pane(current_pane)
         job.last_dispatch_slot = ""
         job.dispatch_id = ""
         job.seen_dispatch_id = ""
@@ -564,7 +610,7 @@ class StateMachine:
         self.dedupe.forget(job.job_id, job.round, job.artifact_hash, "slot_verify")
         job.last_failed_dispatch_at = time.time()
         job.dispatch_fail_count += 1
-        job.last_failed_dispatch_snapshot = "" if self.pane_text_is_idle(current_pane) else current_pane
+        job.last_failed_dispatch_snapshot = self._failed_dispatch_snapshot_for_pane(current_pane)
         job.last_dispatch_slot = ""
         job.dispatch_id = ""
         job.seen_dispatch_id = ""
@@ -610,6 +656,13 @@ class StateMachine:
 
     def _handle_verify_pending(self, job: JobState) -> JobState:
         slot = "slot_verify"
+        prompt_context, prompt = self._build_verify_prompt(job)
+
+        if job.dispatch_control_seq < 0:
+            try:
+                job.dispatch_control_seq = int(prompt_context.get("next_control_seq") or -1)
+            except (TypeError, ValueError):
+                job.dispatch_control_seq = -1
 
         if job.degraded_reason in {"dispatch_stall", "post_accept_completion_stall"}:
             self.dedupe.mark_suppressed(
@@ -631,9 +684,23 @@ class StateMachine:
 
             if job.last_failed_dispatch_snapshot:
                 current_pane = self.capture_pane_text(self.verify_pane_target)
-                if current_pane == job.last_failed_dispatch_snapshot:
+                current_snapshot = self._failed_dispatch_snapshot_for_pane(current_pane)
+                if (
+                    current_snapshot and current_snapshot == job.last_failed_dispatch_snapshot
+                ) or current_pane.rstrip() == job.last_failed_dispatch_snapshot:
+                    job.last_failed_dispatch_at = time.time()
+                    job.last_failed_dispatch_snapshot = current_snapshot or current_pane.rstrip()
+                    job.save(self.state_dir)
                     self.dedupe.mark_suppressed(
                         job.job_id, job.round, job.artifact_hash, slot, "dispatch_backoff_same_snapshot"
+                    )
+                    return job
+                if self._pane_contains_prompt_markers(current_pane, prompt):
+                    job.last_failed_dispatch_at = time.time()
+                    job.last_failed_dispatch_snapshot = current_snapshot or current_pane.rstrip()
+                    job.save(self.state_dir)
+                    self.dedupe.mark_suppressed(
+                        job.job_id, job.round, job.artifact_hash, slot, "dispatch_backoff_prompt_visible"
                     )
                     return job
 
@@ -645,22 +712,6 @@ class StateMachine:
             self.dedupe.mark_suppressed(job.job_id, job.round, job.artifact_hash, slot, "lease_busy")
             return job
 
-        prompt_context = {
-            "job_id": job.job_id,
-            "round": job.round,
-            "artifact_path": job.artifact_path,
-            "latest_work_path": job.artifact_path,
-            "latest_verify_path": "없음",
-        }
-        if self.verify_context_builder:
-            prompt_context.update(self.verify_context_builder(job))
-        if job.dispatch_control_seq < 0:
-            try:
-                job.dispatch_control_seq = int(prompt_context.get("next_control_seq") or -1)
-            except (TypeError, ValueError):
-                job.dispatch_control_seq = -1
-
-        prompt = self.normalize_prompt_text(self.verify_prompt_template.format(**prompt_context))
         ok = self.send_keys(self.verify_pane_target, prompt, self.dry_run, self.verify_pane_type)
 
         if ok:

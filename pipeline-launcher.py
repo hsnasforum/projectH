@@ -44,6 +44,7 @@ from pipeline_gui.setup_profile import (
     resolve_project_active_profile,
     resolve_project_runtime_adapter,
 )
+from pipeline_runtime.lane_catalog import default_role_bindings
 from pipeline_runtime.control_writers import validate_operator_candidate_status
 
 _START_READY_TIMEOUT_SEC = 15.0
@@ -298,11 +299,19 @@ def runtime_lane_name_map(project: Path) -> dict[int, str]:
 
 def _runtime_role_owners(project: Path) -> dict[str, str]:
     owners = dict(resolve_project_runtime_adapter(project).get("role_owners") or {})
+    fallback = default_role_bindings()
     return {
-        "implement": str(owners.get("implement") or "Claude"),
-        "verify": str(owners.get("verify") or "Codex"),
-        "advisory": str(owners.get("advisory") or "Gemini"),
+        "implement": str(owners.get("implement") or fallback["implement"]),
+        "verify": str(owners.get("verify") or fallback["verify"]),
+        "advisory": str(owners.get("advisory") or fallback["advisory"]),
     }
+
+
+def _runtime_role_for_lane(project: Path, lane_name: str) -> str:
+    for role_name, owner in _runtime_role_owners(project).items():
+        if owner == lane_name:
+            return role_name
+    return ""
 
 
 def _runtime_view(project: Path) -> dict[str, object]:
@@ -433,7 +442,7 @@ def _runtime_view(project: Path) -> dict[str, object]:
 def pane_snapshots(project: Path, runtime_view: dict[str, object]) -> list[AgentSnapshot]:
     summaries: list[AgentSnapshot] = []
     active_round = dict(runtime_view.get("active_round") or {})
-    verify_owner = _runtime_role_owners(project).get("verify", "Codex")
+    verify_owner = _runtime_role_owners(project)["verify"]
     for lane in list(runtime_view.get("lanes") or []):
         if not isinstance(lane, dict):
             continue
@@ -441,6 +450,9 @@ def pane_snapshots(project: Path, runtime_view: dict[str, object]) -> list[Agent
         state = str(lane.get("state") or "OFF")
         status_note = str(lane.get("note") or "")
         detail_parts = []
+        role_name = _runtime_role_for_lane(project, name)
+        if role_name:
+            detail_parts.append(f"role={role_name}")
         if lane.get("pid"):
             detail_parts.append(f"pid={lane['pid']}")
         last_event_at = str(lane.get("last_event_at") or "")
@@ -463,8 +475,8 @@ def pane_snapshots(project: Path, runtime_view: dict[str, object]) -> list[Agent
 def focused_lane_details(project: Path, runtime_view: dict[str, object], agent_index: int) -> list[str]:
     lane_name = runtime_lane_name_map(project).get(agent_index, "")
     role_owners = _runtime_role_owners(project)
-    implement_owner = role_owners.get("implement", "Claude")
-    verify_owner = role_owners.get("verify", "Codex")
+    implement_owner = role_owners["implement"]
+    verify_owner = role_owners["verify"]
     active_round = dict(runtime_view.get("active_round") or {})
     lane = next(
         (dict(item) for item in list(runtime_view.get("lanes") or []) if str(item.get("name") or "") == lane_name),
@@ -478,6 +490,9 @@ def focused_lane_details(project: Path, runtime_view: dict[str, object], agent_i
         f"state={lane.get('state') or 'UNKNOWN'}",
         f"attachable={bool(lane.get('attachable'))}",
     ]
+    role_name = _runtime_role_for_lane(project, lane_name)
+    if role_name:
+        lines.append(f"bound_role={role_name}")
     if lane.get("pid"):
         lines.append(f"pid={lane['pid']}")
     if lane.get("note"):
@@ -507,9 +522,8 @@ def focused_lane_details(project: Path, runtime_view: dict[str, object], agent_i
     for event in list(runtime_view.get("events") or []):
         payload = dict(event.get("payload") or {})
         event_type = str(event.get("event_type") or "")
-        if str(payload.get("lane") or "") != lane_name:
-            if not (lane_name == implement_owner and event_type == "control_duplicate_ignored"):
-                continue
+        if str(payload.get("lane") or "") != lane_name and event_type != "control_duplicate_ignored":
+            continue
         subject = str(payload.get("state") or payload.get("result") or payload.get("reason") or "").strip()
         if event_type == "control_duplicate_ignored":
             subject = str(payload.get("reason") or "duplicate_control").strip()
@@ -524,6 +538,7 @@ def focused_lane_details(project: Path, runtime_view: dict[str, object], agent_i
 
 def build_snapshot(project: Path, session: str, runtime_view: dict[str, object] | None = None) -> list[str]:
     runtime_view = runtime_view or _runtime_view(project)
+    role_owners = _runtime_role_owners(project)
     runtime_status = str(runtime_view.get("runtime_state") or "STOPPED")
     watcher_ok = bool(runtime_view.get("watcher_alive"))
     watcher_pid = runtime_view.get("watcher_pid")
@@ -553,6 +568,7 @@ def build_snapshot(project: Path, session: str, runtime_view: dict[str, object] 
         f"Project : {project}",
         f"Runtime : {runtime_status}",
         f"Runtime helper : {'ALIVE pid=' + str(watcher_pid) if watcher_ok and watcher_pid else 'DEAD'}",
+        f"Role owners : implement={role_owners['implement']} / verify={role_owners['verify']} / advisory={role_owners['advisory']}",
         "",
         f"Latest work  : {work_name} ({time_ago(work_mtime)})" if work_mtime else f"Latest work  : {work_name}",
         f"Latest verify: {verify_name} ({time_ago(verify_mtime)})" if verify_mtime else f"Latest verify: {verify_name}",
@@ -589,7 +605,7 @@ def build_snapshot(project: Path, session: str, runtime_view: dict[str, object] 
     if pane_lines:
         lines.extend([
             "",
-            "Agents:",
+            "Lanes:",
             *[
                 f"  {_fit_text(snap.label, 6)} "
                 f"{_fit_text(f'[{snap.status}]', 11)} "

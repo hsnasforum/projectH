@@ -967,6 +967,8 @@ class SerializerMixin:
                     "value": str(item.get("value") or "").strip(),
                     "source_role": str(item.get("source_role") or "").strip(),
                     "rendered_as": str(item.get("rendered_as") or "").strip(),
+                    "support_plurality": str(item.get("support_plurality") or "").strip(),
+                    "trust_tier": str(item.get("trust_tier") or "").strip(),
                 }
             )
         return serialized

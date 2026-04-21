@@ -6,11 +6,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+from pipeline_runtime.lane_catalog import (
+    build_lane_configs,
+    physical_lane_order,
+)
 from .platform import path_exists, read_json_path
 from storage.json_store_base import utc_now_iso
 
 CURRENT_SETUP_SCHEMA_VERSION = 1
-SETUP_AGENT_ORDER = ("Claude", "Codex", "Gemini")
+SETUP_AGENT_ORDER = physical_lane_order()
 _SETUP_CANONICAL_ARTIFACT_NAMES = ("request.json", "preview.json", "apply.json", "result.json")
 
 
@@ -392,7 +396,6 @@ def validate_profile_payload(payload: dict[str, Any]) -> list[str]:
 def _support_level_for_profile(payload: dict[str, Any]) -> str:
     normalized, _errors = _coerce_profile_payload(payload)
     selected = list(normalized.get("selected_agents", []) or [])
-    selected_set = set(selected)
     bindings = dict(normalized.get("role_bindings", {}) or {})
     options = dict(normalized.get("role_options", {}) or {})
     flags = dict(normalized.get("mode_flags", {}) or {})
@@ -401,31 +404,27 @@ def _support_level_for_profile(payload: dict[str, Any]) -> str:
     advisory = str(bindings.get("advisory") or "")
     advisory_enabled = bool(options.get("advisory_enabled"))
     self_verify_allowed = bool(flags.get("self_verify_allowed"))
+    selected_count = len(selected)
+    implement_verify_distinct = bool(implement and verify and implement != verify)
 
     if (
-        selected_set == {"Claude", "Codex", "Gemini"}
-        and implement == "Claude"
-        and verify == "Codex"
+        selected_count == 3
+        and implement_verify_distinct
         and advisory_enabled
-        and advisory == "Gemini"
+        and bool(advisory)
     ):
         return "supported"
-    if (
-        selected_set == {"Claude", "Codex"}
-        and implement == "Claude"
-        and verify == "Codex"
-        and not advisory_enabled
-    ):
+    if selected_count == 2 and implement_verify_distinct and not advisory_enabled:
         return "supported"
     if (
-        selected_set == {"Codex"}
-        and implement == "Codex"
-        and verify == "Codex"
+        selected_count == 1
+        and implement
+        and implement == verify
         and not advisory_enabled
         and self_verify_allowed
     ):
         return "experimental"
-    if selected_set:
+    if selected:
         return "experimental"
     return "blocked"
 
@@ -543,22 +542,10 @@ def runtime_adapter_from_resolved(resolved: dict[str, Any]) -> dict[str, Any]:
             or role_owners["advisory"]
         ),
     }
-    roles_by_lane: dict[str, list[str]] = {lane: [] for lane in SETUP_AGENT_ORDER}
-    for role_name, owner in role_owners.items():
-        if owner in roles_by_lane:
-            roles_by_lane[owner].append(role_name)
-
-    lane_configs = []
-    for pane_index, lane_name in enumerate(SETUP_AGENT_ORDER):
-        lane_configs.append(
-            {
-                "name": lane_name,
-                "pane_index": pane_index,
-                "pane_type": lane_name.lower(),
-                "enabled": lane_name in enabled_set,
-                "roles": list(roles_by_lane.get(lane_name) or []),
-            }
-        )
+    lane_configs = build_lane_configs(
+        enabled_lanes=enabled_lanes,
+        role_owners=role_owners,
+    )
 
     return {
         "resolution_state": str(resolved.get("resolution_state") or "broken"),

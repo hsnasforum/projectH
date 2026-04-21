@@ -5,9 +5,11 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from .lane_catalog import lane_name_order_map, physical_lane_order
+
 
 class TmuxAdapter:
-    LANE_INDEX = {"Claude": 0, "Codex": 1, "Gemini": 2}
+    LANE_INDEX = lane_name_order_map()
     DEFAULT_SESSION_COLS = 420
     DEFAULT_SESSION_ROWS = 72
 
@@ -296,7 +298,7 @@ class TmuxAdapter:
             "session": self.session_exists(),
             "lanes": {
                 lane_name: self.lane_health(lane_name)
-                for lane_name in ("Claude", "Codex", "Gemini")
+                for lane_name in physical_lane_order()
             },
         }
 

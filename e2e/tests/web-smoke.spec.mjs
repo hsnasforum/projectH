@@ -1782,6 +1782,58 @@ test("claim-coverage panel은 재조사 후 약해진 슬롯을 명확히 표시
   await expect(text).toContainText("교차 확인 기준을 더 이상 충족하지 않아 단일 출처로 조정되었습니다");
 });
 
+test("claim_coverage_multi_source_weak_focus_slot_emits_multi_source_hint", async ({ page }) => {
+  await prepareSession(page, "claim-coverage-focus-multi-source-weak");
+
+  await page.evaluate(() => {
+    // @ts-ignore — renderClaimCoverage is defined in the page scope
+    renderClaimCoverage([
+      {
+        slot: "이용 형태",
+        status_label: "단일 출처",
+        value: "PC·콘솔",
+        support_count: 2,
+        candidate_count: 2,
+        is_focus_slot: true,
+        progress_label: "유지",
+        previous_status_label: "단일 출처",
+        progress_state: "unchanged",
+        support_plurality: "multiple",
+      },
+    ], "이용 형태: 단일 출처 상태 유지.");
+  });
+
+  const text = page.locator("#claim-coverage-text");
+  await expect(text).toContainText("[단일 출처] 이용 형태");
+  await expect(text).toContainText("재조사 대상이며 여러 출처가 확인되었으나, 아직 교차 확인 기준에는 미달합니다.");
+  await expect(text).not.toContainText("1개 출처만 확인됨. 교차 검증이 권장됩니다.");
+});
+
+test("claim_coverage_strong_mixed_trust_tier_non_focus_slot_emits_mixed_trust_hint", async ({ page }) => {
+  await prepareSession(page, "claim-coverage-strong-mixed-trust");
+
+  await page.evaluate(() => {
+    // @ts-ignore — renderClaimCoverage is defined in the page scope
+    renderClaimCoverage([
+      {
+        slot: "개발",
+        status_label: "교차 확인",
+        value: "Pearl Abyss",
+        support_count: 2,
+        candidate_count: 2,
+        is_focus_slot: false,
+        support_plurality: "",
+        trust_tier: "mixed",
+      },
+    ], "");
+  });
+
+  const text = page.locator("#claim-coverage-text");
+  await expect(text).toContainText("[교차 확인] 개발");
+  await expect(text).toContainText("교차 확인 기준은 충족하지만 공식/위키/데이터 소스가 약합니다.");
+  await expect(text).not.toContainText("1개 출처만 확인됨. 교차 검증이 권장됩니다.");
+});
+
 test("fact-strength bar는 conflict badge를 교차 확인과 단일 출처 사이에 렌더링합니다", async ({ page }) => {
   await prepareSession(page, "fact-strength-conflict");
 

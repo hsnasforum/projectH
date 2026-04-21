@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from .agents import STATUS_COLORS, _parse_elapsed, format_elapsed
 from .backend import format_control_summary, time_ago
 from .tokens import format_token_usage_note
+from pipeline_runtime.turn_arbitration import canonical_turn_state_name
 
 _AGENT_STATUS_LABELS = {
     "READY": "대기",
@@ -256,7 +257,10 @@ def _build_round_record_lines(
             _format_record_line("마지막 verify", verify_name, verify_mtime),
         )
 
-    state_value = str(turn_state.get("state") or "")
+    state_value = canonical_turn_state_name(
+        turn_state.get("state"),
+        legacy_state=turn_state.get("legacy_state"),
+    )
     entered_at = float(turn_state.get("entered_at") or 0.0)
     work_is_current = bool(work_mtime and entered_at and work_mtime >= entered_at)
     verify_is_current = bool(verify_mtime and entered_at and verify_mtime >= entered_at)
@@ -264,7 +268,7 @@ def _build_round_record_lines(
     latest_work_text = _format_record_line("최신 work", work_name, work_mtime)
     latest_verify_text = _format_record_line("최신 verify", verify_name, verify_mtime)
 
-    if state_value == "CLAUDE_ACTIVE":
+    if state_value == "IMPLEMENT_ACTIVE":
         if work_is_current:
             work_text = _format_record_line("현재 라운드 work", work_name, work_mtime)
         elif work_name == "—":
@@ -273,7 +277,7 @@ def _build_round_record_lines(
             work_text = f"현재 라운드 work: 아직 기록되지 않음 · {latest_work_text}"
         return work_text, latest_verify_text
 
-    if state_value in {"CODEX_VERIFY", "CODEX_FOLLOWUP"}:
+    if state_value in {"VERIFY_ACTIVE", "VERIFY_FOLLOWUP"}:
         if work_name == "—":
             work_text = "검증 기준 work: 아직 확인되지 않음"
         else:

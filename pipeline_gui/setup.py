@@ -115,18 +115,32 @@ _TMPL_AGENTS = """\
 
 ## Roles
 
-| Role | Agent | Responsibility |
+| Role | Owner | Responsibility |
 |------|-------|---------------|
-| Implementer | Claude | Code changes, bug fixes, feature work |
-| Verifier | Codex | Review, test rerun, truth reconciliation |
-| Arbiter | Gemini | Tie-breaking, advisory when verifier cannot resolve |
+| Implement owner | active role_bindings.implement | Code changes, bug fixes, feature work |
+| Verify/handoff owner | active role_bindings.verify | Review, test rerun, truth reconciliation, next handoff |
+| Advisory owner | active role_bindings.advisory | Tie-breaking, advisory when verify owner cannot resolve |
 
 ## Work Flow
 
-1. Claude implements based on handoff instructions
-2. Codex verifies the implementation against current tree
-3. If Codex cannot resolve, Gemini provides advisory
-4. Operator makes final decisions on ambiguous cases
+1. Implement owner works from `.pipeline/claude_handoff.md`
+2. Verify/handoff owner verifies the latest `/work` against the current tree
+3. If verify/handoff owner cannot resolve, advisory owner provides advisory
+4. Verify/handoff owner writes the next handoff or operator stop
+
+## Turbo-lite Wrappers
+
+Use the wrappers narrowly and in order:
+
+1. `onboard-lite` when the repo or subsystem is unfamiliar
+2. implement owner does the bounded change
+3. `finalize-lite` for implementation-side wrap-up
+4. `round-handoff` when verification truth must be rerun and reconciled
+5. `next-slice-triage` only after `/work` and `/verify` are current
+
+Historical slot filenames remain stable even when the bound owner changes.
+The runtime adapter always carries the full three-lane physical catalog (`Claude`, `Codex`, `Gemini`) and marks each lane with `enabled` plus bound `roles`.
+Support policy is shape-based rather than name-whitelist based: distinct implement/verify 3-lane with advisory enabled is `supported`, distinct implement/verify 2-lane with advisory disabled is also `supported`, one-lane self-verify is `experimental`, and invalid profiles are `blocked`/`broken`.
 """
 
 _TMPL_CLAUDE = """\
@@ -134,6 +148,7 @@ _TMPL_CLAUDE = """\
 
 ## Working Principles
 
+- Follow the active `role_bindings`; Claude may be implement owner or verify/handoff owner depending on the current profile.
 - Read the codebase before making changes.
 - Prefer editing existing files over creating new ones.
 - Make the smallest change that solves the problem.
@@ -161,6 +176,7 @@ _TMPL_GEMINI = """\
 
 You serve as an advisory arbiter for this project.
 Your primary function is analysis and recommendation, not direct implementation.
+Role ownership follows active `role_bindings`; this file is Gemini's root memory, not proof that Gemini always owns a given lane.
 
 ## Principles
 

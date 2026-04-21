@@ -11,6 +11,8 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
+from .lane_catalog import physical_lane_order
+
 CONTROL_SLOT_STATUSES: dict[str, str] = {
     "claude_handoff.md": "implement",
     "gemini_request.md": "request_open",
@@ -19,13 +21,13 @@ CONTROL_SLOT_STATUSES: dict[str, str] = {
 }
 
 CONTROL_SLOT_LABELS: dict[str, str] = {
-    "claude_handoff.md": "Claude 실행",
-    "gemini_request.md": "Gemini 실행",
-    "gemini_advice.md": "Codex follow-up",
-    "operator_request.md": "operator 대기",
+    "claude_handoff.md": "implement handoff",
+    "gemini_request.md": "advisory request",
+    "gemini_advice.md": "verify follow-up",
+    "operator_request.md": "operator wait",
 }
 
-RUNTIME_LANE_ORDER = ("Claude", "Codex", "Gemini")
+RUNTIME_LANE_ORDER = physical_lane_order()
 _CONTROL_HEADER_LINE_RE = re.compile(r"^\s*([A-Z][A-Z0-9_]*):\s*(.*?)\s*$")
 ROUND_NOTE_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-.+\.md$")
 WORK_PATH_RE = re.compile(r"(work/\d+/\d+/[^\s`]+\.md)")
@@ -270,6 +272,7 @@ def latest_markdown(directory: Path) -> tuple[str, float]:
 
 def latest_round_markdown(directory: Path) -> tuple[str, float]:
     best_path: Path | None = None
+    best_date = ""
     best_mtime = 0.0
     if not directory.exists():
         return "—", 0.0
@@ -284,8 +287,10 @@ def latest_round_markdown(directory: Path) -> tuple[str, float]:
             mtime = candidate.stat().st_mtime
         except OSError:
             continue
-        if mtime > best_mtime:
+        date_key = candidate.name[:10]
+        if (date_key, mtime) > (best_date, best_mtime):
             best_path = candidate
+            best_date = date_key
             best_mtime = mtime
     if best_path is None:
         return "—", 0.0
@@ -370,12 +375,8 @@ def latest_verify_note_for_work(
 
     verify_dir = same_day_verify_dir_for_work(work_root, verify_root, work_path)
 
-    latest_any: Path | None = None
-    latest_any_mtime = 0.0
     latest_referenced: Path | None = None
     latest_referenced_mtime = 0.0
-    candidate_count = 0
-    latest_any_refs: set[str] = set()
     if verify_dir.exists():
         for md in verify_dir.rglob("*.md"):
             if not is_canonical_round_note(verify_dir, md, work_root=work_root, verify_root=verify_root):
@@ -384,12 +385,7 @@ def latest_verify_note_for_work(
                 mtime = md.stat().st_mtime
             except OSError:
                 continue
-            candidate_count += 1
             refs = note_referenced_work_paths(md, repo_root=repo_root)
-            if mtime >= latest_any_mtime:
-                latest_any = md
-                latest_any_mtime = mtime
-                latest_any_refs = refs
             if normalized_work not in refs:
                 continue
             if mtime >= latest_referenced_mtime:
@@ -412,8 +408,6 @@ def latest_verify_note_for_work(
 
     if latest_referenced is not None:
         return latest_referenced
-    if candidate_count == 1 and not latest_any_refs:
-        return latest_any
     return None
 
 

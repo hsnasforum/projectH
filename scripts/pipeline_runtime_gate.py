@@ -21,6 +21,11 @@ if str(REPO_ROOT) not in sys.path:
 
 from pipeline_gui.project import _session_name_for
 from pipeline_runtime.control_writers import validate_operator_candidate_status
+from pipeline_runtime.lane_catalog import (
+    build_agent_profile_payload,
+    default_role_bindings,
+    physical_lane_order,
+)
 from pipeline_runtime.schema import parse_control_slots, read_json
 from pipeline_runtime.supervisor import RuntimeSupervisor
 from pipeline_runtime.tmux_adapter import TmuxAdapter
@@ -501,10 +506,13 @@ def _probe_receipt_manifest_mismatch_degraded_precedence() -> tuple[bool, str, d
         (state_dir / "turn_state.json").write_text(
             json.dumps(
                 {
-                    "state": "CODEX_VERIFY",
+                    "state": "VERIFY_ACTIVE",
+                    "legacy_state": "CODEX_VERIFY",
                     "entered_at": 1.0,
                     "active_control_file": ".pipeline/claude_handoff.md",
                     "active_control_seq": 91,
+                    "active_role": "verify",
+                    "active_lane": "Claude",
                     "verify_job_id": "job-fault-manifest",
                 }
             ),
@@ -567,15 +575,22 @@ def _probe_receipt_manifest_mismatch_degraded_precedence() -> tuple[bool, str, d
 
 
 def _probe_active_lane_auth_failure_degraded_precedence() -> tuple[bool, str, dict[str, Any]]:
-    """Synthetic fault probe: an active Claude lane with an auth failure in its pane
-    tail must surface `runtime_state = DEGRADED` with `claude_auth_login_required`,
-    not `STARTING`, even when `_runtime_started` is false. Regression of the
-    just-fixed boundary would silently keep STARTING."""
+    """Synthetic fault probe for the legacy Claude-implement topology.
+
+    The auth-failure degraded reason currently exercised here is the
+    Claude-specific `claude_auth_login_required` lane surface. Keep the
+    probe explicit about that legacy role binding so swapped-topology
+    synthetic defaults can still be the gate baseline without weakening
+    this focused degraded-precedence check.
+    """
     from unittest import mock
 
     with tempfile.TemporaryDirectory(prefix="projecth-fault-auth-") as tmp:
         root = Path(tmp)
-        _write_active_profile(root)
+        _write_active_profile(
+            root,
+            role_bindings={"implement": "Claude", "verify": "Codex", "advisory": "Gemini"},
+        )
         pipeline_dir = root / ".pipeline"
         state_dir = pipeline_dir / "state"
         state_dir.mkdir(parents=True, exist_ok=True)
@@ -586,10 +601,13 @@ def _probe_active_lane_auth_failure_degraded_precedence() -> tuple[bool, str, di
         (state_dir / "turn_state.json").write_text(
             json.dumps(
                 {
-                    "state": "CLAUDE_ACTIVE",
+                    "state": "IMPLEMENT_ACTIVE",
+                    "legacy_state": "CLAUDE_ACTIVE",
                     "entered_at": 1.0,
                     "active_control_file": ".pipeline/claude_handoff.md",
                     "active_control_seq": 88,
+                    "active_role": "implement",
+                    "active_lane": "Claude",
                 }
             ),
             encoding="utf-8",
@@ -1067,36 +1085,45 @@ def run_soak(
     }
 
 
-def _write_active_profile(project_root: Path) -> None:
+def _write_active_profile(
+    project_root: Path,
+    *,
+    role_bindings: dict[str, str] | None = None,
+) -> None:
     active_path = project_root / ".pipeline" / "config" / "agent_profile.json"
     active_path.parent.mkdir(parents=True, exist_ok=True)
-    active_path.write_text(
-        json.dumps(
+    bindings = default_role_bindings()
+    if isinstance(role_bindings, dict):
+        bindings.update(
             {
-                "schema_version": 1,
-                "selected_agents": ["Claude", "Codex", "Gemini"],
-                "role_bindings": {"implement": "Claude", "verify": "Codex", "advisory": "Gemini"},
-                "role_options": {
-                    "advisory_enabled": True,
-                    "operator_stop_enabled": True,
-                    "session_arbitration_enabled": True,
-                },
-                "mode_flags": {
-                    "single_agent_mode": False,
-                    "self_verify_allowed": False,
-                    "self_advisory_allowed": False,
-                },
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
+                key: str(value).strip()
+                for key, value in role_bindings.items()
+                if key in {"implement", "verify", "advisory"} and str(value).strip()
+            }
+        )
+    payload = build_agent_profile_payload(
+        selected_agents=None,
+        role_bindings=bindings,
+        advisory_enabled=True,
+        operator_stop_enabled=True,
+        session_arbitration_enabled=True,
+        single_agent_mode=False,
+        self_verify_allowed=False,
+        self_advisory_allowed=False,
+    )
+    active_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
 
-def _seed_synthetic_workspace(project_root: Path) -> Path:
+def _seed_synthetic_workspace(
+    project_root: Path,
+    *,
+    role_bindings: dict[str, str] | None = None,
+) -> Path:
     (project_root / ".pipeline").mkdir(parents=True, exist_ok=True)
-    _write_active_profile(project_root)
+    _write_active_profile(project_root, role_bindings=role_bindings)
     (project_root / "work").mkdir(parents=True, exist_ok=True)
     (project_root / "verify").mkdir(parents=True, exist_ok=True)
     (project_root / "report" / "gemini").mkdir(parents=True, exist_ok=True)
@@ -1135,22 +1162,32 @@ def _synthetic_lane_env() -> dict[str, str]:
     python_bin = shlex.quote(sys.executable)
     fake_lane_path = shlex.quote(str(fake_lane))
     common = f"{python_bin} {fake_lane_path} --project-root {{project_root_shlex}}"
-    return {
-        "PIPELINE_RUNTIME_DISABLE_TOKEN_COLLECTOR": "1",
-        "PIPELINE_RUNTIME_LANE_COMMAND_CLAUDE": f"{common} --lane Claude --action-delay-sec 0.2",
-        "PIPELINE_RUNTIME_LANE_COMMAND_CODEX": f"{common} --lane Codex --gemini-every 5 --action-delay-sec 5.0",
-        "PIPELINE_RUNTIME_LANE_COMMAND_GEMINI": f"{common} --lane Gemini --gemini-every 5 --action-delay-sec 5.0",
+    command_suffixes = {
+        "Claude": "--action-delay-sec 0.2",
+        "Codex": "--gemini-every 5 --action-delay-sec 5.0",
+        "Gemini": "--gemini-every 5 --action-delay-sec 5.0",
     }
+    env = {"PIPELINE_RUNTIME_DISABLE_TOKEN_COLLECTOR": "1"}
+    for lane_name in physical_lane_order():
+        suffix = command_suffixes.get(lane_name, "")
+        env[f"PIPELINE_RUNTIME_LANE_COMMAND_{lane_name.upper()}"] = (
+            f"{common} --lane {lane_name}{(' ' + suffix) if suffix else ''}"
+        )
+    return env
 
 
-def prepare_synthetic_workspace(base_root: Path | None = None) -> tuple[Path, dict[str, str]]:
+def prepare_synthetic_workspace(
+    base_root: Path | None = None,
+    *,
+    role_bindings: dict[str, str] | None = None,
+) -> tuple[Path, dict[str, str]]:
     workspace = Path(
         tempfile.mkdtemp(
             prefix="projecth-pipeline-runtime-synthetic-",
             dir=str(base_root) if base_root else None,
         )
     ).resolve()
-    _seed_synthetic_workspace(workspace)
+    _seed_synthetic_workspace(workspace, role_bindings=role_bindings)
     return workspace, _synthetic_lane_env()
 
 

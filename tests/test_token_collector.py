@@ -412,7 +412,7 @@ class TokenCollectorTest(unittest.TestCase):
                         "ts": "2026-04-05T01:05:00Z",
                         "job_id": "turn_signal",
                         "round": None,
-                        "event_type": "gemini_notify",
+                        "event_type": "advisory_notify",
                         "slot": None,
                         "agent": "gemini",
                         "pane_target": "%3",

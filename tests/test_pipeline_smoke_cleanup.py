@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import tempfile
@@ -50,6 +51,54 @@ class SmokeCleanupLibTest(unittest.TestCase):
             MANUAL_SCRIPT_SOURCE.read_text(encoding="utf-8"), encoding="utf-8"
         )
         target.chmod(0o755)
+        return target
+
+    def _install_blocked_auto_triage_script(self, root: Path) -> Path:
+        target = root / ".pipeline" / "smoke-implement-blocked-auto-triage.sh"
+        target.write_text(
+            AUTO_TRIAGE_SCRIPT_SOURCE.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        target.chmod(0o755)
+        return target
+
+    def _write_active_profile(
+        self,
+        root: Path,
+        *,
+        implement: str,
+        verify: str,
+        advisory: str | None = "Gemini",
+        advisory_enabled: bool = True,
+        self_verify_allowed: bool = False,
+    ) -> Path:
+        config_dir = root / ".pipeline" / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "schema_version": 1,
+            "selected_agents": ["Claude", "Codex", "Gemini"],
+            "role_bindings": {
+                "implement": implement,
+                "verify": verify,
+                "advisory": advisory if advisory_enabled else None,
+            },
+            "role_options": {
+                "advisory_enabled": advisory_enabled,
+                "operator_stop_enabled": True,
+                "session_arbitration_enabled": advisory_enabled,
+            },
+            "mode_flags": {
+                "single_agent_mode": False,
+                "self_verify_allowed": self_verify_allowed,
+                "self_advisory_allowed": False,
+            },
+            "metadata": {
+                "saved_at": "2026-04-20T00:00:00+00:00",
+                "saved_by": "test",
+                "source_setup_id": "setup-test",
+            },
+        }
+        target = config_dir / "agent_profile.json"
+        target.write_text(json.dumps(payload), encoding="utf-8")
         return target
 
     def _mkdir_with_mtime(self, path: Path, epoch: int) -> None:
@@ -527,6 +576,67 @@ class SmokeCleanupLibTest(unittest.TestCase):
             "shared prune_blocked_smoke_dirs helper",
         )
 
+    def test_blocked_auto_triage_script_resolves_role_bound_runtime_adapter(self) -> None:
+        script_text = AUTO_TRIAGE_SCRIPT_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("resolve_project_runtime_adapter", script_text)
+        self.assertIn("IMPLEMENT_OWNER", script_text)
+        self.assertIn("VERIFY_OWNER", script_text)
+        self.assertIn("unsupported implement owner", script_text)
+        self.assertIn("implement and verify owners must differ", script_text)
+
+    def test_blocked_auto_triage_script_fail_closed_when_active_profile_missing(self) -> None:
+        tmp, root = self._make_temp_repo()
+        with tmp:
+            self._install_blocked_auto_triage_script(root)
+            env = dict(os.environ)
+            env["PYTHONPATH"] = (
+                f"{REPO_ROOT}:{env['PYTHONPATH']}"
+                if env.get("PYTHONPATH")
+                else str(REPO_ROOT)
+            )
+
+            result = subprocess.run(
+                ["bash", str(root / ".pipeline" / "smoke-implement-blocked-auto-triage.sh"), str(root)],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                env=env,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("blocked auto-triage smoke role resolution failed", result.stderr)
+            self.assertIn("Active profile is missing.", result.stderr)
+            self.assertNotIn("tmux", result.stderr.lower())
+
+    def test_blocked_auto_triage_script_fail_closed_for_non_claude_codex_owner(self) -> None:
+        tmp, root = self._make_temp_repo()
+        with tmp:
+            self._install_blocked_auto_triage_script(root)
+            self._write_active_profile(
+                root,
+                implement="Gemini",
+                verify="Claude",
+                advisory_enabled=False,
+            )
+            env = dict(os.environ)
+            env["PYTHONPATH"] = (
+                f"{REPO_ROOT}:{env['PYTHONPATH']}"
+                if env.get("PYTHONPATH")
+                else str(REPO_ROOT)
+            )
+
+            result = subprocess.run(
+                ["bash", str(root / ".pipeline" / "smoke-implement-blocked-auto-triage.sh"), str(root)],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                env=env,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("blocked auto-triage smoke role resolution failed", result.stderr)
+            self.assertIn("unsupported implement owner: Gemini", result.stderr)
+
     def test_live_arb_caller_keeps_newest_and_prunes_older(self) -> None:
         tmp, root = self._make_temp_repo()
         with tmp:
@@ -667,6 +777,44 @@ class SmokeCleanupLibTest(unittest.TestCase):
             script_text,
             "live-arb smoke script must delegate auto-prune to the shared "
             "prune_live_arb_smoke_dirs helper",
+        )
+
+    def test_live_arb_script_launches_real_lane_clis(self) -> None:
+        script_text = LIVE_ARB_SCRIPT_SOURCE.read_text(encoding="utf-8")
+        self.assertIn(
+            'find_cli_bin claude',
+            script_text,
+            "live-arb smoke must resolve the Claude CLI before launching the physical Claude lane",
+        )
+        self.assertIn(
+            'find_cli_bin codex',
+            script_text,
+            "live-arb smoke must resolve the Codex CLI before launching the physical Codex lane",
+        )
+        self.assertIn(
+            'find_cli_bin gemini',
+            script_text,
+            "live-arb smoke must resolve the Gemini CLI before launching the physical Gemini lane",
+        )
+        self.assertIn(
+            'tmux new-session -d -s "$SESSION" -c "$PROJECT_ROOT" "exec \\"$CLAUDE_BIN\\" --dangerously-skip-permissions"',
+            script_text,
+            "live-arb smoke must launch the physical Claude lane as Claude CLI instead of a bare shell",
+        )
+        self.assertIn(
+            'tmux split-window -P -F \'#{pane_id}\' -h -t "$SESSION:0" -c "$PROJECT_ROOT" "exec \\"$CODEX_BIN\\" --ask-for-approval never --disable apps"',
+            script_text,
+            "live-arb smoke must launch the physical Codex lane with the runtime Codex command",
+        )
+        self.assertIn(
+            'tmux split-window -P -F \'#{pane_id}\' -v -t "$CODEX_PANE" -c "$PROJECT_ROOT" "exec \\"$GEMINI_BIN\\" --approval-mode auto_edit"',
+            script_text,
+            "live-arb smoke must launch the physical Gemini lane with the runtime Gemini command",
+        )
+        self.assertIn(
+            'wait_for_cli_ready "$CLAUDE_PANE" 25 || true',
+            script_text,
+            "live-arb smoke must wait for the physical Claude lane prompt before handing watcher traffic to it",
         )
 
     def test_manual_cleanup_caller_default_live_arb_path_prunes_older(self) -> None:

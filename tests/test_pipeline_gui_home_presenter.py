@@ -40,13 +40,13 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
     def test_build_control_presentation_normal_active(self) -> None:
         presentation = build_control_presentation(
             {
-                "active": {"file": "claude_handoff.md", "status": "implement", "label": "Claude 실행", "mtime": 1.0},
-                "stale": [{"file": "operator_request.md", "status": "needs_operator", "label": "operator 대기", "mtime": 0.5}],
+                "active": {"file": "claude_handoff.md", "status": "implement", "label": "implement handoff", "mtime": 1.0},
+                "stale": [{"file": "operator_request.md", "status": "needs_operator", "label": "operator wait", "mtime": 0.5}],
             },
             None,
         )
 
-        self.assertIn("Claude 실행", presentation.active_text)
+        self.assertIn("implement handoff", presentation.active_text)
         self.assertIn("mtime fallback", presentation.active_text)
         self.assertIn("operator_request.md", presentation.stale_text)
         self.assertEqual(presentation.active_fg, "#93c5fd")
@@ -57,13 +57,13 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
     def test_build_control_presentation_needs_operator_is_red(self) -> None:
         presentation = build_control_presentation(
             {
-                "active": {"file": "operator_request.md", "status": "needs_operator", "label": "operator 대기", "mtime": 1.0},
+                "active": {"file": "operator_request.md", "status": "needs_operator", "label": "operator wait", "mtime": 1.0},
                 "stale": [],
             },
             None,
         )
 
-        self.assertIn("operator 대기", presentation.active_text)
+        self.assertIn("operator wait", presentation.active_text)
         self.assertEqual(presentation.active_fg, "#fca5a5")
         self.assertEqual(presentation.active_box_bg, "#2a1015")
         self.assertEqual(presentation.active_box_border, "#7f1d1d")
@@ -82,8 +82,8 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
     def test_build_control_presentation_preserves_seq_provenance(self) -> None:
         presentation = build_control_presentation(
             {
-                "active": {"file": "claude_handoff.md", "status": "implement", "label": "Claude 실행", "mtime": 1.0, "control_seq": 7},
-                "stale": [{"file": "gemini_request.md", "status": "request_open", "label": "Gemini 실행", "mtime": 0.5, "control_seq": 5}],
+                "active": {"file": "claude_handoff.md", "status": "implement", "label": "implement handoff", "mtime": 1.0, "control_seq": 7},
+                "stale": [{"file": "gemini_request.md", "status": "request_open", "label": "advisory request", "mtime": 0.5, "control_seq": 5}],
             },
             None,
         )
@@ -95,17 +95,17 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
     def test_build_control_presentation_prefers_verify_activity_over_handoff_label(self) -> None:
         presentation = build_control_presentation(
             {
-                "active": {"file": "claude_handoff.md", "status": "implement", "label": "Claude 실행", "mtime": 1.0, "control_seq": 8},
+                "active": {"file": "claude_handoff.md", "status": "implement", "label": "implement handoff", "mtime": 1.0, "control_seq": 8},
                 "stale": [],
             },
             {
                 "status": "VERIFY_RUNNING",
-                "label": "Codex 검증 실행 중",
+                "label": "verify 실행 중",
                 "artifact_name": "2026-04-09-docs-response-origin-summary-richness-family-closure.md",
             },
         )
 
-        self.assertIn("Codex 검증 실행 중", presentation.active_text)
+        self.assertIn("verify 실행 중", presentation.active_text)
         self.assertIn("family-closure.md", presentation.active_text)
         self.assertIn("claude_handoff.md", presentation.active_text)
         self.assertEqual(presentation.active_fg, "#93c5fd")
@@ -113,7 +113,7 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
     def test_build_control_presentation_mtime_fallback_without_seq(self) -> None:
         presentation = build_control_presentation(
             {
-                "active": {"file": "gemini_advice.md", "status": "advice_ready", "label": "Codex follow-up", "mtime": 2.0},
+                "active": {"file": "gemini_advice.md", "status": "advice_ready", "label": "verify follow-up", "mtime": 2.0},
                 "stale": [],
             },
             None,
@@ -182,7 +182,7 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
                 "work_mtime": 10.0,
                 "verify_name": "verify.md",
                 "verify_mtime": 15.0,
-                "turn_state": {"state": "CLAUDE_ACTIVE", "entered_at": 20.0},
+                "turn_state": {"state": "IMPLEMENT_ACTIVE", "legacy_state": "CLAUDE_ACTIVE", "entered_at": 20.0},
             }
         )
 
@@ -207,7 +207,7 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
                 "work_mtime": 10.0,
                 "verify_name": "verify.md",
                 "verify_mtime": 15.0,
-                "turn_state": {"state": "CODEX_VERIFY", "entered_at": 20.0},
+                "turn_state": {"state": "VERIFY_ACTIVE", "legacy_state": "CODEX_VERIFY", "entered_at": 20.0},
             }
         )
 

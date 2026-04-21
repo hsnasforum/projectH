@@ -1356,7 +1356,7 @@ These are placeholders for the next phase design target and its immediate follow
 ### Current Gates
 - Unit/service regression uses `python3 -m unittest -v`.
 - Playwright webServer launch clears inherited provider/model overrides, forces `LOCAL_AI_MODEL_PROVIDER=mock`, and does not reuse an already running smoke-port server, so operator shell state must not change the automated smoke baseline.
-- Playwright smoke covers 125 core browser scenarios (document-level browser coverage inventory count, not the raw `test(...)` count in `e2e/tests/web-smoke.spec.mjs`):
+- Playwright smoke covers 126 core browser scenarios (document-level browser coverage inventory count, not the raw `test(...)` count in `e2e/tests/web-smoke.spec.mjs`):
   - file summary with panels, source filename assertion in both quick-meta and transcript meta, and `문서 요약` source-type label assertion in both quick-meta and transcript meta
   - browser file picker with source filename and `문서 요약` source-type label assertion in both quick-meta and transcript meta
   - browser folder picker with `선택 결과 요약` source-type label and multi-source count-based metadata (`출처 2개`) assertion in both quick-meta and transcript meta, plus response detail preview panel alongside summary body with both cards' ordered labels, full-path tooltips, match badges (`파일명 일치` / `내용 일치`), and snippet text content, and transcript preview panel with item count, both cards' ordered labels, full-path tooltips, match badges (`파일명 일치` / `내용 일치`), and snippet text content

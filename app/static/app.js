@@ -2448,10 +2448,18 @@
         return `→ 재조사 결과: ${prev} → ${curr}${particle} 약해졌습니다. 추가 교차 검증이 권장됩니다.`;
       }
       if (curr === "교차 확인") {
+        const trust = String(item.trust_tier || "").trim();
+        if (trust === "mixed") {
+          return "→ 재조사 대상이며 현재 교차 확인 상태이지만, 공식/위키/데이터 소스가 약합니다.";
+        }
         return `→ 재조사 대상이며, 현재 교차 확인 상태입니다.`;
       }
       if (curr === "단일 출처") {
-        return `→ 재조사 대상이지만, 아직 단일 출처 상태입니다. 추가 교차 검증이 권장됩니다.`;
+        const plurality = String(item.support_plurality || "").trim();
+        if (plurality === "multiple") {
+          return "→ 재조사 대상이며 여러 출처가 확인되었으나, 아직 교차 확인 기준에는 미달합니다.";
+        }
+        return "→ 재조사 대상이지만, 아직 단일 출처 상태입니다. 추가 교차 검증이 권장됩니다.";
       }
       if (curr === "미확인") {
         return `→ 재조사 대상이지만, 아직 확인되지 않았습니다. 추가 출처가 필요합니다.`;
@@ -2497,7 +2505,17 @@
         } else if (statusLabel === "미확인") {
           lines.push(`   → 추가 출처가 필요합니다.`);
         } else if (statusLabel === "단일 출처") {
-          lines.push(`   → 1개 출처만 확인됨. 교차 검증이 권장됩니다.`);
+          const plurality = String(item.support_plurality || "").trim();
+          if (plurality === "multiple") {
+            lines.push(`   → 여러 출처가 확인되었으나 교차 확인 기준에는 미달합니다.`);
+          } else {
+            lines.push(`   → 1개 출처만 확인됨. 교차 검증이 권장됩니다.`);
+          }
+        } else if (statusLabel === "교차 확인") {
+          const trust = String(item.trust_tier || "").trim();
+          if (trust === "mixed") {
+            lines.push(`   → 교차 확인 기준은 충족하지만 공식/위키/데이터 소스가 약합니다.`);
+          }
         }
         if (sourceRole) {
           lines.push(`   출처 유형: ${formatSourceRoleWithTrust(sourceRole)}`);

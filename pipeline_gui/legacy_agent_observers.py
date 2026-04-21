@@ -7,7 +7,10 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from pipeline_runtime.lane_catalog import default_role_bindings
+
 from .formatting import format_elapsed
+from .setup_profile import resolve_project_runtime_adapter
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 BOX_DRAWING_ONLY_RE = re.compile(r"^[\s\-_=~│┃┆┊┌┐└┘├┤┬┴┼╭╮╯╰•·●○■□▶◀▸▹▾▿▴▵>*]+$")
@@ -314,22 +317,41 @@ def watcher_runtime_hints(
             lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-300:]
         except OSError:
             return {}
-    return watcher_runtime_hints_from_lines(lines, now_fn=now_fn)
+    adapter = resolve_project_runtime_adapter(project)
+    owners = dict(adapter.get("role_owners") or {})
+    return watcher_runtime_hints_from_lines(
+        lines,
+        now_fn=now_fn,
+        implement_owner=str(owners.get("implement") or ""),
+        verify_owner=str(owners.get("verify") or ""),
+        advisory_owner=str(owners.get("advisory") or ""),
+    )
 
 
 def watcher_runtime_hints_from_lines(
     lines: list[str],
     *,
     now_fn: Callable[[], float] = time.time,
+    implement_owner: str = "",
+    verify_owner: str = "",
+    advisory_owner: str = "",
 ) -> dict[str, tuple[str, str]]:
     if not lines:
         return {}
-    claude_started_at: float | None = None
-    claude_done = False
-    codex_started_at: float | None = None
-    codex_done = False
-    gemini_started_at: float | None = None
-    gemini_done = False
+    default_owners = default_role_bindings()
+    implement_lane = str(implement_owner or default_owners["implement"]).strip()
+    verify_lane = str(verify_owner or default_owners["verify"]).strip()
+    advisory_lane = str(advisory_owner or default_owners["advisory"]).strip()
+    role_started_at: dict[str, float | None] = {
+        "implement": None,
+        "verify": None,
+        "advisory": None,
+    }
+    role_done: dict[str, bool] = {
+        "implement": False,
+        "verify": False,
+        "advisory": False,
+    }
     for line in lines:
         ts_match = WATCHER_TS_RE.match(line)
         if not ts_match:
@@ -338,37 +360,42 @@ def watcher_runtime_hints_from_lines(
             timestamp = dt.datetime.fromisoformat(ts_match.group(1)).timestamp()
         except ValueError:
             continue
-        if "notify_claude" in line or ("send-keys" in line and "pane_type=claude" in line) or "waiting_for_claude" in line:
-            claude_started_at = timestamp
-            claude_done = False
-        elif "claude activity detected" in line or ("new job:" in line and claude_started_at is not None):
-            claude_done = True
+        if (
+            "notify_claude" in line
+            or "notify_implement_owner" in line
+            or ("send-keys" in line and "pane_type=claude" in line)
+            or "waiting_for_claude" in line
+        ):
+            role_started_at["implement"] = timestamp
+            role_done["implement"] = False
+        elif "activity detected by snapshot diff" in line or ("new job:" in line and role_started_at["implement"] is not None):
+            role_done["implement"] = True
         if "lease acquired: slot=slot_verify" in line or "VERIFY_PENDING → VERIFY_RUNNING" in line:
-            codex_started_at = timestamp
-            codex_done = False
+            role_started_at["verify"] = timestamp
+            role_done["verify"] = False
         elif (
-            "codex task completed" in line
+            "task completed" in line
             or "lease released: slot=slot_verify" in line
             or "VERIFY_RUNNING → VERIFY_DONE" in line
         ):
-            codex_done = True
-        if "notify_gemini" in line or "gemini response activity" in line:
-            gemini_started_at = timestamp
-            gemini_done = False
+            role_done["verify"] = True
+        if "notify_gemini" in line or "notify_advisory_owner" in line or "gemini response activity" in line:
+            role_started_at["advisory"] = timestamp
+            role_done["advisory"] = False
         elif "gemini advice updated" in line:
-            gemini_done = True
+            role_done["advisory"] = True
     now = now_fn()
     hints: dict[str, tuple[str, str]] = {}
-    if claude_started_at is not None and not claude_done:
-        hints["Claude"] = ("WORKING", f"impl {format_elapsed(now - claude_started_at)}")
-    elif claude_done:
-        hints["Claude"] = ("READY", "")
-    if codex_started_at is not None and not codex_done:
-        hints["Codex"] = ("WORKING", f"verify {format_elapsed(now - codex_started_at)}")
-    elif codex_done:
-        hints["Codex"] = ("READY", "")
-    if gemini_started_at is not None and not gemini_done:
-        hints["Gemini"] = ("WORKING", f"advice {format_elapsed(now - gemini_started_at)}")
-    elif gemini_done:
-        hints["Gemini"] = ("READY", "")
+    for role_name, lane_name, note_prefix in (
+        ("implement", implement_lane, "impl"),
+        ("verify", verify_lane, "verify"),
+        ("advisory", advisory_lane, "advice"),
+    ):
+        if not lane_name:
+            continue
+        started_at = role_started_at[role_name]
+        if started_at is not None and not role_done[role_name]:
+            hints[lane_name] = ("WORKING", f"{note_prefix} {format_elapsed(now - started_at)}")
+        elif role_done[role_name]:
+            hints[lane_name] = ("READY", "")
     return hints

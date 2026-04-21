@@ -99,6 +99,35 @@ class PipelineGuiSetupProfileTest(unittest.TestCase):
             [lane["roles"] for lane in adapter["lane_configs"]],
             [["implement"], ["verify"], ["advisory"]],
         )
+        lane_map = {lane["name"]: lane for lane in adapter["lane_configs"]}
+        self.assertEqual(lane_map["Claude"]["read_first_doc"], "CLAUDE.md")
+        self.assertEqual(lane_map["Codex"]["read_first_doc"], "AGENTS.md")
+        self.assertEqual(lane_map["Gemini"]["token_source_root"], "~/.gemini/tmp")
+        self.assertEqual(lane_map["Codex"]["support_rank"], 3)
+
+    def test_runtime_adapter_preserves_swapped_role_bindings(self) -> None:
+        adapter = runtime_adapter_from_resolved(
+            resolve_active_profile(_profile(implement="Codex", verify="Claude", advisory="Gemini"))
+        )
+        self.assertEqual(
+            adapter["role_owners"],
+            {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"},
+        )
+        self.assertEqual(
+            adapter["prompt_owners"],
+            {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"},
+        )
+        self.assertEqual(
+            [lane["roles"] for lane in adapter["lane_configs"]],
+            [["verify"], ["implement"], ["advisory"]],
+        )
+
+    def test_resolve_active_profile_returns_supported_for_swapped_three_lane(self) -> None:
+        resolved = resolve_active_profile(
+            _profile(implement="Codex", verify="Claude", advisory="Gemini")
+        )
+        self.assertEqual(resolved["resolution_state"], "ready")
+        self.assertEqual(resolved["support_level"], "supported")
 
     def test_resolve_active_profile_returns_experimental_for_codex_only_self_verify(self) -> None:
         resolved = resolve_active_profile(

@@ -340,6 +340,7 @@ class SQLiteSessionStore:
     _latest_save_signal_for_anchor = _SS._latest_save_signal_for_anchor
     _normalize_message = _SS._normalize_message
     _current_correctable_text = _SS._current_correctable_text
+    _compact_summary_hint_for_persist = staticmethod(_SS._compact_summary_hint_for_persist)
     # Public session-data methods
     build_session_local_memory_signal = _SS.build_session_local_memory_signal
     find_artifact_source_message = _SS.find_artifact_source_message

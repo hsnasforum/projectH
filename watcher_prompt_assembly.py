@@ -12,14 +12,12 @@ DEFAULT_IMPLEMENT_PROMPT = (
     "HANDOFF: {active_handoff_path}\n"
     "HANDOFF_SHA: {active_handoff_sha}\n"
     "GOAL:\n"
-    "- implement only the exact slice in the handoff\n"
-    "- if finished, leave one `/work` closeout and stop\n"
+    "- do only the handoff; if done, leave one `/work` closeout and stop\n"
     "READ_FIRST:\n"
     "- {runtime_implement_read_first_doc}\n"
-    "- work/README.md\n"
     "- {active_handoff_path}\n"
     "RULES:\n"
-    "- do not commit, push, publish a branch/PR, or choose the next slice\n"
+    "- no commit, push, branch/PR publish, or next-slice choice\n"
     "- do not write .pipeline/gemini_request.md or .pipeline/operator_request.md yourself\n"
     "- if the handoff is blocked or not actionable, emit the exact sentinel below and stop\n"
     "BLOCKED_SENTINEL:\n"
@@ -48,11 +46,14 @@ DEFAULT_ADVISORY_PROMPT = (
     "- {latest_work_mention}\n"
     "- {latest_verify_mention}\n"
     "OUTPUTS:\n"
-    "- advisory log: {gemini_report_path}\n"
-    "- recommendation slot: {gemini_advice_path} (STATUS: advice_ready, CONTROL_SEQ: {next_control_seq})\n"
+    "- log: {gemini_report_path}\n"
+    "- advice slot: {gemini_advice_path} (STATUS: advice_ready, CONTROL_SEQ: {next_control_seq})\n"
     "RULES:\n"
+    "- keep `READ_FIRST` to the listed advisory-owner root doc only\n"
+    "- if the request cites exact shipped docs or a current runtime-doc family, inspect those first\n"
+    "- do not widen to `docs/superpowers/**`, `plandoc/**`, or historical planning docs unless the request, latest `/work`, or latest `/verify` cites them as current evidence\n"
     "- pane-only answer is not completion\n"
-    "- use edit/write tools only; no shell heredoc or shell redirection\n"
+    "- use edit/write tools only; no shell heredoc or redirection\n"
     "- do not modify other repo files\n"
     "- keep the recommendation short and exact"
 )
@@ -66,19 +67,19 @@ DEFAULT_FOLLOWUP_PROMPT = (
     "WORK: {latest_work_path}\n"
     "VERIFY: {latest_verify_path}\n"
     "GOAL:\n"
-    "- convert the advisory into exactly one next control outcome\n"
+    "- turn the advisory into exactly one next control\n"
     "READ_FIRST:\n"
     "- {runtime_verify_read_first_doc}\n"
-    "- verify/README.md\n"
     "- .pipeline/gemini_request.md\n"
     "- .pipeline/gemini_advice.md\n"
     "OUTPUTS:\n"
-    "- .pipeline/claude_handoff.md (STATUS: implement, CONTROL_SEQ: {next_control_seq})\n"
-    "- .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: {next_control_seq})\n"
+    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/claude_handoff.md [implement] | .pipeline/operator_request.md [needs_operator]\n"
     "RULES:\n"
-    "- write exactly one next control outcome\n"
-    "- if you write .pipeline/operator_request.md, keep STATUS/CONTROL_SEQ in the first 12 lines and also include REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, and BASED_ON_VERIFY near the top\n"
-    "- after Gemini advice, write .pipeline/operator_request.md only if the advice itself recommends a real operator decision or still leaves no truthful exact slice"
+    "- keep `READ_FIRST` to the listed verify-owner root doc only\n"
+    "- write exactly one next control\n"
+    "- if you write `.pipeline/claude_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
+    "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
+    "- after Gemini advice, use .pipeline/operator_request.md only if it recommends a real operator decision or no truthful exact slice remains"
 )
 
 DEFAULT_CONTROL_RECOVERY_PROMPT = (
@@ -92,24 +93,22 @@ DEFAULT_CONTROL_RECOVERY_PROMPT = (
     "WORK: {latest_work_path}\n"
     "VERIFY: {latest_verify_path}\n"
     "GOAL:\n"
-    "- the active operator stop was suppressed because its referenced blocker work notes are already VERIFY_DONE\n"
-    "- write exactly one next control outcome so runtime does not stay idle on stale control alone\n"
+    "- its blocker work is already VERIFY_DONE; write exactly one next control so runtime does not sit idle on stale control\n"
     "READ_FIRST:\n"
     "- {runtime_verify_read_first_doc}\n"
-    "- verify/README.md\n"
     "- {stale_control_path}\n"
     "- {latest_work_path}\n"
     "- {latest_verify_path}\n"
     "OUTPUTS:\n"
-    "- .pipeline/claude_handoff.md (STATUS: implement, CONTROL_SEQ: {next_control_seq})\n"
-    "- .pipeline/gemini_request.md (STATUS: request_open, CONTROL_SEQ: {next_control_seq})\n"
-    "- .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: {next_control_seq})\n"
+    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/claude_handoff.md [implement] | .pipeline/gemini_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
     "RULES:\n"
-    "- write exactly one next control outcome\n"
-    "- if you write .pipeline/operator_request.md, keep STATUS/CONTROL_SEQ in the first 12 lines and also include REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, and BASED_ON_VERIFY near the top\n"
-    "- if the only blocker is next-slice ambiguity, overlapping candidates, or low-confidence prioritization, write .pipeline/gemini_request.md before .pipeline/operator_request.md\n"
-    "- do not leave runtime idle on a stale operator stop alone\n"
-    "- only use STATUS: needs_operator without Gemini for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, or when Gemini is unavailable/already inconclusive"
+    "- keep `READ_FIRST` to the listed verify-owner root doc only\n"
+    "- write exactly one next control\n"
+    "- if you write `.pipeline/claude_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
+    "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
+    "- for next-slice ambiguity / overlap / low-confidence prioritization, write .pipeline/gemini_request.md before .pipeline/operator_request.md\n"
+    "- do not leave runtime idle on stale control alone\n"
+    "- skip Gemini only for a real operator-only decision, approval/truth-sync, immediate safety, or unavailable/inconclusive Gemini"
 )
 
 DEFAULT_OPERATOR_RETRIAGE_PROMPT = (
@@ -122,22 +121,21 @@ DEFAULT_OPERATOR_RETRIAGE_PROMPT = (
     "WORK: {latest_work_path}\n"
     "VERIFY: {latest_verify_path}\n"
     "GOAL:\n"
-    "- the active operator stop is pending or gated, so runtime should re-triage it instead of publishing operator wait immediately\n"
-    "- verify whether the stop is still a real operator-only decision after self-heal / triage / hibernate checks\n"
-    "- then write exactly one next control outcome\n"
+    "- re-triage the pending or gated operator stop before publishing operator wait\n"
+    "- decide whether self-heal / triage / hibernate cleared the real operator-only decision\n"
+    "- then write exactly one next control\n"
     "READ_FIRST:\n"
     "- {runtime_verify_read_first_doc}\n"
-    "- verify/README.md\n"
     "- {operator_request_path}\n"
     "- {latest_work_path}\n"
     "- {latest_verify_path}\n"
     "OUTPUTS:\n"
-    "- .pipeline/claude_handoff.md (STATUS: implement, CONTROL_SEQ: {next_control_seq})\n"
-    "- .pipeline/gemini_request.md (STATUS: request_open, CONTROL_SEQ: {next_control_seq})\n"
-    "- .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: {next_control_seq})\n"
+    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/claude_handoff.md [implement] | .pipeline/gemini_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
     "RULES:\n"
-    "- write exactly one next control outcome\n"
-    "- if you write .pipeline/operator_request.md, keep STATUS/CONTROL_SEQ in the first 12 lines and also include REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, and BASED_ON_VERIFY near the top\n"
+    "- keep `READ_FIRST` to the listed verify-owner root doc only\n"
+    "- write exactly one next control\n"
+    "- if you write `.pipeline/claude_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
+    "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
     "- prefer .pipeline/gemini_request.md before .pipeline/operator_request.md when the only blocker is next-slice ambiguity\n"
     "- only keep STATUS: needs_operator if a real operator-only decision, approval/truth-sync blocker, or immediate safety stop still remains right now"
 )
@@ -156,25 +154,24 @@ DEFAULT_VERIFY_TRIAGE_PROMPT = (
     "WORK: {latest_work_path}\n"
     "VERIFY: {latest_verify_path}\n"
     "GOAL:\n"
-    "- recover from implement_blocked with exactly one next control outcome\n"
+    "- recover from implement_blocked with exactly one next control\n"
     "BLOCK_EXCERPT:\n"
     "{blocked_excerpt}\n"
     "READ_FIRST:\n"
     "- {runtime_verify_read_first_doc}\n"
-    "- verify/README.md\n"
     "- {active_handoff_path}\n"
     "- {latest_work_path}\n"
     "- {latest_verify_path}\n"
     "OUTPUTS:\n"
-    "- .pipeline/claude_handoff.md (STATUS: implement, CONTROL_SEQ: {next_control_seq})\n"
-    "- .pipeline/gemini_request.md (STATUS: request_open, CONTROL_SEQ: {next_control_seq})\n"
-    "- .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: {next_control_seq})\n"
+    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/claude_handoff.md [implement] | .pipeline/gemini_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
     "RULES:\n"
-    "- write exactly one next control outcome\n"
-    "- do not leave Claude waiting on an operator-choice menu\n"
-    "- if you write .pipeline/operator_request.md, keep STATUS/CONTROL_SEQ in the first 12 lines and also include REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, and BASED_ON_VERIFY near the top\n"
-    "- if the only blocker is next-slice ambiguity, overlapping candidates, or low-confidence prioritization, write .pipeline/gemini_request.md before .pipeline/operator_request.md\n"
-    "- only use STATUS: needs_operator without Gemini for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, or when Gemini is unavailable/already inconclusive"
+    "- keep `READ_FIRST` to the listed verify-owner root doc only\n"
+    "- write exactly one next control\n"
+    "- if you write `.pipeline/claude_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
+    "- do not leave the implement owner waiting on an operator-choice menu\n"
+    "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
+    "- for next-slice ambiguity / overlap / low-confidence prioritization, write .pipeline/gemini_request.md before .pipeline/operator_request.md\n"
+    "- skip Gemini only for a real operator-only decision, approval/truth-sync, immediate safety, or unavailable/inconclusive Gemini"
 )
 
 DEFAULT_VERIFY_PROMPT_TEMPLATE = (
@@ -184,26 +181,24 @@ DEFAULT_VERIFY_PROMPT_TEMPLATE = (
     "VERIFY: {latest_verify_path}\n"
     "NEXT_CONTROL_SEQ: {next_control_seq}\n"
     "GOAL:\n"
-    "- verify the latest `/work` truthfully\n"
-    "- leave or update `/verify` before any next control slot\n"
-    "- then write exactly one next control outcome\n"
+    "- verify the latest `/work`, update `/verify`, then write exactly one next control\n"
     "SCOPE_HINT:\n"
     "{verify_scope_hint}\n"
     "READ_FIRST:\n"
     "- {runtime_verify_read_first_doc}\n"
-    "- work/README.md\n"
-    "- verify/README.md\n"
+    "- {latest_work_path}\n"
+    "- {latest_verify_path}\n"
     "OUTPUTS:\n"
     "- /verify note first\n"
-    "- .pipeline/claude_handoff.md (STATUS: implement, CONTROL_SEQ: {next_control_seq})\n"
-    "- .pipeline/gemini_request.md (STATUS: request_open, CONTROL_SEQ: {next_control_seq})\n"
-    "- .pipeline/operator_request.md (STATUS: needs_operator, CONTROL_SEQ: {next_control_seq})\n"
+    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/claude_handoff.md [implement] | .pipeline/gemini_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
     "RULES:\n"
-    "- keep one exact next slice or one exact operator decision only\n"
-    "- if you write .pipeline/operator_request.md, keep STATUS/CONTROL_SEQ in the first 12 lines and also include REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, and BASED_ON_VERIFY near the top\n"
-    "- if the only blocker is next-slice ambiguity, overlapping candidates, or low-confidence prioritization, open .pipeline/gemini_request.md before .pipeline/operator_request.md\n"
-    "- use .pipeline/operator_request.md without Gemini only for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, or when Gemini is unavailable/already inconclusive\n"
-    "- if same-day same-family docs-only truth-sync already repeated 3+ times, do not choose another narrower docs-only micro-slice; choose one bounded docs bundle or escalate"
+    "- keep `READ_FIRST` to the listed verify-owner root doc only\n"
+    "- choose one exact next slice or one exact operator decision\n"
+    "- if you write `.pipeline/claude_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
+    "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
+    "- for next-slice ambiguity / overlap / low-confidence prioritization, open .pipeline/gemini_request.md before .pipeline/operator_request.md\n"
+    "- skip Gemini only for a real operator-only decision, approval/truth-sync, immediate safety, or unavailable/inconclusive Gemini\n"
+    "- after 3+ same-day same-family docs-only truth-sync rounds, choose one bounded docs bundle or escalate"
 )
 
 
@@ -214,6 +209,10 @@ class PromptDispatchSpec:
     lane_role: str
     prompt: str
     prompt_path: Path
+    functional_role: str = ""
+    lane_id: str = ""
+    agent_kind: str = ""
+    model_alias: str | None = None
     notify_label: str = ""
     raw_event: str = ""
     raw_payload: dict[str, object] = field(default_factory=dict)
@@ -284,20 +283,79 @@ class WatcherPromptAssembler:
         self._get_path_sha256 = get_path_sha256
         self._extract_changed_file_paths_from_round_note = extract_changed_file_paths_from_round_note
 
+    def _finalize_prompt_text(self, text: str) -> str:
+        normalized = self._normalize_prompt_text(text)
+        drop_exact = {
+            "WORK: 없음",
+            "WORK: (없음)",
+            "VERIFY: 없음",
+            "VERIFY: (없음)",
+            "- 없음",
+            "- (없음)",
+        }
+        kept_lines: list[str] = []
+        blank_run = 0
+        for line in normalized.splitlines():
+            stripped = line.strip()
+            if stripped in drop_exact:
+                continue
+            if not stripped:
+                blank_run += 1
+                if blank_run > 1:
+                    continue
+            else:
+                blank_run = 0
+            kept_lines.append(line)
+        return "\n".join(kept_lines).strip()
+
+    def finalize_prompt_text(self, text: str) -> str:
+        return self._finalize_prompt_text(text)
+
+    def _lane_identity(
+        self,
+        *,
+        functional_role: str,
+        notify_kind: str,
+        control_seq: int,
+    ) -> dict[str, object]:
+        owner = str(self._role_owner(functional_role) or functional_role).strip()
+        agent_kind = owner.lower() if owner else functional_role
+        lane_id = f"{agent_kind}_{functional_role}"
+        seq_suffix = str(control_seq) if control_seq >= 0 else "na"
+        return {
+            "functional_role": functional_role,
+            "lane_id": lane_id,
+            "agent_kind": agent_kind,
+            "model_alias": None,
+            "pending_key": f"{lane_id}:{notify_kind}:{seq_suffix}",
+        }
+
+    def _identity_payload(
+        self,
+        *,
+        functional_role: str,
+        lane_id: str,
+        agent_kind: str,
+        model_alias: str | None,
+    ) -> dict[str, object]:
+        return {
+            "functional_role": functional_role,
+            "lane_id": lane_id,
+            "agent_kind": agent_kind,
+            "model_alias": model_alias,
+            "lane_role": functional_role,
+        }
+
     def verify_scope_hint_for_work(self, work_path: Optional[Path]) -> tuple[str, str]:
         changed_paths = self._extract_changed_file_paths_from_round_note(work_path)
         if changed_paths and all(path.endswith(".md") for path in changed_paths):
             return (
                 "docs_only",
-                "- docs-only truth-sync round detected from `## 변경 파일`\n"
-                "- re-check the changed markdown docs against current code/docs truth first\n"
-                "- prefer `git diff --check` and direct file comparison; do not widen into unit or Playwright reruns unless the work note itself claims code/test/runtime changes\n"
-                "- if truthful, keep `/verify` concise and move directly to one exact next slice",
+                "- docs-only truth-sync from `## 변경 파일`; check markdown truth first with `git diff --check`, and do not widen into unit or Playwright unless code/test/runtime changed",
             )
         return (
             "standard",
-            "- standard verification round\n"
-            "- rerun only the narrowest checks actually needed for the claimed changes",
+            "- standard verification; rerun only the narrowest checks needed for the claimed changes",
         )
 
     def build_runtime_prompt_context(self, work_path: Optional[Path] = None) -> dict[str, str]:
@@ -359,10 +417,10 @@ class WatcherPromptAssembler:
         }
 
     def format_runtime_prompt(self, template: str, work_path: Optional[Path] = None) -> str:
-        return self._normalize_prompt_text(template.format(**self.build_runtime_prompt_context(work_path)))
+        return self._finalize_prompt_text(template.format(**self.build_runtime_prompt_context(work_path)))
 
     def format_implement_prompt(self, handoff_path: Optional[Path] = None) -> str:
-        return self._normalize_prompt_text(
+        return self._finalize_prompt_text(
             self.implement_prompt.format(**self.build_implement_prompt_context(handoff_path))
         )
 
@@ -378,7 +436,7 @@ class WatcherPromptAssembler:
                 f"- {line}" for line in signal.get("excerpt_lines", [])
             ) or "- (없음)",
         }
-        return self._normalize_prompt_text(self.verify_triage_prompt.format(**context))
+        return self._finalize_prompt_text(self.verify_triage_prompt.format(**context))
 
     def format_control_recovery_prompt(self, marker: Mapping[str, object]) -> str:
         resolved_paths = list(marker.get("resolved_work_paths") or [])
@@ -389,7 +447,7 @@ class WatcherPromptAssembler:
             "stale_control_reason": str(marker.get("reason") or "verified_blockers_resolved"),
             "stale_control_resolved_work_paths": "\n".join(f"- {path}" for path in resolved_paths) or "- (없음)",
         }
-        return self._normalize_prompt_text(self.control_recovery_prompt.format(**context))
+        return self._finalize_prompt_text(self.control_recovery_prompt.format(**context))
 
     def format_operator_retriage_prompt(self, marker: Mapping[str, object]) -> str:
         context = {
@@ -398,7 +456,7 @@ class WatcherPromptAssembler:
             "stale_control_reason": str(marker.get("reason") or "operator_wait_idle_retriage"),
             "operator_wait_age_sec": str(marker.get("operator_wait_age_sec") or "0"),
         }
-        return self._normalize_prompt_text(self.operator_retriage_prompt.format(**context))
+        return self._finalize_prompt_text(self.operator_retriage_prompt.format(**context))
 
     def format_session_arbitration_draft(self, signal: Mapping[str, object]) -> str:
         context = self.build_runtime_prompt_context()
@@ -426,22 +484,39 @@ class WatcherPromptAssembler:
             "- 그렇지 않으면 Claude에게 short lane reply만 전달\n"
         )
 
-    def build_claude_dispatch_spec(
+    def build_implement_dispatch_spec(
         self,
         reason: str,
         handoff_path: Optional[Path] = None,
     ) -> PromptDispatchSpec:
         prompt_path = handoff_path or self.claude_handoff_path
         control_seq = self._read_control_seq_from_path(prompt_path)
+        identity = self._lane_identity(
+            functional_role="implement",
+            notify_kind="claude_handoff",
+            control_seq=control_seq,
+        )
         return PromptDispatchSpec(
-            pending_key="claude_handoff",
+            pending_key=str(identity["pending_key"]),
             notify_kind="claude_handoff",
             lane_role="implement",
+            functional_role="implement",
+            lane_id=str(identity["lane_id"]),
+            agent_kind=str(identity["agent_kind"]),
+            model_alias=None,
             prompt=self.format_implement_prompt(handoff_path),
             prompt_path=prompt_path,
-            notify_label="notify_claude",
-            raw_event="claude_notify",
-            raw_payload={"reason": reason},
+            notify_label="notify_implement_owner",
+            raw_event="implement_notify",
+            raw_payload={
+                "reason": reason,
+                **self._identity_payload(
+                    functional_role="implement",
+                    lane_id=str(identity["lane_id"]),
+                    agent_kind=str(identity["agent_kind"]),
+                    model_alias=None,
+                ),
+            },
             control_seq=control_seq,
             expected_status="implement",
             expected_control_path=str(prompt_path.name),
@@ -449,17 +524,41 @@ class WatcherPromptAssembler:
             require_active_control=True,
         )
 
+    def build_claude_dispatch_spec(
+        self,
+        reason: str,
+        handoff_path: Optional[Path] = None,
+    ) -> PromptDispatchSpec:
+        return self.build_implement_dispatch_spec(reason, handoff_path)
+
     def build_gemini_dispatch_spec(self, reason: str) -> PromptDispatchSpec:
         control_seq = self._read_control_seq_from_path(self.gemini_request_path)
+        identity = self._lane_identity(
+            functional_role="advisory",
+            notify_kind="gemini_request",
+            control_seq=control_seq,
+        )
         return PromptDispatchSpec(
-            pending_key="gemini_request",
+            pending_key=str(identity["pending_key"]),
             notify_kind="gemini_request",
             lane_role="advisory",
+            functional_role="advisory",
+            lane_id=str(identity["lane_id"]),
+            agent_kind=str(identity["agent_kind"]),
+            model_alias=None,
             prompt=self.format_runtime_prompt(self.advisory_prompt),
             prompt_path=self.gemini_request_path,
-            notify_label="notify_gemini",
-            raw_event="gemini_notify",
-            raw_payload={"reason": reason},
+            notify_label="notify_advisory_owner",
+            raw_event="advisory_notify",
+            raw_payload={
+                "reason": reason,
+                **self._identity_payload(
+                    functional_role="advisory",
+                    lane_id=str(identity["lane_id"]),
+                    agent_kind=str(identity["agent_kind"]),
+                    model_alias=None,
+                ),
+            },
             control_seq=control_seq,
             expected_status="request_open",
             expected_control_path=str(self.gemini_request_path.name),
@@ -467,17 +566,34 @@ class WatcherPromptAssembler:
             require_active_control=True,
         )
 
-    def build_codex_followup_dispatch_spec(self, reason: str) -> PromptDispatchSpec:
+    def build_verify_followup_dispatch_spec(self, reason: str) -> PromptDispatchSpec:
         control_seq = self._read_control_seq_from_path(self.gemini_advice_path)
+        identity = self._lane_identity(
+            functional_role="verify",
+            notify_kind="gemini_advice_followup",
+            control_seq=control_seq,
+        )
         return PromptDispatchSpec(
-            pending_key="gemini_advice_followup",
+            pending_key=str(identity["pending_key"]),
             notify_kind="gemini_advice_followup",
             lane_role="verify",
+            functional_role="verify",
+            lane_id=str(identity["lane_id"]),
+            agent_kind=str(identity["agent_kind"]),
+            model_alias=None,
             prompt=self.format_runtime_prompt(self.followup_prompt),
             prompt_path=self.gemini_advice_path,
-            notify_label="notify_codex_followup",
-            raw_event="codex_followup_notify",
-            raw_payload={"reason": reason},
+            notify_label="notify_verify_followup",
+            raw_event="verify_followup_notify",
+            raw_payload={
+                "reason": reason,
+                **self._identity_payload(
+                    functional_role="verify",
+                    lane_id=str(identity["lane_id"]),
+                    agent_kind=str(identity["agent_kind"]),
+                    model_alias=None,
+                ),
+            },
             control_seq=control_seq,
             expected_status="advice_ready",
             expected_control_path=str(self.gemini_advice_path.name),
@@ -485,21 +601,42 @@ class WatcherPromptAssembler:
             require_active_control=True,
         )
 
+    def build_codex_followup_dispatch_spec(self, reason: str) -> PromptDispatchSpec:
+        return self.build_verify_followup_dispatch_spec(reason)
+
     def build_control_recovery_dispatch_spec(
         self,
         marker: Mapping[str, object],
         reason: str,
     ) -> PromptDispatchSpec:
         control_seq = int(marker.get("control_seq") or -1)
+        identity = self._lane_identity(
+            functional_role="verify",
+            notify_kind="codex_control_recovery",
+            control_seq=control_seq,
+        )
         return PromptDispatchSpec(
-            pending_key="codex_control_recovery",
+            pending_key=str(identity["pending_key"]),
             notify_kind="codex_control_recovery",
             lane_role="verify",
+            functional_role="verify",
+            lane_id=str(identity["lane_id"]),
+            agent_kind=str(identity["agent_kind"]),
+            model_alias=None,
             prompt=self.format_control_recovery_prompt(marker),
             prompt_path=self.operator_request_path,
-            notify_label="notify_codex_control_recovery",
-            raw_event="codex_control_recovery_notify",
-            raw_payload={"reason": reason, **marker},
+            notify_label="notify_verify_control_recovery",
+            raw_event="verify_control_recovery_notify",
+            raw_payload={
+                "reason": reason,
+                **marker,
+                **self._identity_payload(
+                    functional_role="verify",
+                    lane_id=str(identity["lane_id"]),
+                    agent_kind=str(identity["agent_kind"]),
+                    model_alias=None,
+                ),
+            },
             control_seq=control_seq,
             expected_control_path=str(self.operator_request_path.name),
             expected_control_seq=control_seq,
@@ -512,15 +649,33 @@ class WatcherPromptAssembler:
         reason: str,
     ) -> PromptDispatchSpec:
         control_seq = int(marker.get("control_seq") or -1)
+        identity = self._lane_identity(
+            functional_role="verify",
+            notify_kind="codex_operator_retriage",
+            control_seq=control_seq,
+        )
         return PromptDispatchSpec(
-            pending_key="codex_operator_retriage",
+            pending_key=str(identity["pending_key"]),
             notify_kind="codex_operator_retriage",
             lane_role="verify",
+            functional_role="verify",
+            lane_id=str(identity["lane_id"]),
+            agent_kind=str(identity["agent_kind"]),
+            model_alias=None,
             prompt=self.format_operator_retriage_prompt(marker),
             prompt_path=self.operator_request_path,
-            notify_label="notify_codex_operator_retriage",
-            raw_event="codex_operator_retriage_notify",
-            raw_payload={"reason": reason, **marker},
+            notify_label="notify_verify_operator_retriage",
+            raw_event="verify_operator_retriage_notify",
+            raw_payload={
+                "reason": reason,
+                **marker,
+                **self._identity_payload(
+                    functional_role="verify",
+                    lane_id=str(identity["lane_id"]),
+                    agent_kind=str(identity["agent_kind"]),
+                    model_alias=None,
+                ),
+            },
             control_seq=control_seq,
             expected_control_path=str(self.operator_request_path.name),
             expected_control_seq=control_seq,
@@ -534,14 +689,23 @@ class WatcherPromptAssembler:
     ) -> PromptDispatchSpec:
         control_seq = self._read_control_seq_from_path(self.claude_handoff_path)
         handoff_sha = self._get_path_sha256(self.claude_handoff_path)
+        identity = self._lane_identity(
+            functional_role="verify",
+            notify_kind="codex_blocked_triage",
+            control_seq=control_seq,
+        )
         return PromptDispatchSpec(
-            pending_key="codex_blocked_triage",
+            pending_key=str(identity["pending_key"]),
             notify_kind="codex_blocked_triage",
             lane_role="verify",
+            functional_role="verify",
+            lane_id=str(identity["lane_id"]),
+            agent_kind=str(identity["agent_kind"]),
+            model_alias=None,
             prompt=self.format_verify_triage_prompt(signal),
             prompt_path=self.claude_handoff_path,
-            notify_label="notify_codex_blocked_triage",
-            raw_event="codex_blocked_triage_notify",
+            notify_label="notify_verify_blocked_triage",
+            raw_event="verify_blocked_triage_notify",
             raw_payload={
                 "reason": reason,
                 "blocked_reason": str(signal.get("reason", "implement_blocked")),
@@ -550,6 +714,12 @@ class WatcherPromptAssembler:
                 "blocked_escalation_class": str(signal.get("escalation_class", "codex_triage")),
                 "blocked_fingerprint": str(signal.get("fingerprint", "")),
                 "handoff_sha": handoff_sha,
+                **self._identity_payload(
+                    functional_role="verify",
+                    lane_id=str(identity["lane_id"]),
+                    agent_kind=str(identity["agent_kind"]),
+                    model_alias=None,
+                ),
             },
             control_seq=control_seq,
             expected_control_path=str(self.claude_handoff_path.name),

@@ -71,7 +71,7 @@
 ## 3.5 현재 검증 원칙
 runtime long soak는 baseline evidence로 유지하되, 기본 검증 메뉴는 아닙니다.
 
-현재 기본 검증은 아래 세 축입니다.
+현재 기본 검증은 아래 세 축이며, thin-client/UI current-truth read-model 회귀의 focused baseline으로 `python3 -m unittest tests.test_pipeline_gui_backend` 46 green을 함께 유지합니다.
 
 1. launcher live stability gate
 2. incident replay
@@ -201,11 +201,12 @@ synthetic soak는 아래처럼 채택용 보조 게이트로만 남깁니다.
 4. cleanup 실패 시 supervisor restart 고려
 
 - verify lane이 `VERIFY_RUNNING` idle timeout 뒤 `VERIFY_PENDING`으로 복귀했는데 pane이 이미 idle prompt인 경우, same-snapshot guard는 short backoff만 적용하고 이후 재dispatch를 허용해야 합니다.
+- 다만 accept deadline 직후 재큐잉된 pane tail에 `[Pasted Content ...]` 같은 직전 paste 잔상이 그대로 남아 있으면, prompt cursor가 다시 보여도 이를 bare idle prompt로 취급하지 말고 failed-dispatch snapshot으로 유지한 채 same-snapshot backoff를 거는 편이 맞습니다.
 - 이런 상황에서 `dispatch_backoff_same_snapshot`만 반복되고 새 dispatch가 다시 일어나지 않으면 stale retry loop로 보고 watcher retry state를 먼저 점검합니다.
 - 새 verify dispatch는 `dispatch_id`, `dispatched_at`, `accept_deadline_at`을 기준으로 wrapper `DISPATCH_SEEN`, `TASK_ACCEPTED`, `TASK_DONE`를 직접 연결해서 보는 편이 맞습니다.
-- Codex lane은 일반 busy marker가 늦더라도 첫 `• ...` 작업 시작선을 same-dispatch `TASK_ACCEPTED`로 받아야 합니다. 이 acceptance가 빠지면 watcher가 같은 verify prompt를 재dispatch할 수 있습니다.
-- verify lane은 `control=none`이어도 `active_round.dispatch_control_seq`, `job_id`, `dispatch_id`를 가진 round-scoped Codex task hint로 dispatch를 이어갈 수 있습니다. `active_control_seq < 0`만 보고 hint를 inactive로 내려 false `dispatch_stall`을 만들면 안 됩니다.
-- 다만 `CODEX_FOLLOWUP` / `GEMINI_ADVISORY` turn에서는 stale verify `job_id`/`dispatch_id`/`dispatch_control_seq`를 current hint나 status에 남기면 안 됩니다. 이 구간의 active truth는 current control seq이며, 예전 verify round는 current runtime surface에서 비워야 합니다.
+- verify/handoff owner lane은 일반 busy marker가 늦더라도 첫 `• ...` 작업 시작선을 same-dispatch `TASK_ACCEPTED`로 받아야 합니다. 이 acceptance가 빠지면 watcher가 같은 verify prompt를 재dispatch할 수 있습니다.
+- verify lane은 `control=none`이어도 `active_round.dispatch_control_seq`, `job_id`, `dispatch_id`를 가진 round-scoped verify task hint로 dispatch를 이어갈 수 있습니다. `active_control_seq < 0`만 보고 hint를 inactive로 내려 false `dispatch_stall`을 만들면 안 됩니다.
+- 다만 `VERIFY_FOLLOWUP` / `ADVISORY_ACTIVE` turn에서는 stale verify `job_id`/`dispatch_id`/`dispatch_control_seq`를 current hint나 status에 남기면 안 됩니다. 이 구간의 active truth는 current control seq이며, 예전 verify round는 current runtime surface에서 비워야 합니다.
 - wrapper `TASK_DONE`는 task hint clear를 기다리지 않고, accepted된 same dispatch가 prompt-visible + no-busy 상태로 짧게 settle되면 직접 emit될 수 있어야 합니다.
 - verify lane이 busy indicator 없이 idle prompt로 먼저 돌아왔더라도 `DISPATCH_SEEN`/`TASK_ACCEPTED` deadline이 아직 남아 있으면 pre-accept stall로 확정하지 않습니다. 늦게 오는 seen/accept를 기다리는 구간과 post-accept idle retry를 분리하는 편이 맞습니다.
 - verify lane은 `TASK_ACCEPTED -> TASK_DONE -> current-round /verify receipt + next control -> receipt close` 순서로만 닫는 편이 맞습니다. matching `TASK_DONE` 없이 `/verify`나 control output만 먼저 바뀌면 success close가 아니라 completion wait로 유지합니다.
@@ -286,15 +287,15 @@ controller browser UI의 active runtime contract는 아래로 제한합니다.
 다음 조건이 동시에 보이면 duplicate/no-op implement handoff로 판단합니다.
 
 - active control은 여전히 `.pipeline/claude_handoff.md`
-- Claude lane은 `READY`
+- implement owner lane은 `READY`
 - note가 `waiting_next_control`
 - recent events에 `control_duplicate_ignored`가 보임
 
 이 상태의 의미:
 
 - canonical control file은 남아 있지만 runtime은 해당 handoff를 재실행하지 않습니다.
-- watcher가 same-handoff SHA의 no-op completion을 감지해 Codex triage로 되돌린 상태입니다.
-- operator는 pane 텍스트나 stale `WORKING` 표시만 보고 강제 restart하지 말고, Codex follow-up/control 변경을 먼저 확인합니다.
+- watcher가 same-handoff SHA의 no-op completion을 감지해 verify/handoff-owner triage로 되돌린 상태입니다.
+- operator는 pane 텍스트나 stale `WORKING` 표시만 보고 강제 restart하지 말고, verify follow-up/control 변경을 먼저 확인합니다.
 
 ## 6.9 stale operator stop
 다음 조건이 동시에 보이면 stale operator stop으로 판단합니다.
@@ -308,8 +309,8 @@ controller browser UI의 active runtime contract는 아래로 제한합니다.
 - canonical stop 문서는 디버그 surface로 남아 있지만, runtime은 그 본문이 가리킨 blocker `/work`들이 이미 `VERIFY_DONE`으로 닫혔다고 판단한 상태입니다.
 - operator는 stale stop 파일만 보고 automation을 계속 막지 말고, 최신 `/verify` 또는 다음 control 생성 여부를 먼저 확인해야 합니다.
 - stale stop suppression은 operator 문서를 삭제하거나 rewrite하는 동작이 아니라 supervisor read-model 정규화입니다.
-- watcher는 이 상태에서 startup/rolling turn을 `CODEX_FOLLOWUP`으로 다시 열고, Codex에게 다음 canonical control outcome을 다시 쓰도록 1회 control-recovery prompt를 보낼 수 있습니다.
-- 이때 browser/TUI 표면에서는 `control=none`이더라도 Codex lane이 `WORKING` / `followup`으로 보일 수 있습니다.
+- watcher는 이 상태에서 startup/rolling turn을 `VERIFY_FOLLOWUP`으로 다시 열고, verify/handoff owner에게 다음 canonical control outcome을 다시 쓰도록 1회 control-recovery prompt를 보낼 수 있습니다.
+- 이때 browser/TUI 표면에서는 `control=none`이더라도 active verify/handoff-owner lane이 `WORKING` / `followup`으로 보일 수 있습니다.
 
 ## 6.10 gated operator candidate
 다음 조건이 동시에 보이면 gated operator candidate로 판단합니다.
@@ -323,9 +324,10 @@ controller browser UI의 active runtime contract는 아래로 제한합니다.
 
 - canonical operator stop 파일은 남아 있지만, supervisor/watcher가 이를 즉시 operator wait current truth로 승격하지 않은 상태입니다.
 - `status.autonomy.block_reason`과 `suppress_operator_until`이 24시간 gate의 이유와 deadline입니다.
-- `recovery`면 lane/session/receipt/auth 계열 자가복구가 먼저이고, `triage`면 Codex/Gemini 판단이 먼저이며, `hibernate`면 현재는 idle stable이라 operator 호출 없이 unattended로 유지하는 편이 맞습니다.
+- `recovery`면 lane/session/receipt/auth 계열 자가복구가 먼저이고, `triage`면 verify/handoff-owner와 advisory owner 판단이 먼저이며, `hibernate`면 현재는 idle stable이라 operator 호출 없이 unattended로 유지하는 편이 맞습니다.
+- 예외적으로 `internal_only + next_slice_selection + waiting_next_control` 조합은 idle hibernate가 아니라 `triage`로 보고 verify/handoff-owner follow-up을 다시 여는 편이 맞습니다. genuine `idle_hibernate + internal_only`만 unattended idle로 남깁니다.
 - `pending_operator`는 immediate safety/approval/truth-sync는 아니지만 아직 exact self-route가 닫히지 않은 후보라는 뜻입니다.
-- 이 상태에서 operator는 stop 파일만 보고 즉시 재기동/강제 attach하지 말고, Codex follow-up 또는 gate window 경과 여부를 먼저 확인해야 합니다.
+- 이 상태에서 operator는 stop 파일만 보고 즉시 재기동/강제 attach하지 말고, verify follow-up 또는 gate window 경과 여부를 먼저 확인해야 합니다.
 
 ## 6.11 duplicate supervisor
 다음 조건이 보이면 duplicate supervisor로 판단합니다.

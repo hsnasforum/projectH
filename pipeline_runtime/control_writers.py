@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .operator_autonomy import (
+    SUPPORTED_DECISION_CLASSES,
     SUPPORTED_OPERATOR_POLICIES,
     SUPPORTED_REASON_CODES,
     normalize_decision_class,
@@ -234,6 +235,7 @@ def validate_operator_candidate_status(status: Mapping[str, Any]) -> None:
     reason_code = str(autonomy.get("reason_code") or "").strip()
     operator_policy = str(autonomy.get("operator_policy") or "").strip()
     classification_source = str(autonomy.get("classification_source") or "").strip()
+    decision_class = str(autonomy.get("decision_class") or "").strip()
 
     is_operator_candidate = bool(
         active_control_file.endswith("operator_request.md")
@@ -249,3 +251,18 @@ def validate_operator_candidate_status(status: Mapping[str, Any]) -> None:
             "operator candidate status must resolve from structured metadata "
             f"(got {classification_source or 'missing'})"
         )
+    normalized_reason_code = normalize_reason_code(reason_code)
+    if normalized_reason_code and normalized_reason_code not in SUPPORTED_REASON_CODES:
+        raise ValueError(f"unsupported reason_code: {reason_code}")
+    normalized_operator_policy = normalize_operator_policy(operator_policy)
+    if (
+        normalized_operator_policy
+        and normalized_operator_policy not in SUPPORTED_OPERATOR_POLICIES
+    ):
+        raise ValueError(f"unsupported operator_policy: {operator_policy}")
+    normalized_decision_class = normalize_decision_class(decision_class)
+    if (
+        normalized_decision_class
+        and normalized_decision_class not in SUPPORTED_DECISION_CLASSES
+    ):
+        raise ValueError(f"unsupported decision_class: {decision_class}")

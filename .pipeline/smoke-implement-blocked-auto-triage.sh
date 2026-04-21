@@ -13,20 +13,14 @@ TIMEOUT_SEC="${PIPELINE_BLOCKED_SMOKE_TIMEOUT:-60}"
 KEEP_SESSION_ON_FAILURE="${PIPELINE_BLOCKED_SMOKE_KEEP_SESSION_ON_FAILURE:-1}"
 KEEP_SESSION_ON_SUCCESS="${PIPELINE_BLOCKED_SMOKE_KEEP_SESSION_ON_SUCCESS:-0}"
 KEEP_RECENT_SMOKES="${PIPELINE_BLOCKED_SMOKE_KEEP_RECENT:-3}"
-
-BASE_DIR="$(mktemp -d "$PROJECT_ROOT/.pipeline/live-blocked-smoke-XXXXXX")"
-BASE_REL="${BASE_DIR#$PROJECT_ROOT/}"
-WATCHER_LOG="$BASE_DIR/watcher.log"
-RAW_LOG="$BASE_DIR/logs/experimental/raw.jsonl"
-CLAUDE_HANDOFF="$BASE_DIR/claude_handoff.md"
-GEMINI_REQUEST="$BASE_DIR/gemini_request.md"
-GEMINI_ADVICE="$BASE_DIR/gemini_advice.md"
-OPERATOR_REQUEST="$BASE_DIR/operator_request.md"
-SMOKE_WORK_DIR="$BASE_DIR/work"
-CLAUDE_SHIM="$BASE_DIR/claude_smoke_lane.py"
-CODEX_SHIM="$BASE_DIR/codex_smoke_lane.py"
 SUCCESS=0
 WATCHER_PID=""
+IMPLEMENT_OWNER=""
+VERIFY_OWNER=""
+CLAUDE_PHYSICAL_PANE=""
+CODEX_PHYSICAL_PANE=""
+IMPLEMENT_PANE=""
+VERIFY_PANE=""
 
 wait_for_cli_ready() {
     local pane_target="$1"
@@ -105,6 +99,53 @@ prune_old_smoke_dirs() {
     prune_blocked_smoke_dirs "$PROJECT_ROOT" "$keep_recent"
 }
 
+resolve_role_bound_smoke_owners() {
+    PYTHONPATH="$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 - "$PROJECT_ROOT" <<'PY'
+from pathlib import Path
+import sys
+
+from pipeline_gui.setup_profile import resolve_project_runtime_adapter
+
+project_root = Path(sys.argv[1]).resolve()
+adapter = resolve_project_runtime_adapter(project_root)
+resolution_state = str(adapter.get("resolution_state") or "")
+messages = [str(item).strip() for item in list(adapter.get("messages") or []) if str(item).strip()]
+role_owners = dict(adapter.get("role_owners") or {})
+implement = str(role_owners.get("implement") or "").strip()
+verify = str(role_owners.get("verify") or "").strip()
+allowed = {"Claude", "Codex"}
+
+errors: list[str] = []
+if resolution_state != "ready":
+    errors.append(f"active profile is not ready ({resolution_state})")
+if not implement:
+    errors.append("implement owner missing")
+elif implement not in allowed:
+    errors.append(f"unsupported implement owner: {implement}")
+if not verify:
+    errors.append("verify owner missing")
+elif verify not in allowed:
+    errors.append(f"unsupported verify owner: {verify}")
+if implement and verify and implement == verify:
+    errors.append(f"implement and verify owners must differ ({implement})")
+
+if errors:
+    print(
+        "blocked auto-triage smoke requires a ready active profile with "
+        "distinct Claude/Codex implement+verify owners",
+        file=sys.stderr,
+    )
+    for message in messages:
+        print(f"- {message}", file=sys.stderr)
+    for error in errors:
+        print(f"- {error}", file=sys.stderr)
+    raise SystemExit(64)
+
+print(implement)
+print(verify)
+PY
+}
+
 cleanup() {
     if [ -n "$WATCHER_PID" ] && kill -0 "$WATCHER_PID" 2>/dev/null; then
         kill "$WATCHER_PID" 2>/dev/null || true
@@ -121,6 +162,25 @@ cleanup() {
 }
 trap cleanup EXIT
 
+ROLE_OWNER_OUTPUT="$(resolve_role_bound_smoke_owners)" || {
+    echo "blocked auto-triage smoke role resolution failed" >&2
+    exit 1
+}
+IMPLEMENT_OWNER="$(printf '%s\n' "$ROLE_OWNER_OUTPUT" | sed -n '1p')"
+VERIFY_OWNER="$(printf '%s\n' "$ROLE_OWNER_OUTPUT" | sed -n '2p')"
+
+BASE_DIR="$(mktemp -d "$PROJECT_ROOT/.pipeline/live-blocked-smoke-XXXXXX")"
+BASE_REL="${BASE_DIR#$PROJECT_ROOT/}"
+WATCHER_LOG="$BASE_DIR/watcher.log"
+RAW_LOG="$BASE_DIR/logs/experimental/raw.jsonl"
+CLAUDE_HANDOFF="$BASE_DIR/claude_handoff.md"
+GEMINI_REQUEST="$BASE_DIR/gemini_request.md"
+GEMINI_ADVICE="$BASE_DIR/gemini_advice.md"
+OPERATOR_REQUEST="$BASE_DIR/operator_request.md"
+SMOKE_WORK_DIR="$BASE_DIR/work"
+IMPLEMENT_SHIM="$BASE_DIR/implement_smoke_lane.py"
+VERIFY_SHIM="$BASE_DIR/verify_smoke_lane.py"
+
 mkdir -p "$SMOKE_WORK_DIR"
 
 cat > "$CLAUDE_HANDOFF" <<EOF
@@ -132,15 +192,41 @@ Next slice: \`blocked smoke initial handoff\`
 This is a deterministic watcher-path smoke handoff.
 EOF
 
-cat > "$CLAUDE_SHIM" <<'PY'
+cat > "$IMPLEMENT_SHIM" <<'PY'
 #!/usr/bin/env python3
+import atexit
 import sys
+import termios
 
 from pipeline_runtime.control_writers import render_implement_blocked
 
 sentinel_sent = False
 handoff = ""
 handoff_sha = ""
+stdin_fd = None
+stdin_attrs = None
+
+try:
+    stdin_fd = sys.stdin.fileno()
+    stdin_attrs = termios.tcgetattr(stdin_fd)
+    noecho_attrs = termios.tcgetattr(stdin_fd)
+    noecho_attrs[3] &= ~termios.ECHO
+    termios.tcsetattr(stdin_fd, termios.TCSANOW, noecho_attrs)
+except (termios.error, OSError):
+    stdin_fd = None
+    stdin_attrs = None
+
+
+def restore_tty() -> None:
+    if stdin_fd is None or stdin_attrs is None:
+        return
+    try:
+        termios.tcsetattr(stdin_fd, termios.TCSANOW, stdin_attrs)
+    except (termios.error, OSError):
+        pass
+
+
+atexit.register(restore_tty)
 
 
 def prompt() -> None:
@@ -161,6 +247,7 @@ for raw in sys.stdin:
         handoff_sha = stripped.split(":", 1)[1].strip()
         continue
     if stripped.startswith("BLOCK_ID: ") and not sentinel_sent and handoff and handoff_sha:
+        sys.stdout.write("\n• Working smoke implement\n")
         sys.stdout.write(
             render_implement_blocked(
                 block_reason="smoke_handoff_blocked",
@@ -174,25 +261,51 @@ for raw in sys.stdin:
         )
         sys.stdout.flush()
         sentinel_sent = True
-        prompt()
         continue
-    if stripped.startswith("ROLE: claude_implement") and sentinel_sent:
-        sys.stdout.write("Claude smoke resumed after new handoff\n")
-        sys.stdout.flush()
-        prompt()
+    if stripped.startswith("ROLE: implement") and sentinel_sent:
+        # Keep the blocked sentinel as the hot tail so watcher settle/detection
+        # sees a stable implement_blocked surface instead of an immediately
+        # restored prompt.
+        continue
 PY
-chmod +x "$CLAUDE_SHIM"
+chmod +x "$IMPLEMENT_SHIM"
 
-cat > "$CODEX_SHIM" <<'PY'
+cat > "$VERIFY_SHIM" <<'PY'
 #!/usr/bin/env python3
+import atexit
 import os
 import sys
+import termios
 from pathlib import Path
 
 role = ""
 handoff = ""
 next_control_seq = "2"
 written = False
+stdin_fd = None
+stdin_attrs = None
+
+try:
+    stdin_fd = sys.stdin.fileno()
+    stdin_attrs = termios.tcgetattr(stdin_fd)
+    noecho_attrs = termios.tcgetattr(stdin_fd)
+    noecho_attrs[3] &= ~termios.ECHO
+    termios.tcsetattr(stdin_fd, termios.TCSANOW, noecho_attrs)
+except (termios.error, OSError):
+    stdin_fd = None
+    stdin_attrs = None
+
+
+def restore_tty() -> None:
+    if stdin_fd is None or stdin_attrs is None:
+        return
+    try:
+        termios.tcsetattr(stdin_fd, termios.TCSANOW, stdin_attrs)
+    except (termios.error, OSError):
+        pass
+
+
+atexit.register(restore_tty)
 
 
 def prompt() -> None:
@@ -233,38 +346,71 @@ for raw in sys.stdin:
         written = True
         prompt()
 PY
-chmod +x "$CODEX_SHIM"
+chmod +x "$VERIFY_SHIM"
+
+if [ "$IMPLEMENT_OWNER" = "Claude" ]; then
+    CLAUDE_LANE_CMD="env PYTHONPATH=\"$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}\" python3 -u \"$IMPLEMENT_SHIM\""
+    CODEX_LANE_CMD="env PYTHONPATH=\"$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}\" python3 -u \"$VERIFY_SHIM\""
+    IMPLEMENT_PHYSICAL_OWNER="Claude"
+    VERIFY_PHYSICAL_OWNER="Codex"
+else
+    CLAUDE_LANE_CMD="env PYTHONPATH=\"$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}\" python3 -u \"$VERIFY_SHIM\""
+    CODEX_LANE_CMD="env PYTHONPATH=\"$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}\" python3 -u \"$IMPLEMENT_SHIM\""
+    IMPLEMENT_PHYSICAL_OWNER="Codex"
+    VERIFY_PHYSICAL_OWNER="Claude"
+fi
 
 if tmux has-session -t "$SESSION" 2>/dev/null; then
     tmux kill-session -t "$SESSION"
 fi
 
-tmux new-session -d -s "$SESSION" -c "$PROJECT_ROOT" "bash --noprofile --norc -lc 'while true; do PYTHONPATH=\"$PROJECT_ROOT\${PYTHONPATH:+:\$PYTHONPATH}\" python3 -u \"$CLAUDE_SHIM\"; sleep 1; done'"
-CLAUDE_PANE="$(tmux display-message -t "$SESSION:0.0" -p '#{pane_id}')"
-CODEX_PANE="$(tmux split-window -P -F '#{pane_id}' -h -t "$SESSION:0" -c "$PROJECT_ROOT" "env PYTHONPATH=\"$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}\" python3 -u \"$CODEX_SHIM\"")"
-GEMINI_PANE="$(tmux split-window -P -F '#{pane_id}' -v -t "$CODEX_PANE" -c "$PROJECT_ROOT" "bash --noprofile --norc")"
+tmux new-session -d -s "$SESSION" -c "$PROJECT_ROOT" "$CLAUDE_LANE_CMD"
+CLAUDE_PHYSICAL_PANE="$(tmux display-message -t "$SESSION:0.0" -p '#{pane_id}')"
+CODEX_PHYSICAL_PANE="$(tmux split-window -P -F '#{pane_id}' -h -t "$SESSION:0" -c "$PROJECT_ROOT" "$CODEX_LANE_CMD")"
 
-wait_for_cli_ready "$CLAUDE_PANE" 20 || true
-wait_for_cli_ready "$CODEX_PANE" 20 || true
+if [ "$IMPLEMENT_PHYSICAL_OWNER" = "Claude" ]; then
+    IMPLEMENT_PANE="$CLAUDE_PHYSICAL_PANE"
+    VERIFY_PANE="$CODEX_PHYSICAL_PANE"
+else
+    IMPLEMENT_PANE="$CODEX_PHYSICAL_PANE"
+    VERIFY_PANE="$CLAUDE_PHYSICAL_PANE"
+fi
+
+# Keep the implement shim in the taller full-height pane so the visible tmux
+# viewport retains the whole implement_blocked sentinel. Shrink the verify pane
+# instead when parking the idle Gemini lane.
+GEMINI_PANE="$(tmux split-window -P -F '#{pane_id}' -v -l 6 -t "$VERIFY_PANE" -c "$PROJECT_ROOT" "bash --noprofile --norc")"
+
+wait_for_cli_ready "$CLAUDE_PHYSICAL_PANE" 20 || true
+wait_for_cli_ready "$CODEX_PHYSICAL_PANE" 20 || true
 wait_for_cli_ready "$GEMINI_PANE" 20 || true
 
 python3 "$SCRIPT_DIR/watcher_core.py" \
     --watch-dir "$SMOKE_WORK_DIR" \
     --base-dir "$BASE_DIR" \
     --repo-root "$PROJECT_ROOT" \
-    --verify-pane-target "$CODEX_PANE" \
-    --claude-pane-target "$CLAUDE_PANE" \
+    --verify-pane-target "$CODEX_PHYSICAL_PANE" \
+    --claude-pane-target "$CLAUDE_PHYSICAL_PANE" \
     --gemini-pane-target "$GEMINI_PANE" \
     --startup-grace "$STARTUP_GRACE" \
     --lease-ttl 60 \
     > "$WATCHER_LOG" 2>&1 &
 WATCHER_PID="$!"
 
-if ! wait_for_log_contains "$RAW_LOG" "\"event\": \"codex_blocked_triage_notify\"" "$TIMEOUT_SEC"; then
-    echo "Blocked triage notify event timed out" >&2
+if ! wait_for_log_contains "$RAW_LOG" "\"event\": \"verify_blocked_triage_notify\"" "$TIMEOUT_SEC"; then
+    if ! wait_for_log_contains "$RAW_LOG" "\"event\": \"codex_blocked_triage_notify\"" "$TIMEOUT_SEC"; then
+        echo "Blocked triage notify event timed out" >&2
+        echo "watcher log: $WATCHER_LOG" >&2
+        tmux capture-pane -pt "$IMPLEMENT_PANE" -S -80 >&2 || true
+        tmux capture-pane -pt "$VERIFY_PANE" -S -80 >&2 || true
+        exit 1
+    fi
+fi
+
+if ! wait_for_log_contains "$RAW_LOG" "\"event\": \"implement_notify\"" "$TIMEOUT_SEC"; then
+    echo "Implement notify event timed out" >&2
     echo "watcher log: $WATCHER_LOG" >&2
-    tmux capture-pane -pt "$CLAUDE_PANE" -S -80 >&2 || true
-    tmux capture-pane -pt "$CODEX_PANE" -S -80 >&2 || true
+    tmux capture-pane -pt "$IMPLEMENT_PANE" -S -80 >&2 || true
     exit 1
 fi
 
@@ -283,6 +429,12 @@ if ! grep -Eq '"event": "claude_handoff_deferred"|"reason": "claude_handoff_upda
         cat "$RAW_LOG" >&2 || true
         exit 1
     fi
+fi
+
+if grep -Eq '"legacy_event"|"legacy_notify_label"' "$RAW_LOG" 2>/dev/null; then
+    echo "Legacy alias fields should not appear in blocked auto-triage smoke raw log" >&2
+    cat "$RAW_LOG" >&2 || true
+    exit 1
 fi
 
 if [ ! -f "$CLAUDE_HANDOFF" ]; then
@@ -316,4 +468,6 @@ echo "base_dir: $BASE_DIR"
 echo "watcher_log: $WATCHER_LOG"
 echo "raw_log: $RAW_LOG"
 echo "claude_handoff: $CLAUDE_HANDOFF"
+echo "implement_owner: $IMPLEMENT_OWNER"
+echo "verify_owner: $VERIFY_OWNER"
 echo "kept_recent_smokes: $KEEP_RECENT_SMOKES"

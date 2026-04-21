@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import time
 import unittest
+import json
 from pathlib import Path
 from unittest import mock
 
@@ -137,6 +138,28 @@ class PipelineGuiAgentsTest(unittest.TestCase):
             project = Path(td)
             log_dir = project / ".pipeline" / "logs" / "experimental"
             log_dir.mkdir(parents=True)
+            profile_path = project / ".pipeline" / "config" / "agent_profile.json"
+            profile_path.parent.mkdir(parents=True, exist_ok=True)
+            profile_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "selected_agents": ["Claude", "Codex", "Gemini"],
+                        "role_bindings": {"implement": "Claude", "verify": "Codex", "advisory": "Gemini"},
+                        "role_options": {
+                            "advisory_enabled": True,
+                            "operator_stop_enabled": True,
+                            "session_arbitration_enabled": True,
+                        },
+                        "mode_flags": {
+                            "single_agent_mode": False,
+                            "self_verify_allowed": False,
+                            "self_advisory_allowed": False,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
             log_dir.joinpath("watcher.log").write_text(
                 "\n".join(
                     [
@@ -152,6 +175,47 @@ class PipelineGuiAgentsTest(unittest.TestCase):
 
         self.assertEqual(hints["Codex"][0], "WORKING")
         self.assertIn("verify", hints["Codex"][1])
+
+    def test_watcher_runtime_hints_accepts_canonical_advisory_notify_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            log_dir = project / ".pipeline" / "logs" / "experimental"
+            log_dir.mkdir(parents=True)
+            profile_path = project / ".pipeline" / "config" / "agent_profile.json"
+            profile_path.parent.mkdir(parents=True, exist_ok=True)
+            profile_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "selected_agents": ["Claude", "Codex", "Gemini"],
+                        "role_bindings": {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"},
+                        "role_options": {
+                            "advisory_enabled": True,
+                            "operator_stop_enabled": True,
+                            "session_arbitration_enabled": True,
+                        },
+                        "mode_flags": {
+                            "single_agent_mode": False,
+                            "self_verify_allowed": False,
+                            "self_advisory_allowed": False,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            log_dir.joinpath("watcher.log").write_text(
+                "\n".join(
+                    [
+                        "2026-04-07T22:52:11 [INFO] watcher_core: notify_advisory_owner: reason=startup_turn_gemini",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch("pipeline_gui.agents.time.time", return_value=time.mktime((2026, 4, 7, 22, 52, 21, 0, 0, -1))):
+                hints = watcher_runtime_hints(project)
+
+        self.assertEqual(hints["Gemini"][0], "WORKING")
 
 
 if __name__ == "__main__":

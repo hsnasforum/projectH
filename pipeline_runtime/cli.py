@@ -54,9 +54,7 @@ _TASK_DONE_SETTLE_SEC = 1.5
 
 _CODEX_UPDATE_SKIP_MARKERS = (
     "update available",
-    "@openai/codex",
     "skip until next version",
-    "press enter to continue",
 )
 
 

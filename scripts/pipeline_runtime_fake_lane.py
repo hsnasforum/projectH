@@ -10,6 +10,8 @@ import sys
 import time
 from pathlib import Path
 
+from pipeline_runtime.lane_catalog import physical_lane_order
+
 _FIELD_RE = re.compile(r"^\s*([A-Z_]+):\s*(.+?)\s*$", re.MULTILINE)
 _ROLE_RE = re.compile(r"^\s*ROLE:\s*([A-Za-z_]+)\s*$", re.MULTILINE)
 _OUTPUT_LABEL_RE = re.compile(r"^\s*-\s*([^:]+):\s*(.+?)\s*$", re.MULTILINE)
@@ -323,7 +325,7 @@ def run_interactive(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pipeline_runtime_fake_lane")
     parser.add_argument("--project-root", required=True)
-    parser.add_argument("--lane", required=True, choices=["Claude", "Codex", "Gemini"])
+    parser.add_argument("--lane", required=True, choices=physical_lane_order())
     parser.add_argument("--gemini-every", type=int, default=5)
     parser.add_argument("--idle-flush-sec", type=float, default=0.2)
     parser.add_argument("--action-delay-sec", type=float, default=0.05)

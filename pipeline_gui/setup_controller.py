@@ -4,6 +4,12 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from pipeline_runtime.lane_catalog import (
+    build_agent_profile_payload,
+    default_role_bindings,
+    lane_support_rank_map,
+    physical_lane_order,
+)
 from .platform import atomic_write_json_path, path_exists, read_json_path
 from .setup_executor import LocalSetupExecutorAdapter
 from .setup_models import (
@@ -36,19 +42,15 @@ class SetupController:
         project: Path,
         *,
         executor_adapter=None,
-        agent_order: tuple[str, ...] = ("Claude", "Codex", "Gemini"),
+        agent_order: tuple[str, ...] | None = None,
         agent_support_rank: dict[str, int] | None = None,
         default_apply_result_message: str = "설정 적용 결과가 도착했습니다.",
         detail_pending_text: str = "갱신 중...",
     ) -> None:
         self.project = project
         self.executor_adapter = executor_adapter or LocalSetupExecutorAdapter()
-        self.agent_order = agent_order
-        self.agent_support_rank = agent_support_rank or {
-            "Codex": 3,
-            "Claude": 2,
-            "Gemini": 1,
-        }
+        self.agent_order = agent_order or physical_lane_order()
+        self.agent_support_rank = agent_support_rank or lane_support_rank_map()
         self.default_apply_result_message = default_apply_result_message
         self.detail_pending_text = detail_pending_text
         self._disk_state_cache: SetupDiskState | None = None
@@ -84,26 +86,18 @@ class SetupController:
         }
 
     def default_profile(self) -> dict[str, object]:
-        return {
-            "schema_version": 1,
-            "selected_agents": list(self.agent_order),
-            "role_bindings": {
-                "implement": "Claude",
-                "verify": "Codex",
-                "advisory": "Gemini",
-            },
-            "role_options": {
-                "advisory_enabled": True,
-                "operator_stop_enabled": True,
-                "session_arbitration_enabled": True,
-            },
-            "mode_flags": {
-                "single_agent_mode": False,
-                "self_verify_allowed": False,
-                "self_advisory_allowed": False,
-            },
-            "executor_override": "auto",
-        }
+        payload = build_agent_profile_payload(
+            selected_agents=list(self.agent_order),
+            role_bindings=default_role_bindings(),
+            advisory_enabled=True,
+            operator_stop_enabled=True,
+            session_arbitration_enabled=True,
+            single_agent_mode=False,
+            self_verify_allowed=False,
+            self_advisory_allowed=False,
+        )
+        payload["executor_override"] = "auto"
+        return payload
 
     def collect_form_payload(
         self,

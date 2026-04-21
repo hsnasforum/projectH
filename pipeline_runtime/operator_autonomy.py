@@ -50,6 +50,16 @@ SUPPORTED_REASON_CODES = frozenset(
     | set(_GATED_REASON_CODES)
     | set(_INTERNAL_REASON_CODES)
 )
+SUPPORTED_DECISION_CLASSES: frozenset[str] = frozenset(
+    {
+        "operator_only",
+        "advisory_only",
+        "next_slice_selection",
+        "internal_only",
+        "truth_sync_scope",
+        "red_test_family_scope_decision",
+    }
+)
 
 _REASON_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("safety_stop", ("safety_stop", "safety stop", "immediate safety stop")),
@@ -269,6 +279,12 @@ def classify_operator_candidate(
         if resolved_reason in _IMMEDIATE_REASON_CODES:
             mode = "pending_operator"
             routed_to = "codex_followup"
+        elif (
+            decision_class == "next_slice_selection"
+            and resolved_reason == "waiting_next_control"
+        ):
+            mode = "triage"
+            routed_to = "codex_followup"
         elif idle_stable and resolved_reason == "operator_candidate_pending":
             resolved_reason = "idle_hibernate"
             mode = "hibernate"
@@ -287,6 +303,15 @@ def classify_operator_candidate(
     visible_mode = "needs_operator" if operator_eligible else mode
     if operator_eligible:
         routed_to = "operator"
+    if not decision_class:
+        if visible_mode == "needs_operator":
+            decision_class = "operator_only"
+        elif visible_mode == "pending_operator":
+            decision_class = "operator_only"
+        elif visible_mode == "triage":
+            decision_class = "next_slice_selection"
+        elif visible_mode == "hibernate":
+            decision_class = "internal_only"
 
     fingerprint_source = "\n".join(
         [

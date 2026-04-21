@@ -1387,6 +1387,58 @@ class SmokeTest(unittest.TestCase):
         self.assertEqual(coverage_by_slot["상태"]["trust_tier"], "")
         self.assertEqual(coverage_by_slot["상태"]["support_plurality"], "")
 
+    def test_serialize_claim_coverage_passes_through_trust_tier_for_strong_items(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            service = WebAppService(
+                settings=AppSettings(
+                    sessions_dir=str(tmp_path / "sessions"),
+                    task_log_path=str(tmp_path / "task_log.jsonl"),
+                    notes_dir=str(tmp_path / "notes"),
+                    web_search_history_dir=str(tmp_path / "web-search"),
+                    model_provider="mock",
+                )
+            )
+
+            serialized = service._serialize_claim_coverage(
+                [
+                    {
+                        "slot": "개발",
+                        "status": "strong",
+                        "status_label": "교차 확인",
+                        "trust_tier": "trusted",
+                    },
+                    {
+                        "slot": "서비스/배급",
+                        "status": "strong",
+                        "status_label": "교차 확인",
+                        "trust_tier": "mixed",
+                    },
+                    {
+                        "slot": "이용 형태",
+                        "status": "weak",
+                        "status_label": "단일 출처",
+                        "trust_tier": "",
+                    },
+                    {
+                        "slot": "상태",
+                        "status": "missing",
+                        "status_label": "미확인",
+                    },
+                ]
+            )
+
+            coverage_by_slot = {
+                str(item.get("slot") or ""): dict(item)
+                for item in serialized
+                if isinstance(item, dict)
+            }
+
+            self.assertEqual(coverage_by_slot["개발"]["trust_tier"], "trusted")
+            self.assertEqual(coverage_by_slot["서비스/배급"]["trust_tier"], "mixed")
+            self.assertEqual(coverage_by_slot["이용 형태"]["trust_tier"], "")
+            self.assertEqual(coverage_by_slot["상태"]["trust_tier"], "")
+
     def test_web_search_entity_summary_runs_second_pass_queries_for_missing_core_slots(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -2545,6 +2597,53 @@ class SmokeTest(unittest.TestCase):
         for slot in CORE_ENTITY_SLOTS:
             self.assertTrue(any(slot in q for q in queries), f"slot {slot} missing from second-pass queries")
 
+    def test_build_entity_claim_records_role_confidence_aligns_with_role_priority_hierarchy(self) -> None:
+        from core.contracts import SourceRole
+
+        loop = AgentLoop.__new__(AgentLoop)
+        loop._entity_source_role_label = lambda *, query, source: source["forced_role"]
+        loop._extract_entity_source_fact_bullets = (
+            lambda *, query, source: [f"개발: {source['title']}"]
+        )
+
+        records = loop._build_entity_claim_records(
+            query="붉은사막",
+            selected_sources=[
+                {
+                    "title": "공식 페이지",
+                    "url": "https://official.example.com/game",
+                    "forced_role": SourceRole.OFFICIAL,
+                },
+                {
+                    "title": "위키 정리",
+                    "url": "https://wiki.example.com/game",
+                    "forced_role": SourceRole.WIKI,
+                },
+                {
+                    "title": "데이터 레코드",
+                    "url": "https://data.example.com/game",
+                    "forced_role": SourceRole.DATABASE,
+                },
+            ],
+        )
+
+        confidence_by_role = {
+            record.source_role: record.confidence
+            for record in records
+        }
+
+        self.assertEqual(confidence_by_role[SourceRole.OFFICIAL], 0.95)
+        self.assertEqual(confidence_by_role[SourceRole.WIKI], 0.9)
+        self.assertEqual(confidence_by_role[SourceRole.DATABASE], 0.9)
+        self.assertGreater(
+            confidence_by_role[SourceRole.OFFICIAL],
+            confidence_by_role[SourceRole.WIKI],
+        )
+        self.assertEqual(
+            confidence_by_role[SourceRole.WIKI],
+            confidence_by_role[SourceRole.DATABASE],
+        )
+
     def test_summarize_slot_coverage_untrusted_only_agreement_stays_weak(self) -> None:
         """Raw multi-source support alone must not mark a slot `strong` when
         none of the supporters are trusted roles. `strong` coverage requires
@@ -3190,6 +3289,146 @@ class SmokeTest(unittest.TestCase):
                     query=query,
                 )
                 self.assertEqual(summary, expected)
+
+    def test_build_claim_coverage_progress_summary_focus_slot_weak_multi_source_emits_multi_source_wording(self) -> None:
+        from core.contracts import CoverageStatus
+
+        loop = AgentLoop.__new__(AgentLoop)
+        summary = loop._build_claim_coverage_progress_summary(
+            previous_claim_coverage=[{"slot": "이용 형태", "status": CoverageStatus.WEAK}],
+            current_claim_coverage=[
+                {
+                    "slot": "이용 형태",
+                    "status": CoverageStatus.WEAK,
+                    "support_plurality": "multiple",
+                }
+            ],
+            query="붉은사막 공식 플랫폼 검색해봐",
+        )
+
+        self.assertEqual(
+            summary,
+            "재조사했지만 이용 형태는 아직 여러 출처가 확인되었으나 교차 확인 기준에는 미달합니다.",
+        )
+        self.assertNotIn("한 가지 출처", summary)
+
+    def test_build_claim_coverage_progress_summary_surfaces_mixed_trust_focus_strong_and_non_focus_weak_multi_source(self) -> None:
+        from core.contracts import CoverageStatus
+
+        loop = AgentLoop.__new__(AgentLoop)
+
+        mixed_trust_summary = loop._build_claim_coverage_progress_summary(
+            previous_claim_coverage=[{"slot": "이용 형태", "status": CoverageStatus.WEAK}],
+            current_claim_coverage=[
+                {
+                    "slot": "이용 형태",
+                    "status": CoverageStatus.STRONG,
+                    "trust_tier": "mixed",
+                }
+            ],
+            query="붉은사막 공식 플랫폼 검색해봐",
+        )
+        self.assertIsNotNone(mixed_trust_summary)
+        self.assertIn("재조사 결과 이용 형태", mixed_trust_summary)
+        self.assertIn("공식/위키/데이터 소스가 약합니다", mixed_trust_summary)
+        self.assertNotIn("교차 확인 기준을 충족했습니다", mixed_trust_summary)
+
+        trusted_summary = loop._build_claim_coverage_progress_summary(
+            previous_claim_coverage=[{"slot": "이용 형태", "status": CoverageStatus.WEAK}],
+            current_claim_coverage=[
+                {
+                    "slot": "이용 형태",
+                    "status": CoverageStatus.STRONG,
+                    "trust_tier": "trusted",
+                }
+            ],
+            query="붉은사막 공식 플랫폼 검색해봐",
+        )
+        self.assertIsNotNone(trusted_summary)
+        self.assertIn("교차 확인 기준을 충족했습니다", trusted_summary)
+
+        non_focus_summary = loop._build_claim_coverage_progress_summary(
+            previous_claim_coverage=[
+                {"slot": "이용 형태", "status": CoverageStatus.STRONG},
+                {"slot": "개발", "status": CoverageStatus.WEAK},
+            ],
+            current_claim_coverage=[
+                {"slot": "이용 형태", "status": CoverageStatus.STRONG},
+                {
+                    "slot": "개발",
+                    "status": CoverageStatus.WEAK,
+                    "support_plurality": "multiple",
+                },
+            ],
+            query="붉은사막에 대해 알려줘",
+        )
+        self.assertIsNotNone(non_focus_summary)
+        self.assertIn("개발 여러 출처 확인", non_focus_summary)
+        self.assertNotIn("개발 단일 출처", non_focus_summary)
+
+    def test_build_claim_coverage_progress_summary_surfaces_non_focus_strong_mixed_trust_via_combined_summary(self) -> None:
+        from core.contracts import CoverageStatus
+
+        loop = AgentLoop.__new__(AgentLoop)
+        summary = loop._build_claim_coverage_progress_summary(
+            previous_claim_coverage=[
+                {"slot": "개발", "status": CoverageStatus.STRONG},
+                {"slot": "서비스/배급", "status": CoverageStatus.WEAK},
+            ],
+            current_claim_coverage=[
+                {
+                    "slot": "개발",
+                    "status": CoverageStatus.STRONG,
+                    "trust_tier": "mixed",
+                },
+                {
+                    "slot": "서비스/배급",
+                    "status": CoverageStatus.WEAK,
+                    "support_plurality": "single",
+                },
+            ],
+            query="붉은사막에 대해 알려줘",
+        )
+
+        self.assertIsNotNone(summary)
+        self.assertTrue(summary.startswith("재조사했지만 아직 "))
+        self.assertIn("개발 교차 확인(출처 약함)", summary)
+        self.assertNotRegex(summary, r"개발 교차 확인(?!\(출처 약함\))")
+
+        unresolved_idx = summary.index("서비스/배급 단일 출처")
+        mixed_idx = summary.index("개발 교차 확인(출처 약함)")
+        self.assertLess(unresolved_idx, mixed_idx)
+
+    def test_build_claim_coverage_progress_summary_focus_slot_steady_strong_mixed_trust_emits_mixed_trust_wording(self) -> None:
+        from core.contracts import CoverageStatus
+
+        loop = AgentLoop.__new__(AgentLoop)
+        query = "붉은사막 개발 상황 알려줘"
+        focus_slot = loop._entity_slot_from_probe_text(query)
+        self.assertEqual(focus_slot, "개발")
+        focus_particle = loop._select_korean_particle(focus_slot, "은는")
+
+        result = loop._build_claim_coverage_progress_summary(
+            previous_claim_coverage=[
+                {"slot": "개발", "status": CoverageStatus.STRONG},
+            ],
+            current_claim_coverage=[
+                {
+                    "slot": "개발",
+                    "status": CoverageStatus.STRONG,
+                    "trust_tier": "mixed",
+                    "support_plurality": "multiple",
+                },
+            ],
+            query=query,
+        )
+
+        self.assertEqual(
+            result,
+            f"재조사했지만 {focus_slot}{focus_particle} "
+            "교차 확인 기준은 충족하지만 공식/위키/데이터 소스가 약합니다.",
+        )
+        self.assertNotIn("아직", result)
 
     def test_annotate_claim_coverage_progress_focus_slot_strong_boundary_labels_are_specific(self) -> None:
         """``_annotate_claim_coverage_progress`` must surface a

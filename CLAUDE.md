@@ -43,6 +43,7 @@
 - Older stale control files are not execution input once a newer valid control file exists.
 - If `.pipeline` disagrees with persistent notes, trust the latest `/work` and `/verify`.
 - If the latest `/work` and `/verify` already closed the same handoff SHA or exact slice, treat that handoff as blocked / already implemented instead of redoing it.
+- When opening `.pipeline/gemini_request.md` for advisory arbitration, keep the ask anchored to the named shipped docs/code paths first; do not send Gemini into `docs/superpowers/**`, `plandoc/**`, or other historical planning docs unless the current `/work` or `/verify` explicitly cites them as the evidence source.
 - Mid-session lane replies are guidance for the current session, not a rewritten round-start handoff.
 
 ## Default Engineering Rules
@@ -67,6 +68,10 @@
 - Run the narrowest relevant check first.
 - If a check was not run, say so explicitly.
 - Start with isolated Playwright reruns for selector drift, fixture drift, or single-scenario smoke changes. Use the broad browser suite only when the browser-visible contract widened, shared helpers changed, or a ready / release claim is being made.
+- `finalize-lite` is the implementation-side wrap-up skill for this repo. Use it to combine release-check truth, doc-sync review, and `/work` closeout readiness without adding commit/push/PR, `/verify`, or next-slice selection.
+- `onboard-lite` is the fast-orientation skill for unfamiliar repos or subsystems. Use it to gather real run/test entrypoints, required docs, and ownership boundaries before planning or implementation, not as a broad audit.
+- `next-slice-triage` is the verification-side slice-selection wrapper. Use it only after `/work` and `/verify` truth is already current, to narrow one exact next slice or choose `gemini_request` versus `needs_operator` without rerunning verification.
+- Preferred order is: `onboard-lite` for orientation when needed -> implementation -> `finalize-lite` -> `round-handoff` when verification truth needs rerun -> `next-slice-triage` only after truth is current.
 
 Common commands:
 - `python3 -m py_compile <files>`

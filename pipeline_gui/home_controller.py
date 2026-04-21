@@ -203,6 +203,7 @@ class HomeController:
         pane_map: dict[str, str] = {}
         token_usage = self.get_cached_token_usage(on_refresh=on_token_usage_refresh)
         token_dashboard = self.get_cached_token_dashboard(on_refresh=on_token_dashboard_refresh)
+        role_owners = dict(runtime_status.get("role_owners") or {})
         artifacts = dict(runtime_status.get("artifacts") or {})
         latest_work = dict(artifacts.get("latest_work") or {})
         latest_verify = dict(artifacts.get("latest_verify") or {})
@@ -211,7 +212,11 @@ class HomeController:
         verify_name = str(latest_verify.get("path") or "—")
         verify_mtime = float(latest_verify.get("mtime") or 0.0)
         compat = dict(runtime_status.get("compat") or {})
-        turn_state = dict(compat.get("turn_state") or {}) or None
+        turn_state = (
+            dict(runtime_status.get("turn_state") or {})
+            or dict(compat.get("turn_state") or {})
+            or None
+        )
         turn_description = describe_turn_state(turn_state)
         log_lines: list[str] = []
         for data in read_runtime_event_tail(self.project, max_lines=14):
@@ -224,15 +229,17 @@ class HomeController:
         verify_activity = None
         round_state = str(active_round.get("state") or "")
         if round_state in {"VERIFY_PENDING", "VERIFYING", "RECEIPT_PENDING"}:
+            turn_active_lane = str((turn_state or {}).get("active_lane") or "").strip()
+            verify_owner = str(role_owners.get("verify") or "").strip()
             verify_lane = (
-                turn_description["active_lane"]
+                turn_active_lane
                 if turn_description.get("active_role") == "verify"
                 else ""
-            ) or "Codex"
+            ) or verify_owner
             verify_label = (
-                f"{verify_lane} 검증 실행 중"
-                if round_state != "VERIFY_PENDING"
-                else f"{verify_lane} 검증 준비 중"
+                f"{verify_lane} 검증 실행 중" if verify_lane else "verify 실행 중"
+            ) if round_state != "VERIFY_PENDING" else (
+                f"{verify_lane} 검증 준비 중" if verify_lane else "verify 준비 중"
             )
             verify_activity = {
                 "job_id": str(active_round.get("job_id") or ""),

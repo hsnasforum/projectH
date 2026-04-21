@@ -1,4 +1,5 @@
 import os
+import subprocess
 import tempfile
 import time
 import unittest
@@ -8,6 +9,14 @@ from pathlib import Path
 from unittest import mock
 
 import watcher_core
+from pipeline_runtime.automation_health import (
+    STALE_ADVISORY_GRACE_CYCLES,
+    STALE_CONTROL_CYCLE_THRESHOLD,
+)
+from pipeline_runtime.operator_autonomy import (
+    COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+    OPERATOR_APPROVAL_COMPLETED_REASON,
+)
 from pipeline_runtime.wrapper_events import append_wrapper_event
 
 
@@ -131,6 +140,69 @@ def _write_verify_note_for_work(path: Path, work_ref: str) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def _run_git(repo: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _init_repo_with_commit_push(tmp_root: Path, *, push: bool = True) -> tuple[Path, Path]:
+    repo = tmp_root / "repo"
+    remote = tmp_root / "remote.git"
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True, text=True)
+    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True, text=True)
+    _run_git(repo, ["checkout", "-b", "main"])
+    _write_active_profile(repo)
+    (repo / "README.md").write_text("initial\n", encoding="utf-8")
+    _run_git(repo, ["add", "."])
+    _run_git(
+        repo,
+        [
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "user.name=Test User",
+            "commit",
+            "-m",
+            "initial",
+        ],
+    )
+    if push:
+        _run_git(repo, ["remote", "add", "origin", str(remote)])
+        _run_git(repo, ["push", "-u", "origin", "main"])
+    return repo, remote
+
+
+def _write_commit_push_operator_request(
+    base_dir: Path,
+    *,
+    seq: int = 44,
+    reason_code: str = "approval_required",
+    operator_policy: str = "gate_24h",
+    decision_class: str = "operator_only",
+) -> Path:
+    operator_path = base_dir / "operator_request.md"
+    operator_path.write_text(
+        "\n".join(
+            [
+                "STATUS: needs_operator",
+                f"CONTROL_SEQ: {seq}",
+                f"REASON_CODE: {reason_code}",
+                f"OPERATOR_POLICY: {operator_policy}",
+                f"DECISION_CLASS: {decision_class}",
+                "DECISION_REQUIRED: approve completed commit and remote push follow-up",
+                "",
+                "- commit and push approved boundary",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return operator_path
 
 
 class WorkNoteFilteringTest(unittest.TestCase):
@@ -1204,6 +1276,74 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
             self.assertEqual(spec.raw_payload["blocked_escalation_class"], "codex_triage")
             self.assertEqual(spec.raw_payload["blocked_fingerprint"], "block-123")
             self.assertTrue(spec.raw_payload["handoff_sha"])
+
+    def test_operator_retriage_prompt_keeps_commit_push_in_verify_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+
+            prompt = core.prompt_assembler.format_operator_retriage_prompt(
+                {
+                    "control_seq": 713,
+                    "reason": COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+                    "operator_wait_age_sec": 0,
+                }
+            )
+
+            self.assertIn("commit_push_bundle_authorization + internal_only", prompt)
+            self.assertIn("perform the scoped commit/push in this verify/handoff round", prompt)
+            self.assertIn("do not hand commit/push work to the implement lane", prompt)
+
+    def test_blocked_triage_prompt_rejects_commit_push_reissue_to_implement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+            handoff = base_dir / "claude_handoff.md"
+            handoff.write_text(
+                "STATUS: implement\n"
+                "CONTROL_SEQ: 714\n"
+                "REASON_CODE: commit_push_bundle_authorization\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+            spec = core.prompt_assembler.build_blocked_triage_dispatch_spec(
+                {
+                    "reason": "commit_push_forbidden_by_lane_rules",
+                    "reason_code": "handoff_requires_commit_push_but_rules_forbid_commit_push",
+                    "escalation_class": "codex_triage",
+                    "fingerprint": "block-commit-push",
+                    "source": "sentinel",
+                },
+                "claude_implement_blocked",
+            )
+
+            self.assertIn("commit/push is forbidden by implement-lane rules", spec.prompt)
+            self.assertIn("do not reissue commit/push as `.pipeline/claude_handoff.md`", spec.prompt)
 
     def test_session_arbitration_draft_format_moves_body_to_assembler(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3429,6 +3569,228 @@ class TurnResolutionTest(unittest.TestCase):
             self.assertEqual(marker["reason"], "operator_wait_idle_retriage")
             self.assertEqual(core._resolve_turn(), "codex_followup")
 
+    def test_satisfied_commit_push_operator_request_routes_to_codex_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, _remote = _init_repo_with_commit_push(root)
+            watch_dir = repo / "work"
+            base_dir = repo / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_commit_push_operator_request(base_dir, seq=44)
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(repo),
+                    "dry_run": True,
+                }
+            )
+
+            marker = core._operator_control_recovery_marker()
+            self.assertIsNotNone(marker)
+            self.assertEqual(marker["reason"], OPERATOR_APPROVAL_COMPLETED_REASON)
+            self.assertEqual(marker["branch"], "main")
+            self.assertEqual(marker["upstream"], "origin/main")
+            self.assertEqual(core._get_pending_operator_mtime(), 0.0)
+            self.assertEqual(core._resolve_turn(), "codex_followup")
+
+            core._last_operator_request_sig = ""
+            with mock.patch.object(core, "_notify_codex_control_recovery") as notify:
+                core._check_pipeline_signal_updates()
+
+            notify.assert_called_once()
+            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
+            events = [
+                json.loads(line)
+                for line in (base_dir / "runs" / core.run_id / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            approval_events = [
+                event for event in events if event.get("event_type") == OPERATOR_APPROVAL_COMPLETED_REASON
+            ]
+            self.assertEqual(len(approval_events), 1)
+            payload = approval_events[0]["payload"]
+            self.assertEqual(payload["control_seq"], 44)
+            self.assertEqual(payload["branch"], "main")
+            self.assertEqual(payload["upstream"], "origin/main")
+            self.assertIn("head_sha", payload)
+            raw_text = (base_dir / "logs" / "experimental" / "raw.jsonl").read_text(encoding="utf-8")
+            self.assertIn(OPERATOR_APPROVAL_COMPLETED_REASON, raw_text)
+
+    def test_satisfied_commit_push_bundle_authorization_routes_to_codex_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, _remote = _init_repo_with_commit_push(root)
+            watch_dir = repo / "work"
+            base_dir = repo / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_commit_push_operator_request(
+                base_dir,
+                seq=49,
+                reason_code=COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+                operator_policy="internal_only",
+                decision_class="release_gate",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(repo),
+                    "dry_run": True,
+                }
+            )
+
+            marker = core._operator_control_recovery_marker()
+            self.assertIsNotNone(marker)
+            self.assertEqual(marker["reason"], OPERATOR_APPROVAL_COMPLETED_REASON)
+            self.assertEqual(marker["control_seq"], 49)
+            self.assertEqual(core._resolve_turn(), "codex_followup")
+
+    def test_dirty_commit_push_bundle_authorization_routes_to_codex_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, _remote = _init_repo_with_commit_push(root)
+            watch_dir = repo / "work"
+            base_dir = repo / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            (repo / "dirty-source.txt").write_text("dirty\n", encoding="utf-8")
+            _write_commit_push_operator_request(
+                base_dir,
+                seq=50,
+                reason_code=COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+                operator_policy="internal_only",
+                decision_class="release_gate",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(repo),
+                    "dry_run": True,
+                }
+            )
+
+            self.assertIsNone(core._operator_control_recovery_marker())
+            marker = core._operator_gate_marker()
+            self.assertIsNotNone(marker)
+            self.assertEqual(marker["reason"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+            self.assertEqual(marker["mode"], "triage")
+            self.assertEqual(marker["routed_to"], "codex_followup")
+            self.assertEqual(core._resolve_turn(), "codex_followup")
+
+    def test_commit_push_operator_request_without_upstream_stays_operator_turn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, _remote = _init_repo_with_commit_push(root, push=False)
+            watch_dir = repo / "work"
+            base_dir = repo / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            _write_commit_push_operator_request(base_dir, seq=45)
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(repo),
+                    "dry_run": True,
+                }
+            )
+
+            self.assertIsNone(core._operator_control_recovery_marker())
+            self.assertGreater(core._get_pending_operator_mtime(), 0.0)
+            self.assertEqual(core._resolve_turn(), "operator")
+
+    def test_commit_push_operator_request_upstream_behind_stays_operator_turn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, _remote = _init_repo_with_commit_push(root)
+            watch_dir = repo / "work"
+            base_dir = repo / ".pipeline"
+            (repo / "README.md").write_text("local ahead\n", encoding="utf-8")
+            _run_git(repo, ["add", "README.md"])
+            _run_git(
+                repo,
+                [
+                    "-c",
+                    "user.email=test@example.com",
+                    "-c",
+                    "user.name=Test User",
+                    "commit",
+                    "-m",
+                    "local ahead",
+                ],
+            )
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            _write_commit_push_operator_request(base_dir, seq=46)
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(repo),
+                    "dry_run": True,
+                }
+            )
+
+            self.assertIsNone(core._operator_control_recovery_marker())
+            self.assertGreater(core._get_pending_operator_mtime(), 0.0)
+            self.assertEqual(core._resolve_turn(), "operator")
+
+    def test_commit_push_operator_request_dirty_source_stays_operator_turn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, _remote = _init_repo_with_commit_push(root)
+            watch_dir = repo / "work"
+            base_dir = repo / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            (repo / "untracked-source.txt").write_text("dirty\n", encoding="utf-8")
+            _write_commit_push_operator_request(base_dir, seq=47)
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(repo),
+                    "dry_run": True,
+                }
+            )
+
+            self.assertIsNone(core._operator_control_recovery_marker())
+            self.assertGreater(core._get_pending_operator_mtime(), 0.0)
+            self.assertEqual(core._resolve_turn(), "operator")
+
+    def test_commit_push_operator_request_allows_rolling_pipeline_dirty_slots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, _remote = _init_repo_with_commit_push(root)
+            watch_dir = repo / "work"
+            base_dir = repo / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            _write_commit_push_operator_request(base_dir, seq=48)
+            for filename, status in {
+                "claude_handoff.md": "STATUS: implement\nCONTROL_SEQ: 1\n",
+                "gemini_request.md": "STATUS: request_open\nCONTROL_SEQ: 2\n",
+                "gemini_advice.md": "STATUS: advice_ready\nCONTROL_SEQ: 3\n",
+            }.items():
+                (base_dir / filename).write_text(status, encoding="utf-8")
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(repo),
+                    "dry_run": True,
+                }
+            )
+
+            marker = core._operator_control_recovery_marker()
+            self.assertIsNotNone(marker)
+            self.assertEqual(marker["reason"], OPERATOR_APPROVAL_COMPLETED_REASON)
+
     def test_fresh_slice_ambiguity_operator_request_routes_to_codex_followup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4124,6 +4486,172 @@ class TurnResolutionTest(unittest.TestCase):
             self.assertEqual(marker["operator_policy"], "gate_24h")
             self.assertEqual(marker["reason_code"], "newer_unverified_work_present")
             self.assertEqual(core._resolve_turn(), "codex")
+
+
+class ControlSeqAgeTrackerTest(unittest.TestCase):
+    def _make_core(self, root: Path) -> watcher_core.WatcherCore:
+        watch_dir = root / "work"
+        base_dir = root / ".pipeline"
+        watch_dir.mkdir(parents=True, exist_ok=True)
+        base_dir.mkdir(parents=True, exist_ok=True)
+        _write_active_profile(root)
+        return watcher_core.WatcherCore(
+            {
+                "watch_dir": str(watch_dir),
+                "base_dir": str(base_dir),
+                "repo_root": str(root),
+                "dry_run": True,
+            }
+        )
+
+    def test_same_control_seq_increments_age_cycles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            core = self._make_core(root)
+            (root / ".pipeline" / "claude_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: 31\n",
+                encoding="utf-8",
+            )
+
+            observed = [core._refresh_control_seq_age() for _ in range(4)]
+
+            self.assertEqual(observed, [0, 1, 2, 3])
+            self.assertEqual(core._last_seen_control_seq, 31)
+            self.assertEqual(core._control_seq_age_cycles, 3)
+
+    def test_different_control_seq_resets_age_cycles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            core = self._make_core(root)
+            handoff = root / ".pipeline" / "claude_handoff.md"
+            handoff.write_text("STATUS: implement\nCONTROL_SEQ: 41\n", encoding="utf-8")
+            self.assertEqual(core._refresh_control_seq_age(), 0)
+            self.assertEqual(core._refresh_control_seq_age(), 1)
+
+            handoff.write_text("STATUS: implement\nCONTROL_SEQ: 42\n", encoding="utf-8")
+
+            self.assertEqual(core._refresh_control_seq_age(), 0)
+            self.assertEqual(core._last_seen_control_seq, 42)
+            self.assertEqual(core._control_seq_age_cycles, 0)
+
+    def test_missing_or_unreadable_control_slot_returns_zero_age(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            core = self._make_core(root)
+
+            self.assertEqual(core._refresh_control_seq_age(), 0)
+            self.assertIsNone(core._last_seen_control_seq)
+            with mock.patch.object(core, "_highest_control_seq_for_age", side_effect=OSError("unreadable")):
+                self.assertEqual(core._refresh_control_seq_age(), 0)
+            self.assertFalse(core._control_seq_age_cycles)
+
+    def test_stale_control_advisory_writes_after_grace_period(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            core = self._make_core(root)
+            base_dir = root / ".pipeline"
+            handoff_path = base_dir / "claude_handoff.md"
+            handoff_text = "STATUS: implement\nCONTROL_SEQ: 31\n"
+            handoff_path.write_text(handoff_text, encoding="utf-8")
+
+            core._last_seen_control_seq = 31
+            core._control_seq_age_cycles = (
+                STALE_CONTROL_CYCLE_THRESHOLD + STALE_ADVISORY_GRACE_CYCLES
+            )
+
+            with mock.patch.object(core, "_notify_gemini") as notify:
+                wrote = core._maybe_write_stale_control_advisory_request()
+
+            self.assertTrue(wrote)
+            notify.assert_called_once_with("stale_control_advisory")
+            self.assertEqual(handoff_path.read_text(encoding="utf-8"), handoff_text)
+            self.assertFalse((base_dir / "operator_request.md").exists())
+            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.ADVISORY_ACTIVE)
+            self.assertEqual(core._turn_active_control_seq, 32)
+            request_text = (base_dir / "gemini_request.md").read_text(encoding="utf-8")
+            self.assertIn("STATUS: request_open", request_text)
+            self.assertIn("CONTROL_SEQ: 32", request_text)
+            self.assertIn("REASON_CODE: stale_control_advisory", request_text)
+            self.assertIn("SUPERSEDES: .pipeline/claude_handoff.md CONTROL_SEQ 31", request_text)
+            raw_text = (base_dir / "logs" / "experimental" / "raw.jsonl").read_text(encoding="utf-8")
+            self.assertIn("stale_control_advisory_written", raw_text)
+
+    def test_stale_control_advisory_waits_for_grace_period(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            core = self._make_core(root)
+            base_dir = root / ".pipeline"
+            (base_dir / "claude_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: 31\n",
+                encoding="utf-8",
+            )
+
+            core._last_seen_control_seq = 31
+            core._control_seq_age_cycles = (
+                STALE_CONTROL_CYCLE_THRESHOLD + STALE_ADVISORY_GRACE_CYCLES - 1
+            )
+
+            with mock.patch.object(core, "_notify_gemini") as notify:
+                wrote = core._maybe_write_stale_control_advisory_request()
+
+            self.assertFalse(wrote)
+            notify.assert_not_called()
+            self.assertFalse((base_dir / "gemini_request.md").exists())
+
+    def test_stale_control_advisory_skips_when_operator_request_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            core = self._make_core(root)
+            base_dir = root / ".pipeline"
+            operator_path = base_dir / "operator_request.md"
+            operator_text = (
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 55\n"
+                "REASON_CODE: approval_required\n"
+            )
+            operator_path.write_text(operator_text, encoding="utf-8")
+
+            core._last_seen_control_seq = 55
+            core._control_seq_age_cycles = (
+                STALE_CONTROL_CYCLE_THRESHOLD + STALE_ADVISORY_GRACE_CYCLES
+            )
+
+            with mock.patch.object(core, "_notify_gemini") as notify:
+                wrote = core._maybe_write_stale_control_advisory_request()
+
+            self.assertFalse(wrote)
+            notify.assert_not_called()
+            self.assertFalse((base_dir / "gemini_request.md").exists())
+            self.assertEqual(operator_path.read_text(encoding="utf-8"), operator_text)
+
+    def test_stale_control_advisory_preserves_current_existing_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            core = self._make_core(root)
+            base_dir = root / ".pipeline"
+            (base_dir / "claude_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: 31\n",
+                encoding="utf-8",
+            )
+            request_path = base_dir / "gemini_request.md"
+            request_text = (
+                "STATUS: request_open\n"
+                "CONTROL_SEQ: 40\n"
+                "REASON_CODE: stale_control_advisory\n"
+            )
+            request_path.write_text(request_text, encoding="utf-8")
+
+            core._last_seen_control_seq = 31
+            core._control_seq_age_cycles = (
+                STALE_CONTROL_CYCLE_THRESHOLD + STALE_ADVISORY_GRACE_CYCLES
+            )
+
+            with mock.patch.object(core, "_notify_gemini") as notify:
+                wrote = core._maybe_write_stale_control_advisory_request()
+
+            self.assertFalse(wrote)
+            notify.assert_not_called()
+            self.assertEqual(request_path.read_text(encoding="utf-8"), request_text)
 
 
 class RollingSignalTransitionTest(unittest.TestCase):
@@ -6643,6 +7171,69 @@ class VerifyCompletionContractTest(unittest.TestCase):
             stepped_job = step_mock.call_args.args[0]
             self.assertEqual(stepped_job.job_id, pending_job_id)
             self.assertEqual(stepped_job.status, watcher_core.JobStatus.VERIFY_PENDING)
+
+    def test_poll_archives_verified_pending_job_before_latest_unverified_work_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            verify_dir = root / "verify"
+            base_dir = root / ".pipeline"
+            work_day = watch_dir / "4" / "10"
+            verify_day = verify_dir / "4" / "10"
+            work_day.mkdir(parents=True, exist_ok=True)
+            verify_day.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            old_work = work_day / "2026-04-10-old.md"
+            latest_work = work_day / "2026-04-10-latest.md"
+            old_verify = verify_day / "2026-04-10-old-verification.md"
+            _write_work_note(old_work, ["watcher_core.py"])
+            _write_verify_note_for_work(old_verify, "work/4/10/2026-04-10-old.md")
+            _write_work_note(latest_work, ["tests/test_watcher_core.py"])
+            now = time.time()
+            os.utime(old_work, (now - 30, now - 30))
+            os.utime(old_verify, (now - 20, now - 20))
+            os.utime(latest_work, (now - 10, now - 10))
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                }
+            )
+
+            old_job_id = watcher_core.make_job_id(watch_dir, old_work)
+            old_job = watcher_core.JobState.from_artifact(
+                old_job_id,
+                str(old_work),
+                run_id=core.run_id,
+            )
+            old_job.status = watcher_core.JobStatus.VERIFY_PENDING
+            old_job.save(core.state_dir)
+            latest_job_id = watcher_core.make_job_id(watch_dir, latest_work)
+
+            core._initial_turn_checked = True
+            core._transition_turn(watcher_core.WatcherTurnState.IDLE, "test_setup")
+
+            with mock.patch.object(core.sm, "step", side_effect=lambda job: job) as step_mock:
+                core._poll()
+
+            step_mock.assert_called_once()
+            stepped_job = step_mock.call_args.args[0]
+            self.assertEqual(stepped_job.job_id, latest_job_id)
+            self.assertIsNone(watcher_core.JobState.load(core.state_dir, old_job_id))
+            archived = (
+                base_dir
+                / "runs"
+                / core.run_id
+                / "state-archive"
+                / f"{old_job_id}.json"
+            )
+            self.assertTrue(archived.exists())
 
     def test_poll_steps_current_run_verify_running_before_pending_gemini_advice(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

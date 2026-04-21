@@ -8,9 +8,16 @@ from typing import Any, Iterable, Mapping
 from .schema import iso_utc
 
 OPERATOR_SUPPRESS_WINDOW_SEC = 24 * 60 * 60
+OPERATOR_APPROVAL_COMPLETED_REASON = "operator_approval_completed"
+COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON = "commit_push_bundle_authorization"
 
 _SPACE_RE = re.compile(r"\s+")
 _NON_REASON_CODE_RE = re.compile(r"[^a-z0-9_]+")
+_COMMIT_APPROVAL_MARKERS = ("commit", "커밋")
+_PUSH_APPROVAL_MARKERS = ("push", "푸시")
+_COMMIT_PUSH_APPROVAL_REASONS = frozenset(
+    {"approval_required", COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON}
+)
 _LETTER_CHOICE_LINE_RE = re.compile(
     r"(?im)^\s*(?:[-*]\s*)?(?:\*\*)?"
     r"(?:(?:option|choice|candidate|proposal|decision)\s*)?"
@@ -132,6 +139,10 @@ _GATED_REASON_CODES = {
 
 _INTERNAL_REASON_CODES = {
     "codex_triage_only": {"mode": "triage", "routed_to": "codex_followup"},
+    COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON: {
+        "mode": "triage",
+        "routed_to": "codex_followup",
+    },
     "gemini_tiebreak": {"mode": "triage", "routed_to": "codex_followup"},
     "waiting_next_control": {"mode": "hibernate", "routed_to": "hibernate"},
     "idle_hibernate": {"mode": "hibernate", "routed_to": "hibernate"},
@@ -151,6 +162,7 @@ SUPPORTED_DECISION_CLASSES: frozenset[str] = frozenset(
         "advisory_only",
         "next_slice_selection",
         "internal_only",
+        "release_gate",
         "truth_sync_scope",
         "red_test_family_scope_decision",
     }
@@ -301,6 +313,33 @@ def allows_verified_blocker_auto_recovery(control_meta: Mapping[str, Any] | None
     meta = _normalize_meta(control_meta)
     reason_code = normalize_reason_code(meta.get("reason_code"))
     return reason_code in _VERIFIED_BLOCKER_AUTO_RECOVERY_REASON_CODES
+
+
+def is_commit_push_approval_stop(
+    control_meta: Mapping[str, Any] | None,
+    *,
+    control_text: object = "",
+) -> bool:
+    """Return true for structured stops that ask for commit and push approval."""
+    meta = _normalize_meta(control_meta)
+    status = str(meta.get("status") or "").strip()
+    if status and status != "needs_operator":
+        return False
+    if normalize_reason_code(meta.get("reason_code")) not in _COMMIT_PUSH_APPROVAL_REASONS:
+        return False
+
+    searchable = _normalize_text(
+        [
+            meta.get("decision_required"),
+            control_text,
+        ]
+    )
+    if not searchable:
+        return False
+    return (
+        any(marker in searchable for marker in _COMMIT_APPROVAL_MARKERS)
+        and any(marker in searchable for marker in _PUSH_APPROVAL_MARKERS)
+    )
 
 
 def _match_reason(text: str) -> str:

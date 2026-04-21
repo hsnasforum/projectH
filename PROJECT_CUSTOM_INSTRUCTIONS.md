@@ -70,6 +70,18 @@
 - `trace-implementer`는 grounded-brief trace anchor, snapshot normalization, corrected-outcome linkage 같은 작은 구현 슬라이스를 맡기되, review queue나 user-level memory 같은 다음 단계 범위를 끌어오지 않도록 제한합니다.
 - 구현이나 제안 전에 기존 shared helper, query, formatter, prompt가 있는지 먼저 보고, 같은 책임의 near-copy 코드를 새로 늘리지 않습니다.
 - 작업은 필요 이상으로 잘게 쪼개지 않습니다. 같은 파일과 같은 검증 경로를 공유하는 변경은 review 가능한 범위 안에서 하나의 의미 있는 슬라이스로 묶습니다.
+- 하드코딩은 금지합니다. 현재 branch, commit SHA, `CONTROL_SEQ`, pane id, 한국어 표시 문구, 특정 operator prose, 특정 control file body를 런타임 로직에 직접 박지 말고 structured metadata, parser/schema helper, status-label helper, fixture, 문서 계약을 사용합니다.
+- 중복 코드는 금지합니다. watcher/supervisor/launcher/controller/test가 같은 truth를 각각 재해석해야 한다면 owning module이나 shared helper로 올리고 thin client는 그 surface를 읽게 합니다.
+- 한 파일이나 한 함수에 계속 로직을 몰아 유지보수성을 낮추는 것도 금지합니다. 무의미한 초미세 분리는 피하되, parsing, labeling, control writing, lane surface, event contract 책임이 커지면 명확한 owner/helper로 빼서 다음 수정 범위를 줄입니다.
+
+## 5-0. 자동화 완성 목표
+- 최종 자동화 목표는 일반적인 다음 작업 선택, 애매한 선택지, stall, session rollover, recovery 상황에서 사용자를 호출하지 않는 것입니다.
+- 문제가 생기면 implement / verify-handoff / advisory owner가 `/work`, `/verify`, current docs, runtime evidence를 함께 보고 먼저 회의/중재해서 하나의 다음 control로 좁힙니다.
+- `STATUS: needs_operator`는 삭제/덮어쓰기, auth/credential, approval-record, truth-sync, publication boundary 같은 실제 위험이나 명시 승인 경계에만 남기는 것이 목표입니다.
+- 자기적 재귀 개선은 같은 문제가 다시 올 때 더 작은 범위에서 닫히도록 incident family, replay test, owning boundary, shared helper, runtime surface를 남기는 것입니다.
+- 재귀학습은 현재 단계에서 모델 가중치 학습이 아니라 repo-local operational memory입니다. `/work`/`/verify`, incident 기록, 테스트, 문서, helper가 다음 의사결정을 더 잘하게 만드는 형태입니다.
+- 진화적 탐색은 current evidence와 milestone에 묶인 bounded candidate comparison입니다. broad random exploration이나 에이전트가 좁힐 수 있는 선택지를 사용자에게 되돌리는 방식이 아닙니다.
+- 단, 현재 shipped contract에서는 위험 작업의 승인·감사 가능성·가시성을 유지합니다. 사용자를 호출하지 않는 목표가 안전 경계를 조용히 우회한다는 뜻은 아닙니다.
 
 ## 5-1. 재귀개선 원칙
 - 재귀개선은 같은 버그를 계속 땜질하는 뜻이 아니라, 비슷한 다음 버그가 더 작은 범위에서 닫히게 만드는 원칙입니다.
@@ -124,6 +136,9 @@
 - `.pipeline/session_arbitration_draft.md`는 `STATUS: draft_only`만 담는 draft 슬롯이며, stop/go 실행 신호가 아닙니다.
 - `STATUS: implement`이면 active verify/handoff owner가 이미 다음 단일 슬라이스를 확정한 상태이고, active implement owner는 그 한 슬라이스만 구현합니다.
 - implement-owner 라운드는 bounded 파일 수정과 canonical `/work` closeout에서 끝납니다. implement lane에서 commit, push, branch publish, PR 생성까지 진행하지 않습니다.
+- commit/push 자동화는 큰 검증 묶음 경계에서만 다룹니다. operator가 명시 승인한 release, soak, PR stabilization, direct publish bundle이 아니면 small/local slice는 `/work` closeout과 local dirty state로 끝내고 commit/push operator stop을 새로 열지 않습니다.
+- `REASON_CODE: commit_push_bundle_authorization`와 `OPERATOR_POLICY: internal_only`가 함께 있으면 이미 큰 묶음 승인 follow-up이므로 operator에게 다시 묻지 않고 verify/handoff-owner가 범위 확인과 auditable publish 정리를 맡습니다.
+- 이 commit/push follow-up을 implement handoff로 넘기지 않습니다. implement lane은 여전히 commit, push, branch/PR publish가 금지되어 있으므로 verify/handoff owner가 직접 처리하거나, 직접 처리할 수 없으면 advisory로 넘겨야 합니다.
 - 그 handoff가 막혔으면 active implement owner는 operator 선택지를 새로 열지 말고, pane 출력에만 `STATUS: implement_blocked` + `BLOCK_REASON` + `BLOCK_REASON_CODE` + `REQUEST: codex_triage` + `ESCALATION_CLASS: codex_triage` + `HANDOFF` + `HANDOFF_SHA` + `BLOCK_ID`를 남긴 뒤 멈춥니다.
 - `STATUS: needs_operator`이면 active verify/handoff owner가 real operator-only decision 또는 blocker 때문에 아직 truthful하게 다음 단일 슬라이스를 확정하지 못한 상태이며, active implement owner는 새 구현을 시작하지 않고 대기합니다.
 - `STATUS: needs_operator`는 한 줄짜리 bare stop signal로 끝내지 않습니다. 최소한 아래를 같이 남깁니다.

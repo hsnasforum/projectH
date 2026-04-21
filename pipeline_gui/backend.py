@@ -90,7 +90,9 @@ def _apply_supervisor_missing_status(
             "active_control_seq": -1,
             "active_control_status": "none",
             "active_control_updated_at": "",
+            "control_age_cycles": 0,
         }
+        status["control_age_cycles"] = 0
         status["active_round"] = None
         status["watcher"] = {"alive": False, "pid": None}
         note = reason or "stopped"
@@ -213,7 +215,9 @@ def normalize_runtime_status(value: object | None, project: Path | None = None) 
                 "active_control_seq": -1,
                 "active_control_status": "none",
                 "active_control_updated_at": "",
+                "control_age_cycles": 0,
             }
+            status["control_age_cycles"] = 0
             status["active_round"] = None
             status["watcher"] = {"alive": False, "pid": None}
             status["lanes"] = [

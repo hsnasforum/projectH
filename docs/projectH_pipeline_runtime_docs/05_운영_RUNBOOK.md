@@ -58,7 +58,7 @@
 - degraded reason
 - recent events
 - 마지막 receipt 시각
-- automation health / reason / next action
+- automation health / reason / next action / `control_age_cycles` / `stale_control_seq`
 - `OPERATOR_WAIT`인데 이전 `.pipeline/gemini_request.md` / `.pipeline/gemini_advice.md`가 화면에 남아 보이면 current `status.control`의 `CONTROL_SEQ`를 먼저 확인합니다. 최신 watcher는 더 낮은 seq의 advisory 슬롯을 `STATUS: superseded`로 중립화하므로, superseded 슬롯은 pending arbitration으로 보지 않습니다.
 
 ## 3.4 정상 종료
@@ -74,7 +74,7 @@
 - controller가 오래된 `STOPPING` run을 다시 읽더라도 supervisor PID가 이미 없으면 UI는 이를 `STOPPED`로 정규화하고 `Control=none`, `Round=IDLE`로 보여야 합니다. 이 reader 정규화는 graceful flush 실패에 대비한 fallback safety net입니다.
 
 ## 3.5 현재 검증 원칙
-runtime long soak는 baseline evidence로 유지하되, 기본 검증 메뉴는 아닙니다. 현재 1차 automation milestone은 PR/publication 전 operator boundary를 유지한 채 6시간 synthetic soak를 통과하는 것입니다.
+runtime long soak는 baseline evidence로 유지하되, 기본 검증 메뉴는 아닙니다. 6시간 synthetic soak와 24시간 soak는 adoption/cutover 또는 runtime contract 대변경 때의 예외 gate이며, 현재 사용자 지시 handoff의 기본 next action은 watcher/supervisor/launcher 자동화 안정화입니다.
 
 현재 기본 검증은 아래 세 축이며, thin-client/UI current-truth read-model 회귀의 focused baseline으로 `python3 -m unittest tests.test_pipeline_gui_backend` 46 green을 함께 유지합니다.
 
@@ -98,6 +98,17 @@ launcher live stability gate는 아래를 현재 통과 기준으로 둡니다.
 - orphan watcher/session이 없을 것
 - dispatch/completion/receipt close incident가 named event로 surface될 것
 - 반복된 실전 incident가 replay test로 고정되어 재발 시 즉시 드러날 것
+
+## 3.6 자동화 완성 목표
+완성 목표는 ordinary next-step, ambiguity, stall, rollover, recovery 상황에서 사용자를 호출하지 않는 것입니다.
+에이전트들은 `/work`, `/verify`, current docs, runtime evidence를 기준으로 먼저 상의하고, 하나의 다음 control로 좁혀야 합니다.
+
+재귀학습은 현재 단계에서 모델 학습이 아니라 운영 학습입니다.
+반복 문제는 named incident, focused replay, owning boundary, shared helper, truthful runtime surface로 남겨 다음 수정 범위를 줄입니다.
+진화적 탐색은 current evidence와 milestone에 묶인 bounded candidate comparison이며, broad random exploration이나 사용자에게 선택지를 되돌리는 방식이 아닙니다.
+하드코딩, near-copy 중복, 과도한 파일/함수 집중은 runtime 유지보수 리스크입니다. current branch/SHA/seq/pane/prose/label 의존 대신 structured metadata와 shared helper를 사용하고, 같은 truth가 반복되면 owning boundary로 올립니다.
+
+real-risk action, auth/credential, destructive write, approval-record repair, truth-sync blocker, publication boundary는 여전히 explicit approval과 audit trail을 요구합니다.
 - thin client drift triage는 runtime `status.json` / `events.jsonl` 기준으로만 하고, pane/log/file scan은 current truth 재판정이 아니라 mismatch evidence로만 사용할 것
 - current `accepted_task`가 살아 있는 lane은 tail prompt가 보여도 `READY`로 내리지 말고 `WORKING`으로 유지할 것. verify lane이 이미 `TASK_DONE` 뒤 receipt close만 기다리는 경우는 launcher snapshot에 `active_round.state`, `dispatch_id`, `completion_stage`, `Receipt: pending close`로 그대로 드러나야 합니다.
 - pane busy/ready marker는 `pipeline_runtime/lane_surface.py` shared helper/profile을 single source로 유지할 것. watcher, supervisor, cli wrapper가 각자 marker 확장을 따로 들고 있으면 READY/WORKING drift triage가 다시 흔들립니다.
@@ -123,7 +134,7 @@ synthetic soak는 아래처럼 채택용 보조 게이트로만 남깁니다.
 - readiness barrier timeout 시 report에는 마지막 status snapshot을 남깁니다. 최소 덤프 항목은 `runtime_state`, `watcher.alive/pid`, lane별 `state/attachable/pid/note/last_event_at/last_heartbeat_at`, `control.active_control_status`, `active_round.state`입니다.
 - report에는 `receipt_count`, `duplicate_dispatch_count`, `control_mismatch_samples`, `control_mismatch_max_streak`, `orphan_session`를 함께 남깁니다.
 - report/check에는 `classification_gate_failures`와 `classification_fallback_detected` 여부도 함께 남깁니다.
-- JSON sidecar의 `summary.runtime_context`에는 latest status snapshot, recent events, current run id, open control, active round, `automation_health`, `automation_reason_code`, `automation_incident_family`, `automation_next_action`이 함께 남아야 합니다. 실패 분석은 markdown 문장 scraping보다 이 structured payload를 우선합니다.
+- JSON sidecar의 `summary.runtime_context`에는 latest status snapshot, recent events, current run id, open control, active round, `automation_health`, `automation_reason_code`, `automation_incident_family`, `automation_next_action`, `control_age_cycles`, `stale_control_seq`이 함께 남아야 합니다. 실패 분석은 markdown 문장 scraping보다 이 structured payload를 우선합니다.
 - `control_mismatch_samples`는 transition 시점에 1회 관측될 수 있으므로, 채택 판단은 persistent mismatch(`control_mismatch_max_streak > 1`) 기준으로 봅니다.
 - 현재 실전 로그는 장시간 샘플링보다 상태 전이 이벤트 위주로 남기는 편이 맞습니다. 최소 이벤트는 `handoff_dispatch`, `TASK_ACCEPTED`, `TASK_DONE`, `receipt_close`, `dispatch_stall_detected`, `completion_stall_detected`, `stale_cleanup`, `lane_broken`입니다.
 
@@ -342,7 +353,24 @@ controller browser UI의 active runtime contract는 아래로 제한합니다.
 - 같은 결정을 `CONTROL_SEQ`만 올려 다시 쓴 경우에는 suppress deadline과 retriage age가 이어져야 합니다. seq-only bump가 보이는데 `operator_retriage_no_next_control` age가 0초로 돌아가면 watcher/supervisor semantic fingerprint 회귀로 봅니다.
 - 이 상태에서 operator는 stop 파일만 보고 즉시 재기동/강제 attach하지 말고, verify follow-up 또는 gate window 경과 여부를 먼저 확인해야 합니다.
 
-## 6.11 duplicate supervisor
+## 6.11 satisfied commit/push operator boundary
+다음 조건이 동시에 보이면 commit/push 승인 stop이 이미 충족된 recovery 상태로 판단합니다.
+
+- `.pipeline/operator_request.md`는 `STATUS: needs_operator`, `REASON_CODE: approval_required` 또는 `commit_push_bundle_authorization`이며 `DECISION_REQUIRED` 또는 본문이 commit/push 승인 경계를 가리킨다.
+- current branch에 upstream이 있고, `HEAD`가 upstream tip과 같거나 upstream에 포함된다.
+- worktree dirty 항목은 rolling `.pipeline` control/runtime artifact뿐이다.
+- recent events 또는 상세 console에 raw `operator_approval_completed`가 보이고, operator-facing surface에는 `승인 작업 완료, 다음 제어 정리 중`이 보인다.
+
+이 상태의 의미:
+
+- operator-approved commit/push 자체는 이미 끝났으므로 이전 stop을 unresolved loop처럼 계속 보여주지 않습니다.
+- 이 recovery는 이미 승인돼 끝난 큰 검증 묶음을 인식하는 경로입니다. small/local slice dirty state만으로 새 commit/push operator stop을 열라는 의미가 아닙니다.
+- canonical stop 파일은 삭제하지 않고, watcher/supervisor는 `VERIFY_FOLLOWUP`으로 verify/handoff owner가 다음 control을 정리하게 합니다.
+- upstream이 없거나 remote/upstream이 HEAD를 포함하지 않거나 non-rolling source dirty가 있으면 generic `approval_required`는 fail-closed로 기존 `needs_operator`를 유지합니다.
+- 다만 `commit_push_bundle_authorization + OPERATOR_POLICY: internal_only`는 이미 큰 publish 묶음 승인이 난 follow-up으로 보고, dirty source가 남아 있어도 operator 재호출이 아니라 verify/handoff-owner triage로 넘깁니다.
+- 이 triage는 implement handoff를 만들라는 뜻이 아닙니다. implement lane은 commit/push 금지 경계가 유지되므로, verify/handoff owner가 직접 publish를 처리하거나 처리 불가 시 advisory escalation으로 넘겨야 합니다.
+
+## 6.12 duplicate supervisor
 다음 조건이 보이면 duplicate supervisor로 판단합니다.
 
 - 같은 `project_root + session`으로 `pipeline_runtime.cli daemon`이 2개 이상 떠 있음

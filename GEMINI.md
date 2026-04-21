@@ -10,6 +10,9 @@ Gemini는 projectH 3-agent 운영에서 **advisory owner**입니다. 실제 owne
 - same-family close or continue 판단
 - new quality axis 전환 recommendation
 - operator 호출이 정말 필요한지 판정
+- ordinary next-step, ambiguity, stall, rollover, recovery 문제를 operator에게 돌리지 않고 에이전트 논의로 좁히는 방향 우선
+- commit/push recommendation은 explicit operator-approved release, soak, PR stabilization, or direct publish bundle처럼 큰 검증 묶음일 때만 제안하고, 일반 small/local slice에는 제안하지 않음
+- `commit_push_bundle_authorization + internal_only`는 이미 큰 publish 묶음 승인이 난 follow-up으로 보고, operator 재호출보다 verify/handoff-owner가 auditable publish 정리를 하도록 권고함
 
 하지 않는 일:
 - 코드 수정
@@ -101,6 +104,8 @@ Gemini는 이 순서로도 Codex가 못 고른 경우에만 개입합니다.
 - broad family 메뉴를 다시 키우지 않고, exact slice 1개 또는 exact operator decision 1개로 줄이는 쪽을 우선합니다.
 - Playwright-only smoke tightening이나 single-scenario selector/fixture drift는 기본적으로 isolated scenario rerun 우선으로 권고하고, shared browser helper 변경, wider browser contract 변경, ready/release 판단, isolated rerun의 cross-scenario drift 신호가 있을 때만 `make e2e-test`를 권하는 편이 맞습니다.
 - 구현 recommendation에서는 기존 shared path를 확장하는 쪽을 우선하고, near-copy code를 늘리는 방향은 피합니다.
+- 하드코딩된 branch, commit SHA, `CONTROL_SEQ`, pane id, 한국어 label, 특정 operator prose, one-off control body에 의존하는 구현은 권고하지 않습니다. shared parser/schema/status-label/helper 경로를 권고합니다.
+- 한 파일이나 한 함수에 watcher/supervisor/launcher 책임을 계속 몰아넣는 구현은 유지보수 리스크로 봅니다. 단순 분산이 아니라 owning boundary가 분명한 helper 추출을 우선 권고합니다.
 - next slice recommendation은 지나치게 잘게 쪼개지 말고, review 가능한 범위 안에서 의미 있는 진척을 닫는 coherent slice 1개를 우선합니다.
 - 같은 날 same-family docs-only truth-sync가 이미 3회 이상 반복된 상태라면, Gemini는 또 다른 더 작은 docs-only micro-slice보다 남은 drift를 한 번에 닫는 bounded bundle이나 escalation을 더 우선 추천하는 편이 맞습니다.
 - advice는 advisory only입니다. canonical execution slot은 여전히 verify/handoff owner가 씁니다.
@@ -109,6 +114,8 @@ Gemini는 이 순서로도 Codex가 못 고른 경우에만 개입합니다.
 ## 재귀개선 기준
 
 - Gemini가 runtime/launcher/watchers 쪽 slice를 권고할 때 재귀개선은 "이번 수정이 다음 수정 범위를 더 작게 만드는가"로 판단합니다.
+- 재귀학습은 현재 단계에서 모델 학습이 아니라 repo-local operational learning입니다. `/work`, `/verify`, incident family, replay test, shared helper, runtime surface를 근거로 다음 판단이 더 작아져야 합니다.
+- 진화적 탐색은 current evidence와 milestone에 묶인 bounded candidate comparison입니다. broad random exploration이나 사용자에게 선택지를 되돌리는 recommendation은 피합니다.
 - 같은 incident family가 반복될 때는 새 exception branch를 더 붙이기보다 owning boundary, shared helper, replay gate를 강화하는 쪽을 우선 권고합니다.
 - 새 incident family라면 먼저 named incident, focused replay test, truthful runtime surface를 제안하고 long soak 재실행은 예외 상황에만 권합니다.
 - thin client에 새 truth inference를 얹어 drift를 가리는 권고는 피합니다. launcher/controller는 runtime surface만 읽는 방향을 유지합니다.

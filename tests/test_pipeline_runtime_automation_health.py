@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import unittest
 
-from pipeline_runtime.automation_health import derive_automation_health
+from pipeline_runtime.automation_health import (
+    STALE_ADVISORY_GRACE_CYCLES,
+    STALE_CONTROL_CYCLE_THRESHOLD,
+    derive_automation_health,
+)
+from pipeline_runtime.operator_autonomy import (
+    COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+    OPERATOR_APPROVAL_COMPLETED_REASON,
+)
 
 
 class PipelineRuntimeAutomationHealthTest(unittest.TestCase):
@@ -47,6 +55,84 @@ class PipelineRuntimeAutomationHealthTest(unittest.TestCase):
         self.assertEqual(health["automation_health"], "attention")
         self.assertEqual(health["automation_incident_family"], "completion_stall")
         self.assertEqual(health["automation_next_action"], "verify_followup")
+
+    def test_operator_approval_completed_recovery_routes_to_verify_followup(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "autonomy": {"mode": "recovery", "reason_code": OPERATOR_APPROVAL_COMPLETED_REASON},
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "recovering")
+        self.assertEqual(health["automation_reason_code"], OPERATOR_APPROVAL_COMPLETED_REASON)
+        self.assertEqual(health["automation_incident_family"], OPERATOR_APPROVAL_COMPLETED_REASON)
+        self.assertEqual(health["automation_next_action"], "verify_followup")
+
+    def test_commit_push_bundle_authorization_triage_routes_to_verify_followup(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "autonomy": {
+                    "mode": "triage",
+                    "reason_code": COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+                },
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "attention")
+        self.assertEqual(
+            health["automation_reason_code"],
+            COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+        )
+        self.assertEqual(health["automation_next_action"], "verify_followup")
+
+    def test_control_age_below_threshold_is_not_stale(self) -> None:
+        age = STALE_CONTROL_CYCLE_THRESHOLD - 1
+        health = derive_automation_health({"runtime_state": "RUNNING", "control_age_cycles": age})
+
+        self.assertEqual(health["control_age_cycles"], age)
+        self.assertEqual(health["stale_control_cycle_threshold"], STALE_CONTROL_CYCLE_THRESHOLD)
+        self.assertFalse(health["stale_control_seq"])
+        self.assertNotIn("제어 슬롯 고착 감지됨", str(health["automation_health_detail"]))
+
+    def test_control_age_at_threshold_is_stale(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "control_age_cycles": STALE_CONTROL_CYCLE_THRESHOLD,
+            }
+        )
+
+        self.assertEqual(health["control_age_cycles"], STALE_CONTROL_CYCLE_THRESHOLD)
+        self.assertTrue(health["stale_control_seq"])
+        self.assertFalse(health["stale_advisory_pending"])
+
+    def test_control_age_after_advisory_grace_is_advisory_pending(self) -> None:
+        age = STALE_CONTROL_CYCLE_THRESHOLD + STALE_ADVISORY_GRACE_CYCLES
+        health = derive_automation_health({"runtime_state": "RUNNING", "control_age_cycles": age})
+
+        self.assertEqual(health["control_age_cycles"], age)
+        self.assertEqual(health["stale_advisory_grace_cycles"], STALE_ADVISORY_GRACE_CYCLES)
+        self.assertTrue(health["stale_control_seq"])
+        self.assertTrue(health["stale_advisory_pending"])
+
+    def test_stale_control_seq_label_appears_in_health_detail(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "control_age_cycles": STALE_CONTROL_CYCLE_THRESHOLD,
+            }
+        )
+
+        self.assertIn("제어 슬롯 고착 감지됨", str(health["automation_health_detail"]))
+        self.assertIn(f"{STALE_CONTROL_CYCLE_THRESHOLD} 사이클", str(health["automation_health_detail"]))
+
+    def test_non_stale_control_seq_label_absent_from_health_detail(self) -> None:
+        health = derive_automation_health({"runtime_state": "RUNNING", "control_age_cycles": 0})
+
+        self.assertFalse(health["stale_control_seq"])
+        self.assertEqual(health["automation_health_detail"], "")
 
     def test_menu_or_session_ambiguity_routes_to_advisory_followup(self) -> None:
         for reason in ("slice_ambiguity", "context_exhaustion", "session_rollover"):

@@ -18,7 +18,7 @@ from pipeline_gui.platform import resolve_project_runtime_file
 from pipeline_gui.project import _session_name_for
 from pipeline_gui.setup_profile import resolve_project_runtime_adapter
 
-from .automation_health import derive_automation_health
+from .automation_health import advance_control_seq_age, derive_automation_health
 from .lane_catalog import (
     build_lane_configs,
     default_role_bindings,
@@ -26,7 +26,11 @@ from .lane_catalog import (
     read_first_doc_for_owner,
 )
 from .lane_surface import tail_has_busy_indicator, tail_has_ready_indicator, tail_surface_state
-from .operator_autonomy import allows_verified_blocker_auto_recovery, classify_operator_candidate
+from .operator_autonomy import (
+    OPERATOR_APPROVAL_COMPLETED_REASON,
+    allows_verified_blocker_auto_recovery,
+    classify_operator_candidate,
+)
 from .receipts import (
     build_receipt,
     manifest_feedback_path,
@@ -86,6 +90,11 @@ _WATCHER_SELF_RESTART_SOURCE_NAMES = (
 _WATCHER_SELF_RESTART_COOLDOWN_SEC = 10.0
 _SESSION_RECOVERY_RETRY_LIMIT = 1
 _SESSION_RECOVERY_RESET_STABLE_SEC = 300.0
+_CONTROL_SEQ_AGE_SLOT_FILES = frozenset({
+    "claude_handoff.md",
+    "gemini_request.md",
+    "operator_request.md",
+})
 
 class RuntimeSupervisor:
     def __init__(
@@ -161,6 +170,8 @@ class RuntimeSupervisor:
         self._mirrored_wrapper_event_keys_seeded = False
         self._last_watcher_source_restart_key = ""
         self._last_watcher_source_restart_at = 0.0
+        self._last_seen_control_seq: int | None = None
+        self._control_seq_age_cycles = 0
 
     def _make_run_id(self) -> str:
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -576,6 +587,44 @@ class RuntimeSupervisor:
     def _save_autonomy_state(self, data: dict[str, Any]) -> None:
         atomic_write_json(self.autonomy_state_path, data)
 
+    def _highest_control_seq_for_age(self, control_slots: dict[str, Any]) -> int | None:
+        entries: list[dict[str, Any]] = []
+        active = control_slots.get("active")
+        if isinstance(active, dict):
+            entries.append(active)
+        for stale in list(control_slots.get("stale") or []):
+            if isinstance(stale, dict):
+                entries.append(stale)
+
+        seqs: list[int] = []
+        for entry in entries:
+            if str(entry.get("file") or "") not in _CONTROL_SEQ_AGE_SLOT_FILES:
+                continue
+            raw_seq = entry.get("control_seq")
+            if isinstance(raw_seq, bool):
+                continue
+            try:
+                seq = int(raw_seq)
+            except (TypeError, ValueError):
+                continue
+            if seq >= 0:
+                seqs.append(seq)
+        if not seqs:
+            return None
+        return max(seqs)
+
+    def _refresh_control_seq_age(self, control_slots: dict[str, Any]) -> int:
+        try:
+            current_seq = self._highest_control_seq_for_age(control_slots)
+        except Exception:
+            current_seq = None
+        self._last_seen_control_seq, self._control_seq_age_cycles = advance_control_seq_age(
+            last_seen_control_seq=self._last_seen_control_seq,
+            control_seq_age_cycles=self._control_seq_age_cycles,
+            current_control_seq=current_seq,
+        )
+        return self._control_seq_age_cycles
+
     def _control_text(self, control: dict[str, Any]) -> str:
         control_path = self._control_path(control)
         if control_path is None or not control_path.exists():
@@ -614,12 +663,24 @@ class RuntimeSupervisor:
                 }
             )
         reason = str((turn_state or {}).get("reason") or "")
+        turn_state_name = canonical_turn_state_name(
+            (turn_state or {}).get("state"),
+            legacy_state=(turn_state or {}).get("legacy_state"),
+        )
+        if (
+            turn_state_name == "VERIFY_FOLLOWUP"
+            and reason == OPERATOR_APPROVAL_COMPLETED_REASON
+            and int((turn_state or {}).get("active_control_seq") or -1)
+            == int(control.get("active_control_seq") or control.get("control_seq") or -1)
+        ):
+            return {
+                "control_file": str(control.get("active_control_file") or control.get("file") or ""),
+                "control_seq": int(control.get("active_control_seq") or control.get("control_seq") or -1),
+                "reason": OPERATOR_APPROVAL_COMPLETED_REASON,
+                "resolved_work_paths": [],
+            }
         retriage_active = (
-            canonical_turn_state_name(
-                (turn_state or {}).get("state"),
-                legacy_state=(turn_state or {}).get("legacy_state"),
-            )
-            == "VERIFY_FOLLOWUP"
+            turn_state_name == "VERIFY_FOLLOWUP"
             and reason == "operator_wait_idle_retriage"
         )
         auto_recovery_allowed = allows_verified_blocker_auto_recovery(control_meta)
@@ -1208,7 +1269,10 @@ class RuntimeSupervisor:
             else:
                 phase = "running_verification"
         elif turn_name == "VERIFY_FOLLOWUP":
-            if control_status == "needs_operator" or autonomy_mode in {"pending_operator", "needs_operator"}:
+            if autonomy_reason == OPERATOR_APPROVAL_COMPLETED_REASON:
+                phase = OPERATOR_APPROVAL_COMPLETED_REASON
+                reason = autonomy_reason
+            elif control_status == "needs_operator" or autonomy_mode in {"pending_operator", "needs_operator"}:
                 phase = "operator_gate_followup"
                 reason = autonomy_reason or control_status
             elif control_status in {"implement", "request_open", "advice_ready"}:
@@ -1572,6 +1636,7 @@ class RuntimeSupervisor:
     def _write_status(self) -> dict[str, Any]:
         turn_state = read_json(self.base_dir / "state" / "turn_state.json")
         control_slots = parse_control_slots(self.base_dir)
+        control_age_cycles = self._refresh_control_seq_age(control_slots)
         active_control = dict(control_slots.get("active") or {})
         job_states = load_job_states(
             self.base_dir / "state",
@@ -1607,6 +1672,7 @@ class RuntimeSupervisor:
                 "active_control_seq": -1,
                 "active_control_status": "none",
                 "active_control_updated_at": "",
+                "control_age_cycles": control_age_cycles,
             }
         else:
             control_block = {
@@ -1626,6 +1692,7 @@ class RuntimeSupervisor:
                     if active_control.get("mtime")
                     else ""
                 ),
+                "control_age_cycles": control_age_cycles,
             }
         duplicate_control = self._duplicate_control_marker(control_block)
         self._current_duplicate_control_marker = duplicate_control
@@ -1635,6 +1702,7 @@ class RuntimeSupervisor:
                 "active_control_seq": -1,
                 "active_control_status": "none",
                 "active_control_updated_at": "",
+                "control_age_cycles": control_age_cycles,
             }
         active_lane = self._active_lane_for_runtime(
             turn_state,
@@ -1837,6 +1905,7 @@ class RuntimeSupervisor:
                 "active_control_seq": -1,
                 "active_control_status": "none",
                 "active_control_updated_at": "",
+                "control_age_cycles": control_age_cycles,
             }
             surfaced_active_round = None
             watcher = {"alive": False, "pid": None}
@@ -1863,6 +1932,7 @@ class RuntimeSupervisor:
                 "active_control_seq": -1,
                 "active_control_status": "none",
                 "active_control_updated_at": "",
+                "control_age_cycles": control_age_cycles,
             }
             # stopped runtime에서도 receipt-close를 기다리는 round는 launcher/controller가
             # current truth로 계속 보이게 유지합니다. live verify(`VERIFY_PENDING` /
@@ -1902,6 +1972,7 @@ class RuntimeSupervisor:
             "runtime_state": self.runtime_state,
             "degraded_reason": self.degraded_reason,
             "degraded_reasons": list(self.degraded_reasons),
+            "control_age_cycles": control_age_cycles,
             "autonomy": autonomy,
             "control": control_block,
             "lanes": lanes,

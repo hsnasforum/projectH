@@ -4,10 +4,13 @@ import unittest
 
 from pipeline_runtime.control_writers import validate_operator_request_headers
 from pipeline_runtime.operator_autonomy import (
+    COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
     SUPPORTED_DECISION_CLASSES,
     SUPPORTED_OPERATOR_POLICIES,
     SUPPORTED_REASON_CODES,
     _MENU_CHOICE_BLOCKER_MARKERS,
+    classify_operator_candidate,
+    is_commit_push_approval_stop,
     normalize_decision_class,
     normalize_operator_policy,
     normalize_reason_code,
@@ -83,6 +86,91 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
         """git/milestone 마커가 _MENU_CHOICE_BLOCKER_MARKERS에 포함되어야 함"""
         for marker in ("커밋", "commit", "push", "milestone", "마일스톤"):
             self.assertIn(marker, _MENU_CHOICE_BLOCKER_MARKERS, f"{marker!r} missing")
+
+    def test_commit_push_approval_stop_uses_metadata_and_body_predicate(self) -> None:
+        self.assertTrue(
+            is_commit_push_approval_stop(
+                {
+                    "status": "needs_operator",
+                    "reason_code": "approval_required",
+                    "decision_required": "approve completed commit and remote push publication",
+                }
+            )
+        )
+        self.assertTrue(
+            is_commit_push_approval_stop(
+                {
+                    "status": "needs_operator",
+                    "reason_code": "approval_required",
+                },
+                control_text="operator approval is required after commit evidence and push evidence are ready",
+            )
+        )
+        self.assertTrue(
+            is_commit_push_approval_stop(
+                {
+                    "status": "needs_operator",
+                    "reason_code": COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+                    "decision_required": "automation bundle commit and push authorization",
+                }
+            )
+        )
+
+    def test_commit_push_approval_stop_rejects_non_matching_stops(self) -> None:
+        self.assertFalse(
+            is_commit_push_approval_stop(
+                {
+                    "status": "implement",
+                    "reason_code": "approval_required",
+                    "decision_required": "approve completed commit and remote push publication",
+                }
+            )
+        )
+        self.assertFalse(
+            is_commit_push_approval_stop(
+                {
+                    "status": "needs_operator",
+                    "reason_code": "truth_sync_required",
+                    "decision_required": "approve completed commit and remote push publication",
+                }
+            )
+        )
+        self.assertFalse(
+            is_commit_push_approval_stop(
+                {
+                    "status": "needs_operator",
+                    "reason_code": "approval_required",
+                    "decision_required": "approve completed commit only",
+                }
+            )
+        )
+
+    def test_commit_push_bundle_authorization_is_internal_followup_metadata(self) -> None:
+        self.assertIn(COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON, SUPPORTED_REASON_CODES)
+        self.assertIn("release_gate", SUPPORTED_DECISION_CLASSES)
+
+        decision = classify_operator_candidate(
+            "STATUS: needs_operator\n"
+            f"REASON_CODE: {COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON}\n"
+            "OPERATOR_POLICY: internal_only\n"
+            "DECISION_CLASS: release_gate\n"
+            "DECISION_REQUIRED: automation axis commit and push authorization\n",
+            control_meta={
+                "status": "needs_operator",
+                "reason_code": COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+                "operator_policy": "internal_only",
+                "decision_class": "release_gate",
+                "decision_required": "automation axis commit and push authorization",
+            },
+            idle_stable=True,
+            now_ts=1_000.0,
+        )
+
+        self.assertEqual(decision["mode"], "triage")
+        self.assertEqual(decision["routed_to"], "codex_followup")
+        self.assertEqual(decision["operator_policy"], "internal_only")
+        self.assertEqual(decision["decision_class"], "release_gate")
+        self.assertFalse(decision["operator_eligible"])
 
     def test_seq617_raw_operator_headers_normalize_to_canonical_metadata(self) -> None:
         self.assertEqual(

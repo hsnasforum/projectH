@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from .agents import STATUS_COLORS, _parse_elapsed, format_elapsed
 from .backend import format_control_summary, time_ago
 from .tokens import format_token_usage_note
+from pipeline_runtime.operator_autonomy import OPERATOR_APPROVAL_COMPLETED_REASON
+from pipeline_runtime.status_labels import automation_snapshot_flag_label, progress_phase_label
 from pipeline_runtime.turn_arbitration import canonical_turn_state_name
 
 _AGENT_STATUS_LABELS = {
@@ -34,6 +36,9 @@ _AGENT_NOTE_LABELS = {
     "progress:advisory_running": "자문 진행 중",
     "progress:operator_boundary": "operator 경계 대기",
 }
+_AGENT_NOTE_LABELS[f"progress:{OPERATOR_APPROVAL_COMPLETED_REASON}"] = progress_phase_label(
+    OPERATOR_APPROVAL_COMPLETED_REASON
+)
 
 _AUTOMATION_HEALTH_LABELS = {
     "ok": "정상",
@@ -178,6 +183,11 @@ def build_console_presentation(*, selected_agent: str, snapshot: object) -> Cons
     automation_reason = str(_snapshot_get(snapshot, "automation_reason_code", "") or "")
     automation_family = str(_snapshot_get(snapshot, "automation_incident_family", "") or "")
     automation_action = str(_snapshot_get(snapshot, "automation_next_action", "continue") or "continue")
+    automation_detail = str(_snapshot_get(snapshot, "automation_health_detail", "") or "")
+    control_age_cycles = int(_snapshot_get(snapshot, "control_age_cycles", 0) or 0)
+    stale_control_seq = bool(_snapshot_get(snapshot, "stale_control_seq", False))
+    stale_control_threshold = int(_snapshot_get(snapshot, "stale_control_cycle_threshold", 0) or 0)
+    stale_advisory_pending = bool(_snapshot_get(snapshot, "stale_advisory_pending", False))
     is_live = runtime_state in {"STARTING", "RUNNING", "DEGRADED"}
     lane_details = _snapshot_get(snapshot, "lane_details", {}) or {}
     run = _snapshot_get(snapshot, "run_summary", {}) or {}
@@ -198,6 +208,18 @@ def build_console_presentation(*, selected_agent: str, snapshot: object) -> Cons
             focus_lines.append(f"automation_incident_family: {automation_family}")
         if automation_action:
             focus_lines.append(f"automation_next_action: {automation_action}")
+    if automation_detail:
+        focus_lines.append(f"automation_health_detail: {automation_detail}")
+    if control_age_cycles or stale_control_seq:
+        focus_lines.append(f"control_age_cycles: {control_age_cycles}")
+    if stale_control_seq:
+        focus_lines.append("stale_control_seq: true")
+    if stale_control_threshold and (control_age_cycles or stale_control_seq):
+        focus_lines.append(f"stale_control_cycle_threshold: {stale_control_threshold}")
+    if stale_advisory_pending:
+        advisory_label = automation_snapshot_flag_label("stale_advisory_pending")
+        suffix = f" ({advisory_label})" if advisory_label else ""
+        focus_lines.append(f"stale_advisory_pending: true{suffix}")
     selected_lane = dict(lane_details.get(selected_agent) or {}) if isinstance(lane_details, dict) else {}
     selected_state = str(selected_lane.get("state") or "")
     if selected_state:

@@ -47,6 +47,11 @@ from pipeline_gui.setup_profile import (
 from pipeline_runtime.lane_catalog import default_role_bindings
 from pipeline_runtime.control_writers import validate_operator_candidate_status
 from pipeline_runtime.automation_health import derive_automation_health
+from pipeline_runtime.status_labels import (
+    automation_snapshot_flag_label,
+    operator_facing_reason_label,
+    progress_phase_label,
+)
 
 _START_READY_TIMEOUT_SEC = 15.0
 _OPERATOR_CLASSIFICATION_GATE_REASON = "classification_fallback_detected"
@@ -152,6 +157,57 @@ def _control_summary(control_file: str, control_seq: int, control_status: str) -
     if not detail_parts:
         return label
     return f"{label} · {' · '.join(detail_parts)}"
+
+
+def _automation_summary(
+    *,
+    health: str,
+    reason: str,
+    action: str,
+    family: str = "",
+) -> str:
+    display = _AUTOMATION_HEALTH_LABELS.get(health, health)
+    known_reason_label = operator_facing_reason_label(reason)
+    reason_label = known_reason_label or reason
+    if reason_label:
+        display += f" / {reason_label}"
+    if action and action != "continue" and not known_reason_label:
+        display += f" / {action}"
+    if family and not known_reason_label:
+        display += f" / family={family}"
+    return display
+
+def _automation_detail(
+    reason: str,
+    action: str,
+    family: str = "",
+    *,
+    health_detail: str = "",
+    control_age_cycles: int = 0,
+    stale_control_cycle_threshold: int = 0,
+    stale_advisory_pending: bool = False,
+) -> str:
+    parts = []
+    if health_detail:
+        parts.extend(
+            [
+                health_detail,
+                f"control_age_cycles={control_age_cycles}",
+                f"stale_control_cycle_threshold={stale_control_cycle_threshold}",
+            ]
+        )
+    if stale_advisory_pending:
+        advisory_label = automation_snapshot_flag_label("stale_advisory_pending")
+        parts.extend([advisory_label, "stale_advisory_pending=true"])
+    if operator_facing_reason_label(reason):
+        parts.extend(
+            [
+                f"reason={reason}",
+                f"action={action}" if action else "",
+                f"family={family}" if family else "",
+            ]
+        )
+    return " / ".join(part for part in parts if part)
 
 
 # ── 파이프라인 제어 ────────────────────────────────────────────
@@ -368,6 +424,13 @@ def _runtime_view(project: Path) -> dict[str, object]:
         event_type = str(event.get("event_type") or "")
         payload = dict(event.get("payload") or {})
         subject = ""
+        event_label = operator_facing_reason_label(event_type)
+        if event_label:
+            seq = payload.get("control_seq")
+            branch = str(payload.get("branch") or "")
+            detail = " ".join(part for part in [f"seq={seq}" if seq is not None else "", branch] if part)
+            event_lines.append(event_label + (f" {detail}" if detail else ""))
+            continue
         if event_type == "control_changed":
             control_status_text = str(payload.get("active_control_status") or "")
             seq = payload.get("active_control_seq")
@@ -459,6 +522,11 @@ def _runtime_view(project: Path) -> dict[str, object]:
         "automation_reason_code": str(status.get("automation_reason_code") or ""),
         "automation_incident_family": str(status.get("automation_incident_family") or ""),
         "automation_next_action": str(status.get("automation_next_action") or "continue"),
+        "automation_health_detail": str(status.get("automation_health_detail") or ""),
+        "control_age_cycles": int(status.get("control_age_cycles") or 0),
+        "stale_control_seq": bool(status.get("stale_control_seq")),
+        "stale_control_cycle_threshold": int(status.get("stale_control_cycle_threshold") or 0),
+        "stale_advisory_pending": bool(status.get("stale_advisory_pending")),
         "active_round": active_round,
         "progress": dict(status.get("progress") or {}),
         "last_receipt_id": str(status.get("last_receipt_id") or ""),
@@ -481,7 +549,11 @@ def pane_snapshots(project: Path, runtime_view: dict[str, object]) -> list[Agent
         name = str(lane.get("name") or "")
         state = str(lane.get("state") or "OFF")
         progress_phase = str(lane.get("progress_phase") or "")
-        status_note = _PROGRESS_PHASE_LABELS.get(progress_phase, "") or str(lane.get("note") or "")
+        status_note = (
+            progress_phase_label(progress_phase)
+            or _PROGRESS_PHASE_LABELS.get(progress_phase, "")
+            or str(lane.get("note") or "")
+        )
         detail_parts = []
         role_name = _runtime_role_for_lane(project, name)
         if role_name:
@@ -535,7 +607,8 @@ def focused_lane_details(project: Path, runtime_view: dict[str, object], agent_i
     progress_phase = str(lane.get("progress_phase") or "")
     if progress_phase:
         lines.append(f"progress_phase={progress_phase}")
-        lines.append(f"progress_label={_PROGRESS_PHASE_LABELS.get(progress_phase, progress_phase)}")
+        label = progress_phase_label(progress_phase) or _PROGRESS_PHASE_LABELS.get(progress_phase, progress_phase)
+        lines.append(f"progress_label={label}")
     if lane.get("progress_reason"):
         lines.append(f"progress_reason={lane['progress_reason']}")
     if lane.get("last_heartbeat_at"):
@@ -606,6 +679,10 @@ def build_snapshot(project: Path, session: str, runtime_view: dict[str, object] 
     automation_reason = str(runtime_view.get("automation_reason_code") or "")
     automation_family = str(runtime_view.get("automation_incident_family") or "")
     automation_action = str(runtime_view.get("automation_next_action") or "continue")
+    automation_health_detail = str(runtime_view.get("automation_health_detail") or "")
+    control_age_cycles = int(runtime_view.get("control_age_cycles") or 0)
+    stale_control_cycle_threshold = int(runtime_view.get("stale_control_cycle_threshold") or 0)
+    stale_advisory_pending = bool(runtime_view.get("stale_advisory_pending"))
     degraded_reason = str(runtime_view.get("degraded_reason") or "")
     degraded_reasons = [str(item) for item in list(runtime_view.get("degraded_reasons") or []) if str(item)]
     last_receipt_id = str(runtime_view.get("last_receipt_id") or "")
@@ -616,21 +693,11 @@ def build_snapshot(project: Path, session: str, runtime_view: dict[str, object] 
         f"Project : {project}",
         f"Runtime : {runtime_status}",
         "Automation: "
-        + _AUTOMATION_HEALTH_LABELS.get(automation_health, automation_health)
-        + (
-            f" / {automation_reason}"
-            if automation_reason
-            else ""
-        )
-        + (
-            f" / {automation_action}"
-            if automation_action and automation_action != "continue"
-            else ""
-        )
-        + (
-            f" / family={automation_family}"
-            if automation_family
-            else ""
+        + _automation_summary(
+            health=automation_health,
+            reason=automation_reason,
+            action=automation_action,
+            family=automation_family,
         ),
         f"Runtime helper : {'ALIVE pid=' + str(watcher_pid) if watcher_ok and watcher_pid else 'DEAD'}",
         f"Role owners : implement={role_owners['implement']} / verify={role_owners['verify']} / advisory={role_owners['advisory']}",
@@ -646,11 +713,22 @@ def build_snapshot(project: Path, session: str, runtime_view: dict[str, object] 
             if part
         ),
     ]
+    automation_detail = _automation_detail(
+        automation_reason,
+        automation_action,
+        automation_family,
+        health_detail=automation_health_detail,
+        control_age_cycles=control_age_cycles,
+        stale_control_cycle_threshold=stale_control_cycle_threshold,
+        stale_advisory_pending=stale_advisory_pending,
+    )
+    if automation_detail:
+        lines.append(f"Automation detail: {automation_detail}")
     if active_round_note or active_round_completion_stage:
         note_bits = [part for part in [active_round_note, active_round_completion_stage] if part]
         lines.append(f"Round note: {' / '.join(note_bits)}")
     if progress_phase:
-        progress_label = _PROGRESS_PHASE_LABELS.get(progress_phase, progress_phase)
+        progress_label = progress_phase_label(progress_phase) or _PROGRESS_PHASE_LABELS.get(progress_phase, progress_phase)
         suffix = f" / lane={progress_lane}" if progress_lane else ""
         lines.append(f"Progress: {progress_label} / phase={progress_phase}{suffix}")
     if last_receipt_id:
@@ -933,11 +1011,11 @@ def draw(
 
     safe_addstr(stdscr, row, 0, "│ ", CYAN)
     safe_addstr(stdscr, row, 2, "Automation:    ", WHITE)
-    automation_display = _AUTOMATION_HEALTH_LABELS.get(automation_health, automation_health)
-    if automation_reason:
-        automation_display += f" / {automation_reason}"
-    if automation_action and automation_action != "continue":
-        automation_display += f" / {automation_action}"
+    automation_display = _automation_summary(
+        health=automation_health,
+        reason=automation_reason,
+        action=automation_action,
+    )
     automation_attr = {
         "ok": GREEN,
         "recovering": YELLOW,

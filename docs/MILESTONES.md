@@ -482,11 +482,14 @@
 - enough approval / rejection traces
 - enough workflow-level eval data
 
-#### Shipped Infrastructure (Axes 1–4, 2026-04-23)
+#### Shipped Infrastructure (Axes 1–6, 2026-04-23)
 - Axis 1 (6838aba, seq 921): trace audit baseline — `scripts/audit_traces.py`, `get_global_audit_summary()` (267 sessions, 137 correction pairs)
 - Axis 2 (701166b, seq 925): trace export utility — `scripts/export_traces.py`, `stream_trace_pairs()`
 - Axis 3 (966fdb4, seq 929+933): quality scoring + threshold recalibration — `_is_high_quality()` (`0.05 ≤ score ≤ 0.98`); 137/137 pairs high-quality
 - Axis 4 (215096d, seq 935): asset promotion — `scripts/promote_assets.py` → `CorrectionStore.promote_correction()`; 137 pairs promoted
+- Axis 5 (c3e46ab, seq 941): preference visibility — `audit_traces.py` PreferenceStore counts + `data/preference_assets.jsonl`; 23 candidate preferences
+- Axis 6 (dbfbec0, seq 944): trace evaluation — `scripts/evaluate_traces.py`; model layer: JUSTIFIED (137 pairs ≥100, 100% HQ ≥50)
+- **Milestone 12 closed** (seqs 921–944): personalization pipeline infrastructure + evaluation complete; model-layer deployment and approval trace collection deferred
 
 ## Next 3 Implementation Priorities
 

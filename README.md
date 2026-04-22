@@ -88,6 +88,70 @@ repo 안의 internal/operator tooling은 릴리즈 게이트 밖이지만 계속
 - evidence, summary chunks, approval preview, feedback을 한 단위에 묶기 쉽습니다
 - memo보다 범용적이고, action-item note보다 좁지 않아서 correction memory의 기준 단위로 적합합니다
 
+## Setup
+
+권장 환경은 Linux 또는 WSL입니다. GitHub clone은 tracked source만 내려받습니다. 커밋되지 않은 로컬 변경, generated/runtime 파일, 가상환경, `node_modules`는 포함되지 않습니다. 진행 중인 작업을 다른 컴퓨터에서 그대로 이어가려면 먼저 commit/push 하거나 필요한 로컬 파일을 별도로 옮겨야 합니다.
+
+### Fresh Clone
+
+필수 도구:
+- `git`
+- Python `3.11+`
+- `python3-venv` / `pip`
+- Node.js / `npm` / `npx` for Playwright smoke
+- `make` and `ripgrep` for common local checks
+
+기본 설치:
+
+```bash
+git clone <repo-url>
+cd projectH
+
+python3 -m venv .venv
+. .venv/bin/activate
+python3 -m pip install --upgrade pip
+python3 -m pip install -e '.[search]'
+```
+
+개발/검증 보조 패키지는 필요할 때 설치합니다. `pytest`는 일부 focused runtime checks에서 쓰이고, `Pillow`는 office sprite asset helper에서 쓰입니다.
+
+```bash
+python3 -m pip install pytest Pillow
+```
+
+### Browser Smoke
+
+```bash
+make e2e-install
+make e2e-test
+```
+
+Linux/WSL에서 Playwright system dependency가 부족하면 아래를 한 번 실행합니다.
+
+```bash
+cd e2e
+npx playwright install-deps
+cd ..
+```
+
+### Internal Pipeline Tooling
+
+문서 비서 본체만 실행할 때는 필요하지 않지만, repo-local pipeline launcher / watcher / supervisor 자동화까지 돌릴 때는 아래가 추가로 필요합니다.
+
+- `tmux`
+- Claude Code or Claude CLI, Codex CLI, Gemini CLI
+- 각 CLI의 별도 초기 설정
+- optional local model provider such as Ollama, only when not using `mock`
+
+CLI agent 설치 방식은 각 도구의 현재 배포 방식에 따라 달라질 수 있습니다. 새 컴퓨터에서 GPT/Codex에게 설정을 맡길 때는 repo URL과 함께 필요한 도구 설치와 기본 검증까지 요청하면 됩니다.
+
+기본 상태 확인:
+
+```bash
+python3 -m unittest discover -s tests -p 'test_*.py'
+python3 -m pipeline_runtime.cli status . --json
+```
+
 ## Run
 
 - CLI:

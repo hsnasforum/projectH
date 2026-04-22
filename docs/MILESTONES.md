@@ -405,7 +405,7 @@
   - one same-source-message `candidate_review_record` may now be recorded through `accept`, `reject`, or `defer`
   - all three outcomes stay reviewed-but-not-applied and do not open user-level memory
 - keep durable candidates reviewable and separate from future user-level memory
-- keep `edit`, reviewed-memory store, and user-level memory later than the shipped review action slice
+- keep reviewed-memory store and user-level memory later than the shipped review action slice
 
 ### Milestone 7: Reviewable Durable Candidate Surface
 - implemented first slice:
@@ -414,8 +414,8 @@
   - one same-source-message `candidate_review_record` may now be recorded through `accept`, `reject`, `defer`, or `edit`
   - all four outcomes stay reviewed-but-not-applied and the matching pending item leaves the queue
 - Axis 2 shipped: `CandidateReviewAction.EDIT = "edit"` -> status `"edited"` with optional `reason_note` storage (seqs 807-808)
+- Axis 4 shipped: `suggested_scope` optional free-text field added to `candidate_review_record` across 4 layers (seqs 818-819); scope value constraints deferred until reviewed-memory planning opens
 - still later inside this milestone:
-  - keep scope suggestion fields later than the first review-action trace
   - define minimum scope, conflict, and rollback rules before future user-level memory
   - define a conservative default suggested-scope order and justification rule only when reviewed-memory planning opens
   - keep reviewed memory distinguishable from unreviewed durable candidates
@@ -456,7 +456,7 @@
 ## Next 3 Implementation Priorities
 
 1. Keep the shipped read-only `reviewed_memory_boundary_draft` draft-only and do not widen it into readiness tracking or cross-session scope. The rollback / disable / conflict / operator-audit contracts and the reviewed-memory apply path are now shipped; boundary draft stays separate from apply result.
-2. Keep `edit`, broader scope suggestion, merge-helper reopen, broader save-history replay, durable-candidate application, user-level memory, and broader operator work in later slices until the recurrence boundary and review boundary both stay small and non-confusing. (`reject` and `defer` are now shipped alongside `accept`.)
+2. Keep merge-helper reopen, broader save-history replay, durable-candidate application, user-level memory, and broader operator work in later slices until the recurrence boundary and review boundary both stay small and non-confusing. (`reject`, `defer`, `edit`, and the basic `suggested_scope` field are now shipped.)
 3. The reviewed-memory apply result, stop-apply (`future_reviewed_memory_stop_apply`), reversal (`future_reviewed_memory_reversal`), and conflict visibility (`future_reviewed_memory_conflict_visibility`) are now all implemented: after the effect is reversed (`record_stage = reversed`), the aggregate card shows a `충돌 확인` button; clicking it creates a separate conflict-visibility transition record with `transition_action = future_reviewed_memory_conflict_visibility`, `record_stage = conflict_visibility_checked`, evaluated `conflict_entries` and `conflict_entry_count`, and `source_apply_transition_ref` linking back to the original apply record; the conflict visibility record is separate from the apply transition record and does not mutate it; aggregate identity, supporting refs, and contracts are retained. Keep repeated-signal promotion, broader durable promotion, and cross-session counting later than the now-shipped conflict visibility.
 
 ## Do Not Pull Forward

@@ -1266,3 +1266,46 @@ correction verify (아래 섹션)로 전환.
 
 CONTROL_SEQ 820 → `.pipeline/operator_request.md` (STATUS: needs_operator)
 - 이유: Axis 4 전체 구현 완료(seqs 818-819). 4파일 + work/verify notes bundle commit/push는 operator 승인 경계.
+
+---
+
+## CONTROL_SEQ 823 구현 검증 (NEXT_CONTROL_SEQ: 824)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-milestone7-doc-cleanup-milestone8-entry.md`
+
+### 검증 결과
+
+**docs/MILESTONES.md — 3개 변경:**
+
+1. Milestone 6 "keep later" (line 408):
+   - `- keep \`edit\`, reviewed-memory store, and user-level memory...` → `edit` 제거 ✅
+   - 확인: `- keep reviewed-memory store and user-level memory later than the shipped review action slice`
+
+2. Milestone 7 "still later" (lines 417–421):
+   - "scope suggestion fields later than first review-action trace" 항목 제거 ✅
+   - Axis 4 shipped 노트 추가: `suggested_scope optional free-text field across 4 layers (seqs 818-819)` ✅
+   - 나머지 3개 "still later" 항목 유지 ✅
+
+3. "Next 3 Implementation Priorities" #2 (line 459):
+   - `Keep \`edit\`, broader scope suggestion, ...` → `edit` + "broader scope suggestion" 제거 ✅
+   - 괄호 업데이트: `(\`reject\`, \`defer\`, \`edit\`, and the basic \`suggested_scope\` field are now shipped.)` ✅
+
+- `git diff --check -- docs/MILESTONES.md` → **OK** ✅
+- `python3 -m unittest tests.test_smoke -q` → **150 tests OK** ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. 3개 변경 코드 직접 확인. 다른 파일 무수정 확인.
+
+### 남은 리스크 (CONTROL_SEQ 823 이후)
+
+- docs/MILESTONES.md 변경 + seq 823/820 work notes 미커밋
+- Milestone 7 "still later" 3개 항목은 reviewed-memory planning 이후 설계 대상으로 유지
+- Milestone 8 첫 구현 슬라이스 미결정 (advisory 선행 필요)
+
+### 다음 control
+
+CONTROL_SEQ 824 → `.pipeline/operator_request.md` (STATUS: needs_operator)
+- 이유: docs/MILESTONES.md doc cleanup 완료. 1파일 docs + work notes bundle commit/push는 operator 승인 경계.

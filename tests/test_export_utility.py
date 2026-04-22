@@ -1,5 +1,6 @@
 import json
 import unittest
+from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from storage.session_store import SessionStore
@@ -116,6 +117,50 @@ class TestStreamTracePairs(unittest.TestCase):
         self.assertTrue(_is_high_quality(0.090))
         # Below new floor is not high quality
         self.assertFalse(_is_high_quality(0.03))
+
+
+class TestPreferenceExport(unittest.TestCase):
+    def test_preference_assets_path_targets_data_jsonl(self) -> None:
+        from scripts.export_traces import PREF_PATH
+
+        self.assertEqual(PREF_PATH.name, "preference_assets.jsonl")
+        self.assertEqual(PREF_PATH.parent.name, "data")
+
+    def test_preference_export_includes_candidates_and_active(self) -> None:
+        from core.contracts import PreferenceStatus
+        from storage.preference_store import PreferenceStore
+
+        with TemporaryDirectory() as base_dir:
+            pref_store = PreferenceStore(base_dir=str(Path(base_dir) / "preferences"))
+            candidate = pref_store.record_reviewed_candidate_preference(
+                delta_fingerprint="candidate-fingerprint",
+                candidate_family="correction_rewrite",
+                description="candidate preference",
+                source_refs={"candidate_id": "cand-1"},
+            )
+            active = pref_store.record_reviewed_candidate_preference(
+                delta_fingerprint="active-fingerprint",
+                candidate_family="correction_rewrite",
+                description="active preference",
+                source_refs={"candidate_id": "cand-2"},
+            )
+            pref_store.activate_preference(active["preference_id"])
+
+            pref_records = pref_store.get_candidates() + pref_store.get_active_preferences()
+            out = Path(base_dir) / "preference_assets.jsonl"
+            with out.open("w", encoding="utf-8") as pref_out:
+                for rec in pref_records:
+                    pref_out.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+            lines = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual({rec["preference_id"] for rec in lines}, {
+                candidate["preference_id"],
+                active["preference_id"],
+            })
+            self.assertEqual({rec["status"] for rec in lines}, {
+                PreferenceStatus.CANDIDATE,
+                PreferenceStatus.ACTIVE,
+            })
 
 
 if __name__ == "__main__":

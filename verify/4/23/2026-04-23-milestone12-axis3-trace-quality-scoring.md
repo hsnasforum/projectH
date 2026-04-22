@@ -1,43 +1,58 @@
 STATUS: verified
-CONTROL_SEQ: 937
-BASED_ON_WORK: work/4/23/2026-04-23-milestone12-docsync-axes1to4.md
-HANDOFF_SHA: 215096d
+CONTROL_SEQ: 941
+BASED_ON_WORK: work/4/23/2026-04-23-milestone12-axis5-preference-visibility.md
+HANDOFF_SHA: fd864d6
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 935
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 937
 
 ## Claim
 
-Milestone 12 doc-sync — Axes 1–4 shipped infrastructure 기록:
-- `docs/MILESTONES.md`: `### Preconditions` 목록 뒤에 `#### Shipped Infrastructure (Axes 1–4, 2026-04-23)` 블록 추가
+Milestone 12 Axis 5 — Preference Visibility:
+- `scripts/audit_traces.py`: `PreferenceStore.get_candidates()` + `get_active_preferences()` 추가 → `Preferences: candidate=N, active=M` 출력
+- `scripts/export_traces.py`: `PREF_PATH` 상수 + preference JSONL export 추가 (`data/preference_assets.jsonl`)
+- `tests/test_export_utility.py`: `TestPreferenceExport` 클래스 2건 추가
 
 ## Checks Run
 
-- `grep -n "Shipped Infrastructure" docs/MILESTONES.md` → line 485 (Preconditions 직후, Next 3 직전) ✓
-- `grep -n "promote_assets" docs/MILESTONES.md` → line 489 Axis 4 항목 ✓
-- `git diff --check -- docs/MILESTONES.md` → OK
-- 코드/테스트/런타임 변경 없음 — unittest 재실행 불필요
+- `python3 -m py_compile scripts/audit_traces.py scripts/export_traces.py tests/test_export_utility.py` → OK
+- `python3 -m unittest tests.test_session_store tests.test_operator_executor tests.test_eval_loader tests.test_operator_audit tests.test_export_utility tests.test_promote_assets -v` → **51/51 통과** (기존 49 + 신규 2)
+- `python3 scripts/audit_traces.py | grep "Preferences:"` → `Preferences:       candidate=23, active=0`
+- `python3 scripts/export_traces.py | grep "Preference assets:"` → `Preference assets: 23 → data/preference_assets.jsonl`
+- `git diff --check -- scripts/audit_traces.py scripts/export_traces.py tests/test_export_utility.py` → OK
 
-## Content Review
+## Code Review
 
-삽입 블록 위치 검증 (lines 483–491):
-```
-- enough workflow-level eval data          ← Preconditions 마지막 줄
+### `scripts/audit_traces.py`
 
-#### Shipped Infrastructure (Axes 1–4, 2026-04-23)
-- Axis 1 (6838aba, seq 921): trace audit baseline — scripts/audit_traces.py, get_global_audit_summary()
-- Axis 2 (701166b, seq 925): trace export utility — scripts/export_traces.py, stream_trace_pairs()
-- Axis 3 (966fdb4, seq 929+933): quality scoring + threshold recalibration — _is_high_quality() (0.05 ≤ score ≤ 0.98); 137/137 pairs high-quality
-- Axis 4 (215096d, seq 935): asset promotion — scripts/promote_assets.py → CorrectionStore.promote_correction(); 137 pairs promoted
+- `PreferenceStore` import 추가, `get_candidates()` + `get_active_preferences()` 호출. 올바름.
+- summary 마지막 줄에 `Preferences: candidate=N, active=M` 추가. 올바름.
+- `storage/session_store.py` / contracts 미수정. handoff 범위 준수.
 
-## Next 3 Implementation Priorities    ← 이후 섹션 무변경
-```
+### `scripts/export_traces.py`
 
-- SHA 4건 실제 commit SHA 일치 확인 (6838aba / 701166b / 966fdb4 / 215096d) ✓
-- seq 번호 (921 / 925 / 929+933 / 935) 실제 CONTROL_SEQ 일치 ✓
-- Milestone 12 Long-Term 유지, Shipped 섹션 이동 없음 ✓
-- 다른 milestone 섹션 미수정 ✓
+- `PreferenceStore` import + `PREF_PATH = Path("data/preference_assets.jsonl")` 추가. 올바름.
+- 기존 correction pair export 로직 무변경. 그 뒤에 preference export 루프 추가. 올바름.
+- `get_candidates() + get_active_preferences()` — CANDIDATE·ACTIVE만 포함. REJECTED·PAUSED 제외. 올바름.
+
+### `tests/test_export_utility.py` — `TestPreferenceExport` 신규 2건
+
+- `test_preference_assets_path_targets_data_jsonl`: `PREF_PATH.name == "preference_assets.jsonl"` + `parent.name == "data"` — 경로 상수 검증. 올바름.
+- `test_preference_export_includes_candidates_and_active`: 임시 PreferenceStore에 CANDIDATE 1건 + ACTIVE 1건(activate_preference 호출) 생성 → `get_candidates() + get_active_preferences()` → JSONL 출력 → preference_id 2건 + status 2종 검증. 올바름.
+- `stream_trace_pairs()` feedback 확장 / `_is_high_quality` 세분화 — handoff 범위 제외 확인. 올바름.
+
+## Milestone 12 Axes 1–5 요약
+
+| axis | seq | SHA | 내용 |
+|---|---|---|---|
+| 1 | 921 | 6838aba | trace audit baseline |
+| 2 | 925 | 701166b | trace export utility |
+| 3 | 929+933 | f13a1ad+966fdb4 | quality scoring + threshold 재조정 |
+| 4 | 935 | 215096d | asset promotion pipeline |
+| 5 | 940 | (미커밋) | preference visibility |
 
 ## Risk / Open Questions
 
-- Milestone 12 close 여부 미결 — preconditions 미충족(preference/approval 신호 0). advisory 필요.
-- 브라우저/Playwright 미실행: docs-only 변경.
+- approval/rejection 신호 0 gap 미해결 — 구현 문제가 아닌 사용 데이터 축적 문제.
+- Milestone 12 close 여부: Axes 1–5로 "promote" 목표 완료, preference 가시성 확보. "evaluate model layer" 목표 및 approval trace precondition은 미충족.
+- advisory 재요청 필요: Gemini가 Axis 5 이후 M12 close 허용할지 확인.
+- 브라우저/Playwright 미실행: frontend 변경 없음.

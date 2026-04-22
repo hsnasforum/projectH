@@ -921,6 +921,9 @@ class SerializerMixin:
         reason_note = str(candidate_review_record.get("reason_note") or "").strip()
         if reason_note:
             normalized["reason_note"] = reason_note
+        suggested_scope = str(candidate_review_record.get("suggested_scope") or "").strip()
+        if suggested_scope:
+            normalized["suggested_scope"] = suggested_scope
         return normalized
 
     def _serialize_candidate_confirmation_record(

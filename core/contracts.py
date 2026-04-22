@@ -299,6 +299,8 @@ CANDIDATE_REVIEW_ACTION_TO_STATUS: dict[str, str] = {
     CandidateReviewAction.EDIT: "edited",
 }
 
+CANDIDATE_REVIEW_OPTIONAL_FIELDS: frozenset[str] = frozenset({"reason_note", "suggested_scope"})
+
 
 def sanitize_supporting_review_refs(refs: object) -> list[dict]:
     """Return only accepted review refs; reject/defer stay source-message audit-only."""

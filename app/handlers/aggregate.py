@@ -112,6 +112,7 @@ class AggregateHandlerMixin:
         candidate_updated_at = self._normalize_optional_text(payload.get("candidate_updated_at"))
         review_action = self._normalize_optional_text(payload.get("review_action"))
         reason_note = self._normalize_optional_text(payload.get("reason_note"))
+        suggested_scope = self._normalize_optional_text(payload.get("suggested_scope"))
 
         if not message_id:
             raise WebApiError(400, "검토 결과를 기록할 메시지 ID가 필요합니다.")
@@ -184,6 +185,7 @@ class AggregateHandlerMixin:
                     "review_action": review_action,
                     "review_status": review_status,
                     **({"reason_note": reason_note} if reason_note else {}),
+                    **({"suggested_scope": suggested_scope} if suggested_scope else {}),
                 },
             )
         except ValueError as exc:

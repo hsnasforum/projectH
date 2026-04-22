@@ -1134,3 +1134,135 @@ Axis 3 doc+e2e 변경을 모두 적용했음을 확인:
 CONTROL_SEQ 815 → `.pipeline/operator_request.md` (STATUS: needs_operator)
 - 이유: Milestone 7 Axis 3 전체 구현(seqs 813–814) + serializer fix 완료. dirty tree의
   7개 수정 파일 + work/verify notes bundle commit/push는 operator 승인 경계.
+
+---
+
+## CONTROL_SEQ 818 구현 검증 (NEXT_CONTROL_SEQ: 819)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-candidate-review-suggested-scope.md`
+
+### 검증 결과
+
+**contracts.py (line 302):**
+- `CANDIDATE_REVIEW_OPTIONAL_FIELDS: frozenset[str] = frozenset({"reason_note", "suggested_scope"})` 추가 ✅
+
+**aggregate.py (lines 115, 188):**
+- `suggested_scope = self._normalize_optional_text(payload.get("suggested_scope"))` (line 115) ✅
+- `**({"suggested_scope": suggested_scope} if suggested_scope else {}),` (line 188) ✅
+
+**serializers.py (lines 924–926):**
+- `suggested_scope = str(...).strip()` + conditional add 패턴 ✅
+
+**storage/session_store.py — 오배치 버그 발견:**
+- `suggested_scope` normalization이 `_normalize_candidate_review_record` (line 283, 대상 함수)에 없음 ❌
+- `suggested_scope` normalization이 `_normalize_content_reason_record` (line 198, 오배치)에 있음 ❌
+
+  실제 위치 (lines 235–237, `_normalize_content_reason_record` 내부):
+  ```python
+  suggested_scope = self._normalize_multiline_text(record.get("suggested_scope"))
+  if suggested_scope:
+      normalized["suggested_scope"] = suggested_scope
+  ```
+  
+  `_normalize_candidate_review_record` (lines 323–326)에는 reason_note만 있고 suggested_scope 없음:
+  ```python
+  reason_note = self._normalize_multiline_text(record.get("reason_note"))
+  if reason_note:
+      normalized["reason_note"] = reason_note
+  return normalized
+  ```
+
+- 결과: content_reason_record에 `suggested_scope` 의도치 않게 저장됨;
+  candidate_review_record에는 저장 안 됨 (write-dead)
+- smoke test 통과 이유: `suggested_scope`가 optional이라 behavioral regression 없음
+
+### work note 클레임 진실성 평가
+
+3개 파일(contracts.py, aggregate.py, serializers.py) 클레임 **truthful**.
+`storage/session_store.py` 클레임 **false**: `_normalize_candidate_review_record`에 추가했다고
+기록했지만 실제로는 `_normalize_content_reason_record`에 추가됨.
+
+### 남은 리스크 (CONTROL_SEQ 818 이후)
+
+- session_store.py wrong-function 오배치 → CONTROL_SEQ 819 correction 필요
+- content_reason_record에 `suggested_scope` 잔존 → 함께 제거해야 함
+
+### 다음 control
+
+CONTROL_SEQ 819 → `.pipeline/implement_handoff.md` (STATUS: implement)
+- 이유: session_store.py 단일 파일 correction — `_normalize_content_reason_record`에서 제거,
+  `_normalize_candidate_review_record`에 추가. 1파일 bounded fix.
+
+---
+
+## CONTROL_SEQ 819 implement_blocked 트리아지 (NEXT_CONTROL_SEQ: 820)
+
+### 블록 분석
+
+Codex BLOCK_REASON_CODE: `already_done`  
+HANDOFF_SHA: `a11726b59741be0554efb6b887994044112fceef2bc4feffdf2fbcc183886e7b`
+
+**verify 코드 재확인:**
+- `storage/session_store.py` grep 결과: `suggested_scope`는 여전히 line 235-237 (
+  `_normalize_content_reason_record` 내부)에만 존재
+- `_normalize_candidate_review_record` (lines 283-326): `suggested_scope` 여전히 없음
+- py_compile OK, 150 smoke OK — optional field이라 behavioral regression 없음
+
+**블록 판정: FALSE already_done**  
+Codex가 session_store.py 어딘가에 `suggested_scope`가 있다는 이유로 `already_done` 처리.
+실제로는 틀린 함수에 있고 정확한 수정이 미완. 재발행 필요.
+
+### 재발행 사유
+
+CONTROL_SEQ 819 handoff의 old/new 문자열이 두 함수에서 동일한 패턴
+(`reason_note` + `return normalized`)을 공유해 Codex가 함수를 혼동한 것으로 판단.
+CONTROL_SEQ 820에서 함수명 명시 + 차별화 컨텍스트 포함.
+
+### 실제 결과
+
+triage 처리 중 Codex가 별도 implementation을 완료하고 새 work note
+`work/4/22/2026-04-22-candidate-review-suggested-scope-storage-correction.md`를 작성함.
+correction verify (아래 섹션)로 전환.
+
+---
+
+## CONTROL_SEQ 819 correction 검증 (NEXT_CONTROL_SEQ: 820)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-candidate-review-suggested-scope-storage-correction.md`
+
+### 검증 결과
+
+**storage/session_store.py:**
+- `_normalize_content_reason_record` (lines 230-235): `suggested_scope` 3줄 제거됨 — 함수는 `return normalized`로 끝남 ✅
+- `_normalize_candidate_review_record` (lines 320-325): `suggested_scope` 3줄 추가됨 (reason_note 이후) ✅
+- `python3 -m py_compile storage/session_store.py` → **OK** ✅
+- `python3 -m unittest tests.test_smoke -q` → **150 tests OK** ✅
+- `git diff --check -- storage/session_store.py` → **OK** ✅
+
+### Milestone 7 Axis 4 전체 4-layer 완료 상태
+
+| 레이어 | 파일 | 변경 내용 | seq |
+|--------|------|----------|-----|
+| 계약 문서화 | `core/contracts.py` | CANDIDATE_REVIEW_OPTIONAL_FIELDS frozenset | 818 |
+| 핸들러 | `app/handlers/aggregate.py` | suggested_scope payload 추출 + record 포함 | 818 |
+| 스토리지 | `storage/session_store.py` | _normalize_candidate_review_record 추가 (correction) | 819 |
+| serializer | `app/serializers.py` | suggested_scope 직렬화 | 818 |
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. `_normalize_content_reason_record`에서 제거, `_normalize_candidate_review_record`에 추가 — 양쪽 모두 코드 확인.
+
+### 남은 리스크 (CONTROL_SEQ 819 이후)
+
+- Milestone 7 Axis 4 (suggested_scope) bundle commit/push 미처리
+- `suggested_scope`는 free-text placeholder — scope ordering rules/values는 reviewed-memory planning 이후 설계
+- Playwright browser smoke 미실행 (UI 없으므로 해당 없음)
+
+### 다음 control
+
+CONTROL_SEQ 820 → `.pipeline/operator_request.md` (STATUS: needs_operator)
+- 이유: Axis 4 전체 구현 완료(seqs 818-819). 4파일 + work/verify notes bundle commit/push는 operator 승인 경계.

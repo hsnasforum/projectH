@@ -10,6 +10,7 @@ from pipeline_runtime.lane_catalog import (
     build_lane_configs,
     physical_lane_order,
 )
+from pipeline_runtime.role_harness import role_harness_specs
 from .platform import path_exists, read_json_path
 from storage.json_store_base import utc_now_iso
 
@@ -510,6 +511,7 @@ def resolve_active_profile(payload: dict[str, Any] | None) -> dict[str, Any]:
         "enabled_lanes": enabled_lanes,
         "role_owners": role_owners,
         "prompt_owners": prompt_owners,
+        "role_harnesses": role_harness_specs(),
         "controls": dict(controls),
     }
     return {
@@ -555,6 +557,7 @@ def runtime_adapter_from_resolved(resolved: dict[str, Any]) -> dict[str, Any]:
         "enabled_lanes": enabled_lanes,
         "role_owners": role_owners,
         "prompt_owners": prompt_owners,
+        "role_harnesses": list(effective_plan.get("role_harnesses") or role_harness_specs()),
         "lane_configs": lane_configs,
     }
 

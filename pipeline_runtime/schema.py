@@ -8,24 +8,122 @@ import re
 import subprocess
 import time
 from collections import deque
+from dataclasses import dataclass
+from functools import cmp_to_key
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, TypedDict
 
 from .lane_catalog import physical_lane_order
 
+@dataclass(frozen=True)
+class ControlSlotSpec:
+    slot_id: str
+    canonical_filename: str
+    status: str
+    label: str
+    legacy_filenames: tuple[str, ...] = ()
+
+    @property
+    def accepted_filenames(self) -> tuple[str, ...]:
+        return (self.canonical_filename, *self.legacy_filenames)
+
+
+CONTROL_SLOT_SPECS: tuple[ControlSlotSpec, ...] = (
+    ControlSlotSpec(
+        slot_id="implement_handoff",
+        canonical_filename="implement_handoff.md",
+        legacy_filenames=("claude_handoff.md",),
+        status="implement",
+        label="implement handoff",
+    ),
+    ControlSlotSpec(
+        slot_id="advisory_request",
+        canonical_filename="advisory_request.md",
+        legacy_filenames=("gemini_request.md",),
+        status="request_open",
+        label="advisory request",
+    ),
+    ControlSlotSpec(
+        slot_id="advisory_advice",
+        canonical_filename="advisory_advice.md",
+        legacy_filenames=("gemini_advice.md",),
+        status="advice_ready",
+        label="verify follow-up",
+    ),
+    ControlSlotSpec(
+        slot_id="operator_request",
+        canonical_filename="operator_request.md",
+        status="needs_operator",
+        label="operator wait",
+    ),
+)
+
+_CONTROL_SLOT_BY_ID: dict[str, ControlSlotSpec] = {
+    spec.slot_id: spec for spec in CONTROL_SLOT_SPECS
+}
+_CONTROL_SLOT_BY_FILENAME: dict[str, ControlSlotSpec] = {
+    filename: spec
+    for spec in CONTROL_SLOT_SPECS
+    for filename in spec.accepted_filenames
+}
+
 CONTROL_SLOT_STATUSES: dict[str, str] = {
-    "claude_handoff.md": "implement",
-    "gemini_request.md": "request_open",
-    "gemini_advice.md": "advice_ready",
-    "operator_request.md": "needs_operator",
+    filename: spec.status for filename, spec in _CONTROL_SLOT_BY_FILENAME.items()
 }
 
 CONTROL_SLOT_LABELS: dict[str, str] = {
-    "claude_handoff.md": "implement handoff",
-    "gemini_request.md": "advisory request",
-    "gemini_advice.md": "verify follow-up",
-    "operator_request.md": "operator wait",
+    filename: spec.label for filename, spec in _CONTROL_SLOT_BY_FILENAME.items()
 }
+
+
+class ActiveControlSnapshot(TypedDict, total=False):
+    control_file: str
+    control_seq: int
+    control_status: str
+    control_updated_at: str
+    slot_id: str
+    canonical_file: str
+
+
+class PipelineControlSnapshot(TypedDict, total=False):
+    active: ActiveControlSnapshot
+    stale: list[ActiveControlSnapshot]
+    active_entry: dict[str, Any]
+    stale_entries: list[dict[str, Any]]
+    slots: dict[str, Any]
+
+
+def iter_control_slot_specs() -> tuple[ControlSlotSpec, ...]:
+    return CONTROL_SLOT_SPECS
+
+
+def control_slot_spec(slot_id: str) -> ControlSlotSpec | None:
+    return _CONTROL_SLOT_BY_ID.get(str(slot_id or "").strip())
+
+
+def control_slot_spec_for_filename(filename: str | Path | None) -> ControlSlotSpec | None:
+    name = Path(str(filename or "")).name
+    return _CONTROL_SLOT_BY_FILENAME.get(name)
+
+
+def control_slot_id_for_filename(filename: str | Path | None) -> str:
+    spec = control_slot_spec_for_filename(filename)
+    return spec.slot_id if spec else ""
+
+
+def canonical_control_filename(slot_id_or_filename: str | Path | None) -> str:
+    spec = control_slot_spec(str(slot_id_or_filename or ""))
+    if spec is None:
+        spec = control_slot_spec_for_filename(slot_id_or_filename)
+    return spec.canonical_filename if spec else Path(str(slot_id_or_filename or "")).name
+
+
+def control_filenames_equivalent(left: str | Path | None, right: str | Path | None) -> bool:
+    left_spec = control_slot_spec_for_filename(left)
+    right_spec = control_slot_spec_for_filename(right)
+    if left_spec is not None and right_spec is not None:
+        return left_spec.slot_id == right_spec.slot_id
+    return Path(str(left or "")).name == Path(str(right or "")).name
 
 RUNTIME_LANE_ORDER = physical_lane_order()
 _CONTROL_HEADER_LINE_RE = re.compile(r"^\s*([A-Z][A-Z0-9_]*):\s*(.*?)\s*$")
@@ -411,13 +509,26 @@ def latest_verify_note_for_work(
     return None
 
 
-def read_control_meta(path: Path, *, max_lines: int = 20) -> dict[str, Any]:
-    if not path.exists():
-        return {}
+def control_seq_value(value: Any, *, default: int | None = None) -> int | None:
+    if isinstance(value, bool):
+        return default
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return {}
+        seq = int(value)
+    except (TypeError, ValueError):
+        return default
+    return seq if seq >= 0 else default
+
+
+def snapshot_control_seq(
+    snapshot: Mapping[str, Any] | None,
+    *,
+    default: int = -1,
+) -> int:
+    value = control_seq_value((snapshot or {}).get("control_seq"), default=default)
+    return value if isinstance(value, int) else default
+
+
+def parse_control_meta_text(text: str, *, max_lines: int = 20) -> dict[str, Any]:
     meta: dict[str, Any] = {}
     for line in text.splitlines()[:max_lines]:
         match = _CONTROL_HEADER_LINE_RE.match(line)
@@ -428,58 +539,224 @@ def read_control_meta(path: Path, *, max_lines: int = 20) -> dict[str, Any]:
             continue
         raw_value = match.group(2).strip()
         if key == "control_seq":
-            try:
-                parsed = int(raw_value)
-            except ValueError:
+            parsed = control_seq_value(raw_value, default=None)
+            if parsed is None:
                 continue
-            meta[key] = parsed if parsed >= 0 else None
+            meta[key] = parsed
             continue
         meta[key] = raw_value
     return meta
 
 
+def read_control_meta(path: Path, *, max_lines: int = 20) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    return parse_control_meta_text(text, max_lines=max_lines)
+
+
 def _read_control_header(path: Path) -> tuple[str | None, int | None]:
     meta = read_control_meta(path, max_lines=12)
     status = str(meta.get("status") or "").strip() or None
-    control_seq = meta.get("control_seq")
-    if not isinstance(control_seq, int) or control_seq < 0:
-        control_seq = None
+    control_seq = control_seq_value(meta.get("control_seq"), default=None)
     return status, control_seq
+
+
+def _compare_control_slot_entries(left: dict[str, Any], right: dict[str, Any]) -> int:
+    left_seq = left.get("control_seq")
+    right_seq = right.get("control_seq")
+    left_has_seq = isinstance(left_seq, int)
+    right_has_seq = isinstance(right_seq, int)
+    if left_has_seq != right_has_seq:
+        return -1 if left_has_seq else 1
+    if left_has_seq and right_has_seq and left_seq != right_seq:
+        return -1 if left_seq > right_seq else 1
+
+    same_logical_slot = str(left.get("slot_id") or "") == str(right.get("slot_id") or "")
+    if same_logical_slot and bool(left.get("is_legacy_alias")) != bool(right.get("is_legacy_alias")):
+        return -1 if not left.get("is_legacy_alias") else 1
+
+    left_mtime = float(left.get("mtime") or 0.0)
+    right_mtime = float(right.get("mtime") or 0.0)
+    if left_mtime != right_mtime:
+        return -1 if left_mtime > right_mtime else 1
+
+    if bool(left.get("is_legacy_alias")) != bool(right.get("is_legacy_alias")):
+        return -1 if not left.get("is_legacy_alias") else 1
+
+    left_file = str(left.get("file") or "")
+    right_file = str(right.get("file") or "")
+    if left_file == right_file:
+        return 0
+    return -1 if left_file < right_file else 1
+
+
+def sort_control_slot_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(entries, key=cmp_to_key(_compare_control_slot_entries))
 
 
 def parse_control_slots(pipeline_dir: Path) -> dict[str, Any]:
     entries: list[dict[str, Any]] = []
-    for filename, expected_status in CONTROL_SLOT_STATUSES.items():
-        slot_path = pipeline_dir / filename
-        if not slot_path.exists():
-            continue
-        try:
-            mtime = slot_path.stat().st_mtime
-        except OSError:
-            continue
-        status, control_seq = _read_control_header(slot_path)
-        if status != expected_status:
-            continue
-        entries.append(
-            {
-                "file": filename,
-                "status": status,
-                "label": CONTROL_SLOT_LABELS[filename],
-                "mtime": mtime,
-                "control_seq": control_seq,
-            }
-        )
+    for spec in CONTROL_SLOT_SPECS:
+        for filename in spec.accepted_filenames:
+            slot_path = pipeline_dir / filename
+            if not slot_path.exists():
+                continue
+            try:
+                mtime = slot_path.stat().st_mtime
+            except OSError:
+                continue
+            status, control_seq = _read_control_header(slot_path)
+            if status != spec.status:
+                continue
+            entries.append(
+                {
+                    "file": filename,
+                    "status": status,
+                    "label": spec.label,
+                    "mtime": mtime,
+                    "control_seq": control_seq,
+                    "slot_id": spec.slot_id,
+                    "canonical_file": spec.canonical_filename,
+                    "is_legacy_alias": filename != spec.canonical_filename,
+                }
+            )
     if not entries:
         return {"active": None, "stale": []}
-    entries.sort(
-        key=lambda entry: (
-            entry["control_seq"] is not None,
-            entry["control_seq"] if entry["control_seq"] is not None else -1,
-            entry["mtime"],
-        ),
-        reverse=True,
-    )
+    entries = sort_control_slot_entries(entries)
     return {"active": entries[0], "stale": entries[1:]}
+
+
+def _pipeline_control_filename(value: Any) -> str:
+    text = str(value or "").strip().replace("\\", "/")
+    if not text:
+        return ""
+    if text.startswith(".pipeline/"):
+        return text
+    return f".pipeline/{Path(text).name}"
+
+
+def active_control_snapshot_from_entry(entry: dict[str, Any]) -> ActiveControlSnapshot:
+    """Build an active-control snapshot from a parse_control_slots active entry."""
+    snapshot: ActiveControlSnapshot = {}
+    if not isinstance(entry, dict) or not entry:
+        return snapshot
+
+    control_file = _pipeline_control_filename(entry.get("file"))
+    if control_file:
+        snapshot["control_file"] = control_file
+
+    control_seq = control_seq_value(entry.get("control_seq"), default=None)
+    if control_seq is not None:
+        snapshot["control_seq"] = control_seq
+
+    control_status = str(entry.get("status") or "").strip()
+    if control_status:
+        snapshot["control_status"] = control_status
+
+    try:
+        mtime = float(entry.get("mtime") or 0.0)
+    except (TypeError, ValueError):
+        mtime = 0.0
+    if mtime > 0.0:
+        snapshot["control_updated_at"] = iso_utc(mtime)
+
+    slot_id = str(entry.get("slot_id") or "").strip()
+    if slot_id:
+        snapshot["slot_id"] = slot_id
+
+    canonical_file = _pipeline_control_filename(entry.get("canonical_file"))
+    if canonical_file:
+        snapshot["canonical_file"] = canonical_file
+
+    return snapshot
+
+
+def active_control_snapshot_from_status(status: dict[str, Any]) -> ActiveControlSnapshot:
+    """Read an active-control snapshot from status.json / turn_state keys."""
+    snapshot: ActiveControlSnapshot = {}
+    if not isinstance(status, dict) or not status:
+        return snapshot
+
+    control_file = str(status.get("active_control_file") or "").strip()
+    if control_file:
+        snapshot["control_file"] = control_file
+
+    control_seq = control_seq_value(status.get("active_control_seq"), default=None)
+    if control_seq is not None:
+        snapshot["control_seq"] = control_seq
+
+    control_status = str(status.get("active_control_status") or "").strip()
+    if control_status:
+        snapshot["control_status"] = control_status
+
+    control_updated_at = str(status.get("active_control_updated_at") or "").strip()
+    if control_updated_at:
+        snapshot["control_updated_at"] = control_updated_at
+
+    slot_id = str(status.get("active_control_slot") or "").strip()
+    if slot_id:
+        snapshot["slot_id"] = slot_id
+
+    canonical_file = str(status.get("active_control_canonical_file") or "").strip()
+    if canonical_file:
+        snapshot["canonical_file"] = canonical_file
+
+    return snapshot
+
+
+def control_block_from_snapshot(
+    snapshot: Mapping[str, Any] | None,
+    *,
+    control_age_cycles: int,
+    is_legacy_alias: bool = False,
+) -> dict[str, Any]:
+    snapshot = snapshot or {}
+    return {
+        "active_control_file": str(snapshot.get("control_file") or ""),
+        "active_control_slot": str(snapshot.get("slot_id") or ""),
+        "active_control_canonical_file": str(snapshot.get("canonical_file") or ""),
+        "active_control_is_legacy_alias": is_legacy_alias,
+        "active_control_seq": snapshot_control_seq(snapshot),
+        "active_control_status": str(snapshot.get("control_status") or "none"),
+        "active_control_updated_at": str(snapshot.get("control_updated_at") or ""),
+        "control_age_cycles": control_age_cycles,
+    }
+
+
+def pipeline_control_snapshot_from_slots(slots: dict[str, Any]) -> PipelineControlSnapshot:
+    """Build active/stale snapshots from parse_control_slots output."""
+    active_entry = dict(slots.get("active") or {}) if isinstance(slots, dict) else {}
+    stale_entries = [
+        dict(entry)
+        for entry in list((slots or {}).get("stale") or [])
+        if isinstance(entry, dict)
+    ]
+    snapshot: PipelineControlSnapshot = {
+        "stale": [
+            stale_snapshot
+            for stale_snapshot in (
+                active_control_snapshot_from_entry(entry) for entry in stale_entries
+            )
+            if stale_snapshot
+        ],
+        "stale_entries": stale_entries,
+        "slots": slots if isinstance(slots, dict) else {"active": None, "stale": []},
+    }
+    active_snapshot = active_control_snapshot_from_entry(active_entry)
+    if active_snapshot:
+        snapshot["active"] = active_snapshot
+    if active_entry:
+        snapshot["active_entry"] = active_entry
+    return snapshot
+
+
+def read_pipeline_control_snapshot(pipeline_dir: Path) -> PipelineControlSnapshot:
+    """Parse pipeline control slots and return one shared active/stale snapshot."""
+    return pipeline_control_snapshot_from_slots(parse_control_slots(pipeline_dir))
 
 
 def load_job_states(

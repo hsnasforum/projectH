@@ -67,12 +67,12 @@ repo 안의 internal/operator tooling은 릴리즈 게이트 밖이지만 계속
 - streaming progress + cancel
 - response feedback capture
 - grounded-brief artifact trace anchor on summary responses, save approvals, and relevant local traces
-- normalized original-response snapshot, minimum `accepted_as_is` / `corrected` content-outcome capture, and minimum reject / reissue approval reason capture on grounded-brief traces
+- normalized original-response snapshot, minimum `accepted_as_is` / `corrected` content-outcome capture with `explicit_correction_submitted` correction labels, and minimum reject / reissue approval reason capture on grounded-brief traces (`corrected_text_reissue` for corrected-save reissue)
 - small grounded-brief correction editor seeded with the current draft text, with explicit correction submit kept separate from save approval; correction submit also updates the session `active_context.summary_hint` so that subsequent follow-up responses and re-summaries in the same session use the corrected text as their basis; the session `active_context` now carries an explicit `summary_hint_basis` field (`current_summary` | `recorded_correction`) that is seeded as `current_summary` when a document/search/web active context is built and flipped to `recorded_correction` when `record_correction_for_message()` rewrites `active_context.summary_hint`; the correction helper copy makes this explicit (unrecorded editor text is not yet the follow-up/re-summary basis, a recorded correction becomes the current same-session follow-up/re-summary basis, and an editor change after a recorded correction still uses the last recorded correction until `수정본 기록` is submitted again) and the current-document context box labels `active_context.summary_hint` as `후속 질문 / 재요약 기준 (기록된 수정본)` when the serialized `summary_hint_basis` is `recorded_correction` and `후속 질문 / 재요약 기준 (현재 요약)` otherwise
 - current save approvals and save/write traces now expose `save_content_source = original_draft | corrected_text` plus explicit `source_message_id` anchoring to the original grounded-brief source message
 - minimum corrected-save bridge action that stays always visible inside the correction area, stays disabled until a recorded `corrected_text` exists, creates a fresh approval from that recorded text, freezes the approval snapshot under a new `approval_id`, and reuses the same `artifact_id` / `source_message_id` with `save_content_source = corrected_text`
 - one small candidate-linked confirmation action on the grounded-brief response card that appears only when the current `session_local_candidate` exists and persists one separate source-message `candidate_confirmation_record`
-- one optional source-message-anchored `durable_candidate` projection plus one local `검토 후보` section fed only by current pending `review_queue_items`, with `accept`/`reject`/`defer` review actions that record source-message `candidate_review_record`, remove the item from the pending queue, and persistently show the review outcome (`검토 수락됨`/`검토 거절됨`/`검토 보류됨`) on the source-message transcript meta
+- one optional source-message-anchored `durable_candidate` projection with `derived_from` / `derived_at` confirmation metadata plus one local `검토 후보` section fed only by current pending `review_queue_items` marked `item_type = durable_candidate`, with `accept`/`reject`/`defer`/`edit` review actions that record source-message `candidate_review_record`, remove the item from the pending queue, and persistently show the review outcome (`검토 수락됨`/`검토 거절됨`/`검토 보류됨`/`검토 편집됨`) on the source-message transcript meta
 - one separate aggregate-level `검토 메모 적용 후보` section fed only by current same-session `recurrence_aggregate_candidates` (current-version only; retired automatically when any supporting correction is superseded before transition emit; record-backed lifecycle aggregates survive supersession), shown adjacent to `검토 후보` only when aggregates exist, with one visible-but-disabled `검토 메모 적용 시작` action per aggregate card plus blocked helper copy only; each aggregate card shows a visible review-support line (`검토 수락 N건 / 교정 M건 (거절·보류는 감사 기록만)`) derived from accept-only `supporting_review_refs`; transition-backed aggregate cards prefix the line with `[기록된 기준]` to indicate the displayed counts describe the persisted recorded basis behind the lifecycle card
 - short-summary, per-chunk chunk-note, and reduce prompts, plus the internal `summary_chunks` anchor-selection heuristic, now all reuse the same truthful source boundary already known to current call sites, so local file or uploaded-document summaries keep document-flow and narrative-friendly guidance with a strict source-anchored faithfulness rule (no fabricated events, no term substitution, no conclusions beyond what the text shows) while selected local search-result summaries keep source-backed synthesis guidance with multi-result summaries using comparative wording and single-result summaries using non-comparative wording, without adding a new mode toggle or classifier
 - PDF text-layer reading: readable text-layer PDF는 visible summary body로 정상 요약되고(`문서 요약` label, context box/quick meta/transcript meta에 PDF 파일명 표시), scanned/image-only PDF는 visible OCR-not-supported guidance(`요약할 수 없습니다`, `OCR`, `이미지형 PDF`, `다음 단계:`)를 반환
@@ -87,6 +87,70 @@ repo 안의 internal/operator tooling은 릴리즈 게이트 밖이지만 계속
 - 현재 codebase가 이미 단일 문서를 읽고 요약 본문과 저장 미리보기를 만드는 흐름에 가장 잘 맞습니다
 - evidence, summary chunks, approval preview, feedback을 한 단위에 묶기 쉽습니다
 - memo보다 범용적이고, action-item note보다 좁지 않아서 correction memory의 기준 단위로 적합합니다
+
+## Setup
+
+권장 환경은 Linux 또는 WSL입니다. GitHub clone은 tracked source만 내려받습니다. 커밋되지 않은 로컬 변경, generated/runtime 파일, 가상환경, `node_modules`는 포함되지 않습니다. 진행 중인 작업을 다른 컴퓨터에서 그대로 이어가려면 먼저 commit/push 하거나 필요한 로컬 파일을 별도로 옮겨야 합니다.
+
+### Fresh Clone
+
+필수 도구:
+- `git`
+- Python `3.11+`
+- `python3-venv` / `pip`
+- Node.js / `npm` / `npx` for Playwright smoke
+- `make` and `ripgrep` for common local checks
+
+기본 설치:
+
+```bash
+git clone <repo-url>
+cd projectH
+
+python3 -m venv .venv
+. .venv/bin/activate
+python3 -m pip install --upgrade pip
+python3 -m pip install -e '.[search]'
+```
+
+개발/검증 보조 패키지는 필요할 때 설치합니다. `pytest`는 일부 focused runtime checks에서 쓰이고, `Pillow`는 office sprite asset helper에서 쓰입니다.
+
+```bash
+python3 -m pip install pytest Pillow
+```
+
+### Browser Smoke
+
+```bash
+make e2e-install
+make e2e-test
+```
+
+Linux/WSL에서 Playwright system dependency가 부족하면 아래를 한 번 실행합니다.
+
+```bash
+cd e2e
+npx playwright install-deps
+cd ..
+```
+
+### Internal Pipeline Tooling
+
+문서 비서 본체만 실행할 때는 필요하지 않지만, repo-local pipeline launcher / watcher / supervisor 자동화까지 돌릴 때는 아래가 추가로 필요합니다.
+
+- `tmux`
+- Claude Code or Claude CLI, Codex CLI, Gemini CLI
+- 각 CLI의 별도 초기 설정
+- optional local model provider such as Ollama, only when not using `mock`
+
+CLI agent 설치 방식은 각 도구의 현재 배포 방식에 따라 달라질 수 있습니다. 새 컴퓨터에서 GPT/Codex에게 설정을 맡길 때는 repo URL과 함께 필요한 도구 설치와 기본 검증까지 요청하면 됩니다.
+
+기본 상태 확인:
+
+```bash
+python3 -m unittest discover -s tests -p 'test_*.py'
+python3 -m pipeline_runtime.cli status . --json
+```
 
 ## Run
 
@@ -107,14 +171,16 @@ repo 안의 internal/operator tooling은 릴리즈 게이트 밖이지만 계속
   - `http://127.0.0.1:8780/controller`
   - internal/operator tool only; not part of the current release-candidate browser contract
   - canonical runtime API는 `/api/runtime/status`, `/api/runtime/start|stop|restart`, `/api/runtime/capture-tail?lane=`, `/api/runtime/send-input`입니다.
+  - CLI read-model은 `python3 -m pipeline_runtime.cli status <project-root> --json`입니다. 이 명령은 런타임을 바꾸지 않고 `current_run.json`, run-scoped `status.json`, `status_path`를 함께 출력합니다.
   - controller/browser UI는 supervisor가 쓴 run-scoped runtime status만 읽고, direct pane/log/file scan을 current truth로 사용하지 않습니다.
   - Office View의 desk label과 agent home zone은 `/api/runtime/status`의 `role_owners`를 따릅니다. `claude_desk` / `codex_desk` / `gemini_desk` 키는 각각 implement / verify / advisory role anchor 이름일 뿐, Claude / Codex / Gemini의 고정 소유권을 뜻하지 않습니다.
   - sidebar는 `Party Roster`와 별도로 `Role Binding` 섹션을 렌더링해 현재 `implement` / `verify` / `advisory` owner를 명시적으로 보여 줍니다.
   - Quest Log는 `/api/runtime/status` fetch 실패를 같은 오류 메시지 기준으로 1회만 기록하고, polling이 다시 성공하면 `상태 조회 복구: ...`를 1회 남겨 네트워크/서버 단절 동안 같은 에러가 매 poll마다 누적되지 않게 합니다.
   - stop은 graceful flush 우선입니다. CLI/controller는 먼저 final `STOPPED` status flush를 기다리고, timeout 뒤에만 강제 종료 fallback을 사용합니다. supervisor가 이미 사라진 orphan watcher/session만 남아 있으면 stop이 이를 정리하고 `status.json`을 `control=none`, `active_round=null`, watcher dead, lane `OFF`로 보정합니다.
+  - lane command override는 synthetic/runtime gate 같은 명시적 테스트 경로에서만 `PIPELINE_RUNTIME_ALLOW_LANE_COMMAND_OVERRIDE=1`과 함께 사용합니다. opt-in 없이 override env가 보이면 supervisor는 이를 무시하고 `lane_command_override_ignored` audit event만 남깁니다.
   - 이미 receipt로 닫힌 duplicate `STATUS: implement` handoff는 debug용 `compat.control_slots`에는 남아도, canonical `control` block에서는 `none`으로 내려 controller가 `implement + all READY` 같은 stale 표기를 하지 않게 합니다.
   - recent runtime snapshot이 supervisor/pid 없이 불완전하게 남아 있거나, 같은 ambiguous snapshot에 `updated_at`까지 비어 있으면 controller는 이를 즉시 `STOPPED/BROKEN`으로 단정하지 않고 uncertain `DEGRADED`(`supervisor_missing_recent_ambiguous` / `supervisor_missing_snapshot_undated`)로 표기합니다.
-  - `.pipeline/operator_request.md`는 `CONTROL_SEQ`, `REASON_CODE`, `OPERATOR_POLICY`, `DECISION_CLASS`, `DECISION_REQUIRED`, `BASED_ON_WORK`, `BASED_ON_VERIFY`를 top header로 함께 두는 편이 canonical입니다. supervisor는 `OPERATOR_POLICY` 우선, `REASON_CODE` 다음 순서로 publish/gate를 판정하고, 구조화 metadata가 없거나 알 수 없으면 fail-safe로 즉시 publish합니다.
+  - `.pipeline/operator_request.md`는 `CONTROL_SEQ`, `REASON_CODE`, `OPERATOR_POLICY`, `DECISION_CLASS`, `DECISION_REQUIRED`, `BASED_ON_WORK`, `BASED_ON_VERIFY`를 top header로 함께 두는 편이 canonical입니다. supervisor/watcher는 `pipeline_runtime.operator_autonomy`의 공유 evaluator로 `OPERATOR_POLICY` 우선, `REASON_CODE` 다음 순서의 publish/gate를 판정하고, 구조화 metadata가 없거나 알 수 없으면 fail-safe로 즉시 publish합니다.
   - 구조화 metadata가 있는 `needs_operator`만 24시간 gate 대상이 됩니다. `safety_stop`, `approval_required`, `truth_sync_required`는 즉시 publish하고, 그 밖의 gated candidate는 `autonomy.recovery|triage|hibernate|pending_operator`로 먼저 surface합니다.
   - gate된 operator candidate는 canonical `control` block에서는 `none`으로 내려가고, status의 `autonomy` block(`mode`, `block_reason`, `suppress_operator_until`, `operator_eligible` 등)으로만 노출됩니다. 오래 방치된 stop은 watcher가 Codex 재심사(`operator_wait_idle_retriage` 또는 gated follow-up)로 다시 넘깁니다.
   - browser log modal은 tail read-model 위에 bounded one-line lane input(`POST /api/runtime/send-input`)을 함께 제공합니다. permission/plan prompt처럼 operator 선택이 필요한 경우 현재 열린 lane에 `1`, `2`, `3` 같은 짧은 응답을 바로 보낼 수 있습니다. lane pause/resume/restart나 attach 같은 backend 미연결 액션은 계속 노출하지 않습니다.
@@ -147,7 +213,7 @@ Current smoke scenarios:
 8. `내용 거절` content-verdict path with same-card reject-note update, pending approval preserved, and later explicit save supersession
 9. corrected-save first bridge path
 10. corrected-save saved snapshot remains while late reject and later re-correct move the latest state separately
-11. candidate-linked explicit confirmation path stays outside approval UI, remains distinct from save support on the same source message, records `candidate_confirmation_record`, surfaces one `검토 후보` with `검토 수락`/`거절`/`보류`, records source-message `candidate_review_record`, removes the pending queue item without applying user-level memory, retains review-outcome quick-meta on plain follow-up responses, and drops review-outcome quick-meta after a later correction creates a newer unreviewed context
+11. candidate-linked explicit confirmation path stays outside approval UI, remains distinct from save support on the same source message, records `candidate_confirmation_record`, surfaces one `검토 후보` with `검토 수락`/`거절`/`보류`/`편집`, records source-message `candidate_review_record`, removes the pending queue item without applying user-level memory, retains review-outcome quick-meta on plain follow-up responses, and drops review-outcome quick-meta after a later correction creates a newer unreviewed context
 12. same-session recurrence aggregate path renders one separate `검토 메모 적용 후보` section only after an aggregate exists, keeps `검토 메모 적용 시작` visible but disabled, keeps the queue-side review actions separate, preserves `reviewed_memory_transition_record` absence, after transition record emission, a hard page reload still shows the emitted helper text, payload continuity (`record_stage = emitted_record_only_not_applied`, `applied_at` absent, `apply_result` absent, `reviewed_memory_active_effects` absent or empty), apply button visible and enabled, and a post-reload follow-up does not include `[검토 메모 활성]`; after `검토 메모 적용 실행`, a hard page reload still shows the applied-pending helper text, payload continuity (`record_stage = applied_pending_result`, `applied_at` present, `apply_result` absent, `reviewed_memory_active_effects` absent or empty), `결과 확정` button visible and enabled, and a post-reload follow-up does not include `[검토 메모 활성]`; after `결과 확정` with active effect, a hard page reload still shows the active-effect result indicator, helper text, payload continuity (`record_stage = applied_with_result`, `result_stage = effect_active`, `reviewed_memory_active_effects` present), and a post-reload follow-up still includes `[검토 메모 활성]`; after `적용 중단`, a hard page reload still shows the stopped indicator and helper text, payload continuity (`record_stage = stopped`, `result_stage = effect_stopped`, `reviewed_memory_active_effects` absent or empty), and a post-reload follow-up does not include `[검토 메모 활성]`; after `적용 되돌리기`, a hard page reload still shows the reversed indicator and helper text, payload continuity (`record_stage = reversed`, `result_stage = effect_reversed`, `reviewed_memory_active_effects` absent or empty), and a post-reload follow-up does not include `[검토 메모 활성]`; after the full lifecycle reaches `reversed` + `conflict_visibility_checked`, a second hard page reload still shows the `검토 메모 적용 후보` section with `충돌 확인 완료` and `적용 되돌림 완료` badges, the conflict-checked helper text, and payload continuity (`reviewed_memory_transition_record.record_stage = reversed`, `reviewed_memory_conflict_visibility_record.record_stage = conflict_visibility_checked`)
 13. streaming cancel
 14. general chat negative source-type label contract (no `문서 요약` / `선택 결과 요약` in quick-meta or transcript meta)
@@ -397,13 +463,14 @@ Current controller smoke scenarios:
 3. controller shows `#storage-warn` chip (`⚠ 설정 비저장`) with expected tooltip when browser localStorage is blocked via `Storage.prototype` throw, and event log contains the one-time storage warning (`환경 설정 저장 불가`) exactly once
 4. controller hides `#storage-warn` chip and event log contains no storage warning when browser localStorage is available
 5. controller deduplicates repeated `/api/runtime/status` fetch failures and logs exactly one `상태 조회 복구: Failed to fetch` event after polling recovers, instead of flooding Quest Log with the same network error every second
-6. marquee text keeps moving when the polled runtime payload is unchanged — routes `/api/runtime/status` to a stable payload and asserts `#marquee-text` `transform` translateX decreases monotonically across two 2.5s samples so the marquee animation does not stall on repeated identical polls
-7. agent cards expose `data-fatigue` attribute for fatigue observability — verifies that a working agent's sidebar card carries `data-agent` and `data-fatigue` attributes, with no `.agent-fatigue` indicator visible before the fatigue threshold is reached
-8. `setAgentFatigue` hook transitions card to `fatigued` state — injects fatigue via `window.setAgentFatigue("Claude", "fatigued")` and asserts `data-fatigue="fatigued"` with `💦 피로 누적` label
-9. `setAgentFatigue` hook transitions card to `coffee` state — injects coffee via `window.setAgentFatigue("Claude", "coffee")` and asserts `data-fatigue="coffee"` with `☕ 커피 충전 중` label
-10. idle agents settle into lounge rest bounds — stubs one idle lane, checks `window.getAgentPositions().Claude` is already inside `window.getRoamBounds().restZones.Claude`, then forces 30 picks via `window.testPickIdleTargets("Claude", 30)` and asserts every point stays inside that lounge rest zone
-11. lounge rest zones keep idle agents partitioned — places a phantom at the center of `codex_desk`, forces 50 picks via `window.testAntiStacking("Claude", cx, cy, 50)`, and asserts every pick still lies inside Claude's own lounge `restZones.Claude` partition
-12. lounge idle roam uses continuous micro-roam (no spot history) — asserts `window.testHistoryPenalty("Claude", [0,1,2,3,4], 120)` returns an empty array because lounge micro-roam no longer tracks spot history, and that `window.testPickIdleTargets("Claude", 20)` still yields 20 points inside the assigned lounge rest zone
+6. controller surfaces runtime-owned automation attention detail — stubs `/api/runtime/status` with `automation_health=attention`, `stale_control_advisory`, `control_age_cycles`, and `stale_advisory_pending`, then asserts the sidebar Incident Room displays those fields without browser-side reclassification
+7. marquee text keeps moving when the polled runtime payload is unchanged — routes `/api/runtime/status` to a stable payload and asserts `#marquee-text` `transform` translateX decreases monotonically across two 2.5s samples so the marquee animation does not stall on repeated identical polls
+8. agent cards expose `data-fatigue` attribute for fatigue observability — verifies that a working agent's sidebar card carries `data-agent` and `data-fatigue` attributes, with no `.agent-fatigue` indicator visible before the fatigue threshold is reached
+9. `setAgentFatigue` hook transitions card to `fatigued` state — injects fatigue via `window.setAgentFatigue("Claude", "fatigued")` and asserts `data-fatigue="fatigued"` with `💦 피로 누적` label
+10. `setAgentFatigue` hook transitions card to `coffee` state — injects coffee via `window.setAgentFatigue("Claude", "coffee")` and asserts `data-fatigue="coffee"` with `☕ 커피 충전 중` label
+11. idle agents settle into lounge rest bounds — stubs one idle lane, checks `window.getAgentPositions().Claude` is already inside `window.getRoamBounds().restZones.Claude`, then forces 30 picks via `window.testPickIdleTargets("Claude", 30)` and asserts every point stays inside that lounge rest zone
+12. lounge rest zones keep idle agents partitioned — places a phantom at the center of `codex_desk`, forces 50 picks via `window.testAntiStacking("Claude", cx, cy, 50)`, and asserts every pick still lies inside Claude's own lounge `restZones.Claude` partition
+13. lounge idle roam uses continuous micro-roam (no spot history) — asserts `window.testHistoryPenalty("Claude", [0,1,2,3,4], 120)` returns an empty array because lounge micro-roam no longer tracks spot history, and that `window.testPickIdleTargets("Claude", 20)` still yields 20 points inside the assigned lounge rest zone
 
 ## Safety Defaults
 
@@ -412,8 +479,8 @@ Current controller smoke scenarios:
 - overwrite is rejected by default; when a save target already exists, the approval card shows an overwrite warning and the user can explicitly approve the overwrite, which then replaces the existing file
 - web search is permission-gated, read-only, and logged
 - OCR is not enabled in the current MVP
-- structured correction / preference memory is not yet implemented; the current memory foundation is limited to grounded-brief trace anchoring, normalized original-response snapshots, explicit `corrected_text` submission plus minimum `accepted_as_is` / `corrected` / `rejected` outcome capture on the source message, one source-message `content_reason_record` for explicit `내용 거절` plus optional same-card reject-note updates, and approval-linked `approval_reason_record` traces for reject / reissue
-- the shipped candidate-linked reuse confirmation remains separate from approval-backed save support: it is stored as one source-message `candidate_confirmation_record`, leaves `session_local_candidate` unchanged, may materialize one source-message `durable_candidate` plus one pending `review_queue_items` entry, and now supports `accept`/`reject`/`defer` reviewed-but-not-applied actions that write source-message `candidate_review_record` and persistently show the review outcome on the source-message transcript meta, without opening user-level memory
+- structured correction / preference memory is not yet implemented; the current memory foundation is limited to grounded-brief trace anchoring, normalized original-response snapshots, explicit `corrected_text` submission plus minimum `accepted_as_is` / `corrected` / `rejected` outcome capture on the source message (`corrected` carries `reason_label = explicit_correction_submitted`), one source-message `content_reason_record` for explicit `내용 거절` plus optional same-card reject-note updates, and approval-linked `approval_reason_record` traces for reject / reissue (`corrected_text_reissue` for corrected-save reissue)
+- the shipped candidate-linked reuse confirmation remains separate from approval-backed save support: it is stored as one source-message `candidate_confirmation_record`, leaves `session_local_candidate` unchanged, may materialize one source-message `durable_candidate` with `derived_from` / `derived_at` plus one pending `review_queue_items` entry marked `item_type = durable_candidate`, and now supports `accept`/`reject`/`defer`/`edit` reviewed-but-not-applied actions that write source-message `candidate_review_record` and persistently show the review outcome on the source-message transcript meta, without opening user-level memory
 - corrected-save is implemented only as a minimum bridge action: it starts from the response-card correction area, stays visible but disabled until a correction is recorded, consumes recorded `corrected_text` only, and creates a fresh immutable approval snapshot without rebasing older pending approvals
 
 ## Where To Read Next

@@ -3098,6 +3098,13 @@ function getPresentation(data) {
   const turn = currentTurnState(payload);
   const degradedReasons = (payload.degraded_reasons || []).filter(Boolean);
   const degradedReason = degradedReasons[0] || String(payload.degraded_reason || '').trim();
+  const automationHealth = String(payload.automation_health || 'ok').trim();
+  const automationReason = String(payload.automation_reason_code || '').trim();
+  const automationFamily = String(payload.automation_incident_family || '').trim();
+  const automationAction = String(payload.automation_next_action || 'continue').trim();
+  const automationDetail = String(payload.automation_health_detail || '').trim();
+  const controlAgeCycles = Number(payload.control_age_cycles || 0);
+  const staleAdvisoryPending = Boolean(payload.stale_advisory_pending);
   const uncertain = runtimeState === 'DEGRADED' && degradedReasons.some((reason) => UNCERTAIN_RUNTIME_REASONS.has(reason));
   const inactive = INACTIVE_RUNTIME_STATES.has(runtimeState);
   const showLive = !inactive && !uncertain;
@@ -3142,6 +3149,13 @@ function getPresentation(data) {
     watcherClass,
     degradedReason,
     degradedReasons,
+    automationHealth,
+    automationReason,
+    automationFamily,
+    automationAction,
+    automationDetail,
+    controlAgeCycles,
+    staleAdvisoryPending,
   };
 }
 
@@ -3343,6 +3357,13 @@ function renderSidebar() {
     <div class="sidebar-section">
       <div class="sidebar-section-title">Incident Room</div>
       <div class="info-row"><span class="info-label">Watcher</span><span class="info-value ${presentation.watcherClass}">${esc(presentation.watcherStatus)}</span></div>
+      <div class="info-row"><span class="info-label">Automation</span><span class="info-value ${presentation.automationHealth === 'ok' ? 'ok' : 'warn'}">${esc(presentation.automationHealth)}</span></div>
+      ${presentation.automationReason ? `<div class="info-row"><span class="info-label">Reason</span><span class="info-value warn">${esc(presentation.automationReason)}</span></div>` : ''}
+      ${presentation.automationFamily ? `<div class="info-row"><span class="info-label">Family</span><span class="info-value neutral">${esc(presentation.automationFamily)}</span></div>` : ''}
+      ${presentation.automationAction ? `<div class="info-row"><span class="info-label">Next action</span><span class="info-value neutral">${esc(presentation.automationAction)}</span></div>` : ''}
+      ${presentation.automationDetail ? `<div class="info-row"><span class="info-label">Detail</span><span class="info-value warn">${esc(presentation.automationDetail)}</span></div>` : ''}
+      ${presentation.controlAgeCycles ? `<div class="info-row"><span class="info-label">Control age</span><span class="info-value dim">${esc(String(presentation.controlAgeCycles))}</span></div>` : ''}
+      ${presentation.staleAdvisoryPending ? `<div class="info-row"><span class="info-label">Advisory</span><span class="info-value warn">stale_advisory_pending</span></div>` : ''}
       <div class="info-row"><span class="info-label">Operator eligible</span><span class="info-value dim">${esc(String(autonomy.operator_eligible ?? false))}</span></div>
       ${degradedReasons.map((reason) => `<div class="info-row"><span class="info-label">Degraded</span><span class="info-value warn">${esc(reason)}</span></div>`).join('')}
     </div>

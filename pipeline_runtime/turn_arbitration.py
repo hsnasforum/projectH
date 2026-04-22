@@ -3,6 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from .role_routes import (
+    LEGACY_CODEX_FOLLOWUP_ROUTE,
+    VERIFY_FOLLOWUP_ROUTE,
+    is_verify_followup_route,
+)
+from .schema import active_control_snapshot_from_status, control_seq_value, snapshot_control_seq
 
 TURN_IMPLEMENT = "implement"
 TURN_VERIFY = "verify"
@@ -19,10 +25,14 @@ TURN_GEMINI = TURN_ADVISORY
 LEGACY_WATCHER_TURN_BY_CANONICAL = {
     TURN_IMPLEMENT: "claude",
     TURN_VERIFY: "codex",
-    TURN_VERIFY_FOLLOWUP: "codex_followup",
+    TURN_VERIFY_FOLLOWUP: VERIFY_FOLLOWUP_ROUTE,
     TURN_ADVISORY: "gemini",
     TURN_OPERATOR: "operator",
     TURN_IDLE: "idle",
+}
+
+LEGACY_WATCHER_TURN_ALIASES = {
+    LEGACY_CODEX_FOLLOWUP_ROUTE: TURN_VERIFY_FOLLOWUP,
 }
 
 TURN_STATE_IDLE = "IDLE"
@@ -67,11 +77,11 @@ VERIFY_ROUND_STATES = frozenset({"VERIFY_PENDING", "VERIFYING"})
 @dataclass(frozen=True)
 class WatcherTurnInputs:
     operator_request_active: bool
-    gemini_request_active: bool
-    gemini_advice_active: bool
-    claude_handoff_active: bool
+    advisory_request_active: bool
+    advisory_advice_active: bool
+    implement_handoff_active: bool
     latest_work_needs_verify: bool
-    claude_handoff_verify_active: bool
+    implement_handoff_verify_active: bool
     idle_release_cooldown_active: bool
     operator_recovery_marker: Mapping[str, Any] | None = None
     operator_gate_marker: Mapping[str, Any] | None = None
@@ -111,7 +121,11 @@ def turn_state_role(
 
 
 def legacy_watcher_turn_name(turn: object) -> str:
-    return LEGACY_WATCHER_TURN_BY_CANONICAL.get(str(turn or "").strip(), TURN_IDLE)
+    token = str(turn or "").strip()
+    return LEGACY_WATCHER_TURN_BY_CANONICAL.get(
+        LEGACY_WATCHER_TURN_ALIASES.get(token, token),
+        TURN_IDLE,
+    )
 
 
 def resolve_watcher_turn(inputs: WatcherTurnInputs) -> str:
@@ -125,21 +139,21 @@ def resolve_watcher_turn(inputs: WatcherTurnInputs) -> str:
     ):
         return TURN_OPERATOR
 
-    if inputs.gemini_request_active:
+    if inputs.advisory_request_active:
         return TURN_ADVISORY
 
-    if inputs.gemini_advice_active:
+    if inputs.advisory_advice_active:
         return TURN_VERIFY_FOLLOWUP
 
-    if inputs.claude_handoff_active and (
-        inputs.latest_work_needs_verify or inputs.claude_handoff_verify_active
+    if inputs.implement_handoff_active and (
+        inputs.latest_work_needs_verify or inputs.implement_handoff_verify_active
     ):
         return TURN_VERIFY
 
     if inputs.latest_work_needs_verify:
         return TURN_VERIFY
 
-    if inputs.claude_handoff_active and not inputs.idle_release_cooldown_active:
+    if inputs.implement_handoff_active and not inputs.idle_release_cooldown_active:
         return TURN_IMPLEMENT
 
     if operator_recovery is not None:
@@ -147,7 +161,7 @@ def resolve_watcher_turn(inputs: WatcherTurnInputs) -> str:
 
     if (
         operator_gate is not None
-        and str(operator_gate.get("routed_to") or "") != "hibernate"
+        and is_verify_followup_route(operator_gate.get("routed_to"))
     ):
         return TURN_VERIFY_FOLLOWUP
 
@@ -172,10 +186,10 @@ def active_lane_for_runtime(
     )
     round_state = str((active_round or {}).get("state") or "")
     completion_stage = str((active_round or {}).get("completion_stage") or "")
-    control = control or {}
-    control_status = str(control.get("active_control_status") or "")
-    control_seq = int(control.get("active_control_seq") or -1)
-    last_receipt_seq = int((last_receipt or {}).get("control_seq") or -1)
+    control_snapshot = active_control_snapshot_from_status(dict(control or {}))
+    control_status = str(control_snapshot.get("control_status") or "")
+    control_seq = snapshot_control_seq(control_snapshot)
+    last_receipt_seq = control_seq_value((last_receipt or {}).get("control_seq"), default=-1)
 
     if (
         state == TURN_STATE_IMPLEMENT_ACTIVE

@@ -12,10 +12,12 @@ from pipeline_runtime.operator_autonomy import (
     SUPPORTED_REASON_CODES,
     _MENU_CHOICE_BLOCKER_MARKERS,
     classify_operator_candidate,
+    evaluate_stale_operator_control,
     is_commit_push_approval_stop,
     normalize_decision_class,
     normalize_operator_policy,
     normalize_reason_code,
+    operator_gate_marker_from_decision,
 )
 
 FIXTURE_HEADER: str = r"""STATUS: needs_operator
@@ -147,6 +149,70 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
             )
         )
 
+    def test_shared_stale_operator_evaluator_requires_verified_allowed_work(self) -> None:
+        marker = evaluate_stale_operator_control(
+            control_text=(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 462\n"
+                "REASON_CODE: truth_sync_required\n"
+                "BASED_ON_WORK: work/4/20/2026-04-20-example-work.md\n"
+            ),
+            control_meta={
+                "status": "needs_operator",
+                "reason_code": "truth_sync_required",
+                "based_on_work": "work/4/20/2026-04-20-example-work.md",
+            },
+            verified_work_paths=["work/4/20/2026-04-20-example-work.md"],
+            control_file="operator_request.md",
+            control_seq=462,
+        )
+
+        self.assertEqual(marker["reason"], "verified_blockers_resolved")
+        self.assertEqual(marker["resolved_work_paths"], ["work/4/20/2026-04-20-example-work.md"])
+
+    def test_shared_stale_operator_evaluator_keeps_publication_boundary_stopped(self) -> None:
+        marker = evaluate_stale_operator_control(
+            control_text=(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 463\n"
+                "REASON_CODE: approval_required\n"
+                "BASED_ON_WORK: work/4/20/2026-04-20-example-work.md\n"
+            ),
+            control_meta={
+                "status": "needs_operator",
+                "reason_code": "approval_required",
+                "based_on_work": "work/4/20/2026-04-20-example-work.md",
+            },
+            verified_work_paths=["work/4/20/2026-04-20-example-work.md"],
+            control_file="operator_request.md",
+            control_seq=463,
+        )
+
+        self.assertIsNone(marker)
+
+    def test_shared_gate_marker_shape_matches_consumers(self) -> None:
+        decision = classify_operator_candidate(
+            "",
+            control_meta={
+                "reason_code": COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+                "operator_policy": "internal_only",
+                "decision_class": "release_gate",
+            },
+            control_seq=713,
+            now_ts=1_000.0,
+        )
+
+        marker = operator_gate_marker_from_decision(
+            decision,
+            control_file="operator_request.md",
+            control_seq=713,
+        )
+
+        self.assertIsNotNone(marker)
+        self.assertEqual(marker["reason"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+        self.assertEqual(marker["mode"], "triage")
+        self.assertEqual(marker["routed_to"], "verify_followup")
+
     def test_commit_push_bundle_authorization_is_internal_followup_metadata(self) -> None:
         self.assertIn(COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON, SUPPORTED_REASON_CODES)
         self.assertIn("release_gate", SUPPORTED_DECISION_CLASSES)
@@ -169,7 +235,7 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
         )
 
         self.assertEqual(decision["mode"], "triage")
-        self.assertEqual(decision["routed_to"], "codex_followup")
+        self.assertEqual(decision["routed_to"], "verify_followup")
         self.assertEqual(decision["operator_policy"], "internal_only")
         self.assertEqual(decision["decision_class"], "release_gate")
         self.assertFalse(decision["operator_eligible"])
@@ -198,7 +264,7 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
 
         self.assertEqual(decision["mode"], "triage")
         self.assertEqual(decision["suppressed_mode"], "triage")
-        self.assertEqual(decision["routed_to"], "codex_followup")
+        self.assertEqual(decision["routed_to"], "verify_followup")
         self.assertEqual(decision["operator_policy"], "gate_24h")
         self.assertEqual(decision["decision_class"], "release_gate")
         self.assertFalse(decision["operator_eligible"])

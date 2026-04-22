@@ -11,8 +11,17 @@ from pipeline_runtime.lane_surface import (
     pane_text_has_input_cursor,
     pane_text_is_idle,
 )
+from pipeline_runtime.schema import control_filenames_equivalent, control_slot_id_for_filename
+from pipeline_runtime.role_routes import (
+    IMPLEMENT_HANDOFF_NOTIFY,
+    LEGACY_CLAUDE_HANDOFF_NOTIFY,
+    normalize_notify_kind,
+)
 
-SIGNAL_MISMATCH_DROP_NOTIFY_KINDS = frozenset({"claude_handoff"})
+SIGNAL_MISMATCH_DROP_NOTIFY_KINDS = frozenset({
+    IMPLEMENT_HANDOFF_NOTIFY,
+    LEGACY_CLAUDE_HANDOFF_NOTIFY,
+})
 
 
 @dataclass(frozen=True)
@@ -32,6 +41,7 @@ class DispatchIntent:
     control_seq: int = -1
     expected_status: str = ""
     expected_control_path: str = ""
+    expected_control_slot: str = ""
     expected_control_seq: int = -1
     require_active_control: bool = False
 
@@ -128,6 +138,7 @@ class WatcherDispatchQueue:
             "control_seq": intent.control_seq,
             "expected_status": intent.expected_status,
             "expected_control_path": intent.expected_control_path,
+            "expected_control_slot": intent.expected_control_slot,
             "expected_control_seq": intent.expected_control_seq,
             "require_active_control": intent.require_active_control,
             "sig": self._get_path_sig(intent.prompt_path),
@@ -158,6 +169,7 @@ class WatcherDispatchQueue:
             control_seq=int(pending.get("control_seq") or -1),
             expected_status=str(pending.get("expected_status") or ""),
             expected_control_path=str(pending.get("expected_control_path") or ""),
+            expected_control_slot=str(pending.get("expected_control_slot") or ""),
             expected_control_seq=int(pending.get("expected_control_seq") or -1),
             require_active_control=bool(pending.get("require_active_control")),
         )
@@ -217,13 +229,23 @@ class WatcherDispatchQueue:
         active_control: Any,
     ) -> str | None:
         expected_control_path = str(pending.get("expected_control_path") or "").strip()
+        expected_control_slot = str(pending.get("expected_control_slot") or "").strip()
         expected_status = str(pending.get("expected_status") or "").strip()
         expected_control_seq = int(pending.get("expected_control_seq") or -1)
-        if not expected_control_path and not expected_status and expected_control_seq < 0:
+        if not expected_control_path and not expected_control_slot and not expected_status and expected_control_seq < 0:
             return None
         if active_control is None:
             return "active_control_missing"
-        if expected_control_path and active_control.path.name != expected_control_path:
+        active_slot_id = str(getattr(active_control, "slot_id", "") or "").strip()
+        if not active_slot_id:
+            active_slot_id = control_slot_id_for_filename(getattr(active_control, "path", None))
+        if expected_control_slot and active_slot_id != expected_control_slot:
+            return "control_file_drift"
+        if (
+            expected_control_path
+            and active_control.path.name != expected_control_path
+            and not control_filenames_equivalent(active_control.path.name, expected_control_path)
+        ):
             return "control_file_drift"
         if expected_status and active_control.status != expected_status:
             return "control_status_drift"
@@ -234,7 +256,7 @@ class WatcherDispatchQueue:
         return None
 
     def _pending_signal_mismatch_reason(self, pending: dict[str, object]) -> str | None:
-        notify_kind = str(pending.get("notify_kind") or "").strip()
+        notify_kind = normalize_notify_kind(pending.get("notify_kind"))
         if notify_kind not in SIGNAL_MISMATCH_DROP_NOTIFY_KINDS:
             return None
 
@@ -245,14 +267,12 @@ class WatcherDispatchQueue:
         if control_seq < 0:
             return None
 
-        lane_hint = str(pending.get("agent_kind") or "").strip().lower()
-        if not lane_hint:
-            lane_hint = {
-                "implement": "claude",
-                "verify": "codex",
-                "advisory": "gemini",
-            }.get(str(pending.get("functional_role") or pending.get("lane_role") or "").strip(), "")
-        if not lane_hint:
+        role_name = str(pending.get("functional_role") or pending.get("lane_role") or "").strip()
+        lane_name = str(self._role_owner(role_name) or "").strip()
+        if not lane_name:
+            lane_hint = str(pending.get("agent_kind") or "").strip()
+            lane_name = lane_hint[:1].upper() + lane_hint[1:] if lane_hint else ""
+        if not lane_name:
             return None
 
         prompt_path = Path(prompt_path_raw)
@@ -270,7 +290,6 @@ class WatcherDispatchQueue:
         if not events_path.is_absolute():
             events_path = base_dir.parent / events_path
 
-        lane_name = lane_hint.capitalize()
         latest_lane_signal = ""
         lane_signal_at = ""
         try:

@@ -71,15 +71,15 @@ def _note_path(project_root: Path, category: str, slug: str) -> Path:
 
 
 def _handoff_path(project_root: Path) -> Path:
-    return project_root / ".pipeline" / "claude_handoff.md"
+    return project_root / ".pipeline" / "implement_handoff.md"
 
 
-def _gemini_request_path(project_root: Path) -> Path:
-    return project_root / ".pipeline" / "gemini_request.md"
+def _advisory_request_path(project_root: Path) -> Path:
+    return project_root / ".pipeline" / "advisory_request.md"
 
 
-def _gemini_advice_path(project_root: Path) -> Path:
-    return project_root / ".pipeline" / "gemini_advice.md"
+def _advisory_advice_path(project_root: Path) -> Path:
+    return project_root / ".pipeline" / "advisory_advice.md"
 
 
 def _operator_request_path(project_root: Path) -> Path:
@@ -126,9 +126,9 @@ def _render_verify_note(control_seq: int, route: str) -> str:
     )
 
 
-def _render_gemini_report(control_seq: int) -> str:
+def _render_advisory_report(control_seq: int) -> str:
     return (
-        f"# synthetic gemini advisory seq {control_seq}\n\n"
+        f"# synthetic advisory seq {control_seq}\n\n"
         "- synthetic arbitration report\n"
         "- recommendation: proceed with implement handoff\n"
     )
@@ -145,24 +145,24 @@ def _write_handoff(project_root: Path, control_seq: int) -> Path:
     return _write_text(_handoff_path(project_root), content)
 
 
-def _write_gemini_request(project_root: Path, control_seq: int) -> Path:
+def _write_advisory_request(project_root: Path, control_seq: int) -> Path:
     content = (
         "STATUS: request_open\n"
         f"CONTROL_SEQ: {control_seq}\n\n"
         "Synthetic arbitration request.\n"
         "- Choose the bounded implement recommendation.\n"
     )
-    return _write_text(_gemini_request_path(project_root), content)
+    return _write_text(_advisory_request_path(project_root), content)
 
 
-def _write_gemini_advice(project_root: Path, control_seq: int) -> Path:
+def _write_advisory_advice(project_root: Path, control_seq: int) -> Path:
     content = (
         "STATUS: advice_ready\n"
         f"CONTROL_SEQ: {control_seq}\n\n"
         "Recommendation:\n"
         "- proceed with the bounded implement handoff\n"
     )
-    return _write_text(_gemini_advice_path(project_root), content)
+    return _write_text(_advisory_advice_path(project_root), content)
 
 
 def _write_operator_request(project_root: Path, control_seq: int, reason: str) -> Path:
@@ -186,7 +186,7 @@ def handle_prompt(
         return []
     written: list[Path] = []
     if role == "implement":
-        handoff_rel = _extract_field(prompt_text, "HANDOFF") or ".pipeline/claude_handoff.md"
+        handoff_rel = _extract_field(prompt_text, "HANDOFF") or ".pipeline/implement_handoff.md"
         handoff_path = project_root / handoff_rel
         control_seq = _control_seq_from_file(handoff_path)
         variability = (control_seq % 4) + 1
@@ -212,11 +212,11 @@ def handle_prompt(
             control_seq = int(raw_seq)
         except ValueError:
             control_seq = 1
-        route = "gemini" if gemini_every > 0 and control_seq % gemini_every == 0 else "implement"
+        route = "advisory" if gemini_every > 0 and control_seq % gemini_every == 0 else "implement"
         verify_path = _note_path(project_root, "verify", f"synthetic-verify-{control_seq:04d}")
         written.append(_write_text(verify_path, _render_verify_note(control_seq, route)))
-        if route == "gemini":
-            written.append(_write_gemini_request(project_root, control_seq))
+        if route == "advisory":
+            written.append(_write_advisory_request(project_root, control_seq))
         else:
             written.append(_write_handoff(project_root, control_seq))
         return written
@@ -236,10 +236,10 @@ def handle_prompt(
             control_seq = int(raw_seq)
         except ValueError:
             control_seq = 1
-        report_rel = _extract_output_path(prompt_text, "advisory log") or "report/gemini/synthetic-gemini-advice.md"
+        report_rel = _extract_output_path(prompt_text, "advisory log") or "report/gemini/synthetic-advisory-advice.md"
         report_path = project_root / report_rel
-        written.append(_write_text(report_path, _render_gemini_report(control_seq)))
-        written.append(_write_gemini_advice(project_root, control_seq))
+        written.append(_write_text(report_path, _render_advisory_report(control_seq)))
+        written.append(_write_advisory_advice(project_root, control_seq))
         return written
 
     if role == "operator":

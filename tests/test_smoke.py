@@ -1342,24 +1342,28 @@ class SmokeTest(unittest.TestCase):
                     status=CoverageStatus.STRONG,
                     primary_claim=strong_trusted_claim,
                     candidate_count=2,
+                    trusted_source_count=2,
                 ),
                 "서비스/배급": SlotCoverage(
                     slot="서비스/배급",
                     status=CoverageStatus.STRONG,
                     primary_claim=strong_mixed_claim,
                     candidate_count=2,
+                    trusted_source_count=0,
                 ),
                 "장르/성격": SlotCoverage(
                     slot="장르/성격",
                     status=CoverageStatus.WEAK,
                     primary_claim=weak_multiple_claim,
                     candidate_count=2,
+                    trusted_source_count=2,
                 ),
                 "이용 형태": SlotCoverage(
                     slot="이용 형태",
                     status=CoverageStatus.WEAK,
                     primary_claim=weak_single_claim,
                     candidate_count=1,
+                    trusted_source_count=0,
                 ),
             },
             primary_claims=[strong_trusted_claim, strong_mixed_claim],
@@ -1375,17 +1379,23 @@ class SmokeTest(unittest.TestCase):
         for item in claim_coverage:
             self.assertIn("trust_tier", item)
             self.assertIn("support_plurality", item)
+            self.assertIn("trusted_source_count", item)
 
         self.assertEqual(coverage_by_slot["개발"]["trust_tier"], "trusted")
         self.assertEqual(coverage_by_slot["개발"]["support_plurality"], "")
+        self.assertEqual(coverage_by_slot["개발"]["trusted_source_count"], 2)
         self.assertEqual(coverage_by_slot["서비스/배급"]["trust_tier"], "mixed")
         self.assertEqual(coverage_by_slot["서비스/배급"]["support_plurality"], "")
+        self.assertEqual(coverage_by_slot["서비스/배급"]["trusted_source_count"], 0)
         self.assertEqual(coverage_by_slot["장르/성격"]["trust_tier"], "")
         self.assertEqual(coverage_by_slot["장르/성격"]["support_plurality"], "multiple")
+        self.assertEqual(coverage_by_slot["장르/성격"]["trusted_source_count"], 2)
         self.assertEqual(coverage_by_slot["이용 형태"]["trust_tier"], "")
         self.assertEqual(coverage_by_slot["이용 형태"]["support_plurality"], "single")
+        self.assertEqual(coverage_by_slot["이용 형태"]["trusted_source_count"], 0)
         self.assertEqual(coverage_by_slot["상태"]["trust_tier"], "")
         self.assertEqual(coverage_by_slot["상태"]["support_plurality"], "")
+        self.assertEqual(coverage_by_slot["상태"]["trusted_source_count"], 0)
 
     def test_serialize_claim_coverage_passes_through_trust_tier_for_strong_items(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -1407,18 +1417,21 @@ class SmokeTest(unittest.TestCase):
                         "status": "strong",
                         "status_label": "교차 확인",
                         "trust_tier": "trusted",
+                        "trusted_source_count": 2,
                     },
                     {
                         "slot": "서비스/배급",
                         "status": "strong",
                         "status_label": "교차 확인",
                         "trust_tier": "mixed",
+                        "trusted_source_count": 0,
                     },
                     {
                         "slot": "이용 형태",
                         "status": "weak",
                         "status_label": "단일 출처",
                         "trust_tier": "",
+                        "trusted_source_count": 1,
                     },
                     {
                         "slot": "상태",
@@ -1438,6 +1451,36 @@ class SmokeTest(unittest.TestCase):
             self.assertEqual(coverage_by_slot["서비스/배급"]["trust_tier"], "mixed")
             self.assertEqual(coverage_by_slot["이용 형태"]["trust_tier"], "")
             self.assertEqual(coverage_by_slot["상태"]["trust_tier"], "")
+            self.assertEqual(coverage_by_slot["개발"]["trusted_source_count"], 2)
+            self.assertEqual(coverage_by_slot["서비스/배급"]["trusted_source_count"], 0)
+            self.assertEqual(coverage_by_slot["이용 형태"]["trusted_source_count"], 1)
+            self.assertEqual(coverage_by_slot["상태"]["trusted_source_count"], 0)
+
+    def test_serialize_claim_coverage_includes_source_role(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            service = WebAppService(
+                settings=AppSettings(
+                    sessions_dir=str(tmp_path / "sessions"),
+                    task_log_path=str(tmp_path / "task_log.jsonl"),
+                    notes_dir=str(tmp_path / "notes"),
+                    web_search_history_dir=str(tmp_path / "web-search"),
+                    model_provider="mock",
+                )
+            )
+
+            serialized = service._serialize_claim_coverage(
+                [
+                    {
+                        "slot": "개발",
+                        "status": "strong",
+                        "source_role": "공식 기반",
+                    }
+                ]
+            )
+
+            self.assertEqual(serialized[0]["source_role"], "공식 기반")
+            self.assertTrue(serialized[0]["source_role"])
 
     def test_web_search_entity_summary_runs_second_pass_queries_for_missing_core_slots(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -2574,6 +2617,141 @@ class SmokeTest(unittest.TestCase):
                 )
                 self.assertEqual(queries, case["expected"])
 
+    def test_second_pass_prioritizes_conflict_slot_over_weak_slot(self) -> None:
+        from core.contracts import SourceRole
+        from core.web_claims import ClaimRecord
+
+        loop = AgentLoop.__new__(AgentLoop)
+        loop._build_entity_claim_confirmation_queries = lambda **kwargs: []
+        loop._build_entity_slot_probe_queries = (
+            lambda *, query, slot, status, primary_claim: [f"{slot} 탐침"]
+        )
+        loop._entity_slot_from_search_query = lambda **kwargs: ""
+
+        def _strong_claim(slot: str, value: str) -> ClaimRecord:
+            return ClaimRecord(
+                slot=slot,
+                value=value,
+                source_url=f"https://example.com/{slot}-official",
+                source_title=f"{slot} 공식",
+                source_role=SourceRole.OFFICIAL,
+                support_count=2,
+                supporting_sources=(
+                    (f"https://example.com/{slot}-official", f"{slot} 공식", SourceRole.OFFICIAL),
+                    (f"https://data.example.com/{slot}", f"{slot} 데이터", SourceRole.DATABASE),
+                ),
+            )
+
+        conflict_primary = ClaimRecord(
+            slot="상태",
+            value="출시 예정",
+            source_url="https://official.example.com/status",
+            source_title="상태 공식",
+            source_role=SourceRole.OFFICIAL,
+            support_count=2,
+            supporting_sources=(
+                ("https://official.example.com/status", "상태 공식", SourceRole.OFFICIAL),
+                ("https://data.example.com/status", "상태 데이터", SourceRole.DATABASE),
+            ),
+        )
+        trusted_conflict = ClaimRecord(
+            slot="상태",
+            value="출시 완료",
+            source_url="https://wiki.example.com/status",
+            source_title="상태 위키",
+            source_role=SourceRole.WIKI,
+            support_count=2,
+            supporting_sources=(
+                ("https://wiki.example.com/status", "상태 위키", SourceRole.WIKI),
+                ("https://data.example.com/status-alt", "상태 보조 데이터", SourceRole.DATABASE),
+            ),
+        )
+        weak_claim = ClaimRecord(
+            slot="서비스/배급",
+            value="펄어비스",
+            source_url="https://official.example.com/service",
+            source_title="서비스 공식",
+            source_role=SourceRole.OFFICIAL,
+            support_count=1,
+        )
+        loop._build_entity_claim_records = lambda **kwargs: [
+            _strong_claim("개발", "펄어비스"),
+            _strong_claim("장르/성격", "오픈월드 액션 어드벤처"),
+            _strong_claim("이용 형태", "PC"),
+            conflict_primary,
+            trusted_conflict,
+            weak_claim,
+        ]
+
+        queries = loop._build_entity_second_pass_queries(
+            query="붉은사막",
+            selected_sources=[],
+            existing_queries=[],
+        )
+
+        self.assertLess(queries.index("상태 탐침"), queries.index("서비스/배급 탐침"))
+
+    def test_second_pass_prioritizes_zero_trusted_weak_over_positive_trusted_weak(self) -> None:
+        from core.contracts import SourceRole
+        from core.web_claims import ClaimRecord
+
+        loop = AgentLoop.__new__(AgentLoop)
+        loop._build_entity_claim_confirmation_queries = lambda **kwargs: []
+        loop._build_entity_slot_probe_queries = (
+            lambda *, query, slot, status, primary_claim: [f"{slot} 탐침"]
+        )
+        loop._entity_slot_from_search_query = lambda **kwargs: ""
+
+        def _strong_claim(slot: str, value: str) -> ClaimRecord:
+            return ClaimRecord(
+                slot=slot,
+                value=value,
+                source_url=f"https://example.com/{slot}-official",
+                source_title=f"{slot} 공식",
+                source_role=SourceRole.OFFICIAL,
+                support_count=2,
+                supporting_sources=(
+                    (f"https://example.com/{slot}-official", f"{slot} 공식", SourceRole.OFFICIAL),
+                    (f"https://data.example.com/{slot}", f"{slot} 데이터", SourceRole.DATABASE),
+                ),
+            )
+
+        positive_trusted_weak = ClaimRecord(
+            slot="서비스/배급",
+            value="펄어비스",
+            source_url="https://official.example.com/service",
+            source_title="서비스 공식",
+            source_role=SourceRole.OFFICIAL,
+            support_count=1,
+        )
+        zero_trusted_weak = ClaimRecord(
+            slot="이용 형태",
+            value="PC와 콘솔",
+            source_url="https://blog.example.com/platform",
+            source_title="플랫폼 블로그",
+            source_role=SourceRole.BLOG,
+            support_count=2,
+            supporting_sources=(
+                ("https://blog.example.com/platform", "플랫폼 블로그", SourceRole.BLOG),
+                ("https://community.example.com/platform", "플랫폼 커뮤니티", SourceRole.COMMUNITY),
+            ),
+        )
+        loop._build_entity_claim_records = lambda **kwargs: [
+            _strong_claim("개발", "펄어비스"),
+            _strong_claim("장르/성격", "오픈월드 액션 어드벤처"),
+            _strong_claim("상태", "출시 예정"),
+            positive_trusted_weak,
+            zero_trusted_weak,
+        ]
+
+        queries = loop._build_entity_second_pass_queries(
+            query="붉은사막",
+            selected_sources=[],
+            existing_queries=[],
+        )
+
+        self.assertLess(queries.index("이용 형태 탐침"), queries.index("서비스/배급 탐침"))
+
     def test_coverage_reinvestigation_overall_cap_is_now_5(self) -> None:
         from core.contracts import CoverageStatus, SourceRole
         from core.web_claims import CORE_ENTITY_SLOTS, ClaimRecord, summarize_slot_coverage
@@ -2671,9 +2849,51 @@ class SmokeTest(unittest.TestCase):
 
         coverage = summarize_slot_coverage([untrusted_only], slots=CORE_ENTITY_SLOTS)
         self.assertEqual(coverage["개발"].status, CoverageStatus.WEAK)
+        self.assertEqual(coverage["개발"].trusted_source_count, 0)
         self.assertEqual(coverage["상태"].status, CoverageStatus.MISSING)
+        self.assertEqual(coverage["상태"].trusted_source_count, 0)
         self.assertIsNotNone(coverage["개발"].primary_claim)
         self.assertEqual(coverage["개발"].primary_claim.value, "펄어비스")
+
+    def test_slot_coverage_weak_with_trusted_single_source_has_positive_trusted_count(self) -> None:
+        from core.contracts import CoverageStatus, SourceRole
+        from core.web_claims import ClaimRecord, summarize_slot_coverage
+
+        trusted_single_source = ClaimRecord(
+            slot="서비스/배급",
+            value="넥슨",
+            source_url="https://official.example.com/maplestory",
+            source_title="공식 소개",
+            source_role=SourceRole.OFFICIAL,
+            support_count=1,
+        )
+
+        coverage = summarize_slot_coverage([trusted_single_source], slots=("서비스/배급",))
+
+        self.assertEqual(coverage["서비스/배급"].status, CoverageStatus.WEAK)
+        self.assertGreaterEqual(coverage["서비스/배급"].trusted_source_count, 1)
+
+    def test_slot_coverage_strong_trusted_count_matches_support(self) -> None:
+        from core.contracts import CoverageStatus, SourceRole
+        from core.web_claims import ClaimRecord, summarize_slot_coverage
+
+        trusted_agreement = ClaimRecord(
+            slot="개발",
+            value="펄어비스",
+            source_url="https://official.example.com/developer",
+            source_title="개발 공식",
+            source_role=SourceRole.OFFICIAL,
+            support_count=2,
+            supporting_sources=(
+                ("https://official.example.com/developer", "개발 공식", SourceRole.OFFICIAL),
+                ("https://data.example.com/developer", "개발 데이터", SourceRole.DATABASE),
+            ),
+        )
+
+        coverage = summarize_slot_coverage([trusted_agreement], slots=("개발",))
+
+        self.assertEqual(coverage["개발"].status, CoverageStatus.STRONG)
+        self.assertGreaterEqual(coverage["개발"].trusted_source_count, 2)
 
     def test_claims_summarize_slot_coverage_conflicting_trusted_alternative_returns_conflict(self) -> None:
         """When the chosen primary has trusted agreement but a competing
@@ -2769,6 +2989,84 @@ class SmokeTest(unittest.TestCase):
         coverage = summarize_slot_coverage([wiki_claim, official_claim], slots=(slot,))
         self.assertEqual(coverage[slot].primary_claim.source_role, SourceRole.OFFICIAL)
         self.assertEqual(coverage[slot].primary_claim.value, "공식 액션 RPG")
+
+    def test_claim_sort_key_trusted_source_beats_high_volume_untrusted(self) -> None:
+        from core.contracts import SourceRole
+        from core.web_claims import _claim_sort_key, ClaimRecord
+
+        official_record = ClaimRecord(
+            slot="개발",
+            value="공식 개발사",
+            source_url="https://official.example.com/developer",
+            source_title="공식 개발사",
+            source_role=SourceRole.OFFICIAL,
+            support_count=1,
+        )
+        community_record = ClaimRecord(
+            slot="개발",
+            value="커뮤니티 개발사",
+            source_url="https://community.example.com/developer",
+            source_title="커뮤니티 개발사",
+            source_role=SourceRole.COMMUNITY,
+            support_count=5,
+        )
+
+        selected = max([official_record, community_record], key=_claim_sort_key)
+        self.assertIs(selected, official_record)
+
+    def test_claim_sort_key_higher_support_wins_within_trusted_tier(self) -> None:
+        from core.contracts import SourceRole
+        from core.web_claims import _claim_sort_key, ClaimRecord
+
+        higher_support = ClaimRecord(
+            slot="상태",
+            value="지원 중",
+            source_url="https://official.example.com/status",
+            source_title="공식 상태",
+            source_role=SourceRole.OFFICIAL,
+            support_count=2,
+        )
+        lower_support = ClaimRecord(
+            slot="상태",
+            value="출시 예정",
+            source_url="https://official.example.com/status-old",
+            source_title="이전 공식 상태",
+            source_role=SourceRole.OFFICIAL,
+            support_count=1,
+        )
+
+        selected = max([lower_support, higher_support], key=_claim_sort_key)
+        self.assertIs(selected, higher_support)
+
+    def test_entity_claim_sort_key_trusted_beats_high_volume_untrusted(self) -> None:
+        from core.contracts import SourceRole
+        from core.web_claims import ClaimRecord
+
+        loop = AgentLoop.__new__(AgentLoop)
+        official_claim = ClaimRecord(
+            slot="개발",
+            value="공식 개발사",
+            source_url="https://official.example.com/developer",
+            source_title="공식 개발사",
+            source_role=SourceRole.OFFICIAL,
+            support_count=1,
+        )
+        community_claim = ClaimRecord(
+            slot="개발",
+            value="커뮤니티 개발사",
+            source_url="https://community.example.com/developer",
+            source_title="커뮤니티 개발사",
+            source_role=SourceRole.COMMUNITY,
+            support_count=5,
+        )
+
+        selected = max([community_claim, official_claim], key=loop._entity_claim_sort_key)
+
+        self.assertIs(selected, official_claim)
+        self.assertGreater(
+            loop._entity_claim_sort_key(official_claim),
+            loop._entity_claim_sort_key(community_claim),
+        )
 
     def test_claims_source_role_priority_ties_database_with_wiki_above_descriptive(self) -> None:
         from core.contracts import SourceRole
@@ -6544,6 +6842,7 @@ class SmokeTest(unittest.TestCase):
             self.assertIsNotNone(updated)
             self.assertEqual(updated["corrected_text"], "수정한 요약입니다.\n핵심만 남겼습니다.")
             self.assertEqual(updated["corrected_outcome"]["outcome"], "corrected")
+            self.assertEqual(updated["corrected_outcome"]["reason_label"], "explicit_correction_submitted")
             self.assertEqual(updated["corrected_outcome"]["artifact_id"], "artifact-correction")
             self.assertEqual(updated["corrected_outcome"]["source_message_id"], stored_message["message_id"])
             self.assertEqual(updated["original_response_snapshot"]["draft_text"], "원본 요약입니다.")
@@ -6557,6 +6856,10 @@ class SmokeTest(unittest.TestCase):
             self.assertTrue(source_messages)
             self.assertEqual(source_messages[-1]["corrected_text"], "수정한 요약입니다.\n핵심만 남겼습니다.")
             self.assertEqual(source_messages[-1]["corrected_outcome"]["outcome"], "corrected")
+            self.assertEqual(
+                source_messages[-1]["corrected_outcome"]["reason_label"],
+                "explicit_correction_submitted",
+            )
             self.assertEqual(source_messages[-1]["corrected_outcome"]["source_message_id"], stored_message["message_id"])
 
     def test_correction_updates_active_context_summary_hint(self) -> None:
@@ -7059,9 +7362,9 @@ class SmokeTest(unittest.TestCase):
             self.assertEqual(signal["signal_scope"], "session_local")
             self.assertEqual(signal["artifact_id"], "artifact-session-signal")
             self.assertEqual(signal["source_message_id"], source_message["message_id"])
-            self.assertEqual(signal["content_signal"]["latest_corrected_outcome"]["outcome"], "corrected")
-            self.assertTrue(signal["content_signal"]["has_corrected_text"])
-            self.assertNotIn("content_reason_record", signal["content_signal"])
+            self.assertEqual(signal["correction_signal"]["corrected_outcome"]["outcome"], "corrected")
+            self.assertTrue(signal["correction_signal"]["has_corrected_text"])
+            self.assertNotIn("content_signal", signal)
             self.assertEqual(signal["save_signal"]["latest_save_content_source"], "corrected_text")
             self.assertEqual(signal["save_signal"]["latest_saved_note_path"], str(note_path))
             self.assertNotIn("latest_approval_id", signal["save_signal"])
@@ -7090,7 +7393,7 @@ class SmokeTest(unittest.TestCase):
                     "supporting_source_message_ids": [source_message_id],
                     "supporting_signal_refs": [
                         {
-                            "signal_name": "session_local_memory_signal.content_signal",
+                            "signal_name": "session_local_memory_signal.correction_signal",
                             "relationship": "primary_basis",
                         }
                     ],
@@ -7339,7 +7642,7 @@ class SmokeTest(unittest.TestCase):
                             "supporting_source_message_ids": ["msg-d"],
                             "supporting_signal_refs": [
                                 {
-                                    "signal_name": "session_local_memory_signal.content_signal",
+                                    "signal_name": "session_local_memory_signal.correction_signal",
                                     "relationship": "primary_basis",
                                 }
                             ],
@@ -9616,6 +9919,10 @@ class SmokeTest(unittest.TestCase):
             source_message = source_messages[-1]
             self.assertEqual(source_message["corrected_text"], "수정본 B입니다.\n다시 손봤습니다.")
             self.assertEqual(source_message["corrected_outcome"]["outcome"], "corrected")
+            self.assertEqual(
+                source_message["corrected_outcome"]["reason_label"],
+                "explicit_correction_submitted",
+            )
             self.assertEqual(source_message["corrected_outcome"]["artifact_id"], artifact_id)
             self.assertEqual(source_message["corrected_outcome"]["approval_id"], approval_id)
             self.assertEqual(source_message["corrected_outcome"]["saved_note_path"], str(note_path))
@@ -9666,9 +9973,110 @@ class SmokeTest(unittest.TestCase):
             self.assertEqual(write_note["detail"]["source_message_id"], source_message_id)
             self.assertEqual(write_note["detail"]["save_content_source"], "corrected_text")
             self.assertEqual(corrected_outcome_recorded["detail"]["outcome"], "corrected")
+            self.assertEqual(
+                corrected_outcome_recorded["detail"]["reason_label"],
+                "explicit_correction_submitted",
+            )
             self.assertEqual(corrected_outcome_recorded["detail"]["artifact_id"], artifact_id)
             self.assertEqual(corrected_outcome_recorded["detail"]["approval_id"], approval_id)
             self.assertEqual(corrected_outcome_recorded["detail"]["saved_note_path"], str(note_path))
+
+    def test_corrected_save_reissue_uses_corrected_text_reason_label(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            first_note_path = tmp_path / "notes" / "source-summary.md"
+            second_note_path = tmp_path / "notes" / "source-summary-v2.md"
+            source_path.write_text("# Demo\n\nhello world", encoding="utf-8")
+
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(allowed_roots=[str(tmp_path), str(tmp_path / "notes")]),
+                },
+                notes_dir=str(tmp_path / "notes"),
+            )
+
+            initial = loop.handle(
+                UserRequest(
+                    user_text=f"Summarize {source_path}",
+                    session_id="corrected-save-reissue-session",
+                    metadata={"source_path": str(source_path)},
+                )
+            )
+            source_message_id = initial.source_message_id
+            artifact_id = initial.artifact_id
+            self.assertIsNotNone(source_message_id)
+
+            updated_source = loop.session_store.record_correction_for_message(
+                "corrected-save-reissue-session",
+                message_id=source_message_id or "",
+                corrected_text="수정본입니다.",
+            )
+            self.assertIsNotNone(updated_source)
+            bridge = loop.handle(
+                UserRequest(
+                    user_text="",
+                    session_id="corrected-save-reissue-session",
+                    metadata={
+                        "corrected_save_message_id": source_message_id,
+                        "note_path": str(first_note_path),
+                    },
+                )
+            )
+            first_approval_id = bridge.approval["approval_id"] if bridge.approval else ""
+            self.assertTrue(first_approval_id)
+
+            reissued = loop.handle(
+                UserRequest(
+                    user_text="",
+                    session_id="corrected-save-reissue-session",
+                    reissue_approval_id=first_approval_id,
+                    metadata={"note_path": str(second_note_path)},
+                )
+            )
+
+            self.assertEqual(reissued.status, "needs_approval")
+            self.assertTrue(reissued.requires_approval)
+            self.assertEqual(reissued.artifact_id, artifact_id)
+            self.assertEqual(reissued.source_message_id, source_message_id)
+            self.assertEqual(reissued.save_content_source, "corrected_text")
+            self.assertIsNotNone(reissued.approval)
+            self.assertEqual(reissued.approval["requested_path"], str(second_note_path))
+            self.assertEqual(reissued.approval["save_content_source"], "corrected_text")
+            self.assertIsNotNone(reissued.approval_reason_record)
+            self.assertEqual(reissued.approval_reason_record["reason_scope"], "approval_reissue")
+            self.assertEqual(reissued.approval_reason_record["reason_label"], "corrected_text_reissue")
+            self.assertEqual(reissued.approval_reason_record["artifact_id"], artifact_id)
+            self.assertEqual(reissued.approval_reason_record["source_message_id"], source_message_id)
+            self.assertEqual(
+                reissued.approval_reason_record["approval_id"],
+                reissued.approval["approval_id"],
+            )
+
+            session = loop.session_store.get_session("corrected-save-reissue-session")
+            self.assertEqual(len(session["pending_approvals"]), 1)
+            self.assertEqual(
+                session["pending_approvals"][0]["approval_reason_record"]["reason_label"],
+                "corrected_text_reissue",
+            )
+            self.assertFalse(first_note_path.exists())
+            self.assertFalse(second_note_path.exists())
+
+            log_records = [
+                json.loads(line)
+                for line in (tmp_path / "task_log.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            approval_reissued = next(record for record in log_records if record["action"] == "approval_reissued")
+            self.assertEqual(approval_reissued["detail"]["save_content_source"], "corrected_text")
+            self.assertEqual(
+                approval_reissued["detail"]["approval_reason_record"]["reason_label"],
+                "corrected_text_reissue",
+            )
 
     def test_scanned_pdf_returns_helpful_ocr_message(self) -> None:
         with TemporaryDirectory() as tmp_dir:

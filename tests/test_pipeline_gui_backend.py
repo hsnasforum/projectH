@@ -106,6 +106,34 @@ class TestParseControlSlots(unittest.TestCase):
             self.assertEqual(result["active"]["file"], "gemini_request.md")
             self.assertEqual(result["active"]["control_seq"], 8)
 
+    def test_role_based_canonical_slot_is_active(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            pipeline = project / ".pipeline"
+            pipeline.mkdir()
+            self._write_slot(pipeline, "advisory_request.md", "request_open", control_seq=9)
+
+            result = parse_control_slots(project)
+
+            self.assertEqual(result["active"]["file"], "advisory_request.md")
+            self.assertEqual(result["active"]["slot_id"], "advisory_request")
+            self.assertEqual(result["active"]["canonical_file"], "advisory_request.md")
+            self.assertFalse(result["active"]["is_legacy_alias"])
+
+    def test_role_based_canonical_wins_same_seq_over_legacy_alias(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            pipeline = project / ".pipeline"
+            pipeline.mkdir()
+            self._write_slot(pipeline, "advisory_advice.md", "advice_ready", age_offset=100, control_seq=10)
+            self._write_slot(pipeline, "gemini_advice.md", "advice_ready", age_offset=0, control_seq=10)
+
+            result = parse_control_slots(project)
+
+            self.assertEqual(result["active"]["file"], "advisory_advice.md")
+            self.assertEqual(result["active"]["slot_id"], "advisory_advice")
+            self.assertEqual(result["stale"][0]["file"], "gemini_advice.md")
+
     def test_stale_gemini_slots_lose_to_higher_handoff_seq(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
@@ -213,6 +241,47 @@ class TestParseControlSlotsWindowsBranch(unittest.TestCase):
 
             self.assertEqual(result["active"]["file"], "gemini_request.md")
             self.assertAlmostEqual(result["active"]["mtime"], 1712700000.8, places=1)
+
+    def test_windows_branch_uses_shared_control_seq_parser(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            pipeline = project / ".pipeline"
+            pipeline.mkdir()
+            (pipeline / "claude_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: not-a-number\n",
+                encoding="utf-8",
+            )
+            (pipeline / "operator_request.md").write_text(
+                "STATUS: needs_operator\nCONTROL_SEQ: 3\n",
+                encoding="utf-8",
+            )
+
+            find_responses = {
+                "claude_handoff.md": "1712700001.0000000000",
+                "operator_request.md": "1712700000.1000000000",
+            }
+
+            def fake_run(cmd, **kwargs):
+                if isinstance(cmd, list) and cmd[0] == "find":
+                    for fname, resp in find_responses.items():
+                        if fname in str(cmd[1]):
+                            return 0, resp + "\n"
+                    return 1, ""
+                if isinstance(cmd, list) and cmd[0] == "head":
+                    for fname in find_responses:
+                        if fname in str(cmd[-1]):
+                            return 0, (pipeline / fname).read_text()
+                    return 1, ""
+                return 1, ""
+
+            with mock.patch("pipeline_gui.backend.IS_WINDOWS", True), \
+                 mock.patch("pipeline_gui.backend._run", side_effect=fake_run), \
+                 mock.patch("pipeline_gui.backend._wsl_path_str", side_effect=str):
+                result = parse_control_slots(project)
+
+            self.assertEqual(result["active"]["file"], "operator_request.md")
+            self.assertEqual(result["active"]["control_seq"], 3)
+            self.assertIsNone(result["stale"][0]["control_seq"])
 
 
 class TestPipelineStartLaunchGate(unittest.TestCase):
@@ -471,7 +540,7 @@ class TestPipelineStartDiagnostics(unittest.TestCase):
             log_path.write_text(
                 (
                     "2026-04-09T20:52:57 [INFO] watcher_core: WatcherCore v2.1 started\n"
-                    "2026-04-09T20:53:05 [INFO] watcher_core: notify_advisory_owner: reason=startup_turn_gemini\n"
+                    "2026-04-09T20:53:05 [INFO] watcher_core: notify_advisory_owner: reason=startup_turn_advisory\n"
                 ),
                 encoding="utf-8",
             )

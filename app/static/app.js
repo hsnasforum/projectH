@@ -1341,7 +1341,14 @@
       if (normalized === "accept") return "검토 수락됨";
       if (normalized === "reject") return "검토 거절됨";
       if (normalized === "defer") return "검토 보류됨";
+      if (normalized === "edit") return "검토 편집됨";
       return "";
+    }
+
+    function formatReviewItemTypeLabel(value) {
+      const normalized = String(value || "").trim().toLowerCase();
+      if (normalized === "durable_candidate") return "durable_candidate";
+      return normalized || "";
     }
 
     function formatAggregateCandidateFamilyLabel(value) {
@@ -1372,7 +1379,7 @@
 
     function formatSignalRefLabel(signalName) {
       const normalized = String(signalName || "").trim();
-      if (normalized === "session_local_memory_signal.content_signal") return "content_signal";
+      if (normalized === "session_local_memory_signal.correction_signal") return "correction_signal";
       if (normalized === "session_local_memory_signal.save_signal") return "save_signal";
       return normalized || "signal";
     }
@@ -2026,9 +2033,10 @@
       accept: "검토 후보를 수락했습니다. 아직 적용되지는 않았습니다.",
       reject: "검토 후보를 거절했습니다.",
       defer: "검토 후보를 보류했습니다.",
+      edit: "검토 후보에 편집 의견을 기록했습니다.",
     };
 
-    async function submitCandidateReview(item, reviewAction) {
+    async function submitCandidateReview(item, reviewAction, reasonNote) {
       if (state.isBusy || !item || typeof item !== "object") return;
       const sourceMessageId = String(item.source_message_id || "").trim();
       const candidateId = String(item.candidate_id || "").trim();
@@ -2047,6 +2055,7 @@
           candidate_id: candidateId,
           candidate_updated_at: candidateUpdatedAt,
           review_action: reviewAction,
+          ...(reasonNote ? { reason_note: reasonNote } : {}),
         }),
       });
       if (data.session) {
@@ -2597,7 +2606,7 @@
         return;
       }
 
-      reviewQueueStatus.textContent = "후보를 수락, 거절, 또는 보류할 수 있습니다. 아직 적용이나 편집은 열지 않았습니다.";
+      reviewQueueStatus.textContent = "후보를 수락, 거절, 보류, 또는 편집 메모로 기록할 수 있습니다.";
       reviewItems.forEach((item) => {
         const card = document.createElement("article");
         card.className = "history-item";
@@ -2614,6 +2623,7 @@
 
         const meta = document.createElement("span");
         meta.textContent = [
+          formatReviewItemTypeLabel(item.item_type) ? `유형 ${formatReviewItemTypeLabel(item.item_type)}` : "",
           `기준 ${formatPromotionBasisLabel(item.promotion_basis)}`,
           `상태 ${formatPromotionEligibilityLabel(item.promotion_eligibility)}`,
           item.updated_at ? `업데이트 ${formatWhen(item.updated_at)}` : "",
@@ -2689,6 +2699,36 @@
             submitCandidateReview(item, "defer");
           });
           actions.appendChild(deferButton);
+
+          const editButton = document.createElement("button");
+          editButton.type = "button";
+          editButton.className = "secondary";
+          editButton.textContent = "편집";
+          editButton.setAttribute("data-testid", "review-queue-edit");
+          editButton.addEventListener("click", () => {
+            const editArea = document.createElement("div");
+            editArea.className = "edit-note-area";
+            const textarea = document.createElement("textarea");
+            textarea.rows = 3;
+            textarea.style.width = "100%";
+            textarea.style.resize = "vertical";
+            textarea.placeholder = "편집 의견 (편집된 문장 또는 메모)";
+            textarea.value = String(item.statement || "").trim();
+            const confirmBtn = document.createElement("button");
+            confirmBtn.type = "button";
+            confirmBtn.className = "secondary";
+            confirmBtn.textContent = "확인";
+            confirmBtn.addEventListener("click", () => {
+              const note = textarea.value.trim();
+              if (!note) return;
+              editArea.remove();
+              submitCandidateReview(item, "edit", note);
+            });
+            editArea.appendChild(textarea);
+            editArea.appendChild(confirmBtn);
+            card.appendChild(editArea);
+          });
+          actions.appendChild(editButton);
 
           card.appendChild(actions);
         }

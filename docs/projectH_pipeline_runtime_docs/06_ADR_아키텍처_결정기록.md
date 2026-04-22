@@ -128,8 +128,9 @@ supervisor/adapter/state 정비 후 lane 1개 pilot으로만 검증한다.
 ### 결정
 export-only compatibility 대상은 legacy status surface와 read-model 보조 파일/화면으로 제한한다.  
 `latest-work`, `latest-verify`, legacy status snapshot 같은 surface는 export-only로 유지할 수 있다.  
-단, `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, `.pipeline/gemini_advice.md`, `.pipeline/operator_request.md` 같은 rolling control slot은 export-only 대상에 포함하지 않는다.  
+단, `.pipeline/implement_handoff.md`, `.pipeline/advisory_request.md`, `.pipeline/advisory_advice.md`, `.pipeline/operator_request.md` 같은 rolling control slot은 export-only 대상에 포함하지 않는다.
 rolling control slot은 전환 기간에도 canonical control plane으로 유지하며, current truth가 아닌 compatibility surface로 격하하지 않는다.
+historical aliases `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, `.pipeline/gemini_advice.md`는 같은 role-based logical slot의 read-only compatibility input으로만 허용하며, 별도 control plane으로 분리하지 않는다.
 
 ### 이유
 - 점진적 전환 가능

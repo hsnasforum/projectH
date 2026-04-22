@@ -977,7 +977,12 @@ def draw(
     autonomy_reason = str(runtime_view.get("autonomy_reason") or "")
     automation_health = str(runtime_view.get("automation_health") or "ok")
     automation_reason = str(runtime_view.get("automation_reason_code") or "")
+    automation_family = str(runtime_view.get("automation_incident_family") or "")
     automation_action = str(runtime_view.get("automation_next_action") or "continue")
+    automation_health_detail = str(runtime_view.get("automation_health_detail") or "")
+    control_age_cycles = int(runtime_view.get("control_age_cycles") or 0)
+    stale_control_cycle_threshold = int(runtime_view.get("stale_control_cycle_threshold") or 0)
+    stale_advisory_pending = bool(runtime_view.get("stale_advisory_pending"))
 
     safe_addstr(stdscr, row, 0, "│ ", CYAN)
     safe_addstr(stdscr, row, 2, "Latest work:   ", WHITE)
@@ -1025,6 +1030,22 @@ def draw(
     safe_addstr(stdscr, row, 17, automation_display[:max(0, w - 20)], automation_attr)
     safe_addstr(stdscr, row, w - 1, "│", CYAN)
     row += 1
+
+    automation_detail = _automation_detail(
+        automation_reason,
+        automation_action,
+        automation_family,
+        health_detail=automation_health_detail,
+        control_age_cycles=control_age_cycles,
+        stale_control_cycle_threshold=stale_control_cycle_threshold,
+        stale_advisory_pending=stale_advisory_pending,
+    )
+    if automation_detail and row < h - 4:
+        safe_addstr(stdscr, row, 0, "│ ", CYAN)
+        safe_addstr(stdscr, row, 2, "Auto detail:   ", WHITE)
+        safe_addstr(stdscr, row, 17, automation_detail[:max(0, w - 20)], automation_attr)
+        safe_addstr(stdscr, row, w - 1, "│", CYAN)
+        row += 1
 
     # 구분선
     safe_addstr(stdscr, row, 0, f"├{border}┤", CYAN)

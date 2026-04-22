@@ -1584,7 +1584,7 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
                 "automation_incident_family": "dispatch_stall",
                 "automation_next_action": "verify_followup",
                 "open_control": {
-                    "active_control_file": ".pipeline/claude_handoff.md",
+                    "active_control_file": ".pipeline/implement_handoff.md",
                     "active_control_seq": 17,
                     "active_control_status": "implement",
                 },

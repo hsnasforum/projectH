@@ -60,7 +60,7 @@ class ControlWritersTest(unittest.TestCase):
                 block_reason_code="unknown_reason",
                 request="codex_triage",
                 escalation_class="codex_triage",
-                handoff=".pipeline/claude_handoff.md",
+                handoff=".pipeline/implement_handoff.md",
                 handoff_sha="sha256:test",
                 block_id="sha256:test:blocked",
             )
@@ -70,7 +70,7 @@ class ControlWritersTest(unittest.TestCase):
                 block_reason_code="codex_triage_only",
                 request="codex_triage",
                 escalation_class="operator_only",
-                handoff=".pipeline/claude_handoff.md",
+                handoff=".pipeline/implement_handoff.md",
                 handoff_sha="sha256:test",
                 block_id="sha256:test:blocked",
             )

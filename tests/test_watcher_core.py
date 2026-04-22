@@ -268,7 +268,7 @@ class WorkNoteFilteringTest(unittest.TestCase):
             watch_dir.mkdir(parents=True, exist_ok=True)
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
-            (base_dir / "claude_handoff.md").write_text("STATUS: implement\nCONTROL_SEQ: 8\n", encoding="utf-8")
+            (base_dir / "implement_handoff.md").write_text("STATUS: implement\nCONTROL_SEQ: 8\n", encoding="utf-8")
 
             meta_note = watch_dir / "4" / "9" / "2026-04-09-claude-handoff-task-list-review.md"
             _write_work_note(meta_note, ["work/4/9/2026-04-09-claude-handoff-task-list-review.md"])
@@ -306,7 +306,7 @@ class WorkNoteFilteringTest(unittest.TestCase):
             watch_dir.mkdir(parents=True, exist_ok=True)
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
-            (base_dir / "claude_handoff.md").write_text("STATUS: implement\nCONTROL_SEQ: 8\n", encoding="utf-8")
+            (base_dir / "implement_handoff.md").write_text("STATUS: implement\nCONTROL_SEQ: 8\n", encoding="utf-8")
 
             core = watcher_core.WatcherCore(
                 {
@@ -939,7 +939,7 @@ Should I continue here or handoff and continue in a fresh session?
             base_dir = root / ".pipeline"
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
-            (base_dir / "claude_handoff.md").write_text("STATUS: implement\n")
+            (base_dir / "implement_handoff.md").write_text("STATUS: implement\n")
 
             core = watcher_core.WatcherCore(
                 {
@@ -976,8 +976,8 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
             content = draft_path.read_text()
             self.assertIn("STATUS: draft_only", content)
             self.assertIn("non-canonical draft", content)
-            self.assertIn(".pipeline/claude_handoff.md", content)
-            self.assertFalse((base_dir / "gemini_request.md").exists())
+            self.assertIn(".pipeline/implement_handoff.md", content)
+            self.assertFalse((base_dir / "advisory_request.md").exists())
 
     def test_waiting_for_claude_skips_draft_until_all_three_panes_are_idle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -987,7 +987,7 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
             base_dir = root / ".pipeline"
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
-            (base_dir / "claude_handoff.md").write_text("STATUS: implement\n")
+            (base_dir / "implement_handoff.md").write_text("STATUS: implement\n")
 
             core = watcher_core.WatcherCore(
                 {
@@ -1028,7 +1028,7 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
             base_dir = root / ".pipeline"
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
-            (base_dir / "claude_handoff.md").write_text("STATUS: implement\n")
+            (base_dir / "implement_handoff.md").write_text("STATUS: implement\n")
 
             core = watcher_core.WatcherCore(
                 {
@@ -1063,8 +1063,8 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
                 fingerprint = watcher_core.hashlib.sha1(
                     pane_texts["claude-pane"].encode("utf-8")
                 ).hexdigest()
-                core._session_arbitration_snapshot_fingerprints["claude"] = fingerprint
-                core._session_arbitration_snapshot_changed_at["claude"] = 0.0
+                core._session_arbitration_snapshot_fingerprints["implement"] = fingerprint
+                core._session_arbitration_snapshot_changed_at["implement"] = 0.0
                 with mock.patch("watcher_core.time.time", return_value=10.0):
                     core._poll()
 
@@ -1079,7 +1079,7 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
             base_dir = root / ".pipeline"
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
-            (base_dir / "claude_handoff.md").write_text("STATUS: implement\n")
+            (base_dir / "implement_handoff.md").write_text("STATUS: implement\n")
 
             core = watcher_core.WatcherCore(
                 {
@@ -1164,7 +1164,7 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
             base_dir = root / ".pipeline"
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
-            (base_dir / "claude_handoff.md").write_text("STATUS: implement\n")
+            (base_dir / "implement_handoff.md").write_text("STATUS: implement\n")
 
             core = watcher_core.WatcherCore(
                 {
@@ -1212,7 +1212,7 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
             watch_dir.mkdir(parents=True, exist_ok=True)
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
-            handoff = base_dir / "claude_handoff.md"
+            handoff = base_dir / "implement_handoff.md"
             handoff.write_text("STATUS: implement\nCONTROL_SEQ: 41\n", encoding="utf-8")
 
             core = watcher_core.WatcherCore(
@@ -1224,7 +1224,7 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
                 }
             )
 
-            spec = core.prompt_assembler.build_claude_dispatch_spec("startup_turn_claude")
+            spec = core.prompt_assembler.build_implement_dispatch_spec("startup_turn_implement")
 
             self.assertEqual(spec.lane_role, "implement")
             self.assertEqual(spec.functional_role, "implement")
@@ -1232,7 +1232,7 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
             self.assertEqual(spec.agent_kind, "claude")
             self.assertEqual(spec.notify_label, "notify_implement_owner")
             self.assertEqual(spec.raw_event, "implement_notify")
-            self.assertEqual(spec.raw_payload["reason"], "startup_turn_claude")
+            self.assertEqual(spec.raw_payload["reason"], "startup_turn_implement")
             self.assertEqual(spec.raw_payload["functional_role"], "implement")
             self.assertEqual(spec.raw_payload["lane_id"], "claude_implement")
             self.assertEqual(spec.raw_payload["agent_kind"], "claude")
@@ -1240,6 +1240,117 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
             self.assertEqual(spec.control_seq, 41)
 
     def test_blocked_triage_spec_carries_raw_event_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+            handoff = base_dir / "implement_handoff.md"
+            handoff.write_text("STATUS: implement\nCONTROL_SEQ: 52\n", encoding="utf-8")
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+            signal = {
+                "reason": "handoff_already_completed",
+                "reason_code": "already_implemented",
+                "escalation_class": "verify_triage",
+                "fingerprint": "block-123",
+                "source": "sentinel",
+            }
+
+            spec = core.prompt_assembler.build_blocked_triage_dispatch_spec(signal, "implement_blocked")
+
+            self.assertEqual(spec.lane_role, "verify")
+            self.assertEqual(spec.notify_label, "notify_verify_blocked_triage")
+            self.assertEqual(spec.raw_event, "verify_blocked_triage_notify")
+            self.assertEqual(spec.raw_payload["reason"], "implement_blocked")
+            self.assertEqual(spec.raw_payload["blocked_reason"], "handoff_already_completed")
+            self.assertEqual(spec.raw_payload["blocked_reason_code"], "already_implemented")
+            self.assertEqual(spec.raw_payload["blocked_escalation_class"], "verify_triage")
+            self.assertEqual(spec.raw_payload["blocked_fingerprint"], "block-123")
+            self.assertTrue(spec.raw_payload["handoff_sha"])
+
+    def test_verify_blocked_triage_prompt_takes_precedence_over_legacy_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+            handoff = base_dir / "implement_handoff.md"
+            handoff.write_text("STATUS: implement\nCONTROL_SEQ: 52\n", encoding="utf-8")
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_blocked_triage_prompt": "CANONICAL {blocked_reason} {blocked_reason_code}",
+                    "verify_triage_prompt": "OLD_VERIFY {blocked_reason}",
+                    "codex_blocked_triage_prompt": "LEGACY {blocked_reason}",
+                }
+            )
+
+            spec = core.prompt_assembler.build_blocked_triage_dispatch_spec(
+                {
+                    "reason": "blocked_by_test",
+                    "reason_code": "canonical_precedence",
+                    "escalation_class": "verify_triage",
+                    "fingerprint": "block-prompt",
+                    "source": "sentinel",
+                },
+                "implement_blocked",
+            )
+
+            self.assertIn("CANONICAL blocked_by_test canonical_precedence", spec.prompt)
+            self.assertNotIn("OLD_VERIFY", spec.prompt)
+            self.assertNotIn("LEGACY", spec.prompt)
+
+    def test_codex_blocked_triage_prompt_remains_read_only_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+            handoff = base_dir / "implement_handoff.md"
+            handoff.write_text("STATUS: implement\nCONTROL_SEQ: 52\n", encoding="utf-8")
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "codex_blocked_triage_prompt": "LEGACY {blocked_reason} {blocked_reason_code}",
+                }
+            )
+
+            spec = core.prompt_assembler.build_blocked_triage_dispatch_spec(
+                {
+                    "reason": "blocked_by_test",
+                    "reason_code": "legacy_fallback",
+                    "escalation_class": "verify_triage",
+                    "fingerprint": "block-prompt",
+                    "source": "sentinel",
+                },
+                "implement_blocked",
+            )
+
+            self.assertIn("LEGACY blocked_by_test legacy_fallback", spec.prompt)
+
+    def test_blocked_triage_prompt_uses_active_legacy_handoff_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -1256,27 +1367,29 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
                     "base_dir": str(base_dir),
                     "repo_root": str(root),
                     "dry_run": True,
+                    "verify_blocked_triage_prompt": (
+                        "HANDOFF {active_handoff_path}\n"
+                        "SHA {active_handoff_sha}\n"
+                        "REASON {blocked_reason}"
+                    ),
                 }
             )
-            signal = {
-                "reason": "handoff_already_completed",
-                "reason_code": "already_implemented",
-                "escalation_class": "codex_triage",
-                "fingerprint": "block-123",
-                "source": "sentinel",
-            }
 
-            spec = core.prompt_assembler.build_blocked_triage_dispatch_spec(signal, "claude_implement_blocked")
+            spec = core.prompt_assembler.build_blocked_triage_dispatch_spec(
+                {
+                    "reason": "legacy alias",
+                    "reason_code": "legacy_alias",
+                    "escalation_class": "verify_triage",
+                    "fingerprint": "block-prompt",
+                    "source": "sentinel",
+                },
+                "implement_blocked",
+            )
 
-            self.assertEqual(spec.lane_role, "verify")
-            self.assertEqual(spec.notify_label, "notify_verify_blocked_triage")
-            self.assertEqual(spec.raw_event, "verify_blocked_triage_notify")
-            self.assertEqual(spec.raw_payload["reason"], "claude_implement_blocked")
-            self.assertEqual(spec.raw_payload["blocked_reason"], "handoff_already_completed")
-            self.assertEqual(spec.raw_payload["blocked_reason_code"], "already_implemented")
-            self.assertEqual(spec.raw_payload["blocked_escalation_class"], "codex_triage")
-            self.assertEqual(spec.raw_payload["blocked_fingerprint"], "block-123")
-            self.assertTrue(spec.raw_payload["handoff_sha"])
+            self.assertEqual(spec.prompt_path.name, "claude_handoff.md")
+            self.assertIn("HANDOFF .pipeline/claude_handoff.md", spec.prompt)
+            self.assertNotIn("HANDOFF .pipeline/implement_handoff.md", spec.prompt)
+            self.assertIn(f"SHA {core._get_path_sha256(handoff)}", spec.prompt)
 
     def test_operator_retriage_prompt_keeps_commit_push_in_verify_owner(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1341,8 +1454,8 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
             self.assertIsNotNone(marker)
             self.assertEqual(marker["reason"], PR_CREATION_GATE_REASON)
             self.assertEqual(marker["mode"], "triage")
-            self.assertEqual(marker["routed_to"], "codex_followup")
-            self.assertEqual(core._resolve_turn(), "codex_followup")
+            self.assertEqual(marker["routed_to"], "verify_followup")
+            self.assertEqual(core._resolve_turn(), "verify_followup")
 
             prompt = core.prompt_assembler.format_operator_retriage_prompt(marker or {})
             self.assertIn("pr_creation_gate + gate_24h + release_gate", prompt)
@@ -1356,7 +1469,7 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
             watch_dir.mkdir(parents=True, exist_ok=True)
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
-            handoff = base_dir / "claude_handoff.md"
+            handoff = base_dir / "implement_handoff.md"
             handoff.write_text(
                 "STATUS: implement\n"
                 "CONTROL_SEQ: 714\n"
@@ -1376,15 +1489,15 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
                 {
                     "reason": "commit_push_forbidden_by_lane_rules",
                     "reason_code": "handoff_requires_commit_push_but_rules_forbid_commit_push",
-                    "escalation_class": "codex_triage",
+                    "escalation_class": "verify_triage",
                     "fingerprint": "block-commit-push",
                     "source": "sentinel",
                 },
-                "claude_implement_blocked",
+                "implement_blocked",
             )
 
             self.assertIn("commit/push is forbidden by implement-lane rules", spec.prompt)
-            self.assertIn("do not reissue commit/push as `.pipeline/claude_handoff.md`", spec.prompt)
+            self.assertIn("do not reissue commit/push as `.pipeline/implement_handoff.md`", spec.prompt)
 
     def test_session_arbitration_draft_format_moves_body_to_assembler(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1396,7 +1509,7 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
             verify_dir.mkdir(parents=True, exist_ok=True)
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
-            (base_dir / "claude_handoff.md").write_text("STATUS: implement\nCONTROL_SEQ: 61\n", encoding="utf-8")
+            (base_dir / "implement_handoff.md").write_text("STATUS: implement\nCONTROL_SEQ: 61\n", encoding="utf-8")
             _write_work_note(watch_dir / "2026-04-17-sample-work.md", ["app/sample.py"])
             _write_verify_note(verify_dir / "2026-04-17-sample-verify.md", ["app/sample.py"])
 
@@ -1420,11 +1533,11 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
             self.assertIn("non-canonical draft", body)
             self.assertIn("context_exhaustion", body)
             self.assertIn("continue_vs_switch", body)
-            self.assertIn(".pipeline/claude_handoff.md", body)
+            self.assertIn(".pipeline/implement_handoff.md", body)
             self.assertIn("latest `/work`", body)
             self.assertIn("latest `/verify`", body)
 
-    def test_notify_codex_followup_wrapper_uses_dispatch_helper_with_assembler_spec(self) -> None:
+    def test_notify_verify_followup_wrapper_uses_dispatch_helper_with_assembler_spec(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -1432,7 +1545,7 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
             watch_dir.mkdir(parents=True, exist_ok=True)
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
-            (base_dir / "gemini_advice.md").write_text(
+            (base_dir / "advisory_advice.md").write_text(
                 "STATUS: advice_ready\nCONTROL_SEQ: 77\n",
                 encoding="utf-8",
             )
@@ -1447,48 +1560,48 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
             )
 
             with mock.patch.object(core, "_dispatch_notify_spec", return_value=True) as dispatch_notify:
-                core._notify_codex_followup("gemini_advice_ready")
+                core._notify_verify_followup("advisory_advice_ready")
 
             dispatch_notify.assert_called_once()
             kwargs = dispatch_notify.call_args.kwargs
             spec = kwargs["spec"]
-            self.assertEqual(kwargs["reason"], "gemini_advice_ready")
+            self.assertEqual(kwargs["reason"], "advisory_advice_ready")
             self.assertEqual(spec.lane_role, "verify")
             self.assertEqual(spec.functional_role, "verify")
             self.assertEqual(spec.lane_id, "codex_verify")
             self.assertEqual(spec.agent_kind, "codex")
-            self.assertEqual(spec.notify_kind, "gemini_advice_followup")
-            self.assertEqual(spec.pending_key, "codex_verify:gemini_advice_followup:77")
+            self.assertEqual(spec.notify_kind, "advisory_advice_followup")
+            self.assertEqual(spec.pending_key, "codex_verify:advisory_advice_followup:77")
             self.assertEqual(spec.notify_label, "notify_verify_followup")
             self.assertEqual(spec.raw_event, "verify_followup_notify")
-            self.assertEqual(spec.raw_payload["reason"], "gemini_advice_ready")
+            self.assertEqual(spec.raw_payload["reason"], "advisory_advice_ready")
             self.assertEqual(spec.raw_payload["functional_role"], "verify")
             self.assertEqual(spec.raw_payload["lane_id"], "codex_verify")
             self.assertEqual(spec.raw_payload["agent_kind"], "codex")
             self.assertEqual(spec.control_seq, 77)
             self.assertEqual(spec.expected_status, "advice_ready")
-            self.assertEqual(spec.expected_control_path, "gemini_advice.md")
+            self.assertEqual(spec.expected_control_path, "advisory_advice.md")
             self.assertEqual(spec.expected_control_seq, 77)
             self.assertTrue(spec.require_active_control)
 
 
 class ClaudeImplementBlockedTest(unittest.TestCase):
     def test_extract_implement_blocked_accepts_bulleted_status_line(self) -> None:
-        signal = watcher_core._extract_claude_implement_blocked_signal(
+        signal = watcher_core._extract_implement_blocked_signal(
             "\n".join(
                 [
                     "• STATUS: implement_blocked",
                     "  BLOCK_REASON: conflict_count_owner_out_of_scope",
                     "  BLOCK_REASON_CODE: scope_missing_owner",
-                    "  REQUEST: codex_triage",
-                    "  ESCALATION_CLASS: codex_triage",
-                    "  HANDOFF: .pipeline/claude_handoff.md",
+                    "  REQUEST: verify_triage",
+                    "  ESCALATION_CLASS: verify_triage",
+                    "  HANDOFF: .pipeline/implement_handoff.md",
                     "  HANDOFF_SHA: abcdef1234567890",
                     "  BLOCK_ID: block-bullet-001",
                     "› Summarize recent commits",
                 ]
             ),
-            active_handoff_path=".pipeline/claude_handoff.md",
+            active_handoff_path=".pipeline/implement_handoff.md",
             active_handoff_sha="abcdef1234567890",
         )
 
@@ -1498,14 +1611,14 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
         self.assertEqual(signal["fingerprint"], "block-bullet-001")
 
     def test_extract_implement_blocked_tolerates_wrapped_handoff_fields(self) -> None:
-        signal = watcher_core._extract_claude_implement_blocked_signal(
+        signal = watcher_core._extract_implement_blocked_signal(
             "\n".join(
                 [
                     "STATUS: implement_blocked",
                     "BLOCK_REASON: smoke_handoff_blocked",
                     "REQUEST: verify_triage",
                     "HANDOFF: .pipeline/live-blocked-smoke-j3",
-                    "YWbK/claude_handoff.md",
+                    "YWbK/implement_handoff.md",
                     "HANDOFF_SHA: abcdef1234567890",
                     "fedcba0987654321",
                     "BLOCK_ID: abcdef1234567890fedc",
@@ -1513,7 +1626,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                     ">",
                 ]
             ),
-            active_handoff_path=".pipeline/live-blocked-smoke-j3YWbK/claude_handoff.md",
+            active_handoff_path=".pipeline/live-blocked-smoke-j3YWbK/implement_handoff.md",
             active_handoff_sha="abcdef1234567890fedcba0987654321",
         )
 
@@ -1522,7 +1635,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
         self.assertEqual(signal["fingerprint"], "abcdef1234567890fedcba0987654321:smoke_handoff_blocked")
 
     def test_extract_implement_blocked_tolerates_wrapped_status_and_reason(self) -> None:
-        signal = watcher_core._extract_claude_implement_blocked_signal(
+        signal = watcher_core._extract_implement_blocked_signal(
             "\n".join(
                 [
                     "STATUS:",
@@ -1531,8 +1644,8 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                     "renderResult follow-up",
                     "correctly drops review-outcome",
                     "REQUEST: verify_triage",
-                    "HANDOFF: .pipeline/claud",
-                    "e_handoff.md",
+                    "HANDOFF: .pipeline/implement_",
+                    "handoff.md",
                     "HANDOFF_SHA:",
                     "abcdef1234567890",
                     "fedcba0987654321",
@@ -1543,7 +1656,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                     ">",
                 ]
             ),
-            active_handoff_path=".pipeline/claude_handoff.md",
+            active_handoff_path=".pipeline/implement_handoff.md",
             active_handoff_sha="abcdef1234567890fedcba0987654321",
         )
 
@@ -1552,30 +1665,53 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
         self.assertEqual(signal["fingerprint"], "abcdef1234567890fedcba0987654321:renderResult-follow-up")
 
     def test_extract_implement_blocked_prefers_structured_reason_code_and_escalation_class(self) -> None:
-        signal = watcher_core._extract_claude_implement_blocked_signal(
+        signal = watcher_core._extract_implement_blocked_signal(
             "\n".join(
                 [
                     "STATUS: implement_blocked",
                     "BLOCK_REASON: context window exhausted after diff review",
                     "BLOCK_REASON_CODE: context_exhaustion",
-                    "REQUEST: codex_triage",
-                    "ESCALATION_CLASS: codex_triage",
-                    "HANDOFF: .pipeline/claude_handoff.md",
+                    "REQUEST: verify_triage",
+                    "ESCALATION_CLASS: verify_triage",
+                    "HANDOFF: .pipeline/implement_handoff.md",
                     "HANDOFF_SHA: abcdef1234567890",
                     "BLOCK_ID: block-structured-001",
                 ]
             ),
-            active_handoff_path=".pipeline/claude_handoff.md",
+            active_handoff_path=".pipeline/implement_handoff.md",
             active_handoff_sha="abcdef1234567890",
         )
 
         self.assertIsNotNone(signal)
         self.assertEqual(signal["reason_code"], "context_exhaustion")
-        self.assertEqual(signal["escalation_class"], "codex_triage")
-        self.assertEqual(signal["request"], "codex_triage")
+        self.assertEqual(signal["escalation_class"], "verify_triage")
+        self.assertEqual(signal["request"], "verify_triage")
+
+    def test_extract_implement_blocked_normalizes_legacy_codex_triage_alias(self) -> None:
+        signal = watcher_core._extract_implement_blocked_signal(
+            "\n".join(
+                [
+                    "STATUS: implement_blocked",
+                    "BLOCK_REASON: legacy alias",
+                    "BLOCK_REASON_CODE: codex_triage_only",
+                    "REQUEST: codex_triage",
+                    "ESCALATION_CLASS: codex_triage",
+                    "HANDOFF: .pipeline/implement_handoff.md",
+                    "HANDOFF_SHA: abcdef1234567890",
+                    "BLOCK_ID: block-legacy-001",
+                ]
+            ),
+            active_handoff_path=".pipeline/implement_handoff.md",
+            active_handoff_sha="abcdef1234567890",
+        )
+
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal["reason_code"], "verify_triage_only")
+        self.assertEqual(signal["escalation_class"], "verify_triage")
+        self.assertEqual(signal["request"], "verify_triage")
 
     def test_extract_implement_blocked_ignores_prompt_template_example(self) -> None:
-        signal = watcher_core._extract_claude_implement_blocked_signal(
+        signal = watcher_core._extract_implement_blocked_signal(
             "\n".join(
                 [
                     "- if the handoff is blocked or not actionable, emit the exact sentinel below and stop",
@@ -1583,13 +1719,13 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                     "STATUS: implement_blocked",
                     "BLOCK_REASON: <short_reason>",
                     "REQUEST: verify_triage",
-                    "HANDOFF: .pipeline/claude_handoff.md",
+                    "HANDOFF: .pipeline/implement_handoff.md",
                     "HANDOFF_SHA: abcdef1234567890",
                     "BLOCK_ID: abcdef1234567890:<short_reason>",
                     ">",
                 ]
             ),
-            active_handoff_path=".pipeline/claude_handoff.md",
+            active_handoff_path=".pipeline/implement_handoff.md",
             active_handoff_sha="abcdef1234567890",
         )
 
@@ -1603,7 +1739,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             base_dir = root / ".pipeline"
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
-            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path = base_dir / "implement_handoff.md"
             handoff_path.write_text("STATUS: implement\n")
 
             core = watcher_core.WatcherCore(
@@ -1627,10 +1763,10 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                 "claude-pane": (
                     "STATUS: implement_blocked\n"
                     "BLOCK_REASON: handoff_not_actionable\n"
-                    "BLOCK_REASON_CODE: codex_triage_only\n"
-                    "REQUEST: codex_triage\n"
-                    "ESCALATION_CLASS: codex_triage\n"
-                    "HANDOFF: .pipeline/claude_handoff.md\n"
+                    "BLOCK_REASON_CODE: verify_triage_only\n"
+                    "REQUEST: verify_triage\n"
+                    "ESCALATION_CLASS: verify_triage\n"
+                    "HANDOFF: .pipeline/implement_handoff.md\n"
                     f"HANDOFF_SHA: {handoff_sha}\n"
                     "BLOCK_ID: block-001\n"
                 ),
@@ -1648,11 +1784,11 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             self.assertIn("ROLE: verify_triage", args[1])
             self.assertIn("OWNER: Codex", args[1])
             self.assertIn("BLOCK_REASON: handoff_not_actionable", args[1])
-            self.assertIn("BLOCK_REASON_CODE: codex_triage_only", args[1])
-            self.assertIn("ESCALATION_CLASS: codex_triage", args[1])
+            self.assertIn("BLOCK_REASON_CODE: verify_triage_only", args[1])
+            self.assertIn("ESCALATION_CLASS: verify_triage", args[1])
             self.assertIn("BLOCK_ID: block-001", args[1])
             self.assertEqual(kwargs.get("pane_type"), "codex")
-            self.assertEqual(core._last_claude_blocked_fingerprint, "block-001")
+            self.assertEqual(core._last_implement_blocked_fingerprint, "block-001")
 
     def test_waiting_for_role_bound_implement_owner_routes_bulleted_blocked_signal_to_verify_owner(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1679,7 +1815,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                     },
                 },
             )
-            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path = base_dir / "implement_handoff.md"
             handoff_path.write_text("STATUS: implement\n", encoding="utf-8")
 
             core = watcher_core.WatcherCore(
@@ -1704,9 +1840,9 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                     "• STATUS: implement_blocked\n"
                     "  BLOCK_REASON: conflict_count_owner_out_of_scope\n"
                     "  BLOCK_REASON_CODE: scope_missing_owner\n"
-                    "  REQUEST: codex_triage\n"
-                    "  ESCALATION_CLASS: codex_triage\n"
-                    "  HANDOFF: .pipeline/claude_handoff.md\n"
+                    "  REQUEST: verify_triage\n"
+                    "  ESCALATION_CLASS: verify_triage\n"
+                    "  HANDOFF: .pipeline/implement_handoff.md\n"
                     f"  HANDOFF_SHA: {handoff_sha}\n"
                     "  BLOCK_ID: block-role-bound-001\n"
                     "› Summarize recent commits\n"
@@ -1728,7 +1864,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             self.assertIn("BLOCK_REASON_CODE: scope_missing_owner", args[1])
             self.assertIn("BLOCK_ID: block-role-bound-001", args[1])
             self.assertEqual(kwargs.get("pane_type"), "claude")
-            self.assertEqual(core._last_claude_blocked_fingerprint, "block-role-bound-001")
+            self.assertEqual(core._last_implement_blocked_fingerprint, "block-role-bound-001")
 
     def test_same_block_id_is_not_redispatched_while_outstanding(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1738,7 +1874,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             base_dir = root / ".pipeline"
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
-            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path = base_dir / "implement_handoff.md"
             handoff_path.write_text("STATUS: implement\n")
 
             core = watcher_core.WatcherCore(
@@ -1762,8 +1898,8 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                 "claude-pane": (
                     "STATUS: implement_blocked\n"
                     "BLOCK_REASON: handoff_not_actionable\n"
-                    "REQUEST: codex_triage\n"
-                    "HANDOFF: .pipeline/claude_handoff.md\n"
+                    "REQUEST: verify_triage\n"
+                    "HANDOFF: .pipeline/implement_handoff.md\n"
                     f"HANDOFF_SHA: {handoff_sha}\n"
                     "BLOCK_ID: block-dedupe\n"
                 ),
@@ -1777,7 +1913,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                     core._poll()
 
             self.assertEqual(send.call_count, 1)
-            self.assertEqual(core._last_claude_blocked_fingerprint, "block-dedupe")
+            self.assertEqual(core._last_implement_blocked_fingerprint, "block-dedupe")
 
     def test_uncorroborated_materialized_block_is_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1800,7 +1936,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path = base_dir / "implement_handoff.md"
             handoff_path.write_text(
                 "\n".join(
                     [
@@ -1840,9 +1976,9 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                     "STATUS: implement_blocked\n"
                     "BLOCK_REASON: slice_already_materialized\n"
                     "BLOCK_REASON_CODE: handoff_already_applied\n"
-                    "REQUEST: codex_triage\n"
-                    "ESCALATION_CLASS: codex_triage\n"
-                    "HANDOFF: .pipeline/claude_handoff.md\n"
+                    "REQUEST: verify_triage\n"
+                    "ESCALATION_CLASS: verify_triage\n"
+                    "HANDOFF: .pipeline/implement_handoff.md\n"
                     f"HANDOFF_SHA: {handoff_sha}\n"
                     "BLOCK_ID: block-materialized-false-positive\n"
                 ),
@@ -1855,7 +1991,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                     core._poll()
 
             send.assert_not_called()
-            self.assertEqual(core._last_claude_blocked_fingerprint, "")
+            self.assertEqual(core._last_implement_blocked_fingerprint, "")
             raw_events = [
                 json.loads(line)
                 for line in (core.events_dir / "raw.jsonl").read_text(encoding="utf-8").splitlines()
@@ -1874,7 +2010,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             base_dir = root / ".pipeline"
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
-            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path = base_dir / "implement_handoff.md"
             handoff_path.write_text("STATUS: implement\n", encoding="utf-8")
 
             core = watcher_core.WatcherCore(
@@ -1898,8 +2034,8 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                 "claude-pane": (
                     "STATUS: implement_blocked\n"
                     "BLOCK_REASON: handoff_not_actionable\n"
-                    "REQUEST: codex_triage\n"
-                    "HANDOFF: .pipeline/claude_handoff.md\n"
+                    "REQUEST: verify_triage\n"
+                    "HANDOFF: .pipeline/implement_handoff.md\n"
                     f"HANDOFF_SHA: {handoff_sha}\n"
                     "BLOCK_ID: block-deferred-dedupe\n"
                 ),
@@ -1913,10 +2049,10 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                     core._poll()
 
             send.assert_not_called()
-            self.assertEqual(core._last_claude_blocked_fingerprint, "block-deferred-dedupe")
+            self.assertEqual(core._last_implement_blocked_fingerprint, "block-deferred-dedupe")
             self.assertEqual(len(core.dispatch_queue.pending_notifications), 1)
             pending_key = next(iter(core.dispatch_queue.pending_notifications))
-            self.assertEqual(pending_key, "codex_verify:codex_blocked_triage:na")
+            self.assertEqual(pending_key, "codex_verify:verify_blocked_triage:na")
             raw_events = [
                 json.loads(line)
                 for line in (core.events_dir / "raw.jsonl").read_text(encoding="utf-8").splitlines()
@@ -1933,7 +2069,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             base_dir = root / ".pipeline"
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
-            (base_dir / "claude_handoff.md").write_text("STATUS: implement\n")
+            (base_dir / "implement_handoff.md").write_text("STATUS: implement\n")
 
             core = watcher_core.WatcherCore(
                 {
@@ -1978,7 +2114,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             base_dir = root / ".pipeline"
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
-            (base_dir / "claude_handoff.md").write_text("STATUS: implement\n", encoding="utf-8")
+            (base_dir / "implement_handoff.md").write_text("STATUS: implement\n", encoding="utf-8")
 
             core = watcher_core.WatcherCore(
                 {
@@ -2039,7 +2175,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
             operator_path = base_dir / "operator_request.md"
-            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path = base_dir / "implement_handoff.md"
             operator_path.write_text("STATUS: needs_operator\n")
             handoff_path.write_text("STATUS: implement\n")
             os.utime(operator_path, (100.0, 100.0))
@@ -2068,8 +2204,8 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             base_dir = root / ".pipeline"
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
-            request_path = base_dir / "gemini_request.md"
-            handoff_path = base_dir / "claude_handoff.md"
+            request_path = base_dir / "advisory_request.md"
+            handoff_path = base_dir / "implement_handoff.md"
             request_path.write_text("STATUS: request_open\nCONTROL_SEQ: 8\n")
             handoff_path.write_text("STATUS: implement\nCONTROL_SEQ: 7\n")
             os.utime(request_path, (100.0, 100.0))
@@ -2090,7 +2226,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             self.assertEqual(active.control_seq, 8)
             self.assertEqual(core._resolve_turn(), "gemini")
 
-    def test_stale_gemini_slots_do_not_block_newer_handoff(self) -> None:
+    def test_stale_advisory_slots_do_not_block_newer_handoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -2098,9 +2234,9 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             base_dir = root / ".pipeline"
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
-            request_path = base_dir / "gemini_request.md"
-            advice_path = base_dir / "gemini_advice.md"
-            handoff_path = base_dir / "claude_handoff.md"
+            request_path = base_dir / "advisory_request.md"
+            advice_path = base_dir / "advisory_advice.md"
+            handoff_path = base_dir / "implement_handoff.md"
             request_path.write_text("STATUS: request_open\nCONTROL_SEQ: 2\n")
             advice_path.write_text("STATUS: advice_ready\nCONTROL_SEQ: 3\n")
             handoff_path.write_text("STATUS: implement\nCONTROL_SEQ: 4\n")
@@ -2120,8 +2256,8 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             active = core._get_active_control_signal()
             self.assertIsNotNone(active)
             self.assertEqual(active.path, handoff_path)
-            self.assertEqual(core._get_pending_gemini_request_mtime(), 0.0)
-            self.assertEqual(core._get_pending_gemini_advice_mtime(), 0.0)
+            self.assertEqual(core._get_pending_advisory_request_mtime(), 0.0)
+            self.assertEqual(core._get_pending_advisory_advice_mtime(), 0.0)
             self.assertEqual(core._resolve_turn(), "claude")
 
 
@@ -2373,7 +2509,7 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
                 capture_pane_text=mock.Mock(return_value="› \n tab to queue message\n55% context left\n"),
                 send_keys=send_prompt,
                 get_path_sig=get_path_sig,
-                role_owner=lambda role: role,
+                role_owner=lambda role: {"implement": "Claude"}.get(role, role),
                 log_raw=log_raw,
                 append_runtime_event=append_runtime_event,
                 get_active_control_signal=mock.Mock(side_effect=active_controls),
@@ -2419,6 +2555,64 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
             log_raw.assert_not_called()
             append_runtime_event.assert_not_called()
 
+    def test_pending_control_path_accepts_legacy_alias_for_same_slot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prompt_path = root / ".pipeline" / "implement_handoff.md"
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("STATUS: implement\nCONTROL_SEQ: 31\n", encoding="utf-8")
+
+            active_control = watcher_core.ControlSignal(
+                kind="implement_handoff",
+                path=prompt_path,
+                status="implement",
+                mtime=31.0,
+                sig="sig-31",
+                control_seq=31,
+                slot_id="implement_handoff",
+                canonical_file="implement_handoff.md",
+            )
+            send_prompt = mock.Mock(return_value=True)
+            log_raw = mock.Mock()
+            append_runtime_event = mock.Mock()
+            queue = watcher_core.WatcherDispatchQueue(
+                lane_input_defer_cooldown_sec=0.0,
+                capture_pane_text=mock.Mock(return_value="› \n tab to queue message\n55% context left\n"),
+                send_keys=send_prompt,
+                get_path_sig=lambda path: path.read_text(encoding="utf-8") if path.exists() else "",
+                role_owner=lambda role: {"implement": "Claude"}.get(role, role),
+                log_raw=log_raw,
+                append_runtime_event=append_runtime_event,
+                get_active_control_signal=mock.Mock(return_value=active_control),
+                is_active_control=mock.Mock(return_value=True),
+            )
+            queue.pending_notifications = {
+                "pending-legacy-alias": {
+                    "notify_kind": "implement_handoff",
+                    "lane_role": "implement",
+                    "functional_role": "implement",
+                    "reason": "legacy_alias_recheck",
+                    "prompt": "prompt 31",
+                    "prompt_path": str(prompt_path),
+                    "target": "claude-pane",
+                    "pane_type": "claude",
+                    "control_seq": 31,
+                    "expected_status": "implement",
+                    "expected_control_path": "claude_handoff.md",
+                    "expected_control_slot": "implement_handoff",
+                    "expected_control_seq": 31,
+                    "require_active_control": False,
+                    "sig": "",
+                }
+            }
+
+            queue.flush_pending()
+
+            send_prompt.assert_called_once()
+            self.assertEqual(queue.pending_notifications, {})
+            log_raw.assert_not_called()
+            append_runtime_event.assert_not_called()
+
     def test_flush_pending_logs_structured_control_seq_drift(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2442,7 +2636,7 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
                 capture_pane_text=mock.Mock(return_value="› \n tab to queue message\n55% context left\n"),
                 send_keys=send_prompt,
                 get_path_sig=lambda path: path.read_text(encoding="utf-8") if path.exists() else "",
-                role_owner=lambda role: role,
+                role_owner=lambda role: {"implement": "Claude"}.get(role, role),
                 log_raw=log_raw,
                 append_runtime_event=append_runtime_event,
                 get_active_control_signal=mock.Mock(return_value=active_control),
@@ -2450,7 +2644,7 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
             )
             queue.pending_notifications = {
                 "pending-20": {
-                    "notify_kind": "codex_operator_retriage",
+                    "notify_kind": "verify_operator_retriage",
                     "lane_role": "verify",
                     "reason": "operator_wait_idle_retriage",
                     "prompt": "prompt 20",
@@ -2475,7 +2669,7 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
             self.assertEqual(event, "lane_input_deferred_dropped")
             self.assertEqual(path, str(prompt_path))
             self.assertEqual(job_id, "turn_signal")
-            self.assertEqual(payload["notify_kind"], "codex_operator_retriage")
+            self.assertEqual(payload["notify_kind"], "verify_operator_retriage")
             self.assertEqual(payload["reason"], "control_mismatch")
             self.assertEqual(payload["reason_code"], "control_seq_drift")
             self.assertEqual(payload["expected_control_seq"], 20)
@@ -2493,7 +2687,7 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
             base_dir = root / ".pipeline"
             run_dir = base_dir / "runs" / "run-1"
             wrapper_dir = run_dir / "wrapper-events"
-            prompt_path = base_dir / "claude_handoff.md"
+            prompt_path = base_dir / "implement_handoff.md"
             prompt_path.parent.mkdir(parents=True, exist_ok=True)
             wrapper_dir.mkdir(parents=True, exist_ok=True)
             prompt_path.write_text("STATUS: implement\nCONTROL_SEQ: 236\n", encoding="utf-8")
@@ -2541,6 +2735,7 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
                 sig="sig-236",
                 control_seq=236,
             )
+            role_owner = lambda role: {"implement": "Claude"}.get(role, role)
             send_prompt = mock.Mock(return_value=True)
             log_raw = mock.Mock()
             append_runtime_event = mock.Mock()
@@ -2549,14 +2744,14 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
                 capture_pane_text=mock.Mock(return_value="› \n tab to queue message\n55% context left\n"),
                 send_keys=send_prompt,
                 get_path_sig=lambda path: path.read_text(encoding="utf-8") if path.exists() else "",
-                role_owner=lambda role: role,
+                role_owner=role_owner,
                 log_raw=log_raw,
                 append_runtime_event=append_runtime_event,
                 get_active_control_signal=mock.Mock(return_value=active_control),
                 is_active_control=mock.Mock(return_value=True),
             )
             queue.pending_notifications = {
-                "claude_implement:claude_handoff:236": {
+                "claude_implement:implement_handoff:236": {
                     "notify_kind": "claude_handoff",
                     "lane_role": "implement",
                     "functional_role": "implement",
@@ -2569,7 +2764,7 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
                     "pane_type": "claude",
                     "control_seq": 236,
                     "expected_status": "implement",
-                    "expected_control_path": "claude_handoff.md",
+                    "expected_control_path": "implement_handoff.md",
                     "expected_control_seq": 236,
                     "require_active_control": False,
                     "sig": "",
@@ -2595,7 +2790,7 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
             base_dir = root / ".pipeline"
             run_dir = base_dir / "runs" / "run-1"
             wrapper_dir = run_dir / "wrapper-events"
-            prompt_path = base_dir / "gemini_advice.md"
+            prompt_path = base_dir / "advisory_advice.md"
             prompt_path.parent.mkdir(parents=True, exist_ok=True)
             wrapper_dir.mkdir(parents=True, exist_ok=True)
             prompt_path.write_text("STATUS: advice_ready\nCONTROL_SEQ: 237\n", encoding="utf-8")
@@ -2658,20 +2853,20 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
                 is_active_control=mock.Mock(return_value=True),
             )
             queue.pending_notifications = {
-                "claude_verify:gemini_advice_followup:237": {
-                    "notify_kind": "gemini_advice_followup",
+                "claude_verify:advisory_advice_followup:237": {
+                    "notify_kind": "advisory_advice_followup",
                     "lane_role": "verify",
                     "functional_role": "verify",
                     "lane_id": "claude_verify",
                     "agent_kind": "claude",
-                    "reason": "gemini_advice_updated",
+                    "reason": "advisory_advice_updated",
                     "prompt": "prompt 237",
                     "prompt_path": str(prompt_path),
                     "target": "claude-pane",
                     "pane_type": "claude",
                     "control_seq": 237,
                     "expected_status": "advice_ready",
-                    "expected_control_path": "gemini_advice.md",
+                    "expected_control_path": "advisory_advice.md",
                     "expected_control_seq": 237,
                     "require_active_control": False,
                     "sig": "",
@@ -2734,11 +2929,11 @@ class ClaudeHandoffDispatchTest(unittest.TestCase):
                 }
             )
 
-            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path = base_dir / "implement_handoff.md"
             handoff_path.write_text("STATUS: implement\nCONTROL_SEQ: 10\n")
             core.lease.acquire("slot_verify", "job-1", 1, "codex-pane", ttl=900)
 
-            with mock.patch.object(core, "_notify_claude") as notify:
+            with mock.patch.object(core, "_notify_implement_owner") as notify:
                 core._check_pipeline_signal_updates()
                 notify.assert_not_called()
                 # Handoff detected but verify active, so stays at current state
@@ -2772,13 +2967,13 @@ class ClaudeHandoffDispatchTest(unittest.TestCase):
                 }
             )
 
-            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path = base_dir / "implement_handoff.md"
             handoff_path.write_text("STATUS: implement\nCONTROL_SEQ: 10\n")
             core.lease.acquire("slot_verify", "job-1", 1, "codex-pane", ttl=900)
 
             with (
                 mock.patch("watcher_core.os.kill", side_effect=ProcessLookupError),
-                mock.patch.object(core, "_notify_claude") as notify,
+                mock.patch.object(core, "_notify_implement_owner") as notify,
             ):
                 core._check_pipeline_signal_updates()
                 notify.assert_called_once()
@@ -2823,7 +3018,7 @@ class ClaudeHandoffDispatchTest(unittest.TestCase):
             self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
             core.lease.acquire("slot_verify", job.job_id, job.round, "codex-pane", ttl=900)
 
-            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path = base_dir / "implement_handoff.md"
             handoff_path.write_text("STATUS: implement\nCONTROL_SEQ: 292\n", encoding="utf-8")
             verify_note = root / "verify" / "4" / "18" / "2026-04-18-current-verification.md"
             _write_verify_note_for_work(verify_note, "work/4/18/2026-04-18-current.md")
@@ -2851,7 +3046,7 @@ class ClaudeHandoffDispatchTest(unittest.TestCase):
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE)
             self.assertFalse((core.state_dir / f"{stale_job_id}.json").exists())
 
-    def test_handoff_update_releases_from_codex_followup(self) -> None:
+    def test_handoff_update_releases_from_verify_followup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work" / "4" / "8"
@@ -2873,17 +3068,17 @@ class ClaudeHandoffDispatchTest(unittest.TestCase):
                 }
             )
 
-            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path = base_dir / "implement_handoff.md"
             handoff_path.write_text("STATUS: implement\nCONTROL_SEQ: 10\n")
             core._transition_turn(
                 watcher_core.WatcherTurnState.VERIFY_FOLLOWUP,
                 "test_followup_active",
-                active_control_file="gemini_advice.md",
+                active_control_file="advisory_advice.md",
                 active_control_seq=9,
             )
             core.lease.acquire("slot_verify", "job-1", 1, "codex-pane", ttl=900)
 
-            with mock.patch.object(core, "_notify_claude") as notify:
+            with mock.patch.object(core, "_notify_implement_owner") as notify:
                 core._check_pipeline_signal_updates()
                 notify.assert_not_called()
                 self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
@@ -2920,7 +3115,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
                     },
                 },
             )
-            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path = base_dir / "implement_handoff.md"
             handoff_path.write_text("STATUS: implement\n", encoding="utf-8")
             work_note = watch_dir / "2026-04-09-runtime-role-neutral.md"
             work_note.write_text("## 변경 파일\n- watcher_core.py\n", encoding="utf-8")
@@ -2949,6 +3144,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
 
             self.assertIn("ROLE: implement", implement_prompt)
             self.assertIn("OWNER: Codex", implement_prompt)
+            self.assertIn("ROLE_HARNESS: .pipeline/harness/implement.md", implement_prompt)
             self.assertNotIn("claude_implement", implement_prompt)
             self.assertIn("AGENTS.md", implement_prompt)
             self.assertNotIn("OWNER: Claude", implement_prompt)
@@ -2960,25 +3156,28 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
 
             self.assertIn("ROLE: verify", verify_prompt)
             self.assertIn("OWNER: Claude", verify_prompt)
+            self.assertIn("ROLE_HARNESS: .pipeline/harness/verify.md", verify_prompt)
+            self.assertIn("COUNCIL_HARNESS: .pipeline/harness/council.md", verify_prompt)
             self.assertNotIn("codex_verify", verify_prompt)
             self.assertIn("CLAUDE.md", verify_prompt)
             self.assertIn("GOAL:", verify_prompt)
             self.assertIn("verify the latest `/work`, update `/verify`, then write exactly one next control", verify_prompt)
             self.assertIn("keep `READ_FIRST` to the listed verify-owner root doc only", verify_prompt)
             self.assertIn("after 3+ same-day same-family docs-only truth-sync rounds", verify_prompt)
-            self.assertIn("do not route commit/push/PR publish work to `.pipeline/claude_handoff.md`", verify_prompt)
+            self.assertIn("do not route commit/push/PR publish work to `.pipeline/implement_handoff.md`", verify_prompt)
             self.assertIn("keep its `READ_FIRST` to the implement-owner root doc only", verify_prompt)
             self.assertNotIn("work/README.md", verify_prompt)
             self.assertNotIn("verify/README.md", verify_prompt)
             self.assertNotIn("VERIFY: 없음", verify_prompt)
             self.assertNotIn("\n- 없음", verify_prompt)
-            self.assertIn(".pipeline/claude_handoff.md [implement]", verify_prompt)
+            self.assertIn(".pipeline/implement_handoff.md [implement]", verify_prompt)
             self.assertIn("CONTROL_SEQ:", verify_prompt)
             self.assertNotIn(".pipeline/README.md", verify_prompt)
             self.assertNotIn("never route needs_operator to Claude", verify_prompt)
 
             self.assertIn("ROLE: advisory", advisory_prompt)
             self.assertIn("OWNER: Gemini", advisory_prompt)
+            self.assertIn("ROLE_HARNESS: .pipeline/harness/advisory.md", advisory_prompt)
             self.assertNotIn("gemini_arbitrate", advisory_prompt)
             self.assertIn("GEMINI.md", advisory_prompt)
             self.assertIn("keep `READ_FIRST` to the listed advisory-owner root doc only", advisory_prompt)
@@ -2993,14 +3192,14 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
             self.assertNotIn("codex_followup", followup_prompt)
             self.assertIn("CLAUDE.md", followup_prompt)
             self.assertIn("keep `READ_FIRST` to the listed verify-owner root doc only", followup_prompt)
-            self.assertIn("do not route commit/push/PR publish work to `.pipeline/claude_handoff.md`", followup_prompt)
+            self.assertIn("do not route commit/push/PR publish work to `.pipeline/implement_handoff.md`", followup_prompt)
             self.assertIn("keep its `READ_FIRST` to the implement-owner root doc only", followup_prompt)
             self.assertNotIn("verify/README.md", followup_prompt)
             self.assertIn("GOAL:", followup_prompt)
             self.assertIn("turn the advisory into exactly one next control", followup_prompt)
             self.assertNotIn("(없음)", followup_prompt)
 
-    def test_gemini_request_dispatch_allows_advisory_without_session_arbitration(self) -> None:
+    def test_advisory_request_dispatch_allows_advisory_without_session_arbitration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -3025,8 +3224,8 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
                     },
                 },
             )
-            gemini_request = base_dir / "gemini_request.md"
-            gemini_request.write_text("STATUS: request_open\nCONTROL_SEQ: 5\n", encoding="utf-8")
+            advisory_request = base_dir / "advisory_request.md"
+            advisory_request.write_text("STATUS: request_open\nCONTROL_SEQ: 5\n", encoding="utf-8")
 
             core = watcher_core.WatcherCore(
                 {
@@ -3039,7 +3238,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
                     "gemini_pane_target": "gemini-pane",
                 }
             )
-            core._last_gemini_request_sig = ""
+            core._last_advisory_request_sig = ""
 
             with mock.patch("watcher_core.tmux_send_keys", return_value=True) as send:
                 with mock.patch(
@@ -3051,6 +3250,45 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
             args, kwargs = send.call_args
             self.assertEqual(args[0], "gemini-pane")
             self.assertEqual(kwargs.get("pane_type"), "gemini")
+
+    def test_startup_advisory_turn_records_active_advisory_request_control(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir = root / ".pipeline"
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+            (base_dir / "advisory_request.md").write_text(
+                "STATUS: request_open\nCONTROL_SEQ: 41\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "startup_grace_sec": 0.0,
+                }
+            )
+            core.started_at = time.time() - 1.0
+
+            with mock.patch.object(core, "_notify_advisory_owner") as notify:
+                core._poll()
+
+            notify.assert_called_once_with("startup_turn_advisory")
+            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.ADVISORY_ACTIVE)
+            self.assertEqual(core._turn_active_control_file, "advisory_request.md")
+            self.assertEqual(core._turn_active_control_seq, 41)
+
+            turn_state = json.loads((base_dir / "state" / "turn_state.json").read_text(encoding="utf-8"))
+            self.assertEqual(turn_state["state"], "ADVISORY_ACTIVE")
+            self.assertEqual(turn_state["active_control_file"], "advisory_request.md")
+            self.assertEqual(turn_state["active_control_seq"], 41)
+            self.assertEqual(turn_state["active_role"], "advisory")
+            self.assertEqual(turn_state["active_lane"], "Gemini")
 
     def test_operator_request_disabled_is_not_active_control(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3078,7 +3316,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
                 },
             )
             operator_path = base_dir / "operator_request.md"
-            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path = base_dir / "implement_handoff.md"
             operator_path.write_text("STATUS: needs_operator\nCONTROL_SEQ: 9\n", encoding="utf-8")
             handoff_path.write_text("STATUS: implement\nCONTROL_SEQ: 8\n", encoding="utf-8")
 
@@ -3096,7 +3334,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
             self.assertEqual(active.path, handoff_path)
             self.assertEqual(core._get_pending_operator_mtime(), 0.0)
 
-    def test_gemini_request_disabled_without_advisory_lane(self) -> None:
+    def test_advisory_request_disabled_without_advisory_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -3121,9 +3359,9 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
                     },
                 },
             )
-            gemini_request = base_dir / "gemini_request.md"
-            handoff_path = base_dir / "claude_handoff.md"
-            gemini_request.write_text("STATUS: request_open\nCONTROL_SEQ: 9\n", encoding="utf-8")
+            advisory_request = base_dir / "advisory_request.md"
+            handoff_path = base_dir / "implement_handoff.md"
+            advisory_request.write_text("STATUS: request_open\nCONTROL_SEQ: 9\n", encoding="utf-8")
             handoff_path.write_text("STATUS: implement\nCONTROL_SEQ: 8\n", encoding="utf-8")
 
             core = watcher_core.WatcherCore(
@@ -3138,7 +3376,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
             active = core._get_active_control_signal()
             self.assertIsNotNone(active)
             self.assertEqual(active.path, handoff_path)
-            self.assertEqual(core._get_gemini_request_mtime(), 0.0)
+            self.assertEqual(core._get_advisory_request_mtime(), 0.0)
 
     def test_verify_owner_updates_runtime_verify_target_and_type(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3206,7 +3444,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
                     },
                 },
             )
-            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path = base_dir / "implement_handoff.md"
             handoff_path.write_text("STATUS: implement\n", encoding="utf-8")
 
             core = watcher_core.WatcherCore(
@@ -3226,7 +3464,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
                     "watcher_core._capture_pane_text",
                     return_value="OpenAI Codex\n› Type your message\n",
                 ):
-                    core._notify_claude("test-runtime-implement", handoff_path)
+                    core._notify_implement_owner("test-runtime-implement", handoff_path)
 
             args, kwargs = send.call_args
             self.assertEqual(args[0], "codex-pane")
@@ -3257,7 +3495,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
                     },
                 },
             )
-            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path = base_dir / "implement_handoff.md"
             handoff_path.write_text("STATUS: implement\n", encoding="utf-8")
 
             core = watcher_core.WatcherCore(
@@ -3277,7 +3515,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
                     "watcher_core._capture_pane_text",
                     return_value="OpenAI Codex\n› Type your message\n",
                 ):
-                    core._notify_claude("test-runtime-implement", handoff_path)
+                    core._notify_implement_owner("test-runtime-implement", handoff_path)
 
             args, kwargs = send.call_args
             self.assertEqual(args[0], "codex-pane")
@@ -3308,7 +3546,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
                     },
                 },
             )
-            (base_dir / "claude_handoff.md").write_text("STATUS: implement\n", encoding="utf-8")
+            (base_dir / "implement_handoff.md").write_text("STATUS: implement\n", encoding="utf-8")
 
             core = watcher_core.WatcherCore(
                 {
@@ -3427,7 +3665,7 @@ class TurnResolutionTest(unittest.TestCase):
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
 
-            handoff = base_dir / "claude_handoff.md"
+            handoff = base_dir / "implement_handoff.md"
             handoff.write_text("STATUS: implement\nCONTROL_SEQ: 17\n", encoding="utf-8")
 
             work_note = watch_dir / "4" / "10" / "2026-04-10-some-work.md"
@@ -3453,7 +3691,7 @@ class TurnResolutionTest(unittest.TestCase):
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
 
-            handoff = base_dir / "claude_handoff.md"
+            handoff = base_dir / "implement_handoff.md"
             handoff.write_text("STATUS: implement\nCONTROL_SEQ: 17\n", encoding="utf-8")
 
             core = watcher_core.WatcherCore({
@@ -3480,7 +3718,7 @@ class TurnResolutionTest(unittest.TestCase):
             old_mtime = time.time() - 60.0
             os.utime(work_note, (old_mtime, old_mtime))
 
-            handoff = base_dir / "claude_handoff.md"
+            handoff = base_dir / "implement_handoff.md"
             handoff.write_text("STATUS: implement\nCONTROL_SEQ: 17\n", encoding="utf-8")
 
             core = watcher_core.WatcherCore({
@@ -3491,7 +3729,7 @@ class TurnResolutionTest(unittest.TestCase):
             })
 
             turn = core._resolve_turn()
-            dispatch_state = core._claude_handoff_dispatch_state(handoff.stat().st_mtime)
+            dispatch_state = core._implement_handoff_dispatch_state(handoff.stat().st_mtime)
 
             self.assertEqual(turn, "claude")
             self.assertFalse(dispatch_state["pending_verify"])
@@ -3517,7 +3755,7 @@ class TurnResolutionTest(unittest.TestCase):
             turn = core._resolve_turn()
             self.assertEqual(turn, "idle")
 
-    def test_stale_operator_request_resolves_to_codex_followup(self) -> None:
+    def test_stale_operator_request_resolves_to_verify_followup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -3570,9 +3808,9 @@ class TurnResolutionTest(unittest.TestCase):
             marker = core._stale_operator_control_marker()
             self.assertIsNotNone(marker)
             self.assertEqual(core._get_pending_operator_mtime(), 0.0)
-            self.assertEqual(core._resolve_turn(), "codex_followup")
+            self.assertEqual(core._resolve_turn(), "verify_followup")
 
-    def test_aged_operator_request_resolves_to_codex_followup(self) -> None:
+    def test_aged_operator_request_resolves_to_verify_followup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -3610,9 +3848,9 @@ class TurnResolutionTest(unittest.TestCase):
             marker = core._operator_control_recovery_marker()
             self.assertIsNotNone(marker)
             self.assertEqual(marker["reason"], "operator_wait_idle_retriage")
-            self.assertEqual(core._resolve_turn(), "codex_followup")
+            self.assertEqual(core._resolve_turn(), "verify_followup")
 
-    def test_satisfied_commit_push_operator_request_routes_to_codex_followup(self) -> None:
+    def test_satisfied_commit_push_operator_request_routes_to_verify_followup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             repo, _remote = _init_repo_with_commit_push(root)
@@ -3637,10 +3875,10 @@ class TurnResolutionTest(unittest.TestCase):
             self.assertEqual(marker["branch"], "main")
             self.assertEqual(marker["upstream"], "origin/main")
             self.assertEqual(core._get_pending_operator_mtime(), 0.0)
-            self.assertEqual(core._resolve_turn(), "codex_followup")
+            self.assertEqual(core._resolve_turn(), "verify_followup")
 
             core._last_operator_request_sig = ""
-            with mock.patch.object(core, "_notify_codex_control_recovery") as notify:
+            with mock.patch.object(core, "_notify_verify_control_recovery") as notify:
                 core._check_pipeline_signal_updates()
 
             notify.assert_called_once()
@@ -3661,7 +3899,7 @@ class TurnResolutionTest(unittest.TestCase):
             raw_text = (base_dir / "logs" / "experimental" / "raw.jsonl").read_text(encoding="utf-8")
             self.assertIn(OPERATOR_APPROVAL_COMPLETED_REASON, raw_text)
 
-    def test_satisfied_commit_push_bundle_authorization_routes_to_codex_followup(self) -> None:
+    def test_satisfied_commit_push_bundle_authorization_routes_to_verify_followup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             repo, _remote = _init_repo_with_commit_push(root)
@@ -3690,9 +3928,9 @@ class TurnResolutionTest(unittest.TestCase):
             self.assertIsNotNone(marker)
             self.assertEqual(marker["reason"], OPERATOR_APPROVAL_COMPLETED_REASON)
             self.assertEqual(marker["control_seq"], 49)
-            self.assertEqual(core._resolve_turn(), "codex_followup")
+            self.assertEqual(core._resolve_turn(), "verify_followup")
 
-    def test_dirty_commit_push_bundle_authorization_routes_to_codex_followup(self) -> None:
+    def test_dirty_commit_push_bundle_authorization_routes_to_verify_followup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             repo, _remote = _init_repo_with_commit_push(root)
@@ -3722,8 +3960,8 @@ class TurnResolutionTest(unittest.TestCase):
             self.assertIsNotNone(marker)
             self.assertEqual(marker["reason"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
             self.assertEqual(marker["mode"], "triage")
-            self.assertEqual(marker["routed_to"], "codex_followup")
-            self.assertEqual(core._resolve_turn(), "codex_followup")
+            self.assertEqual(marker["routed_to"], "verify_followup")
+            self.assertEqual(core._resolve_turn(), "verify_followup")
 
     def test_commit_push_operator_request_without_upstream_stays_operator_turn(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3815,9 +4053,9 @@ class TurnResolutionTest(unittest.TestCase):
             watch_dir.mkdir(parents=True, exist_ok=True)
             _write_commit_push_operator_request(base_dir, seq=48)
             for filename, status in {
-                "claude_handoff.md": "STATUS: implement\nCONTROL_SEQ: 1\n",
-                "gemini_request.md": "STATUS: request_open\nCONTROL_SEQ: 2\n",
-                "gemini_advice.md": "STATUS: advice_ready\nCONTROL_SEQ: 3\n",
+                "implement_handoff.md": "STATUS: implement\nCONTROL_SEQ: 1\n",
+                "advisory_request.md": "STATUS: request_open\nCONTROL_SEQ: 2\n",
+                "advisory_advice.md": "STATUS: advice_ready\nCONTROL_SEQ: 3\n",
             }.items():
                 (base_dir / filename).write_text(status, encoding="utf-8")
 
@@ -3834,7 +4072,7 @@ class TurnResolutionTest(unittest.TestCase):
             self.assertIsNotNone(marker)
             self.assertEqual(marker["reason"], OPERATOR_APPROVAL_COMPLETED_REASON)
 
-    def test_fresh_slice_ambiguity_operator_request_routes_to_codex_followup(self) -> None:
+    def test_fresh_slice_ambiguity_operator_request_routes_to_verify_followup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -3867,7 +4105,7 @@ class TurnResolutionTest(unittest.TestCase):
             self.assertIsNotNone(marker)
             self.assertEqual(marker["reason"], "slice_ambiguity")
             self.assertEqual(marker["operator_policy"], "gate_24h")
-            self.assertEqual(core._resolve_turn(), "codex_followup")
+            self.assertEqual(core._resolve_turn(), "verify_followup")
 
     def test_next_slice_alias_operator_request_stays_gated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3904,7 +4142,7 @@ class TurnResolutionTest(unittest.TestCase):
             self.assertEqual(marker["reason_code"], "slice_ambiguity")
             self.assertEqual(marker["operator_policy"], "gate_24h")
             self.assertEqual(marker["classification_source"], "operator_policy")
-            self.assertEqual(core._resolve_turn(), "codex_followup")
+            self.assertEqual(core._resolve_turn(), "verify_followup")
 
     def test_choice_menu_operator_request_routes_to_followup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3948,7 +4186,7 @@ class TurnResolutionTest(unittest.TestCase):
             self.assertEqual(marker["reason"], "slice_ambiguity")
             self.assertEqual(marker["decision_class"], "next_slice_selection")
             self.assertEqual(marker["operator_policy"], "gate_24h")
-            self.assertEqual(core._resolve_turn(), "codex_followup")
+            self.assertEqual(core._resolve_turn(), "verify_followup")
 
     def test_numbered_choice_menu_operator_request_routes_to_followup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3992,7 +4230,7 @@ class TurnResolutionTest(unittest.TestCase):
             self.assertEqual(marker["reason"], "slice_ambiguity")
             self.assertEqual(marker["decision_class"], "next_slice_selection")
             self.assertEqual(marker["operator_policy"], "gate_24h")
-            self.assertEqual(core._resolve_turn(), "codex_followup")
+            self.assertEqual(core._resolve_turn(), "verify_followup")
 
     def test_parenthesized_inline_choice_operator_request_routes_to_followup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4036,7 +4274,7 @@ class TurnResolutionTest(unittest.TestCase):
             self.assertEqual(marker["reason"], "slice_ambiguity")
             self.assertEqual(marker["decision_class"], "next_slice_selection")
             self.assertEqual(marker["operator_policy"], "gate_24h")
-            self.assertEqual(core._resolve_turn(), "codex_followup")
+            self.assertEqual(core._resolve_turn(), "verify_followup")
 
     def test_real_approval_required_gate_stays_operator_turn(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4083,8 +4321,8 @@ class TurnResolutionTest(unittest.TestCase):
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
 
-            gemini_request_path = base_dir / "gemini_request.md"
-            gemini_request_path.write_text(
+            advisory_request_path = base_dir / "advisory_request.md"
+            advisory_request_path.write_text(
                 "\n".join(
                     [
                         "STATUS: request_open",
@@ -4094,8 +4332,8 @@ class TurnResolutionTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            gemini_advice_path = base_dir / "gemini_advice.md"
-            gemini_advice_path.write_text(
+            advisory_advice_path = base_dir / "advisory_advice.md"
+            advisory_advice_path.write_text(
                 "\n".join(
                     [
                         "STATUS: advice_ready",
@@ -4133,14 +4371,14 @@ class TurnResolutionTest(unittest.TestCase):
             core._check_pipeline_signal_updates()
 
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.OPERATOR_WAIT)
-            self.assertEqual(core._get_pending_gemini_request_mtime(), 0.0)
-            self.assertEqual(core._get_pending_gemini_advice_mtime(), 0.0)
-            self.assertEqual(core._last_gemini_request_sig, core._get_path_sig(gemini_request_path))
-            self.assertEqual(core._last_gemini_advice_sig, core._get_path_sig(gemini_advice_path))
-            self.assertIn("STATUS: superseded", gemini_request_path.read_text(encoding="utf-8"))
-            self.assertIn("STATUS: superseded", gemini_advice_path.read_text(encoding="utf-8"))
-            self.assertIn("SUPERSEDED_BY_SEQ: 30", gemini_request_path.read_text(encoding="utf-8"))
-            self.assertIn("SUPERSEDED_BY_SEQ: 30", gemini_advice_path.read_text(encoding="utf-8"))
+            self.assertEqual(core._get_pending_advisory_request_mtime(), 0.0)
+            self.assertEqual(core._get_pending_advisory_advice_mtime(), 0.0)
+            self.assertEqual(core._last_advisory_request_sig, core._get_path_sig(advisory_request_path))
+            self.assertEqual(core._last_advisory_advice_sig, core._get_path_sig(advisory_advice_path))
+            self.assertIn("STATUS: superseded", advisory_request_path.read_text(encoding="utf-8"))
+            self.assertIn("STATUS: superseded", advisory_advice_path.read_text(encoding="utf-8"))
+            self.assertIn("SUPERSEDED_BY_SEQ: 30", advisory_request_path.read_text(encoding="utf-8"))
+            self.assertIn("SUPERSEDED_BY_SEQ: 30", advisory_advice_path.read_text(encoding="utf-8"))
 
     def test_choice_menu_operator_request_ignores_explanatory_body_blocker_markers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4188,7 +4426,7 @@ class TurnResolutionTest(unittest.TestCase):
             self.assertEqual(marker["reason"], "slice_ambiguity")
             self.assertEqual(marker["decision_class"], "next_slice_selection")
             self.assertEqual(marker["operator_policy"], "gate_24h")
-            self.assertEqual(core._resolve_turn(), "codex_followup")
+            self.assertEqual(core._resolve_turn(), "verify_followup")
 
     def test_slice_ambiguity_operator_request_with_verified_work_stays_gated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4244,8 +4482,8 @@ class TurnResolutionTest(unittest.TestCase):
 
             core._last_operator_request_sig = ""
             with (
-                mock.patch.object(core, "_notify_codex_control_recovery") as recovery_notify,
-                mock.patch.object(core, "_notify_codex_operator_retriage") as retriage_notify,
+                mock.patch.object(core, "_notify_verify_control_recovery") as recovery_notify,
+                mock.patch.object(core, "_notify_verify_operator_retriage") as retriage_notify,
             ):
                 core._check_pipeline_signal_updates()
 
@@ -4319,7 +4557,7 @@ class TurnResolutionTest(unittest.TestCase):
             self.assertEqual(marker["mode"], "hibernate")
             self.assertEqual(core._resolve_turn(), "idle")
 
-    def test_waiting_next_control_next_slice_selection_routes_to_codex_followup(self) -> None:
+    def test_waiting_next_control_next_slice_selection_routes_to_verify_followup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -4353,8 +4591,8 @@ class TurnResolutionTest(unittest.TestCase):
             self.assertEqual(marker["reason"], "waiting_next_control")
             self.assertEqual(marker["operator_policy"], "internal_only")
             self.assertEqual(marker["mode"], "triage")
-            self.assertEqual(marker["routed_to"], "codex_followup")
-            self.assertEqual(core._resolve_turn(), "codex_followup")
+            self.assertEqual(marker["routed_to"], "verify_followup")
+            self.assertEqual(core._resolve_turn(), "verify_followup")
 
     def test_operator_request_missing_structured_headers_stays_fail_safe_operator(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4393,7 +4631,7 @@ class TurnResolutionTest(unittest.TestCase):
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
 
-            handoff = base_dir / "claude_handoff.md"
+            handoff = base_dir / "implement_handoff.md"
             handoff.write_text("STATUS: implement\nCONTROL_SEQ: 17\n", encoding="utf-8")
 
             meta_note = watch_dir / "4" / "10" / "2026-04-10-meta-only.md"
@@ -4551,7 +4789,7 @@ class ControlSeqAgeTrackerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             core = self._make_core(root)
-            (root / ".pipeline" / "claude_handoff.md").write_text(
+            (root / ".pipeline" / "implement_handoff.md").write_text(
                 "STATUS: implement\nCONTROL_SEQ: 31\n",
                 encoding="utf-8",
             )
@@ -4566,7 +4804,7 @@ class ControlSeqAgeTrackerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             core = self._make_core(root)
-            handoff = root / ".pipeline" / "claude_handoff.md"
+            handoff = root / ".pipeline" / "implement_handoff.md"
             handoff.write_text("STATUS: implement\nCONTROL_SEQ: 41\n", encoding="utf-8")
             self.assertEqual(core._refresh_control_seq_age(), 0)
             self.assertEqual(core._refresh_control_seq_age(), 1)
@@ -4593,7 +4831,7 @@ class ControlSeqAgeTrackerTest(unittest.TestCase):
             root = Path(tmp)
             core = self._make_core(root)
             base_dir = root / ".pipeline"
-            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path = base_dir / "implement_handoff.md"
             handoff_text = "STATUS: implement\nCONTROL_SEQ: 31\n"
             handoff_path.write_text(handoff_text, encoding="utf-8")
 
@@ -4602,7 +4840,7 @@ class ControlSeqAgeTrackerTest(unittest.TestCase):
                 STALE_CONTROL_CYCLE_THRESHOLD + STALE_ADVISORY_GRACE_CYCLES
             )
 
-            with mock.patch.object(core, "_notify_gemini") as notify:
+            with mock.patch.object(core, "_notify_advisory_owner") as notify:
                 wrote = core._maybe_write_stale_control_advisory_request()
 
             self.assertTrue(wrote)
@@ -4611,11 +4849,11 @@ class ControlSeqAgeTrackerTest(unittest.TestCase):
             self.assertFalse((base_dir / "operator_request.md").exists())
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.ADVISORY_ACTIVE)
             self.assertEqual(core._turn_active_control_seq, 32)
-            request_text = (base_dir / "gemini_request.md").read_text(encoding="utf-8")
+            request_text = (base_dir / "advisory_request.md").read_text(encoding="utf-8")
             self.assertIn("STATUS: request_open", request_text)
             self.assertIn("CONTROL_SEQ: 32", request_text)
             self.assertIn("REASON_CODE: stale_control_advisory", request_text)
-            self.assertIn("SUPERSEDES: .pipeline/claude_handoff.md CONTROL_SEQ 31", request_text)
+            self.assertIn("SUPERSEDES: .pipeline/implement_handoff.md CONTROL_SEQ 31", request_text)
             raw_text = (base_dir / "logs" / "experimental" / "raw.jsonl").read_text(encoding="utf-8")
             self.assertIn("stale_control_advisory_written", raw_text)
 
@@ -4624,7 +4862,7 @@ class ControlSeqAgeTrackerTest(unittest.TestCase):
             root = Path(tmp)
             core = self._make_core(root)
             base_dir = root / ".pipeline"
-            (base_dir / "claude_handoff.md").write_text(
+            (base_dir / "implement_handoff.md").write_text(
                 "STATUS: implement\nCONTROL_SEQ: 31\n",
                 encoding="utf-8",
             )
@@ -4634,12 +4872,12 @@ class ControlSeqAgeTrackerTest(unittest.TestCase):
                 STALE_CONTROL_CYCLE_THRESHOLD + STALE_ADVISORY_GRACE_CYCLES - 1
             )
 
-            with mock.patch.object(core, "_notify_gemini") as notify:
+            with mock.patch.object(core, "_notify_advisory_owner") as notify:
                 wrote = core._maybe_write_stale_control_advisory_request()
 
             self.assertFalse(wrote)
             notify.assert_not_called()
-            self.assertFalse((base_dir / "gemini_request.md").exists())
+            self.assertFalse((base_dir / "advisory_request.md").exists())
 
     def test_stale_control_advisory_skips_when_operator_request_active(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4659,24 +4897,45 @@ class ControlSeqAgeTrackerTest(unittest.TestCase):
                 STALE_CONTROL_CYCLE_THRESHOLD + STALE_ADVISORY_GRACE_CYCLES
             )
 
-            with mock.patch.object(core, "_notify_gemini") as notify:
+            with mock.patch.object(core, "_notify_advisory_owner") as notify:
                 wrote = core._maybe_write_stale_control_advisory_request()
 
             self.assertFalse(wrote)
             notify.assert_not_called()
-            self.assertFalse((base_dir / "gemini_request.md").exists())
+            self.assertFalse((base_dir / "advisory_request.md").exists())
             self.assertEqual(operator_path.read_text(encoding="utf-8"), operator_text)
+
+    def test_stale_control_advisory_skips_when_advisory_request_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            core = self._make_core(root)
+            base_dir = root / ".pipeline"
+            request_path = base_dir / "advisory_request.md"
+            request_text = "STATUS: request_open\nCONTROL_SEQ: 31\n"
+            request_path.write_text(request_text, encoding="utf-8")
+
+            core._last_seen_control_seq = 31
+            core._control_seq_age_cycles = (
+                STALE_CONTROL_CYCLE_THRESHOLD + STALE_ADVISORY_GRACE_CYCLES
+            )
+
+            with mock.patch.object(core, "_notify_advisory_owner") as notify:
+                wrote = core._maybe_write_stale_control_advisory_request()
+
+            self.assertFalse(wrote)
+            notify.assert_not_called()
+            self.assertEqual(request_path.read_text(encoding="utf-8"), request_text)
 
     def test_stale_control_advisory_preserves_current_existing_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             core = self._make_core(root)
             base_dir = root / ".pipeline"
-            (base_dir / "claude_handoff.md").write_text(
+            (base_dir / "implement_handoff.md").write_text(
                 "STATUS: implement\nCONTROL_SEQ: 31\n",
                 encoding="utf-8",
             )
-            request_path = base_dir / "gemini_request.md"
+            request_path = base_dir / "advisory_request.md"
             request_text = (
                 "STATUS: request_open\n"
                 "CONTROL_SEQ: 40\n"
@@ -4689,7 +4948,7 @@ class ControlSeqAgeTrackerTest(unittest.TestCase):
                 STALE_CONTROL_CYCLE_THRESHOLD + STALE_ADVISORY_GRACE_CYCLES
             )
 
-            with mock.patch.object(core, "_notify_gemini") as notify:
+            with mock.patch.object(core, "_notify_advisory_owner") as notify:
                 wrote = core._maybe_write_stale_control_advisory_request()
 
             self.assertFalse(wrote)
@@ -4723,10 +4982,10 @@ class RollingSignalTransitionTest(unittest.TestCase):
             )
 
             # A handoff with lower seq should not override
-            handoff = base_dir / "claude_handoff.md"
+            handoff = base_dir / "implement_handoff.md"
             handoff.write_text("STATUS: implement\nCONTROL_SEQ: 15\n", encoding="utf-8")
             # Reset sig tracking so change is detected
-            core._last_claude_handoff_sig = ""
+            core._last_implement_handoff_sig = ""
             core._check_pipeline_signal_updates()
 
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CODEX_VERIFY)
@@ -4754,16 +5013,16 @@ class RollingSignalTransitionTest(unittest.TestCase):
                 active_control_seq=15,
             )
 
-            handoff = base_dir / "claude_handoff.md"
+            handoff = base_dir / "implement_handoff.md"
             handoff.write_text("STATUS: implement\nCONTROL_SEQ: 18\n", encoding="utf-8")
-            core._last_claude_handoff_sig = ""
+            core._last_implement_handoff_sig = ""
 
             with mock.patch("watcher_core.tmux_send_keys", return_value=True):
                 core._check_pipeline_signal_updates()
 
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE)
 
-    def test_stale_operator_request_update_routes_to_codex_control_recovery(self) -> None:
+    def test_stale_operator_request_update_routes_to_verify_control_recovery(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -4812,13 +5071,13 @@ class RollingSignalTransitionTest(unittest.TestCase):
             })
             core._last_operator_request_sig = ""
 
-            with mock.patch.object(core, "_notify_codex_control_recovery") as notify:
+            with mock.patch.object(core, "_notify_verify_control_recovery") as notify:
                 core._check_pipeline_signal_updates()
 
             notify.assert_called_once()
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
 
-    def test_startup_turn_uses_codex_control_recovery_for_stale_operator_request(self) -> None:
+    def test_startup_turn_uses_verify_control_recovery_for_stale_operator_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -4867,13 +5126,13 @@ class RollingSignalTransitionTest(unittest.TestCase):
             })
             core.started_at = time.time() - core.startup_grace_sec - 1.0
 
-            with mock.patch.object(core, "_notify_codex_control_recovery") as notify:
+            with mock.patch.object(core, "_notify_verify_control_recovery") as notify:
                 core._poll()
 
             notify.assert_called_once()
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
 
-    def test_startup_turn_uses_codex_operator_retriage_for_aged_operator_request(self) -> None:
+    def test_startup_turn_uses_verify_operator_retriage_for_aged_operator_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -4901,13 +5160,13 @@ class RollingSignalTransitionTest(unittest.TestCase):
             )
             core.started_at = time.time() - core.startup_grace_sec - 1.0
 
-            with mock.patch.object(core, "_notify_codex_operator_retriage") as notify:
+            with mock.patch.object(core, "_notify_verify_operator_retriage") as notify:
                 core._poll()
 
             notify.assert_called_once()
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
 
-    def test_operator_wait_idle_timeout_routes_to_codex_operator_retriage_once(self) -> None:
+    def test_operator_wait_idle_timeout_routes_to_verify_operator_retriage_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -4943,7 +5202,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
             with (
                 mock.patch("watcher_core._capture_pane_text", return_value="$ "),
                 mock.patch("watcher_core._pane_text_is_idle", return_value=True),
-                mock.patch.object(core, "_notify_codex_operator_retriage") as notify,
+                mock.patch.object(core, "_notify_verify_operator_retriage") as notify,
             ):
                 core._check_operator_wait_idle_timeout()
                 core._check_operator_wait_idle_timeout()
@@ -4952,7 +5211,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
             self.assertEqual(core._turn_active_control_seq, 24)
 
-    def test_operator_retriage_no_next_control_promotes_to_gemini_request(self) -> None:
+    def test_operator_retriage_no_next_control_promotes_to_advisory_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -4999,7 +5258,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
 
             with (
                 mock.patch("watcher_core._capture_pane_text", return_value="openai codex\n› "),
-                mock.patch.object(core, "_notify_gemini") as notify,
+                mock.patch.object(core, "_notify_advisory_owner") as notify,
             ):
                 promoted = core._promote_operator_retriage_no_next_control()
 
@@ -5007,7 +5266,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
             notify.assert_called_once_with("operator_retriage_no_next_control")
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.ADVISORY_ACTIVE)
             self.assertEqual(core._turn_active_control_seq, 32)
-            request_text = (base_dir / "gemini_request.md").read_text(encoding="utf-8")
+            request_text = (base_dir / "advisory_request.md").read_text(encoding="utf-8")
             self.assertIn("STATUS: request_open", request_text)
             self.assertIn("CONTROL_SEQ: 32", request_text)
             self.assertIn("SOURCE: watcher operator_retriage_no_next_control", request_text)
@@ -5072,7 +5331,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
             write_operator_request(32, base_now + 30)
             with (
                 mock.patch("watcher_core.time.time", return_value=base_now + 35),
-                mock.patch.object(core, "_notify_codex_operator_retriage") as retriage_notify,
+                mock.patch.object(core, "_notify_verify_operator_retriage") as retriage_notify,
             ):
                 core._check_pipeline_signal_updates()
 
@@ -5087,13 +5346,13 @@ class RollingSignalTransitionTest(unittest.TestCase):
             with (
                 mock.patch("watcher_core.time.time", return_value=base_now + 46),
                 mock.patch("watcher_core._capture_pane_text", return_value="openai codex\n› "),
-                mock.patch.object(core, "_notify_gemini") as notify,
+                mock.patch.object(core, "_notify_advisory_owner") as notify,
             ):
                 promoted = core._promote_operator_retriage_no_next_control()
 
             self.assertTrue(promoted)
             notify.assert_called_once_with("operator_retriage_no_next_control")
-            request_text = (base_dir / "gemini_request.md").read_text(encoding="utf-8")
+            request_text = (base_dir / "advisory_request.md").read_text(encoding="utf-8")
             self.assertIn("CONTROL_SEQ: 33", request_text)
             self.assertIn("SUPERSEDES: .pipeline/operator_request.md CONTROL_SEQ 32", request_text)
 
@@ -5120,14 +5379,14 @@ class RollingSignalTransitionTest(unittest.TestCase):
                 active_control_seq=17,
             )
 
-            handoff = base_dir / "claude_handoff.md"
+            handoff = base_dir / "implement_handoff.md"
             handoff.write_text("STATUS: implement\nCONTROL_SEQ: 18\n", encoding="utf-8")
-            core._last_claude_handoff_sig = ""
+            core._last_implement_handoff_sig = ""
 
             with (
                 mock.patch("watcher_core._capture_pane_text", return_value="running tests...\n"),
                 mock.patch("watcher_core._pane_text_is_idle", return_value=False),
-                mock.patch.object(core, "_notify_claude") as notify,
+                mock.patch.object(core, "_notify_implement_owner") as notify,
             ):
                 core._check_pipeline_signal_updates()
 
@@ -5160,14 +5419,14 @@ class RollingSignalTransitionTest(unittest.TestCase):
             )
             core._work_baseline_snapshot = core._get_work_tree_snapshot_broad()
 
-            handoff = base_dir / "claude_handoff.md"
+            handoff = base_dir / "implement_handoff.md"
             handoff.write_text("STATUS: implement\nCONTROL_SEQ: 18\n", encoding="utf-8")
-            core._last_claude_handoff_sig = ""
+            core._last_implement_handoff_sig = ""
 
             with (
                 mock.patch("watcher_core._capture_pane_text", return_value="running tests...\n"),
                 mock.patch("watcher_core._pane_text_is_idle", return_value=False),
-                mock.patch.object(core, "_notify_claude") as notify,
+                mock.patch.object(core, "_notify_implement_owner") as notify,
             ):
                 core._check_pipeline_signal_updates()
                 notify.assert_not_called()
@@ -5175,7 +5434,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
             with (
                 mock.patch("watcher_core._capture_pane_text", return_value="$ "),
                 mock.patch("watcher_core._pane_text_is_idle", return_value=True),
-                mock.patch.object(core, "_notify_claude") as notify,
+                mock.patch.object(core, "_notify_implement_owner") as notify,
             ):
                 self.assertTrue(core._check_pending_idle_release_handoff())
 
@@ -5208,14 +5467,14 @@ class RollingSignalTransitionTest(unittest.TestCase):
                 active_control_seq=17,
             )
 
-            handoff = base_dir / "claude_handoff.md"
+            handoff = base_dir / "implement_handoff.md"
             handoff.write_text("STATUS: implement\nCONTROL_SEQ: 18\n", encoding="utf-8")
-            core._last_claude_handoff_sig = ""
+            core._last_implement_handoff_sig = ""
 
             with (
                 mock.patch("watcher_core._capture_pane_text", return_value="$ "),
                 mock.patch("watcher_core._pane_text_is_idle", return_value=True),
-                mock.patch.object(core, "_notify_claude") as notify,
+                mock.patch.object(core, "_notify_implement_owner") as notify,
             ):
                 core._check_pipeline_signal_updates()
 
@@ -5246,14 +5505,14 @@ class RollingSignalTransitionTest(unittest.TestCase):
                 active_control_seq=17,
             )
 
-            handoff = base_dir / "claude_handoff.md"
+            handoff = base_dir / "implement_handoff.md"
             handoff.write_text("STATUS: implement\nCONTROL_SEQ: 18\n", encoding="utf-8")
-            core._last_claude_handoff_sig = ""
+            core._last_implement_handoff_sig = ""
 
             with (
                 mock.patch("watcher_core._capture_pane_text", return_value="running tests...\n"),
                 mock.patch("watcher_core._pane_text_is_idle", return_value=False),
-                mock.patch.object(core, "_notify_claude") as notify,
+                mock.patch.object(core, "_notify_implement_owner") as notify,
             ):
                 core._check_pipeline_signal_updates()
                 notify.assert_not_called()
@@ -5269,8 +5528,8 @@ class RollingSignalTransitionTest(unittest.TestCase):
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE)
 
 
-class ClaudeIdleTimeoutTest(unittest.TestCase):
-    def test_claude_idle_timeout_transitions_to_idle(self) -> None:
+class ImplementIdleTimeoutTest(unittest.TestCase):
+    def test_implement_idle_timeout_transitions_to_idle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -5284,7 +5543,7 @@ class ClaudeIdleTimeoutTest(unittest.TestCase):
                 "base_dir": str(base_dir),
                 "repo_root": str(root),
                 "dry_run": True,
-                "claude_active_idle_timeout_sec": 5,
+                "implement_active_idle_timeout_sec": 5,
             })
 
             core._transition_turn(
@@ -5299,14 +5558,14 @@ class ClaudeIdleTimeoutTest(unittest.TestCase):
 
             with mock.patch("watcher_core._capture_pane_text", return_value="$ "):
                 with mock.patch("watcher_core._pane_text_is_idle", return_value=True):
-                    core._check_claude_idle_timeout()
+                    core._check_implement_idle_timeout()
 
             self.assertEqual(
                 core._current_turn_state,
                 watcher_core.WatcherTurnState.IDLE,
             )
 
-    def test_claude_progress_resets_timeout(self) -> None:
+    def test_legacy_claude_idle_timeout_key_still_configures_implement_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -5320,7 +5579,26 @@ class ClaudeIdleTimeoutTest(unittest.TestCase):
                 "base_dir": str(base_dir),
                 "repo_root": str(root),
                 "dry_run": True,
-                "claude_active_idle_timeout_sec": 5,
+                "claude_active_idle_timeout_sec": 7,
+            })
+
+            self.assertEqual(core.implement_active_idle_timeout_sec, 7)
+
+    def test_implement_progress_resets_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            core = watcher_core.WatcherCore({
+                "watch_dir": str(watch_dir),
+                "base_dir": str(base_dir),
+                "repo_root": str(root),
+                "dry_run": True,
+                "implement_active_idle_timeout_sec": 5,
             })
 
             core._transition_turn(
@@ -5332,7 +5610,7 @@ class ClaudeIdleTimeoutTest(unittest.TestCase):
 
             with mock.patch("watcher_core._capture_pane_text", return_value="running tests..."):
                 with mock.patch("watcher_core._pane_text_is_idle", return_value=False):
-                    core._check_claude_idle_timeout()
+                    core._check_implement_idle_timeout()
 
             self.assertEqual(
                 core._current_turn_state,
@@ -5349,7 +5627,7 @@ class ClaudeIdleTimeoutTest(unittest.TestCase):
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
 
-            handoff = base_dir / "claude_handoff.md"
+            handoff = base_dir / "implement_handoff.md"
             handoff.write_text("STATUS: implement\nCONTROL_SEQ: 17\n", encoding="utf-8")
 
             core = watcher_core.WatcherCore({
@@ -5357,7 +5635,7 @@ class ClaudeIdleTimeoutTest(unittest.TestCase):
                 "base_dir": str(base_dir),
                 "repo_root": str(root),
                 "dry_run": True,
-                "claude_active_idle_timeout_sec": 5,
+                "implement_active_idle_timeout_sec": 5,
             })
 
             handoff_sig = core._get_path_sig(handoff)
@@ -5468,7 +5746,7 @@ class TransitionTurnTest(unittest.TestCase):
             core._transition_turn(
                 watcher_core.WatcherTurnState.CODEX_VERIFY,
                 "work_needs_verify",
-                active_control_file="claude_handoff.md",
+                active_control_file="implement_handoff.md",
                 active_control_seq=17,
                 verify_job_id="test-job-1",
             )
@@ -5479,7 +5757,7 @@ class TransitionTurnTest(unittest.TestCase):
             self.assertEqual(data["state"], "VERIFY_ACTIVE")
             self.assertEqual(data["legacy_state"], "CODEX_VERIFY")
             self.assertEqual(data["reason"], "work_needs_verify")
-            self.assertEqual(data["active_control_file"], "claude_handoff.md")
+            self.assertEqual(data["active_control_file"], "implement_handoff.md")
             self.assertEqual(data["active_control_seq"], 17)
             self.assertEqual(data["active_role"], "verify")
             self.assertEqual(data["active_lane"], "Codex")
@@ -5498,7 +5776,7 @@ class TransitionTurnTest(unittest.TestCase):
             self.assertEqual(status["runtime_state"], "RUNNING")
             self.assertEqual(status["turn_state"], "VERIFY_ACTIVE")
             self.assertEqual(status["legacy_turn_state"], "CODEX_VERIFY")
-            self.assertEqual(status["control"]["active_control_file"], ".pipeline/claude_handoff.md")
+            self.assertEqual(status["control"]["active_control_file"], ".pipeline/implement_handoff.md")
             self.assertEqual(status["control"]["active_control_seq"], 17)
 
             events_path = base_dir / "runs" / core.run_id / "events.jsonl"
@@ -5548,8 +5826,8 @@ class TransitionTurnTest(unittest.TestCase):
 
             core._transition_turn(
                 watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE,
-                "startup_turn_claude",
-                active_control_file="claude_handoff.md",
+                "startup_turn_implement",
+                active_control_file="implement_handoff.md",
                 active_control_seq=23,
             )
 
@@ -5572,7 +5850,7 @@ class TransitionTurnTest(unittest.TestCase):
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
 
-            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path = base_dir / "implement_handoff.md"
             handoff_path.write_text("STATUS: implement\nCONTROL_SEQ: 17\n", encoding="utf-8")
 
             core = watcher_core.WatcherCore({
@@ -5586,7 +5864,7 @@ class TransitionTurnTest(unittest.TestCase):
                 core._transition_turn(
                     watcher_core.WatcherTurnState.CODEX_VERIFY,
                     "work_needs_verify",
-                    active_control_file="claude_handoff.md",
+                    active_control_file="implement_handoff.md",
                     active_control_seq=17,
                     verify_job_id="test-job-1",
                 )
@@ -5609,7 +5887,7 @@ class TransitionTurnTest(unittest.TestCase):
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
 
-            handoff_path = base_dir / "claude_handoff.md"
+            handoff_path = base_dir / "implement_handoff.md"
             handoff_path.write_text("STATUS: implement\nCONTROL_SEQ: 17\n", encoding="utf-8")
 
             core = watcher_core.WatcherCore({
@@ -5630,7 +5908,7 @@ class TransitionTurnTest(unittest.TestCase):
                 core._transition_turn(
                     watcher_core.WatcherTurnState.CODEX_VERIFY,
                     "work_needs_verify",
-                    active_control_file="claude_handoff.md",
+                    active_control_file="implement_handoff.md",
                     active_control_seq=17,
                     verify_job_id="test-job-1",
                 )
@@ -5668,13 +5946,13 @@ class TransitionTurnTest(unittest.TestCase):
 
             core._transition_turn(
                 watcher_core.WatcherTurnState.IDLE,
-                "claude_idle_timeout",
+                "implement_idle_timeout",
             )
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IDLE)
 
 
 class BusyLaneNotificationDeferTest(unittest.TestCase):
-    def test_gemini_request_idle_retry_redispatches_when_advice_is_stale(self) -> None:
+    def test_advisory_request_idle_retry_redispatches_when_advice_is_stale(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -5683,8 +5961,8 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
 
-            request_path = base_dir / "gemini_request.md"
-            advice_path = base_dir / "gemini_advice.md"
+            request_path = base_dir / "advisory_request.md"
+            advice_path = base_dir / "advisory_advice.md"
             request_path.write_text("STATUS: request_open\nCONTROL_SEQ: 18\n", encoding="utf-8")
             advice_path.write_text("STATUS: advice_ready\nCONTROL_SEQ: 17\n", encoding="utf-8")
             old = time.time() - 10.0
@@ -5698,16 +5976,16 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                     "repo_root": str(root),
                     "dry_run": True,
                     "gemini_pane_target": "gemini-pane",
-                    "gemini_advisory_retry_sec": 5.0,
+                    "advisory_idle_retry_sec": 5.0,
                 }
             )
             core._initial_turn_checked = True
-            core._last_gemini_request_sig = core._get_path_sig(request_path)
-            core._last_gemini_advice_sig = core._get_path_sig(advice_path)
+            core._last_advisory_request_sig = core._get_path_sig(request_path)
+            core._last_advisory_advice_sig = core._get_path_sig(advice_path)
             core._transition_turn(
                 watcher_core.WatcherTurnState.ADVISORY_ACTIVE,
-                "test_setup_gemini",
-                active_control_file="gemini_request.md",
+                "test_setup_advisory",
+                active_control_file="advisory_request.md",
                 active_control_seq=18,
             )
             core._turn_entered_at = time.time() - 10.0
@@ -5730,9 +6008,9 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                 for line in core.run_events_path.read_text(encoding="utf-8").splitlines()
                 if line.strip()
             ]
-            self.assertTrue(any(event.get("event_type") == "gemini_advisory_retry" for event in events))
+            self.assertTrue(any(event.get("event_type") == "advisory_idle_retry" for event in events))
 
-    def test_gemini_request_idle_retry_skips_when_current_advice_exists(self) -> None:
+    def test_advisory_request_idle_retry_skips_when_current_advice_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -5741,8 +6019,8 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
 
-            request_path = base_dir / "gemini_request.md"
-            advice_path = base_dir / "gemini_advice.md"
+            request_path = base_dir / "advisory_request.md"
+            advice_path = base_dir / "advisory_advice.md"
             request_path.write_text("STATUS: request_open\nCONTROL_SEQ: 18\n", encoding="utf-8")
             advice_path.write_text("STATUS: advice_ready\nCONTROL_SEQ: 18\n", encoding="utf-8")
             old = time.time() - 10.0
@@ -5755,16 +6033,16 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                     "repo_root": str(root),
                     "dry_run": True,
                     "gemini_pane_target": "gemini-pane",
-                    "gemini_advisory_retry_sec": 5.0,
+                    "advisory_idle_retry_sec": 5.0,
                 }
             )
             core._initial_turn_checked = True
-            core._last_gemini_request_sig = core._get_path_sig(request_path)
-            core._last_gemini_advice_sig = core._get_path_sig(advice_path)
+            core._last_advisory_request_sig = core._get_path_sig(request_path)
+            core._last_advisory_advice_sig = core._get_path_sig(advice_path)
             core._transition_turn(
                 watcher_core.WatcherTurnState.ADVISORY_ACTIVE,
-                "test_setup_gemini",
-                active_control_file="gemini_request.md",
+                "test_setup_advisory",
+                active_control_file="advisory_request.md",
                 active_control_seq=18,
             )
             core._turn_entered_at = time.time() - 10.0
@@ -5780,7 +6058,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
 
             send_prompt.assert_not_called()
 
-    def test_gemini_advice_followup_defers_until_codex_prompt_ready(self) -> None:
+    def test_stale_advisory_recovers_to_verify_followup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -5789,7 +6067,112 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
 
-            (base_dir / "gemini_advice.md").write_text(
+            request_path = base_dir / "advisory_request.md"
+            request_path.write_text("STATUS: request_open\nCONTROL_SEQ: 18\n", encoding="utf-8")
+            old = time.time() - 20.0
+            os.utime(request_path, (old, old))
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                    "gemini_pane_target": "gemini-pane",
+                    "advisory_recovery_sec": 5.0,
+                }
+            )
+            core._initial_turn_checked = True
+            core._last_advisory_request_sig = core._get_path_sig(request_path)
+            core._transition_turn(
+                watcher_core.WatcherTurnState.ADVISORY_ACTIVE,
+                "test_setup_advisory",
+                active_control_file="advisory_request.md",
+                active_control_seq=18,
+            )
+            core._turn_entered_at = time.time() - 20.0
+
+            with (
+                mock.patch("watcher_core._capture_pane_text", return_value="openai codex\n› "),
+                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+            ):
+                recovered = core._recover_stale_advisory()
+
+            self.assertTrue(recovered)
+            send_prompt.assert_called_once()
+            args, kwargs = send_prompt.call_args
+            self.assertEqual(args[0], "codex-pane")
+            self.assertEqual(kwargs.get("pane_type"), "codex")
+            self.assertIn("ROLE: advisory_recovery", args[1])
+            self.assertIn("REQUEST_SEQ: 18", args[1])
+            self.assertIn("write exactly one next control", args[1])
+            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
+            self.assertEqual(core._turn_active_control_file, "advisory_request.md")
+            self.assertEqual(core._turn_active_control_seq, 18)
+            events = [
+                json.loads(line)
+                for line in core.run_events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(any(event.get("event_type") == "advisory_recovery" for event in events))
+
+    def test_stale_advisory_recovery_skips_when_current_advice_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            request_path = base_dir / "advisory_request.md"
+            advice_path = base_dir / "advisory_advice.md"
+            request_path.write_text("STATUS: request_open\nCONTROL_SEQ: 18\n", encoding="utf-8")
+            advice_path.write_text("STATUS: advice_ready\nCONTROL_SEQ: 18\n", encoding="utf-8")
+            old = time.time() - 20.0
+            os.utime(request_path, (old, old))
+            os.utime(advice_path, (old, old))
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                    "advisory_recovery_sec": 5.0,
+                }
+            )
+            core._initial_turn_checked = True
+            core._transition_turn(
+                watcher_core.WatcherTurnState.ADVISORY_ACTIVE,
+                "test_setup_advisory",
+                active_control_file="advisory_request.md",
+                active_control_seq=18,
+            )
+            core._turn_entered_at = time.time() - 20.0
+
+            with (
+                mock.patch("watcher_core._capture_pane_text", return_value="openai codex\n› "),
+                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+            ):
+                recovered = core._recover_stale_advisory()
+
+            self.assertFalse(recovered)
+            send_prompt.assert_not_called()
+            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.ADVISORY_ACTIVE)
+
+    def test_advisory_advice_followup_defers_until_codex_prompt_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            (base_dir / "advisory_advice.md").write_text(
                 "STATUS: advice_ready\nCONTROL_SEQ: 18\n",
                 encoding="utf-8",
             )
@@ -5803,7 +6186,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                     "verify_pane_target": "codex-pane",
                 }
             )
-            core._last_gemini_advice_sig = ""
+            core._last_advisory_advice_sig = ""
 
             with (
                 mock.patch("watcher_core._capture_pane_text", return_value="• Working (18s • esc to interrupt)\n"),
@@ -5812,7 +6195,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                 core._check_pipeline_signal_updates()
 
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
-            pending_key = "codex_verify:gemini_advice_followup:18"
+            pending_key = "codex_verify:advisory_advice_followup:18"
             self.assertIn(pending_key, core.dispatch_queue.pending_notifications)
             send_prompt.assert_not_called()
             events = [
@@ -5834,7 +6217,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             send_prompt.assert_called_once()
             self.assertNotIn(pending_key, core.dispatch_queue.pending_notifications)
 
-    def test_claude_handoff_notify_defers_until_prompt_is_ready(self) -> None:
+    def test_implement_handoff_notify_defers_until_prompt_is_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -5843,7 +6226,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
 
-            (base_dir / "claude_handoff.md").write_text(
+            (base_dir / "implement_handoff.md").write_text(
                 "STATUS: implement\nCONTROL_SEQ: 19\n",
                 encoding="utf-8",
             )
@@ -5857,7 +6240,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                     "claude_pane_target": "claude-pane",
                 }
             )
-            core._last_claude_handoff_sig = ""
+            core._last_implement_handoff_sig = ""
 
             with (
                 mock.patch("watcher_core._capture_pane_text", return_value="Discombobulating... (22s)\n"),
@@ -5866,7 +6249,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                 core._check_pipeline_signal_updates()
 
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE)
-            pending_key = "claude_implement:claude_handoff:19"
+            pending_key = "claude_implement:implement_handoff:19"
             self.assertIn(pending_key, core.dispatch_queue.pending_notifications)
             send_prompt.assert_not_called()
 
@@ -5882,7 +6265,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             send_prompt.assert_called_once()
             self.assertNotIn(pending_key, core.dispatch_queue.pending_notifications)
 
-    def test_claude_handoff_dispatches_when_busy_marker_is_only_old_scrollback(self) -> None:
+    def test_implement_handoff_dispatches_when_busy_marker_is_only_old_scrollback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -5891,7 +6274,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
 
-            (base_dir / "claude_handoff.md").write_text(
+            (base_dir / "implement_handoff.md").write_text(
                 "STATUS: implement\nCONTROL_SEQ: 19\n",
                 encoding="utf-8",
             )
@@ -5905,7 +6288,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                     "claude_pane_target": "claude-pane",
                 }
             )
-            core._last_claude_handoff_sig = ""
+            core._last_implement_handoff_sig = ""
             pane_text = "\n".join(
                 [
                     "• Working (22s • esc to interrupt)",
@@ -5924,7 +6307,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
 
             send_prompt.assert_called_once()
             self.assertEqual(send_prompt.call_args.args[0], "claude-pane")
-            self.assertNotIn("claude_implement:claude_handoff:19", core.dispatch_queue.pending_notifications)
+            self.assertNotIn("claude_implement:implement_handoff:19", core.dispatch_queue.pending_notifications)
 
     def test_blocked_triage_defers_until_codex_prompt_is_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5935,7 +6318,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             base_dir.mkdir(parents=True, exist_ok=True)
             _write_active_profile(root)
 
-            (base_dir / "claude_handoff.md").write_text(
+            (base_dir / "implement_handoff.md").write_text(
                 "STATUS: implement\nCONTROL_SEQ: 20\n",
                 encoding="utf-8",
             )
@@ -5953,7 +6336,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             signal = {
                 "reason": "handoff_already_completed",
                 "reason_code": "already_implemented",
-                "escalation_class": "codex_triage",
+                "escalation_class": "verify_triage",
                 "fingerprint": "block-123",
                 "source": "sentinel",
             }
@@ -5962,10 +6345,10 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                 mock.patch("watcher_core._capture_pane_text", return_value="• Working (22s • esc to interrupt)\n"),
                 mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
             ):
-                ok = core._notify_codex_blocked_triage(signal, "claude_implement_blocked")
+                ok = core._notify_verify_blocked_triage(signal, "implement_blocked")
 
             self.assertTrue(ok)
-            pending_key = "codex_verify:codex_blocked_triage:20"
+            pending_key = "codex_verify:verify_blocked_triage:20"
             self.assertIn(pending_key, core.dispatch_queue.pending_notifications)
             send_prompt.assert_not_called()
             events = [
@@ -5987,7 +6370,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             send_prompt.assert_called_once()
             self.assertNotIn(pending_key, core.dispatch_queue.pending_notifications)
 
-    def test_stale_codex_pending_notification_is_dropped_before_claude_handoff_dispatch(self) -> None:
+    def test_stale_verify_pending_notification_is_dropped_before_implement_handoff_dispatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -6001,7 +6384,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                 "STATUS: needs_operator\nCONTROL_SEQ: 20\nREASON_CODE: slice_ambiguity\n",
                 encoding="utf-8",
             )
-            handoff = base_dir / "claude_handoff.md"
+            handoff = base_dir / "implement_handoff.md"
             handoff.write_text(
                 "STATUS: implement\nCONTROL_SEQ: 21\n",
                 encoding="utf-8",
@@ -6018,9 +6401,9 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                 }
             )
             core._last_operator_request_sig = core._get_path_sig(operator_request)
-            core._last_claude_handoff_sig = ""
-            core.dispatch_queue.pending_notifications["codex_operator_retriage"] = {
-                "notify_kind": "codex_operator_retriage",
+            core._last_implement_handoff_sig = ""
+            core.dispatch_queue.pending_notifications["verify_operator_retriage"] = {
+                "notify_kind": "verify_operator_retriage",
                 "lane_role": "verify",
                 "reason": "operator_wait_idle_retriage",
                 "prompt": "stale codex retriage",
@@ -6046,7 +6429,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
 
             send_prompt.assert_called_once()
             self.assertEqual(send_prompt.call_args.args[0], "claude-pane")
-            self.assertNotIn("codex_operator_retriage", core.dispatch_queue.pending_notifications)
+            self.assertNotIn("verify_operator_retriage", core.dispatch_queue.pending_notifications)
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE)
             raw_events = [
                 json.loads(line)
@@ -6105,7 +6488,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
             job.accepted_at = time.time() - 5
             job.done_deadline_at = time.time() + 30
 
-            handoff = base_dir / "claude_handoff.md"
+            handoff = base_dir / "implement_handoff.md"
             handoff.write_text("STATUS: implement\nCONTROL_SEQ: 19\n", encoding="utf-8")
 
             with mock.patch("watcher_core._capture_pane_text", return_value="$ "), \
@@ -6773,7 +7156,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                 derived_from="vendor_output",
             )
 
-            handoff = base_dir / "claude_handoff.md"
+            handoff = base_dir / "implement_handoff.md"
             handoff.write_text("STATUS: implement\nCONTROL_SEQ: 19\n", encoding="utf-8")
             verify_note = verify_day / "2026-04-10-slice-verification.md"
             _write_verify_note(verify_note, ["verify/4/10/2026-04-10-slice-verification.md"])
@@ -6861,7 +7244,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                 derived_from="vendor_output",
             )
 
-            handoff = base_dir / "claude_handoff.md"
+            handoff = base_dir / "implement_handoff.md"
             handoff.write_text("STATUS: implement\nCONTROL_SEQ: 19\n", encoding="utf-8")
             verify_note = verify_day / "2026-04-10-slice-verification.md"
             _write_verify_note_for_work(verify_note, "work/4/10/2026-04-10-slice.md")
@@ -7278,7 +7661,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
             )
             self.assertTrue(archived.exists())
 
-    def test_poll_steps_current_run_verify_running_before_pending_gemini_advice(self) -> None:
+    def test_poll_steps_current_run_verify_running_before_pending_advisory_advice(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -7290,7 +7673,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             work_note = work_day / "2026-04-10-slice.md"
             _write_work_note(work_note, ["watcher_core.py"])
-            (base_dir / "gemini_advice.md").write_text(
+            (base_dir / "advisory_advice.md").write_text(
                 "STATUS: advice_ready\nCONTROL_SEQ: 7\n",
                 encoding="utf-8",
             )
@@ -7319,7 +7702,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             with (
                 mock.patch.object(core, "_check_pipeline_signal_updates"),
-                mock.patch.object(core, "_retry_gemini_advisory_if_idle") as retry_mock,
+                mock.patch.object(core, "_retry_advisory_if_idle") as retry_mock,
                 mock.patch.object(core.sm, "step", side_effect=lambda job: job) as step_mock,
             ):
                 core._poll()
@@ -7330,7 +7713,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
             self.assertEqual(stepped_job.status, watcher_core.JobStatus.VERIFY_RUNNING)
             retry_mock.assert_not_called()
 
-    def test_poll_defers_current_run_verify_pending_while_gemini_request_is_pending(self) -> None:
+    def test_poll_defers_current_run_verify_pending_while_advisory_request_is_pending(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -7342,7 +7725,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             work_note = work_day / "2026-04-10-slice.md"
             _write_work_note(work_note, ["watcher_core.py"])
-            (base_dir / "gemini_request.md").write_text(
+            (base_dir / "advisory_request.md").write_text(
                 "STATUS: request_open\nCONTROL_SEQ: 8\n",
                 encoding="utf-8",
             )
@@ -7371,7 +7754,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             with (
                 mock.patch.object(core, "_check_pipeline_signal_updates"),
-                mock.patch.object(core, "_retry_gemini_advisory_if_idle") as retry_mock,
+                mock.patch.object(core, "_retry_advisory_if_idle") as retry_mock,
                 mock.patch.object(core.sm, "step", side_effect=lambda job: job) as step_mock,
             ):
                 core._poll()
@@ -7382,7 +7765,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
             self.assertIsNotNone(persisted_job)
             self.assertEqual(persisted_job.status, watcher_core.JobStatus.VERIFY_PENDING)
 
-    def test_poll_skips_new_verify_candidate_scan_during_codex_followup(self) -> None:
+    def test_poll_skips_new_verify_candidate_scan_during_verify_followup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -7799,7 +8182,7 @@ class VerifyPendingBackoffTest(unittest.TestCase):
             stale_snapshot = "\n".join(
                 [
                     "[Pasted Content 1024 chars] #12ED, BASED_ON_WORK, and BASED_ON_VERIFY near the top",
-                    "- use .pipeline/gemini_request.md before .pipeline/operator_request.md",
+                    "- use .pipeline/advisory_request.md before .pipeline/operator_request.md",
                     "›",
                 ]
             )

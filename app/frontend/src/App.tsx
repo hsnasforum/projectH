@@ -4,7 +4,14 @@ import ChatArea from "./components/ChatArea";
 import Toast from "./components/Toast";
 import type { ToastItem } from "./components/Toast";
 import { useChat } from "./hooks/useChat";
-import { postCorrection, postFeedback } from "./api/client";
+import {
+  postContentReasonLabel,
+  postContentReasonNote,
+  postContentVerdict,
+  postCorrectedSave,
+  postCorrection,
+  postFeedback,
+} from "./api/client";
 import { DEFAULT_SETTINGS } from "./types";
 import type { AppSettings } from "./types";
 
@@ -41,6 +48,41 @@ export default function App() {
       await chat.loadSession(chat.sessionId);
     } catch {
       addToast("error", "피드백 제출에 실패했습니다.");
+    }
+  }, [chat.sessionId, chat.loadSession, addToast]);
+
+  const handleContentVerdict = useCallback(async (messageId: string, verdict: string) => {
+    try {
+      await postContentVerdict(chat.sessionId, messageId, verdict);
+      await chat.loadSession(chat.sessionId);
+    } catch {
+      addToast("error", "내용 거절 제출에 실패했습니다.");
+    }
+  }, [chat.sessionId, chat.loadSession, addToast]);
+
+  const handleContentReasonNote = useCallback(async (messageId: string, note: string) => {
+    try {
+      await postContentReasonNote(chat.sessionId, messageId, note);
+    } catch {
+      addToast("error", "거절 이유 저장에 실패했습니다.");
+    }
+  }, [chat.sessionId, addToast]);
+
+  const handleContentReasonLabel = useCallback(async (messageId: string, label: string) => {
+    try {
+      await postContentReasonLabel(chat.sessionId, messageId, label);
+      await chat.loadSession(chat.sessionId);
+    } catch {
+      // Label update is non-critical.
+    }
+  }, [chat.sessionId, chat.loadSession]);
+
+  const handleCorrectedSave = useCallback(async (messageId: string) => {
+    try {
+      await postCorrectedSave(chat.sessionId, messageId);
+      await chat.loadSession(chat.sessionId);
+    } catch {
+      addToast("error", "수정본 저장 요청에 실패했습니다.");
     }
   }, [chat.sessionId, chat.loadSession, addToast]);
 
@@ -113,6 +155,10 @@ export default function App() {
         onCancel={chat.cancel}
         onCorrection={handleCorrection}
         onFeedback={handleFeedback}
+        onContentVerdict={handleContentVerdict}
+        onContentReasonNote={handleContentReasonNote}
+        onContentReasonLabel={handleContentReasonLabel}
+        onCorrectedSave={handleCorrectedSave}
         onToggleSidebar={toggleSidebar}
         sessionTitle={chat.sessionTitle}
         reviewQueueCount={chat.reviewQueueCount}

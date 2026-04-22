@@ -124,10 +124,11 @@ Priority order:
   - `report/gemini/` stores Gemini advisory or mediation logs
 - `.pipeline/`
   - rolling automation handoff slots for the single-Codex tmux flow
-  - `claude_handoff.md` is the historical filename for the implement control slot in the current stage-3 flow; the active implement owner comes from `.pipeline/config/agent_profile.json`
-  - `gemini_request.md` is the verify/handoff-owner -> advisory-owner arbitration request slot in the current stage-3 flow
-  - `gemini_advice.md` is the advisory-owner -> verify/handoff-owner advisory slot in the current stage-3 flow
+  - `implement_handoff.md` is the canonical implement control slot; historical alias `claude_handoff.md` is read-only compatibility for the same logical slot
+  - `advisory_request.md` is the canonical verify/handoff-owner -> advisory-owner arbitration request slot; historical alias `gemini_request.md` is read-only compatibility for the same logical slot
+  - `advisory_advice.md` is the canonical advisory-owner -> verify/handoff-owner advisory slot; historical alias `gemini_advice.md` is read-only compatibility for the same logical slot
   - `operator_request.md` is the operator-only stop slot in the current stage-3 flow
+  - `harness/implement.md`, `harness/verify.md`, `harness/advisory.md`, and `harness/council.md` are role protocols, not control slots; watcher prompts may surface them as `ROLE_HARNESS` / `COUNCIL_HARNESS`
   - `codex_feedback.md` is optional scratch or legacy compatibility text and is no longer part of the execution path
   - `gpt_prompt.md` is an optional or legacy scratch slot and is no longer part of the canonical flow
 - `.agents/skills/`, `.claude/skills/`
@@ -182,7 +183,7 @@ Current source-of-truth docs live in the root `docs/` directory.
 - Use `onboard-lite` first when the repo or subsystem is unfamiliar and you need actual run/test entrypoints plus immediate ownership boundaries before planning or implementation.
 - Use `finalize-lite` after a meaningful implementation round to close focused verification truth, doc-sync requirements, and `/work` closeout readiness on the implementation side.
 - Use `round-handoff` when verification truth still needs rerun/reconciliation and a `/verify`-backed handoff is required.
-- Use `next-slice-triage` only after `/work` and `/verify` truth is already current and the remaining task is picking one exact next slice or the correct Gemini/operator escalation.
+- Use `next-slice-triage` only after `/work` and `/verify` truth is already current and the remaining task is picking one exact next slice or the correct advisory/operator escalation.
 - Do not collapse these wrappers into one broad workflow. Each wrapper should stop at its own boundary.
 
 ## Single Codex Pipeline Convention
@@ -192,30 +193,34 @@ Current source-of-truth docs live in the root `docs/` directory.
   - verify/handoff owner lane = active `role_bindings.verify`
   - advisory owner lane = active `role_bindings.advisory` when enabled
   - watcher = file-watch and delivery helper lane
-- Historical slot filenames stay stable for compatibility. `.pipeline/claude_handoff.md` remains the implement control slot name even when Claude is not the implement owner.
+- Canonical role-based control filenames are `.pipeline/implement_handoff.md`, `.pipeline/advisory_request.md`, `.pipeline/advisory_advice.md`, and `.pipeline/operator_request.md`.
+- Historical filenames `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, and `.pipeline/gemini_advice.md` are read-only compatibility aliases for those same logical role slots. They must not be treated as separate active control planes.
+- If a canonical file and its historical alias both exist for the same slot, resolve them as one logical control: higher `CONTROL_SEQ` wins, and the canonical filename wins when `CONTROL_SEQ` ties.
 - Prompt ownership follows the active role binding. The bound owner reads its root memory file (`AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`) for that round.
+- `.pipeline/harness/*.md` files are role-neutral SOPs inspired by self-contained skill/harness patterns. They are not execution signals and do not replace `/work`, `/verify`, supervisor status/events, or active control slots.
+- `council.md` is a convergence protocol for blocked or ambiguous rounds, not a fourth physical agent. Verify/handoff or recovery prompts may use it to reduce implement/verify/advisory evidence into one next control.
 - Verification / handoff owner responsibilities:
   - read the newest `/work` note first
   - read the newest same-day `/verify` note if one exists
   - rerun the requested verification honestly
   - leave or update the persistent `/verify` note
-  - write the next implement-facing execution handoff to `.pipeline/claude_handoff.md` when one exact slice is fixed
-  - write `.pipeline/gemini_request.md` when the only blocker is next-slice ambiguity, overlapping candidates, or a low-confidence tie-break before operator escalation
-  - if an active implement-owner session asks a live side question such as context exhaustion, session rollover, or continue-vs-switch, use `.pipeline/gemini_request.md` only as verify/advisory coordination and relay the answer back to the implement owner as a short lane reply instead of rewriting `.pipeline/claude_handoff.md` mid-session
-  - write `.pipeline/operator_request.md` only when automation must stop for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, or after Gemini advice still leaves no truthful exact slice
-- `.pipeline/claude_handoff.md` is the current implement control slot (historical filename).
-- `.pipeline/claude_handoff.md` should declare `STATUS: implement` and should include `CONTROL_SEQ`.
-- When `STATUS: implement` is active, the implement owner may only implement that exact slice or emit a pane-local `STATUS: implement_blocked` sentinel with `BLOCK_REASON`, `BLOCK_REASON_CODE`, `REQUEST: codex_triage`, `ESCALATION_CLASS: codex_triage`, `HANDOFF`, `HANDOFF_SHA`, and `BLOCK_ID`.
+  - write the next implement-facing execution handoff to `.pipeline/implement_handoff.md` when one exact slice is fixed
+  - write `.pipeline/advisory_request.md` when the only blocker is next-slice ambiguity, overlapping candidates, or a low-confidence tie-break before operator escalation
+  - if an active implement-owner session asks a live side question such as context exhaustion, session rollover, or continue-vs-switch, use `.pipeline/advisory_request.md` only as verify/advisory coordination and relay the answer back to the implement owner as a short lane reply instead of rewriting `.pipeline/implement_handoff.md` mid-session
+  - write `.pipeline/operator_request.md` only when automation must stop for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, or after advisory advice still leaves no truthful exact slice
+- `.pipeline/implement_handoff.md` is the canonical implement control slot.
+- `.pipeline/implement_handoff.md` should declare `STATUS: implement` and should include `CONTROL_SEQ`.
+- When `STATUS: implement` is active, the implement owner may only implement that exact slice or emit a pane-local `STATUS: implement_blocked` sentinel with `BLOCK_REASON`, `BLOCK_REASON_CODE`, `REQUEST: verify_triage`, `ESCALATION_CLASS: verify_triage`, `HANDOFF`, `HANDOFF_SHA`, and `BLOCK_ID`.
 - Implement-owner rounds stop after the bounded file edits plus the canonical `/work` closeout. The implement owner must not commit, push, publish a branch, or open a PR from the implement lane.
 - Commit/push automation is a large-bundle boundary only. Use it only when the operator explicitly approves a verified bundle such as release, soak, PR stabilization, or direct publish work; small/local slices stop at `/work` and remain local instead of opening commit/push operator stops.
 - PR creation is included in that verified large-bundle publish follow-up when the active control is `REASON_CODE: pr_creation_gate`, `OPERATOR_POLICY: gate_24h`, and `DECISION_CLASS: release_gate`. Create or reuse a draft PR, record the PR URL in `/work`, then write the next control. Merge, destructive publication changes, auth/credential repair, and approval-record/truth-sync blockers still require an operator stop.
 - If a verified large bundle already carries `REASON_CODE: commit_push_bundle_authorization` with `OPERATOR_POLICY: internal_only`, automation should route it to verify/handoff-owner publish follow-up instead of hibernating or asking the user again. The follow-up must still scope the dirty tree and keep the action auditable.
 - Do not hand that commit/push/PR work to the implement owner. The implement lane still forbids commit, push, branch/PR publish, so publish follow-up belongs to the verify/handoff owner or to an advisory escalation if the verify/handoff owner cannot execute it truthfully.
 - watcher should auto-route that `implement_blocked` sentinel to verify/handoff-owner triage instead of opening an operator stop directly.
-- `.pipeline/gemini_request.md` is the current verify/handoff-owner -> advisory-owner arbitration slot.
-- `.pipeline/gemini_request.md` should declare `STATUS: request_open` and should include `CONTROL_SEQ` while pending.
-- `.pipeline/gemini_advice.md` is the current advisory-owner -> verify/handoff-owner advisory slot.
-- `.pipeline/gemini_advice.md` should declare `STATUS: advice_ready` and should include `CONTROL_SEQ` while pending.
+- `.pipeline/advisory_request.md` is the current verify/handoff-owner -> advisory-owner arbitration slot.
+- `.pipeline/advisory_request.md` should declare `STATUS: request_open` and should include `CONTROL_SEQ` while pending.
+- `.pipeline/advisory_advice.md` is the current advisory-owner -> verify/handoff-owner advisory slot.
+- `.pipeline/advisory_advice.md` should declare `STATUS: advice_ready` and should include `CONTROL_SEQ` while pending.
 - `.pipeline/session_arbitration_draft.md` is an optional watcher-generated non-canonical draft slot.
 - `.pipeline/session_arbitration_draft.md` should declare `STATUS: draft_only` only, and must not be treated as a stop/go execution signal.
 - `.pipeline/operator_request.md` is the current operator-only stop slot.
@@ -226,27 +231,27 @@ Current source-of-truth docs live in the root `docs/` directory.
 - supervisor/watcher should classify operator stop publish/gate behavior from `OPERATOR_POLICY` first, then `REASON_CODE`, and only use free-form prose as explanatory context.
 - Gemini is advisory only:
   - it may write `report/gemini/...md`
-  - it may write `.pipeline/gemini_advice.md`
-  - it must not directly write `.pipeline/claude_handoff.md` or `.pipeline/operator_request.md`
+  - it may write `.pipeline/advisory_advice.md`
+  - it must not directly write `.pipeline/implement_handoff.md` or `.pipeline/operator_request.md`
   - it should prefer file edit/write tools for advisory output instead of shell heredoc or shell redirection
   - watcher prompts for Gemini should prefer explicit `@path` file mentions and exact advisory output paths over loose path prose
   - when arbitration already names exact shipped docs or a current runtime-doc family, Gemini should inspect those paths first and avoid widening into `docs/superpowers/**`, `plandoc/**`, or other historical planning docs unless the request or latest persistent notes explicitly cite them as current evidence
-  - pane-only answers do not close the advisory round; the round is complete only after both `report/gemini/...md` and `.pipeline/gemini_advice.md` are written
-  - if the advice is answering an active implement-owner session's side question, the verify/handoff owner should relay that answer as a short lane reply and keep `.pipeline/claude_handoff.md` unchanged until the session boundary or next round handoff
+  - pane-only answers do not close the advisory round; the round is complete only after both `report/gemini/...md` and `.pipeline/advisory_advice.md` are written
+  - if the advice is answering an active implement-owner session's side question, the verify/handoff owner should relay that answer as a short lane reply and keep `.pipeline/implement_handoff.md` unchanged until the session boundary or next round handoff
 - `.pipeline/codex_feedback.md` may still exist as optional scratch, but Claude should not rely on it as a direct execution slot.
 - In automation, the newest valid control file wins by `CONTROL_SEQ` first and `mtime` only as a fallback, and stale control files are excluded from dispatch:
-  - `.pipeline/claude_handoff.md` → implement owner 실행
-  - `.pipeline/gemini_request.md` → advisory owner 실행
-  - `.pipeline/gemini_advice.md` → verify/handoff-owner follow-up
+  - `.pipeline/implement_handoff.md` → implement owner 실행
+  - `.pipeline/advisory_request.md` → advisory owner 실행
+  - `.pipeline/advisory_advice.md` → verify/handoff-owner follow-up
   - `.pipeline/operator_request.md` → 자동 진행 중단, operator 대기
-- `.pipeline/session_arbitration_draft.md` is not a control file. watcher may write it as a draft only after an active implement-owner session shows the escalation pattern and the lanes are settled enough for arbitration: verify/advisory panes must be idle, and the implement owner must be either idle or stably showing the escalation text for a short settle window. watcher should clear that draft again when implement-owner activity resumes or canonical Gemini/operator control opens, and should suppress immediate same-fingerprint rewrites for a short cooldown. The verify/handoff owner must explicitly decide whether to ignore it, answer the implement owner directly, or promote it into `.pipeline/gemini_request.md`.
+- `.pipeline/session_arbitration_draft.md` is not a control file. watcher may write it as a draft only after an active implement-owner session shows the escalation pattern and the lanes are settled enough for arbitration: verify/advisory panes must be idle, and the implement owner must be either idle or stably showing the escalation text for a short settle window. watcher should clear that draft again when implement-owner activity resumes or canonical advisory/operator control opens, and should suppress immediate same-fingerprint rewrites for a short cooldown. The verify/handoff owner must explicitly decide whether to ignore it, answer the implement owner directly, or promote it into `.pipeline/advisory_request.md`.
 - `.pipeline/gpt_prompt.md` may remain as an optional or legacy scratch slot, but it is no longer required for the canonical flow.
 - Persistent records in `/work`, `/verify`, and `report/` should default to Korean unless the user explicitly asks otherwise.
 - Execution-facing rolling slots in `.pipeline/` should default to concise English-led instructions so Claude, Codex, and Gemini can execute exact slices without translation drift.
 - File paths, test names, selectors, field names, and literal code identifiers should stay in their original form even inside Korean records or English execution slots.
 - Persistent truth still lives in `/work` and `/verify`; if `.pipeline` disagrees with them, trust the latest `/work` and `/verify`.
 - watcher guarantees file-detection and pane-delivery only. If the implement owner or verify/handoff owner is busy, interrupted, or not actually ready to receive input, that is a lane/session-state issue rather than a `.pipeline` contract issue.
-- `.pipeline/claude_handoff.md` is the round-start execution contract, not a live side-channel. Mid-session Gemini arbitration answers should normally return to the implement owner as a short lane reply so later troubleshooting can still compare the finished work against the unchanged handoff that started the round.
+- `.pipeline/implement_handoff.md` is the round-start execution contract, not a live side-channel. Mid-session advisory arbitration answers should normally return to the implement owner as a short lane reply so later troubleshooting can still compare the finished work against the unchanged handoff that started the round.
 
 ## Codex Review Scope
 
@@ -258,11 +263,11 @@ Current source-of-truth docs live in the root `docs/` directory.
   - the round did not widen scope away from current MVP priorities
 - Treat `/verify` as the review report for the latest implement-owner round plus a narrow direction guard, not as a mandatory full-repository diagnosis.
 - After that review, Codex should either:
-  - choose one exact next slice and write `STATUS: implement` to `.pipeline/claude_handoff.md`, or
-  - write `.pipeline/gemini_request.md` when the only blocker is next-slice ambiguity, overlapping candidates, or a low-confidence tie-break, or
+  - choose one exact next slice and write `STATUS: implement` to `.pipeline/implement_handoff.md`, or
+  - write `.pipeline/advisory_request.md` when the only blocker is next-slice ambiguity, overlapping candidates, or a low-confidence tie-break, or
   - explicitly stop automation with `.pipeline/operator_request.md` only when a real operator-only decision remains, approval-record/truth-sync work must happen first, immediate safety requires a stop, or Gemini was already unavailable/inconclusive
 - If a stop request presents labeled choices, such as lettered, numbered, inline parenthesized, or Korean `n안` options, that can be narrowed from current `docs/`, milestones, latest `/work`, and latest `/verify`, treat it as next-slice ambiguity and route advisory-first instead of holding for the operator, unless the decision header itself includes safety, destructive, auth/credential, approval-record, or truth-sync blockers.
-- If watcher has already routed such a gated operator request to verify/handoff retriage and that lane returns to an idle prompt without writing a newer control slot, watcher may record `operator_retriage_no_next_control` and machine-write the next `.pipeline/gemini_request.md` so the agents arbitrate before asking the operator.
+- If watcher has already routed such a gated operator request to verify/handoff retriage and that lane returns to an idle prompt without writing a newer control slot, watcher may record `operator_retriage_no_next_control` and machine-write the next `.pipeline/advisory_request.md` so the agents arbitrate before asking the operator.
 - In the canonical flow, Codex should not close a verification round with pane-only reasoning or a control-slot rewrite alone. Codex must leave or update `/verify` before writing the next control slot.
 - When the latest `/work` and `/verify` already closed one family truthfully, prefer automatic next-slice selection over `needs_operator` if one smaller same-family follow-up remains.
 - Default automatic tie-break order is:
@@ -272,7 +277,7 @@ Current source-of-truth docs live in the root `docs/` directory.
   - internal cleanup
 - However, if the same day already contains 3 or more same-family docs-only truth-sync rounds in a row, Codex must not auto-select yet another narrower docs-only micro-slice from that family. At that point Codex should either:
   - choose one slightly larger but still bounded docs-only bundle that closes the remaining same-family drift in one round, or
-  - open `.pipeline/gemini_request.md` first, or `.pipeline/operator_request.md` only if a real operator-only decision remains, instead of extending the docs-only micro-loop
+  - open `.pipeline/advisory_request.md` first, or `.pipeline/operator_request.md` only if a real operator-only decision remains, instead of extending the docs-only micro-loop
 - If Codex stops with `.pipeline/operator_request.md`, the stop request should still explain the reason and the missing operator decision instead of leaving the rolling slot empty.
 - Do not push slice selection back onto Claude with wording such as "continue only if you can find a good slice."
 - Use a broader whole-project audit only when explicitly requested or when a milestone, release, or trajectory check is needed.
@@ -298,7 +303,7 @@ Current source-of-truth docs live in the root `docs/` directory.
 - Use `STATUS: needs_operator` only when:
   - approval-record or truth-sync work must happen before any new implementation slice can start, or
   - a real operator-only decision or immediate safety stop is required now, or
-  - Gemini arbitration is unavailable or already completed and two or more candidates still remain genuinely tied after the order above.
+  - advisory arbitration is unavailable or already completed and two or more candidates still remain genuinely tied after the order above.
 
 ## Recursive Improvement Rules
 
@@ -369,7 +374,7 @@ Current source-of-truth docs live in the root `docs/` directory.
 16. Use `onboard-lite` when you are entering an unfamiliar repo or subsystem and need the minimum run/test entrypoints, ownership boundaries, and current risks before planning or implementation, without widening into a whole-project audit.
 17. Use `round-handoff` when a Codex round is complete and you need to re-check the latest `/work` note, rerun honest verification, leave or update a `/verify` note, and draft the next operator prompt without overstating progress.
 18. In the single tmux flow, keep the active verify/handoff owner responsible for rerun verification and next-implement feedback together; do not reintroduce a second canonical reviewer lane unless the docs are updated again.
-19. In automation handoff, the active implement owner should implement only `.pipeline/claude_handoff.md` when it says `STATUS: implement`. If that slice is blocked, the implement owner should emit the `STATUS: implement_blocked` sentinel with `BLOCK_REASON_CODE` and `ESCALATION_CLASS` instead of asking the operator to choose. Gemini와 operator stop files must not be routed to the implement owner.
+19. In automation handoff, the active implement owner should implement only `.pipeline/implement_handoff.md` when it says `STATUS: implement`. If that slice is blocked, the implement owner should emit the `STATUS: implement_blocked` sentinel with `BLOCK_REASON_CODE` and `ESCALATION_CLASS` instead of asking the operator to choose. Gemini와 operator stop files must not be routed to the implement owner.
 20. Prefer extending existing shared helpers, queries, scripts, and prompts over adding near-copy code paths. If temporary duplication is unavoidable, say why and leave a clear cleanup path.
 21. Do not split one coherent task into many ultra-small slices just to keep rounds tiny. Prefer the smallest coherent reviewable slice that closes meaningful progress when the files and verification path naturally belong together.
 
@@ -393,15 +398,15 @@ Current source-of-truth docs live in the root `docs/` directory.
 - Occasional whole-project, milestone, or trajectory audits should leave a report under `report/YYYY-MM-DD-<slug>.md`.
 - Persistent notes under `work/`, `verify/`, and `report/` should default to Korean.
 - Rolling execution slots under `.pipeline/` should default to English-led execution prompts.
-- `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, `.pipeline/gemini_advice.md`, `.pipeline/operator_request.md`, and optional scratch files like `.pipeline/codex_feedback.md` never replace the persistent `/work` and `/verify` notes.
+- `.pipeline/implement_handoff.md`, `.pipeline/advisory_request.md`, `.pipeline/advisory_advice.md`, `.pipeline/operator_request.md`, and optional scratch files like `.pipeline/codex_feedback.md` never replace the persistent `/work` and `/verify` notes.
 - `.pipeline/gpt_prompt.md` may remain as an optional or legacy scratch slot, but it is not required in the canonical single-Codex flow.
 - In the current stage-3 single-runtime flow:
   - the active implement owner finishes implementation and leaves `/work`
   - the active verify/handoff owner reruns verification and leaves `/verify`
-  - the active verify/handoff owner then writes `.pipeline/claude_handoff.md` for the next implement round when one exact slice is fixed
-  - if the active verify/handoff owner cannot narrow one exact slice yet, it writes `.pipeline/gemini_request.md`
-  - the active advisory owner writes `.pipeline/gemini_advice.md` plus `report/gemini/...md`
-  - the active verify/handoff owner then writes the final `.pipeline/claude_handoff.md` or `.pipeline/operator_request.md`
+  - the active verify/handoff owner then writes `.pipeline/implement_handoff.md` for the next implement round when one exact slice is fixed
+  - if the active verify/handoff owner cannot narrow one exact slice yet, it writes `.pipeline/advisory_request.md`
+  - the active advisory owner writes `.pipeline/advisory_advice.md` plus `report/gemini/...md`
+  - the active verify/handoff owner then writes the final `.pipeline/implement_handoff.md` or `.pipeline/operator_request.md`
   - if automation must stop, the active verify/handoff owner writes `.pipeline/operator_request.md`
 - `/verify` should stay tied to the latest implement-owner round. Do not turn every verification note into a whole-project audit.
 - Before starting a new meaningful round, check the newest note in today's `work/<month>/<day>/` folder. If there is no note for today, read the newest note from the previous day.

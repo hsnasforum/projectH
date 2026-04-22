@@ -104,6 +104,14 @@ class PipelineGuiSetupProfileTest(unittest.TestCase):
         self.assertEqual(lane_map["Codex"]["read_first_doc"], "AGENTS.md")
         self.assertEqual(lane_map["Gemini"]["token_source_root"], "~/.gemini/tmp")
         self.assertEqual(lane_map["Codex"]["support_rank"], 3)
+        harness_map = {
+            item["role"]: item["path"]
+            for item in adapter["role_harnesses"]
+        }
+        self.assertEqual(harness_map["implement"], ".pipeline/harness/implement.md")
+        self.assertEqual(harness_map["verify"], ".pipeline/harness/verify.md")
+        self.assertEqual(harness_map["advisory"], ".pipeline/harness/advisory.md")
+        self.assertEqual(harness_map["council"], ".pipeline/harness/council.md")
 
     def test_runtime_adapter_preserves_swapped_role_bindings(self) -> None:
         adapter = runtime_adapter_from_resolved(

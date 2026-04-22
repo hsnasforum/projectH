@@ -88,6 +88,7 @@ class FeedbackHandlerMixin:
                 action="corrected_outcome_recorded",
                 detail={
                     "outcome": corrected_outcome.get("outcome"),
+                    "reason_label": corrected_outcome.get("reason_label"),
                     "recorded_at": corrected_outcome.get("recorded_at"),
                     "artifact_id": corrected_outcome.get("artifact_id"),
                     "source_message_id": corrected_outcome.get("source_message_id"),
@@ -192,6 +193,7 @@ class FeedbackHandlerMixin:
                 action="corrected_outcome_recorded",
                 detail={
                     "outcome": corrected_outcome.get("outcome"),
+                    "reason_label": corrected_outcome.get("reason_label"),
                     "recorded_at": corrected_outcome.get("recorded_at"),
                     "artifact_id": corrected_outcome.get("artifact_id"),
                     "source_message_id": corrected_outcome.get("source_message_id"),
@@ -269,6 +271,51 @@ class FeedbackHandlerMixin:
             },
         )
 
+        return {
+            "ok": True,
+            "message_id": message_id,
+            "artifact_id": str(updated_message.get("artifact_id") or "").strip() or None,
+            "content_verdict": corrected_outcome.get("outcome") if corrected_outcome else None,
+            "corrected_outcome": corrected_outcome,
+            "content_reason_record": content_reason_record,
+            "session": self._serialize_session(self.session_store.get_session(session_id)),
+        }
+
+    def submit_content_reason_label(self, payload: dict[str, Any]) -> dict[str, Any]:
+        session_id = self._normalize_session_id(payload.get("session_id"))
+        message_id = self._normalize_optional_text(payload.get("message_id"))
+        reason_label = self._normalize_optional_text(payload.get("reason_label"))
+
+        if not message_id:
+            raise WebApiError(400, "레이블을 기록할 메시지 ID가 필요합니다.")
+        if not reason_label:
+            raise WebApiError(400, "reason_label을 입력해 주세요.")
+
+        try:
+            updated_message = self.session_store.record_content_reason_label_for_message(
+                session_id,
+                message_id=message_id,
+                reason_label=reason_label,
+            )
+        except ValueError as exc:
+            raise WebApiError(400, str(exc)) from exc
+
+        if updated_message is None:
+            raise WebApiError(404, "레이블을 기록할 grounded-brief 원문 응답을 찾지 못했습니다.")
+
+        corrected_outcome = self._serialize_corrected_outcome(updated_message.get("corrected_outcome"))
+        content_reason_record = self._serialize_content_reason_record(updated_message.get("content_reason_record"))
+        self.task_logger.log(
+            session_id=session_id,
+            action="content_reason_label_recorded",
+            detail={
+                "message_id": message_id,
+                "artifact_id": updated_message.get("artifact_id"),
+                "artifact_kind": updated_message.get("artifact_kind"),
+                "reason_label": reason_label,
+                "content_reason_record": content_reason_record,
+            },
+        )
         return {
             "ok": True,
             "message_id": message_id,

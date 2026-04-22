@@ -41,6 +41,13 @@ ALLOWED_SAVE_CONTENT_SOURCES = frozenset(SaveContentSource)
 
 
 # ---------------------------------------------------------------------------
+# Session-local memory signal
+# ---------------------------------------------------------------------------
+
+SESSION_LOCAL_MEMORY_SIGNAL_VERSION = "session_local_memory_signal_v1"
+
+
+# ---------------------------------------------------------------------------
 # Reviewed-memory transition lifecycle (record_stage)
 # ---------------------------------------------------------------------------
 
@@ -192,6 +199,15 @@ class CorrectedOutcome(StrEnum):
 ALLOWED_CORRECTED_OUTCOMES = frozenset(CorrectedOutcome)
 
 
+class CorrectedOutcomeReasonLabel(StrEnum):
+    EXPLICIT_CORRECTION_SUBMITTED = "explicit_correction_submitted"
+
+
+ALLOWED_CORRECTED_OUTCOME_REASON_LABELS: dict[str, frozenset[str]] = {
+    CorrectedOutcome.CORRECTED: frozenset({CorrectedOutcomeReasonLabel.EXPLICIT_CORRECTION_SUBMITTED}),
+}
+
+
 # ---------------------------------------------------------------------------
 # Content verdict
 # ---------------------------------------------------------------------------
@@ -209,9 +225,18 @@ class ApprovalReasonScope(StrEnum):
     APPROVAL_REISSUE = "approval_reissue"
 
 
+class ApprovalReasonLabel(StrEnum):
+    EXPLICIT_REJECTION = "explicit_rejection"
+    PATH_CHANGE = "path_change"
+    CORRECTED_TEXT_REISSUE = "corrected_text_reissue"
+
+
 ALLOWED_APPROVAL_REASON_LABELS: dict[str, frozenset[str]] = {
-    ApprovalReasonScope.APPROVAL_REJECT: frozenset({"explicit_rejection"}),
-    ApprovalReasonScope.APPROVAL_REISSUE: frozenset({"path_change"}),
+    ApprovalReasonScope.APPROVAL_REJECT: frozenset({ApprovalReasonLabel.EXPLICIT_REJECTION}),
+    ApprovalReasonScope.APPROVAL_REISSUE: frozenset({
+        ApprovalReasonLabel.PATH_CHANGE,
+        ApprovalReasonLabel.CORRECTED_TEXT_REISSUE,
+    }),
 }
 
 
@@ -223,8 +248,20 @@ class ContentReasonScope(StrEnum):
     CONTENT_REJECT = "content_reject"
 
 
+class ContentReasonLabel(StrEnum):
+    EXPLICIT_CONTENT_REJECTION = "explicit_content_rejection"
+    FACT_ERROR = "fact_error"
+    TONE_ERROR = "tone_error"
+    MISSING_INFO = "missing_info"
+
+
 ALLOWED_CONTENT_REASON_LABELS: dict[str, frozenset[str]] = {
-    ContentReasonScope.CONTENT_REJECT: frozenset({"explicit_content_rejection"}),
+    ContentReasonScope.CONTENT_REJECT: frozenset({
+        ContentReasonLabel.EXPLICIT_CONTENT_REJECTION,
+        ContentReasonLabel.FACT_ERROR,
+        ContentReasonLabel.TONE_ERROR,
+        ContentReasonLabel.MISSING_INFO,
+    }),
 }
 
 
@@ -252,13 +289,23 @@ class CandidateReviewAction(StrEnum):
     ACCEPT = "accept"
     REJECT = "reject"
     DEFER = "defer"
+    EDIT = "edit"
+
+
+class CandidateReviewSuggestedScope(StrEnum):
+    MESSAGE_ONLY = "message_only"
+    FAMILY_SCOPED = "family_scoped"
+    GLOBAL_PREFERENCE = "global_preference"
 
 
 CANDIDATE_REVIEW_ACTION_TO_STATUS: dict[str, str] = {
     CandidateReviewAction.ACCEPT: "accepted",
     CandidateReviewAction.REJECT: "rejected",
     CandidateReviewAction.DEFER: "deferred",
+    CandidateReviewAction.EDIT: "edited",
 }
+
+CANDIDATE_REVIEW_OPTIONAL_FIELDS: frozenset[str] = frozenset({"reason_note", "suggested_scope"})
 
 
 def sanitize_supporting_review_refs(refs: object) -> list[dict]:

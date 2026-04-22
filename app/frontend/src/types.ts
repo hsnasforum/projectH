@@ -27,6 +27,8 @@ export interface Message {
   search_results?: SearchResult[];
   applied_preferences?: { description: string; fingerprint: string }[];
   feedback?: string;
+  content_verdict?: string;
+  content_reason_record?: ContentReasonRecord;
 }
 
 export interface ResponseOrigin {
@@ -63,6 +65,16 @@ export interface ClaimCoverageItem {
   source_role?: string;
   source_title?: string;
   hint?: string;
+  trusted_source_count?: number;
+}
+
+export interface ContentReasonRecord {
+  reason_scope: string;
+  reason_label: string;
+  reason_note?: string;
+  recorded_at: string;
+  artifact_id: string;
+  source_message_id: string;
 }
 
 export interface SearchResult {
@@ -114,6 +126,7 @@ export interface ChatResponse {
     search_results?: SearchResult[];
     web_search_record_path?: string;
     saved_note_path?: string;
+    applied_preferences?: { description: string; fingerprint: string }[];
   };
   session?: Session;
   error?: { message: string };

@@ -64,21 +64,48 @@ from pipeline_runtime.lane_surface import (
     pane_text_is_idle as _shared_pane_text_is_idle,
     wait_for_pane_settle as _shared_wait_for_pane_settle,
 )
+from pipeline_runtime.lane_catalog import (
+    default_role_bindings,
+    legacy_watcher_pane_target_arg_for_lane,
+    physical_lane_order,
+    physical_lane_specs,
+    read_first_doc_for_owner,
+)
 from pipeline_runtime.operator_autonomy import (
     OPERATOR_APPROVAL_COMPLETED_REASON,
-    allows_verified_blocker_auto_recovery,
     classify_operator_candidate,
+    evaluate_stale_operator_control,
     is_commit_push_approval_stop,
     normalize_reason_code,
+    operator_gate_marker_from_decision,
+)
+from pipeline_runtime.role_routes import (
+    ADVISORY_RECOVERY_NOTIFY,
+    VERIFY_FOLLOWUP_ROUTE,
+    VERIFY_TRIAGE_ESCALATION,
+    VERIFY_TRIAGE_ONLY_REASON,
+    is_verify_followup_route,
+    is_verify_triage_escalation,
+    normalize_notify_kind,
+    normalize_verify_triage_escalation,
 )
 from pipeline_runtime.schema import (
+    active_control_snapshot_from_entry,
+    active_control_snapshot_from_status,
     atomic_write_text,
+    control_block_from_snapshot,
+    control_filenames_equivalent,
+    control_seq_value,
+    control_slot_spec,
+    control_slot_spec_for_filename,
     iter_job_state_paths,
     latest_verify_note_for_work,
     process_starttime_fingerprint,
     read_control_meta,
     read_json,
+    read_pipeline_control_snapshot,
     same_day_verify_dir_for_work,
+    snapshot_control_seq,
 )
 from pipeline_runtime.turn_arbitration import (
     WatcherTurnInputs,
@@ -100,6 +127,7 @@ from verify_fsm import (
 from watcher_dispatch import DispatchIntent, WatcherDispatchQueue
 from watcher_prompt_assembly import (
     DEFAULT_ADVISORY_PROMPT,
+    DEFAULT_ADVISORY_RECOVERY_PROMPT,
     DEFAULT_CONTROL_RECOVERY_PROMPT,
     DEFAULT_FOLLOWUP_PROMPT,
     DEFAULT_IMPLEMENT_PROMPT,
@@ -124,9 +152,9 @@ except ImportError:
 _SESSION_PREFIX = "aip"
 _ROLLING_PIPELINE_PATHS = frozenset(
     {
-        ".pipeline/claude_handoff.md",
-        ".pipeline/gemini_request.md",
-        ".pipeline/gemini_advice.md",
+        ".pipeline/implement_handoff.md",
+        ".pipeline/advisory_request.md",
+        ".pipeline/advisory_advice.md",
         ".pipeline/operator_request.md",
         ".pipeline/session_arbitration_draft.md",
         ".pipeline/codex_feedback.md",
@@ -150,9 +178,27 @@ def _session_name_for_project(project_path: str) -> str:
     return f"{_SESSION_PREFIX}-{safe}" if safe else f"{_SESSION_PREFIX}-default"
 
 
-def _default_pane_targets(session: str) -> tuple[str, str, str]:
-    """Return default physical pane targets for implement / verify / advisory lanes."""
-    return f"{session}:0.0", f"{session}:0.1", f"{session}:0.2"
+def _default_pane_target_for_lane(session: str, lane: dict[str, object]) -> str:
+    raw_index = lane.get("pane_index")
+    try:
+        pane_index = int(raw_index)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        pane_index = 0
+    return f"{session}:0.{pane_index}"
+
+
+def _default_runtime_lane_configs() -> list[dict[str, object]]:
+    return [{**spec, "enabled": True} for spec in physical_lane_specs()]
+
+
+def _legacy_pane_target_config_key(lane: dict[str, object]) -> str:
+    option = legacy_watcher_pane_target_arg_for_lane(lane)
+    return option[2:].replace("-", "_") if option.startswith("--") else ""
+
+
+def _default_dispatch_pane_type() -> str:
+    specs = physical_lane_specs()
+    return str((specs[0] if specs else {}).get("pane_type") or "claude")
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +216,6 @@ ROUND_NOTE_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-.+\.md$")
 ROUND_NOTE_SECTION_RE = re.compile(r"^##\s+(.+?)\s*$")
 ROUND_NOTE_PATH_RE = re.compile(r"(?<!@)(?:\./)?([A-Za-z0-9_.\-/]+?\.[A-Za-z0-9]+)")
 ROUND_NOTE_METADATA_ONLY_PREFIXES = ("work/", "verify/", "report/", ".pipeline/", "pipeline/")
-WORK_PATH_RE = re.compile(r"(work/\d+/\d+/[^\s`]+\.md)")
 _DISPATCH_LOCKS_GUARD = threading.Lock()
 _DISPATCH_LOCKS: dict[str, threading.Lock] = {}
 _DISPATCH_LOCK_TIMEOUT_SEC = 30.0
@@ -271,6 +316,9 @@ class ControlSignal:
     mtime:       float
     sig:         str
     control_seq: int = -1
+    slot_id:     str = ""
+    canonical_file: str = ""
+    is_legacy_alias: bool = False
 
 
 class PaneLease:
@@ -930,12 +978,12 @@ def _normalize_control_path_hint(path_hint: str) -> str:
     return path_hint.strip().lstrip("./").replace("\\", "/")
 
 
-def _extract_claude_implement_blocked_signal(
+def _extract_implement_blocked_signal(
     text: str,
     active_handoff_path: str = "",
     active_handoff_sha: str = "",
 ) -> Optional[dict[str, object]]:
-    """Return an explicit implement_blocked sentinel if present in recent Claude output."""
+    """Return an explicit implement_blocked sentinel if present in recent implement-owner output."""
     if not text.strip():
         return None
 
@@ -980,15 +1028,16 @@ def _extract_claude_implement_blocked_signal(
             if stripped:
                 block_lines.append(stripped)
 
-        request = fields.get("REQUEST", "").lower()
+        request = normalize_verify_triage_escalation(fields.get("REQUEST", ""))
         escalation_class = fields.get("ESCALATION_CLASS", "").strip().lower()
-        if request and request not in {"verify_triage", "codex_triage"}:
+        escalation_class = normalize_verify_triage_escalation(escalation_class)
+        if request and not is_verify_triage_escalation(request):
             return None
-        if escalation_class and escalation_class not in {"verify_triage", "codex_triage"}:
+        if escalation_class and not is_verify_triage_escalation(escalation_class):
             return None
         if escalation_class and request and escalation_class != request:
             return None
-        request = escalation_class or request or "codex_triage"
+        request = escalation_class or request or VERIFY_TRIAGE_ESCALATION
 
         block_reason_code = normalize_reason_code(fields.get("BLOCK_REASON_CODE", ""))
 
@@ -1030,8 +1079,8 @@ def _extract_claude_implement_blocked_signal(
     return None
 
 
-def _extract_claude_forbidden_menu_signal(text: str, active_handoff_sha: str = "") -> Optional[dict[str, object]]:
-    """Detect forbidden operator-choice text in recent Claude output as a soft blocked signal."""
+def _extract_implement_forbidden_menu_signal(text: str, active_handoff_sha: str = "") -> Optional[dict[str, object]]:
+    """Detect forbidden operator-choice text in recent implement-owner output as a soft blocked signal."""
     if not text.strip():
         return None
 
@@ -1052,17 +1101,17 @@ def _extract_claude_forbidden_menu_signal(text: str, active_handoff_sha: str = "
     return {
         "source": "soft_blocked",
         "reason": "forbidden_operator_menu",
-        "reason_code": "codex_triage_only",
-        "escalation_class": "codex_triage",
-        "request": "codex_triage",
+        "reason_code": VERIFY_TRIAGE_ONLY_REASON,
+        "escalation_class": VERIFY_TRIAGE_ESCALATION,
+        "request": VERIFY_TRIAGE_ESCALATION,
         "excerpt_lines": matched_lines[:6],
         "fingerprint": hashlib.sha1(fingerprint_source.encode("utf-8")).hexdigest(),
         "handoff_hint": "",
     }
 
 
-def _extract_claude_completed_handoff_signal(text: str, active_handoff_sha: str = "") -> Optional[dict[str, object]]:
-    """Detect Claude saying the current handoff is already complete / no-op."""
+def _extract_implement_completed_handoff_signal(text: str, active_handoff_sha: str = "") -> Optional[dict[str, object]]:
+    """Detect the implement owner saying the current handoff is already complete / no-op."""
     if not text.strip():
         return None
 
@@ -1091,8 +1140,8 @@ def _extract_claude_completed_handoff_signal(text: str, active_handoff_sha: str 
         "source": "soft_completed",
         "reason": "handoff_already_completed",
         "reason_code": "duplicate_handoff",
-        "escalation_class": "codex_triage",
-        "request": "codex_triage",
+        "escalation_class": VERIFY_TRIAGE_ESCALATION,
+        "request": VERIFY_TRIAGE_ESCALATION,
         "excerpt_lines": excerpt_lines,
         "fingerprint": hashlib.sha1(fingerprint_source.encode("utf-8")).hexdigest(),
         "handoff_hint": "",
@@ -1360,11 +1409,12 @@ class WatcherCore:
         base = Path(config.get("base_dir", ".pipeline"))
 
         self.base_dir      = base
+        self.pipeline_dir  = base
         self.watch_dir     = Path(config["watch_dir"])
         self.artifact_root = self.watch_dir.parent
         self.repo_root     = Path(config.get("repo_root", str(self.artifact_root))).resolve()
         self.verify_dir    = self.artifact_root / "verify"
-        self.report_gemini_dir = self.artifact_root / "report" / "gemini"
+        self.advisory_report_dir = self.artifact_root / "report" / "gemini"
         self.state_dir     = base / "state"
         self.state_archive_dir = base / "state-archive"
         self.lock_dir      = base / "locks"
@@ -1391,29 +1441,36 @@ class WatcherCore:
         self.runtime_prompt_owners = dict(self.runtime_adapter.get("prompt_owners") or self.runtime_role_owners)
         self.runtime_lane_configs = list(self.runtime_adapter.get("lane_configs") or [])
 
-        # rolling handoff slots (historical filenames, role-bound owners)
-        self.claude_handoff_path    = base / "claude_handoff.md"      # implement handoff slot
-        self.gemini_request_path    = base / "gemini_request.md"      # verify -> advisory request slot
-        self.gemini_advice_path     = base / "gemini_advice.md"       # advisory -> verify recommendation slot
-        self.operator_request_path  = base / "operator_request.md"    # operator-only stop slot
+        # rolling control slots (role-based canonical filenames; historical names are read-only aliases)
+        implement_spec = control_slot_spec("implement_handoff")
+        advisory_request_spec = control_slot_spec("advisory_request")
+        advisory_advice_spec = control_slot_spec("advisory_advice")
+        operator_spec = control_slot_spec("operator_request")
+        self.implement_handoff_path    = base / (implement_spec.canonical_filename if implement_spec else "implement_handoff.md")
+        self.advisory_request_path    = base / (advisory_request_spec.canonical_filename if advisory_request_spec else "advisory_request.md")
+        self.advisory_advice_path     = base / (advisory_advice_spec.canonical_filename if advisory_advice_spec else "advisory_advice.md")
+        self.operator_request_path  = base / (operator_spec.canonical_filename if operator_spec else "operator_request.md")
         self.session_arbitration_draft_path = base / "session_arbitration_draft.md"  # watcher-generated non-canonical draft
         self.completion_paths       = [
-            self.claude_handoff_path,
-            self.gemini_request_path,
+            self.implement_handoff_path,
+            self.advisory_request_path,
             self.operator_request_path,
         ]
-        # pane target: 명시 인자 우선, 없으면 project-aware session 기반 default
+        # pane target: 명시 인자 우선, 없으면 active physical lane catalog 기반 default
         repo_root_str = str(self.repo_root)
         _sess = _session_name_for_project(repo_root_str)
-        _def_claude, _def_codex, _def_gemini = _default_pane_targets(_sess)
-        self.claude_pane_target  = config.get("claude_pane_target", _def_claude)
-        self.gemini_pane_target  = config.get("gemini_pane_target", _def_gemini)
-        self.codex_pane_target   = config.get("verify_pane_target", _def_codex)
-        self.agent_pane_targets = {
-            "Claude": self.claude_pane_target,
-            "Codex": self.codex_pane_target,
-            "Gemini": self.gemini_pane_target,
-        }
+        _lane_configs_for_targets = self.runtime_lane_configs or _default_runtime_lane_configs()
+        self.agent_pane_targets: dict[str, str] = {}
+        for lane in _lane_configs_for_targets:
+            lane_name = str(lane.get("name") or "").strip()
+            if not lane_name:
+                continue
+            config_key = _legacy_pane_target_config_key(lane)
+            explicit_target = str(config.get(config_key) or "").strip() if config_key else ""
+            self.agent_pane_targets[lane_name] = explicit_target or _default_pane_target_for_lane(_sess, lane)
+        self.claude_pane_target  = self.agent_pane_targets.get("Claude", "")
+        self.gemini_pane_target  = self.agent_pane_targets.get("Gemini", "")
+        self.codex_pane_target   = self.agent_pane_targets.get("Codex", "")
         self.implement_prompt = _normalize_prompt_text(
             config.get("implement_prompt")
             or config.get("claude_prompt")
@@ -1429,6 +1486,10 @@ class WatcherCore:
             or config.get("codex_followup_prompt")
             or DEFAULT_FOLLOWUP_PROMPT
         )
+        self.advisory_recovery_prompt = _normalize_prompt_text(
+            config.get("advisory_recovery_prompt")
+            or DEFAULT_ADVISORY_RECOVERY_PROMPT
+        )
         self.control_recovery_prompt = _normalize_prompt_text(
             config.get("control_recovery_prompt")
             or DEFAULT_CONTROL_RECOVERY_PROMPT
@@ -1438,15 +1499,16 @@ class WatcherCore:
             or DEFAULT_OPERATOR_RETRIAGE_PROMPT
         )
         self.verify_triage_prompt = _normalize_prompt_text(
-            config.get("verify_triage_prompt")
+            config.get("verify_blocked_triage_prompt")
+            or config.get("verify_triage_prompt")
             or config.get("codex_blocked_triage_prompt")
             or DEFAULT_VERIFY_TRIAGE_PROMPT
         )
 
         # rolling 슬롯 시그니처 추적 (mtime_ns + size + hash)
-        self._last_claude_handoff_sig: str = self._get_path_sig(self.claude_handoff_path)
-        self._last_gemini_request_sig: str = self._get_path_sig(self.gemini_request_path)
-        self._last_gemini_advice_sig: str = self._get_path_sig(self.gemini_advice_path)
+        self._last_implement_handoff_sig: str = self._get_path_sig(self.implement_handoff_path)
+        self._last_advisory_request_sig: str = self._get_path_sig(self.advisory_request_path)
+        self._last_advisory_advice_sig: str = self._get_path_sig(self.advisory_advice_path)
         self._last_operator_request_sig: str = self._get_path_sig(self.operator_request_path)
         self._last_seen_control_seq: int | None = None
         self._control_seq_age_cycles: int = 0
@@ -1458,10 +1520,10 @@ class WatcherCore:
         self._session_arbitration_snapshot_fingerprints: dict[str, str] = {}
         self._session_arbitration_snapshot_changed_at: dict[str, float] = {}
         self._session_arbitration_cooldowns: dict[str, float] = {}
-        self._last_claude_blocked_fingerprint: str = ""
-        self._claude_blocked_snapshot_fingerprints: dict[str, str] = {}
-        self._claude_blocked_snapshot_changed_at: dict[str, float] = {}
-        self._claude_blocked_cooldowns: dict[str, float] = {}
+        self._last_implement_blocked_fingerprint: str = ""
+        self._implement_blocked_snapshot_fingerprints: dict[str, str] = {}
+        self._implement_blocked_snapshot_changed_at: dict[str, float] = {}
+        self._implement_blocked_cooldowns: dict[str, float] = {}
         # 시작 시 이미 implement 차례인지 판단하는 플래그
         self._initial_turn_checked: bool = False
         # implement 차례일 때: 시작 시점 work/ 스냅샷
@@ -1476,14 +1538,17 @@ class WatcherCore:
         self._lane_input_defer_cooldown_sec: float = float(
             config.get("lane_input_defer_cooldown_sec", 5.0)
         )
-        self.gemini_advisory_retry_sec: float = float(
-            config.get("gemini_advisory_retry_sec", 30.0)
+        self.advisory_retry_sec: float = float(
+            config.get("advisory_idle_retry_sec", config.get("advisory_retry_sec", 30.0))
         )
+        self.advisory_recovery_sec: float = float(config.get("advisory_recovery_sec", 900.0))
         self.operator_retriage_no_control_sec: float = float(
             config.get("operator_retriage_no_control_sec", 45.0)
         )
-        self._last_gemini_advisory_retry_sig: str = ""
-        self._last_gemini_advisory_retry_at: float = 0.0
+        self._last_advisory_retry_sig: str = ""
+        self._last_advisory_retry_at: float = 0.0
+        self._last_advisory_recovery_sig: str = ""
+        self._last_advisory_recovery_at: float = 0.0
         self._runtime_export_enabled: bool = os.environ.get("PIPELINE_RUNTIME_DISABLE_EXPORTER", "").strip().lower() not in {
             "1",
             "true",
@@ -1500,9 +1565,13 @@ class WatcherCore:
             self.run_dir.mkdir(parents=True, exist_ok=True)
         self._archive_stale_job_states()
 
-        # Claude idle timeout tracking
-        self.claude_active_idle_timeout_sec: float = float(
-            config.get("claude_active_idle_timeout_sec", 300)
+        # Implement-owner idle timeout tracking. The legacy key remains a read-only
+        # config alias so existing local profiles do not lose their timeout.
+        self.implement_active_idle_timeout_sec: float = float(
+            config.get(
+                "implement_active_idle_timeout_sec",
+                config.get("claude_active_idle_timeout_sec", 300),
+            )
         )
         self.operator_wait_retriage_sec: float = float(
             config.get("operator_wait_retriage_sec", 3600)
@@ -1549,16 +1618,17 @@ class WatcherCore:
             is_active_control=self._is_active_control,
         )
         self.prompt_assembler = WatcherPromptAssembler(
-            report_gemini_dir=self.report_gemini_dir,
-            claude_handoff_path=self.claude_handoff_path,
-            gemini_request_path=self.gemini_request_path,
-            gemini_advice_path=self.gemini_advice_path,
+            advisory_report_dir=self.advisory_report_dir,
+            implement_handoff_path=self.implement_handoff_path,
+            advisory_request_path=self.advisory_request_path,
+            advisory_advice_path=self.advisory_advice_path,
             operator_request_path=self.operator_request_path,
             runtime_enabled_lanes=list(self.runtime_adapter.get("enabled_lanes") or []),
             runtime_controls=self.runtime_controls,
             implement_prompt=self.implement_prompt,
             advisory_prompt=self.advisory_prompt,
             followup_prompt=self.followup_prompt,
+            advisory_recovery_prompt=self.advisory_recovery_prompt,
             control_recovery_prompt=self.control_recovery_prompt,
             operator_retriage_prompt=self.operator_retriage_prompt,
             verify_triage_prompt=self.verify_triage_prompt,
@@ -1566,7 +1636,7 @@ class WatcherCore:
             get_latest_work_path=self._get_latest_work_path,
             get_latest_same_day_verify_path_for_work=self._get_latest_same_day_verify_path_for_work,
             get_latest_same_day_verify_path=self._get_latest_same_day_verify_path,
-            infer_gemini_report_hint=self._infer_gemini_report_hint,
+            infer_advisory_report_hint=self._infer_advisory_report_hint,
             get_active_control_signal=self._get_active_control_signal,
             get_next_control_seq=self._get_next_control_seq,
             read_control_seq_from_path=self._read_control_seq_from_path,
@@ -1580,13 +1650,13 @@ class WatcherCore:
 
         self.sm = StateMachine(
             project_root=self.repo_root,
-            verify_lane_name=self._prompt_owner("verify") or "Codex",
+            verify_lane_name=self._prompt_owner("verify") or "",
             state_dir=self.state_dir,
             stabilizer=self.stabilizer,
             lease=self.lease,
             dedupe=self.dedupe,
             collector=self.collector,
-            verify_pane_target=self._prompt_pane_target("verify") or config.get("verify_pane_target", _def_codex),
+            verify_pane_target=self._prompt_pane_target("verify"),
             verify_pane_type=self._prompt_pane_type("verify"),
             verify_prompt_template=config.get(
                 "verify_prompt_template",
@@ -1621,6 +1691,7 @@ class WatcherCore:
                 pane_type=pane_type,
             ),
             dry_run=self.dry_run,
+            pipeline_dir=self.pipeline_dir,
         )
         if self._runtime_export_enabled:
             self._write_current_run_pointer()
@@ -1645,7 +1716,11 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _role_owner(self, role_name: str) -> Optional[str]:
         owner = str(self.runtime_role_owners.get(role_name) or "").strip()
-        return owner or None
+        if owner:
+            return owner
+        if role_name in self.runtime_role_owners:
+            return None
+        return str(default_role_bindings().get(role_name) or "").strip() or None
 
     # ------------------------------------------------------------------
     def _prompt_owner(self, role_name: str) -> Optional[str]:
@@ -1655,20 +1730,12 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _role_read_first_doc(self, role_name: str) -> str:
         owner = self._role_owner(role_name) or ""
-        if owner == "Claude":
-            return "CLAUDE.md"
-        if owner == "Gemini":
-            return "GEMINI.md"
-        return "AGENTS.md"
+        return read_first_doc_for_owner(owner)
 
     # ------------------------------------------------------------------
     def _prompt_read_first_doc(self, role_name: str) -> str:
         owner = self._prompt_owner(role_name) or ""
-        if owner == "Claude":
-            return "CLAUDE.md"
-        if owner == "Gemini":
-            return "GEMINI.md"
-        return "AGENTS.md"
+        return read_first_doc_for_owner(owner)
 
     # ------------------------------------------------------------------
     def _role_pane_target(self, role_name: str) -> str:
@@ -1688,13 +1755,13 @@ class WatcherCore:
     def _role_pane_type(self, role_name: str) -> str:
         lane = self._lane_config(self._role_owner(role_name))
         pane_type = str((lane or {}).get("pane_type") or "").strip()
-        return pane_type or "claude"
+        return pane_type or _default_dispatch_pane_type()
 
     # ------------------------------------------------------------------
     def _prompt_pane_type(self, role_name: str) -> str:
         lane = self._lane_config(self._prompt_owner(role_name))
         pane_type = str((lane or {}).get("pane_type") or "").strip()
-        return pane_type or "claude"
+        return pane_type or _default_dispatch_pane_type()
 
     # ------------------------------------------------------------------
     def _dispatch_target_for_spec(self, spec: PromptDispatchSpec) -> tuple[str, str, str]:
@@ -1839,7 +1906,7 @@ class WatcherCore:
     def _active_lane_name_for_turn(self, turn_state: Optional[WatcherTurnState] = None) -> str:
         state = turn_state or self._current_turn_state
         if state == WatcherTurnState.IMPLEMENT_ACTIVE:
-            return self._prompt_owner("implement") or "Claude"
+            return self._prompt_owner("implement") or ""
         if state in (WatcherTurnState.VERIFY_ACTIVE, WatcherTurnState.VERIFY_FOLLOWUP):
             return self._prompt_owner("verify") or ""
         if state == WatcherTurnState.ADVISORY_ACTIVE:
@@ -1878,14 +1945,10 @@ class WatcherCore:
         lane_statuses: list[dict[str, object]] = []
         active_lane = self._active_lane_name_for_turn()
         active_control = self._get_active_control_signal()
-        implement_lane = self._prompt_owner("implement") or "Claude"
+        implement_lane = self._prompt_owner("implement") or ""
         implement_live = self._implement_control_should_surface_working(active_control)
         seen_names: set[str] = set()
-        lane_configs = self.runtime_lane_configs or [
-            {"name": "Claude", "enabled": True},
-            {"name": "Codex", "enabled": True},
-            {"name": "Gemini", "enabled": True},
-        ]
+        lane_configs = self.runtime_lane_configs or _default_runtime_lane_configs()
         for lane in lane_configs:
             name = str(lane.get("name") or "").strip()
             if not name:
@@ -1903,7 +1966,7 @@ class WatcherCore:
                     "last_heartbeat_at": heartbeat_iso if enabled else "",
                 }
             )
-        for fallback_name in ("Claude", "Codex", "Gemini"):
+        for fallback_name in physical_lane_order():
             if fallback_name in seen_names:
                 continue
             lane_statuses.append(
@@ -1927,17 +1990,27 @@ class WatcherCore:
         now = time.time()
         now_iso = self._iso_utc(now)
         active_control = self._get_active_control_signal()
-        control_file = ""
-        control_seq = self._turn_active_control_seq
-        control_status = "none"
-        control_updated_at = ""
+        control_snapshot = {}
+        control_is_legacy_alias = False
         if active_control is not None:
-            control_file = f".pipeline/{active_control.path.name}"
-            control_seq = active_control.control_seq
-            control_status = active_control.status
-            control_updated_at = self._iso_utc(active_control.mtime)
+            control_snapshot = active_control_snapshot_from_entry(
+                {
+                    "file": active_control.path.name,
+                    "control_seq": active_control.control_seq,
+                    "status": active_control.status,
+                    "mtime": active_control.mtime,
+                    "slot_id": active_control.slot_id,
+                    "canonical_file": active_control.canonical_file,
+                }
+            )
+            control_is_legacy_alias = active_control.is_legacy_alias
         elif self._turn_active_control_file:
-            control_file = f".pipeline/{self._turn_active_control_file}"
+            control_snapshot = active_control_snapshot_from_status(
+                {
+                    "active_control_file": f".pipeline/{self._turn_active_control_file}",
+                    "active_control_seq": self._turn_active_control_seq,
+                }
+            )
         data = {
             "schema_version": 1,
             "run_id": self.run_id,
@@ -1946,13 +2019,11 @@ class WatcherCore:
             "turn_state": self._current_turn_state.value,
             "legacy_turn_state": legacy_turn_state_name(self._current_turn_state.value),
             "degraded_reason": "",
-            "control": {
-                "active_control_file": control_file,
-                "active_control_seq": control_seq,
-                "active_control_status": control_status,
-                "active_control_updated_at": control_updated_at,
-                "control_age_cycles": self._control_seq_age_cycles,
-            },
+            "control": control_block_from_snapshot(
+                control_snapshot,
+                control_age_cycles=self._control_seq_age_cycles,
+                is_legacy_alias=control_is_legacy_alias,
+            ),
             "control_age_cycles": self._control_seq_age_cycles,
             "lanes": self._build_lane_statuses(now_iso),
             "last_receipt_id": "",
@@ -1978,10 +2049,21 @@ class WatcherCore:
         """Transition to a new turn state and write turn_state.json atomically."""
         old_state = self._current_turn_state
         now = time.time()
+        control_snapshot = active_control_snapshot_from_status(
+            {
+                "active_control_file": active_control_file,
+                "active_control_seq": active_control_seq,
+            }
+        )
+        transition_control_file = str(control_snapshot.get("control_file") or active_control_file)
+        transition_control_seq = snapshot_control_seq(
+            control_snapshot,
+            default=control_seq_value(active_control_seq, default=-1),
+        )
         self._current_turn_state = new_state
         self._turn_entered_at = now
-        self._turn_active_control_file = active_control_file
-        self._turn_active_control_seq = active_control_seq
+        self._turn_active_control_file = transition_control_file
+        self._turn_active_control_seq = transition_control_seq
         active_role = self._active_role_for_turn(new_state)
         active_lane = self._active_lane_name_for_turn(new_state)
         legacy_state = legacy_turn_state_name(new_state.value)
@@ -2002,8 +2084,8 @@ class WatcherCore:
                 "from_legacy": legacy_turn_state_name(old_state.value),
                 "to_legacy": legacy_state,
                 "reason": reason,
-                "active_control_file": active_control_file,
-                "active_control_seq": active_control_seq,
+                "active_control_file": transition_control_file,
+                "active_control_seq": transition_control_seq,
                 "active_role": active_role,
                 "active_lane": active_lane,
             },
@@ -2014,8 +2096,8 @@ class WatcherCore:
             "legacy_state": legacy_state,
             "entered_at": now,
             "reason": reason,
-            "active_control_file": active_control_file,
-            "active_control_seq": active_control_seq,
+            "active_control_file": transition_control_file,
+            "active_control_seq": transition_control_seq,
             "active_role": active_role,
             "active_lane": active_lane,
         }
@@ -2031,8 +2113,8 @@ class WatcherCore:
                 "turn_state": new_state.value,
                 "legacy_turn_state": legacy_state,
                 "reason": reason,
-                "active_control_file": active_control_file,
-                "active_control_seq": active_control_seq,
+                "active_control_file": transition_control_file,
+                "active_control_seq": transition_control_seq,
                 "active_role": active_role,
                 "active_lane": active_lane,
             },
@@ -2090,54 +2172,102 @@ class WatcherCore:
         return None
 
     # ------------------------------------------------------------------
-    def _get_valid_control_signal(self, path: Path, expected_status: str, kind: str) -> Optional[ControlSignal]:
-        if kind in {"gemini_request", "gemini_advice"} and not self._advisory_enabled():
+    def _control_signal_from_entry(self, entry: dict[str, object]) -> Optional[ControlSignal]:
+        slot_id = str(entry.get("slot_id") or "").strip()
+        if slot_id in {"advisory_request", "advisory_advice"} and not self._advisory_enabled():
             return None
-        if kind == "operator_request" and not self._operator_stop_enabled():
+        if slot_id == "operator_request" and not self._operator_stop_enabled():
             return None
-        status = self._read_status_from_path(path)
-        if status != expected_status:
+        filename = str(entry.get("file") or "").strip()
+        status = str(entry.get("status") or "").strip()
+        if not filename or not status:
             return None
-        mtime = self._get_path_mtime(path)
+        path = self.pipeline_dir / filename
+        try:
+            mtime = float(entry.get("mtime") or 0.0)
+        except (TypeError, ValueError):
+            mtime = 0.0
         if mtime == 0.0:
             return None
+        control_seq = control_seq_value(entry.get("control_seq"), default=-1)
         return ControlSignal(
-            kind=kind,
+            kind=slot_id or filename,
             path=path,
             status=status,
             mtime=mtime,
             sig=self._get_path_sig(path),
-            control_seq=self._read_control_seq_from_path(path),
+            control_seq=control_seq,
+            slot_id=slot_id,
+            canonical_file=str(entry.get("canonical_file") or filename),
+            is_legacy_alias=bool(entry.get("is_legacy_alias")),
         )
+
+    # ------------------------------------------------------------------
+    def _iter_valid_control_signals(self, *, include_advisory_advice: bool = True) -> list[ControlSignal]:
+        snapshot = read_pipeline_control_snapshot(self.pipeline_dir)
+        entries: list[dict[str, object]] = []
+        active_entry = snapshot.get("active_entry")
+        if isinstance(active_entry, dict):
+            entries.append(active_entry)
+        entries.extend(
+            entry
+            for entry in list(snapshot.get("stale_entries") or [])
+            if isinstance(entry, dict)
+        )
+        candidates: list[ControlSignal] = []
+        for entry in entries:
+            if not include_advisory_advice and str(entry.get("slot_id") or "") == "advisory_advice":
+                continue
+            signal = self._control_signal_from_entry(entry)
+            if signal is not None:
+                candidates.append(signal)
+        return candidates
+
+    def _newest_control_signal(self, signals: list[ControlSignal]) -> Optional[ControlSignal]:
+        if not signals:
+            return None
+        return signals[0]
+
+    def _control_signal_matches(self, signal: Optional[ControlSignal], path: Path, expected_status: str) -> bool:
+        if signal is None or signal.status != expected_status:
+            return False
+        if signal.path == path:
+            return True
+        return control_filenames_equivalent(signal.path.name, path.name)
+
+    def _control_signal_for_slot(
+        self,
+        signal: Optional[ControlSignal],
+        slot_id: str,
+        expected_status: str,
+    ) -> Optional[ControlSignal]:
+        if signal is None or signal.status != expected_status:
+            return None
+        if signal.slot_id == slot_id:
+            return signal
+        spec = control_slot_spec_for_filename(signal.path.name)
+        if spec is not None and spec.slot_id == slot_id:
+            return signal
+        return None
+
+    def _newest_control_signal_for_slot(self, slot_id: str, expected_status: str) -> Optional[ControlSignal]:
+        signals = [
+            signal
+            for signal in self._iter_valid_control_signals()
+            if signal.slot_id == slot_id and signal.status == expected_status
+        ]
+        return self._newest_control_signal(signals)
+
+    def _control_file_name(self, signal: Optional[ControlSignal], fallback: Path) -> str:
+        return signal.path.name if signal is not None else fallback.name
 
     # ------------------------------------------------------------------
     def _get_active_control_signal(self) -> Optional[ControlSignal]:
-        candidates = [
-            self._get_valid_control_signal(self.claude_handoff_path, "implement", "claude_handoff"),
-            self._get_valid_control_signal(self.gemini_request_path, "request_open", "gemini_request"),
-            self._get_valid_control_signal(self.gemini_advice_path, "advice_ready", "gemini_advice"),
-            self._get_valid_control_signal(self.operator_request_path, "needs_operator", "operator_request"),
-        ]
-        valid = [candidate for candidate in candidates if candidate is not None]
-        if not valid:
-            return None
-        return max(
-            valid,
-            key=lambda signal: (
-                signal.control_seq >= 0,
-                signal.control_seq,
-                signal.mtime,
-                signal.path.name,
-            ),
-        )
+        return self._newest_control_signal(self._iter_valid_control_signals())
 
     # ------------------------------------------------------------------
     def _highest_control_seq_for_age(self) -> int | None:
-        candidates = [
-            self._get_valid_control_signal(self.claude_handoff_path, "implement", "claude_handoff"),
-            self._get_valid_control_signal(self.gemini_request_path, "request_open", "gemini_request"),
-            self._get_valid_control_signal(self.operator_request_path, "needs_operator", "operator_request"),
-        ]
+        candidates = self._iter_valid_control_signals(include_advisory_advice=False)
         seqs = [
             candidate.control_seq
             for candidate in candidates
@@ -2163,12 +2293,7 @@ class WatcherCore:
 
     # ------------------------------------------------------------------
     def _get_next_control_seq(self) -> int:
-        candidates = [
-            self._get_valid_control_signal(self.claude_handoff_path, "implement", "claude_handoff"),
-            self._get_valid_control_signal(self.gemini_request_path, "request_open", "gemini_request"),
-            self._get_valid_control_signal(self.gemini_advice_path, "advice_ready", "gemini_advice"),
-            self._get_valid_control_signal(self.operator_request_path, "needs_operator", "operator_request"),
-        ]
+        candidates = self._iter_valid_control_signals()
         seqs = [candidate.control_seq for candidate in candidates if candidate is not None and candidate.control_seq >= 0]
         if not seqs:
             return 1
@@ -2176,7 +2301,7 @@ class WatcherCore:
 
     # ------------------------------------------------------------------
     def _existing_stale_control_advisory_current(self, control_seq: int) -> bool:
-        meta = read_control_meta(self.gemini_request_path)
+        meta = read_control_meta(self.advisory_request_path)
         existing_seq = meta.get("control_seq")
         return (
             str(meta.get("status") or "").strip().lower() == "request_open"
@@ -2235,7 +2360,7 @@ class WatcherCore:
             f"- `stale_control_seq=true` persisted for {self._control_seq_age_cycles} watcher cycles.\n"
             f"- Detection threshold: {STALE_CONTROL_CYCLE_THRESHOLD} cycles.\n"
             f"- Advisory grace: {STALE_ADVISORY_GRACE_CYCLES} additional cycles.\n"
-            "- The watcher did not modify `.pipeline/claude_handoff.md` or `.pipeline/operator_request.md`.\n"
+            "- The watcher did not modify `.pipeline/implement_handoff.md` or `.pipeline/operator_request.md`.\n"
             "\n"
             "QUESTION:\n"
             "- Inspect the stale control state and recommend one exact next control action.\n"
@@ -2249,6 +2374,8 @@ class WatcherCore:
         if not self._advisory_enabled():
             return False
         if self._is_active_control(self.operator_request_path, "needs_operator"):
+            return False
+        if self._is_active_control(self.advisory_request_path, "request_open"):
             return False
         if self._control_seq_age_cycles < (
             STALE_CONTROL_CYCLE_THRESHOLD + STALE_ADVISORY_GRACE_CYCLES
@@ -2265,20 +2392,20 @@ class WatcherCore:
         payload = {
             "reason_code": "stale_control_advisory",
             "tracked_control_seq": current_control_seq,
-            "request_control_file": "gemini_request.md",
+            "request_control_file": "advisory_request.md",
             "request_control_seq": next_control_seq,
             "control_age_cycles": self._control_seq_age_cycles,
             "stale_control_cycle_threshold": STALE_CONTROL_CYCLE_THRESHOLD,
             "stale_advisory_grace_cycles": STALE_ADVISORY_GRACE_CYCLES,
         }
         try:
-            atomic_write_text(self.gemini_request_path, request_text)
+            atomic_write_text(self.advisory_request_path, request_text)
         except Exception as exc:
             log.warning("failed to write stale control advisory request: %s", exc)
             try:
                 self._log_raw(
                     "stale_control_advisory_write_failed",
-                    str(self.gemini_request_path),
+                    str(self.advisory_request_path),
                     "turn_signal",
                     {**payload, "error": str(exc)},
                 )
@@ -2286,11 +2413,11 @@ class WatcherCore:
                 log.warning("failed to log stale control advisory write failure: %s", log_exc)
             return False
 
-        self._last_gemini_request_sig = self._get_path_sig(self.gemini_request_path)
-        self._clear_claude_blocked_state("stale_control_advisory")
+        self._last_advisory_request_sig = self._get_path_sig(self.advisory_request_path)
+        self._clear_implement_blocked_state("stale_control_advisory")
         self._log_raw(
             "stale_control_advisory_written",
-            str(self.gemini_request_path),
+            str(self.advisory_request_path),
             "turn_signal",
             payload,
         )
@@ -2298,16 +2425,16 @@ class WatcherCore:
         self._transition_turn(
             WatcherTurnState.ADVISORY_ACTIVE,
             "stale_control_advisory",
-            active_control_file="gemini_request.md",
+            active_control_file="advisory_request.md",
             active_control_seq=next_control_seq,
         )
-        self._notify_gemini("stale_control_advisory")
+        self._notify_advisory_owner("stale_control_advisory")
         return True
 
     # ------------------------------------------------------------------
     def _is_active_control(self, path: Path, expected_status: str) -> bool:
         active = self._get_active_control_signal()
-        return active is not None and active.path == path and active.status == expected_status
+        return self._control_signal_matches(active, path, expected_status)
 
     # ------------------------------------------------------------------
     def _repo_relative(self, path: Optional[Path]) -> str:
@@ -2358,31 +2485,14 @@ class WatcherCore:
         except OSError:
             return None
         control_meta = read_control_meta(self.operator_request_path)
-        if not allows_verified_blocker_auto_recovery(control_meta):
-            return None
-        based_on_work = self._normalize_artifact_path(control_meta.get("based_on_work"))
-        if based_on_work:
-            referenced_work_paths = [based_on_work]
-        else:
-            referenced_work_paths = sorted(
-                {
-                    self._normalize_artifact_path(match.group(1))
-                    for match in WORK_PATH_RE.finditer(control_text)
-                    if self._normalize_artifact_path(match.group(1))
-                }
-            )
-        if not referenced_work_paths:
-            return None
-        verified_work_paths = self._verified_work_paths()
-        unresolved = [path for path in referenced_work_paths if path not in verified_work_paths]
-        if unresolved:
-            return None
-        return {
-            "control_file": "operator_request.md",
-            "control_seq": self._read_control_seq_from_path(self.operator_request_path),
-            "reason": "verified_blockers_resolved",
-            "resolved_work_paths": referenced_work_paths,
-        }
+        return evaluate_stale_operator_control(
+            control_text=control_text,
+            control_meta=control_meta,
+            verified_work_paths=self._verified_work_paths(),
+            control_file="operator_request.md",
+            control_seq=self._read_control_seq_from_path(self.operator_request_path),
+            normalize_path=self._normalize_artifact_path,
+        )
 
     # ------------------------------------------------------------------
     def _operator_gate_marker(self) -> Optional[dict[str, object]]:
@@ -2393,34 +2503,25 @@ class WatcherCore:
         except OSError:
             return None
         control_meta = read_control_meta(self.operator_request_path)
+        control_seq = self._read_control_seq_from_path(self.operator_request_path)
         decision = classify_operator_candidate(
             control_text,
             control_meta=control_meta,
             control_path=str(self.operator_request_path),
-            control_seq=self._read_control_seq_from_path(self.operator_request_path),
+            control_seq=control_seq,
             control_mtime=self._get_path_mtime(self.operator_request_path),
             idle_stable=(
                 not self._latest_work_needs_verify_broad()
-                and not self._is_active_control(self.claude_handoff_path, "implement")
-                and self._get_gemini_request_mtime() == 0.0
-                and self._get_gemini_advice_mtime() == 0.0
+                and not self._is_active_control(self.implement_handoff_path, "implement")
+                and self._get_advisory_request_mtime() == 0.0
+                and self._get_advisory_advice_mtime() == 0.0
             ),
         )
-        if bool(decision.get("operator_eligible")):
-            return None
-        return {
-            "control_file": "operator_request.md",
-            "control_seq": self._read_control_seq_from_path(self.operator_request_path),
-            "reason": str(decision.get("block_reason") or ""),
-            "reason_code": str(decision.get("reason_code") or ""),
-            "operator_policy": str(decision.get("operator_policy") or ""),
-            "decision_class": str(decision.get("decision_class") or ""),
-            "classification_source": str(decision.get("classification_source") or ""),
-            "mode": str(decision.get("suppressed_mode") or ""),
-            "routed_to": str(decision.get("routed_to") or ""),
-            "suppress_operator_until": str(decision.get("suppress_operator_until") or ""),
-            "fingerprint": str(decision.get("fingerprint") or ""),
-        }
+        return operator_gate_marker_from_decision(
+            decision,
+            control_file="operator_request.md",
+            control_seq=control_seq,
+        )
 
     # ------------------------------------------------------------------
     def _git_read(self, args: list[str]) -> Optional[str]:
@@ -2705,7 +2806,7 @@ class WatcherCore:
         return self._repo_relative(latest_verify), self._get_path_mtime(latest_verify)
 
     # ------------------------------------------------------------------
-    def _infer_gemini_report_hint(self, work_path: Optional[Path]) -> str:
+    def _infer_advisory_report_hint(self, work_path: Optional[Path]) -> str:
         date_prefix = time.strftime("%Y-%m-%d")
         if work_path is not None:
             stem = work_path.stem
@@ -2759,20 +2860,7 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _read_control_seq_from_path(self, path: Path) -> int:
         """지정 control 파일의 CONTROL_SEQ 값을 읽는다. 없거나 invalid면 -1."""
-        try:
-            with path.open() as f:
-                for line in f:
-                    stripped = line.strip()
-                    if stripped.startswith("CONTROL_SEQ:"):
-                        raw = stripped.split(":", 1)[1].strip()
-                        try:
-                            value = int(raw)
-                        except ValueError:
-                            return -1
-                        return value if value >= 0 else -1
-        except OSError:
-            return -1
-        return -1
+        return control_seq_value(read_control_meta(path).get("control_seq"), default=-1)
 
     # ------------------------------------------------------------------
     def _supersede_stale_advisory_slots_for_operator_boundary(
@@ -2786,8 +2874,8 @@ class WatcherCore:
             return
 
         targets = (
-            (self.gemini_request_path, "request_open", "gemini_request.md"),
-            (self.gemini_advice_path, "advice_ready", "gemini_advice.md"),
+            (self.advisory_request_path, "request_open", "advisory_request.md"),
+            (self.advisory_advice_path, "advice_ready", "advisory_advice.md"),
         )
         for path, expected_status, name in targets:
             if self._read_status_from_path(path) != expected_status:
@@ -2831,10 +2919,10 @@ class WatcherCore:
 
             atomic_write_text(path, "\n".join(output_lines).rstrip() + "\n")
             new_sig = self._get_path_sig(path)
-            if path == self.gemini_request_path:
-                self._last_gemini_request_sig = new_sig
-            elif path == self.gemini_advice_path:
-                self._last_gemini_advice_sig = new_sig
+            if path == self.advisory_request_path:
+                self._last_advisory_request_sig = new_sig
+            elif path == self.advisory_advice_path:
+                self._last_advisory_advice_sig = new_sig
             payload = {
                 "control_file": name,
                 "control_seq": slot_seq,
@@ -2853,9 +2941,15 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _get_latest_implement_handoff(self) -> tuple[Optional[Path], float]:
         """active implement owner가 읽을 최신 implement handoff 슬롯을 고른다."""
-        if not self._is_active_control(self.claude_handoff_path, "implement"):
+        active_control = self._get_active_control_signal()
+        implement_control = self._control_signal_for_slot(
+            active_control,
+            "implement_handoff",
+            "implement",
+        )
+        if implement_control is None:
             return None, 0.0
-        return self.claude_handoff_path, self._get_path_mtime(self.claude_handoff_path)
+        return implement_control.path, implement_control.mtime
 
     # ------------------------------------------------------------------
     def _get_pending_operator_mtime(self) -> float:
@@ -2866,29 +2960,47 @@ class WatcherCore:
             return 0.0
         if self._operator_gate_marker() is not None:
             return 0.0
-        if self._is_active_control(self.operator_request_path, "needs_operator"):
-            return self._get_path_mtime(self.operator_request_path)
+        active_control = self._get_active_control_signal()
+        operator_control = self._control_signal_for_slot(
+            active_control,
+            "operator_request",
+            "needs_operator",
+        )
+        if operator_control is not None:
+            return operator_control.mtime
         return 0.0
 
     # ------------------------------------------------------------------
-    def _get_gemini_request_mtime(self) -> float:
-        if self._is_active_control(self.gemini_request_path, "request_open"):
-            return self._get_path_mtime(self.gemini_request_path)
+    def _get_advisory_request_mtime(self) -> float:
+        active_control = self._get_active_control_signal()
+        request_control = self._control_signal_for_slot(
+            active_control,
+            "advisory_request",
+            "request_open",
+        )
+        if request_control is not None:
+            return request_control.mtime
         return 0.0
 
     # ------------------------------------------------------------------
-    def _get_gemini_advice_mtime(self) -> float:
-        if self._is_active_control(self.gemini_advice_path, "advice_ready"):
-            return self._get_path_mtime(self.gemini_advice_path)
+    def _get_advisory_advice_mtime(self) -> float:
+        active_control = self._get_active_control_signal()
+        advice_control = self._control_signal_for_slot(
+            active_control,
+            "advisory_advice",
+            "advice_ready",
+        )
+        if advice_control is not None:
+            return advice_control.mtime
         return 0.0
 
     # ------------------------------------------------------------------
-    def _get_pending_gemini_request_mtime(self) -> float:
-        return self._get_gemini_request_mtime()
+    def _get_pending_advisory_request_mtime(self) -> float:
+        return self._get_advisory_request_mtime()
 
     # ------------------------------------------------------------------
-    def _get_pending_gemini_advice_mtime(self) -> float:
-        return self._get_gemini_advice_mtime()
+    def _get_pending_advisory_advice_mtime(self) -> float:
+        return self._get_advisory_advice_mtime()
 
     # ------------------------------------------------------------------
     def _control_resolution_turn_active(self) -> bool:
@@ -2899,43 +3011,50 @@ class WatcherCore:
         }
 
     # ------------------------------------------------------------------
-    def _gemini_advice_is_current_for_request(self, request_seq: int) -> bool:
-        if self._read_status_from_path(self.gemini_advice_path) != "advice_ready":
-            return False
-        advice_seq = self._read_control_seq_from_path(self.gemini_advice_path)
-        if advice_seq < 0:
+    def _advisory_advice_is_current_for_request(self, request_seq: int) -> bool:
+        advice_control = self._newest_control_signal_for_slot(
+            "advisory_advice",
+            "advice_ready",
+        )
+        if advice_control is None or advice_control.control_seq < 0:
             return False
         if request_seq < 0:
             return True
-        return advice_seq >= request_seq
+        return advice_control.control_seq >= request_seq
 
     # ------------------------------------------------------------------
-    def _retry_gemini_advisory_if_idle(self) -> None:
+    def _retry_advisory_if_idle(self) -> None:
         if self._current_turn_state != WatcherTurnState.ADVISORY_ACTIVE:
             return
         if not self._advisory_enabled():
             return
         if self._get_pending_operator_mtime() > 0.0:
             return
-        if not self._is_active_control(self.gemini_request_path, "request_open"):
+        active_control = self._get_active_control_signal()
+        request_control = self._control_signal_for_slot(
+            active_control,
+            "advisory_request",
+            "request_open",
+        )
+        if request_control is None:
             return
 
-        request_sig = self._get_path_sig(self.gemini_request_path)
+        request_sig = request_control.sig
         if not request_sig:
             return
-        request_seq = self._read_control_seq_from_path(self.gemini_request_path)
+        request_seq = request_control.control_seq
         if request_seq >= 0 and request_seq < self._turn_active_control_seq:
             return
-        if self._gemini_advice_is_current_for_request(request_seq):
+        if self._advisory_advice_is_current_for_request(request_seq):
             return
 
         now = time.time()
-        if request_sig == self._last_gemini_advisory_retry_sig:
-            if now - self._last_gemini_advisory_retry_at < self.gemini_advisory_retry_sec:
+        if request_sig == self._last_advisory_retry_sig:
+            if now - self._last_advisory_retry_at < self.advisory_retry_sec:
                 return
         else:
-            request_started_at = max(self._turn_entered_at, self._get_path_mtime(self.gemini_request_path))
-            if now - request_started_at < self.gemini_advisory_retry_sec:
+            request_started_at = max(self._turn_entered_at, request_control.mtime)
+            if now - request_started_at < self.advisory_retry_sec:
                 return
 
         target = self._prompt_pane_target("advisory")
@@ -2946,22 +3065,105 @@ class WatcherCore:
             return
 
         payload = {
-            "reason": "gemini_advisory_idle_retry",
-            "control_file": str(self.gemini_request_path.name),
+            "reason": "advisory_idle_retry",
+            "control_file": str(request_control.path.name),
             "control_seq": request_seq,
             "turn_state": self._current_turn_state.value,
             "target": target,
         }
         self._log_raw(
-            "gemini_advisory_retry",
-            str(self.gemini_request_path),
+            "advisory_idle_retry",
+            str(request_control.path),
             "turn_signal",
             payload,
         )
-        self._append_runtime_event("gemini_advisory_retry", payload)
-        self._last_gemini_advisory_retry_sig = request_sig
-        self._last_gemini_advisory_retry_at = now
-        self._notify_gemini("gemini_advisory_idle_retry")
+        self._append_runtime_event("advisory_idle_retry", payload)
+        self._last_advisory_retry_sig = request_sig
+        self._last_advisory_retry_at = now
+        self._notify_advisory_owner("advisory_idle_retry")
+
+    # ------------------------------------------------------------------
+    def _stale_advisory_recovery_marker(self) -> Optional[dict[str, object]]:
+        if self._current_turn_state != WatcherTurnState.ADVISORY_ACTIVE:
+            return None
+        if self._get_pending_operator_mtime() > 0.0:
+            return None
+        active_control = self._get_active_control_signal()
+        request_control = self._control_signal_for_slot(
+            active_control,
+            "advisory_request",
+            "request_open",
+        )
+        if request_control is None:
+            return None
+
+        request_sig = request_control.sig
+        if not request_sig:
+            return None
+        if request_sig == self._last_advisory_recovery_sig:
+            return None
+
+        request_seq = request_control.control_seq
+        if request_seq >= 0 and request_seq < self._turn_active_control_seq:
+            return None
+        if self._advisory_advice_is_current_for_request(request_seq):
+            return None
+
+        now = time.time()
+        request_started_at = max(self._turn_entered_at, request_control.mtime)
+        pending_age = now - request_started_at
+        if pending_age < self.advisory_recovery_sec:
+            return None
+
+        if any(
+            normalize_notify_kind(pending.get("notify_kind")) == ADVISORY_RECOVERY_NOTIFY
+            for pending in self.dispatch_queue.pending_notifications.values()
+        ):
+            return None
+
+        target = self._prompt_pane_target("verify")
+        if not target:
+            return None
+        ready, defer_reason = self.dispatch_queue.lane_prompt_readiness(target)
+        if not ready:
+            return None
+
+        return {
+            "reason": "advisory_recovery",
+            "control_file": request_control.path.name,
+            "control_seq": request_seq,
+            "request_sig": request_sig,
+            "advisory_pending_age_sec": int(pending_age),
+            "verify_lane_ready": True,
+            "verify_lane_ready_reason": defer_reason,
+        }
+
+    # ------------------------------------------------------------------
+    def _recover_stale_advisory(self) -> bool:
+        marker = self._stale_advisory_recovery_marker()
+        if marker is None:
+            return False
+
+        request_seq = control_seq_value(marker.get("control_seq"), default=-1)
+        request_sig = str(marker.get("request_sig") or "")
+        self._last_advisory_recovery_sig = request_sig
+        self._last_advisory_recovery_at = time.time()
+        self._clear_implement_blocked_state("advisory_recovery")
+        self._log_raw(
+            "advisory_recovery",
+            str(self.advisory_request_path),
+            "turn_signal",
+            marker,
+        )
+        self._append_runtime_event("advisory_recovery", marker)
+        self._transition_turn(
+            WatcherTurnState.VERIFY_FOLLOWUP,
+            "advisory_recovery",
+            active_control_file="advisory_request.md",
+            active_control_seq=request_seq,
+        )
+        self._notify_verify_advisory_recovery("advisory_recovery", marker)
+        return True
 
     # ------------------------------------------------------------------
     def _operator_blocks_handoff(self, handoff_mtime: float) -> bool:
@@ -3195,6 +3397,7 @@ class WatcherCore:
                 active_jobs.append(job)
                 continue
             self.stabilizer.clear(job.job_id)
+            log.info("lease released: slot=slot_verify reason=archive_matching_verified_pending")
             self.lease.release("slot_verify")
             if job.artifact_hash:
                 self.dedupe.forget(job.job_id, job.round, job.artifact_hash, "slot_verify")
@@ -3221,16 +3424,16 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _resolve_canonical_turn(self) -> str:
         """Resolve which functional role should act next."""
-        handoff_active = self._is_active_control(self.claude_handoff_path, "implement")
-        handoff_mtime = self._get_path_mtime(self.claude_handoff_path) if handoff_active else 0.0
+        handoff_active = self._is_active_control(self.implement_handoff_path, "implement")
+        handoff_mtime = self._get_path_mtime(self.implement_handoff_path) if handoff_active else 0.0
         return resolve_watcher_turn(
             WatcherTurnInputs(
                 operator_request_active=self._is_active_control(self.operator_request_path, "needs_operator"),
-                gemini_request_active=self._is_active_control(self.gemini_request_path, "request_open"),
-                gemini_advice_active=self._is_active_control(self.gemini_advice_path, "advice_ready"),
-                claude_handoff_active=handoff_active,
+                advisory_request_active=self._is_active_control(self.advisory_request_path, "request_open"),
+                advisory_advice_active=self._is_active_control(self.advisory_advice_path, "advice_ready"),
+                implement_handoff_active=handoff_active,
                 latest_work_needs_verify=self._handoff_verify_blocker_exists(handoff_mtime),
-                claude_handoff_verify_active=self._claude_handoff_verify_active(),
+                implement_handoff_verify_active=self._implement_handoff_verify_active(),
                 idle_release_cooldown_active=self._is_idle_release_cooldown_active(),
                 operator_recovery_marker=self._operator_control_recovery_marker(),
                 operator_gate_marker=self._operator_gate_marker(),
@@ -3243,7 +3446,7 @@ class WatcherCore:
         return legacy_watcher_turn_name(self._resolve_canonical_turn())
 
     # ------------------------------------------------------------------
-    def _check_claude_idle_timeout(self) -> None:
+    def _check_implement_idle_timeout(self) -> None:
         """Check whether the active implement-owner lane has been idle too long."""
         if self._current_turn_state != WatcherTurnState.IMPLEMENT_ACTIVE:
             return
@@ -3270,7 +3473,7 @@ class WatcherCore:
 
         # No progress — check timeout
         elapsed = now - self._last_progress_at
-        if elapsed < self.claude_active_idle_timeout_sec:
+        if elapsed < self.implement_active_idle_timeout_sec:
             return
 
         # Final guard: pane must look idle too
@@ -3278,13 +3481,13 @@ class WatcherCore:
             return
 
         log.warning(
-            "claude idle timeout: %.0fs since last progress, transitioning to IDLE",
+            "implement idle timeout: %.0fs since last progress, transitioning to IDLE",
             elapsed,
         )
         # Record cooldown to prevent immediate re-dispatch of same handoff
-        self._last_idle_release_handoff_sig = self._get_path_sig(self.claude_handoff_path)
+        self._last_idle_release_handoff_sig = self._get_path_sig(self.implement_handoff_path)
         self._last_idle_release_at = now
-        self._transition_turn(WatcherTurnState.IDLE, "claude_idle_timeout")
+        self._transition_turn(WatcherTurnState.IDLE, "implement_idle_timeout")
 
     # ------------------------------------------------------------------
     def _check_operator_wait_idle_timeout(self) -> None:
@@ -3299,16 +3502,16 @@ class WatcherCore:
         target = self._prompt_pane_target("verify")
         if not target:
             return
-        codex_snapshot = _capture_pane_text(target)
-        if not _pane_text_is_idle(codex_snapshot):
+        verify_snapshot = _capture_pane_text(target)
+        if not _pane_text_is_idle(verify_snapshot):
             return
         self._mark_operator_retriage_started(operator_sig, marker)
-        self._clear_claude_blocked_state("operator_wait_idle_retriage")
+        self._clear_implement_blocked_state("operator_wait_idle_retriage")
         self._transition_turn(
             WatcherTurnState.VERIFY_FOLLOWUP,
             "operator_wait_idle_retriage",
             active_control_file="operator_request.md",
-            active_control_seq=int(marker.get("control_seq") or -1),
+            active_control_seq=control_seq_value(marker.get("control_seq"), default=-1),
         )
         self._log_raw(
             "operator_request_idle_retriage",
@@ -3316,7 +3519,7 @@ class WatcherCore:
             "turn_signal",
             marker,
         )
-        self._notify_codex_operator_retriage("operator_wait_idle_retriage", marker)
+        self._notify_verify_operator_retriage("operator_wait_idle_retriage", marker)
 
     # ------------------------------------------------------------------
     def _operator_retriage_no_next_control_marker(self) -> Optional[dict[str, object]]:
@@ -3324,25 +3527,25 @@ class WatcherCore:
             return None
         if not self._advisory_enabled():
             return None
-        if self._get_pending_gemini_request_mtime() > 0.0 or self._get_pending_gemini_advice_mtime() > 0.0:
+        if self._get_pending_advisory_request_mtime() > 0.0 or self._get_pending_advisory_advice_mtime() > 0.0:
             return None
 
         marker = self._operator_gate_marker()
         if marker is None:
             return None
-        if str(marker.get("routed_to") or "") != "codex_followup":
+        if not is_verify_followup_route(marker.get("routed_to")):
             return None
 
         operator_sig = self._get_path_sig(self.operator_request_path)
         if not operator_sig or operator_sig != self._last_operator_retriage_sig:
             return None
         if any(
-            str(pending.get("notify_kind") or "") == "codex_operator_retriage"
+            str(pending.get("notify_kind") or "") in {"verify_operator_retriage", "codex_operator_retriage"}
             for pending in self.dispatch_queue.pending_notifications.values()
         ):
             return None
 
-        operator_seq = int(marker.get("control_seq") or -1)
+        operator_seq = control_seq_value(marker.get("control_seq"), default=-1)
         if self._turn_active_control_seq >= 0 and operator_seq < self._turn_active_control_seq:
             return None
 
@@ -3379,7 +3582,7 @@ class WatcherCore:
         }
 
     # ------------------------------------------------------------------
-    def _render_operator_retriage_gemini_request(
+    def _render_operator_retriage_advisory_request(
         self,
         *,
         marker: dict[str, object],
@@ -3397,7 +3600,7 @@ class WatcherCore:
             if path and path != "없음" and path not in read_first:
                 read_first.append(path)
         read_first_lines = "\n".join(f"- {path}" for path in read_first)
-        operator_seq = int(marker.get("control_seq") or -1)
+        operator_seq = control_seq_value(marker.get("control_seq"), default=-1)
         reason_code = str(marker.get("reason_code") or marker.get("reason") or "slice_ambiguity")
         decision_class = str(marker.get("decision_class") or "next_slice_selection")
         return (
@@ -3418,7 +3621,7 @@ class WatcherCore:
             "\n"
             "CONTEXT:\n"
             f"- `.pipeline/operator_request.md` CONTROL_SEQ {operator_seq} was classified as `{reason_code}` / `{decision_class}` and routed to verify/handoff follow-up.\n"
-            "- The verify/handoff owner was already prompted for operator retriage, but the lane returned idle without writing a newer `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, or `.pipeline/operator_request.md`.\n"
+            "- The verify/handoff owner was already prompted for operator retriage, but the lane returned idle without writing a newer `.pipeline/implement_handoff.md`, `.pipeline/advisory_request.md`, or `.pipeline/operator_request.md`.\n"
             "- This request keeps automation moving by asking the advisory owner to break the tie before falling back to an operator-only stop.\n"
             "\n"
             "QUESTION:\n"
@@ -3429,8 +3632,8 @@ class WatcherCore:
             "3. `RECOMMEND: needs_operator <one decision>` only if safety, destructive action, auth/credential, approval-record, truth-sync, external publish approval, or another real operator-only blocker remains.\n"
             "\n"
             "OUTPUTS:\n"
-            f"- Write advisory notes to `{context['gemini_report_path']}`.\n"
-            f"- Write `.pipeline/gemini_advice.md` with `STATUS: advice_ready` and `CONTROL_SEQ: {next_control_seq}`.\n"
+            f"- Write advisory notes to `{context['advisory_report_path']}`.\n"
+            f"- Write `.pipeline/advisory_advice.md` with `STATUS: advice_ready` and `CONTROL_SEQ: {next_control_seq}`.\n"
         )
 
     # ------------------------------------------------------------------
@@ -3439,21 +3642,21 @@ class WatcherCore:
         if marker is None:
             return False
 
-        operator_seq = int(marker.get("control_seq") or -1)
+        operator_seq = control_seq_value(marker.get("control_seq"), default=-1)
         next_control_seq = max(self._get_next_control_seq(), operator_seq + 1)
-        request_text = self._render_operator_retriage_gemini_request(
+        request_text = self._render_operator_retriage_advisory_request(
             marker=marker,
             next_control_seq=next_control_seq,
         )
-        atomic_write_text(self.gemini_request_path, request_text)
-        request_sig = self._get_path_sig(self.gemini_request_path)
+        atomic_write_text(self.advisory_request_path, request_text)
+        request_sig = self._get_path_sig(self.advisory_request_path)
         payload = {
             **marker,
-            "request_control_file": "gemini_request.md",
+            "request_control_file": "advisory_request.md",
             "request_control_seq": next_control_seq,
         }
-        self._last_gemini_request_sig = request_sig
-        self._clear_claude_blocked_state("operator_retriage_no_next_control")
+        self._last_advisory_request_sig = request_sig
+        self._clear_implement_blocked_state("operator_retriage_no_next_control")
         self._log_raw(
             "operator_retriage_no_next_control",
             str(self.operator_request_path),
@@ -3464,12 +3667,12 @@ class WatcherCore:
         self._transition_turn(
             WatcherTurnState.ADVISORY_ACTIVE,
             "operator_retriage_no_next_control",
-            active_control_file="gemini_request.md",
+            active_control_file="advisory_request.md",
             active_control_seq=next_control_seq,
         )
         self._operator_retriage_started_at = 0.0
         self._last_operator_retriage_fingerprint = ""
-        self._notify_gemini("operator_retriage_no_next_control")
+        self._notify_advisory_owner("operator_retriage_no_next_control")
         return True
 
     # ------------------------------------------------------------------
@@ -3477,21 +3680,21 @@ class WatcherCore:
         """True if the same handoff was recently released from idle timeout."""
         if not self._last_idle_release_handoff_sig:
             return False
-        current_sig = self._get_path_sig(self.claude_handoff_path)
+        current_sig = self._get_path_sig(self.implement_handoff_path)
         if current_sig != self._last_idle_release_handoff_sig:
             return False
         elapsed = time.time() - self._last_idle_release_at
-        return elapsed < self.claude_active_idle_timeout_sec
+        return elapsed < self.implement_active_idle_timeout_sec
 
     # ------------------------------------------------------------------
-    def _release_claude_handoff_from_idle(self, handoff_seq: int, release_reason: str) -> None:
+    def _release_implement_handoff_from_idle(self, handoff_seq: int, release_reason: str) -> None:
         log.info(
-            "claude handoff updated after implement lane became idle: release deferred seq=%s",
+            "implement handoff updated after implement lane became idle: release deferred seq=%s",
             handoff_seq,
         )
         self._log_raw(
-            "claude_handoff_idle_release",
-            str(self.claude_handoff_path),
+            "implement_handoff_idle_release",
+            str(self.implement_handoff_path),
             "turn_signal",
             {
                 "status": "implement",
@@ -3500,16 +3703,16 @@ class WatcherCore:
                 "release_reason": release_reason,
             },
         )
-        self._clear_claude_blocked_state("claude_handoff_idle_release")
+        self._clear_implement_blocked_state("implement_handoff_idle_release")
         self._transition_turn(
             WatcherTurnState.IMPLEMENT_ACTIVE,
-            "claude_handoff_idle_release",
-            active_control_file="claude_handoff.md",
+            "implement_handoff_idle_release",
+            active_control_file="implement_handoff.md",
             active_control_seq=handoff_seq,
         )
         self._work_baseline_snapshot = self._get_work_tree_snapshot_broad()
         self._pending_idle_release_handoff = None
-        self._notify_claude("claude_handoff_idle_release", self.claude_handoff_path)
+        self._notify_implement_owner("implement_handoff_idle_release", self.implement_handoff_path)
 
     # ------------------------------------------------------------------
     def _check_pending_idle_release_handoff(self) -> bool:
@@ -3519,23 +3722,27 @@ class WatcherCore:
         if self._current_turn_state != WatcherTurnState.IMPLEMENT_ACTIVE:
             self._pending_idle_release_handoff = None
             return False
-        handoff_sig = self._get_path_sig(self.claude_handoff_path)
+        active_control = self._get_active_control_signal()
+        handoff_control = self._control_signal_for_slot(
+            active_control,
+            "implement_handoff",
+            "implement",
+        )
+        handoff_sig = handoff_control.sig if handoff_control is not None else ""
         if not handoff_sig or handoff_sig != str(pending.get("sig") or ""):
             self._pending_idle_release_handoff = None
             return False
-        active_control = self._get_active_control_signal()
-        handoff_seq = int(pending.get("control_seq") or -1)
+        handoff_seq = control_seq_value(pending.get("control_seq"), default=-1)
         if (
-            active_control is None
-            or active_control.path != self.claude_handoff_path
-            or active_control.control_seq != handoff_seq
+            handoff_control is None
+            or handoff_control.control_seq != handoff_seq
             or handoff_seq <= self._turn_active_control_seq
             or self._is_idle_release_cooldown_active()
         ):
             self._pending_idle_release_handoff = None
             return False
-        handoff_mtime = self._get_path_mtime(self.claude_handoff_path)
-        dispatch_state = self._claude_handoff_dispatch_state(handoff_mtime)
+        handoff_mtime = handoff_control.mtime
+        dispatch_state = self._implement_handoff_dispatch_state(handoff_mtime)
         if not dispatch_state["dispatchable"]:
             self._pending_idle_release_handoff = None
             return False
@@ -3545,7 +3752,7 @@ class WatcherCore:
         release_ready, release_reason = self._implement_lane_ready_for_handoff_release()
         if not release_ready:
             return False
-        self._release_claude_handoff_from_idle(handoff_seq, release_reason)
+        self._release_implement_handoff_from_idle(handoff_seq, release_reason)
         return True
 
     # ------------------------------------------------------------------
@@ -3595,6 +3802,7 @@ class WatcherCore:
                 control_seq=spec.control_seq,
                 expected_status=spec.expected_status,
                 expected_control_path=spec.expected_control_path,
+                expected_control_slot=spec.expected_control_slot,
                 expected_control_seq=spec.expected_control_seq,
                 require_active_control=spec.require_active_control,
             )
@@ -3609,21 +3817,13 @@ class WatcherCore:
         )
 
     # ------------------------------------------------------------------
-    def _notify_claude(self, reason: str, handoff_path: Optional[Path] = None) -> None:
-        self._notify_implement_owner(reason, handoff_path)
-
-    # ------------------------------------------------------------------
-    def _notify_gemini(self, reason: str) -> None:
-        self._notify_advisory_owner(reason)
-
-    # ------------------------------------------------------------------
     def _notify_advisory_owner(self, reason: str) -> None:
         """advisory owner pane에 arbitration 프롬프트 전송."""
         if not self._advisory_enabled():
             log.info("notify_advisory_owner skipped: advisory disabled")
             self._log_raw(
                 "advisory_notify_skipped",
-                str(self.gemini_request_path),
+                str(self.advisory_request_path),
                 "turn_signal",
                 {
                     "reason": "runtime_advisory_disabled",
@@ -3634,7 +3834,7 @@ class WatcherCore:
             log.info("notify_advisory_owner skipped: no advisory owner target")
             self._log_raw(
                 "advisory_notify_skipped",
-                str(self.gemini_request_path),
+                str(self.advisory_request_path),
                 "turn_signal",
                 {
                     "reason": "missing_advisory_target",
@@ -3642,7 +3842,7 @@ class WatcherCore:
             )
             return
         self._dispatch_notify_spec(
-            spec=self.prompt_assembler.build_gemini_dispatch_spec(reason),
+            spec=self.prompt_assembler.build_advisory_dispatch_spec(reason),
             reason=reason,
             missing_target_level=logging.INFO,
         )
@@ -3656,8 +3856,11 @@ class WatcherCore:
         )
 
     # ------------------------------------------------------------------
-    def _notify_codex_followup(self, reason: str) -> None:
-        self._notify_verify_followup(reason)
+    def _notify_verify_advisory_recovery(self, reason: str, marker: dict[str, object]) -> None:
+        self._dispatch_notify_spec(
+            spec=self.prompt_assembler.build_advisory_recovery_dispatch_spec(marker, reason),
+            reason=reason,
+        )
 
     # ------------------------------------------------------------------
     def _notify_control_recovery(self, reason: str, marker: dict[str, object]) -> None:
@@ -3668,7 +3871,7 @@ class WatcherCore:
         )
 
     # ------------------------------------------------------------------
-    def _notify_codex_control_recovery(self, reason: str, marker: dict[str, object]) -> None:
+    def _notify_verify_control_recovery(self, reason: str, marker: dict[str, object]) -> None:
         self._notify_control_recovery(reason, marker)
 
     # ------------------------------------------------------------------
@@ -3697,7 +3900,7 @@ class WatcherCore:
                 event_name,
                 {
                     "control_file": "operator_request.md",
-                    "control_seq": int(marker.get("control_seq") or -1),
+                    "control_seq": control_seq_value(marker.get("control_seq"), default=-1),
                     "branch": str(marker.get("branch") or ""),
                     "head_sha": str(marker.get("head_sha") or ""),
                     "upstream": str(marker.get("upstream") or ""),
@@ -3716,7 +3919,7 @@ class WatcherCore:
         )
 
     # ------------------------------------------------------------------
-    def _notify_codex_operator_retriage(self, reason: str, marker: dict[str, object]) -> None:
+    def _notify_verify_operator_retriage(self, reason: str, marker: dict[str, object]) -> None:
         self._notify_operator_retriage(reason, marker)
 
     # ------------------------------------------------------------------
@@ -3727,24 +3930,20 @@ class WatcherCore:
             reason=reason,
         )
         if ok or spec.pending_key in self.dispatch_queue.pending_notifications:
-            self._last_claude_blocked_fingerprint = str(signal.get("fingerprint", ""))
-            self._clear_session_arbitration_draft("claude_blocked_triage")
+            self._last_implement_blocked_fingerprint = str(signal.get("fingerprint", ""))
+            self._clear_session_arbitration_draft("implement_blocked_triage")
             return True
         return False
 
     # ------------------------------------------------------------------
-    def _notify_codex_blocked_triage(self, signal: dict[str, object], reason: str) -> bool:
-        return self._notify_verify_blocked_triage(signal, reason)
-
-    # ------------------------------------------------------------------
-    def _claude_handoff_verify_active(self) -> bool:
+    def _implement_handoff_verify_active(self) -> bool:
         return self.lease.is_active("slot_verify")
 
     # ------------------------------------------------------------------
-    def _claude_handoff_dispatch_state(self, handoff_mtime: float) -> dict[str, bool]:
+    def _implement_handoff_dispatch_state(self, handoff_mtime: float) -> dict[str, bool]:
         operator_blocked = self._operator_blocks_handoff(handoff_mtime)
         pending_verify = self._handoff_verify_blocker_exists(handoff_mtime)
-        verify_active = self._claude_handoff_verify_active()
+        verify_active = self._implement_handoff_verify_active()
         return {
             "operator_blocked": operator_blocked,
             "pending_verify": pending_verify,
@@ -3768,7 +3967,7 @@ class WatcherCore:
         return True, "implement_lane_idle"
 
     # ------------------------------------------------------------------
-    def _flush_pending_claude_handoff(self) -> None:
+    def _flush_pending_implement_handoff(self) -> None:
         """If verify lease just released and handoff is waiting, transition to implement."""
         if self._current_turn_state not in (
             WatcherTurnState.VERIFY_ACTIVE,
@@ -3776,7 +3975,7 @@ class WatcherCore:
             WatcherTurnState.IDLE,
         ):
             return
-        if self._claude_handoff_verify_active():
+        if self._implement_handoff_verify_active():
             return  # verify still running
 
         # Re-resolve: maybe the implement owner can go now
@@ -3790,12 +3989,12 @@ class WatcherCore:
             self._transition_turn(
                 WatcherTurnState.IMPLEMENT_ACTIVE,
                 "verify_lease_released",
-                active_control_file="claude_handoff.md",
+                active_control_file=handoff_path.name if handoff_path is not None else self.implement_handoff_path.name,
                 active_control_seq=seq,
             )
             self._work_baseline_snapshot = self._get_work_tree_snapshot_broad()
-            self._clear_claude_blocked_state("claude_handoff_pending_release")
-            self._notify_claude("verify_lease_released", handoff_path)
+            self._clear_implement_blocked_state("implement_handoff_pending_release")
+            self._notify_implement_owner("verify_lease_released", handoff_path)
 
     # ------------------------------------------------------------------
     def _check_pipeline_signal_updates(self) -> None:
@@ -3803,26 +4002,31 @@ class WatcherCore:
         self.dispatch_queue.flush_pending()
         active_control = self._get_active_control_signal()
 
-        operator_sig = self._get_path_sig(self.operator_request_path)
+        operator_control = self._control_signal_for_slot(
+            active_control,
+            "operator_request",
+            "needs_operator",
+        )
+        operator_path = operator_control.path if operator_control is not None else self.operator_request_path
+        operator_sig = operator_control.sig if operator_control is not None else self._get_path_sig(self.operator_request_path)
         if operator_sig and operator_sig != self._last_operator_request_sig:
             self._last_operator_request_sig = operator_sig
-            status = self._read_status_from_path(self.operator_request_path) or "missing"
+            status = self._read_status_from_path(operator_path) or "missing"
             operator_recovery = self._operator_control_recovery_marker()
             operator_gate = self._operator_gate_marker()
             if (
-                active_control is not None
-                and active_control.path == self.operator_request_path
-                and active_control.control_seq >= self._turn_active_control_seq
+                operator_control is not None
+                and operator_control.control_seq >= self._turn_active_control_seq
             ):
                 if operator_recovery is not None:
                     recovery_reason = str(operator_recovery.get("reason") or "verified_blockers_resolved")
                     log.info("operator request updated but recoverable: verify follow-up resumes (%s)", recovery_reason)
-                    self._clear_claude_blocked_state(recovery_reason)
+                    self._clear_implement_blocked_state(recovery_reason)
                     self._transition_turn(
                         WatcherTurnState.VERIFY_FOLLOWUP,
                         recovery_reason,
-                        active_control_file="operator_request.md",
-                        active_control_seq=active_control.control_seq,
+                        active_control_file=operator_path.name,
+                        active_control_seq=operator_control.control_seq,
                     )
                     if recovery_reason == "operator_wait_idle_retriage":
                         self._mark_operator_retriage_started(operator_sig, operator_recovery)
@@ -3833,13 +4037,13 @@ class WatcherCore:
                         source="turn_signal",
                     )
                     if recovery_reason == "operator_wait_idle_retriage":
-                        self._notify_codex_operator_retriage(recovery_reason, operator_recovery)
+                        self._notify_verify_operator_retriage(recovery_reason, operator_recovery)
                     else:
-                        self._notify_codex_control_recovery(recovery_event, operator_recovery)
+                        self._notify_verify_control_recovery(recovery_event, operator_recovery)
                     return
                 if operator_gate is not None:
                     gate_reason = str(operator_gate.get("reason") or "operator_candidate_pending")
-                    self._clear_claude_blocked_state(gate_reason)
+                    self._clear_implement_blocked_state(gate_reason)
                     if self._operator_retriage_is_same_semantic_bump(operator_gate):
                         self._last_operator_retriage_sig = operator_sig
                         self._log_raw(
@@ -3862,32 +4066,32 @@ class WatcherCore:
                     self._transition_turn(
                         WatcherTurnState.VERIFY_FOLLOWUP,
                         "operator_request_gated",
-                        active_control_seq=active_control.control_seq,
+                        active_control_seq=operator_control.control_seq,
                     )
-                    self._notify_codex_operator_retriage("operator_request_gated", operator_gate)
+                    self._notify_verify_operator_retriage("operator_request_gated", operator_gate)
                     return
                 log.info("operator request updated: STATUS=needs_operator → implement notify blocked")
-                self._clear_claude_blocked_state("operator_request_pending")
+                self._clear_implement_blocked_state("operator_request_pending")
                 self._transition_turn(
                     WatcherTurnState.OPERATOR_WAIT,
                     "operator_request_updated",
-                    active_control_file="operator_request.md",
-                    active_control_seq=active_control.control_seq,
+                    active_control_file=operator_path.name,
+                    active_control_seq=operator_control.control_seq,
                 )
                 self._supersede_stale_advisory_slots_for_operator_boundary(
-                    operator_seq=active_control.control_seq,
+                    operator_seq=operator_control.control_seq,
                     reason="operator_request_pending",
                 )
                 self._log_raw(
                     "operator_request_pending",
-                    str(self.operator_request_path),
+                    str(operator_path),
                     "turn_signal",
                     {"status": status},
                 )
             else:
                 self._log_raw(
                     "operator_request_stale",
-                    str(self.operator_request_path),
+                    str(operator_path),
                     "turn_signal",
                     {
                         "status": status,
@@ -3895,26 +4099,32 @@ class WatcherCore:
                     },
                 )
 
-        gemini_request_sig = self._get_path_sig(self.gemini_request_path)
-        if gemini_request_sig and gemini_request_sig != self._last_gemini_request_sig:
-            self._last_gemini_request_sig = gemini_request_sig
-            request_mtime = self._get_pending_gemini_request_mtime()
-            status = self._read_status_from_path(self.gemini_request_path) or "missing"
-            gemini_req_control_seq = active_control.control_seq if active_control and active_control.path == self.gemini_request_path else -1
-            if request_mtime > 0.0 and self._get_pending_operator_mtime() == 0.0 and gemini_req_control_seq >= self._turn_active_control_seq:
-                log.info("gemini request updated: STATUS=request_open → advisory turn")
-                self._clear_claude_blocked_state("gemini_request_pending")
+        request_control = self._control_signal_for_slot(
+            active_control,
+            "advisory_request",
+            "request_open",
+        )
+        request_path = request_control.path if request_control is not None else self.advisory_request_path
+        advisory_request_sig = request_control.sig if request_control is not None else self._get_path_sig(self.advisory_request_path)
+        if advisory_request_sig and advisory_request_sig != self._last_advisory_request_sig:
+            self._last_advisory_request_sig = advisory_request_sig
+            request_mtime = self._get_pending_advisory_request_mtime()
+            status = self._read_status_from_path(request_path) or "missing"
+            advisory_req_control_seq = request_control.control_seq if request_control is not None else -1
+            if request_mtime > 0.0 and self._get_pending_operator_mtime() == 0.0 and advisory_req_control_seq >= self._turn_active_control_seq:
+                log.info("advisory request updated: STATUS=request_open → advisory turn")
+                self._clear_implement_blocked_state("advisory_request_pending")
                 self._transition_turn(
                     WatcherTurnState.ADVISORY_ACTIVE,
-                    "gemini_request_updated",
-                    active_control_file="gemini_request.md",
-                    active_control_seq=gemini_req_control_seq,
+                    "advisory_request_updated",
+                    active_control_file=request_path.name,
+                    active_control_seq=advisory_req_control_seq,
                 )
-                self._notify_gemini("gemini_request_updated")
+                self._notify_advisory_owner("advisory_request_updated")
             else:
                 self._log_raw(
                     "advisory_notify_skipped",
-                    str(self.gemini_request_path),
+                    str(request_path),
                     "turn_signal",
                     {
                         "status": status,
@@ -3922,26 +4132,32 @@ class WatcherCore:
                     },
                 )
 
-        gemini_advice_sig = self._get_path_sig(self.gemini_advice_path)
-        if gemini_advice_sig and gemini_advice_sig != self._last_gemini_advice_sig:
-            self._last_gemini_advice_sig = gemini_advice_sig
-            advice_mtime = self._get_pending_gemini_advice_mtime()
-            status = self._read_status_from_path(self.gemini_advice_path) or "missing"
-            gemini_adv_control_seq = active_control.control_seq if active_control and active_control.path == self.gemini_advice_path else -1
-            if advice_mtime > 0.0 and self._get_pending_operator_mtime() == 0.0 and gemini_adv_control_seq >= self._turn_active_control_seq:
-                log.info("gemini advice updated: STATUS=advice_ready → verify follow-up")
-                self._clear_claude_blocked_state("gemini_advice_pending")
+        advice_control = self._control_signal_for_slot(
+            active_control,
+            "advisory_advice",
+            "advice_ready",
+        )
+        advice_path = advice_control.path if advice_control is not None else self.advisory_advice_path
+        advisory_advice_sig = advice_control.sig if advice_control is not None else self._get_path_sig(self.advisory_advice_path)
+        if advisory_advice_sig and advisory_advice_sig != self._last_advisory_advice_sig:
+            self._last_advisory_advice_sig = advisory_advice_sig
+            advice_mtime = self._get_pending_advisory_advice_mtime()
+            status = self._read_status_from_path(advice_path) or "missing"
+            advisory_adv_control_seq = advice_control.control_seq if advice_control is not None else -1
+            if advice_mtime > 0.0 and self._get_pending_operator_mtime() == 0.0 and advisory_adv_control_seq >= self._turn_active_control_seq:
+                log.info("advisory advice updated: STATUS=advice_ready → verify follow-up")
+                self._clear_implement_blocked_state("advisory_advice_pending")
                 self._transition_turn(
                     WatcherTurnState.VERIFY_FOLLOWUP,
-                    "gemini_advice_updated",
-                    active_control_file="gemini_advice.md",
-                    active_control_seq=gemini_adv_control_seq,
+                    "advisory_advice_updated",
+                    active_control_file=advice_path.name,
+                    active_control_seq=advisory_adv_control_seq,
                 )
-                self._notify_codex_followup("gemini_advice_updated")
+                self._notify_verify_followup("advisory_advice_updated")
             else:
                 self._log_raw(
                     "verify_followup_notify_skipped",
-                    str(self.gemini_advice_path),
+                    str(advice_path),
                     "turn_signal",
                     {
                         "status": status,
@@ -3949,16 +4165,21 @@ class WatcherCore:
                     },
                 )
 
-        handoff_sig = self._get_path_sig(self.claude_handoff_path)
-        if handoff_sig and handoff_sig != self._last_claude_handoff_sig:
-            self._last_claude_handoff_sig = handoff_sig
-            status = self._read_status_from_path(self.claude_handoff_path) or "missing"
-            handoff_mtime = self._get_path_mtime(self.claude_handoff_path)
-            dispatch_state = self._claude_handoff_dispatch_state(handoff_mtime)
-            handoff_seq = active_control.control_seq if active_control and active_control.path == self.claude_handoff_path else -1
+        handoff_control = self._control_signal_for_slot(
+            active_control,
+            "implement_handoff",
+            "implement",
+        )
+        handoff_path = handoff_control.path if handoff_control is not None else self.implement_handoff_path
+        handoff_sig = handoff_control.sig if handoff_control is not None else self._get_path_sig(self.implement_handoff_path)
+        if handoff_sig and handoff_sig != self._last_implement_handoff_sig:
+            self._last_implement_handoff_sig = handoff_sig
+            status = self._read_status_from_path(handoff_path) or "missing"
+            handoff_mtime = self._get_path_mtime(handoff_path)
+            dispatch_state = self._implement_handoff_dispatch_state(handoff_mtime)
+            handoff_seq = handoff_control.control_seq if handoff_control is not None else -1
             if (
-                active_control is not None
-                and active_control.path == self.claude_handoff_path
+                handoff_control is not None
                 and status == "implement"
                 and self._current_turn_state == WatcherTurnState.IMPLEMENT_ACTIVE
             ):
@@ -3968,17 +4189,17 @@ class WatcherCore:
                     and dispatch_state["dispatchable"]
                     and release_ready
                 ):
-                    self._release_claude_handoff_from_idle(handoff_seq, release_reason)
+                    self._release_implement_handoff_from_idle(handoff_seq, release_reason)
                 else:
                     if handoff_seq > self._turn_active_control_seq and dispatch_state["dispatchable"]:
                         self._pending_idle_release_handoff = {
                             "sig": handoff_sig,
                             "control_seq": handoff_seq,
                         }
-                    log.info("claude handoff updated during active implement round: defer hot-swap until round exit")
+                    log.info("implement handoff updated during active implement round: defer hot-swap until round exit")
                     self._log_raw(
-                        "claude_handoff_deferred",
-                        str(self.claude_handoff_path),
+                        "implement_handoff_deferred",
+                        str(handoff_path),
                         "turn_signal",
                         {
                             "status": status,
@@ -3991,34 +4212,32 @@ class WatcherCore:
                         },
                     )
             elif (
-                active_control is not None
-                and active_control.path == self.claude_handoff_path
+                handoff_control is not None
                 and status == "implement"
                 and dispatch_state["dispatchable"]
                 and handoff_seq >= self._turn_active_control_seq
             ):
-                log.info("claude handoff updated: STATUS=implement → implement turn")
-                self._clear_claude_blocked_state("claude_handoff_updated")
+                log.info("implement handoff updated: STATUS=implement → implement turn")
+                self._clear_implement_blocked_state("implement_handoff_updated")
                 self._transition_turn(
                     WatcherTurnState.IMPLEMENT_ACTIVE,
-                    "claude_handoff_updated",
-                    active_control_file="claude_handoff.md",
+                    "implement_handoff_updated",
+                    active_control_file=handoff_path.name,
                     active_control_seq=handoff_seq,
                 )
                 self._work_baseline_snapshot = self._get_work_tree_snapshot_broad()
-                self._notify_claude("claude_handoff_updated", self.claude_handoff_path)
+                self._notify_implement_owner("implement_handoff_updated", handoff_path)
             else:
                 if (
-                    active_control is not None
-                    and active_control.path == self.claude_handoff_path
+                    handoff_control is not None
                     and status == "implement"
                     and dispatch_state["verify_active"]
                 ):
-                    self._clear_claude_blocked_state("claude_handoff_pending_release")
-                log.info("claude handoff updated: STATUS=%s → implement notify skipped", status)
+                    self._clear_implement_blocked_state("implement_handoff_pending_release")
+                log.info("implement handoff updated: STATUS=%s → implement notify skipped", status)
                 self._log_raw(
                     "implement_notify_skipped",
-                    str(self.claude_handoff_path),
+                    str(handoff_path),
                     "turn_signal",
                     {
                         "status": status,
@@ -4029,7 +4248,7 @@ class WatcherCore:
                     },
                 )
 
-        self._flush_pending_claude_handoff()
+        self._flush_pending_implement_handoff()
 
     # ------------------------------------------------------------------
     def _log_raw(self, event: str, path: str, job_id: str,
@@ -4057,7 +4276,7 @@ class WatcherCore:
         self._log_raw(
             "session_arbitration_draft_written",
             str(self.session_arbitration_draft_path),
-            "claude_session",
+            "implement_session",
             {"reasons": list(reasons)},
         )
         return True
@@ -4074,7 +4293,7 @@ class WatcherCore:
             self._log_raw(
                 "session_arbitration_draft_cleared",
                 str(self.session_arbitration_draft_path),
-                "claude_session",
+                "implement_session",
                 {"reason": reason},
             )
         self._last_session_arbitration_draft_sig = self._get_path_sig(self.session_arbitration_draft_path)
@@ -4083,74 +4302,74 @@ class WatcherCore:
         self._session_arbitration_snapshot_changed_at = {}
 
     # ------------------------------------------------------------------
-    def _clear_claude_blocked_state(self, reason: str) -> None:
-        fingerprint = self._last_claude_blocked_fingerprint
+    def _clear_implement_blocked_state(self, reason: str) -> None:
+        fingerprint = self._last_implement_blocked_fingerprint
         if fingerprint:
-            self._claude_blocked_cooldowns[fingerprint] = (
+            self._implement_blocked_cooldowns[fingerprint] = (
                 time.time() + self.implement_blocked_cooldown_sec
             )
             self._log_raw(
-                "claude_blocked_cleared",
-                str(self.claude_handoff_path),
-                "claude_session",
+                "implement_blocked_cleared",
+                str(self.implement_handoff_path),
+                "implement_session",
                 {"reason": reason, "blocked_fingerprint": fingerprint},
             )
-        self._last_claude_blocked_fingerprint = ""
-        self._claude_blocked_snapshot_fingerprints = {}
-        self._claude_blocked_snapshot_changed_at = {}
+        self._last_implement_blocked_fingerprint = ""
+        self._implement_blocked_snapshot_fingerprints = {}
+        self._implement_blocked_snapshot_changed_at = {}
 
     # ------------------------------------------------------------------
-    def _claude_blocked_snapshot_stable_sec(self, snapshot: str) -> float:
+    def _implement_blocked_snapshot_stable_sec(self, snapshot: str) -> float:
         now = time.time()
         fingerprint = hashlib.sha1(snapshot.encode("utf-8")).hexdigest()
-        if self._claude_blocked_snapshot_fingerprints.get("claude") != fingerprint:
-            self._claude_blocked_snapshot_fingerprints["claude"] = fingerprint
-            self._claude_blocked_snapshot_changed_at["claude"] = now
+        if self._implement_blocked_snapshot_fingerprints.get("implement") != fingerprint:
+            self._implement_blocked_snapshot_fingerprints["implement"] = fingerprint
+            self._implement_blocked_snapshot_changed_at["implement"] = now
             return 0.0
-        changed_at = self._claude_blocked_snapshot_changed_at.get("claude", now)
+        changed_at = self._implement_blocked_snapshot_changed_at.get("implement", now)
         return max(0.0, now - changed_at)
 
     # ------------------------------------------------------------------
-    def _check_claude_implement_blocked(self) -> bool:
+    def _check_implement_blocked(self) -> bool:
         handoff_path, _ = self._get_latest_implement_handoff()
         if handoff_path is None:
-            self._clear_claude_blocked_state("handoff_inactive")
+            self._clear_implement_blocked_state("handoff_inactive")
             return False
 
         implement_target = self._prompt_pane_target("implement")
         if not implement_target:
-            self._clear_claude_blocked_state("implement_target_missing")
+            self._clear_implement_blocked_state("implement_target_missing")
             return False
-        claude_snapshot = _capture_pane_text(implement_target)
+        implement_snapshot = _capture_pane_text(implement_target)
         handoff_path_rel = self._repo_relative(handoff_path)
         handoff_sha = self._get_path_sha256(handoff_path)
 
-        signal = _extract_claude_implement_blocked_signal(
-            claude_snapshot,
+        signal = _extract_implement_blocked_signal(
+            implement_snapshot,
             active_handoff_path=handoff_path_rel,
             active_handoff_sha=handoff_sha,
         )
         soft_signal: Optional[dict[str, object]] = None
         if signal is None:
-            soft_signal = _extract_claude_completed_handoff_signal(claude_snapshot, active_handoff_sha=handoff_sha)
+            soft_signal = _extract_implement_completed_handoff_signal(implement_snapshot, active_handoff_sha=handoff_sha)
             if soft_signal is None:
-                soft_signal = _extract_claude_forbidden_menu_signal(claude_snapshot, active_handoff_sha=handoff_sha)
+                soft_signal = _extract_implement_forbidden_menu_signal(implement_snapshot, active_handoff_sha=handoff_sha)
             if (
                 soft_signal is not None
-                and self._claude_blocked_snapshot_stable_sec(claude_snapshot) >= self.implement_blocked_settle_sec
+                and self._implement_blocked_snapshot_stable_sec(implement_snapshot) >= self.implement_blocked_settle_sec
             ):
                 signal = soft_signal
 
         if signal is None:
             if soft_signal is not None:
                 return False
-            self._clear_claude_blocked_state("signal_cleared")
+            self._clear_implement_blocked_state("signal_cleared")
             return False
 
         fingerprint = str(signal["fingerprint"])
-        if fingerprint == self._last_claude_blocked_fingerprint:
+        if fingerprint == self._last_implement_blocked_fingerprint:
             return True
-        if time.time() < self._claude_blocked_cooldowns.get(fingerprint, 0.0):
+        if time.time() < self._implement_blocked_cooldowns.get(fingerprint, 0.0):
             return False
         if self._signal_claims_materialized(signal):
             corroborated = self._materialized_signal_corroborated(handoff_path)
@@ -4158,7 +4377,7 @@ class WatcherCore:
                 self._log_raw(
                     "implement_blocked_ignored",
                     str(handoff_path),
-                    "claude_session",
+                    "implement_session",
                     {
                         "blocked_source": signal.get("source", "sentinel"),
                         "blocked_reason": signal.get("reason", "implement_blocked"),
@@ -4173,7 +4392,7 @@ class WatcherCore:
         self._log_raw(
             "implement_blocked_detected",
             str(handoff_path),
-            "claude_session",
+            "implement_session",
             {
                 "blocked_source": signal.get("source", "sentinel"),
                 "blocked_reason": signal.get("reason", "implement_blocked"),
@@ -4181,7 +4400,7 @@ class WatcherCore:
                 "handoff_sha": handoff_sha,
             },
         )
-        self._notify_codex_blocked_triage(signal, "claude_implement_blocked")
+        self._notify_verify_blocked_triage(signal, "implement_blocked")
         return True
 
     # ------------------------------------------------------------------
@@ -4196,7 +4415,7 @@ class WatcherCore:
         return max(0.0, now - changed_at)
 
     # ------------------------------------------------------------------
-    def _claude_session_arbitration_ready(self, pane_snapshots: dict[str, str]) -> bool:
+    def _session_arbitration_ready(self, pane_snapshots: dict[str, str]) -> bool:
         if not self._session_arbitration_enabled():
             return False
         implement_target = self._prompt_pane_target("implement")
@@ -4210,19 +4429,19 @@ class WatcherCore:
             return False
         if _is_pane_dead(advisory_target):
             return False
-        if not _pane_text_is_idle(pane_snapshots["codex"]):
+        if not _pane_text_is_idle(pane_snapshots["verify"]):
             return False
-        if not _pane_text_is_idle(pane_snapshots["gemini"]):
+        if not _pane_text_is_idle(pane_snapshots["advisory"]):
             return False
-        if _pane_text_is_idle(pane_snapshots["claude"]):
+        if _pane_text_is_idle(pane_snapshots["implement"]):
             return True
         return (
-            self._pane_snapshot_stable_sec("claude", pane_snapshots["claude"])
+            self._pane_snapshot_stable_sec("implement", pane_snapshots["implement"])
             >= self.session_arbitration_settle_sec
         )
 
     # ------------------------------------------------------------------
-    def _check_claude_live_session_escalation(self) -> None:
+    def _check_implement_live_session_escalation(self) -> None:
         if self._current_turn_state != WatcherTurnState.IMPLEMENT_ACTIVE:
             return
         if not self._session_arbitration_enabled():
@@ -4231,23 +4450,23 @@ class WatcherCore:
         if self._get_pending_operator_mtime() > 0.0:
             self._clear_session_arbitration_draft("operator_request_pending")
             return
-        if self._get_pending_gemini_request_mtime() > 0.0 or self._get_pending_gemini_advice_mtime() > 0.0:
-            self._clear_session_arbitration_draft("canonical_gemini_pending")
+        if self._get_pending_advisory_request_mtime() > 0.0 or self._get_pending_advisory_advice_mtime() > 0.0:
+            self._clear_session_arbitration_draft("canonical_advisory_pending")
             return
-        if self._read_status_from_path(self.claude_handoff_path) != "implement":
+        if self._read_status_from_path(self.implement_handoff_path) != "implement":
             self._clear_session_arbitration_draft("handoff_inactive")
             return
 
         pane_snapshots = {
-            "claude": _capture_pane_text(self._prompt_pane_target("implement")),
-            "codex": _capture_pane_text(self._prompt_pane_target("verify")),
-            "gemini": _capture_pane_text(self._prompt_pane_target("advisory")),
+            "implement": _capture_pane_text(self._prompt_pane_target("implement")),
+            "verify": _capture_pane_text(self._prompt_pane_target("verify")),
+            "advisory": _capture_pane_text(self._prompt_pane_target("advisory")),
         }
-        signal = _extract_live_session_escalation(pane_snapshots["claude"])
+        signal = _extract_live_session_escalation(pane_snapshots["implement"])
         if signal is None:
             self._clear_session_arbitration_draft("signal_cleared")
             return
-        if not self._claude_session_arbitration_ready(pane_snapshots):
+        if not self._session_arbitration_ready(pane_snapshots):
             return
         if self._write_session_arbitration_draft(signal):
             log.info(
@@ -4350,29 +4569,35 @@ class WatcherCore:
             log.info("initial turn: %s", turn)
             self._log_raw("initial_turn", "", "startup", {"turn": turn})
             if turn == "implement":
+                handoff_path, _ = self._get_latest_implement_handoff()
+                handoff_seq = self._read_control_seq_from_path(handoff_path) if handoff_path else -1
                 self._work_baseline_snapshot = self._get_work_tree_snapshot_broad()
                 self._transition_turn(
                     WatcherTurnState.IMPLEMENT_ACTIVE,
-                    "startup_turn_claude",
-                    active_control_file="claude_handoff.md",
-                    active_control_seq=self._read_control_seq_from_path(self.claude_handoff_path),
+                    "startup_turn_implement",
+                    active_control_file=handoff_path.name if handoff_path else self.implement_handoff_path.name,
+                    active_control_seq=handoff_seq,
                 )
-                handoff_path, _ = self._get_latest_implement_handoff()
-                self._notify_claude("startup_turn_claude", handoff_path)
+                self._notify_implement_owner("startup_turn_implement", handoff_path)
                 log.info("IMPLEMENT_ACTIVE: baseline_files=%d",
                          len(self._work_baseline_snapshot))
                 return
             if turn == "operator":
                 active_control = self._get_active_control_signal()
+                operator_control = self._control_signal_for_slot(
+                    active_control,
+                    "operator_request",
+                    "needs_operator",
+                )
                 operator_seq = (
-                    active_control.control_seq
-                    if active_control is not None and active_control.path == self.operator_request_path
+                    operator_control.control_seq
+                    if operator_control is not None
                     else self._read_control_seq_from_path(self.operator_request_path)
                 )
                 self._transition_turn(
                     WatcherTurnState.OPERATOR_WAIT,
                     "startup_turn_operator",
-                    active_control_file="operator_request.md",
+                    active_control_file=operator_control.path.name if operator_control is not None else self.operator_request_path.name,
                     active_control_seq=operator_seq,
                 )
                 self._supersede_stale_advisory_slots_for_operator_boundary(
@@ -4388,8 +4613,24 @@ class WatcherCore:
                 )
                 return
             if turn == "advisory":
-                self._transition_turn(WatcherTurnState.ADVISORY_ACTIVE, "startup_turn_gemini")
-                self._notify_gemini("startup_turn_gemini")
+                active_control = self._get_active_control_signal()
+                advisory_control = self._control_signal_for_slot(
+                    active_control,
+                    "advisory_request",
+                    "request_open",
+                )
+                advisory_seq = (
+                    advisory_control.control_seq
+                    if advisory_control is not None
+                    else self._read_control_seq_from_path(self.advisory_request_path)
+                )
+                self._transition_turn(
+                    WatcherTurnState.ADVISORY_ACTIVE,
+                    "startup_turn_advisory",
+                    active_control_file=advisory_control.path.name if advisory_control is not None else self.advisory_request_path.name,
+                    active_control_seq=advisory_seq,
+                )
+                self._notify_advisory_owner("startup_turn_advisory")
                 return
             if turn == "verify_followup":
                 operator_recovery = self._operator_control_recovery_marker()
@@ -4400,7 +4641,10 @@ class WatcherCore:
                         WatcherTurnState.VERIFY_FOLLOWUP,
                         recovery_reason,
                         active_control_file="operator_request.md",
-                        active_control_seq=int(operator_recovery.get("control_seq") or -1),
+                        active_control_seq=control_seq_value(
+                            operator_recovery.get("control_seq"),
+                            default=-1,
+                        ),
                     )
                     if recovery_reason == "operator_wait_idle_retriage":
                         self._mark_operator_retriage_started(
@@ -4414,11 +4658,11 @@ class WatcherCore:
                         source="startup",
                     )
                     if recovery_reason == "operator_wait_idle_retriage":
-                        self._notify_codex_operator_retriage("startup_turn_operator_idle_retriage", operator_recovery)
+                        self._notify_verify_operator_retriage("startup_turn_operator_idle_retriage", operator_recovery)
                     else:
-                        self._notify_codex_control_recovery(recovery_event, operator_recovery)
+                        self._notify_verify_control_recovery(recovery_event, operator_recovery)
                 elif operator_gate is not None:
-                    self._transition_turn(WatcherTurnState.VERIFY_FOLLOWUP, "startup_turn_codex_followup")
+                    self._transition_turn(WatcherTurnState.VERIFY_FOLLOWUP, "startup_turn_verify_followup")
                     self._mark_operator_retriage_started(
                         self._get_path_sig(self.operator_request_path),
                         operator_gate,
@@ -4429,13 +4673,13 @@ class WatcherCore:
                         "startup",
                         operator_gate,
                     )
-                    self._notify_codex_operator_retriage("startup_turn_operator_gated", operator_gate)
+                    self._notify_verify_operator_retriage("startup_turn_operator_gated", operator_gate)
                 else:
-                    self._transition_turn(WatcherTurnState.VERIFY_FOLLOWUP, "startup_turn_codex_followup")
-                    self._notify_codex_followup("startup_turn_codex_followup")
+                    self._transition_turn(WatcherTurnState.VERIFY_FOLLOWUP, "startup_turn_verify_followup")
+                    self._notify_verify_followup("startup_turn_verify_followup")
                 return
             if turn == "verify":
-                self._transition_turn(WatcherTurnState.VERIFY_ACTIVE, "startup_turn_codex")
+                self._transition_turn(WatcherTurnState.VERIFY_ACTIVE, "startup_turn_verify")
                 # verify/handoff rerun은 work/ 감시 루프에서 자연스럽게 디스패치됨
                 return
             # idle
@@ -4457,33 +4701,37 @@ class WatcherCore:
         if active_verify_jobs:
             for job in active_verify_jobs:
                 self.sm.step(job)
-            self._flush_pending_claude_handoff()
+            self._flush_pending_implement_handoff()
             return
 
-        gemini_control_pending = (
-            self._get_pending_gemini_request_mtime() > 0.0
-            or self._get_pending_gemini_advice_mtime() > 0.0
+        advisory_control_pending = (
+            self._get_pending_advisory_request_mtime() > 0.0
+            or self._get_pending_advisory_advice_mtime() > 0.0
         )
 
         pending_verify_jobs = self._get_current_run_jobs(statuses={JobStatus.VERIFY_PENDING})
         pending_verify_jobs = self._archive_matching_verified_pending_jobs(pending_verify_jobs)
         if pending_verify_jobs:
-            if gemini_control_pending or self._control_resolution_turn_active():
-                if gemini_control_pending:
-                    self._retry_gemini_advisory_if_idle()
-                    self._clear_session_arbitration_draft("canonical_gemini_pending")
+            if advisory_control_pending or self._control_resolution_turn_active():
+                if advisory_control_pending:
+                    if self._recover_stale_advisory():
+                        return
+                    self._retry_advisory_if_idle()
+                    self._clear_session_arbitration_draft("canonical_advisory_pending")
                 return
             # startup 이후 state에서 복원된 current-run verify pending은 최신 work candidate
             # 스캔만으로는 다시 step되지 않을 수 있으므로, 가장 최근 pending round를 먼저
             # 재개해 starvation 없이 verify lane으로 다시 밀어준다.
             self.sm.step(pending_verify_jobs[0])
-            self._flush_pending_claude_handoff()
+            self._flush_pending_implement_handoff()
             return
 
         # --- advisory arbitration이 pending이면 다른 자동 진행을 잠시 멈춤 ---
-        if gemini_control_pending:
-            self._retry_gemini_advisory_if_idle()
-            self._clear_session_arbitration_draft("canonical_gemini_pending")
+        if advisory_control_pending:
+            if self._recover_stale_advisory():
+                return
+            self._retry_advisory_if_idle()
+            self._clear_session_arbitration_draft("canonical_advisory_pending")
             return
 
         # --- follow-up/advisory/operator resolution 중에는 stale verify를 다시 열지 않음 ---
@@ -4492,12 +4740,12 @@ class WatcherCore:
 
         # --- implement 차례 대기 중이면 work/ 감시 건너뜀 ---
         if self._current_turn_state == WatcherTurnState.IMPLEMENT_ACTIVE:
-            if self._check_claude_implement_blocked():
+            if self._check_implement_blocked():
                 return
-            self._check_claude_live_session_escalation()
+            self._check_implement_live_session_escalation()
             if self._check_pending_idle_release_handoff():
                 return
-            self._check_claude_idle_timeout()
+            self._check_implement_idle_timeout()
             if self._current_turn_state != WatcherTurnState.IMPLEMENT_ACTIVE:
                 return  # idle timeout fired
             # work/ 전체 스냅샷이 달라졌는지 확인
@@ -4505,11 +4753,11 @@ class WatcherCore:
             if current_snapshot == self._work_baseline_snapshot:
                 return  # implement owner가 아직 작업 안 함 → verify dispatch 하지 않음
             # implement owner가 새 파일을 썼거나 기존 파일 내용을 바꿨으므로 대기 해제
-            self._transition_turn(WatcherTurnState.IDLE, "claude_activity_detected")
+            self._transition_turn(WatcherTurnState.IDLE, "implement_activity_detected")
             self._work_baseline_snapshot = {}
-            self._clear_session_arbitration_draft("claude_activity_resumed")
-            self._clear_claude_blocked_state("claude_activity_resumed")
-            log.info("claude activity detected by snapshot diff, resuming codex dispatch")
+            self._clear_session_arbitration_draft("implement_activity_resumed")
+            self._clear_implement_blocked_state("implement_activity_resumed")
+            log.info("implement activity detected by snapshot diff, resuming verify dispatch")
 
         # --- work/ 디렉터리 감시 (implement → verify 방향) ---
         # baseline과 동일하게 가장 최신 파일 1개만 처리

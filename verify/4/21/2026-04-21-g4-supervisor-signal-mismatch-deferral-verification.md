@@ -2170,3 +2170,267 @@ Gate C 완료.
 - **operator_request.md seq 717**: 여전히 live. pr_creation_gate 라우팅이 verify_followup으로 전환됐으므로 다음 verify 라운드에서 CLAUDE.md 예외 실행 가능.
 - AXIS-G6-TEST-WEB-APP: 여전히 열림.
 - **seq 719 next control**: `.pipeline/operator_request.md` CONTROL_SEQ 719 — commit_push_bundle_authorization (post-ef7a3b2 누적 bundle, internal_only → verify/handoff owner 실행).
+2172 
+---
+
+# seq 725 verify round — 2026-04-21 richer reason labels
+
+## 변경 파일
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- 없음 (narrowest check: py_compile + targeted unittest + diff check + 실제 코드 대조)
+
+## 변경 이유
+- `work/4/21/2026-04-21-richer-reason-labels.md`가 CONTROL_SEQ 725 handoff (milestone5_richer_reason_labels) 슬라이스를 닫았다고 주장.
+- verify lane은 (a) py_compile 재실행, (b) targeted unit/smoke test 재실행, (c) 실제 계약 레이어·serializer·agent_loop 변경이 handoff 지시 범위 안에 있는지, (d) `/work` 파일 목록·검증 수치 진위성을 대조.
+
+## 핵심 in-scope 변경 — 확인됨
+
+**`core/contracts.py`**:
+- `CorrectedOutcomeReasonLabel.EXPLICIT_CORRECTION_SUBMITTED = "explicit_correction_submitted"` 추가.
+- `ALLOWED_CORRECTED_OUTCOME_REASON_LABELS: dict[str, frozenset[str]]` 추가 — `CorrectedOutcome.CORRECTED`에 `explicit_correction_submitted` 바인딩.
+- `ALLOWED_APPROVAL_REASON_LABELS[ApprovalReasonScope.APPROVAL_REISSUE]`에 `"corrected_text_reissue"` 추가.
+
+**`storage/session_store.py`**:
+- correction submit 경로에서 `corrected_outcome.reason_label = "explicit_correction_submitted"` 기록 (line 1016 실측).
+- `normalize_corrected_outcome` helper가 `reason_label` 유효성 검사 후 정규화 (lines 181–186 실측).
+
+**`core/agent_loop.py`**:
+- reissue 시 `approval.save_content_source == "corrected_text"`이면 `reason_label = "corrected_text_reissue"`, 아니면 `"path_change"` 유지 (lines 7597–7601 실측).
+
+**`app/serializers.py`**:
+- `corrected_outcome` 직렬화에 `reason_label` 노출 (line 380 실측).
+- `approval_reason_record` 및 `content_reason_record` 직렬화도 이미 `reason_label` 노출.
+
+**content reject label 확장 — intentionally skipped**:
+- `/work` note 서술: "현재 truthful surface는 기존 `explicit_content_rejection`과 optional `reason_note`뿐이라 새 content label을 만들 근거가 없음".
+- handoff 제약(item 35: "Expand reject / reissue labels only when a truthful user-input surface exists")과 일치. skip 정당.
+
+## 검증
+
+- `python3 -m py_compile core/contracts.py storage/session_store.py app/serializers.py app/handlers/feedback.py core/agent_loop.py tests/test_contracts.py tests/test_web_app.py tests/test_smoke.py` → **통과** (EXIT:0).
+- `python3 -m unittest tests.test_contracts` → **Ran 47 tests / OK**. `/work` 주장과 일치.
+- `python3 -m unittest tests.test_web_app.WebAppServiceTest.test_submit_correction_updates_grounded_brief_source_message_and_logs tests.test_web_app.WebAppServiceTest.test_handle_chat_corrected_save_bridge_creates_immutable_approval_snapshot tests.test_web_app.WebAppServiceTest.test_handle_chat_corrected_save_reissue_uses_scoped_reason_label tests.test_web_app.WebAppServiceTest.test_handle_chat_can_reissue_pending_approval_with_new_path` → **4 tests OK**. `/work` 주장과 일치.
+- `python3 -m unittest tests.test_smoke.SmokeTest.test_session_store_records_corrected_text_on_grounded_brief_source_message tests.test_smoke.SmokeTest.test_corrected_save_bridge_uses_recorded_snapshot_and_preserves_corrected_outcome tests.test_smoke.SmokeTest.test_corrected_save_reissue_uses_corrected_text_reason_label tests.test_smoke.SmokeTest.test_pending_approval_can_be_reissued_with_new_path` → **4 tests OK**. `/work` 주장과 일치.
+  - 참고: `/work`에서 첫 실행 시 `SmokeTest.test_correction_updates_grounded_brief_source_message` 이름 착오로 1회 실패 후 교정 재실행 — `work` note 자체 기록. 진위성 갭 없음.
+- `git diff --check -- <claimed 15 files>` → **통과** (EXIT:0). `/work` 주장과 일치.
+
+실행하지 않은 항목 (명시):
+- Playwright / `make e2e-test`: 브라우저 contract 변경 없음. `/work` note도 동일 명시.
+- `tests.test_pipeline_runtime_supervisor`, watcher suite: 이번 변경 delta 없음 (product layer 전용 변경).
+
+## 현재 테스트 전체 상태 (seq 725 기준)
+| 스위트 | 수치 | 비고 |
+|---|---|---|
+| test_contracts | 47 OK | +new label/constant tests |
+| test_web_app (targeted 4) | 4 OK | corrected_save_reissue reason label 포함 |
+| test_smoke (targeted 4) | 4 OK | corrected_text_reason_label smoke 포함 |
+| test_pipeline_runtime_supervisor | 128 OK (seq 719 기준) | 이번 라운드 delta 없음 |
+| test_watcher_core | 185 OK (seq 724 라운드) | 이번 라운드 delta 없음 |
+
+## 남은 리스크
+- **content reject label 확장 미완**: truthful user-input surface가 생기면 별도 슬라이스로 추가 예정. TASK_BACKLOG.md item 35 조건 충족 전까지 hold.
+- **dirty worktree**: `.pipeline/README.md`, `watcher_core.py`, `watcher_prompt_assembly.py`, `pipeline_runtime/automation_health.py`, watcher 관련 test + work files가 이전 라운드부터 미커밋 상태. 이번 라운드(richer labels)도 미커밋. commit+push Gate 필요.
+- **AXIS-G6-TEST-WEB-APP**: 여전히 열림.
+- **draft PR (seq 719 open risk)**: verify/handoff owner publish 대기.
+
+---
+
+# seq 727 verify round — 2026-04-21 session-local memory signal
+
+## 변경 파일
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- 없음 (narrowest check: py_compile + targeted unittest + diff check + 실제 코드 대조)
+
+## 변경 이유
+- `work/4/21/2026-04-21-session-local-memory-signal.md`가 CONTROL_SEQ 727 handoff (milestone5_session_local_memory_signal) 슬라이스를 닫았다고 주장.
+- verify lane은 (a) py_compile 재실행, (b) targeted unit/smoke test 재실행 (non-sqlite + sqlite 양쪽), (c) session_store·serializer·contracts 실제 변경이 handoff 지시 범위 안에 있는지, (d) `/work` 파일 목록·검증 수치 진위성을 대조.
+
+## 핵심 in-scope 변경 — 확인됨
+
+**`core/contracts.py`**:
+- `SESSION_LOCAL_MEMORY_SIGNAL_VERSION = "session_local_memory_signal_v1"` 추가 (실측: line 47).
+
+**`storage/session_store.py`**:
+- `build_session_local_memory_signal` 메서드 추가 (line 533 실측):
+  - `artifact_id` + `source_message_id` anchor 키.
+  - `correction_signal` (corrected_outcome + `has_corrected_text`) — `outcome == corrected`일 때만.
+  - `content_signal` (`content_reason_record`) — record 있을 때만.
+  - `save_signal` (`latest_saved_at` 포함) — completed save linkage 있을 때만.
+  - 4개 sub-signal 모두 absent이면 `None` 반환 → serializer가 field 생략.
+  - `derived_at` = 관련 타임스탬프 max값.
+- `_latest_save_signal_for_anchor` helper 추가 (line 475 실측).
+- task-log replay, cross-session merge 없음 확인.
+
+**`app/serializers.py`**:
+- source message 직렬화 시 `build_session_local_memory_signal` 호출 후 None이면 field 제거, non-None이면 `session_local_memory_signal` 키로 노출 (lines 135–144 실측).
+- `superseded_reject_signal`은 별도 path 유지 — `session_local_memory_signal`을 덮어쓰지 않음 (lines 145–150 실측).
+
+**`app/static/app.js`**:
+- `session_local_memory_signal.correction_signal`을 `session_local_candidate` UI signal ref label의 primary basis로 조정.
+- py_compile 대상 아님 (JS 파일) — diff check로 검증.
+
+**scope violation 없음**: 새 store, 새 write endpoint, 새 approval surface 추가 없음. correction/content/save 기존 persisted fields에서만 파생.
+
+**`tests.test_web_app` 전체 10 errors — signal 관련 아님 확인**:
+- 모두 `LocalOnlyHTTPServer(("127.0.0.1", 0), service)` socket 생성 `PermissionError: [Errno 1] Operation not permitted` (sandbox 제한).
+- AXIS-G6-TEST-WEB-APP 기존 open risk와 동일 원인. 이번 라운드 신규 regression 없음.
+
+## 검증 (실행 결과)
+
+- `python3 -m py_compile core/contracts.py storage/session_store.py app/serializers.py tests/test_web_app.py tests/test_smoke.py` → **통과** (EXIT:0). `/work` 주장과 일치. `app/static/app.js`는 JS라 제외 — 정상.
+- targeted 5 web app tests (non-sqlite): `test_source_message_session_local_memory_signal_separates_content_approval_and_save_axes`, `test_session_local_candidate_requires_explicit_corrected_pair_and_stays_separate_from_signals`, `test_session_local_candidate_omits_accepted_as_is_only_save_path`, `test_superseded_reject_signal_replays_latest_same_anchor_reject_note_without_overwriting_current_signal`, `test_historical_save_identity_signal_replays_latest_same_anchor_write_note_without_overwriting_current_save_signal` → **5 tests OK**. `/work` 주장과 일치.
+- targeted 5 sqlite-backend tests (같은 이름 `_with_sqlite_backend`) → **5 tests OK**. `/work` 주장과 일치.
+- targeted 3 smoke tests: `test_session_local_memory_signal_keeps_latest_save_linkage_but_omits_stale_reject_note`, `test_candidate_recurrence_key_helper_uses_explicit_pair_only_and_keeps_fingerprint_stable`, `test_recurrence_aggregate_candidates_helper_requires_exact_identity_and_distinct_anchors` → **3 tests OK**. `/work` 주장과 일치.
+  - 참고: `/work`에서 `AgentLoopSmokeTest.test_session_local_memory_signal_keeps_latest_save_linkage_but_omits_stale_reject_note` 이름 착오로 1회 실패 후 교정 재실행 — work note 자체 기록. 진위성 갭 없음.
+- `python3 -m unittest tests.test_web_app.WebAppServiceTest.test_handle_chat_summarize_file_returns_session_and_runtime tests.test_web_app.WebAppServiceTest.test_get_session_payload_backfills_original_response_snapshot_for_legacy_grounded_brief` → **2 tests OK** (골든패스 회귀 없음).
+- `git diff --check -- <claimed 11 files>` → **통과** (EXIT:0). `/work` 주장과 일치.
+
+실행하지 않은 항목 (명시):
+- Playwright / `make e2e-test`: browser-visible 카드 레이아웃 변경 없음. session payload + candidate signal-ref label 텍스트 매핑 변경만. `/work` note도 동일 명시.
+- `tests.test_pipeline_runtime_supervisor`, watcher suite: 이번 변경 delta 없음.
+- `tests.test_contracts`: contracts.py에 상수 1개만 추가, 기존 계약 변경 없음 — targeted smoke로 충분 판단.
+
+## 현재 테스트 전체 상태 (seq 727 기준)
+| 스위트 | 수치 | 비고 |
+|---|---|---|
+| test_web_app (targeted 11) | 11 OK | session_local_memory_signal + 골든패스 회귀 포함 |
+| test_smoke (targeted 3) | 3 OK | signal 관련 smoke 포함 |
+| test_web_app (full) | 304 OK / 10 errors | 10 errors = socket PermissionError (sandbox, 기존 AXIS-G6) |
+| test_contracts | 47 OK (seq 725) | 이번 라운드 계약 변경 없음 |
+| test_pipeline_runtime_supervisor | 128 OK (seq 719) | 이번 라운드 delta 없음 |
+| test_watcher_core | 185 OK (seq 724) | 이번 라운드 delta 없음 |
+
+## 남은 리스크
+- **AXIS-G6-TEST-WEB-APP**: socket PermissionError 10개 여전히 열림. 이번 라운드 신규 regression 아님.
+- **dirty worktree 미커밋**: pipeline runtime/watcher 파일 + 지난 여러 라운드 product layer 변경(seq 725, 727) 누적. commit+push Gate 필요.
+- **draft PR (seq 719 open risk)**: verify/handoff owner publish 대기.
+- **TASK_BACKLOG NextToAdd item 5** (Reviewable durable-candidate queue items): 다음 슬라이스 후보이나 exact boundary가 backlog에서 충분히 명확하지 않음 → advisory 필요.
+
+---
+
+# seq 729 verify round — 2026-04-22 durable candidate queue items
+
+## 변경 파일
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- 없음 (narrowest check: py_compile + node --check + targeted unittest + diff check + 실제 코드 대조)
+
+## 변경 이유
+- `work/4/22/2026-04-22-durable-candidate-queue-items.md`가 CONTROL_SEQ 729 handoff (milestone5_durable_candidate_queue_items) 슬라이스를 닫았다고 주장.
+- verify lane은 (a) py_compile + node --check 재실행, (b) targeted unittest 재실행 (non-sqlite + sqlite), (c) serializer 실제 변경이 handoff 지시 범위 안에 있는지, (d) `/work` 파일 목록·검증 수치 진위성을 대조.
+
+## 핵심 in-scope 변경 — 확인됨
+
+**`app/serializers.py`**:
+- `_build_durable_candidate_for_message`: `durable_candidate`에 direct `artifact_id`, `source_message_id`, `derived_from`, `derived_at` 추가 (lines 840–870 실측).
+- `derived_from` provenance object: `record_type = "candidate_confirmation_record"`, `artifact_id`, `source_message_id`, `candidate_id`, `candidate_updated_at`, `confirmation_label`, `recorded_at` 고정 (line 852–860 실측).
+- anchor cross-check: `artifact_id` / `source_message_id`가 `confirmation_ref`와 불일치하면 `None` 반환 (lines 844–850 실측).
+- `review_queue_items` row에 `item_type = "durable_candidate"` discriminator + `candidate_scope` + `derived_from` + `derived_at` 추가 (line 4425–4431 실측).
+
+**`app/static/app.js`**:
+- `유형 durable_candidate` meta label — 기존 review queue UI 안에서만 표시.
+- `node --check` 통과 확인.
+
+**review action 테스트 (accept/reject/defer on durable_candidate)**:
+- `test_submit_candidate_review_accept_records_source_message_trace_and_removes_pending_queue_item` — durable_candidate accept 시 source-message trace 기록 + queue item 제거 확인.
+- `test_submit_candidate_review_reject/defer_records_and_removes_queue_item` — reject/defer 동일 패턴 확인.
+- `session_local_candidate`와 `durable_candidate` queue row의 `item_type` discriminator 분리 확인.
+
+**scope violation 없음**: 새 store, 새 write endpoint, 새 approval surface, 새 review action vocabulary 없음. 기존 `candidate_confirmation_record` anchor에서 inline 파생.
+
+**`/work` 검증 수치 진위성**:
+- py_compile 실패 이력: `/work`가 `app/static/app.js` 포함 실패 → Python 파일만 재실행 → 통과를 자체 기록. 진위성 갭 없음.
+
+## 검증 (실행 결과)
+
+- `python3 -m py_compile app/serializers.py tests/test_web_app.py` → **통과** (EXIT:0).
+- `node --check app/static/app.js` → **통과** (EXIT:0).
+- targeted 5 web app tests (non-sqlite): `test_submit_candidate_confirmation_records_candidate_linked_trace_and_stays_separate_from_save_support`, `test_durable_candidate_requires_exact_current_candidate_confirmation_join`, `test_submit_candidate_review_accept_records_source_message_trace_and_removes_pending_queue_item`, `test_submit_candidate_review_reject_records_and_removes_queue_item`, `test_submit_candidate_review_defer_records_and_removes_queue_item` → **5 tests OK**. `/work` 주장과 일치.
+- targeted 2 sqlite-backend tests (`_reject_with_sqlite_backend`, `_defer_with_sqlite_backend`) + 1 smoke test (`test_recurrence_aggregate_candidates_helper_requires_exact_identity_and_distinct_anchors`) → **3 tests OK**. `/work` 주장과 일치.
+- `git diff --check -- app/serializers.py app/static/app.js tests/test_web_app.py README.md docs/PRODUCT_SPEC.md docs/ARCHITECTURE.md docs/ACCEPTANCE_CRITERIA.md docs/TASK_BACKLOG.md` → **통과** (EXIT:0). `/work` 주장과 일치.
+
+실행하지 않은 항목 (명시):
+- `python3 -m unittest tests.test_web_app` (full): 이번 slice는 serializer projection + queue payload 변경에 한정, socket PermissionError 기존 AXIS-G6 확인 불필요.
+- Playwright: browser-visible queue meta label 변경만 (기존 review queue UI 안). `/work` note도 동일 명시.
+- pipeline runtime / watcher suite: 이번 변경 delta 없음.
+
+## 현재 테스트 전체 상태 (seq 729 기준)
+| 스위트 | 수치 | 비고 |
+|---|---|---|
+| test_web_app (targeted 5+2) | 7 OK | durable_candidate + sqlite 포함 |
+| test_smoke (targeted 1) | 1 OK | recurrence 회귀 없음 |
+| test_web_app (full, seq 727) | 304 OK / 10 errors | 10 = socket PermissionError (기존 AXIS-G6) |
+| test_contracts | 47 OK (seq 725) | 이번 라운드 delta 없음 |
+| test_pipeline_runtime_supervisor | 128 OK (seq 719) | 이번 라운드 delta 없음 |
+
+## 남은 리스크
+- **TASK_BACKLOG NextToAdd item 6** (Source-message `candidate_review_record` traces before reviewed-memory): 이번 slice의 accept/reject/defer 테스트가 durable_candidate 경로의 trace를 이미 커버했는지, 아니면 별도 슬라이스가 필요한지 — advisory 확인 필요.
+- **AXIS-G6-TEST-WEB-APP**: socket PermissionError 10개 여전히 열림.
+- **dirty worktree 미커밋**: pipeline runtime/watcher + 여러 product layer 라운드 변경 누적.
+- **draft PR (seq 719)**: verify/handoff owner publish 대기.
+
+---
+
+# seq 733 verify round — 2026-04-22 smoke drift fix and durable candidate assertions
+
+## 변경 파일
+- `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` (이 파일)
+
+## 사용 skill
+- 없음 (narrowest check: node --check + Playwright isolated scenario rerun + diff check + 실제 코드 대조)
+
+## 변경 이유
+- `work/4/22/2026-04-22-smoke-drift-durable-candidate-assertions.md`가 CONTROL_SEQ 733 handoff (smoke_drift_fix_and_durable_candidate_assertions)를 닫았다고 주장.
+- verify lane은 (a) node --check, (b) Playwright isolated scenario rerun, (c) 실제 변경 위치 대조, (d) `/work` 파일 목록·검증 수치 진위성을 대조.
+
+## 핵심 in-scope 변경 — 확인됨
+
+**`e2e/tests/web-smoke.spec.mjs`**:
+- **drift fix (3곳)**: 기존 `"session_local_memory_signal.content_signal"` → `"session_local_memory_signal.correction_signal"` (lines 694, 729, 780 실측).
+  - 원인: seq 727에서 `session_local_candidate.supporting_signal_refs` primary basis를 `correction_signal`로 변경했으나 test 미업데이트.
+- **새 pre-accept 어설션 (4개)**: `reviewAcceptButton.click()` 전에 session payload 재조회, `review_queue_items[0].item_type === "durable_candidate"`, `derived_from.record_type === "candidate_confirmation_record"`, `derived_at` non-empty string (lines 763–766 실측).
+- **새 post-accept 어설션 (4개)**: `durable_candidate.derived_at` string + non-empty, `derived_from.record_type`, `derived_from.candidate_id === session_local_candidate.candidate_id` (lines 806–809 실측).
+- 기존 assertions 모두 유지 (라인 번호 shift 없음; drift fix 3줄만 변경).
+
+## 검증 (실행 결과)
+
+- `node --check e2e/tests/web-smoke.spec.mjs` → **통과** (EXIT:0).
+- `cd /home/xpdlqj/code/projectH/e2e && npx playwright test tests/web-smoke.spec.mjs -g "candidate confirmation" --reporter=line` → **1 passed (50.7s), 0 failed**. `/work` 주장과 일치.
+- `git diff --check -- e2e/tests/web-smoke.spec.mjs` → **통과** (EXIT:0). `/work` 주장과 일치.
+
+실행하지 않은 항목 (명시):
+- 전체 Playwright suite (`make e2e-test`): 이번 변경은 기존 시나리오 내부 assertion 수정/추가에 한정. `/work` note도 동일 명시.
+
+## 현재 테스트 전체 상태 (seq 733 기준)
+| 스위트 | 수치 | 비고 |
+|---|---|---|
+| e2e candidate confirmation (isolated) | 1 passed | drift 수정 + 새 assertions 포함 |
+| test_contracts | 47 OK (seq 725) | 이번 라운드 delta 없음 |
+| test_web_app (targeted) | 11 OK (seq 727) | 이번 라운드 delta 없음 |
+| test_pipeline_runtime_supervisor | 128 OK (seq 719) | 이번 라운드 delta 없음 |
+
+## 누적 dirty worktree 현황 (seq 733 기준)
+
+HEAD 대비 변경: 25개 파일, +1195 lines / -170 lines.
+
+| 축 | 파일 |
+|---|---|
+| product layer | `app/serializers.py`, `app/handlers/feedback.py`, `core/agent_loop.py`, `core/contracts.py`, `storage/session_store.py`, `app/static/app.js` |
+| product tests | `tests/test_contracts.py`, `tests/test_smoke.py`, `tests/test_web_app.py` |
+| e2e | `e2e/tests/web-smoke.spec.mjs` |
+| pipeline runtime | `pipeline_runtime/automation_health.py`, `watcher_core.py`, `watcher_prompt_assembly.py` |
+| pipeline tests | `tests/test_pipeline_runtime_automation_health.py`, `tests/test_watcher_core.py` |
+| docs | `docs/ACCEPTANCE_CRITERIA.md`, `docs/ARCHITECTURE.md`, `docs/NEXT_STEPS.md`, `docs/PRODUCT_SPEC.md`, `docs/TASK_BACKLOG.md`, `README.md`, `.pipeline/README.md`, runtime docs 2개 |
+| verify | `verify/4/21/2026-04-21-g4-supervisor-signal-mismatch-deferral-verification.md` |
+
+seq 719 commit_push_bundle_authorization(internal_only)는 현재 번들보다 훨씬 작은 pr-creation-gate 2개 라운드 대상이었음. 현재 누적 번들은 원래 인가 범위를 초과 — 재인가 필요.
+
+## 남은 리스크
+- **commit+push bundle 재인가 필요**: seq 719 내부 인가는 더 작은 초기 번들 대상. 현재 25파일/2축 번들에 대한 명시적 operator 인가가 없음. → CONTROL_SEQ 734 operator_request.
+- **draft PR 미생성**: seq 719 open risk에서 draft PR URL 기록 필요 명시됐으나 아직 미실행.
+- **AXIS-G6-TEST-WEB-APP**: socket PermissionError 10개 여전히 열림.

@@ -17,12 +17,17 @@ from storage.json_store_base import atomic_write, json_path, read_json, utc_now_
 from core.contracts import (
     ALLOWED_CANDIDATE_CONFIRMATION_LABELS,
     ALLOWED_CONTENT_REASON_LABELS,
+    ALLOWED_CORRECTED_OUTCOME_REASON_LABELS,
     ALLOWED_CORRECTED_OUTCOMES,
     ALLOWED_FEEDBACK_LABELS,
     ALLOWED_FEEDBACK_REASONS,
     ALLOWED_SESSION_LOCAL_CANDIDATE_FAMILIES,
     ALLOWED_WEB_SEARCH_PERMISSIONS,
     CANDIDATE_REVIEW_ACTION_TO_STATUS,
+    CandidateReviewSuggestedScope,
+    ContentReasonLabel,
+    ContentReasonScope,
+    SESSION_LOCAL_MEMORY_SIGNAL_VERSION,
     WebSearchPermission,
 )
 
@@ -177,6 +182,12 @@ class SessionStore:
             "artifact_id": artifact_id,
             "source_message_id": source_message_id,
         }
+        reason_label = str(corrected_outcome.get("reason_label") or "").strip().lower()
+        if reason_label:
+            allowed_reason_labels = ALLOWED_CORRECTED_OUTCOME_REASON_LABELS.get(outcome, frozenset())
+            if reason_label not in allowed_reason_labels:
+                return None
+            normalized["reason_label"] = reason_label
         approval_id = str(corrected_outcome.get("approval_id") or "").strip()
         if approval_id:
             normalized["approval_id"] = approval_id
@@ -297,7 +308,7 @@ class SessionStore:
         if not artifact_id or not source_message_id:
             return None
 
-        return {
+        normalized = {
             "candidate_id": candidate_id,
             "candidate_updated_at": candidate_updated_at,
             "artifact_id": artifact_id,
@@ -307,6 +318,17 @@ class SessionStore:
             "review_status": review_status,
             "recorded_at": str(record.get("recorded_at") or self._now()),
         }
+        reason_note = self._normalize_multiline_text(record.get("reason_note"))
+        if reason_note:
+            normalized["reason_note"] = reason_note
+        suggested_scope = self._normalize_multiline_text(record.get("suggested_scope"))
+        if suggested_scope:
+            try:
+                CandidateReviewSuggestedScope(suggested_scope)
+            except ValueError as exc:
+                raise ValueError(f"invalid suggested_scope: {suggested_scope!r}") from exc
+            normalized["suggested_scope"] = suggested_scope
+        return normalized
 
     def _build_original_response_snapshot_from_message(self, message: Dict[str, Any]) -> Dict[str, Any] | None:
         artifact_id = str(message.get("artifact_id") or "").strip()
@@ -494,12 +516,15 @@ class SessionStore:
             latest_save_content_source = normalize_save_content_source(latest_saved_message.get("save_content_source"))
             latest_saved_note_path = str(latest_saved_message.get("saved_note_path") or "").strip()
             latest_approval_id = str(latest_saved_message.get("approval_id") or "").strip()
+            latest_saved_at = str(latest_saved_message.get("created_at") or "").strip()
             if latest_save_content_source is not None:
                 signal["latest_save_content_source"] = latest_save_content_source
             if latest_saved_note_path:
                 signal["latest_saved_note_path"] = latest_saved_note_path
             if latest_approval_id:
                 signal["latest_approval_id"] = latest_approval_id
+            if latest_saved_at:
+                signal["latest_saved_at"] = latest_saved_at
 
         corrected_outcome = self._normalize_corrected_outcome(
             source_message.get("corrected_outcome"),
@@ -513,6 +538,9 @@ class SessionStore:
                 signal["latest_approval_id"] = latest_approval_id
             if latest_saved_note_path and "latest_saved_note_path" not in signal:
                 signal["latest_saved_note_path"] = latest_saved_note_path
+            latest_saved_at = str(corrected_outcome.get("recorded_at") or "").strip()
+            if latest_saved_at and "latest_saved_at" not in signal:
+                signal["latest_saved_at"] = latest_saved_at
 
         return signal or None
 
@@ -558,22 +586,44 @@ class SessionStore:
         )
 
         signal: Dict[str, Any] = {
+            "signal_version": SESSION_LOCAL_MEMORY_SIGNAL_VERSION,
             "signal_scope": "session_local",
             "artifact_id": artifact_id,
             "source_message_id": source_message_id,
-            "content_signal": {
-                "latest_corrected_outcome": corrected_outcome,
-                "has_corrected_text": self._normalize_multiline_text(source_message.get("corrected_text")) is not None,
-            },
         }
+        derived_at_candidates: list[str] = []
+
+        if corrected_outcome is not None and corrected_outcome.get("outcome") == "corrected":
+            signal["correction_signal"] = {
+                "corrected_outcome": corrected_outcome,
+                "has_corrected_text": self._normalize_multiline_text(source_message.get("corrected_text")) is not None,
+            }
+            recorded_at = str(corrected_outcome.get("recorded_at") or "").strip()
+            if recorded_at:
+                derived_at_candidates.append(recorded_at)
         if content_reason_record is not None:
-            signal["content_signal"]["content_reason_record"] = content_reason_record
+            signal["content_signal"] = {
+                "content_reason_record": content_reason_record,
+            }
+            recorded_at = str(content_reason_record.get("recorded_at") or "").strip()
+            if recorded_at:
+                derived_at_candidates.append(recorded_at)
         if approval_reason_record is not None:
             signal["approval_signal"] = {
                 "latest_approval_reason_record": approval_reason_record,
             }
+            recorded_at = str(approval_reason_record.get("recorded_at") or "").strip()
+            if recorded_at:
+                derived_at_candidates.append(recorded_at)
         if save_signal is not None:
             signal["save_signal"] = save_signal
+            latest_saved_at = str(save_signal.get("latest_saved_at") or "").strip()
+            if latest_saved_at:
+                derived_at_candidates.append(latest_saved_at)
+
+        if not any(key in signal for key in ("correction_signal", "content_signal", "approval_signal", "save_signal")):
+            return None
+        signal["derived_at"] = max(derived_at_candidates) if derived_at_candidates else self._now()
         return signal
 
     def _current_correctable_text(self, message: Dict[str, Any]) -> str:
@@ -1006,12 +1056,14 @@ class SessionStore:
                 patched["corrected_text"] = normalized_corrected_text
                 patched["corrected_outcome"] = {
                     "outcome": "corrected",
+                    "reason_label": "explicit_correction_submitted",
                     "recorded_at": self._now(),
                     "artifact_id": artifact_id,
                     "source_message_id": normalized_message_id,
                 }
                 patched.pop("candidate_confirmation_record", None)
                 patched.pop("candidate_review_record", None)
+                patched.pop("content_reason_record", None)
                 normalized = self._normalize_message(patched)
                 messages[index] = normalized
                 updated_message = dict(normalized)
@@ -1059,6 +1111,7 @@ class SessionStore:
             patched = dict(message)
             recorded_at = self._now()
             stored_outcome = normalized_outcome
+            reason_label: str | None = None
             if preserve_existing:
                 existing_outcome = self._normalize_corrected_outcome(
                     message.get("corrected_outcome"),
@@ -1068,9 +1121,14 @@ class SessionStore:
                 if existing_outcome is not None and str(existing_outcome.get("outcome") or "") == normalized_outcome:
                     stored_outcome = normalized_outcome
                     recorded_at = str(existing_outcome.get("recorded_at") or recorded_at)
+                    reason_label = str(existing_outcome.get("reason_label") or "").strip() or None
+
+            if stored_outcome == "corrected" and preserve_existing and reason_label is None:
+                reason_label = "explicit_correction_submitted"
 
             patched["corrected_outcome"] = {
                 "outcome": stored_outcome,
+                **({"reason_label": reason_label} if reason_label else {}),
                 "recorded_at": recorded_at,
                 "artifact_id": normalized_artifact_id,
                 "source_message_id": str(message.get("message_id") or ""),
@@ -1080,6 +1138,8 @@ class SessionStore:
             if stored_outcome != "corrected":
                 patched.pop("candidate_confirmation_record", None)
                 patched.pop("candidate_review_record", None)
+            if stored_outcome == "accepted_as_is":
+                patched.pop("content_reason_record", None)
             normalized = self._normalize_message(patched)
             messages[index] = normalized
             updated_message = dict(normalized)
@@ -1134,8 +1194,8 @@ class SessionStore:
                     "source_message_id": normalized_message_id,
                 }
                 patched["content_reason_record"] = {
-                    "reason_scope": "content_reject",
-                    "reason_label": "explicit_content_rejection",
+                    "reason_scope": ContentReasonScope.CONTENT_REJECT,
+                    "reason_label": ContentReasonLabel.EXPLICIT_CONTENT_REJECTION,
                     "recorded_at": recorded_at,
                     "artifact_id": artifact_id,
                     "artifact_kind": "grounded_brief",
@@ -1207,9 +1267,84 @@ class SessionStore:
 
                 patched = dict(message)
                 patched["content_reason_record"] = {
-                    "reason_scope": str(existing_reason_record.get("reason_scope") or "content_reject"),
-                    "reason_label": str(existing_reason_record.get("reason_label") or "explicit_content_rejection"),
+                    "reason_scope": str(existing_reason_record.get("reason_scope") or ContentReasonScope.CONTENT_REJECT),
+                    "reason_label": str(
+                        existing_reason_record.get("reason_label") or ContentReasonLabel.EXPLICIT_CONTENT_REJECTION
+                    ),
                     "reason_note": normalized_reason_note,
+                    "recorded_at": self._now(),
+                    "artifact_id": artifact_id,
+                    "artifact_kind": str(existing_reason_record.get("artifact_kind") or "grounded_brief"),
+                    "source_message_id": normalized_message_id,
+                }
+                normalized = self._normalize_message(patched)
+                messages[index] = normalized
+                updated_message = dict(normalized)
+                break
+
+            if updated_message is None:
+                return None
+
+            data["messages"] = messages
+            self._save(session_id, data)
+            return updated_message
+
+    def record_content_reason_label_for_message(
+        self,
+        session_id: str,
+        *,
+        message_id: str,
+        reason_label: str,
+    ) -> Dict[str, Any] | None:
+        normalized_message_id = str(message_id or "").strip()
+        normalized_reason_label = str(reason_label or "").strip()
+        if not normalized_message_id:
+            raise ValueError("레이블을 기록할 메시지 ID가 필요합니다.")
+        allowed = ALLOWED_CONTENT_REASON_LABELS.get(ContentReasonScope.CONTENT_REJECT, frozenset())
+        if normalized_reason_label not in allowed:
+            raise ValueError(f"허용되지 않은 reason_label: {normalized_reason_label!r}")
+
+        with self._lock:
+            data = self.get_session(session_id)
+            messages = data.get("messages", [])
+            updated_message: Dict[str, Any] | None = None
+            for index, message in enumerate(messages):
+                if str(message.get("message_id") or "").strip() != normalized_message_id:
+                    continue
+
+                if (
+                    message.get("role") != "assistant"
+                    or str(message.get("artifact_kind") or "").strip() != "grounded_brief"
+                    or not isinstance(message.get("original_response_snapshot"), dict)
+                ):
+                    raise ValueError("레이블을 기록할 grounded-brief 원문 응답을 찾지 못했습니다.")
+
+                artifact_id = str(message.get("artifact_id") or "").strip()
+                if not artifact_id:
+                    raise ValueError("레이블을 기록할 grounded-brief artifact anchor를 찾지 못했습니다.")
+
+                existing_outcome = self._normalize_corrected_outcome(
+                    message.get("corrected_outcome"),
+                    fallback_artifact_id=artifact_id,
+                    fallback_source_message_id=normalized_message_id,
+                )
+                if existing_outcome is None or existing_outcome.get("outcome") != "rejected":
+                    raise ValueError("현재 내용 거절로 기록된 grounded-brief 원문 응답에서만 레이블을 변경할 수 있습니다.")
+
+                existing_reason_record = self._normalize_content_reason_record(
+                    message.get("content_reason_record"),
+                    fallback_artifact_id=artifact_id,
+                    fallback_artifact_kind="grounded_brief",
+                    fallback_source_message_id=normalized_message_id,
+                )
+                if existing_reason_record is None:
+                    raise ValueError("레이블을 연결할 content reason record를 찾지 못했습니다.")
+
+                patched = dict(message)
+                patched["content_reason_record"] = {
+                    "reason_scope": str(existing_reason_record.get("reason_scope") or ContentReasonScope.CONTENT_REJECT),
+                    "reason_label": normalized_reason_label,
+                    "reason_note": existing_reason_record.get("reason_note"),
                     "recorded_at": self._now(),
                     "artifact_id": artifact_id,
                     "artifact_kind": str(existing_reason_record.get("artifact_kind") or "grounded_brief"),

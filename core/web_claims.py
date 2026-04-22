@@ -27,6 +27,7 @@ class SlotCoverage:
     status: str
     primary_claim: ClaimRecord | None = None
     candidate_count: int = 0
+    trusted_source_count: int = 0
 
 
 _ROLE_PRIORITY = {
@@ -58,8 +59,10 @@ def claim_values_overlap(left: str, right: str) -> bool:
     )
 
 
-def _claim_sort_key(record: ClaimRecord) -> tuple[int, int, int, int, str, str]:
+def _claim_sort_key(record: ClaimRecord) -> tuple[int, int, int, int, int, str, str]:
+    trusted_tier = 1 if record.source_role in TRUSTED_CLAIM_SOURCE_ROLES else 0
     return (
+        trusted_tier,
         record.support_count,
         _ROLE_PRIORITY.get(record.source_role, 0),
         int(record.confidence * 1000),
@@ -180,12 +183,19 @@ def summarize_slot_coverage(
     for slot in slots:
         items = grouped.get(slot) or []
         if not items:
-            coverage[slot] = SlotCoverage(slot=slot, status=CoverageStatus.MISSING, primary_claim=None, candidate_count=0)
+            coverage[slot] = SlotCoverage(
+                slot=slot,
+                status=CoverageStatus.MISSING,
+                primary_claim=None,
+                candidate_count=0,
+                trusted_source_count=0,
+            )
             continue
         primary = max(items, key=_claim_sort_key)
+        trusted_count = _trusted_supporting_source_count(primary)
         has_trusted_agreement = (
             primary.support_count >= 2
-            and _trusted_supporting_source_count(primary) >= 2
+            and trusted_count >= 2
         )
         has_conflict = _has_competing_trusted_alternative(items, primary)
         status = (
@@ -200,5 +210,6 @@ def summarize_slot_coverage(
             status=status,
             primary_claim=primary,
             candidate_count=len(items),
+            trusted_source_count=trusted_count,
         )
     return coverage

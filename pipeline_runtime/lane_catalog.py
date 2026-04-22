@@ -65,6 +65,12 @@ _LEGACY_ROLE_BINDINGS: dict[str, str] = {
     "advisory": "Gemini",
 }
 
+_LEGACY_WATCHER_PANE_TARGET_ARG_BY_PANE_TYPE: dict[str, str] = {
+    "claude": "--claude-pane-target",
+    "codex": "--verify-pane-target",
+    "gemini": "--gemini-pane-target",
+}
+
 
 def physical_lane_order() -> tuple[str, ...]:
     return tuple(spec.name for spec in _PHYSICAL_LANE_SPECS)
@@ -122,6 +128,11 @@ def lane_vendor_command_parts(lane_name: str) -> list[str]:
     if spec is None:
         return []
     return [spec.vendor_binary, *spec.vendor_args]
+
+
+def legacy_watcher_pane_target_arg_for_lane(lane: dict[str, Any]) -> str:
+    pane_type = str((lane or {}).get("pane_type") or "").strip().lower()
+    return _LEGACY_WATCHER_PANE_TARGET_ARG_BY_PANE_TYPE.get(pane_type, "")
 
 
 def build_lane_configs(

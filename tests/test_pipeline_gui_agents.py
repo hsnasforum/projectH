@@ -206,7 +206,7 @@ class PipelineGuiAgentsTest(unittest.TestCase):
             log_dir.joinpath("watcher.log").write_text(
                 "\n".join(
                     [
-                        "2026-04-07T22:52:11 [INFO] watcher_core: notify_advisory_owner: reason=startup_turn_gemini",
+                        "2026-04-07T22:52:11 [INFO] watcher_core: notify_advisory_owner: reason=startup_turn_advisory",
                     ]
                 ),
                 encoding="utf-8",

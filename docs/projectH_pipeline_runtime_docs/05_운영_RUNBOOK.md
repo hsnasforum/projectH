@@ -14,7 +14,7 @@
 2. pane 화면, artifact 파일, watcher.log는 보조 증거입니다.
 3. round close는 receipt 없이는 인정하지 않습니다.
 4. 장애 시 “억지 재시도”보다 “현재 run 상태 보존 후 복구”를 우선합니다.
-5. next-slice ambiguity는 Gemini arbitration을 먼저 사용하고, `needs_operator`는 real operator-only decision에만 남깁니다.
+5. next-slice ambiguity는 advisory arbitration을 먼저 사용하고, `needs_operator`는 real operator-only decision에만 남깁니다.
 6. fresh `needs_operator`는 즉시 stop slot current truth가 아니라 24시간 gate 후보일 수 있으므로, `status.control`보다 `status.autonomy`를 먼저 확인합니다.
 7. operator stop 판정은 free-form prose가 아니라 `OPERATOR_POLICY` 우선, `REASON_CODE` 다음 순서로 봅니다. 구조화 metadata가 없거나 알 수 없으면 fail-safe로 즉시 publish합니다.
 8. runtime/script가 `operator_request.md`나 `implement_blocked` sentinel을 machine-write해야 할 때는 `pipeline_runtime.control_writers` helper와 classification-source 검사를 우선 사용합니다.
@@ -59,7 +59,7 @@
 - recent events
 - 마지막 receipt 시각
 - automation health / reason / next action / `control_age_cycles` / `stale_control_seq`
-- `OPERATOR_WAIT`인데 이전 `.pipeline/gemini_request.md` / `.pipeline/gemini_advice.md`가 화면에 남아 보이면 current `status.control`의 `CONTROL_SEQ`를 먼저 확인합니다. 최신 watcher는 더 낮은 seq의 advisory 슬롯을 `STATUS: superseded`로 중립화하므로, superseded 슬롯은 pending arbitration으로 보지 않습니다.
+- `OPERATOR_WAIT`인데 이전 `.pipeline/advisory_request.md` / `.pipeline/advisory_advice.md`가 화면에 남아 보이면 current `status.control`의 `CONTROL_SEQ`를 먼저 확인합니다. 최신 watcher는 더 낮은 seq의 advisory 슬롯을 `STATUS: superseded`로 중립화하므로, superseded 슬롯은 pending arbitration으로 보지 않습니다.
 
 ## 3.4 정상 종료
 1. stop 요청
@@ -70,6 +70,7 @@
 - stop 성공은 supervisor pid 소멸만으로 판단하지 않습니다. final status에 `runtime_state=STOPPED`, `control=none`, `active_round=null`, watcher dead, lane inactive가 함께 flush되었는지 확인합니다.
 - final `STOPPED` status는 active incident를 비우더라도 `automation_health=attention`, `automation_reason_code=runtime_stopped`, `automation_next_action=operator_required`를 남겨야 합니다. `STOPPED + ok + continue`는 silent stall 표면 회귀입니다.
 - 최신 CLI stop은 먼저 graceful flush를 기다리고, timeout 뒤에만 강제 종료 fallback을 사용합니다. `STOPPING`이 오래 남았는데 supervisor가 이미 사라졌다면 graceful flush miss 가능성을 먼저 의심합니다.
+- 런타임 상태를 빠르게 확인할 때는 `python3 -m pipeline_runtime.cli status <project-root> --json`을 사용합니다. 이 명령은 read-only이며 `current_run.json`, run-scoped `status.json`, `status_path`를 함께 출력합니다.
 - supervisor가 이미 죽었지만 watcher/tmux session 같은 orphan runtime이 남아 있으면, stop CLI는 orphan cleanup 뒤 `status.json`을 `STOPPED + inactive truth`로 보정합니다.
 - controller가 오래된 `STOPPING` run을 다시 읽더라도 supervisor PID가 이미 없으면 UI는 이를 `STOPPED`로 정규화하고 `Control=none`, `Round=IDLE`로 보여야 합니다. 이 reader 정규화는 graceful flush 실패에 대비한 fallback safety net입니다.
 
@@ -98,10 +99,19 @@ launcher live stability gate는 아래를 현재 통과 기준으로 둡니다.
 - orphan watcher/session이 없을 것
 - dispatch/completion/receipt close incident가 named event로 surface될 것
 - 반복된 실전 incident가 replay test로 고정되어 재발 시 즉시 드러날 것
+- synthetic gate처럼 lane command override가 필요한 경우 `PIPELINE_RUNTIME_ALLOW_LANE_COMMAND_OVERRIDE=1`을 함께 설정할 것. opt-in 없이 override env만 있으면 supervisor는 override를 무시하고 `lane_command_override_ignored` event를 남깁니다.
 
 ## 3.6 자동화 완성 목표
 완성 목표는 ordinary next-step, ambiguity, stall, rollover, recovery 상황에서 사용자를 호출하지 않는 것입니다.
 에이전트들은 `/work`, `/verify`, current docs, runtime evidence를 기준으로 먼저 상의하고, 하나의 다음 control로 좁혀야 합니다.
+
+`.pipeline/harness/implement.md`, `.pipeline/harness/verify.md`, `.pipeline/harness/advisory.md`, `.pipeline/harness/council.md`는 이 상의/수렴을 위한 role protocol입니다. 새 물리 에이전트를 추가하는 문서가 아니며, current truth나 dispatch authority도 아닙니다. watcher prompt의 `ROLE_HARNESS` / `COUNCIL_HARNESS`는 각 role이 허용/금지/출력 형식을 빠르게 맞추기 위한 참조입니다.
+
+CLI-Anything에서 흡수한 원칙은 아래로 제한합니다.
+- self-contained role SOP를 작게 유지합니다.
+- 출력은 사람이 읽는 장문보다 machine-friendly 필드와 한 개 next control로 수렴합니다.
+- 역할은 `implement` / `verify` / `advisory` / `council protocol`로 고정하고, physical adapter 이름은 active profile metadata로만 둡니다.
+- broad exploration보다 request packet, named evidence, current runtime surface를 먼저 봅니다.
 
 재귀학습은 현재 단계에서 모델 학습이 아니라 운영 학습입니다.
 반복 문제는 named incident, focused replay, owning boundary, shared helper, truthful runtime surface로 남겨 다음 수정 범위를 줄입니다.
@@ -110,6 +120,7 @@ launcher live stability gate는 아래를 현재 통과 기준으로 둡니다.
 
 real-risk action, auth/credential, destructive write, approval-record repair, truth-sync blocker, merge/destructive publication boundary는 여전히 explicit approval과 audit trail을 요구합니다.
 - `pr_creation_gate + gate_24h + release_gate`는 승인된 큰 묶음의 draft PR 생성 follow-up이므로 operator wait가 아니라 verify/handoff-owner triage로 흐르고 `automation_health=attention`, `automation_next_action=verify_followup`으로 확인합니다.
+- `advisory_request.md`가 오래 열려 있는데 같은 `CONTROL_SEQ`의 `advisory_advice.md`가 없으면 watcher가 `advisory_recovery` event를 남기고 verify/handoff-owner에게 recovery prompt를 보낼 수 있습니다. 이때 정상 목표는 advisory 대필이 아니라 더 높은 `CONTROL_SEQ`의 다음 control 하나로 회수하는 것입니다.
 - thin client drift triage는 runtime `status.json` / `events.jsonl` 기준으로만 하고, pane/log/file scan은 current truth 재판정이 아니라 mismatch evidence로만 사용할 것
 - current `accepted_task`가 살아 있는 lane은 tail prompt가 보여도 `READY`로 내리지 말고 `WORKING`으로 유지할 것. verify lane이 이미 `TASK_DONE` 뒤 receipt close만 기다리는 경우는 launcher snapshot에 `active_round.state`, `dispatch_id`, `completion_stage`, `Receipt: pending close`로 그대로 드러나야 합니다.
 - pane busy/ready marker는 `pipeline_runtime/lane_surface.py` shared helper/profile을 single source로 유지할 것. watcher, supervisor, cli wrapper가 각자 marker 확장을 따로 들고 있으면 READY/WORKING drift triage가 다시 흔들립니다.
@@ -310,7 +321,7 @@ controller browser UI의 active runtime contract는 아래로 제한합니다.
 ## 6.8 duplicate/no-op implement handoff
 다음 조건이 동시에 보이면 duplicate/no-op implement handoff로 판단합니다.
 
-- active control은 여전히 `.pipeline/claude_handoff.md`
+- active control은 여전히 `.pipeline/implement_handoff.md`
 - implement owner lane은 `READY`
 - note가 `waiting_next_control`
 - recent events에 `control_duplicate_ignored`가 보임

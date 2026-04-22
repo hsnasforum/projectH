@@ -5,7 +5,7 @@
 - This document separates the current shipped contract from next-phase design placeholders.
 - Placeholder items below are **not** current shipped acceptance gates unless explicitly marked as current.
 - The current release gate is scoped to the `app.web` browser shell.
-- Internal/operator tooling such as `controller.server`, `pipeline_gui/`, `windows-launchers/`, and `_data/` pipeline helpers is outside the current release gate unless explicitly promoted later. The cozy controller runtime lives under shared `/controller-assets/js/cozy.js` ownership and is loaded from `controller/index.html` via a single `<script src="/controller-assets/js/cozy.js">` tag rather than one standalone inline runtime copy. Controller has its own Playwright smoke (`e2e/playwright.controller.config.mjs`) covering the shared cozy module load, scene feature hooks for the time-of-day window / pneumatic tube / courier packet-owl / pettable cat-audio path via `window.getSceneDebug()` and `window.testPetCat()`, the `#storage-warn` toolbar chip, event-log storage warning contract, deduplicated repeated `/api/runtime/status` fetch failures with one recovery log on reconnect, agent-card `data-fatigue` observability attribute, deterministic `fatigued`/`coffee` state transitions via `window.setAgentFatigue` test hook, lounge rest-zone roam bounds via `window.testPickIdleTargets` + `window.getRoamBounds`, actual scene placement visibility via `window.getAgentPositions`, lounge partition preservation via `window.testAntiStacking`, and `window.testHistoryPenalty` returning an empty array because idle roam uses continuous micro-roam rather than discrete spot history, runnable via `make controller-test` (port override: `CONTROLLER_SMOKE_PORT`). `ready`/`idle`/`off` agents rest inside the shared `lounge` in agent-specific `restZones`; role anchor keys (`claude_desk`, `codex_desk`, `gemini_desk`) still represent implement / verify / advisory desks and visible owner labels via `/api/runtime/status.role_owners`, but non-working sprites no longer idle at those desks. `sampleIdleTarget()` samples only within the current rest zone for non-working agents, while `working`/`booting`/`broken`/`dead` agents keep their desk/status anchoring.
+- Internal/operator tooling such as `controller.server`, `pipeline_gui/`, `windows-launchers/`, and `_data/` pipeline helpers is outside the current release gate unless explicitly promoted later. The cozy controller runtime lives under shared `/controller-assets/js/cozy.js` ownership and is loaded from `controller/index.html` via a single `<script src="/controller-assets/js/cozy.js">` tag rather than one standalone inline runtime copy. Controller has its own Playwright smoke (`e2e/playwright.controller.config.mjs`) covering the shared cozy module load, scene feature hooks for the time-of-day window / pneumatic tube / courier packet-owl / pettable cat-audio path via `window.getSceneDebug()` and `window.testPetCat()`, the `#storage-warn` toolbar chip, event-log storage warning contract, deduplicated repeated `/api/runtime/status` fetch failures with one recovery log on reconnect, runtime-owned automation attention detail (`automation_health`, stale control/advisory fields) in the Incident Room, agent-card `data-fatigue` observability attribute, deterministic `fatigued`/`coffee` state transitions via `window.setAgentFatigue` test hook, lounge rest-zone roam bounds via `window.testPickIdleTargets` + `window.getRoamBounds`, actual scene placement visibility via `window.getAgentPositions`, lounge partition preservation via `window.testAntiStacking`, and `window.testHistoryPenalty` returning an empty array because idle roam uses continuous micro-roam rather than discrete spot history, runnable via `make controller-test` (port override: `CONTROLLER_SMOKE_PORT`). `ready`/`idle`/`off` agents rest inside the shared `lounge` in agent-specific `restZones`; role anchor keys (`claude_desk`, `codex_desk`, `gemini_desk`) still represent implement / verify / advisory desks and visible owner labels via `/api/runtime/status.role_owners`, but non-working sprites no longer idle at those desks. `sampleIdleTarget()` samples only within the current rest zone for non-working agents, while `working`/`booting`/`broken`/`dead` agents keep their desk/status anchoring.
 - The internal pipeline runtime currently uses a supervisor-owned run-scoped status/events/receipt surface; `controller.server`, `pipeline_gui`, and `pipeline-launcher.py` read that surface as thin clients while `tmux` remains attach/debug substrate only, and operator tooling may consume both `degraded_reason` and `degraded_reasons` from the runtime status payload.
 - The internal `pipeline_gui` home card may still evolve outside the web release gate; current behavior labels the file box as `라운드 기록` and distinguishes latest `/work` or `/verify` from a missing current-round receipt instead of showing a generic no-output label for both cases.
 - When `compat.turn_state` is present, internal current-turn labels should follow `turn_state.active_role` and `turn_state.active_lane` ahead of the legacy enum name alone, so swapped profiles do not mislabel `Claude` / `Codex` ownership on the home card.
@@ -51,13 +51,13 @@
 - Assistant responses can store a feedback label and optional reason.
 - Grounded-brief summary responses can persist one stable `artifact_id` plus `artifact_kind = grounded_brief`.
 - Save approvals and relevant approval / write / feedback traces can carry the same `artifact_id` when applicable.
-- Reject / reissue approval traces can persist one normalized `approval_reason_record` without changing the current approval UI.
+- Reject / reissue approval traces can persist one normalized `approval_reason_record` without changing the current approval UI; corrected-save reissue uses `reason_label = corrected_text_reissue`.
 - Current save-note approvals and related save/write traces can persist one explicit `source_message_id` anchor plus `save_content_source = original_draft | corrected_text` without changing the current save UI.
 - Grounded-brief response cards can expose one small candidate-linked explicit confirmation action when the current source message already emits `session_local_candidate`, and that action stays outside the approval surface.
 - Serialized grounded-brief source messages can now also expose one optional source-message-anchored read-only `candidate_recurrence_key` draft derived only from the explicit original-vs-corrected pair when the same current source message still exposes a matching current `session_local_candidate`.
 - Serialized grounded-brief source messages can now also expose one optional source-message-anchored read-only `durable_candidate` projection when the same current source message still exposes both a matching `session_local_candidate` and `candidate_confirmation_record`.
 - Current session payloads can now also expose one optional top-level read-only `recurrence_aggregate_candidates` projection derived only from current same-session serialized source-message `candidate_recurrence_key` records when at least two distinct grounded-brief anchors share the same exact recurrence identity.
-- Current session payloads and the existing shell can now also expose one local `review_queue_items` / `검토 후보` surface fed only by current `durable_candidate` items with `promotion_eligibility = eligible_for_review`, with `accept`/`reject`/`defer` review actions that each record source-message `candidate_review_record` with the corresponding status, remove the item from the pending queue, and persistently show the review outcome label (`검토 수락됨`/`검토 거절됨`/`검토 보류됨`) on the source-message transcript meta and quick meta; a later correction clears the review outcome with the stale record.
+- Current session payloads and the existing shell can now also expose one local `review_queue_items` / `검토 후보` surface fed only by current `durable_candidate` items with `promotion_eligibility = eligible_for_review`, with `accept`/`reject`/`defer`/`edit` review actions that each record source-message `candidate_review_record` with the corresponding status, remove the item from the pending queue, and persistently show the review outcome label (`검토 수락됨`/`검토 거절됨`/`검토 보류됨`/`검토 편집됨`) on the source-message transcript meta and quick meta; a later correction clears the review outcome with the stale record.
 
 ### In Progress
 - (No web-investigation items currently in progress; see `docs/TASK_BACKLOG.md` Current Phase In Progress for future quality-improvement direction.)
@@ -117,9 +117,10 @@
 - Session payloads can also serialize one computed top-level `recurrence_aggregate_candidates` list, derived from current same-session serialized source-message `candidate_recurrence_key` records when at least two distinct grounded-brief anchors share the same exact recurrence identity; separate from source-message fields and not persisted as its own store.
 - Each current `recurrence_aggregate_candidates` item now also serializes deterministic read-only projections (`aggregate_promotion_marker`, `reviewed_memory_precondition_status`, `reviewed_memory_boundary_draft`, `reviewed_memory_rollback_contract`, `reviewed_memory_disable_contract`, `reviewed_memory_conflict_contract`, `reviewed_memory_transition_audit_contract`, `reviewed_memory_unblock_contract`, `reviewed_memory_capability_status`, `reviewed_memory_planning_target_ref`), one conditional `reviewed_memory_capability_basis` (present only when `capability_outcome = unblocked_all_required`), and lifecycle records: one conditional `reviewed_memory_transition_record` (emitted / applied / stopped / reversed) and one optional `reviewed_memory_conflict_visibility_record` (conflict_visibility_checked). Hard page reload must preserve the aggregate-trigger UI at six lifecycle points: (1) after transition record emission — emitted helper text, payload continuity (`record_stage = emitted_record_only_not_applied`, `applied_at` absent, `apply_result` absent, `reviewed_memory_active_effects` absent or empty), apply button visible and enabled, and post-reload follow-up without `[검토 메모 활성]`; (2) after `검토 메모 적용 실행` — applied-pending helper text, payload continuity (`record_stage = applied_pending_result`, `applied_at` present, `apply_result` absent, `reviewed_memory_active_effects` absent or empty), `결과 확정` button visible and enabled, and post-reload follow-up without `[검토 메모 활성]`; (3) after `결과 확정` with active effect — result indicator, helper text, payload continuity (`record_stage = applied_with_result`, `result_stage = effect_active`, `reviewed_memory_active_effects` present), and post-reload follow-up `[검토 메모 활성]` prefix; (4) after `적용 중단` — stopped indicator, helper text, payload continuity (`record_stage = stopped`, `result_stage = effect_stopped`, `reviewed_memory_active_effects` absent or empty), and post-reload follow-up without `[검토 메모 활성]`; (5) after `적용 되돌리기` — reversed indicator, helper text, payload continuity (`record_stage = reversed`, `result_stage = effect_reversed`, `reviewed_memory_active_effects` absent or empty), and post-reload follow-up without `[검토 메모 활성]`; (6) after `reversed` + `conflict_visibility_checked` — correct badges, helper text, and payload continuity.
 - Session payloads can also serialize one computed top-level `review_queue_items` list, derived from current `durable_candidate` items with `promotion_eligibility = eligible_for_review` and no matching current `candidate_review_record`; separate from source-message fields and not persisted as its own store.
+- Each current review queue item should carry `item_type = durable_candidate`, source anchor fields, and the underlying `derived_from` / `derived_at` projection metadata so future queue families cannot be confused with this source-message durable-candidate path.
 - When a candidate review with `review_action = accept` succeeds and the source message exposes a valid `candidate_recurrence_key` with a `normalized_delta_fingerprint`, the accepted reviewed candidate is persisted as a local preference candidate record through the existing `PreferenceStore` / `SQLitePreferenceStore` via `record_reviewed_candidate_preference`. The record uses `status = candidate` and is not auto-activated. Idempotent on the same fingerprint: refreshes timestamps and appends distinct source refs instead of creating a duplicate record. The record is surfaced through the existing `/api/preferences` list path.
 - Approval and pending-approval payloads can serialize `source_message_id` plus `save_content_source = original_draft | corrected_text` for the current shipped save-note path.
-- Task logs can capture request, approval, write, cancel, feedback, correction, verdict, and candidate events, including additive `artifact_id`, `source_message_id`, and `save_content_source` detail where the grounded-brief save trace exists. Current shipped actions include: `request_received`, `request_cancelled`, `document_context_updated`, `approval_requested`, `approval_granted`, `approval_rejected`, `approval_reissued`, `write_note`, `response_feedback_recorded`, `correction_submitted`, `corrected_outcome_recorded`, `content_verdict_recorded`, `content_reason_note_recorded`, `candidate_confirmation_recorded`, `candidate_review_recorded`, `stream_cancel_requested`, `web_search_permission_updated`, `permissions_updated`, `ocr_not_supported`, `web_search_record_loaded`, `web_search_retried`, `answer_with_active_context`, `reviewed_memory_transition_emitted`, `reviewed_memory_transition_applied`, `reviewed_memory_transition_result_confirmed`, `reviewed_memory_transition_stopped`, `reviewed_memory_transition_reversed`, `reviewed_memory_conflict_visibility_checked`, `agent_response`, `agent_error`, `session_deleted`, `all_sessions_deleted`, `preference_activated`, `preference_paused`, `preference_rejected`, `preference_candidate_recorded`. Save-note actions (`approval_requested`, `approval_granted`, `approval_rejected`, `approval_reissued`, `write_note`) carry per-action detail with core fields `artifact_id`, `source_message_id`, `save_content_source` plus action-specific keys and optional mode addenda such as `source_path` or `search_query` (see ARCHITECTURE for full detail shapes). Feedback/correction/verdict actions (`response_feedback_recorded`, `correction_submitted`, `content_verdict_recorded`, `content_reason_note_recorded`) carry per-action detail with `message_id`, `artifact_id`, `artifact_kind` core fields; `corrected_outcome_recorded` uses a distinct multi-path shape with `outcome`, `recorded_at`, `artifact_id`, `source_message_id` core fields; candidate actions (`candidate_confirmation_recorded`, `candidate_review_recorded`) carry per-action detail with `message_id`, `artifact_id`, `source_message_id`, `candidate_id`, `candidate_family`, `candidate_updated_at` core fields; web-search/follow-up actions (`web_search_record_loaded`, `web_search_retried`, `answer_with_active_context`) singleton actions (`stream_cancel_requested`, `web_search_permission_updated`, `permissions_updated`, `ocr_not_supported`), reviewed-memory transition actions, request plumbing actions (`request_received`, `request_cancelled`, `document_context_updated`), and document-loop actions (`request_intent_classified`, `read_search_results`, `summarize_search_results`, `read_uploaded_file`, `summarize_uploaded_file`, `read_file`, `summarize_file`) all carry per-action detail (see ARCHITECTURE for full detail shapes).
+- Task logs can capture request, approval, write, cancel, feedback, correction, verdict, and candidate events, including additive `artifact_id`, `source_message_id`, and `save_content_source` detail where the grounded-brief save trace exists. Current shipped actions include: `request_received`, `request_cancelled`, `document_context_updated`, `approval_requested`, `approval_granted`, `approval_rejected`, `approval_reissued`, `write_note`, `response_feedback_recorded`, `correction_submitted`, `corrected_outcome_recorded`, `content_verdict_recorded`, `content_reason_note_recorded`, `candidate_confirmation_recorded`, `candidate_review_recorded`, `stream_cancel_requested`, `web_search_permission_updated`, `permissions_updated`, `ocr_not_supported`, `web_search_record_loaded`, `web_search_retried`, `answer_with_active_context`, `reviewed_memory_transition_emitted`, `reviewed_memory_transition_applied`, `reviewed_memory_transition_result_confirmed`, `reviewed_memory_transition_stopped`, `reviewed_memory_transition_reversed`, `reviewed_memory_conflict_visibility_checked`, `agent_response`, `agent_error`, `session_deleted`, `all_sessions_deleted`, `preference_activated`, `preference_paused`, `preference_rejected`, `preference_candidate_recorded`. Save-note actions (`approval_requested`, `approval_granted`, `approval_rejected`, `approval_reissued`, `write_note`) carry per-action detail with core fields `artifact_id`, `source_message_id`, `save_content_source` plus action-specific keys and optional mode addenda such as `source_path` or `search_query` (see ARCHITECTURE for full detail shapes). Feedback/correction/verdict actions (`response_feedback_recorded`, `correction_submitted`, `content_verdict_recorded`, `content_reason_note_recorded`) carry per-action detail with `message_id`, `artifact_id`, `artifact_kind` core fields; `corrected_outcome_recorded` uses a distinct multi-path shape with `outcome`, optional `reason_label`, `recorded_at`, `artifact_id`, `source_message_id` core fields; candidate actions (`candidate_confirmation_recorded`, `candidate_review_recorded`) carry per-action detail with `message_id`, `artifact_id`, `source_message_id`, `candidate_id`, `candidate_family`, `candidate_updated_at` core fields; web-search/follow-up actions (`web_search_record_loaded`, `web_search_retried`, `answer_with_active_context`) singleton actions (`stream_cancel_requested`, `web_search_permission_updated`, `permissions_updated`, `ocr_not_supported`), reviewed-memory transition actions, request plumbing actions (`request_received`, `request_cancelled`, `document_context_updated`), and document-loop actions (`request_intent_classified`, `read_search_results`, `summarize_search_results`, `read_uploaded_file`, `summarize_uploaded_file`, `read_file`, `summarize_file`) all carry per-action detail (see ARCHITECTURE for full detail shapes).
 
 ### Response Payload Contract
 - The top-level response payload (`app/serializers.py:_serialize_response`) returns a fixed set of fields on every assistant response.
@@ -207,6 +208,7 @@ These are placeholders for the next phase design target and its immediate follow
   - the persisted assistant message in session payloads
 - Minimum corrected-outcome capture is now implemented for the three truthful cases currently supported:
   - `corrected_outcome.outcome = accepted_as_is | corrected | rejected`
+  - optional `corrected_outcome.reason_label`, currently `explicit_correction_submitted` on explicit correction submit
   - `recorded_at`
   - `artifact_id`
   - `source_message_id`
@@ -218,6 +220,7 @@ These are placeholders for the next phase design target and its immediate follow
   - one multiline correction editor seeded with the current grounded-brief draft text
   - explicit submit persists `corrected_text` on the original grounded-brief source message
   - the same submit persists `corrected_outcome.outcome = corrected` on that same source message
+  - the same submit persists `corrected_outcome.reason_label = explicit_correction_submitted`
   - unchanged submit must fail validation instead of becoming `accepted_as_is`
   - when the session has an `active_context`, correction submit also updates `active_context.summary_hint` to the corrected text and flips `active_context.summary_hint_basis` from `current_summary` to `recorded_correction`, so subsequent same-session follow-up responses use the corrected version as their basis and the serialized basis is explicit (not inferred from text shape)
   - the correction helper copy makes this basis contract visible: no recorded correction → `아직 기록된 수정본이 없어 같은 세션의 후속 질문과 재요약은 원본 요약 기준으로 이어집니다.`; a recorded correction with no unrecorded editor change → `기록된 수정본이 같은 세션의 후속 질문과 재요약 기준이 됩니다.`; a recorded correction with an unrecorded editor change → `후속 질문과 재요약도 직전 기록본 기준으로 이어지며, 입력창의 새 변경을 기준으로 바꾸려면 다시 수정본 기록을 눌러 주세요.`
@@ -244,7 +247,7 @@ These are placeholders for the next phase design target and its immediate follow
   - the original grounded-brief assistant message does not map approval friction into `corrected_outcome`
 - Current truthful labels are intentionally minimal:
   - `approval_reject -> explicit_rejection`
-  - `approval_reissue -> path_change`
+  - `approval_reissue -> path_change | corrected_text_reissue`
 - Approval and task-log traces still keep anchor linkage only and do not copy the full snapshot blob into every downstream record.
 - Feedback submission continues to target `message_id`, while `response_feedback_recorded` now logs the resolved `artifact_id` for lower-cost audit reconstruction.
 - This additive trace foundation is implemented, including the first explicit content-level `rejected` capture and the first read-only review queue surface, but it does not imply review actions, eval-ready completeness, or user-level memory.
@@ -281,7 +284,7 @@ These are placeholders for the next phase design target and its immediate follow
   - later correction submits must not rewrite an already-issued corrected-save approval
   - a changed corrected text requires a new bridge action and a new approval object
   - approval-card helper copy and corrected-save save-result wording should explicitly describe that frozen body as the request-time snapshot
-  - corrected-save approval execution preserves `corrected_outcome.outcome = corrected` on the source message while adding optional `approval_id` / `saved_note_path` linkage there
+  - corrected-save approval execution preserves `corrected_outcome.outcome = corrected` and `corrected_outcome.reason_label = explicit_correction_submitted` on the source message while adding optional `approval_id` / `saved_note_path` linkage there
 - Current `rejected` surface:
   - requires one explicit content-level reject action on the grounded-brief response
   - the current truthful control is the dedicated response-card content-verdict action `내용 거절`
@@ -350,9 +353,10 @@ These are placeholders for the next phase design target and its immediate follow
 - Current truthful limitation:
   - if later correction or explicit save clears `rejected` from the source message, a superseded reject or reject-note may stay only in audit log and fall out of the first signal summary
 - Current implementation should stay additive:
-  - serialized grounded-brief source messages should expose one computed optional `session_local_memory_signal`
+  - serialized grounded-brief source messages should expose one computed optional `session_local_memory_signal` only when current session state has a relevant same-anchor correction, content reason, approval reason, or completed save signal
   - the signal should stay read-only and source-message-anchored
-  - the signal should keep `content_signal`, `approval_signal`, and `save_signal` separate
+  - the signal should include fixed `signal_version = session_local_memory_signal_v1`, same-anchor `artifact_id` / `source_message_id`, and `derived_at`
+  - the signal should keep `correction_signal`, `content_signal`, `approval_signal`, and `save_signal` separate
   - no new UI should be required for this slice
   - no separate memory store should be required for this slice
 - Recommended next refinement:
@@ -366,8 +370,8 @@ These are placeholders for the next phase design target and its immediate follow
 - Current shipped first slice:
   - only current `durable_candidate` items with `promotion_eligibility = eligible_for_review` may enter the local read-only review queue
   - queue items are read-only inspection projections, not new canonical durable records
-  - `accept`, `reject`, and `defer` actions are available in the current slice
-  - all three actions record reviewed-but-not-applied state only
+  - `accept`, `reject`, `defer`, and `edit` actions are available in the current slice
+  - all four actions record reviewed-but-not-applied state only
 - Only `durable_candidate` items with trace-complete support and no final review outcome should enter a later action-capable local review queue.
 - `session_local` items should not become future user-level memory without first becoming `durable_candidate`.
 - First review-action trace contract should stay source-message-anchored:
@@ -380,22 +384,20 @@ These are placeholders for the next phase design target and its immediate follow
   - `artifact_id`
   - `source_message_id`
   - `review_scope = source_message_candidate_review`
-  - `review_action` ∈ { `accept`, `reject`, `defer` }
-  - `review_status` ∈ { `accepted`, `rejected`, `deferred` }
+  - `review_action` ∈ { `accept`, `reject`, `defer`, `edit` }
+  - `review_status` ∈ { `accepted`, `rejected`, `deferred`, `edited` }
   - `recorded_at`
-  - optional `reviewed_statement` only when a later `edit` action lands
+  - optional `reason_note` (present when `review_action = edit`)
 - Current shipped review actions:
-  - `accept`, `reject`, `defer`
-- Later review actions still include:
-  - `edit`
+  - `accept`, `reject`, `defer`, `edit`
 - Current pending queue rule should stay narrow even after actions exist:
   - `review_queue_items` should continue to include only current `durable_candidate` items with `promotion_eligibility = eligible_for_review`
   - a queue item should appear only when no matching current `candidate_review_record` exists on the same `artifact_id`, `source_message_id`, `candidate_id`, and `candidate_updated_at`
-  - after one matching review record (`accept`, `reject`, or `defer`) is present for that candidate version, the item should leave the pending queue
+  - after one matching review record (`accept`, `reject`, `defer`, or `edit`) is present for that candidate version, the item should leave the pending queue
   - reviewed items should not automatically open a second queue section, dashboard, or user-level memory surface in the same slice
   - aggregate-level reviewed-memory transition initiation must stay outside this queue:
     - `review_queue_items` must not host `future_reviewed_memory_apply`
-    - source-message review outcome (`accept`/`reject`/`defer`) must not be reinterpreted as reviewed-memory apply trigger
+    - source-message review outcome (`accept`/`reject`/`defer`/`edit`) must not be reinterpreted as reviewed-memory apply trigger
     - `candidate_review_record` must not become canonical transition identity, `operator_reason_or_note`, or `emitted_at` basis
 - Action meaning should stay distinct:
   - `accept` reviews the current `durable_candidate` as reusable, but does not apply user-level memory
@@ -413,21 +415,21 @@ These are placeholders for the next phase design target and its immediate follow
 - Approval-backed save should not be the sole reason a candidate becomes reviewed memory or receives a broader suggested scope.
 - This review surface is now a current acceptance gate for the narrow first slice.
 - Current shipped action-capable slice:
-  - `accept`, `reject`, `defer` are all implemented
+  - `accept`, `reject`, `defer`, `edit` are all implemented
   - record one source-message `candidate_review_record` with the corresponding `review_action` and `review_status`
-  - remove the matching item from pending `review_queue_items` after any of the three actions
-  - do not add edit controls, reviewed-memory application, or user-level memory in the same slice
+  - remove the matching item from pending `review_queue_items` after any of the four actions
+  - do not add reviewed-memory application or user-level memory in the same slice
 
 ### Acceptance Placeholder For Memory
 - The current implementation should keep the first source-message-anchored `session_local_memory_signal` projection stable before any review queue or durable-candidate surface is attempted.
 - Focused regression should verify at least:
-  - a grounded-brief source message exposes `session_local_memory_signal` even when no correction, reject, or save has happened yet
-  - `content_signal`, `approval_signal`, and `save_signal` remain separate instead of collapsing into one label
-  - later correction or explicit save can clear stale reject state from `content_signal` while earlier save linkage may still remain in `save_signal`
+  - a grounded-brief source message omits `session_local_memory_signal` when no correction, content reason, approval reason, or completed save exists yet
+  - `correction_signal`, `content_signal`, `approval_signal`, and `save_signal` remain separate instead of collapsing into one label
+  - later correction or explicit save can clear stale reject state from current `content_signal` while earlier save linkage may still remain in `save_signal`
 - Focused regression should now also verify at least:
   - `superseded_reject_signal` appears only when the current source message no longer shows `rejected` but same-anchor audit history still contains a superseded reject
   - the helper replays only one latest superseded reject verdict plus optional reject-note
-  - the helper does not overwrite `session_local_memory_signal.content_signal`
+  - the helper does not overwrite `session_local_memory_signal.correction_signal`
   - the helper does not replay approval friction or saved-body content
   - the helper remains source-message-anchored and read-only
   - if same-anchor note association is ambiguous, the helper omits the replayed note instead of guessing
@@ -451,7 +453,7 @@ These are placeholders for the next phase design target and its immediate follow
 - The current implementation should now expose one optional normalized `session_local_candidate` on serialized grounded-brief source messages only when:
   - the same source message still keeps `original_response_snapshot`
   - the same source message still keeps non-empty `corrected_text`
-  - `session_local_memory_signal.content_signal.latest_corrected_outcome.outcome = corrected`
+  - `session_local_memory_signal.correction_signal.corrected_outcome.outcome = corrected`
   - the normalized original draft and normalized corrected text are not identical
 - The current `session_local_candidate` must remain distinct from:
   - `session_local_memory_signal`
@@ -473,7 +475,7 @@ These are placeholders for the next phase design target and its immediate follow
 - The current extraction rule should stay conservative:
   - rejected-only paths do not emit a candidate
   - accepted-as-is-only paths do not emit a candidate
-  - current `session_local_memory_signal.content_signal` is the primary basis
+  - current `session_local_memory_signal.correction_signal` is the primary basis
   - current `session_local_memory_signal.save_signal` may appear only as supporting evidence when the same current anchor still exposes `latest_approval_id`
   - `evidence_strength` stays the single conservative value `explicit_single_artifact` even when current save support is attached
   - `superseded_reject_signal` and `historical_save_identity_signal` do not become primary extraction sources
@@ -515,7 +517,11 @@ These are placeholders for the next phase design target and its immediate follow
   - `candidate_id`
   - `candidate_scope = durable_candidate`
   - `candidate_family`
+  - `artifact_id`
+  - `source_message_id`
   - `statement`
+  - `derived_from` with `record_type = candidate_confirmation_record`
+  - `derived_at`
   - `supporting_artifact_ids`
   - `supporting_source_message_ids`
   - `supporting_signal_refs`
@@ -530,6 +536,7 @@ These are placeholders for the next phase design target and its immediate follow
   - add one `supporting_confirmation_refs` item from the matching `candidate_confirmation_record`
   - reuse the current source-message `session_local_candidate.candidate_id` while the projection stays source-message-anchored
   - set `has_explicit_confirmation = true`
+  - set `derived_at` from `candidate_confirmation_record.recorded_at`
   - set `promotion_basis = explicit_confirmation`
   - set `promotion_eligibility = eligible_for_review`
   - set projection timestamps from `candidate_confirmation_record.recorded_at`
@@ -1135,9 +1142,9 @@ These are placeholders for the next phase design target and its immediate follow
   - legacy grounded-brief session messages can be normalized into the same snapshot contract without a schema bump
   - a direct approved grounded-brief save can expose one normalized `corrected_outcome` on the same source response and persisted source message
   - an approval-executed save updates the original grounded-brief source message with `corrected_outcome.outcome = accepted_as_is` instead of copying it onto the later system response
-  - an explicit correction submit updates that same original grounded-brief source message with `corrected_text` and `corrected_outcome.outcome = corrected`
+  - an explicit correction submit updates that same original grounded-brief source message with `corrected_text`, `corrected_outcome.outcome = corrected`, and `corrected_outcome.reason_label = explicit_correction_submitted`
   - a reject or reissue response can expose one normalized `approval_reason_record` linked to the same artifact anchor and source message
-  - a reissued pending approval can expose that same normalized `approval_reason_record` on the live approval payload
+  - a reissued pending approval can expose that same normalized `approval_reason_record` on the live approval payload, using `reason_label = corrected_text_reissue` when the approval being reissued targets `save_content_source = corrected_text`
   - write-note task-log entries keep the same `artifact_id`
   - `corrected_outcome_recorded` task-log entries keep the same `artifact_id` and `source_message_id`
   - `correction_submitted` task-log entries keep the same `artifact_id` and `source_message_id`
@@ -1229,7 +1236,7 @@ These are placeholders for the next phase design target and its immediate follow
 - Expected result:
   - repeated `approval_reissue` or reject friction decreases without hiding the approval gate
 - Not implemented today:
-  - richer reject / reissue labels beyond `explicit_rejection` and `path_change`
+  - richer reject / reissue labels beyond `explicit_rejection`, `path_change`, and `corrected_text_reissue`
   - artifact-linked approval fixture harness
 - Future target levels:
   - manual inspection placeholder now

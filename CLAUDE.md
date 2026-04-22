@@ -17,19 +17,20 @@
 
 ## Claude Runtime Role Contract
 
-- Claude follows the active role binding from `.pipeline/config/agent_profile.json`, not the historical slot filename.
-- `.pipeline/claude_handoff.md` remains the implement control slot name even when Claude is not the implement owner.
+- Claude follows the active role binding from `.pipeline/config/agent_profile.json`, not a vendor-named historical slot filename.
+- `.pipeline/implement_handoff.md` is the canonical implement control slot even when Claude is not the implement owner.
+- Historical aliases `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, and `.pipeline/gemini_advice.md` are read-only compatibility inputs for the same role-based controls, not separate control planes.
 - In the currently applied A profile, `implement=Codex`, `verify=Claude`, and `advisory=Gemini`, so Claude is the verification + handoff owner.
 - If Claude is bound to `verify`:
   - read the newest relevant `work/` note first, then the same-day `verify/` note if one exists
   - rerun the narrowest honest verification
   - leave or update the persistent `/verify`
-  - write the next `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, or `.pipeline/operator_request.md` as needed
+  - write the next `.pipeline/implement_handoff.md`, `.pipeline/advisory_request.md`, or `.pipeline/operator_request.md` as needed
 - If Claude is bound to `implement`:
-  - implement only the exact slice in `.pipeline/claude_handoff.md` when it says `STATUS: implement`
+  - implement only the exact slice in `.pipeline/implement_handoff.md` when it says `STATUS: implement`
   - do not self-select the next slice
-  - do not write `.pipeline/gemini_request.md` or `.pipeline/operator_request.md`
-  - if the handoff is blocked, stale, already implemented, or otherwise not actionable, emit pane-local `STATUS: implement_blocked` with `BLOCK_REASON`, `BLOCK_REASON_CODE`, `REQUEST: codex_triage`, `ESCALATION_CLASS: codex_triage`, `HANDOFF`, `HANDOFF_SHA`, and `BLOCK_ID`, then stop
+  - do not write `.pipeline/advisory_request.md` or `.pipeline/operator_request.md`
+  - if the handoff is blocked, stale, already implemented, or otherwise not actionable, emit pane-local `STATUS: implement_blocked` with `BLOCK_REASON`, `BLOCK_REASON_CODE`, `REQUEST: verify_triage`, `ESCALATION_CLASS: verify_triage`, `HANDOFF`, `HANDOFF_SHA`, and `BLOCK_ID`, then stop
   - stop after bounded edits plus the canonical `/work` closeout. Do not commit, push, publish a branch, or open a PR from the implement lane
   - treat commit/push/PR creation as a large-bundle boundary only: recommend or request it only for an explicitly operator-approved release, soak, PR stabilization, or direct publish bundle, not for ordinary small/local slices
   - if `REASON_CODE: commit_push_bundle_authorization` with `OPERATOR_POLICY: internal_only` is active, leave it for verify/handoff-owner publish follow-up; do not re-ask the operator from the implement lane
@@ -39,16 +40,18 @@
 
 - Newest valid control wins by `CONTROL_SEQ` first and `mtime` only as a fallback.
 - Which rolling slot is Claude execution input depends on the active role binding:
-  - implement owner -> `.pipeline/claude_handoff.md`
-  - verify/handoff owner -> latest `/work` + `/verify` pair, plus `.pipeline/gemini_advice.md` follow-up when opened
-  - advisory owner -> `.pipeline/gemini_request.md`
+  - implement owner -> `.pipeline/implement_handoff.md`
+  - verify/handoff owner -> latest `/work` + `/verify` pair, plus `.pipeline/advisory_advice.md` follow-up when opened
+  - advisory owner -> `.pipeline/advisory_request.md`
 - Older stale control files are not execution input once a newer valid control file exists.
 - If `.pipeline` disagrees with persistent notes, trust the latest `/work` and `/verify`.
 - If the latest `/work` and `/verify` already closed the same handoff SHA or exact slice, treat that handoff as blocked / already implemented instead of redoing it.
 - Automation completion target: do not call the user for ordinary next-step, ambiguity, stall, rollover, or recovery choices. Use implement / verify-handoff / advisory discussion first, grounded in `/work`, `/verify`, current docs, and runtime evidence.
-- When opening `.pipeline/gemini_request.md` for advisory arbitration, keep the ask anchored to the named shipped docs/code paths first; do not send Gemini into `docs/superpowers/**`, `plandoc/**`, or other historical planning docs unless the current `/work` or `/verify` explicitly cites them as the evidence source.
+- `.pipeline/harness/implement.md`, `.pipeline/harness/verify.md`, `.pipeline/harness/advisory.md`, and `.pipeline/harness/council.md` are role protocols. They may appear in prompts as `ROLE_HARNESS` / `COUNCIL_HARNESS`, but they are not control slots or current truth.
+- `council.md` is not a fourth agent. Use it as a convergence protocol when blocked or ambiguous evidence must become one next control.
+- When opening `.pipeline/advisory_request.md` for advisory arbitration, keep the ask anchored to the named shipped docs/code paths first; do not send Gemini into `docs/superpowers/**`, `plandoc/**`, or other historical planning docs unless the current `/work` or `/verify` explicitly cites them as the evidence source.
 - If an operator stop is just a labeled choice set, such as lettered, numbered, inline parenthesized, or Korean `n안` options, that can be narrowed from current docs, milestones, and the latest `/work` + `/verify`, route it through advisory-first arbitration instead of waiting on the operator. Keep real safety, destructive, auth/credential, approval-record, and truth-sync blockers in the decision header as operator stops.
-- If watcher sends an operator-retriage follow-up, close it by writing exactly one newer control slot. Returning to an idle prompt without a new control lets watcher escalate the same gated request to `.pipeline/gemini_request.md` with `operator_retriage_no_next_control`.
+- If watcher sends an operator-retriage follow-up, close it by writing exactly one newer control slot. Returning to an idle prompt without a new control lets watcher escalate the same gated request to `.pipeline/advisory_request.md` with `operator_retriage_no_next_control`.
 - Exception: if that follow-up is `commit_push_bundle_authorization + internal_only`, do not write an implement handoff for commit/push. Handle the scoped publish in the verify/handoff round, or escalate to advisory if you cannot execute it truthfully.
 - Exception: if that follow-up is `pr_creation_gate + gate_24h + release_gate`, create or reuse a draft PR in the verify/handoff round, record the PR URL in `/work`, then write the next control. Do not hand PR creation to the implement lane.
 - Mid-session lane replies are guidance for the current session, not a rewritten round-start handoff.
@@ -82,7 +85,7 @@
 - Start with isolated Playwright reruns for selector drift, fixture drift, or single-scenario smoke changes. Use the broad browser suite only when the browser-visible contract widened, shared helpers changed, or a ready / release claim is being made.
 - `finalize-lite` is the implementation-side wrap-up skill for this repo. Use it to combine release-check truth, doc-sync review, and `/work` closeout readiness without adding commit/push/PR, `/verify`, or next-slice selection.
 - `onboard-lite` is the fast-orientation skill for unfamiliar repos or subsystems. Use it to gather real run/test entrypoints, required docs, and ownership boundaries before planning or implementation, not as a broad audit.
-- `next-slice-triage` is the verification-side slice-selection wrapper. Use it only after `/work` and `/verify` truth is already current, to narrow one exact next slice or choose `gemini_request` versus `needs_operator` without rerunning verification.
+- `next-slice-triage` is the verification-side slice-selection wrapper. Use it only after `/work` and `/verify` truth is already current, to narrow one exact next slice or choose `.pipeline/advisory_request.md` versus `.pipeline/operator_request.md` without rerunning verification.
 - Preferred order is: `onboard-lite` for orientation when needed -> implementation -> `finalize-lite` -> `round-handoff` when verification truth needs rerun -> `next-slice-triage` only after truth is current.
 
 Common commands:

@@ -13,6 +13,7 @@ from core.contracts import (
     ALLOWED_APPROVAL_REASON_LABELS,
     ALLOWED_CANDIDATE_CONFIRMATION_LABELS,
     ALLOWED_CONTENT_REASON_LABELS,
+    ALLOWED_CORRECTED_OUTCOME_REASON_LABELS,
     ALLOWED_CORRECTED_OUTCOMES,
     ALLOWED_FEEDBACK_LABELS,
     ALLOWED_FEEDBACK_REASONS,
@@ -32,6 +33,7 @@ from core.contracts import (
     ContentReasonScope,
     ContentVerdict,
     CorrectedOutcome,
+    CorrectedOutcomeReasonLabel,
     CoverageStatus,
     FeedbackLabel,
     FeedbackReason,
@@ -141,6 +143,12 @@ class ContractValueStabilityTest(unittest.TestCase):
         self.assertEqual(CorrectedOutcome.CORRECTED, "corrected")
         self.assertEqual(CorrectedOutcome.REJECTED, "rejected")
 
+    def test_corrected_outcome_reason_label_values(self) -> None:
+        self.assertEqual(
+            CorrectedOutcomeReasonLabel.EXPLICIT_CORRECTION_SUBMITTED,
+            "explicit_correction_submitted",
+        )
+
     def test_content_verdict_values(self) -> None:
         self.assertEqual(ContentVerdict.REJECTED, "rejected")
 
@@ -202,11 +210,19 @@ class ContractDerivedSetsTest(unittest.TestCase):
     def test_allowed_corrected_outcomes(self) -> None:
         self.assertEqual(ALLOWED_CORRECTED_OUTCOMES, frozenset({"accepted_as_is", "corrected", "rejected"}))
 
+    def test_allowed_corrected_outcome_reason_labels(self) -> None:
+        self.assertIn("corrected", ALLOWED_CORRECTED_OUTCOME_REASON_LABELS)
+        self.assertIn(
+            "explicit_correction_submitted",
+            ALLOWED_CORRECTED_OUTCOME_REASON_LABELS["corrected"],
+        )
+
     def test_allowed_approval_reason_labels(self) -> None:
         self.assertIn("approval_reject", ALLOWED_APPROVAL_REASON_LABELS)
         self.assertIn("explicit_rejection", ALLOWED_APPROVAL_REASON_LABELS["approval_reject"])
         self.assertIn("approval_reissue", ALLOWED_APPROVAL_REASON_LABELS)
         self.assertIn("path_change", ALLOWED_APPROVAL_REASON_LABELS["approval_reissue"])
+        self.assertIn("corrected_text_reissue", ALLOWED_APPROVAL_REASON_LABELS["approval_reissue"])
 
     def test_allowed_content_reason_labels(self) -> None:
         self.assertIn("content_reject", ALLOWED_CONTENT_REASON_LABELS)

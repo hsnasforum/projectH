@@ -44,6 +44,13 @@ class _PipelineState {
     const turn = this._currentTurn(d);
     const degradedReasons = (d.degraded_reasons || []).filter(Boolean);
     const degradedReason = degradedReasons[0] || String(d.degraded_reason || '').trim();
+    const automationHealth = String(d.automation_health || 'ok').trim();
+    const automationReason = String(d.automation_reason_code || '').trim();
+    const automationFamily = String(d.automation_incident_family || '').trim();
+    const automationAction = String(d.automation_next_action || 'continue').trim();
+    const automationDetail = String(d.automation_health_detail || '').trim();
+    const controlAgeCycles = Number(d.control_age_cycles || 0);
+    const staleAdvisoryPending = Boolean(d.stale_advisory_pending);
     const uncertain = runtimeState === 'DEGRADED' && degradedReasons.some(r => UNCERTAIN_RUNTIME_REASONS.has(r));
     const inactive = INACTIVE_RUNTIME_STATES.has(runtimeState);
     const showLive = !inactive && !uncertain;
@@ -63,7 +70,9 @@ class _PipelineState {
     const badgeClass = runtimeState === 'RUNNING' ? 'running' : runtimeState === 'DEGRADED' ? 'degraded'
       : runtimeState === 'STOPPING' ? 'stopping' : runtimeState === 'BROKEN' ? 'broken' : 'stopped';
     return { runtimeState, runtimeClass, badgeClass, uncertain, inactive, controlStatus, controlClass,
-      roundState, roundClass, watcherStatus, watcherClass, degradedReason, degradedReasons };
+      roundState, roundClass, watcherStatus, watcherClass, degradedReason, degradedReasons,
+      automationHealth, automationReason, automationFamily, automationAction, automationDetail,
+      controlAgeCycles, staleAdvisoryPending };
   }
 
   detectChanges(data) {

@@ -20,6 +20,7 @@ e2e/test-results/
 # Local runtime data
 data/*
 !data/.gitkeep
+!data/eval/
 !data/sessions/
 data/sessions/*
 !data/sessions/.gitkeep
@@ -60,6 +61,9 @@ build/
 .pipeline/claude_handoff.md
 .pipeline/gemini_request.md
 .pipeline/gemini_advice.md
+.pipeline/implement_handoff.md
+.pipeline/advisory_request.md
+.pipeline/advisory_advice.md
 .pipeline/operator_request.md
 .pipeline/session_arbitration_draft.md
 

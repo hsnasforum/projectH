@@ -25,7 +25,7 @@
 - `tmux` remains available for attach/debug through `TmuxAdapter`, not as the upper-layer state authority
 - 오래 방치된 `operator_request.md`는 watcher가 Codex re-triage로 다시 넘기고, supervisor canonical `control` block은 그 재심사 동안 `needs_operator`를 숨겨 internal controller/launcher가 같은 stop에 고정되지 않게 합니다
 - the cozy controller runtime is loaded from `controller/index.html` via a single `<script src="/controller-assets/js/cozy.js">` tag, so polling, sidebar rendering, log modal input/tail refresh, localStorage warning wiring, and idle-roam test hooks live under shared `/controller-assets/js/` ownership instead of one standalone inline runtime copy
-- controller has dedicated Playwright smoke (`e2e/playwright.controller.config.mjs`, `make controller-test`) covering the shared cozy module load, scene feature hooks for the time-of-day window / pneumatic tube / courier packet-owl / pettable cat-audio path via `window.getSceneDebug()` and `window.testPetCat()`, the `#storage-warn` toolbar chip, event-log storage warning when browser storage is blocked, deduplicated repeated `/api/runtime/status` fetch failures with one recovery event after reconnect, agent-card `data-fatigue` observability, deterministic `fatigued`/`coffee` state transitions via `window.setAgentFatigue` test hook, zone-bounded idle roam (home desk zone) via `window.testPickIdleTargets` + `window.getRoamBounds` test hooks, zone-isolation stacking avoidance via `window.testAntiStacking` test hook (delegates to `testPickIdleTargets` because separate desk zones already keep agents apart), and `window.testHistoryPenalty` returning an empty array because zone-bounded idle roam uses continuous micro-roam rather than discrete spot history; smoke port is configurable via `CONTROLLER_SMOKE_PORT` (default `8781`)
+- controller has dedicated Playwright smoke (`e2e/playwright.controller.config.mjs`, `make controller-test`) covering the shared cozy module load, scene feature hooks for the time-of-day window / pneumatic tube / courier packet-owl / pettable cat-audio path via `window.getSceneDebug()` and `window.testPetCat()`, the `#storage-warn` toolbar chip, event-log storage warning when browser storage is blocked, deduplicated repeated `/api/runtime/status` fetch failures with one recovery event after reconnect, runtime-owned automation attention detail in the Incident Room, agent-card `data-fatigue` observability, deterministic `fatigued`/`coffee` state transitions via `window.setAgentFatigue` test hook, zone-bounded idle roam (home desk zone) via `window.testPickIdleTargets` + `window.getRoamBounds` test hooks, zone-isolation stacking avoidance via `window.testAntiStacking` test hook (delegates to `testPickIdleTargets` because separate desk zones already keep agents apart), and `window.testHistoryPenalty` returning an empty array because zone-bounded idle roam uses continuous micro-roam rather than discrete spot history; smoke port is configurable via `CONTROLLER_SMOKE_PORT` (default `8781`)
 
 ### Milestone 1: Local Document Loop
 - local file read
@@ -405,18 +405,17 @@
   - one same-source-message `candidate_review_record` may now be recorded through `accept`, `reject`, or `defer`
   - all three outcomes stay reviewed-but-not-applied and do not open user-level memory
 - keep durable candidates reviewable and separate from future user-level memory
-- keep `edit`, reviewed-memory store, and user-level memory later than the shipped review action slice
+- keep reviewed-memory store and user-level memory later than the shipped review action slice
 
 ### Milestone 7: Reviewable Durable Candidate Surface
 - implemented first slice:
   - one local pending review queue surface for eligible `durable_candidate` records
   - one compact existing-shell `검토 후보` section fed only by current session `review_queue_items`
-  - one same-source-message `candidate_review_record` may now be recorded through `accept`, `reject`, or `defer`
-  - all three outcomes stay reviewed-but-not-applied and the matching pending item leaves the queue
+  - one same-source-message `candidate_review_record` may now be recorded through `accept`, `reject`, `defer`, or `edit`
+  - all four outcomes stay reviewed-but-not-applied and the matching pending item leaves the queue
+- Axis 2 shipped: `CandidateReviewAction.EDIT = "edit"` -> status `"edited"` with optional `reason_note` storage (seqs 807-808)
+- Axis 4 shipped: `suggested_scope` optional free-text field added to `candidate_review_record` across 4 layers (seqs 818-819); `CandidateReviewSuggestedScope` StrEnum (`message_only`, `family_scoped`, `global_preference`) defined in `core/contracts.py` + `storage/session_store.py` optional validation (seq 849)
 - still later inside this milestone:
-  - keep the source-message-anchored `candidate_review_record` vocabulary wider than the shipped slice:
-    - `edit`
-  - keep scope suggestion fields later than the first review-action trace
   - define minimum scope, conflict, and rollback rules before future user-level memory
   - define a conservative default suggested-scope order and justification rule only when reviewed-memory planning opens
   - keep reviewed memory distinguishable from unreviewed durable candidates
@@ -429,6 +428,11 @@
 - keep approval-backed save as supporting evidence only and never treat it as content-quality improvement
 - stage the rollout as manual placeholder -> service fixture -> unit helper -> e2e later
 - measure whether stored memory reduces repeated mistakes on recurring document tasks without claiming model learning
+- Axis 1 shipped: `core/eval_contracts.py` — `EvalFixtureFamily` StrEnum (7 families), `EVAL_QUALITY_AXES` frozenset (6 axes), `EVAL_FIXTURE_FAMILY_AXES` mapping, `EvalArtifactCoreTrace` TypedDict (seq 826)
+- Axis 2 shipped: first service fixture `correction_reuse_001.json` + `.gitignore` `!data/eval/` exception (seqs 830-831)
+- Axis 3 shipped: `eval/fixture_loader.py` unit helper + `scope_suggestion_safety_001.json` fixture (seq 835)
+- Axis 4 shipped: remaining 5 service fixtures completing all 7 families (seq 837); `suggested_scope` value constraints and family-specific trace extensions deferred until reviewed-memory planning opens
+- Axis 5 shipped: `tests/test_eval_loader.py` (7 unit tests: all-family load + _validate() reject paths) + `eval/__init__.py` `load_fixture` package-level export (seq 843); `CandidateReviewSuggestedScope` enum, family-specific trace extensions, and e2e stage remain deferred
 
 ## Later, After The Memory Phase
 
@@ -457,7 +461,7 @@
 ## Next 3 Implementation Priorities
 
 1. Keep the shipped read-only `reviewed_memory_boundary_draft` draft-only and do not widen it into readiness tracking or cross-session scope. The rollback / disable / conflict / operator-audit contracts and the reviewed-memory apply path are now shipped; boundary draft stays separate from apply result.
-2. Keep `edit`, broader scope suggestion, merge-helper reopen, broader save-history replay, durable-candidate application, user-level memory, and broader operator work in later slices until the recurrence boundary and review boundary both stay small and non-confusing. (`reject` and `defer` are now shipped alongside `accept`.)
+2. Keep merge-helper reopen, broader save-history replay, durable-candidate application, user-level memory, and broader operator work in later slices until the recurrence boundary and review boundary both stay small and non-confusing. (`reject`, `defer`, `edit`, and the basic `suggested_scope` field are now shipped.)
 3. The reviewed-memory apply result, stop-apply (`future_reviewed_memory_stop_apply`), reversal (`future_reviewed_memory_reversal`), and conflict visibility (`future_reviewed_memory_conflict_visibility`) are now all implemented: after the effect is reversed (`record_stage = reversed`), the aggregate card shows a `충돌 확인` button; clicking it creates a separate conflict-visibility transition record with `transition_action = future_reviewed_memory_conflict_visibility`, `record_stage = conflict_visibility_checked`, evaluated `conflict_entries` and `conflict_entry_count`, and `source_apply_transition_ref` linking back to the original apply record; the conflict visibility record is separate from the apply transition record and does not mutate it; aggregate identity, supporting refs, and contracts are retained. Keep repeated-signal promotion, broader durable promotion, and cross-session counting later than the now-shipped conflict visibility.
 
 ## Do Not Pull Forward

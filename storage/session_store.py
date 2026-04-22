@@ -155,6 +155,44 @@ class SessionStore:
             normalized["approval_reason_record"] = approval_reason_record
         return normalized
 
+    def _normalize_operator_action_record(self, approval: Any) -> Dict[str, Any] | None:
+        if not isinstance(approval, dict):
+            return None
+
+        approval_id = str(approval.get("approval_id") or "").strip()
+        kind = str(approval.get("kind") or "").strip()
+        status = str(approval.get("status") or "").strip()
+        if not approval_id or kind != "operator_action" or not status:
+            return None
+
+        normalized: Dict[str, Any] = {
+            "approval_id": approval_id,
+            "kind": "operator_action",
+            "status": status,
+        }
+        for field in (
+            "action_kind", "target_id", "requested_at",
+            "audit_trace_required", "is_reversible", "outcome_id",
+        ):
+            if field in approval:
+                normalized[field] = approval[field]
+        return normalized
+
+    def _normalize_pending_approval_record(
+        self,
+        approval: Any,
+        *,
+        include_note_text: bool = False,
+        artifact_source_message_ids: dict[str, str] | None = None,
+    ) -> Dict[str, Any] | None:
+        if isinstance(approval, dict) and str(approval.get("kind") or "").strip() == "operator_action":
+            return self._normalize_operator_action_record(approval)
+        return self._normalize_approval_record(
+            approval,
+            include_note_text=include_note_text,
+            artifact_source_message_ids=artifact_source_message_ids,
+        )
+
     def _normalize_corrected_outcome(
         self,
         corrected_outcome: Any,
@@ -812,7 +850,7 @@ class SessionStore:
             normalized_approval
             for approval in pending_approvals
             if (
-                normalized_approval := self._normalize_approval_record(
+                normalized_approval := self._normalize_pending_approval_record(
                     approval,
                     include_note_text=True,
                     artifact_source_message_ids=artifact_source_message_ids,
@@ -1557,6 +1595,29 @@ class SessionStore:
             pending.append(normalized_approval)
             data["pending_approvals"] = pending
             self._save(session_id, data)
+
+    def record_operator_action_request(
+        self, session_id: str, action_contract: Dict[str, Any]
+    ) -> str:
+        approval_id = str(uuid4())
+        record: Dict[str, Any] = {
+            "approval_id": approval_id,
+            "kind": "operator_action",
+            "status": "pending",
+        }
+        for field in (
+            "action_kind", "target_id", "requested_at",
+            "audit_trace_required", "is_reversible",
+        ):
+            if field in action_contract:
+                record[field] = action_contract[field]
+        with self._lock:
+            data = self.get_session(session_id)
+            pending = data.get("pending_approvals", [])
+            pending.append(record)
+            data["pending_approvals"] = pending
+            self._save(session_id, data)
+        return approval_id
 
     def get_pending_approval(self, session_id: str, approval_id: str) -> Dict[str, Any] | None:
         with self._lock:

@@ -67,6 +67,28 @@ class SessionStoreTest(unittest.TestCase):
             self.assertIsNotNone(popped)
             self.assertEqual(session["pending_approvals"], [])
 
+    def test_operator_action_request_round_trip(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            store = SessionStore(base_dir=tmp_dir)
+
+            approval_id = store.record_operator_action_request(
+                "demo",
+                {
+                    "action_kind": "local_file_edit",
+                    "target_id": "/tmp/x.txt",
+                    "audit_trace_required": True,
+                    "is_reversible": True,
+                },
+            )
+            fetched = store.get_pending_approval("demo", approval_id)
+
+            self.assertIsInstance(approval_id, str)
+            self.assertTrue(approval_id)
+            self.assertIsNotNone(fetched)
+            self.assertEqual(fetched["kind"], "operator_action")
+            self.assertEqual(fetched["status"], "pending")
+            self.assertEqual(fetched["action_kind"], "local_file_edit")
+
     def test_active_context_round_trip(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             store = SessionStore(base_dir=tmp_dir)

@@ -313,6 +313,17 @@ class OperatorActionContract(TypedDict, total=False):
     is_reversible: bool
 
 
+class OperatorActionRecord(TypedDict, total=False):
+    action_kind: str
+    target_id: str
+    requested_at: str
+    audit_trace_required: bool
+    is_reversible: bool
+    approval_id: str
+    status: str
+    outcome_id: str
+
+
 CANDIDATE_REVIEW_ACTION_TO_STATUS: dict[str, str] = {
     CandidateReviewAction.ACCEPT: "accepted",
     CandidateReviewAction.REJECT: "rejected",
@@ -382,6 +393,7 @@ class FollowUpIntent(StrEnum):
 
 class ApprovalKind(StrEnum):
     SAVE_NOTE = "save_note"
+    OPERATOR_ACTION = "operator_action"
 
 
 # ---------------------------------------------------------------------------

@@ -444,6 +444,7 @@
 - define action approval, audit, and rollback expectations
 - keep local actions observable and reversible
 - Operator action contract shipped: `OperatorActionKind` StrEnum (`local_file_edit`, `shell_execute`, `session_mutation`) + `OperatorActionContract` TypedDict (5 fields, total=False) in `core/contracts.py` (seq 866); action execution, approval flow, and storage wire-up deferred
+- Storage & approval wiring shipped: `OperatorActionRecord` TypedDict + `ApprovalKind.OPERATOR_ACTION` in `core/contracts.py`; `record_operator_action_request()` + session-reload normalization (`_normalize_pending_approval_record`) in `storage/session_store.py` (seq 871)
 
 ### Why This Is Later
 - Program operation should follow stable correction and preference memory, not precede it.

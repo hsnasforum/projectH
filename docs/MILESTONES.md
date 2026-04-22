@@ -432,6 +432,7 @@
 - Axis 2 shipped: first service fixture `correction_reuse_001.json` + `.gitignore` `!data/eval/` exception (seqs 830-831)
 - Axis 3 shipped: `eval/fixture_loader.py` unit helper + `scope_suggestion_safety_001.json` fixture (seq 835)
 - Axis 4 shipped: remaining 5 service fixtures completing all 7 families (seq 837); `suggested_scope` value constraints and family-specific trace extensions deferred until reviewed-memory planning opens
+- Axis 5 shipped: `tests/test_eval_loader.py` (7 unit tests: all-family load + _validate() reject paths) + `eval/__init__.py` `load_fixture` package-level export (seq 843); `CandidateReviewSuggestedScope` enum, family-specific trace extensions, and e2e stage remain deferred
 
 ## Later, After The Memory Phase
 

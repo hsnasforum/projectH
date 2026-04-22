@@ -1591,3 +1591,38 @@ CONTROL_SEQ 840 → `.pipeline/operator_request.md` (STATUS: needs_operator)
 
 CONTROL_SEQ 844 → `.pipeline/operator_request.md` (STATUS: needs_operator)
 - 이유: Milestone 8 Axis 5 (unit helper 안정화) 완료. bundle commit/push는 operator 승인 경계.
+
+---
+
+## CONTROL_SEQ 845 구현 검증 (NEXT_CONTROL_SEQ: 846)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-milestone8-axis5-doc-sync.md`
+
+### 검증 결과
+
+**docs/MILESTONES.md line 435 (Axis 5 shipped line):**
+- `- Axis 5 shipped: tests/test_eval_loader.py (7 unit tests: all-family load + _validate() reject paths) + eval/__init__.py load_fixture package-level export (seq 843); CandidateReviewSuggestedScope enum, family-specific trace extensions, and e2e stage remain deferred` ✅
+- Axis 4 shipped line 바로 아래 삽입 ✅
+- handoff 명세와 정확히 일치 ✅
+- 나머지 deferred 항목 상태 유지 ✅
+- Python source / test / fixture 파일 무수정 ✅
+- `git diff --check -- docs/MILESTONES.md` → **OK** ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. SCOPE_HINT 준수: docs-only이므로 smoke tests 생략.
+
+### 남은 리스크 (CONTROL_SEQ 845 이후)
+
+- Milestone 8 Axis 5 docs bundle commit/push 미처리 (3번째 같은 날 docs-only round → 이번 bundle로 완결)
+- `CandidateReviewSuggestedScope` enum + storage enforcement deferred (valid values 미정의)
+- family-specific trace extensions + e2e later stage deferred
+- Milestone 8 Axes 1-5 완료 이후 다음 방향 advisory 필요
+
+### 다음 control
+
+CONTROL_SEQ 846 → `.pipeline/operator_request.md` (STATUS: needs_operator)
+- 이유: Milestone 8 Axis 5 docs sync 완료. docs bundle commit/push는 operator 승인 경계.
+  3번째 same-day docs-only round → 이 commit으로 docs bundle 완결.

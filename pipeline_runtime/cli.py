@@ -66,6 +66,7 @@ _RUNTIME_RELOAD_SOURCE_NAMES = (
     "pipeline_runtime/tmux_adapter.py",
     "pipeline_runtime/lane_surface.py",
     "pipeline_runtime/lane_catalog.py",
+    "pipeline_runtime/role_harness.py",
     "pipeline_runtime/operator_autonomy.py",
     "pipeline_runtime/schema.py",
     "pipeline_runtime/turn_arbitration.py",

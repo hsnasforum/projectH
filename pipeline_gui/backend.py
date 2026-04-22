@@ -10,7 +10,12 @@ import time
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
-from pipeline_runtime.schema import parse_iso_utc, read_jsonl_tail
+from pipeline_runtime.schema import (
+    iter_control_slot_specs,
+    parse_iso_utc,
+    read_jsonl_tail,
+    sort_control_slot_entries,
+)
 from pipeline_runtime.tmux_adapter import TmuxAdapter
 from pipeline_runtime.turn_arbitration import canonical_turn_state_name, turn_state_role
 from pipeline_runtime.automation_health import derive_automation_health
@@ -471,21 +476,6 @@ def pipeline_stop(project: Path, session: str = "") -> str:
 # Control-slot parsing (newest-valid-control semantics)
 # ---------------------------------------------------------------------------
 
-_CONTROL_SLOTS = {
-    "claude_handoff.md": "implement",
-    "gemini_request.md": "request_open",
-    "gemini_advice.md": "advice_ready",
-    "operator_request.md": "needs_operator",
-}
-
-_SLOT_LABELS = {
-    "claude_handoff.md": "implement handoff",
-    "gemini_request.md": "advisory request",
-    "gemini_advice.md": "verify follow-up",
-    "operator_request.md": "operator wait",
-}
-
-
 def _read_slot_status(path: Path) -> str | None:
     """Return the STATUS value from a control slot file, or None."""
     if IS_WINDOWS:
@@ -543,51 +533,48 @@ def parse_control_slots(project: Path) -> dict[str, object]:
     pipeline_dir = project / ".pipeline"
     entries: list[dict[str, object]] = []
 
-    for filename, expected_status in _CONTROL_SLOTS.items():
-        slot_path = pipeline_dir / filename
-        if IS_WINDOWS:
-            wsl_path = _wsl_path_str(slot_path)
-            code, find_out = _run(
-                ["find", wsl_path, "-maxdepth", "0", "-printf", "%T@\\n"],
-                timeout=FILE_QUERY_TIMEOUT,
-            )
-            if code != 0:
-                continue
-            try:
-                mtime = float(find_out.strip())
-            except ValueError:
-                continue
-        else:
-            if not slot_path.exists():
-                continue
-            try:
-                mtime = slot_path.stat().st_mtime
-            except OSError:
-                continue
+    for spec in iter_control_slot_specs():
+        for filename in spec.accepted_filenames:
+            slot_path = pipeline_dir / filename
+            if IS_WINDOWS:
+                wsl_path = _wsl_path_str(slot_path)
+                code, find_out = _run(
+                    ["find", wsl_path, "-maxdepth", "0", "-printf", "%T@\\n"],
+                    timeout=FILE_QUERY_TIMEOUT,
+                )
+                if code != 0:
+                    continue
+                try:
+                    mtime = float(find_out.strip())
+                except ValueError:
+                    continue
+            else:
+                if not slot_path.exists():
+                    continue
+                try:
+                    mtime = slot_path.stat().st_mtime
+                except OSError:
+                    continue
 
-        status = _read_slot_status(slot_path)
-        if status != expected_status:
-            continue  # invalid status — not a valid control slot
+            status = _read_slot_status(slot_path)
+            if status != spec.status:
+                continue  # invalid status — not a valid control slot
 
-        entries.append({
-            "file": filename,
-            "status": status,
-            "label": _SLOT_LABELS[filename],
-            "mtime": mtime,
-            "control_seq": _read_slot_control_seq(slot_path),
-        })
+            entries.append({
+                "file": filename,
+                "status": status,
+                "label": spec.label,
+                "mtime": mtime,
+                "control_seq": _read_slot_control_seq(slot_path),
+                "slot_id": spec.slot_id,
+                "canonical_file": spec.canonical_filename,
+                "is_legacy_alias": filename != spec.canonical_filename,
+            })
 
     if not entries:
         return {"active": None, "stale": []}
 
-    entries.sort(
-        key=lambda e: (
-            e["control_seq"] is not None,
-            e["control_seq"] if e["control_seq"] is not None else -1,
-            e["mtime"],
-        ),
-        reverse=True,
-    )
+    entries = sort_control_slot_entries(entries)
     return {"active": entries[0], "stale": entries[1:]}
 
 

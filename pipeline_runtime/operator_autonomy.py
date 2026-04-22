@@ -5,6 +5,11 @@ import re
 import time
 from typing import Any, Iterable, Mapping
 
+from .role_routes import (
+    VERIFY_FOLLOWUP_ROUTE,
+    VERIFY_TRIAGE_ONLY_REASON,
+    normalize_verify_triage_reason,
+)
 from .schema import iso_utc
 
 OPERATOR_SUPPRESS_WINDOW_SEC = 24 * 60 * 60
@@ -133,31 +138,31 @@ _IMMEDIATE_REASON_CODES = {
 }
 
 _GATED_REASON_CODES = {
-    "context_exhaustion": {"mode": "triage", "routed_to": "codex_followup"},
-    "session_rollover": {"mode": "triage", "routed_to": "codex_followup"},
-    "continue_vs_switch": {"mode": "triage", "routed_to": "codex_followup"},
-    "slice_ambiguity": {"mode": "triage", "routed_to": "codex_followup"},
-    "newer_unverified_work_present": {"mode": "recovery", "routed_to": "codex_followup"},
-    "auth_login_required": {"mode": "recovery", "routed_to": "codex_followup"},
-    "provider_outage": {"mode": "triage", "routed_to": "codex_followup"},
-    "receipt_repair": {"mode": "recovery", "routed_to": "codex_followup"},
-    "verify_manifest_mismatch": {"mode": "recovery", "routed_to": "codex_followup"},
-    "duplicate_handoff": {"mode": "recovery", "routed_to": "codex_followup"},
-    "lane_recovery_exhausted": {"mode": "recovery", "routed_to": "codex_followup"},
-    "session_missing": {"mode": "recovery", "routed_to": "codex_followup"},
+    "context_exhaustion": {"mode": "triage", "routed_to": VERIFY_FOLLOWUP_ROUTE},
+    "session_rollover": {"mode": "triage", "routed_to": VERIFY_FOLLOWUP_ROUTE},
+    "continue_vs_switch": {"mode": "triage", "routed_to": VERIFY_FOLLOWUP_ROUTE},
+    "slice_ambiguity": {"mode": "triage", "routed_to": VERIFY_FOLLOWUP_ROUTE},
+    "newer_unverified_work_present": {"mode": "recovery", "routed_to": VERIFY_FOLLOWUP_ROUTE},
+    "auth_login_required": {"mode": "recovery", "routed_to": VERIFY_FOLLOWUP_ROUTE},
+    "provider_outage": {"mode": "triage", "routed_to": VERIFY_FOLLOWUP_ROUTE},
+    "receipt_repair": {"mode": "recovery", "routed_to": VERIFY_FOLLOWUP_ROUTE},
+    "verify_manifest_mismatch": {"mode": "recovery", "routed_to": VERIFY_FOLLOWUP_ROUTE},
+    "duplicate_handoff": {"mode": "recovery", "routed_to": VERIFY_FOLLOWUP_ROUTE},
+    "lane_recovery_exhausted": {"mode": "recovery", "routed_to": VERIFY_FOLLOWUP_ROUTE},
+    "session_missing": {"mode": "recovery", "routed_to": VERIFY_FOLLOWUP_ROUTE},
 }
 
 _INTERNAL_REASON_CODES = {
-    "codex_triage_only": {"mode": "triage", "routed_to": "codex_followup"},
+    VERIFY_TRIAGE_ONLY_REASON: {"mode": "triage", "routed_to": VERIFY_FOLLOWUP_ROUTE},
     COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON: {
         "mode": "triage",
-        "routed_to": "codex_followup",
+        "routed_to": VERIFY_FOLLOWUP_ROUTE,
     },
     PR_CREATION_GATE_REASON: {
         "mode": "triage",
-        "routed_to": "codex_followup",
+        "routed_to": VERIFY_FOLLOWUP_ROUTE,
     },
-    "gemini_tiebreak": {"mode": "triage", "routed_to": "codex_followup"},
+    "gemini_tiebreak": {"mode": "triage", "routed_to": VERIFY_FOLLOWUP_ROUTE},
     "waiting_next_control": {"mode": "hibernate", "routed_to": "hibernate"},
     "idle_hibernate": {"mode": "hibernate", "routed_to": "hibernate"},
 }
@@ -257,8 +262,10 @@ _REASON_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("lane_recovery_exhausted", ("lane_recovery_exhausted", "lane_broken", "lane broken")),
     ("session_missing", ("session_missing", "session missing")),
     (
-        "codex_triage_only",
+        VERIFY_TRIAGE_ONLY_REASON,
         (
+            "verify_triage_only",
+            "verify triage only",
             "codex_triage_only",
             "codex triage only",
             "forbidden_operator_menu",
@@ -303,7 +310,7 @@ def normalize_reason_code(value: object) -> str:
         "branch_complete_pending_milestone_transition": "approval_required",
         "gemini_axis_switch_without_exact_slice": "slice_ambiguity",
     }
-    return aliases.get(text, text)
+    return normalize_verify_triage_reason(aliases.get(text, text))
 
 
 def normalize_operator_policy(value: object) -> str:
@@ -557,7 +564,7 @@ def classify_operator_candidate(
             and resolved_reason == "waiting_next_control"
         ):
             mode = "triage"
-            routed_to = "codex_followup"
+            routed_to = VERIFY_FOLLOWUP_ROUTE
         elif idle_stable and resolved_reason == "operator_candidate_pending":
             resolved_reason = "idle_hibernate"
             mode = "hibernate"

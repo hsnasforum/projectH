@@ -12,16 +12,24 @@ launcher / setup / supervisor / smoke는 scattered fixed-owner branch 대신 sha
 
 ## 파일 역할
 
-- `claude_handoff.md`
+Canonical role-based control filenames are `implement_handoff.md`,
+`advisory_request.md`, `advisory_advice.md`, and `operator_request.md`.
+Historical aliases `claude_handoff.md`, `gemini_request.md`, and
+`gemini_advice.md` are read-only compatibility inputs for the same logical
+slots. They must not create a second control plane. If both canonical and alias
+files exist for the same slot, runtime resolves them as one slot: higher
+`CONTROL_SEQ` wins, and the canonical filename wins when `CONTROL_SEQ` ties.
+
+- `implement_handoff.md`
   - 작성자: active verify/handoff owner
   - 역할: active implement owner가 읽는 implement handoff 슬롯
   - 형식: 현재 stage-3에서는 `STATUS: implement` + `CONTROL_SEQ`
-  - 파일명은 historical compatibility를 위해 유지되며, 실제 owner는 active `role_bindings.implement`를 따름
-- `gemini_request.md`
+  - 실제 owner는 active `role_bindings.implement`를 따름
+- `advisory_request.md`
   - 작성자: active verify/handoff owner
   - 역할: active advisory owner에게 넘기는 arbitration 요청 슬롯
   - 형식: 현재 stage-3에서는 `STATUS: request_open` + `CONTROL_SEQ`
-- `gemini_advice.md`
+- `advisory_advice.md`
   - 작성자: active advisory owner
   - 역할: active verify/handoff owner가 읽는 advisory 슬롯
   - 형식: 현재 stage-3에서는 `STATUS: advice_ready` + `CONTROL_SEQ`
@@ -46,9 +54,14 @@ launcher / setup / supervisor / smoke는 scattered fixed-owner branch 대신 sha
   - 작성자: active verify/handoff owner 또는 operator
   - 역할: optional/legacy scratch 슬롯
   - canonical role-bound 흐름에서는 필수 아님
+- `harness/`
+  - 작성자: runtime/operator docs
+  - 역할: active role별 짧은 SOP와 막힘 수렴 protocol
+  - 파일: `implement.md`, `verify.md`, `advisory.md`, `council.md`
+  - control slot이 아니며 dispatch authority도 아님. watcher prompt의 `ROLE_HARNESS` / `COUNCIL_HARNESS` 경로로만 노출되어 각 lane이 role boundary와 출력 형식을 빠르게 맞추게 합니다.
 - `archive-stale-control-slots.sh`
   - 작성자: operator / active verify-handoff owner 수동 실행
-  - 역할: newest control file은 보존한 채 오래된 stale control slot만 `.pipeline/archive/YYYY-MM-DD/`로 옮기는 수동 helper
+  - 역할: active `CONTROL_SEQ`/status 기준 control file은 보존한 채 오래된 stale control slot만 `.pipeline/archive/YYYY-MM-DD/`로 옮기는 수동 helper
   - 형식: `--all-stale` 또는 explicit slot basename 인자
 
 ## turn_state.json
@@ -81,10 +94,12 @@ launcher / setup / supervisor / smoke는 scattered fixed-owner branch 대신 sha
 - `.pipeline/current_run.json`과 `.pipeline/runs/<run_id>/...`는 runtime authority/generated state 산출물이라 local start/stop 중 다시 생기는 것이 정상입니다. 경로 자체는 canonical로 유지하되, source diff와 섞이지 않도록 Git-generated artifact로 취급하는 편이 맞습니다.
 - `/work`, `/verify`, `report/` 같은 persistent 기록은 기본적으로 한국어로 남깁니다.
 - `.pipeline` execution/control 슬롯은 기본적으로 concise English-led instructions를 유지합니다.
+- `.pipeline/harness/*.md`도 execution-facing English-led protocol입니다. 다만 이 파일들은 control slot이 아니라 role protocol입니다. 최신 `/work`, `/verify`, active control, supervisor status/events와 충돌하면 current truth가 우선합니다.
 - 파일 경로, 테스트 이름, selector, field name 같은 literal identifier는 기록 언어와 무관하게 원문 그대로 둡니다.
 - `.pipeline` 내용과 `/work` 또는 `/verify`가 충돌하면 `/work`와 `/verify`를 우선합니다.
-- watcher는 active `IMPLEMENT_ACTIVE` 구현 라운드가 이미 진행 중이면 기본적으로 새 `claude_handoff.md`를 즉시 hot-swap하지 않고, 현재 라운드가 `/work`, `implement_blocked`, 또는 idle timeout으로 닫힌 뒤 다음 판정에서 반영하는 편이 맞습니다. 다만 더 높은 `CONTROL_SEQ`의 implement handoff가 active control이 되었고 이전 implement pane이 이미 prompt-ready idle이면, stale turn-state 고착을 피하기 위해 `claude_handoff_idle_release`로 새 handoff를 재전달할 수 있습니다.
+- watcher는 active `IMPLEMENT_ACTIVE` 구현 라운드가 이미 진행 중이면 기본적으로 새 `implement_handoff.md`를 즉시 hot-swap하지 않고, 현재 라운드가 `/work`, `implement_blocked`, 또는 idle timeout으로 닫힌 뒤 다음 판정에서 반영하는 편이 맞습니다. 다만 더 높은 `CONTROL_SEQ`의 implement handoff가 active control이 되었고 이전 implement pane이 이미 prompt-ready idle이면, stale turn-state 고착을 피하기 위해 `implement_handoff_idle_release`로 새 handoff를 재전달할 수 있습니다.
 - watcher는 control slot 변경만으로 verify/handoff-owner round를 닫지 않습니다. 현재 라운드 시작 이후의 `/verify` receipt가 실제로 갱신된 것이 확인될 때만 feedback-only completion을 인정합니다.
+- watcher prompt에는 active root memory file과 live control/work/verify path 외에 `ROLE_HARNESS` / `COUNCIL_HARNESS` path가 표시될 수 있습니다. 이 경로는 CLI-Anything식 self-contained skill/SOP 패턴을 흡수한 role protocol이며, `READ_FIRST`의 owner root doc 규칙이나 current truth authority를 대체하지 않습니다.
 - verify/handoff-owner round가 idle timeout에 걸렸는데 current-round `/verify` receipt나 next control output이 아직 incomplete하면, watcher는 그 라운드를 terminal done으로 닫지 않고 `VERIFY_PENDING`으로 되돌려 backoff 후 자동 재시도를 거치게 하는 편이 맞습니다.
 - verify/handoff-owner pane이 busy indicator 없이 idle prompt로 빨리 돌아왔는데 current-round `/verify` receipt나 next control output이 아직 incomplete하면, watcher는 5분 full timeout까지 붙들지 말고 short idle window 뒤 `VERIFY_PENDING`으로 되돌려 재시도하는 편이 맞습니다.
 - 새 verify dispatch에는 `dispatch_id`와 `accept_deadline`이 같이 붙고, wrapper는 active task hint를 실제로 읽은 순간 `DISPATCH_SEEN`, 실제 작업 수락 신호가 보일 때 `TASK_ACCEPTED`를 emit하는 편이 맞습니다.
@@ -98,7 +113,7 @@ launcher / setup / supervisor / smoke는 scattered fixed-owner branch 대신 sha
 - wrapper는 verify hint가 아직 active여도 같은 dispatch가 prompt-visible + no-busy 상태로 짧게 settle되면 `TASK_DONE`를 직접 emit할 수 있어야 합니다. `TASK_DONE`를 task-hint clear 이후로만 미루면 verify close chain이 순환에 빠집니다.
 - wrapper는 verify hint가 active인데 `control_seq` metadata가 비정상이면 event를 조용히 생략하지 않고 `BRIDGE_DIAGNOSTIC(code=active_task_hint_metadata_invalid)`를 남기는 편이 맞습니다. silent no-event가 다시 false `dispatch_stall`로 숨으면 안 됩니다.
 - verify/handoff-owner round close는 원칙적으로 `TASK_ACCEPTED -> TASK_DONE -> current-round /verify receipt + next control -> receipt close` 순서로만 허용합니다. 다만 `TASK_ACCEPTED` 뒤 done deadline까지 matching `TASK_DONE`가 없고, lane이 idle이며, current-round `/verify` receipt와 next control이 모두 닫혔을 때는 wrapper 신호 누락으로 보아 FSM이 `TASK_DONE`를 산출물 기반으로 보조 추론할 수 있습니다. 이 보조 추론은 작업 중 pane이나 incomplete output에는 적용하지 않습니다.
-- current run에 `VERIFY_RUNNING` job이 남아 있으면 watcher는 그 job을 terminal close 또는 재큐잉까지 계속 step하는 편이 맞습니다. 이때 오래된 다른 unverified `/work`를 새 verify candidate로 먼저 끼워 넣어 current round lease release나 pending implement handoff를 가리지 않는 편이 맞고, 열린 `.pipeline/gemini_request.md` / `.pipeline/gemini_advice.md`가 있어도 current-run `VERIFY_RUNNING` close chain은 먼저 굴려 얼리지 않는 편이 맞습니다.
+- current run에 `VERIFY_RUNNING` job이 남아 있으면 watcher는 그 job을 terminal close 또는 재큐잉까지 계속 step하는 편이 맞습니다. 이때 오래된 다른 unverified `/work`를 새 verify candidate로 먼저 끼워 넣어 current round lease release나 pending implement handoff를 가리지 않는 편이 맞고, 열린 `.pipeline/advisory_request.md` / `.pipeline/advisory_advice.md`가 있어도 current-run `VERIFY_RUNNING` close chain은 먼저 굴려 얼리지 않는 편이 맞습니다.
 - 다만 fresh automatic verify scan은 historical backlog 전체를 다시 훑지 않고 최신 canonical `/work` 한 장만 기준으로 여는 편이 맞습니다. 오래된 unmatched `/work`는 새 스캔으로 다시 끌어오지 말고, 이미 열린 current-run `VERIFY_PENDING` / `VERIFY_RUNNING` job replay나 operator가 명시한 reverify 경로에서만 이어지는 편이 맞습니다.
 - 반대로 merely `VERIFY_PENDING`인 current-run job replay나 새 `/work` verify candidate 스캔은 `VERIFY_FOLLOWUP` / `ADVISORY_ACTIVE` / gated operator retriage 같은 current control-resolution turn이 살아 있는 동안 끼어들지 않는 편이 맞습니다. 이 경계가 풀리기 전 stale verify가 같은 pane에 다시 paste되면 follow-up/advisory control truth가 오염됩니다.
 - `slot_verify` lease owner인 supervisor pid가 **유효한 pid로 읽히고도 `signal 0`에 응답하지 않을 때만** watcher는 그 lease를 TTL까지 active로 붙들지 않고 stale lock으로 즉시 정리하는 편이 맞습니다. supervisor 비정상 종료 뒤에도 새 handoff나 recovery turn이 lease TTL에 묶여 지연되면 안 됩니다.
@@ -115,8 +130,8 @@ launcher / setup / supervisor / smoke는 scattered fixed-owner branch 대신 sha
 - no-silent-stall contract상 자동화가 멈추거나 주의 상태로 내려가면 supervisor status/events에는 최소 `automation_reason_code`, `automation_incident_family`, `automation_next_action` 중 하나가 남아야 합니다. canonical incident family는 `signal_mismatch`, `dispatch_stall`, `completion_stall`, `operator_retriage_no_next_control`, `stale_control_advisory`, `idle_release_pending`, `lane_recovery_exhausted`, `session_recovery_exhausted`입니다.
 - supervisor는 launcher용 derived field `automation_health = ok|recovering|attention|needs_operator`, `automation_reason_code`, `automation_incident_family`, `automation_next_action = continue|retrying|advisory_followup|verify_followup|operator_required|pr_boundary`, `control_age_cycles`, `stale_control_seq`, `stale_control_cycle_threshold`를 `status.json`에 함께 씁니다. `stale_control_seq=true`는 같은 active `CONTROL_SEQ`가 오래 이어졌다는 surface입니다. advisory grace까지 지나면 `automation_health=attention`, `automation_reason_code=stale_control_advisory`, `automation_next_action=advisory_followup`으로 승격해 launcher가 이를 정상 진행으로 숨기지 않습니다. 같은 health/reason/action 조합이 새로 승격되면 `events.jsonl`에는 `automation_incident` event를 남깁니다.
 - `operator_approval_completed`는 dirty worktree commit/push 승인 stop이 이미 read-only git 증거로 충족된 recovery reason입니다. watcher는 branch/upstream/HEAD와 rolling `.pipeline` artifact 외 clean worktree를 확인한 뒤 `VERIFY_FOLLOWUP`으로 라우팅하고, launcher/GUI는 이를 `승인 작업 완료, 다음 제어 정리 중`으로 표시합니다. raw reason은 상세 console 또는 `events.jsonl` debug context에만 남깁니다.
-- `commit_push_bundle_authorization`은 operator가 이미 큰 검증 묶음을 publish 대상으로 승인한 뒤의 자동화 follow-up reason입니다. `OPERATOR_POLICY: internal_only`와 함께 오면 unattended hibernate가 아니라 verify/handoff-owner triage(`routed_to=codex_followup`)로 보내며, 작은 local slice의 dirty state를 자동 publish하라는 뜻은 아닙니다.
-- `pr_creation_gate`는 승인된 큰 묶음의 draft PR 생성 follow-up reason입니다. `OPERATOR_POLICY: gate_24h`, `DECISION_CLASS: release_gate`와 함께 오면 operator wait가 아니라 verify/handoff-owner triage(`routed_to=codex_followup`)로 보내고 `automation_next_action=verify_followup`으로 보여야 합니다.
+- `commit_push_bundle_authorization`은 operator가 이미 큰 검증 묶음을 publish 대상으로 승인한 뒤의 자동화 follow-up reason입니다. `OPERATOR_POLICY: internal_only`와 함께 오면 unattended hibernate가 아니라 verify/handoff-owner triage(`routed_to=verify_followup`)로 보내며, 작은 local slice의 dirty state를 자동 publish하라는 뜻은 아닙니다.
+- `pr_creation_gate`는 승인된 큰 묶음의 draft PR 생성 follow-up reason입니다. `OPERATOR_POLICY: gate_24h`, `DECISION_CLASS: release_gate`와 함께 오면 operator wait가 아니라 verify/handoff-owner triage(`routed_to=verify_followup`)로 보내고 `automation_next_action=verify_followup`으로 보여야 합니다.
 - `external_publication_boundary` / `publication_boundary` / `pr_boundary`는 draft PR 생성 follow-up이 아니라 merge, release, destructive publication 같은 실제 외부 공개 경계입니다. 이 reason은 `gate_24h`나 idle stable 상태여도 `hibernate + ok`로 숨기지 않고 `automation_health=needs_operator`, `automation_next_action=pr_boundary`로 보여야 합니다.
 - 이 publish follow-up은 implement handoff로 넘기지 않습니다. implement prompt는 commit/push/branch publish/PR을 계속 금지하므로, verify/handoff owner가 범위를 확인해 직접 실행하거나 직접 실행할 수 없으면 advisory escalation으로 닫아야 합니다.
 - 선택지 메뉴, ABCD/숫자/inline label 선택, next-slice ambiguity, session rollover, context exhaustion은 real-risk metadata가 없으면 operator stop이 아니라 `automation_next_action=advisory_followup` 또는 `verify_followup`으로 라우팅합니다. 삭제/덮어쓰기, auth/credential, approval/truth-sync, safety stop, merge/destructive publication boundary만 operator boundary로 남깁니다.
@@ -146,14 +161,14 @@ launcher / setup / supervisor / smoke는 scattered fixed-owner branch 대신 sha
 - turn/control arbitration도 `turn_arbitration.py`가 watcher의 next-turn 결정과 supervisor의 active-lane/active-round suppression 우선순위를 공용으로 들고, `watcher_core.py`와 supervisor는 marker 계산 결과만 넘겨 current truth를 다시 각자 해석하지 않는 편이 맞습니다.
 - prompt/context 조립은 `watcher_prompt_assembly.py` 공용 경계에 두는 편이 맞습니다. `watcher_core.py`가 긴 multi-line prompt 본문과 formatting 규칙을 계속 들고 있으면 dispatch/FSM/arbitration 분리 이후에도 giant orchestrator file이 남게 됩니다.
 - pending defer는 같은 control family/current control이 아직 살아 있을 때만 유지하는 편이 맞습니다. 더 높은 `CONTROL_SEQ` handoff가 열리거나 active control이 다른 family로 넘어가면 예전 verify/advisory/implement pending prompt는 flush하지 말고 폐기해야 합니다.
-- `signal_mismatch` 기반 pending drop은 implement handoff dispatch처럼 wrapper receipt가 직접 confirm해야 하는 prompt에만 적용합니다. `gemini_advice_followup`, `codex_operator_retriage`, `codex_control_recovery`, `codex_blocked_triage`, `gemini_request` 같은 control-resolution prompt는 lane이 바빠서 아직 paste되지 않았을 수 있으므로, active control drift가 없으면 큐에 남겨 lane이 prompt-ready가 될 때 flush하는 편이 맞습니다.
+- `signal_mismatch` 기반 pending drop은 implement handoff dispatch처럼 wrapper receipt가 직접 confirm해야 하는 prompt에만 적용합니다. `advisory_request`, `advisory_advice_followup`, `verify_operator_retriage`, `verify_control_recovery`, `verify_blocked_triage` 같은 control-resolution prompt는 lane이 바빠서 아직 paste되지 않았을 수 있으므로, active control drift가 없으면 큐에 남겨 lane이 prompt-ready가 될 때 flush하는 편이 맞습니다.
 - `watcher_dispatch.flush_pending()`는 pending 항목마다 active control을 다시 읽어야 합니다. stale snapshot을 루프 전체에 재사용하면 seq만 바뀐 최신 handoff를 예전 control로 오판해 drop/paste 순서가 뒤집힐 수 있으므로, drop 시에는 `reason_code`, `expected_control_seq`, `active_control_seq`, `expected_prompt_path`, `active_prompt_path`, `notify_kind`를 함께 남겨 seq drift와 file drift를 분리 관측하는 편이 맞습니다.
 - lane readiness의 busy 판정은 pane 전체 scrollback이 아니라 최근 visible tail 기준으로 보는 편이 맞습니다. 예전 `Working (...)` 줄이 위에 남아 있다는 이유만으로 현재 prompt-visible owner pane을 계속 busy로 취급하면 안 됩니다.
-- stale control slot을 수동 정리해야 할 때는 `.pipeline/archive-stale-control-slots.sh`를 쓰고, newest control file은 archive하지 않는 편이 맞습니다.
+- stale control slot을 수동 정리해야 할 때는 `.pipeline/archive-stale-control-slots.sh`를 쓰고, active `CONTROL_SEQ`/status 기준 control file은 archive하지 않는 편이 맞습니다.
 - shared `.pipeline/state/`에는 `turn_state.json`, `autonomy_state.json`, 그리고 blocker resolution에 아직 필요한 `VERIFY_DONE` 기록만 오래 남길 수 있습니다. 이전 run의 `VERIFY_PENDING` / `VERIFY_RUNNING` 같은 non-terminal job state는 watcher startup에서 `.pipeline/runs/<old_run_id>/state-archive/` 또는 `.pipeline/state-archive/legacy/`로 옮겨 현재 run surface와 섞이지 않게 하는 편이 맞습니다.
 - JobState JSON의 **primary 경로는 `.pipeline/state/jobs/<job_id>.json`**이고, 공용 상태 파일(`turn_state.json`, `autonomy_state.json`)은 `.pipeline/state/` 루트에 남습니다. owner boundary는 name filter가 아니라 디렉터리 path 자체로 강제되며, 새 JobState 쓰기는 항상 `jobs/` 하위로 들어갑니다. migration 기간 동안 `.pipeline/state/<job_id>.json` 루트 fallback은 **읽기 전용**으로만 허용되며, 같은 `job_id`가 양쪽에 있으면 primary가 항상 우선입니다. 자동 이동(auto-move)은 이번 라운드 범위 밖이며, 추후 마이그레이션 라운드에서 replay/복구 테스트와 함께 별도로 다룹니다.
 - state-dir scan 소유권은 `pipeline_runtime/schema.py`의 `jobs_state_dir(...)` / `iter_job_state_paths(...)` / `load_job_states(...)` helper가 가집니다. watcher_core의 `_archive_stale_job_states`, `_verified_work_paths`, `_get_current_run_jobs`와 supervisor의 job state loading은 모두 이 helper를 통해서만 접근하며, 각 파일 안의 직접 `state_dir.glob("*.json")` 조립은 제거됐습니다. `STATE_DIR_SHARED_FILES` name filter는 이제 primary 경로가 아니라 루트 fallback 해석에만 좁게 남아 있습니다.
-- watcher startup이 current run의 `VERIFY_PENDING` job을 state에서 복원했다면, 최신 `/work` candidate 스캔 결과와 무관하게 그 pending round를 먼저 다시 step해 verify/handoff owner lane으로 재개하는 편이 맞습니다. 다만 이 replay는 current control-resolution turn(`VERIFY_FOLLOWUP`, `ADVISORY_ACTIVE`, gated operator retriage)이나 열린 Gemini arbitration이 없을 때만 허용합니다. 그렇지 않으면 older pending round가 현재 follow-up/advisory pane truth를 덮는 false restart가 됩니다.
+- watcher startup이 current run의 `VERIFY_PENDING` job을 state에서 복원했다면, 최신 `/work` candidate 스캔 결과와 무관하게 그 pending round를 먼저 다시 step해 verify/handoff owner lane으로 재개하는 편이 맞습니다. 다만 이 replay는 current control-resolution turn(`VERIFY_FOLLOWUP`, `ADVISORY_ACTIVE`, gated operator retriage)이나 열린 advisory arbitration이 없을 때만 허용합니다. 그렇지 않으면 older pending round가 현재 follow-up/advisory pane truth를 덮는 false restart가 됩니다.
 - 단, current-run `VERIFY_PENDING` job의 artifact가 이미 matching `/verify` note로 닫힌 상태라면 replay하지 않고 같은 run의 `state-archive/`로 옮깁니다. 이렇게 해야 예전 pending job이 최신 unverified `/work` scan을 계속 가로막지 않고, manifest 없는 가짜 `VERIFY_DONE` surface도 만들지 않습니다.
 - supervisor-managed runtime에서는 watcher job state도 supervisor가 만든 current `run_id`를 그대로 써야 합니다. watcher가 자기 PID 기반 별도 `run_id`를 만들면 verify/implement owner job state가 current run status surface에서 빠져 stale `READY`/`prompt_visible`처럼 보일 수 있습니다.
 - 반대로 supervisor가 재시작될 때 watcher가 살아 있다면, supervisor는 `.pipeline/current_run.json`의 기존 `run_id`를 그대로 이어받는 편이 맞습니다. 그래야 canonical `runs/<run_id>/status.json`이 watcher가 이미 startup-replay한 current-run `VERIFY_PENDING` / `VERIFYING` job state와 같은 라인을 계속 비추고, 새 supervisor가 별도 run dir로 옮겨가 이전 status.json이 stale `STOPPED`로 굳는 일이 생기지 않습니다.
@@ -170,36 +185,37 @@ launcher / setup / supervisor / smoke는 scattered fixed-owner branch 대신 sha
 
 ## handoff 작성 원칙
 
-- `.pipeline/claude_handoff.md`는 단순히 "다음으로 비어 있는 내부 regression"을 채우는 문서가 아닙니다.
-- `.pipeline/claude_handoff.md`는 최신 implement-owner round를 검수한 결과를 다음 implement-owner 라운드에 넘기는 **실행 슬롯**입니다.
-- `.pipeline/gemini_request.md`는 active verify/handoff owner가 실제로 exact slice를 못 좁혔을 때만 쓰는 **arbitration 요청 슬롯**입니다.
-- `.pipeline/gemini_advice.md`는 active advisory owner가 active verify/handoff owner에게 recommendation을 남기는 **advisory 슬롯**입니다.
+- `.pipeline/implement_handoff.md`는 단순히 "다음으로 비어 있는 내부 regression"을 채우는 문서가 아닙니다.
+- `.pipeline/implement_handoff.md`는 최신 implement-owner round를 검수한 결과를 다음 implement-owner 라운드에 넘기는 **실행 슬롯**입니다.
+- `.pipeline/advisory_request.md`는 active verify/handoff owner가 실제로 exact slice를 못 좁혔을 때만 쓰는 **arbitration 요청 슬롯**입니다.
+- `.pipeline/advisory_advice.md`는 active advisory owner가 active verify/handoff owner에게 recommendation을 남기는 **advisory 슬롯**입니다.
 - `.pipeline/operator_request.md`는 active verify/handoff owner가 실제로 operator 판단이 필요할 때만 쓰는 **정지 슬롯**입니다.
 - `.pipeline/session_arbitration_draft.md`는 watcher가 active session의 context exhaustion / session rollover / continue-vs-switch를 감지했고 verify/advisory lanes가 idle이며 implement owner가 idle이거나 같은 escalation text에 짧게 안정됐을 때만 남기는 **draft 슬롯**이며, canonical stop/go 신호가 아닙니다.
-- 이 draft는 implement-owner activity resume, canonical Gemini/operator slot open, signal cleared 같은 resolved 조건이 생기면 watcher가 다시 정리할 수 있고, 같은 fingerprint는 짧은 cooldown 동안 곧바로 재생성하지 않는 편이 맞습니다.
-- 실행 슬롯, Gemini arbitration 슬롯, 정지 슬롯을 implement owner가 같이 읽지 않도록 분리하는 것이 stage-3 구조의 핵심입니다.
-- `.pipeline/claude_handoff.md`는 현재 MVP 우선순위에 맞는 다음 implement-owner 라운드 한 슬라이스만 남겨야 합니다.
-- `.pipeline/claude_handoff.md`의 `READ_FIRST`는 implement owner 기준 root memory file 1개만 적는 편이 맞습니다. 즉 Claude면 `CLAUDE.md`, Codex면 `AGENTS.md`, Gemini면 `GEMINI.md`가 들어가야 하고, verify/advisory owner 쪽 다른 root doc는 같이 적지 않는 편이 맞습니다. 그 뒤에 이 슬라이스에 실제로 필요한 source path만 최소로 붙입니다.
-- verify owner와 advisory owner도 같은 규칙을 따르는 편이 맞습니다. `/verify`, `.pipeline/gemini_request.md`, `.pipeline/gemini_advice.md`, verify-owned recovery/follow-up prompt의 `READ_FIRST` 역시 active owner 기준 root memory file 1개만 적고, 다른 role의 root doc는 섞지 않는 편이 맞습니다.
+- 이 draft는 implement-owner activity resume, canonical advisory/operator slot open, signal cleared 같은 resolved 조건이 생기면 watcher가 다시 정리할 수 있고, 같은 fingerprint는 짧은 cooldown 동안 곧바로 재생성하지 않는 편이 맞습니다.
+- 실행 슬롯, advisory arbitration 슬롯, 정지 슬롯을 implement owner가 같이 읽지 않도록 분리하는 것이 stage-3 구조의 핵심입니다.
+- `.pipeline/implement_handoff.md`는 현재 MVP 우선순위에 맞는 다음 implement-owner 라운드 한 슬라이스만 남겨야 합니다.
+- `.pipeline/implement_handoff.md`의 `READ_FIRST`는 implement owner 기준 root memory file 1개만 적는 편이 맞습니다. 즉 Claude면 `CLAUDE.md`, Codex면 `AGENTS.md`, Gemini면 `GEMINI.md`가 들어가야 하고, verify/advisory owner 쪽 다른 root doc는 같이 적지 않는 편이 맞습니다. 그 뒤에 이 슬라이스에 실제로 필요한 source path만 최소로 붙입니다.
+- verify owner와 advisory owner도 같은 규칙을 따르는 편이 맞습니다. `/verify`, `.pipeline/advisory_request.md`, `.pipeline/advisory_advice.md`, verify-owned recovery/follow-up prompt의 `READ_FIRST` 역시 active owner 기준 root memory file 1개만 적고, 다른 role의 root doc는 섞지 않는 편이 맞습니다.
 - context 최적화 관점에서는 `READ_FIRST`에 `work/README.md`, `verify/README.md`, `.pipeline/README.md` 같은 static guide를 매 라운드 기본값으로 반복해서 넣지 않는 편이 맞습니다. 기본값은 active owner root doc 1개 + 현재 control/work/verify처럼 이번 round에 실제로 필요한 live path만 두고, generic guide는 root doc나 named source path가 부족할 때만 추가하는 편이 맞습니다.
 - 특히 advisory arbitration이 exact shipped docs path나 current runtime-doc family를 이미 지목한 경우에는 그 named path들을 먼저 읽고 범위를 유지하는 편이 맞습니다. `docs/superpowers/**`, `plandoc/**`, 기타 historical planning docs는 request/latest `/work`/latest `/verify`가 현재 근거로 명시할 때만 advisory scope에 포함하는 편이 맞습니다.
-- active implement-owner session 중 context exhaustion, session rollover, continue-vs-switch 같은 live side question이 생기면, active verify/handoff owner는 `.pipeline/gemini_request.md` / `.pipeline/gemini_advice.md`를 coordination에만 쓰고 답은 implement owner에게 짧은 lane reply로 relay합니다. 이 경우 `.pipeline/claude_handoff.md`는 session boundary 전까지 그대로 둡니다.
-- `.pipeline/claude_handoff.md`는 `STATUS: implement`와 `CONTROL_SEQ`를 함께 사용합니다.
-- `.pipeline/gemini_request.md`는 `STATUS: request_open`와 `CONTROL_SEQ`를 함께 사용합니다.
-- `.pipeline/gemini_advice.md`는 `STATUS: advice_ready`와 `CONTROL_SEQ`를 함께 사용합니다.
+- active implement-owner session 중 context exhaustion, session rollover, continue-vs-switch 같은 live side question이 생기면, active verify/handoff owner는 `.pipeline/advisory_request.md` / `.pipeline/advisory_advice.md`를 coordination에만 쓰고 답은 implement owner에게 짧은 lane reply로 relay합니다. 이 경우 `.pipeline/implement_handoff.md`는 session boundary 전까지 그대로 둡니다.
+- `.pipeline/implement_handoff.md`는 `STATUS: implement`와 `CONTROL_SEQ`를 함께 사용합니다.
+- `.pipeline/advisory_request.md`는 `STATUS: request_open`와 `CONTROL_SEQ`를 함께 사용합니다.
+- `.pipeline/advisory_advice.md`는 `STATUS: advice_ready`와 `CONTROL_SEQ`를 함께 사용합니다.
 - `.pipeline/operator_request.md`는 `STATUS: needs_operator`와 `CONTROL_SEQ`를 함께 사용합니다.
-- 더 높은 `CONTROL_SEQ`의 real operator boundary가 active current truth가 되면 watcher는 더 낮은 `CONTROL_SEQ`의 `.pipeline/gemini_request.md` / `.pipeline/gemini_advice.md`를 삭제하거나 archive하지 않고 `STATUS: superseded`로 중립화합니다. 이때 `SUPERSEDED_BY`, `SUPERSEDED_BY_SEQ`, `SUPERSEDED_REASON` header와 `advisory_slot_superseded` runtime event를 남겨 이전 advisory가 왜 더 이상 pending dispatch가 아닌지 audit할 수 있게 합니다.
+- 더 높은 `CONTROL_SEQ`의 real operator boundary가 active current truth가 되면 watcher는 더 낮은 `CONTROL_SEQ`의 `.pipeline/advisory_request.md` / `.pipeline/advisory_advice.md`를 삭제하거나 archive하지 않고 `STATUS: superseded`로 중립화합니다. 이때 `SUPERSEDED_BY`, `SUPERSEDED_BY_SEQ`, `SUPERSEDED_REASON` header와 `advisory_slot_superseded` runtime event를 남겨 이전 advisory가 왜 더 이상 pending dispatch가 아닌지 audit할 수 있게 합니다.
 - `.pipeline/session_arbitration_draft.md`는 `STATUS: draft_only`만 사용합니다.
 - `STATUS: implement_blocked`는 rolling control file status가 아니라, active implement-owner pane에서만 watcher가 읽는 machine-readable blocked sentinel입니다.
 - `STATUS: implement`이면 active verify/handoff owner가 다음 단일 슬라이스를 이미 확정한 상태입니다. active implement owner는 그 한 슬라이스만 구현합니다.
-- active implement owner가 그 슬라이스를 실행할 수 없으면 operator 선택지를 직접 열지 않고 `STATUS: implement_blocked` + `BLOCK_REASON` + `BLOCK_REASON_CODE` + `REQUEST: codex_triage` + `ESCALATION_CLASS: codex_triage` + `HANDOFF` + `HANDOFF_SHA` + `BLOCK_ID`를 pane에 남기고 멈추는 편이 맞습니다.
+- active implement owner가 그 슬라이스를 실행할 수 없으면 operator 선택지를 직접 열지 않고 `STATUS: implement_blocked` + `BLOCK_REASON` + `BLOCK_REASON_CODE` + `REQUEST: verify_triage` + `ESCALATION_CLASS: verify_triage` + `HANDOFF` + `HANDOFF_SHA` + `BLOCK_ID`를 pane에 남기고 멈추는 편이 맞습니다.
+- `codex_triage`, `codex_triage_only`, `codex_followup`는 과거 Codex-bound verify lane 호환 alias로만 읽습니다. 새 prompt, route, status, event payload는 role-bound canonical 값인 `verify_triage`, `verify_triage_only`, `verify_followup`을 씁니다.
 - runtime/script smoke가 `implement_blocked` sentinel을 만들 때도 자유문장 출력 대신 `pipeline_runtime.control_writers.render_implement_blocked(...)`로 구조화 필드를 같이 렌더링하는 편이 맞습니다.
 - `STATUS: request_open`이면 active verify/handoff owner가 advisory arbitration을 먼저 요청한 상태입니다. watcher는 advisory owner를 먼저 부릅니다.
 - `STATUS: advice_ready`이면 active advisory owner가 recommendation을 남긴 상태입니다. watcher는 verify/handoff-owner follow-up을 먼저 부릅니다.
-- `STATUS: request_open`이 오래 닫히지 않고 같은 `CONTROL_SEQ`의 current `gemini_advice.md`가 없으면 watcher는 operator stop을 열지 않고 `gemini_advisory_recovery` event를 남긴 뒤 verify/handoff owner에게 recovery prompt를 보낼 수 있습니다. 이 prompt는 `.pipeline/gemini_advice.md`를 대필하지 않고, 기존 request/work/verify를 읽어 더 높은 `CONTROL_SEQ`의 `.pipeline/claude_handoff.md`, 더 좁은 `.pipeline/gemini_request.md`, 또는 실제 operator boundary인 `.pipeline/operator_request.md` 중 하나만 쓰게 합니다.
+- `STATUS: request_open`이 오래 닫히지 않고 같은 `CONTROL_SEQ`의 current `advisory_advice.md`가 없으면 watcher는 operator stop을 열지 않고 `advisory_recovery` event를 남긴 뒤 verify/handoff owner에게 recovery prompt를 보낼 수 있습니다. 이 prompt는 `.pipeline/advisory_advice.md`를 대필하지 않고, 기존 request/work/verify를 읽어 더 높은 `CONTROL_SEQ`의 `.pipeline/implement_handoff.md`, 더 좁은 `.pipeline/advisory_request.md`, 또는 실제 operator boundary인 `.pipeline/operator_request.md` 중 하나만 쓰게 합니다.
 - `STATUS: needs_operator` file이 생겼다고 해서 곧바로 current truth operator stop이 되는 것은 아닙니다. supervisor/watcher는 `safety_stop`, `approval_required`, `truth_sync_required`만 즉시 publish하고, 나머지는 최대 24시간 동안 gated candidate로 다룹니다.
 - `approval_required`로 적힌 stop이라도 본문이 문자/숫자/한글 라벨 선택지 메뉴(괄호형 inline 라벨 포함)이고 최신 `docs/`, milestone, `/work`, `/verify` 근거로 에이전트가 먼저 좁힐 수 있는 문제라면, runtime은 안전/파괴/auth/truth-sync blocker가 없는 한 `slice_ambiguity` 성격의 verify/handoff follow-up으로 낮춰 advisory-first 흐름을 태우는 편이 맞습니다. 실제 blocker 판정은 `DECISION_REQUIRED` 같은 결정 헤더를 우선하고, 본문 설명에 등장한 blocker marker만으로 stop을 확정하지 않는 편이 맞습니다.
-- watcher가 `routed_to=codex_followup` gated operator retriage를 verify/handoff owner에게 이미 보냈고, verify lane이 다시 prompt-ready idle이 됐는데도 더 높은 `CONTROL_SEQ`의 `claude_handoff.md`, `gemini_request.md`, `operator_request.md`가 생기지 않았다면, 같은 stop에 재고정하지 않고 `operator_retriage_no_next_control` incident를 남긴 뒤 `.pipeline/gemini_request.md`를 다음 `CONTROL_SEQ`로 machine-write해 advisory-first arbitration으로 승격할 수 있습니다. `approval_required` / `safety_stop` / `truth_sync_required`처럼 실제 승인·안전 경계가 남은 stop은 이 승격 대상이 아니라 즉시 operator wait current truth로 남습니다.
+- watcher가 `routed_to=verify_followup` gated operator retriage를 verify/handoff owner에게 이미 보냈고, verify lane이 다시 prompt-ready idle이 됐는데도 더 높은 `CONTROL_SEQ`의 `implement_handoff.md`, `advisory_request.md`, `operator_request.md`가 생기지 않았다면, 같은 stop에 재고정하지 않고 `operator_retriage_no_next_control` incident를 남긴 뒤 `.pipeline/advisory_request.md`를 다음 `CONTROL_SEQ`로 machine-write해 advisory-first arbitration으로 승격할 수 있습니다. `approval_required` / `safety_stop` / `truth_sync_required`처럼 실제 승인·안전 경계가 남은 stop은 이 승격 대상이 아니라 즉시 operator wait current truth로 남습니다.
 - 같은 의미의 `.pipeline/operator_request.md`를 규칙 준수를 위해 더 높은 `CONTROL_SEQ`로 다시 쓴 경우에는 `STATUS`, `CONTROL_SEQ`, `SOURCE`, `SUPERSEDES`, timestamp류 header를 semantic fingerprint에서 제외합니다. 이 seq-only/mtime-only bump는 24시간 suppress window나 `operator_retriage_no_next_control` age를 새로 시작하지 않고, 기존 retriage window를 이어갑니다.
 - supervisor/watcher는 operator stop publish/gate를 `OPERATOR_POLICY` 우선, `REASON_CODE` 다음, 설명 prose 마지막 참고 순서로 판정합니다. 구조화 metadata가 없거나 알 수 없으면 fail-safe로 즉시 publish하는 편이 맞습니다.
 - runtime은 오래 남은 control slot compatibility를 위해 `OPERATOR_POLICY: stop_until_exact_slice_selected`를 `gate_24h`로, `REASON_CODE: gemini_axis_switch_without_exact_slice`를 `slice_ambiguity`로 정규화해 false immediate publish를 막습니다. 새 slot은 canonical 값(`gate_24h`, `slice_ambiguity`)을 그대로 쓰는 편이 맞습니다.
@@ -207,7 +223,7 @@ launcher / setup / supervisor / smoke는 scattered fixed-owner branch 대신 sha
 - launcher와 runtime soak/smoke gate도 operator candidate status에서 `classification_source`가 `operator_policy` 또는 `reason_code`가 아니면 `classification_fallback_detected`로 즉시 실패시키는 편이 맞습니다. 즉 fallback metadata는 화면 경고가 아니라 운영 게이트 실패로 다룹니다.
 - gate 중인 후보는 runtime `status.control=none`으로 내려가고, 대신 `status.autonomy.mode = recovery|triage|hibernate`와 `block_reason`, `suppress_operator_until`, `operator_eligible`로 surface됩니다. 오래된 상태 파일에서는 `pending_operator`가 보일 수 있지만, 현재 계약에서 `approval_required` / `safety_stop` / `truth_sync_required` / `external_publication_boundary` 같은 real-risk stop은 gate 뒤에 숨기지 않고 `needs_operator` current truth로 publish합니다. 이 동안 watcher는 verify/handoff-owner follow-up 또는 idle hibernate를 먼저 선택하고, 즉시 operator wait로 고정하지 않습니다.
 - 예외적으로 `approval_required` commit/push stop은 operator-approved commit/push가 이미 끝났음을 watcher가 read-only git evidence로 증명할 수 있으면 `operator_approval_completed` recovery로 내려갑니다. upstream이 없거나 HEAD가 upstream에 포함되지 않거나 rolling `.pipeline` artifact 외 dirty source가 있으면 fail-closed로 기존 `needs_operator` current truth를 유지합니다.
-- 다만 `OPERATOR_POLICY: internal_only` + `DECISION_CLASS: next_slice_selection` + `REASON_CODE: waiting_next_control` 조합, 또는 이미 승인된 큰 publish 묶음을 나타내는 `REASON_CODE: commit_push_bundle_authorization` 조합은 unattended idle로 눕히기보다 verify/handoff-owner follow-up으로 다시 보내는 편이 맞습니다. 이 경우 runtime `autonomy.mode`는 `triage`, gate route는 `codex_followup`으로 남기고, genuine `idle_hibernate` (`DECISION_CLASS: internal_only`)만 `hibernate`를 유지합니다.
+- 다만 `OPERATOR_POLICY: internal_only` + `DECISION_CLASS: next_slice_selection` + `REASON_CODE: waiting_next_control` 조합, 또는 이미 승인된 큰 publish 묶음을 나타내는 `REASON_CODE: commit_push_bundle_authorization` 조합은 unattended idle로 눕히기보다 verify/handoff-owner follow-up으로 다시 보내는 편이 맞습니다. 이 경우 runtime `autonomy.mode`는 `triage`, gate route는 `verify_followup`으로 남기고, genuine `idle_hibernate` (`DECISION_CLASS: internal_only`)만 `hibernate`를 유지합니다.
 - gate window는 next-slice ambiguity, session/context follow-up, recovery 후보처럼 에이전트가 먼저 좁힐 수 있는 non-real-risk stop에만 적용됩니다. active implement owner는 current truth가 아닌 gated stop 슬롯을 직접 따르지 않습니다.
 - runtime long soak는 baseline evidence로 유지하되, 기본 검증 메뉴는 아닙니다. 1차 자동화 milestone은 `scripts/pipeline_runtime_gate.py synthetic-soak --duration-sec 21600 --sample-interval-sec 10 --min-receipts 10`로 만든 6h synthetic soak report(`report/pipeline_runtime/verification/<date>-6h-synthetic-soak.md` + JSON sidecar) 통과이고, 이후 adoption gate에서 24h soak로 올리는 편이 맞습니다. 현재 기본 검증은 launcher live stability gate, incident replay, 실제 작업 세션이며, 6h/24h long soak는 supervisor/watcher/tmux adapter/wrapper event 계약 대변경, control/receipt/state writer 계약 변경, adoption 직전 최종 gate 같은 예외 상황에서만 다시 실행하는 편이 맞습니다.
 - 현재 launcher live stability gate는 `handoff_dispatch -> TASK_ACCEPTED -> TASK_DONE -> receipt_close` chain continuity, READY/WORKING 오표시 0회, 불필요한 `needs_operator` 0회, `classification_fallback_detected` 0회, stop/restart 후 stale `RUNNING/STOPPING` 0회, orphan watcher/session 0회, dispatch/completion/receipt close incident의 named event surface, 반복 incident의 replay 고정 여부를 기준으로 봅니다.
@@ -238,7 +254,7 @@ launcher / setup / supervisor / smoke는 scattered fixed-owner branch 대신 sha
 - stale handoff를 줄이기 위해 현재 `/work`와 `/verify`의 최신 truth를 먼저 확인하고, 그 범위 안에서만 handoff를 작성합니다.
 - Playwright-only smoke tightening, selector drift, single-scenario fixture update handoff는 기본적으로 isolated browser rerun을 요구하는 편이 맞습니다. shared browser helper 변경, 여러 browser scenario 변경, release/ready 판단, isolated rerun의 broader drift 신호가 없는데도 `make e2e-test`를 기본처럼 요구하는 stale handoff는 피합니다.
 - latest `/work`의 `## 변경 파일`이 markdown-only docs sync로 보이면, watcher의 verify/handoff-owner prompt는 docs-only fast path를 붙입니다. 이 경우 active verify/handoff owner는 우선 `git diff --check`와 직접 docs/code truth-sync를 먼저 확인하고, `/work`가 실제로 code/test/runtime 변경을 주장하지 않는 한 broader unit/Playwright rerun으로 자동 확장하지 않는 편이 맞습니다.
-- 다만 같은 날 same-family docs-only truth-sync가 이미 3회 이상 반복됐다면, active verify/handoff owner는 또 하나의 더 작은 docs-only micro-slice를 `.pipeline/claude_handoff.md`에 쓰지 않는 편이 맞습니다. 이 경우 남은 docs drift를 한 번에 닫는 bounded bundle로 묶거나, truthful한 단일 bundle을 못 고르면 `.pipeline/gemini_request.md` 또는 `.pipeline/operator_request.md`로 전환합니다.
+- 다만 같은 날 same-family docs-only truth-sync가 이미 3회 이상 반복됐다면, active verify/handoff owner는 또 하나의 더 작은 docs-only micro-slice를 `.pipeline/implement_handoff.md`에 쓰지 않는 편이 맞습니다. 이 경우 남은 docs drift를 한 번에 닫는 bounded bundle로 묶거나, truthful한 단일 bundle을 못 고르면 `.pipeline/advisory_request.md` 또는 `.pipeline/operator_request.md`로 전환합니다.
 - whole-project trajectory review나 milestone audit은 `.pipeline` handoff가 아니라 `report/`에서 별도로 다룹니다.
 
 ## 권장 흐름
@@ -246,37 +262,39 @@ launcher / setup / supervisor / smoke는 scattered fixed-owner branch 대신 sha
 1. active implement owner가 구현 후 최신 `/work` closeout을 남깁니다.
 2. active verify/handoff owner가 최신 `/work`와 그 work에 매칭되는 `/verify`(same-day fallback 또는 explicit work reference가 있는 cross-day note)를 읽고 실제 검증을 재실행합니다.
 3. active verify/handoff owner가 `/verify` note를 남기거나 갱신합니다.
-4. active verify/handoff owner가 구현 가능한 경우 `.pipeline/claude_handoff.md`에 `STATUS: implement`를 씁니다.
-5. active verify/handoff owner가 exact slice를 못 좁히면 `.pipeline/gemini_request.md`에 `STATUS: request_open`을 씁니다.
-6. advisory owner가 `report/gemini/...md`와 `.pipeline/gemini_advice.md`에 `STATUS: advice_ready`를 남깁니다.
-7. active verify/handoff owner가 advisory recommendation을 읽고 최종 `.pipeline/claude_handoff.md` 또는 `.pipeline/operator_request.md`를 씁니다.
+4. active verify/handoff owner가 구현 가능한 경우 `.pipeline/implement_handoff.md`에 `STATUS: implement`를 씁니다.
+5. active verify/handoff owner가 exact slice를 못 좁히면 `.pipeline/advisory_request.md`에 `STATUS: request_open`을 씁니다.
+6. advisory owner가 `report/gemini/...md`와 `.pipeline/advisory_advice.md`에 `STATUS: advice_ready`를 남깁니다.
+7. active verify/handoff owner가 advisory recommendation을 읽고 최종 `.pipeline/implement_handoff.md` 또는 `.pipeline/operator_request.md`를 씁니다.
 7-0. 예외적으로 active implement-owner lane이 막히면, implement owner는 pane-local `implement_blocked` sentinel만 남기고 watcher가 verify/handoff-owner blocked triage를 자동 dispatch합니다.
-7-1. 예외적으로 active implement-owner session의 side-question arbitration이면, active verify/handoff owner는 Gemini advice를 implement owner에게 짧은 lane reply로만 relay하고 `.pipeline/claude_handoff.md`는 덮어쓰지 않습니다. handoff 갱신은 session boundary 또는 다음 라운드 시작 시점으로 미룹니다.
-7-2. watcher는 이런 active-session side-question을 감지해도 `.pipeline/gemini_request.md`를 자동으로 열지 않습니다. 필요하면 verify/advisory lanes가 idle이고 implement owner가 idle이거나 짧게 settle된 상태일 때 `.pipeline/session_arbitration_draft.md`만 생성하고, active verify/handoff owner가 직접 canonical 슬롯 승격 여부를 정합니다.
-7-3. watcher가 생성한 `.pipeline/session_arbitration_draft.md`는 perpetual slot이 아닙니다. implement owner가 다시 작업을 시작하거나 canonical Gemini/operator 슬롯이 열리면 watcher가 정리하고, 같은 fingerprint는 짧은 cooldown 동안 반복 생성하지 않는 편이 맞습니다.
+7-1. 예외적으로 active implement-owner session의 side-question arbitration이면, active verify/handoff owner는 advisory advice를 implement owner에게 짧은 lane reply로만 relay하고 `.pipeline/implement_handoff.md`는 덮어쓰지 않습니다. handoff 갱신은 session boundary 또는 다음 라운드 시작 시점으로 미룹니다.
+7-2. watcher는 이런 active-session side-question을 감지해도 `.pipeline/advisory_request.md`를 자동으로 열지 않습니다. 필요하면 verify/advisory lanes가 idle이고 implement owner가 idle이거나 짧게 settle된 상태일 때 `.pipeline/session_arbitration_draft.md`만 생성하고, active verify/handoff owner가 직접 canonical 슬롯 승격 여부를 정합니다.
+7-3. watcher가 생성한 `.pipeline/session_arbitration_draft.md`는 perpetual slot이 아닙니다. implement owner가 다시 작업을 시작하거나 canonical advisory/operator 슬롯이 열리면 watcher가 정리하고, 같은 fingerprint는 짧은 cooldown 동안 반복 생성하지 않는 편이 맞습니다.
 8. `.pipeline/codex_feedback.md`는 필요하면 scratch로 남길 수 있지만, watcher는 그것을 stop/go 실행 신호로 읽지 않습니다.
-9. watcher 또는 자동화는 최신 valid control 기준으로 `.pipeline/claude_handoff.md`의 `STATUS: implement`일 때만 implement owner에 전달하고, `.pipeline/gemini_request.md`가 최신이면 advisory owner를, `.pipeline/gemini_advice.md`가 최신이면 verify/handoff-owner follow-up을 실행합니다. `.pipeline/operator_request.md`는 latest slot이어도 gate 대상이면 바로 operator로 서지 않고, immediate publish 사유일 때나 24시간 gate가 지난 뒤에만 operator wait current truth가 됩니다.
+9. watcher 또는 자동화는 최신 valid control 기준으로 `.pipeline/implement_handoff.md`의 `STATUS: implement`일 때만 implement owner에 전달하고, `.pipeline/advisory_request.md`가 최신이면 advisory owner를, `.pipeline/advisory_advice.md`가 최신이면 verify/handoff-owner follow-up을 실행합니다. `.pipeline/operator_request.md`는 latest slot이어도 gate 대상이면 바로 operator로 서지 않고, immediate publish 사유일 때나 24시간 gate가 지난 뒤에만 operator wait current truth가 됩니다.
 10. watcher의 책임은 파일 변경 감지와 올바른 pane 전달까지입니다. 전송 후 implement/verify/advisory owner pane이 바쁘거나 interrupted 상태여서 처리가 안 되는 경우는 watcher contract 문제가 아니라 세션 상태 문제입니다.
 11. active verify/handoff owner가 다음 슬라이스를 고를 때는, 같은 family 안의 작은 current-risk reduction을 먼저 닫고 그다음 새 quality axis로 넘어가는 편이 기본값입니다.
 12. startup dispatch는 pane이 실제로 입력을 받을 준비가 됐는지 먼저 확인한 뒤 보내는 편이 맞습니다. 그 뒤에는 짧은 readiness 확인과 watcher retry에 맡기는 쪽이 기본값입니다.
-13. startup 또는 rolling dispatch에서 최신 canonical `/work`가 아직 matching `/verify` 없이 남아 있으면, unrelated same-day `/verify`가 더 늦게 찍혀 있어도 fresher `claude_handoff.md`보다 verify/handoff-owner verification이 우선입니다.
+13. startup 또는 rolling dispatch에서 최신 canonical `/work`가 아직 matching `/verify` 없이 남아 있으면, unrelated same-day `/verify`가 더 늦게 찍혀 있어도 fresher `implement_handoff.md`보다 verify/handoff-owner verification이 우선입니다.
 14. launcher가 `tmux attach`에서 빠져나와도 자동 진행이 이어져야 하므로, watcher는 launcher shell background보다 tmux session 내부의 별도 hidden watcher window에서 유지하는 편이 더 안전합니다.
-15. active implement-owner round가 이미 진행 중이면, newer `claude_handoff.md`가 생겨도 watcher는 busy pane으로 mid-round re-dispatch하지 않고 현재 라운드 exit 뒤에 반영합니다. 예외적으로 더 높은 `CONTROL_SEQ`가 active이고 implement pane이 prompt-ready idle이면, watcher는 `claude_handoff_idle_release`로 stale seq를 풀고 최신 handoff를 다시 보낼 수 있습니다.
+15. active implement-owner round가 이미 진행 중이면, newer `implement_handoff.md`가 생겨도 watcher는 busy pane으로 mid-round re-dispatch하지 않고 현재 라운드 exit 뒤에 반영합니다. 예외적으로 더 높은 `CONTROL_SEQ`가 active이고 implement pane이 prompt-ready idle이면, watcher는 `implement_handoff_idle_release`로 stale seq를 풀고 최신 handoff를 다시 보낼 수 있습니다.
 
 ## 추가 실행 규칙
 
 - implement-owner round는 bounded file edits와 canonical `/work` closeout에서 끝납니다. implement lane에서 commit, push, branch publish, PR 생성까지 같이 진행하지 않는 편이 맞습니다.
 - commit/push/PR creation automation은 큰 검증 묶음 경계에서만 다룹니다. operator가 명시 승인한 release, soak, PR stabilization, direct publish bundle이 아니면 small/local slice는 `/work` closeout과 local dirty state로 남기고 commit/push/PR operator stop을 새로 열지 않습니다.
-- verify/handoff-owner round는 pane-only reasoning이나 next control slot rewrite만으로 닫히지 않습니다. dispatch 이후 current-round `/verify` receipt가 실제로 갱신된 것이 확인된 뒤에만 `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, `.pipeline/operator_request.md`를 쓰는 편이 맞습니다.
-- Gemini advisory round도 pane-only answer로 닫지 않습니다. `report/gemini/...md` advisory log와 `.pipeline/gemini_advice.md` recommendation slot이 둘 다 있어야 round가 완료된 것으로 봅니다.
+- verify/handoff-owner round는 pane-only reasoning이나 next control slot rewrite만으로 닫히지 않습니다. dispatch 이후 current-round `/verify` receipt가 실제로 갱신된 것이 확인된 뒤에만 `.pipeline/implement_handoff.md`, `.pipeline/advisory_request.md`, `.pipeline/operator_request.md`를 쓰는 편이 맞습니다.
+- Gemini advisory round도 pane-only answer로 닫지 않습니다. `report/gemini/...md` advisory log와 `.pipeline/advisory_advice.md` recommendation slot이 둘 다 있어야 round가 완료된 것으로 봅니다.
 
 ## stale control slot archive helper
 
 - helper: `.pipeline/archive-stale-control-slots.sh`
 - 기본 원칙:
-  - newest existing control file은 archive하지 않음
+  - `pipeline_runtime.schema.parse_control_slots(...)` 기준 active control file은 archive하지 않음
+  - valid active control을 해석할 수 없을 때만 newest existing file을 보수적 fallback으로 보존
   - known control-slot basename만 받음
   - 결과는 `.pipeline/archive/YYYY-MM-DD/` 아래로 이동
+  - 실제 archive 시 repo-relative source/target, file hash, archived slot header, pre/post active control을 `.pipeline/archive/YYYY-MM-DD/archive-manifest.jsonl`에 append
   - `PIPELINE_ARCHIVE_DRY_RUN=1`이면 미리보기만 수행
 - 예시:
   - `bash .pipeline/archive-stale-control-slots.sh --all-stale`
@@ -318,16 +336,16 @@ operator 확인 필요:
 - active profile이 깨져 있거나, implement/verify owner가 비어 있거나, 동일 owner이거나, 둘 중 하나가 `Claude`/`Codex` 밖이면 tmux session을 띄우기 전에 fail-closed로 종료합니다.
 - 이 helper는 workspace 안에 `.pipeline/live-arb-smoke-XXXXXX/` 임시 base dir를 만들고:
   - base dir 아래에 smoke-local `.pipeline/config/agent_profile.json`을 써서 watcher/runtime owner resolve를 production active profile과 분리하고
-  - `gemini_request.md`를 seed한 뒤
+  - `advisory_request.md`를 seed한 뒤
   - smoke-local `work/4/3/...`와 `verify/4/3/...` synthetic note를 같이 만들고
   - physical Claude/Codex/Gemini lane에 실제 각 CLI를 띄우고
   - `watcher_core.py`를 custom `--base-dir` + smoke-local `--repo-root`로 실행합니다.
 - topology는 기본값 `PIPELINE_SMOKE_TOPOLOGY=swapped`(`implement=Codex`, `verify=Claude`, `advisory=Gemini`)이며, `legacy` 또는 `active`로 바꿔 같은 helper를 matrix smoke에 재사용할 수 있습니다.
 - 필요하면 `PIPELINE_SMOKE_ROLE_BINDINGS_JSON='{\"implement\":\"Claude\",\"verify\":\"Codex\",\"advisory\":\"Gemini\"}'` 같이 explicit override를 줄 수 있습니다.
 - 성공 기준:
-  - `gemini_advice.md`가 `STATUS: advice_ready`
+  - `advisory_advice.md`가 `STATUS: advice_ready`
   - `report/gemini/*.md` advisory log 생성
-  - 이후 `claude_handoff.md` 또는 `operator_request.md` 생성
+  - 이후 `implement_handoff.md` 또는 `operator_request.md` 생성
   - 마지막 runtime status가 operator candidate일 경우 `classification_source`가 structured source(`operator_policy|reason_code`)로 검증됨
 - 성공 시 기본값으로 smoke tmux session은 정리하고, smoke 산출물 디렉터리는 남겨 둡니다.
 - 성공 시 기본값으로 최근 `3`개 smoke 디렉터리만 남기고 더 오래된 `live-arb-smoke-*` 디렉터리는 정리합니다.

@@ -169,7 +169,7 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
         )
 
         self.assertEqual(decision["mode"], "triage")
-        self.assertEqual(decision["routed_to"], "codex_followup")
+        self.assertEqual(decision["routed_to"], "verify_followup")
         self.assertEqual(decision["operator_policy"], "internal_only")
         self.assertEqual(decision["decision_class"], "release_gate")
         self.assertFalse(decision["operator_eligible"])
@@ -198,7 +198,7 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
 
         self.assertEqual(decision["mode"], "triage")
         self.assertEqual(decision["suppressed_mode"], "triage")
-        self.assertEqual(decision["routed_to"], "codex_followup")
+        self.assertEqual(decision["routed_to"], "verify_followup")
         self.assertEqual(decision["operator_policy"], "gate_24h")
         self.assertEqual(decision["decision_class"], "release_gate")
         self.assertFalse(decision["operator_eligible"])

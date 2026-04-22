@@ -79,6 +79,85 @@ class RuntimeSchemaTest(unittest.TestCase):
             self.assertEqual(slots["active"]["file"], "claude_handoff.md")
             self.assertEqual(slots["stale"][0]["file"], "operator_request.md")
 
+    def test_parse_control_slots_accepts_role_based_canonical_filenames(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pipeline = Path(tmp)
+            (pipeline / "implement_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: 7\n",
+                encoding="utf-8",
+            )
+
+            slots = parse_control_slots(pipeline)
+
+            self.assertEqual(slots["active"]["file"], "implement_handoff.md")
+            self.assertEqual(slots["active"]["slot_id"], "implement_handoff")
+            self.assertEqual(slots["active"]["canonical_file"], "implement_handoff.md")
+            self.assertFalse(slots["active"]["is_legacy_alias"])
+
+    def test_parse_control_slots_dedupes_canonical_and_legacy_by_control_seq(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pipeline = Path(tmp)
+            (pipeline / "implement_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: 11\n",
+                encoding="utf-8",
+            )
+            (pipeline / "claude_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: 12\n",
+                encoding="utf-8",
+            )
+
+            slots = parse_control_slots(pipeline)
+
+            self.assertEqual(slots["active"]["file"], "claude_handoff.md")
+            self.assertEqual(slots["active"]["slot_id"], "implement_handoff")
+            self.assertTrue(slots["active"]["is_legacy_alias"])
+
+    def test_parse_control_slots_prefers_canonical_alias_when_control_seq_ties(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pipeline = Path(tmp)
+            (pipeline / "implement_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: 13\n",
+                encoding="utf-8",
+            )
+            (pipeline / "claude_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: 13\n",
+                encoding="utf-8",
+            )
+            now = time.time()
+            os.utime(pipeline / "implement_handoff.md", (now, now))
+            os.utime(pipeline / "claude_handoff.md", (now + 1, now + 1))
+
+            slots = parse_control_slots(pipeline)
+
+            self.assertEqual(slots["active"]["file"], "implement_handoff.md")
+            self.assertEqual(slots["stale"][0]["file"], "claude_handoff.md")
+
+    def test_parse_control_slots_ignores_harness_markdown_status_headers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pipeline = Path(tmp)
+            harness_dir = pipeline / "harness"
+            harness_dir.mkdir(parents=True)
+            for name in ["implement.md", "verify.md", "advisory.md", "council.md"]:
+                (harness_dir / name).write_text(
+                    "STATUS: needs_operator\nCONTROL_SEQ: 999\n",
+                    encoding="utf-8",
+                )
+
+            slots = parse_control_slots(pipeline)
+
+            self.assertIsNone(slots["active"])
+            self.assertEqual(slots["stale"], [])
+
+            (pipeline / "gemini_request.md").write_text(
+                "STATUS: request_open\nCONTROL_SEQ: 1\n",
+                encoding="utf-8",
+            )
+            slots = parse_control_slots(pipeline)
+
+            self.assertEqual(slots["active"]["file"], "gemini_request.md")
+            self.assertEqual(slots["active"]["control_seq"], 1)
+            self.assertEqual(slots["stale"], [])
+
     def test_latest_round_markdown_ignores_root_readme(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

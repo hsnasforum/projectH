@@ -2,11 +2,24 @@ from __future__ import annotations
 
 import unittest
 
+from pipeline_runtime.role_routes import (
+    ADVISORY_ADVICE_FOLLOWUP_NOTIFY,
+    ADVISORY_RECOVERY_NOTIFY,
+    ADVISORY_REQUEST_NOTIFY,
+    IMPLEMENT_HANDOFF_NOTIFY,
+    VERIFY_FOLLOWUP_ROUTE,
+    VERIFY_TRIAGE_ESCALATION,
+    VERIFY_TRIAGE_ONLY_REASON,
+    normalize_followup_route,
+    normalize_notify_kind,
+    normalize_verify_triage_escalation,
+    normalize_verify_triage_reason,
+)
 from pipeline_runtime.turn_arbitration import (
-    TURN_CLAUDE,
-    TURN_CODEX_FOLLOWUP,
-    TURN_CODEX_VERIFY,
+    TURN_IMPLEMENT,
     TURN_OPERATOR,
+    TURN_VERIFY,
+    TURN_VERIFY_FOLLOWUP,
     WatcherTurnInputs,
     active_lane_for_runtime,
     resolve_watcher_turn,
@@ -14,63 +27,76 @@ from pipeline_runtime.turn_arbitration import (
 )
 
 
+class RoleRouteCompatibilityTest(unittest.TestCase):
+    def test_legacy_notify_kinds_normalize_to_role_names(self) -> None:
+        self.assertEqual(normalize_notify_kind("claude_handoff"), IMPLEMENT_HANDOFF_NOTIFY)
+        self.assertEqual(normalize_notify_kind("gemini_request"), ADVISORY_REQUEST_NOTIFY)
+        self.assertEqual(normalize_notify_kind("gemini_advice_followup"), ADVISORY_ADVICE_FOLLOWUP_NOTIFY)
+        self.assertEqual(normalize_notify_kind("gemini_advisory_recovery"), ADVISORY_RECOVERY_NOTIFY)
+
+    def test_legacy_verify_routes_normalize_to_role_names(self) -> None:
+        self.assertEqual(normalize_followup_route("codex_followup"), VERIFY_FOLLOWUP_ROUTE)
+        self.assertEqual(normalize_verify_triage_escalation("codex_triage"), VERIFY_TRIAGE_ESCALATION)
+        self.assertEqual(normalize_verify_triage_reason("codex_triage_only"), VERIFY_TRIAGE_ONLY_REASON)
+
+
 class WatcherTurnArbitrationTest(unittest.TestCase):
     def test_operator_request_wins_without_recovery_or_gate(self) -> None:
         turn = resolve_watcher_turn(
             WatcherTurnInputs(
                 operator_request_active=True,
-                gemini_request_active=False,
-                gemini_advice_active=False,
-                claude_handoff_active=True,
+                advisory_request_active=False,
+                advisory_advice_active=False,
+                implement_handoff_active=True,
                 latest_work_needs_verify=False,
-                claude_handoff_verify_active=False,
+                implement_handoff_verify_active=False,
                 idle_release_cooldown_active=False,
             )
         )
         self.assertEqual(turn, TURN_OPERATOR)
 
-    def test_handoff_with_verify_need_prefers_codex_verify(self) -> None:
+    def test_handoff_with_verify_need_prefers_verify(self) -> None:
         turn = resolve_watcher_turn(
             WatcherTurnInputs(
                 operator_request_active=False,
-                gemini_request_active=False,
-                gemini_advice_active=False,
-                claude_handoff_active=True,
+                advisory_request_active=False,
+                advisory_advice_active=False,
+                implement_handoff_active=True,
                 latest_work_needs_verify=True,
-                claude_handoff_verify_active=False,
+                implement_handoff_verify_active=False,
                 idle_release_cooldown_active=False,
             )
         )
-        self.assertEqual(turn, TURN_CODEX_VERIFY)
+        self.assertEqual(turn, TURN_VERIFY)
 
     def test_operator_gate_routes_to_followup_until_hibernate(self) -> None:
         turn = resolve_watcher_turn(
             WatcherTurnInputs(
                 operator_request_active=False,
-                gemini_request_active=False,
-                gemini_advice_active=False,
-                claude_handoff_active=False,
+                advisory_request_active=False,
+                advisory_advice_active=False,
+                implement_handoff_active=False,
                 latest_work_needs_verify=False,
-                claude_handoff_verify_active=False,
+                implement_handoff_verify_active=False,
                 idle_release_cooldown_active=False,
-                operator_gate_marker={"routed_to": "codex_followup"},
+                operator_gate_marker={"routed_to": "verify_followup"},
             )
         )
-        self.assertEqual(turn, TURN_CODEX_FOLLOWUP)
+        self.assertEqual(turn, TURN_VERIFY_FOLLOWUP)
 
-    def test_handoff_without_verify_need_returns_claude(self) -> None:
+    def test_handoff_without_verify_need_returns_implement(self) -> None:
         turn = resolve_watcher_turn(
             WatcherTurnInputs(
                 operator_request_active=False,
-                gemini_request_active=False,
-                gemini_advice_active=False,
-                claude_handoff_active=True,
+                advisory_request_active=False,
+                advisory_advice_active=False,
+                implement_handoff_active=True,
                 latest_work_needs_verify=False,
-                claude_handoff_verify_active=False,
+                implement_handoff_verify_active=False,
                 idle_release_cooldown_active=False,
             )
         )
-        self.assertEqual(turn, TURN_CLAUDE)
+        self.assertEqual(turn, TURN_IMPLEMENT)
 
 
 class RuntimeTurnArbitrationTest(unittest.TestCase):

@@ -11,9 +11,10 @@ from .operator_autonomy import (
     normalize_operator_policy,
     normalize_reason_code,
 )
+from .role_routes import VERIFY_TRIAGE_ESCALATION_ALIASES
 from .schema import atomic_write_text
 
-SUPPORTED_ESCALATION_CLASSES = frozenset({"codex_triage", "verify_triage"})
+SUPPORTED_ESCALATION_CLASSES = VERIFY_TRIAGE_ESCALATION_ALIASES
 
 
 def _require_text(field_name: str, value: object) -> str:

@@ -544,7 +544,7 @@ def _probe_receipt_manifest_mismatch_degraded_precedence() -> tuple[bool, str, d
         manifest_dir = pipeline_dir / "manifests" / "job-fault-manifest"
         state_dir.mkdir(parents=True, exist_ok=True)
         manifest_dir.mkdir(parents=True, exist_ok=True)
-        (pipeline_dir / "claude_handoff.md").write_text(
+        (pipeline_dir / "implement_handoff.md").write_text(
             "STATUS: implement\nCONTROL_SEQ: 91\n",
             encoding="utf-8",
         )
@@ -554,7 +554,7 @@ def _probe_receipt_manifest_mismatch_degraded_precedence() -> tuple[bool, str, d
                     "state": "VERIFY_ACTIVE",
                     "legacy_state": "CODEX_VERIFY",
                     "entered_at": 1.0,
-                    "active_control_file": ".pipeline/claude_handoff.md",
+                    "active_control_file": ".pipeline/implement_handoff.md",
                     "active_control_seq": 91,
                     "active_role": "verify",
                     "active_lane": "Claude",
@@ -639,7 +639,7 @@ def _probe_active_lane_auth_failure_degraded_precedence() -> tuple[bool, str, di
         pipeline_dir = root / ".pipeline"
         state_dir = pipeline_dir / "state"
         state_dir.mkdir(parents=True, exist_ok=True)
-        (pipeline_dir / "claude_handoff.md").write_text(
+        (pipeline_dir / "implement_handoff.md").write_text(
             "STATUS: implement\nCONTROL_SEQ: 88\n",
             encoding="utf-8",
         )
@@ -649,7 +649,7 @@ def _probe_active_lane_auth_failure_degraded_precedence() -> tuple[bool, str, di
                     "state": "IMPLEMENT_ACTIVE",
                     "legacy_state": "CLAUDE_ACTIVE",
                     "entered_at": 1.0,
-                    "active_control_file": ".pipeline/claude_handoff.md",
+                    "active_control_file": ".pipeline/implement_handoff.md",
                     "active_control_seq": 88,
                     "active_role": "implement",
                     "active_lane": "Claude",

@@ -18,9 +18,9 @@ BOOTSTRAP_PIPELINE_README = """# .pipeline
 
 이 디렉터리는 pipeline launcher가 사용하는 런타임 제어 슬롯과 로그를 저장합니다.
 
-- `claude_handoff.md`
-- `gemini_request.md`
-- `gemini_advice.md`
+- `implement_handoff.md`
+- `advisory_request.md`
+- `advisory_advice.md`
 - `operator_request.md`
 - `logs/`
 - `state/`

@@ -17,12 +17,20 @@ from typing import Any
 from pipeline_gui.platform import resolve_project_runtime_file
 from pipeline_gui.project import _session_name_for
 from pipeline_gui.setup_profile import resolve_project_runtime_adapter
+from watcher_prompt_assembly import (
+    DEFAULT_ADVISORY_PROMPT,
+    DEFAULT_FOLLOWUP_PROMPT,
+    DEFAULT_IMPLEMENT_PROMPT,
+    DEFAULT_VERIFY_PROMPT_TEMPLATE,
+)
 
 from .automation_health import advance_control_seq_age, derive_automation_health
 from .lane_catalog import (
     build_lane_configs,
     default_role_bindings,
     lane_vendor_command_parts,
+    legacy_watcher_pane_target_arg_for_lane,
+    physical_lane_specs,
     read_first_doc_for_owner,
 )
 from .lane_surface import tail_has_busy_indicator, tail_has_ready_indicator, tail_surface_state
@@ -31,6 +39,7 @@ from .operator_autonomy import (
     allows_verified_blocker_auto_recovery,
     classify_operator_candidate,
 )
+from .role_routes import VERIFY_TRIAGE_ESCALATION
 from .receipts import (
     build_receipt,
     manifest_feedback_path,
@@ -42,6 +51,8 @@ from .schema import (
     RUNTIME_LANE_ORDER,
     atomic_write_json,
     append_jsonl,
+    control_slot_spec_for_filename,
+    iter_control_slot_specs,
     iso_utc,
     latest_verify_note_for_work,
     latest_round_markdown,
@@ -82,6 +93,7 @@ _WATCHER_SELF_RESTART_SOURCE_NAMES = (
     "watcher_prompt_assembly.py",
     "verify_fsm.py",
     "pipeline_runtime/lane_surface.py",
+    "pipeline_runtime/role_harness.py",
     "pipeline_runtime/schema.py",
     "pipeline_runtime/turn_arbitration.py",
     "pipeline_runtime/operator_autonomy.py",
@@ -90,11 +102,12 @@ _WATCHER_SELF_RESTART_SOURCE_NAMES = (
 _WATCHER_SELF_RESTART_COOLDOWN_SEC = 10.0
 _SESSION_RECOVERY_RETRY_LIMIT = 1
 _SESSION_RECOVERY_RESET_STABLE_SEC = 300.0
-_CONTROL_SEQ_AGE_SLOT_FILES = frozenset({
-    "claude_handoff.md",
-    "gemini_request.md",
-    "operator_request.md",
-})
+_CONTROL_SEQ_AGE_SLOT_FILES = frozenset(
+    filename
+    for spec in iter_control_slot_specs()
+    if spec.slot_id != "advisory_advice"
+    for filename in spec.accepted_filenames
+)
 
 class RuntimeSupervisor:
     def __init__(
@@ -474,12 +487,7 @@ class RuntimeSupervisor:
         normalized = control_file.replace("\\", "/")
         if normalized.startswith(".pipeline/"):
             return self.project_root / normalized
-        if normalized in {
-            "claude_handoff.md",
-            "gemini_request.md",
-            "gemini_advice.md",
-            "operator_request.md",
-        }:
+        if control_slot_spec_for_filename(normalized) is not None:
             return self.base_dir / normalized
         if normalized.startswith("./"):
             return self.project_root / normalized[2:]
@@ -536,7 +544,7 @@ class RuntimeSupervisor:
                 "handoff_sha": handoff_sha,
                 "reason": "handoff_already_completed",
                 "blocked_fingerprint": str(entry.get("blocked_fingerprint") or ""),
-                "routed_to": "codex_triage",
+                "routed_to": VERIFY_TRIAGE_ESCALATION,
                 "source_event": str(entry.get("event") or ""),
             }
             if marker["source_event"] in {"verify_blocked_triage_notify", "codex_blocked_triage_notify"}:
@@ -1427,6 +1435,7 @@ class RuntimeSupervisor:
                             int(seen_task.get("control_seq") or -1) == active_control_seq
                             or int(accepted_task.get("control_seq") or -1) == active_control_seq
                             or done_correlated
+                            or activity_reason == "implement_activity_detected"
                             or activity_reason == f"{lane_name.lower()}_activity_detected"
                         )
                         if done_correlated:
@@ -1669,6 +1678,9 @@ class RuntimeSupervisor:
         if stale_operator_control is not None or operator_gate is not None:
             control_block = {
                 "active_control_file": "",
+                "active_control_slot": "",
+                "active_control_canonical_file": "",
+                "active_control_is_legacy_alias": False,
                 "active_control_seq": -1,
                 "active_control_status": "none",
                 "active_control_updated_at": "",
@@ -1681,6 +1693,13 @@ class RuntimeSupervisor:
                     if active_control.get("file")
                     else str((turn_state or {}).get("active_control_file") or "")
                 ),
+                "active_control_slot": str(active_control.get("slot_id") or ""),
+                "active_control_canonical_file": (
+                    f".pipeline/{active_control.get('canonical_file')}"
+                    if active_control.get("canonical_file")
+                    else ""
+                ),
+                "active_control_is_legacy_alias": bool(active_control.get("is_legacy_alias")),
                 "active_control_seq": int(
                     active_control.get("control_seq")
                     if active_control.get("control_seq") is not None
@@ -2346,107 +2365,10 @@ class RuntimeSupervisor:
 
     def _prompt_templates(self) -> dict[str, str]:
         return {
-            "verify": (
-                "ROLE: verify\n"
-                f"OWNER: {self._prompt_owner('verify')}\n"
-                "WORK: {latest_work_path}\n"
-                "VERIFY: {latest_verify_path}\n"
-                "NEXT_CONTROL_SEQ: {next_control_seq}\n"
-                "GOAL:\n"
-                "- verify the latest `/work`, update `/verify`, then write exactly one next control\n"
-                "SCOPE_HINT:\n"
-                "{verify_scope_hint}\n"
-                "READ_FIRST:\n"
-                f"- {self._prompt_read_first_doc('verify')}\n"
-                "- {latest_work_path}\n"
-                "- {latest_verify_path}\n"
-                "OUTPUTS:\n"
-                "- /verify note first\n"
-                "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/claude_handoff.md [implement] | .pipeline/gemini_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
-                "RULES:\n"
-                "- keep `READ_FIRST` to the listed verify-owner root doc only\n"
-                "- choose one exact next slice or one exact operator decision\n"
-                "- do not route commit/push/PR publish work to `.pipeline/claude_handoff.md`; keep it in verify/handoff or advisory because implement prompts forbid commit, push, branch/PR publish\n"
-                "- if you write `.pipeline/claude_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
-                "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
-                "- for next-slice ambiguity / overlap / low-confidence prioritization, open .pipeline/gemini_request.md before .pipeline/operator_request.md\n"
-                "- skip Gemini only for a real operator-only decision, approval/truth-sync, immediate safety, or unavailable/inconclusive Gemini\n"
-                "- after 3+ same-day same-family docs-only truth-sync rounds, choose one bounded docs bundle or escalate"
-            ),
-            "implement": (
-                "ROLE: implement\n"
-                f"OWNER: {self._prompt_owner('implement')}\n"
-                "HANDOFF: {active_handoff_path}\n"
-                "HANDOFF_SHA: {active_handoff_sha}\n"
-                "GOAL:\n"
-                "- do only the handoff; if done, leave one `/work` closeout and stop\n"
-                "READ_FIRST:\n"
-                f"- {self._prompt_read_first_doc('implement')}\n"
-                "- {active_handoff_path}\n"
-                "RULES:\n"
-                "- no commit, push, branch/PR publish, or next-slice choice\n"
-                "- do not write .pipeline/gemini_request.md or .pipeline/operator_request.md yourself\n"
-                "- if the handoff is blocked or not actionable, emit the exact sentinel below and stop\n"
-                "BLOCKED_SENTINEL:\n"
-                "STATUS: implement_blocked\n"
-                "BLOCK_REASON: <short_reason>\n"
-                "BLOCK_REASON_CODE: <reason_code>\n"
-                "REQUEST: codex_triage\n"
-                "ESCALATION_CLASS: codex_triage\n"
-                "HANDOFF: {active_handoff_path}\n"
-                "HANDOFF_SHA: {active_handoff_sha}\n"
-                "BLOCK_ID: {active_handoff_sha}:<short_reason>"
-            ),
-            "advisory": (
-                "ROLE: advisory\n"
-                f"OWNER: {self._prompt_owner('advisory')}\n"
-                "REQUEST: {gemini_request_mention}\n"
-                "WORK: {latest_work_mention}\n"
-                "VERIFY: {latest_verify_mention}\n"
-                "NEXT_CONTROL_SEQ: {next_control_seq}\n"
-                "GOAL:\n"
-                "- leave one advisory log and one `.pipeline/gemini_advice.md`\n"
-                "READ_FIRST:\n"
-                f"- @{self._prompt_read_first_doc('advisory')}\n"
-                "- {gemini_request_mention}\n"
-                "- {latest_work_mention}\n"
-                "- {latest_verify_mention}\n"
-                "OUTPUTS:\n"
-                "- log: {gemini_report_path}\n"
-                "- advice slot: {gemini_advice_path} (STATUS: advice_ready, CONTROL_SEQ: {next_control_seq})\n"
-                "RULES:\n"
-                "- keep `READ_FIRST` to the listed advisory-owner root doc only\n"
-                "- if the request cites exact shipped docs or a current runtime-doc family, inspect those first\n"
-                "- do not widen to `docs/superpowers/**`, `plandoc/**`, or historical planning docs unless the request, latest `/work`, or latest `/verify` cites them as current evidence\n"
-                "- pane-only answer is not completion\n"
-                "- use edit/write tools only; no shell heredoc or redirection\n"
-                "- do not modify other repo files\n"
-                "- keep the recommendation short and exact"
-            ),
-            "followup": (
-                "ROLE: followup\n"
-                f"OWNER: {self._prompt_owner('verify')}\n"
-                "NEXT_CONTROL_SEQ: {next_control_seq}\n"
-                "REQUEST: .pipeline/gemini_request.md\n"
-                "ADVICE: .pipeline/gemini_advice.md\n"
-                "WORK: {latest_work_path}\n"
-                "VERIFY: {latest_verify_path}\n"
-                "GOAL:\n"
-                "- turn the advisory into exactly one next control\n"
-                "READ_FIRST:\n"
-                f"- {self._prompt_read_first_doc('verify')}\n"
-                "- .pipeline/gemini_request.md\n"
-                "- .pipeline/gemini_advice.md\n"
-                "OUTPUTS:\n"
-                "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/claude_handoff.md [implement] | .pipeline/operator_request.md [needs_operator]\n"
-                "RULES:\n"
-                "- keep `READ_FIRST` to the listed verify-owner root doc only\n"
-                "- write exactly one next control\n"
-                "- do not route commit/push/PR publish work to `.pipeline/claude_handoff.md`; keep it in verify/handoff or advisory because implement prompts forbid commit, push, branch/PR publish\n"
-                "- if you write `.pipeline/claude_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
-                "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
-                "- after Gemini advice, use .pipeline/operator_request.md only if it recommends a real operator decision or no truthful exact slice remains"
-            ),
+            "verify": DEFAULT_VERIFY_PROMPT_TEMPLATE,
+            "implement": DEFAULT_IMPLEMENT_PROMPT,
+            "advisory": DEFAULT_ADVISORY_PROMPT,
+            "followup": DEFAULT_FOLLOWUP_PROMPT,
         }
 
     def _start_token_collector(self) -> None:
@@ -2498,6 +2420,19 @@ class RuntimeSupervisor:
             except FileNotFoundError:
                 pass
 
+    def _watcher_pane_target_args(self) -> list[str]:
+        args: list[str] = []
+        for lane in self.runtime_lane_configs or physical_lane_specs():
+            lane_name = str(lane.get("name") or "").strip()
+            if not lane_name:
+                continue
+            option = legacy_watcher_pane_target_arg_for_lane(lane)
+            if not option:
+                continue
+            pane_id = str((self.adapter.pane_for_lane(lane_name) or {}).get("pane_id") or "")
+            args.extend([option, pane_id])
+        return args
+
     def _watcher_shell_command(self) -> str:
         templates = self._prompt_templates()
         watcher_core_path = resolve_project_runtime_file(self.project_root, "watcher_core.py")
@@ -2519,12 +2454,7 @@ class RuntimeSupervisor:
             str(self.base_dir),
             "--repo-root",
             str(self.project_root),
-            "--verify-pane-target",
-            str((self.adapter.pane_for_lane("Codex") or {}).get("pane_id") or ""),
-            "--claude-pane-target",
-            str((self.adapter.pane_for_lane("Claude") or {}).get("pane_id") or ""),
-            "--gemini-pane-target",
-            str((self.adapter.pane_for_lane("Gemini") or {}).get("pane_id") or ""),
+            *self._watcher_pane_target_args(),
             "--verify-prompt",
             templates["verify"],
             "--implement-prompt",

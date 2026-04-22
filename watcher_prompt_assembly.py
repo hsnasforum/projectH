@@ -5,10 +5,22 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
+from pipeline_runtime.role_routes import (
+    ADVISORY_ADVICE_FOLLOWUP_NOTIFY,
+    ADVISORY_RECOVERY_NOTIFY,
+    ADVISORY_REQUEST_NOTIFY,
+    IMPLEMENT_HANDOFF_NOTIFY,
+    VERIFY_TRIAGE_ESCALATION,
+    normalize_verify_triage_escalation,
+)
+from pipeline_runtime.role_harness import role_harness_path
+from pipeline_runtime.schema import control_slot_id_for_filename
+
 
 DEFAULT_IMPLEMENT_PROMPT = (
     "ROLE: implement\n"
     "OWNER: {runtime_implement_owner}\n"
+    "ROLE_HARNESS: {runtime_implement_harness_path}\n"
     "HANDOFF: {active_handoff_path}\n"
     "HANDOFF_SHA: {active_handoff_sha}\n"
     "GOAL:\n"
@@ -17,15 +29,16 @@ DEFAULT_IMPLEMENT_PROMPT = (
     "- {runtime_implement_read_first_doc}\n"
     "- {active_handoff_path}\n"
     "RULES:\n"
+    "- use ROLE_HARNESS as role protocol; current handoff remains execution truth\n"
     "- no commit, push, branch/PR publish, or next-slice choice\n"
-    "- do not write .pipeline/gemini_request.md or .pipeline/operator_request.md yourself\n"
+    "- do not write .pipeline/advisory_request.md or .pipeline/operator_request.md yourself\n"
     "- if the handoff is blocked or not actionable, emit the exact sentinel below and stop\n"
     "BLOCKED_SENTINEL:\n"
     "STATUS: implement_blocked\n"
     "BLOCK_REASON: <short_reason>\n"
     "BLOCK_REASON_CODE: <reason_code>\n"
-    "REQUEST: codex_triage\n"
-    "ESCALATION_CLASS: codex_triage\n"
+    "REQUEST: verify_triage\n"
+    "ESCALATION_CLASS: verify_triage\n"
     "HANDOFF: {active_handoff_path}\n"
     "HANDOFF_SHA: {active_handoff_sha}\n"
     "BLOCK_ID: {active_handoff_sha}:<short_reason>"
@@ -34,21 +47,23 @@ DEFAULT_IMPLEMENT_PROMPT = (
 DEFAULT_ADVISORY_PROMPT = (
     "ROLE: advisory\n"
     "OWNER: {runtime_advisory_owner}\n"
-    "REQUEST: {gemini_request_mention}\n"
+    "ROLE_HARNESS: {runtime_advisory_harness_path}\n"
+    "REQUEST: {advisory_request_mention}\n"
     "WORK: {latest_work_mention}\n"
     "VERIFY: {latest_verify_mention}\n"
     "NEXT_CONTROL_SEQ: {next_control_seq}\n"
     "GOAL:\n"
-    "- leave one advisory log and one `.pipeline/gemini_advice.md`\n"
+    "- leave one advisory log and one `.pipeline/advisory_advice.md`\n"
     "READ_FIRST:\n"
     "- {runtime_advisory_read_first_doc}\n"
-    "- {gemini_request_mention}\n"
+    "- {advisory_request_mention}\n"
     "- {latest_work_mention}\n"
     "- {latest_verify_mention}\n"
     "OUTPUTS:\n"
-    "- log: {gemini_report_path}\n"
-    "- advice slot: {gemini_advice_path} (STATUS: advice_ready, CONTROL_SEQ: {next_control_seq})\n"
+    "- log: {advisory_report_path}\n"
+    "- advice slot: {advisory_advice_path} (STATUS: advice_ready, CONTROL_SEQ: {next_control_seq})\n"
     "RULES:\n"
+    "- use ROLE_HARNESS as role protocol; request/work/verify remain execution truth\n"
     "- keep `READ_FIRST` to the listed advisory-owner root doc only\n"
     "- if the request cites exact shipped docs or a current runtime-doc family, inspect those first\n"
     "- do not widen to `docs/superpowers/**`, `plandoc/**`, or historical planning docs unless the request, latest `/work`, or latest `/verify` cites them as current evidence\n"
@@ -61,24 +76,27 @@ DEFAULT_ADVISORY_PROMPT = (
 DEFAULT_FOLLOWUP_PROMPT = (
     "ROLE: followup\n"
     "OWNER: {runtime_verify_owner}\n"
+    "ROLE_HARNESS: {runtime_verify_harness_path}\n"
+    "COUNCIL_HARNESS: {runtime_council_harness_path}\n"
     "NEXT_CONTROL_SEQ: {next_control_seq}\n"
-    "REQUEST: .pipeline/gemini_request.md\n"
-    "ADVICE: .pipeline/gemini_advice.md\n"
+    "REQUEST: .pipeline/advisory_request.md\n"
+    "ADVICE: .pipeline/advisory_advice.md\n"
     "WORK: {latest_work_path}\n"
     "VERIFY: {latest_verify_path}\n"
     "GOAL:\n"
     "- turn the advisory into exactly one next control\n"
     "READ_FIRST:\n"
     "- {runtime_verify_read_first_doc}\n"
-    "- .pipeline/gemini_request.md\n"
-    "- .pipeline/gemini_advice.md\n"
+    "- .pipeline/advisory_request.md\n"
+    "- .pipeline/advisory_advice.md\n"
     "OUTPUTS:\n"
-    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/claude_handoff.md [implement] | .pipeline/operator_request.md [needs_operator]\n"
+    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/implement_handoff.md [implement] | .pipeline/operator_request.md [needs_operator]\n"
     "RULES:\n"
+    "- use ROLE_HARNESS and COUNCIL_HARNESS as convergence protocol; current request/advice remain execution truth\n"
     "- keep `READ_FIRST` to the listed verify-owner root doc only\n"
     "- write exactly one next control\n"
-    "- do not route commit/push/PR publish work to `.pipeline/claude_handoff.md`; keep it in verify/handoff or advisory because implement prompts forbid commit, push, branch/PR publish\n"
-    "- if you write `.pipeline/claude_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
+    "- do not route commit/push/PR publish work to `.pipeline/implement_handoff.md`; keep it in verify/handoff or advisory because implement prompts forbid commit, push, branch/PR publish\n"
+    "- if you write `.pipeline/implement_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
     "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
     "- after Gemini advice, use .pipeline/operator_request.md only if it recommends a real operator decision or no truthful exact slice remains"
 )
@@ -86,28 +104,31 @@ DEFAULT_FOLLOWUP_PROMPT = (
 DEFAULT_ADVISORY_RECOVERY_PROMPT = (
     "ROLE: advisory_recovery\n"
     "OWNER: {runtime_verify_owner}\n"
-    "REQUEST: .pipeline/gemini_request.md\n"
+    "ROLE_HARNESS: {runtime_verify_harness_path}\n"
+    "COUNCIL_HARNESS: {runtime_council_harness_path}\n"
+    "REQUEST: .pipeline/advisory_request.md\n"
     "REQUEST_SEQ: {stale_control_seq}\n"
     "PENDING_AGE_SEC: {advisory_pending_age_sec}\n"
     "NEXT_CONTROL_SEQ: {next_control_seq}\n"
     "WORK: {latest_work_path}\n"
     "VERIFY: {latest_verify_path}\n"
     "GOAL:\n"
-    "- recover a stale advisory request that did not produce a current `.pipeline/gemini_advice.md`\n"
+    "- recover a stale advisory request that did not produce a current `.pipeline/advisory_advice.md`\n"
     "- inspect the request and write exactly one next control so automation keeps moving\n"
     "READ_FIRST:\n"
     "- {runtime_verify_read_first_doc}\n"
-    "- .pipeline/gemini_request.md\n"
+    "- .pipeline/advisory_request.md\n"
     "- {latest_work_path}\n"
     "- {latest_verify_path}\n"
     "OUTPUTS:\n"
-    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/claude_handoff.md [implement] | .pipeline/gemini_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
+    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/implement_handoff.md [implement] | .pipeline/advisory_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
     "RULES:\n"
+    "- use ROLE_HARNESS and COUNCIL_HARNESS to converge stale advisory into one next control\n"
     "- keep `READ_FIRST` to the listed verify-owner root doc only\n"
     "- write exactly one next control\n"
-    "- do not write `.pipeline/gemini_advice.md` on behalf of the advisory owner\n"
-    "- if advisory is still needed, write a newer, narrower `.pipeline/gemini_request.md`\n"
-    "- if you write `.pipeline/claude_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
+    "- do not write `.pipeline/advisory_advice.md` on behalf of the advisory owner\n"
+    "- if advisory is still needed, write a newer, narrower `.pipeline/advisory_request.md`\n"
+    "- if you write `.pipeline/implement_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
     "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
     "- use `.pipeline/operator_request.md` only for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, auth/credential blocker, or external publication boundary"
 )
@@ -115,6 +136,8 @@ DEFAULT_ADVISORY_RECOVERY_PROMPT = (
 DEFAULT_CONTROL_RECOVERY_PROMPT = (
     "ROLE: control_recovery\n"
     "OWNER: {runtime_verify_owner}\n"
+    "ROLE_HARNESS: {runtime_verify_harness_path}\n"
+    "COUNCIL_HARNESS: {runtime_council_harness_path}\n"
     "STALE_CONTROL: {stale_control_path}\n"
     "STALE_CONTROL_SEQ: {stale_control_seq}\n"
     "REASON: {stale_control_reason}\n"
@@ -130,14 +153,15 @@ DEFAULT_CONTROL_RECOVERY_PROMPT = (
     "- {latest_work_path}\n"
     "- {latest_verify_path}\n"
     "OUTPUTS:\n"
-    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/claude_handoff.md [implement] | .pipeline/gemini_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
+    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/implement_handoff.md [implement] | .pipeline/advisory_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
     "RULES:\n"
+    "- use ROLE_HARNESS and COUNCIL_HARNESS to converge recovery into one next control\n"
     "- keep `READ_FIRST` to the listed verify-owner root doc only\n"
     "- write exactly one next control\n"
-    "- do not route commit/push/PR publish work to `.pipeline/claude_handoff.md`; keep it in verify/handoff or advisory because implement prompts forbid commit, push, branch/PR publish\n"
-    "- if you write `.pipeline/claude_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
+    "- do not route commit/push/PR publish work to `.pipeline/implement_handoff.md`; keep it in verify/handoff or advisory because implement prompts forbid commit, push, branch/PR publish\n"
+    "- if you write `.pipeline/implement_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
     "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
-    "- for next-slice ambiguity / overlap / low-confidence prioritization, write .pipeline/gemini_request.md before .pipeline/operator_request.md\n"
+    "- for next-slice ambiguity / overlap / low-confidence prioritization, write .pipeline/advisory_request.md before .pipeline/operator_request.md\n"
     "- do not leave runtime idle on stale control alone\n"
     "- skip Gemini only for a real operator-only decision, approval/truth-sync, immediate safety, or unavailable/inconclusive Gemini"
 )
@@ -145,6 +169,8 @@ DEFAULT_CONTROL_RECOVERY_PROMPT = (
 DEFAULT_OPERATOR_RETRIAGE_PROMPT = (
     "ROLE: operator_retriage\n"
     "OWNER: {runtime_verify_owner}\n"
+    "ROLE_HARNESS: {runtime_verify_harness_path}\n"
+    "COUNCIL_HARNESS: {runtime_council_harness_path}\n"
     "ACTIVE_CONTROL: {operator_request_path}\n"
     "ACTIVE_CONTROL_SEQ: {stale_control_seq}\n"
     "PENDING_AGE_SEC: {operator_wait_age_sec}\n"
@@ -161,22 +187,25 @@ DEFAULT_OPERATOR_RETRIAGE_PROMPT = (
     "- {latest_work_path}\n"
     "- {latest_verify_path}\n"
     "OUTPUTS:\n"
-    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/claude_handoff.md [implement] | .pipeline/gemini_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
+    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/implement_handoff.md [implement] | .pipeline/advisory_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
     "- for `commit_push_bundle_authorization + internal_only`: perform the scoped commit/push in this verify/handoff round, write a `/work` closeout with commit SHA and push result, then write the next control\n"
     "- for `pr_creation_gate + gate_24h + release_gate`: create or reuse a draft PR for the pushed branch in this verify/handoff round, record the PR URL in `/work`, then write the next control\n"
     "RULES:\n"
+    "- use ROLE_HARNESS and COUNCIL_HARNESS before preserving operator wait\n"
     "- keep `READ_FIRST` to the listed verify-owner root doc only\n"
     "- write exactly one next control\n"
     "- do not hand commit/push/PR work to the implement lane; implement prompts forbid commit, push, branch/PR publish\n"
-    "- if you write `.pipeline/claude_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
+    "- if you write `.pipeline/implement_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
     "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
-    "- prefer .pipeline/gemini_request.md before .pipeline/operator_request.md when the only blocker is next-slice ambiguity\n"
+    "- prefer .pipeline/advisory_request.md before .pipeline/operator_request.md when the only blocker is next-slice ambiguity\n"
     "- only keep STATUS: needs_operator if a real operator-only decision, approval/truth-sync blocker, or immediate safety stop still remains right now"
 )
 
 DEFAULT_VERIFY_TRIAGE_PROMPT = (
     "ROLE: verify_triage\n"
     "OWNER: {runtime_verify_owner}\n"
+    "ROLE_HARNESS: {runtime_verify_harness_path}\n"
+    "COUNCIL_HARNESS: {runtime_council_harness_path}\n"
     "HANDOFF: {active_handoff_path}\n"
     "HANDOFF_SHA: {active_handoff_sha}\n"
     "BLOCK_SOURCE: {blocked_source}\n"
@@ -198,21 +227,24 @@ DEFAULT_VERIFY_TRIAGE_PROMPT = (
     "- {latest_work_path}\n"
     "- {latest_verify_path}\n"
     "OUTPUTS:\n"
-    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/claude_handoff.md [implement] | .pipeline/gemini_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
+    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/implement_handoff.md [implement] | .pipeline/advisory_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
     "RULES:\n"
+    "- use ROLE_HARNESS and COUNCIL_HARNESS to converge the block into one next control\n"
     "- keep `READ_FIRST` to the listed verify-owner root doc only\n"
     "- write exactly one next control\n"
-    "- do not reissue commit/push as `.pipeline/claude_handoff.md`; implement prompts forbid commit, push, branch/PR publish\n"
-    "- if you write `.pipeline/claude_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
+    "- do not reissue commit/push as `.pipeline/implement_handoff.md`; implement prompts forbid commit, push, branch/PR publish\n"
+    "- if you write `.pipeline/implement_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
     "- do not leave the implement owner waiting on an operator-choice menu\n"
     "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
-    "- for next-slice ambiguity / overlap / low-confidence prioritization, write .pipeline/gemini_request.md before .pipeline/operator_request.md\n"
+    "- for next-slice ambiguity / overlap / low-confidence prioritization, write .pipeline/advisory_request.md before .pipeline/operator_request.md\n"
     "- skip Gemini only for a real operator-only decision, approval/truth-sync, immediate safety, or unavailable/inconclusive Gemini"
 )
 
 DEFAULT_VERIFY_PROMPT_TEMPLATE = (
     "ROLE: verify\n"
     "OWNER: {runtime_verify_owner}\n"
+    "ROLE_HARNESS: {runtime_verify_harness_path}\n"
+    "COUNCIL_HARNESS: {runtime_council_harness_path}\n"
     "WORK: {latest_work_path}\n"
     "VERIFY: {latest_verify_path}\n"
     "NEXT_CONTROL_SEQ: {next_control_seq}\n"
@@ -226,14 +258,15 @@ DEFAULT_VERIFY_PROMPT_TEMPLATE = (
     "- {latest_verify_path}\n"
     "OUTPUTS:\n"
     "- /verify note first\n"
-    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/claude_handoff.md [implement] | .pipeline/gemini_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
+    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/implement_handoff.md [implement] | .pipeline/advisory_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
     "RULES:\n"
+    "- use ROLE_HARNESS and COUNCIL_HARNESS for role boundaries and convergence; latest `/work` and `/verify` remain truth\n"
     "- keep `READ_FIRST` to the listed verify-owner root doc only\n"
     "- choose one exact next slice or one exact operator decision\n"
-    "- do not route commit/push/PR publish work to `.pipeline/claude_handoff.md`; keep it in verify/handoff or advisory because implement prompts forbid commit, push, branch/PR publish\n"
-    "- if you write `.pipeline/claude_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
+    "- do not route commit/push/PR publish work to `.pipeline/implement_handoff.md`; keep it in verify/handoff or advisory because implement prompts forbid commit, push, branch/PR publish\n"
+    "- if you write `.pipeline/implement_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
     "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
-    "- for next-slice ambiguity / overlap / low-confidence prioritization, open .pipeline/gemini_request.md before .pipeline/operator_request.md\n"
+    "- for next-slice ambiguity / overlap / low-confidence prioritization, open .pipeline/advisory_request.md before .pipeline/operator_request.md\n"
     "- skip Gemini only for a real operator-only decision, approval/truth-sync, immediate safety, or unavailable/inconclusive Gemini\n"
     "- after 3+ same-day same-family docs-only truth-sync rounds, choose one bounded docs bundle or escalate"
 )
@@ -256,6 +289,7 @@ class PromptDispatchSpec:
     control_seq: int = -1
     expected_status: str = ""
     expected_control_path: str = ""
+    expected_control_slot: str = ""
     expected_control_seq: int = -1
     require_active_control: bool = False
 
@@ -264,10 +298,10 @@ class WatcherPromptAssembler:
     def __init__(
         self,
         *,
-        report_gemini_dir: Path,
-        claude_handoff_path: Path,
-        gemini_request_path: Path,
-        gemini_advice_path: Path,
+        advisory_report_dir: Path,
+        implement_handoff_path: Path,
+        advisory_request_path: Path,
+        advisory_advice_path: Path,
         operator_request_path: Path,
         runtime_enabled_lanes: list[str],
         runtime_controls: Mapping[str, Any],
@@ -282,7 +316,7 @@ class WatcherPromptAssembler:
         get_latest_work_path: Callable[[], Optional[Path]],
         get_latest_same_day_verify_path_for_work: Callable[[Optional[Path]], Optional[Path]],
         get_latest_same_day_verify_path: Callable[[Optional[Path]], Optional[Path]],
-        infer_gemini_report_hint: Callable[[Optional[Path]], str],
+        infer_advisory_report_hint: Callable[[Optional[Path]], str],
         get_active_control_signal: Callable[[], Any],
         get_next_control_seq: Callable[[], int],
         read_control_seq_from_path: Callable[[Path], int],
@@ -293,10 +327,10 @@ class WatcherPromptAssembler:
         get_path_sha256: Callable[[Path], str],
         extract_changed_file_paths_from_round_note: Callable[[Optional[Path]], list[str]],
     ) -> None:
-        self.report_gemini_dir = report_gemini_dir
-        self.claude_handoff_path = claude_handoff_path
-        self.gemini_request_path = gemini_request_path
-        self.gemini_advice_path = gemini_advice_path
+        self.advisory_report_dir = advisory_report_dir
+        self.implement_handoff_path = implement_handoff_path
+        self.advisory_request_path = advisory_request_path
+        self.advisory_advice_path = advisory_advice_path
         self.operator_request_path = operator_request_path
         self.runtime_enabled_lanes = runtime_enabled_lanes
         self.runtime_controls = runtime_controls
@@ -311,7 +345,7 @@ class WatcherPromptAssembler:
         self._get_latest_work_path = get_latest_work_path
         self._get_latest_same_day_verify_path_for_work = get_latest_same_day_verify_path_for_work
         self._get_latest_same_day_verify_path = get_latest_same_day_verify_path
-        self._infer_gemini_report_hint = infer_gemini_report_hint
+        self._infer_advisory_report_hint = infer_advisory_report_hint
         self._get_active_control_signal = get_active_control_signal
         self._get_next_control_seq = get_next_control_seq
         self._read_control_seq_from_path = read_control_seq_from_path
@@ -385,6 +419,23 @@ class WatcherPromptAssembler:
             "lane_role": functional_role,
         }
 
+    def _control_slot_id_for_path(self, path: Path) -> str:
+        return control_slot_id_for_filename(path.name)
+
+    def _active_control_path_for_slot(self, slot_id: str, expected_status: str, fallback: Path) -> Path:
+        active_control = self._get_active_control_signal()
+        if active_control is None:
+            return fallback
+        active_slot_id = str(getattr(active_control, "slot_id", "") or "").strip()
+        if not active_slot_id:
+            active_slot_id = control_slot_id_for_filename(getattr(active_control, "path", None))
+        if active_slot_id != slot_id:
+            return fallback
+        if str(getattr(active_control, "status", "") or "") != expected_status:
+            return fallback
+        path = getattr(active_control, "path", None)
+        return path if isinstance(path, Path) else fallback
+
     def verify_scope_hint_for_work(self, work_path: Optional[Path]) -> tuple[str, str]:
         changed_paths = self._extract_changed_file_paths_from_round_note(work_path)
         if changed_paths and all(path.endswith(".md") for path in changed_paths):
@@ -403,23 +454,23 @@ class WatcherPromptAssembler:
             self._get_latest_same_day_verify_path_for_work(latest_work)
             or self._get_latest_same_day_verify_path(latest_work)
         )
-        gemini_report_hint = self._infer_gemini_report_hint(latest_work)
-        gemini_report_path = self.report_gemini_dir / gemini_report_hint
+        advisory_report_hint = self._infer_advisory_report_hint(latest_work)
+        advisory_report_path = self.advisory_report_dir / advisory_report_hint
         active_control = self._get_active_control_signal()
         return {
             "latest_work_path": self._repo_relative(latest_work),
             "latest_verify_path": self._repo_relative(latest_verify),
-            "gemini_report_dir": self._repo_relative(self.report_gemini_dir) + "/",
-            "gemini_report_hint": gemini_report_hint,
-            "gemini_report_path": self._repo_relative(gemini_report_path),
-            "claude_handoff_path": self._repo_relative(self.claude_handoff_path),
-            "gemini_request_path": self._repo_relative(self.gemini_request_path),
-            "gemini_advice_path": self._repo_relative(self.gemini_advice_path),
+            "advisory_report_dir": self._repo_relative(self.advisory_report_dir) + "/",
+            "advisory_report_hint": advisory_report_hint,
+            "advisory_report_path": self._repo_relative(advisory_report_path),
+            "implement_handoff_path": self._repo_relative(self.implement_handoff_path),
+            "advisory_request_path": self._repo_relative(self.advisory_request_path),
+            "advisory_advice_path": self._repo_relative(self.advisory_advice_path),
             "operator_request_path": self._repo_relative(self.operator_request_path),
             "latest_work_mention": self._path_mention(latest_work),
             "latest_verify_mention": self._path_mention(latest_verify),
-            "gemini_request_mention": self._path_mention(self.gemini_request_path),
-            "gemini_advice_mention": self._path_mention(self.gemini_advice_path),
+            "advisory_request_mention": self._path_mention(self.advisory_request_path),
+            "advisory_advice_mention": self._path_mention(self.advisory_advice_path),
             "active_control_path": self._repo_relative(active_control.path if active_control else None),
             "active_control_status": active_control.status if active_control else "none",
             "active_control_sig": active_control.sig if active_control else "",
@@ -432,6 +483,10 @@ class WatcherPromptAssembler:
             "runtime_implement_read_first_doc": self._role_read_first_doc("implement"),
             "runtime_verify_read_first_doc": self._role_read_first_doc("verify"),
             "runtime_advisory_read_first_doc": self._role_read_first_doc("advisory"),
+            "runtime_implement_harness_path": role_harness_path("implement"),
+            "runtime_verify_harness_path": role_harness_path("verify"),
+            "runtime_advisory_harness_path": role_harness_path("advisory"),
+            "runtime_council_harness_path": role_harness_path("council"),
             "runtime_advisory_enabled": "true" if self.runtime_controls.get("advisory_enabled") else "false",
             "runtime_operator_stop_enabled": "true" if self.runtime_controls.get("operator_stop_enabled") else "false",
             "runtime_session_arbitration_enabled": "true" if self.runtime_controls.get("session_arbitration_enabled") else "false",
@@ -448,7 +503,7 @@ class WatcherPromptAssembler:
         }
 
     def build_implement_prompt_context(self, handoff_path: Optional[Path] = None) -> dict[str, str]:
-        handoff = handoff_path or self.claude_handoff_path
+        handoff = handoff_path or self.implement_handoff_path
         return {
             **self.build_runtime_prompt_context(),
             "active_handoff_path": self._repo_relative(handoff),
@@ -463,13 +518,19 @@ class WatcherPromptAssembler:
             self.implement_prompt.format(**self.build_implement_prompt_context(handoff_path))
         )
 
-    def format_verify_triage_prompt(self, signal: Mapping[str, object]) -> str:
+    def format_verify_triage_prompt(
+        self,
+        signal: Mapping[str, object],
+        handoff_path: Optional[Path] = None,
+    ) -> str:
         context = {
-            **self.build_implement_prompt_context(self.claude_handoff_path),
+            **self.build_implement_prompt_context(handoff_path or self.implement_handoff_path),
             "blocked_source": str(signal.get("source", "sentinel")),
             "blocked_reason": str(signal.get("reason", "implement_blocked")),
             "blocked_reason_code": str(signal.get("reason_code", "")),
-            "blocked_escalation_class": str(signal.get("escalation_class", "codex_triage")),
+            "blocked_escalation_class": normalize_verify_triage_escalation(
+                signal.get("escalation_class", VERIFY_TRIAGE_ESCALATION)
+            ),
             "blocked_fingerprint": str(signal.get("fingerprint", "")),
             "blocked_excerpt": "\n".join(
                 f"- {line}" for line in signal.get("excerpt_lines", [])
@@ -516,11 +577,11 @@ class WatcherPromptAssembler:
             "역할:\n"
             "- watcher가 active Claude session의 live side question 신호를 감지해 남긴 non-canonical draft\n"
             "- 이 파일은 자동 실행 슬롯이 아니며 watcher와 Claude/Gemini는 이 파일만으로 dispatch하지 않음\n"
-            "- Codex가 보고 short lane reply로 끝낼지, `.pipeline/gemini_request.md`로 승격할지 결정해야 함\n\n"
+            "- Codex가 보고 short lane reply로 끝낼지, `.pipeline/advisory_request.md`로 승격할지 결정해야 함\n\n"
             "감지 이유:\n"
             f"{reason_lines}\n\n"
             "현재 round-start contract:\n"
-            f"- `.pipeline/claude_handoff.md`: {context['claude_handoff_path']}\n"
+            f"- `.pipeline/implement_handoff.md`: {context['implement_handoff_path']}\n"
             f"- latest `/work`: {context['latest_work_path']}\n"
             f"- latest `/verify`: {context['latest_verify_path']}\n\n"
             "관찰 excerpt:\n"
@@ -536,16 +597,20 @@ class WatcherPromptAssembler:
         reason: str,
         handoff_path: Optional[Path] = None,
     ) -> PromptDispatchSpec:
-        prompt_path = handoff_path or self.claude_handoff_path
+        prompt_path = handoff_path or self._active_control_path_for_slot(
+            "implement_handoff",
+            "implement",
+            self.implement_handoff_path,
+        )
         control_seq = self._read_control_seq_from_path(prompt_path)
         identity = self._lane_identity(
             functional_role="implement",
-            notify_kind="claude_handoff",
+            notify_kind=IMPLEMENT_HANDOFF_NOTIFY,
             control_seq=control_seq,
         )
         return PromptDispatchSpec(
             pending_key=str(identity["pending_key"]),
-            notify_kind="claude_handoff",
+            notify_kind=IMPLEMENT_HANDOFF_NOTIFY,
             lane_role="implement",
             functional_role="implement",
             lane_id=str(identity["lane_id"]),
@@ -567,34 +632,33 @@ class WatcherPromptAssembler:
             control_seq=control_seq,
             expected_status="implement",
             expected_control_path=str(prompt_path.name),
+            expected_control_slot=self._control_slot_id_for_path(prompt_path),
             expected_control_seq=control_seq,
             require_active_control=True,
         )
 
-    def build_claude_dispatch_spec(
-        self,
-        reason: str,
-        handoff_path: Optional[Path] = None,
-    ) -> PromptDispatchSpec:
-        return self.build_implement_dispatch_spec(reason, handoff_path)
-
-    def build_gemini_dispatch_spec(self, reason: str) -> PromptDispatchSpec:
-        control_seq = self._read_control_seq_from_path(self.gemini_request_path)
+    def build_advisory_dispatch_spec(self, reason: str) -> PromptDispatchSpec:
+        prompt_path = self._active_control_path_for_slot(
+            "advisory_request",
+            "request_open",
+            self.advisory_request_path,
+        )
+        control_seq = self._read_control_seq_from_path(prompt_path)
         identity = self._lane_identity(
             functional_role="advisory",
-            notify_kind="gemini_request",
+            notify_kind=ADVISORY_REQUEST_NOTIFY,
             control_seq=control_seq,
         )
         return PromptDispatchSpec(
             pending_key=str(identity["pending_key"]),
-            notify_kind="gemini_request",
+            notify_kind=ADVISORY_REQUEST_NOTIFY,
             lane_role="advisory",
             functional_role="advisory",
             lane_id=str(identity["lane_id"]),
             agent_kind=str(identity["agent_kind"]),
             model_alias=None,
             prompt=self.format_runtime_prompt(self.advisory_prompt),
-            prompt_path=self.gemini_request_path,
+            prompt_path=prompt_path,
             notify_label="notify_advisory_owner",
             raw_event="advisory_notify",
             raw_payload={
@@ -608,28 +672,34 @@ class WatcherPromptAssembler:
             },
             control_seq=control_seq,
             expected_status="request_open",
-            expected_control_path=str(self.gemini_request_path.name),
+            expected_control_path=str(prompt_path.name),
+            expected_control_slot=self._control_slot_id_for_path(prompt_path),
             expected_control_seq=control_seq,
             require_active_control=True,
         )
 
     def build_verify_followup_dispatch_spec(self, reason: str) -> PromptDispatchSpec:
-        control_seq = self._read_control_seq_from_path(self.gemini_advice_path)
+        prompt_path = self._active_control_path_for_slot(
+            "advisory_advice",
+            "advice_ready",
+            self.advisory_advice_path,
+        )
+        control_seq = self._read_control_seq_from_path(prompt_path)
         identity = self._lane_identity(
             functional_role="verify",
-            notify_kind="gemini_advice_followup",
+            notify_kind=ADVISORY_ADVICE_FOLLOWUP_NOTIFY,
             control_seq=control_seq,
         )
         return PromptDispatchSpec(
             pending_key=str(identity["pending_key"]),
-            notify_kind="gemini_advice_followup",
+            notify_kind=ADVISORY_ADVICE_FOLLOWUP_NOTIFY,
             lane_role="verify",
             functional_role="verify",
             lane_id=str(identity["lane_id"]),
             agent_kind=str(identity["agent_kind"]),
             model_alias=None,
             prompt=self.format_runtime_prompt(self.followup_prompt),
-            prompt_path=self.gemini_advice_path,
+            prompt_path=prompt_path,
             notify_label="notify_verify_followup",
             raw_event="verify_followup_notify",
             raw_payload={
@@ -643,35 +713,38 @@ class WatcherPromptAssembler:
             },
             control_seq=control_seq,
             expected_status="advice_ready",
-            expected_control_path=str(self.gemini_advice_path.name),
+            expected_control_path=str(prompt_path.name),
+            expected_control_slot=self._control_slot_id_for_path(prompt_path),
             expected_control_seq=control_seq,
             require_active_control=True,
         )
-
-    def build_codex_followup_dispatch_spec(self, reason: str) -> PromptDispatchSpec:
-        return self.build_verify_followup_dispatch_spec(reason)
 
     def build_advisory_recovery_dispatch_spec(
         self,
         marker: Mapping[str, object],
         reason: str,
     ) -> PromptDispatchSpec:
+        prompt_path = self._active_control_path_for_slot(
+            "advisory_request",
+            "request_open",
+            self.advisory_request_path,
+        )
         control_seq = int(marker.get("control_seq") or -1)
         identity = self._lane_identity(
             functional_role="verify",
-            notify_kind="gemini_advisory_recovery",
+            notify_kind=ADVISORY_RECOVERY_NOTIFY,
             control_seq=control_seq,
         )
         return PromptDispatchSpec(
             pending_key=str(identity["pending_key"]),
-            notify_kind="gemini_advisory_recovery",
+            notify_kind=ADVISORY_RECOVERY_NOTIFY,
             lane_role="verify",
             functional_role="verify",
             lane_id=str(identity["lane_id"]),
             agent_kind=str(identity["agent_kind"]),
             model_alias=None,
             prompt=self.format_advisory_recovery_prompt(marker),
-            prompt_path=self.gemini_request_path,
+            prompt_path=prompt_path,
             notify_label="notify_verify_advisory_recovery",
             raw_event="verify_advisory_recovery_notify",
             raw_payload={
@@ -685,7 +758,8 @@ class WatcherPromptAssembler:
                 ),
             },
             control_seq=control_seq,
-            expected_control_path=str(self.gemini_request_path.name),
+            expected_control_path=str(prompt_path.name),
+            expected_control_slot=self._control_slot_id_for_path(prompt_path),
             expected_control_seq=control_seq,
             expected_status="request_open",
             require_active_control=True,
@@ -699,12 +773,12 @@ class WatcherPromptAssembler:
         control_seq = int(marker.get("control_seq") or -1)
         identity = self._lane_identity(
             functional_role="verify",
-            notify_kind="codex_control_recovery",
+            notify_kind="verify_control_recovery",
             control_seq=control_seq,
         )
         return PromptDispatchSpec(
             pending_key=str(identity["pending_key"]),
-            notify_kind="codex_control_recovery",
+            notify_kind="verify_control_recovery",
             lane_role="verify",
             functional_role="verify",
             lane_id=str(identity["lane_id"]),
@@ -726,6 +800,7 @@ class WatcherPromptAssembler:
             },
             control_seq=control_seq,
             expected_control_path=str(self.operator_request_path.name),
+            expected_control_slot=self._control_slot_id_for_path(self.operator_request_path),
             expected_control_seq=control_seq,
             expected_status="needs_operator",
         )
@@ -738,12 +813,12 @@ class WatcherPromptAssembler:
         control_seq = int(marker.get("control_seq") or -1)
         identity = self._lane_identity(
             functional_role="verify",
-            notify_kind="codex_operator_retriage",
+            notify_kind="verify_operator_retriage",
             control_seq=control_seq,
         )
         return PromptDispatchSpec(
             pending_key=str(identity["pending_key"]),
-            notify_kind="codex_operator_retriage",
+            notify_kind="verify_operator_retriage",
             lane_role="verify",
             functional_role="verify",
             lane_id=str(identity["lane_id"]),
@@ -765,6 +840,7 @@ class WatcherPromptAssembler:
             },
             control_seq=control_seq,
             expected_control_path=str(self.operator_request_path.name),
+            expected_control_slot=self._control_slot_id_for_path(self.operator_request_path),
             expected_control_seq=control_seq,
             expected_status="needs_operator",
         )
@@ -774,23 +850,29 @@ class WatcherPromptAssembler:
         signal: Mapping[str, object],
         reason: str,
     ) -> PromptDispatchSpec:
-        control_seq = self._read_control_seq_from_path(self.claude_handoff_path)
-        handoff_sha = self._get_path_sha256(self.claude_handoff_path)
+        prompt_path = self._active_control_path_for_slot(
+            "implement_handoff",
+            "implement",
+            self.implement_handoff_path,
+        )
+        control_seq = self._read_control_seq_from_path(prompt_path)
+        handoff_sha = self._get_path_sha256(prompt_path)
         identity = self._lane_identity(
             functional_role="verify",
-            notify_kind="codex_blocked_triage",
+            notify_kind="verify_blocked_triage",
             control_seq=control_seq,
         )
+        prompt = self.format_verify_triage_prompt(signal, prompt_path)
         return PromptDispatchSpec(
             pending_key=str(identity["pending_key"]),
-            notify_kind="codex_blocked_triage",
+            notify_kind="verify_blocked_triage",
             lane_role="verify",
             functional_role="verify",
             lane_id=str(identity["lane_id"]),
             agent_kind=str(identity["agent_kind"]),
             model_alias=None,
-            prompt=self.format_verify_triage_prompt(signal),
-            prompt_path=self.claude_handoff_path,
+            prompt=prompt,
+            prompt_path=prompt_path,
             notify_label="notify_verify_blocked_triage",
             raw_event="verify_blocked_triage_notify",
             raw_payload={
@@ -798,7 +880,9 @@ class WatcherPromptAssembler:
                 "blocked_reason": str(signal.get("reason", "implement_blocked")),
                 "blocked_reason_code": str(signal.get("reason_code", "")),
                 "blocked_source": str(signal.get("source", "sentinel")),
-                "blocked_escalation_class": str(signal.get("escalation_class", "codex_triage")),
+                "blocked_escalation_class": normalize_verify_triage_escalation(
+                    signal.get("escalation_class", VERIFY_TRIAGE_ESCALATION)
+                ),
                 "blocked_fingerprint": str(signal.get("fingerprint", "")),
                 "handoff_sha": handoff_sha,
                 **self._identity_payload(
@@ -809,7 +893,8 @@ class WatcherPromptAssembler:
                 ),
             },
             control_seq=control_seq,
-            expected_control_path=str(self.claude_handoff_path.name),
+            expected_control_path=str(prompt_path.name),
+            expected_control_slot=self._control_slot_id_for_path(prompt_path),
             expected_control_seq=control_seq,
             expected_status="implement",
         )

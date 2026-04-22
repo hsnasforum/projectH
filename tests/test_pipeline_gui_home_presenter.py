@@ -65,7 +65,7 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
     def test_build_control_presentation_normal_active(self) -> None:
         presentation = build_control_presentation(
             {
-                "active": {"file": "claude_handoff.md", "status": "implement", "label": "implement handoff", "mtime": 1.0},
+                "active": {"file": "implement_handoff.md", "status": "implement", "label": "implement handoff", "mtime": 1.0},
                 "stale": [{"file": "operator_request.md", "status": "needs_operator", "label": "operator wait", "mtime": 0.5}],
             },
             None,
@@ -107,8 +107,8 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
     def test_build_control_presentation_preserves_seq_provenance(self) -> None:
         presentation = build_control_presentation(
             {
-                "active": {"file": "claude_handoff.md", "status": "implement", "label": "implement handoff", "mtime": 1.0, "control_seq": 7},
-                "stale": [{"file": "gemini_request.md", "status": "request_open", "label": "advisory request", "mtime": 0.5, "control_seq": 5}],
+                "active": {"file": "implement_handoff.md", "status": "implement", "label": "implement handoff", "mtime": 1.0, "control_seq": 7},
+                "stale": [{"file": "advisory_request.md", "status": "request_open", "label": "advisory request", "mtime": 0.5, "control_seq": 5}],
             },
             None,
         )
@@ -120,7 +120,7 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
     def test_build_control_presentation_prefers_verify_activity_over_handoff_label(self) -> None:
         presentation = build_control_presentation(
             {
-                "active": {"file": "claude_handoff.md", "status": "implement", "label": "implement handoff", "mtime": 1.0, "control_seq": 8},
+                "active": {"file": "implement_handoff.md", "status": "implement", "label": "implement handoff", "mtime": 1.0, "control_seq": 8},
                 "stale": [],
             },
             {
@@ -132,13 +132,13 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
 
         self.assertIn("verify 실행 중", presentation.active_text)
         self.assertIn("family-closure.md", presentation.active_text)
-        self.assertIn("claude_handoff.md", presentation.active_text)
+        self.assertIn("implement_handoff.md", presentation.active_text)
         self.assertEqual(presentation.active_fg, "#93c5fd")
 
     def test_build_control_presentation_mtime_fallback_without_seq(self) -> None:
         presentation = build_control_presentation(
             {
-                "active": {"file": "gemini_advice.md", "status": "advice_ready", "label": "verify follow-up", "mtime": 2.0},
+                "active": {"file": "advisory_advice.md", "status": "advice_ready", "label": "verify follow-up", "mtime": 2.0},
                 "stale": [],
             },
             None,

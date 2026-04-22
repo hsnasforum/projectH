@@ -416,7 +416,7 @@ class TokenCollectorTest(unittest.TestCase):
                         "slot": None,
                         "agent": "gemini",
                         "pane_target": "%3",
-                        "artifact_path": ".pipeline/gemini_request.md",
+                        "artifact_path": ".pipeline/advisory_request.md",
                         "raw_path": "/tmp/raw.jsonl",
                         "raw_line_no": 2,
                         "log_family": "experimental",

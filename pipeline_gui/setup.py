@@ -123,7 +123,7 @@ _TMPL_AGENTS = """\
 
 ## Work Flow
 
-1. Implement owner works from `.pipeline/claude_handoff.md`
+1. Implement owner works from `.pipeline/implement_handoff.md`
 2. Verify/handoff owner verifies the latest `/work` against the current tree
 3. If verify/handoff owner cannot resolve, advisory owner provides advisory
 4. Verify/handoff owner writes the next handoff or operator stop
@@ -138,7 +138,11 @@ Use the wrappers narrowly and in order:
 4. `round-handoff` when verification truth must be rerun and reconciled
 5. `next-slice-triage` only after `/work` and `/verify` are current
 
-Historical slot filenames remain stable even when the bound owner changes.
+Canonical control filenames are role-based: `.pipeline/implement_handoff.md`,
+`.pipeline/advisory_request.md`, `.pipeline/advisory_advice.md`, and
+`.pipeline/operator_request.md`. Historical aliases `.pipeline/claude_handoff.md`,
+`.pipeline/gemini_request.md`, and `.pipeline/gemini_advice.md` are read-only
+compatibility inputs for the same logical slots.
 The runtime adapter always carries the full three-lane physical catalog (`Claude`, `Codex`, `Gemini`) and marks each lane with `enabled` plus bound `roles`.
 Support policy is shape-based rather than name-whitelist based: distinct implement/verify 3-lane with advisory enabled is `supported`, distinct implement/verify 2-lane with advisory disabled is also `supported`, one-lane self-verify is `experimental`, and invalid profiles are `blocked`/`broken`.
 """
@@ -184,7 +188,7 @@ Role ownership follows active `role_bindings`; this file is Gemini's root memory
 - When reviewing code or decisions, cite specific file paths and line numbers.
 - Prefer the smallest correct recommendation over broad suggestions.
 - Do not modify repo files directly unless explicitly asked with edit/write tools.
-- Write advisory output only to designated slots (.pipeline/gemini_advice.md).
+- Write advisory output only to designated slots (.pipeline/advisory_advice.md).
 
 ## Output Format
 

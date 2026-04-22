@@ -186,7 +186,7 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                     {
                         "event_type": "control_duplicate_ignored",
                         "payload": {
-                            "control_file": ".pipeline/claude_handoff.md",
+                            "control_file": ".pipeline/implement_handoff.md",
                             "control_seq": 154,
                             "reason": "handoff_already_completed",
                         },
@@ -488,9 +488,9 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                         "event_type": "lane_input_deferred",
                         "payload": {
                             "lane": "Codex",
-                            "reason": "gemini_advice_updated",
+                            "reason": "advisory_advice_updated",
                             "defer_reason": "lane_busy",
-                            "control_file": "gemini_advice.md",
+                            "control_file": "advisory_advice.md",
                             "control_seq": 265,
                         },
                     }
@@ -500,7 +500,7 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
 
             self.assertTrue(
                 any(
-                    "lane_input_deferred Codex gemini_advice_updated lane_busy seq=265 gemini_advice.md" in line
+                    "lane_input_deferred Codex advisory_advice_updated lane_busy seq=265 advisory_advice.md" in line
                     for line in runtime_view["event_lines"]
                 )
             )
@@ -525,7 +525,7 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                         "event_type": "lane_input_deferred",
                         "payload": {
                             "lane": "Codex",
-                            "reason": "gemini_advice_updated",
+                            "reason": "advisory_advice_updated",
                             "defer_reason": "lane_busy",
                         },
                     }
@@ -544,7 +544,7 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                 details = pipeline_launcher.focused_lane_details(project, runtime_view, 0)
 
             self.assertIn("name=Codex", details)
-            self.assertTrue(any("lane_input_deferred gemini_advice_updated" in line for line in details))
+            self.assertTrue(any("lane_input_deferred advisory_advice_updated" in line for line in details))
 
     def test_pane_snapshots_include_verify_round_context_for_codex(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-pane-round-context-") as tmp:
@@ -724,7 +724,7 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                     "work_mtime": 0.0,
                     "verify_name": "—",
                     "verify_mtime": 0.0,
-                    "control_file": ".pipeline/claude_handoff.md",
+                    "control_file": ".pipeline/implement_handoff.md",
                     "control_seq": 697,
                     "control_status": "implement",
                     "autonomy_mode": "normal",
@@ -763,7 +763,7 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                     "work_mtime": 0.0,
                     "verify_name": "—",
                     "verify_mtime": 0.0,
-                    "control_file": ".pipeline/claude_handoff.md",
+                    "control_file": ".pipeline/implement_handoff.md",
                     "control_seq": 700,
                     "control_status": "implement",
                     "autonomy_mode": "normal",

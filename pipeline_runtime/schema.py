@@ -8,24 +8,105 @@ import re
 import subprocess
 import time
 from collections import deque
+from dataclasses import dataclass
+from functools import cmp_to_key
 from pathlib import Path
 from typing import Any
 
 from .lane_catalog import physical_lane_order
 
+@dataclass(frozen=True)
+class ControlSlotSpec:
+    slot_id: str
+    canonical_filename: str
+    status: str
+    label: str
+    legacy_filenames: tuple[str, ...] = ()
+
+    @property
+    def accepted_filenames(self) -> tuple[str, ...]:
+        return (self.canonical_filename, *self.legacy_filenames)
+
+
+CONTROL_SLOT_SPECS: tuple[ControlSlotSpec, ...] = (
+    ControlSlotSpec(
+        slot_id="implement_handoff",
+        canonical_filename="implement_handoff.md",
+        legacy_filenames=("claude_handoff.md",),
+        status="implement",
+        label="implement handoff",
+    ),
+    ControlSlotSpec(
+        slot_id="advisory_request",
+        canonical_filename="advisory_request.md",
+        legacy_filenames=("gemini_request.md",),
+        status="request_open",
+        label="advisory request",
+    ),
+    ControlSlotSpec(
+        slot_id="advisory_advice",
+        canonical_filename="advisory_advice.md",
+        legacy_filenames=("gemini_advice.md",),
+        status="advice_ready",
+        label="verify follow-up",
+    ),
+    ControlSlotSpec(
+        slot_id="operator_request",
+        canonical_filename="operator_request.md",
+        status="needs_operator",
+        label="operator wait",
+    ),
+)
+
+_CONTROL_SLOT_BY_ID: dict[str, ControlSlotSpec] = {
+    spec.slot_id: spec for spec in CONTROL_SLOT_SPECS
+}
+_CONTROL_SLOT_BY_FILENAME: dict[str, ControlSlotSpec] = {
+    filename: spec
+    for spec in CONTROL_SLOT_SPECS
+    for filename in spec.accepted_filenames
+}
+
 CONTROL_SLOT_STATUSES: dict[str, str] = {
-    "claude_handoff.md": "implement",
-    "gemini_request.md": "request_open",
-    "gemini_advice.md": "advice_ready",
-    "operator_request.md": "needs_operator",
+    filename: spec.status for filename, spec in _CONTROL_SLOT_BY_FILENAME.items()
 }
 
 CONTROL_SLOT_LABELS: dict[str, str] = {
-    "claude_handoff.md": "implement handoff",
-    "gemini_request.md": "advisory request",
-    "gemini_advice.md": "verify follow-up",
-    "operator_request.md": "operator wait",
+    filename: spec.label for filename, spec in _CONTROL_SLOT_BY_FILENAME.items()
 }
+
+
+def iter_control_slot_specs() -> tuple[ControlSlotSpec, ...]:
+    return CONTROL_SLOT_SPECS
+
+
+def control_slot_spec(slot_id: str) -> ControlSlotSpec | None:
+    return _CONTROL_SLOT_BY_ID.get(str(slot_id or "").strip())
+
+
+def control_slot_spec_for_filename(filename: str | Path | None) -> ControlSlotSpec | None:
+    name = Path(str(filename or "")).name
+    return _CONTROL_SLOT_BY_FILENAME.get(name)
+
+
+def control_slot_id_for_filename(filename: str | Path | None) -> str:
+    spec = control_slot_spec_for_filename(filename)
+    return spec.slot_id if spec else ""
+
+
+def canonical_control_filename(slot_id_or_filename: str | Path | None) -> str:
+    spec = control_slot_spec(str(slot_id_or_filename or ""))
+    if spec is None:
+        spec = control_slot_spec_for_filename(slot_id_or_filename)
+    return spec.canonical_filename if spec else Path(str(slot_id_or_filename or "")).name
+
+
+def control_filenames_equivalent(left: str | Path | None, right: str | Path | None) -> bool:
+    left_spec = control_slot_spec_for_filename(left)
+    right_spec = control_slot_spec_for_filename(right)
+    if left_spec is not None and right_spec is not None:
+        return left_spec.slot_id == right_spec.slot_id
+    return Path(str(left or "")).name == Path(str(right or "")).name
 
 RUNTIME_LANE_ORDER = physical_lane_order()
 _CONTROL_HEADER_LINE_RE = re.compile(r"^\s*([A-Z][A-Z0-9_]*):\s*(.*?)\s*$")
@@ -447,38 +528,68 @@ def _read_control_header(path: Path) -> tuple[str | None, int | None]:
     return status, control_seq
 
 
+def _compare_control_slot_entries(left: dict[str, Any], right: dict[str, Any]) -> int:
+    left_seq = left.get("control_seq")
+    right_seq = right.get("control_seq")
+    left_has_seq = isinstance(left_seq, int)
+    right_has_seq = isinstance(right_seq, int)
+    if left_has_seq != right_has_seq:
+        return -1 if left_has_seq else 1
+    if left_has_seq and right_has_seq and left_seq != right_seq:
+        return -1 if left_seq > right_seq else 1
+
+    same_logical_slot = str(left.get("slot_id") or "") == str(right.get("slot_id") or "")
+    if same_logical_slot and bool(left.get("is_legacy_alias")) != bool(right.get("is_legacy_alias")):
+        return -1 if not left.get("is_legacy_alias") else 1
+
+    left_mtime = float(left.get("mtime") or 0.0)
+    right_mtime = float(right.get("mtime") or 0.0)
+    if left_mtime != right_mtime:
+        return -1 if left_mtime > right_mtime else 1
+
+    if bool(left.get("is_legacy_alias")) != bool(right.get("is_legacy_alias")):
+        return -1 if not left.get("is_legacy_alias") else 1
+
+    left_file = str(left.get("file") or "")
+    right_file = str(right.get("file") or "")
+    if left_file == right_file:
+        return 0
+    return -1 if left_file < right_file else 1
+
+
+def sort_control_slot_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(entries, key=cmp_to_key(_compare_control_slot_entries))
+
+
 def parse_control_slots(pipeline_dir: Path) -> dict[str, Any]:
     entries: list[dict[str, Any]] = []
-    for filename, expected_status in CONTROL_SLOT_STATUSES.items():
-        slot_path = pipeline_dir / filename
-        if not slot_path.exists():
-            continue
-        try:
-            mtime = slot_path.stat().st_mtime
-        except OSError:
-            continue
-        status, control_seq = _read_control_header(slot_path)
-        if status != expected_status:
-            continue
-        entries.append(
-            {
-                "file": filename,
-                "status": status,
-                "label": CONTROL_SLOT_LABELS[filename],
-                "mtime": mtime,
-                "control_seq": control_seq,
-            }
-        )
+    for spec in CONTROL_SLOT_SPECS:
+        for filename in spec.accepted_filenames:
+            slot_path = pipeline_dir / filename
+            if not slot_path.exists():
+                continue
+            try:
+                mtime = slot_path.stat().st_mtime
+            except OSError:
+                continue
+            status, control_seq = _read_control_header(slot_path)
+            if status != spec.status:
+                continue
+            entries.append(
+                {
+                    "file": filename,
+                    "status": status,
+                    "label": spec.label,
+                    "mtime": mtime,
+                    "control_seq": control_seq,
+                    "slot_id": spec.slot_id,
+                    "canonical_file": spec.canonical_filename,
+                    "is_legacy_alias": filename != spec.canonical_filename,
+                }
+            )
     if not entries:
         return {"active": None, "stale": []}
-    entries.sort(
-        key=lambda entry: (
-            entry["control_seq"] is not None,
-            entry["control_seq"] if entry["control_seq"] is not None else -1,
-            entry["mtime"],
-        ),
-        reverse=True,
-    )
+    entries = sort_control_slot_entries(entries)
     return {"active": entries[0], "stale": entries[1:]}
 
 

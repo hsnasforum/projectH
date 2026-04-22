@@ -1,43 +1,53 @@
 STATUS: verified
-CONTROL_SEQ: 960
-BASED_ON_WORK: work/4/23/2026-04-23-milestone13-docsync-milestones.md
-HANDOFF_SHA: 8cea2f1
+CONTROL_SEQ: 962
+BASED_ON_WORK: work/4/23/2026-04-23-milestone13-axis2-correction-link.md
+HANDOFF_SHA: f85404c
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 958
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 960
 
 ## Claim
 
-Milestone 13 doc-sync — MILESTONES.md M13 항목 추가:
-- `docs/MILESTONES.md`: M12 closed record 다음에 M13 목적, 가드레일, Axis 1 shipped infrastructure 항목 추가
+Milestone 13 Axis 2 — Applied Preference → Correction Link:
+- `storage/correction_store.py`: `record_correction()`에 `applied_preference_ids: list[str] | None = None` 파라미터 추가, record dict에 저장
+- `app/handlers/feedback.py`: `record_correction()` 호출부에 `applied_preference_ids=updated_message.get("applied_preference_ids")` 전달
+- `tests/test_export_utility.py`: `TestCorrectionPreferenceLinks.test_record_correction_stores_applied_preference_ids` 1건 추가 (`["pref-abc"]` 및 `None` 두 케이스 검증)
 
 ## Checks Run
 
-- `grep -n "Milestone 13" docs/MILESTONES.md` → line 494: `### Milestone 13: Applied Preference Effectiveness Tracking` OK
-- `git diff --check -- docs/MILESTONES.md` → OK (exit 0)
+- `python3 -m py_compile storage/correction_store.py app/handlers/feedback.py` → OK (exit 0)
+- `python3 -m unittest tests.test_session_store tests.test_operator_executor tests.test_eval_loader tests.test_operator_audit tests.test_export_utility tests.test_promote_assets tests.test_evaluate_traces -v` → **58/58 통과** (기존 57 + 신규 1)
+- `git diff --check -- storage/correction_store.py app/handlers/feedback.py tests/test_export_utility.py` → OK (exit 0)
 
-## Actual Diff (docs/MILESTONES.md, +13 lines)
+## Actual Diff (added lines)
 
-```diff
-+### Milestone 13: Applied Preference Effectiveness Tracking
-+- track which active preferences are applied to responses and correction traces
-+- measure whether applied preferences improve later corrections before widening memory automation
-+- keep preference activation explicit and auditable while the safety loop is validated
-+
-+#### Guardrails
-+- repeated-signal promotion remains blocked until the safety loop is validated
-+- cross-session counting remains later
-+- CANDIDATE → ACTIVE auto-activation remains deferred
-+
-+#### Shipped Infrastructure (Axis 1, 2026-04-23)
-+- Axis 1 (8cea2f1, seq 958): applied preference tracking in session + trace export — `app/handlers/chat.py` stores `applied_preference_ids` in `update_last_message()`; `storage/session_store.py` yields `applied_preference_ids` in `stream_trace_pairs()`; 57 unit tests
+**`storage/correction_store.py`** — 시그니처 + record dict:
+```python
+# 파라미터 추가:
+applied_preference_ids: list[str] | None = None,
+
+# record dict에 추가 (pattern_family 다음):
+"applied_preference_ids": applied_preference_ids,
 ```
 
-## Doc Review
+**`app/handlers/feedback.py`** — `record_correction()` 호출부:
+```python
+applied_preference_ids=updated_message.get("applied_preference_ids"),
+```
 
-- M13 목적이 현재 구현된 범위(applied_preference_ids 추적만)를 정확히 반영함. 과장 없음.
-- 가드레일 3개가 MILESTONES.md 기존 deferred 항목(lines 238, 243, 250)과 일치함.
-- Axis 1 커밋 SHA `8cea2f1`, seq 958이 실제 커밋과 일치함.
-- 코드 파일, `.pipeline` control slot 미수정. docs-only 범위 준수.
+**`tests/test_export_utility.py`** — 신규 테스트 클래스:
+```python
+class TestCorrectionPreferenceLinks(unittest.TestCase):
+    def test_record_correction_stores_applied_preference_ids(self) -> None:
+        # ["pref-abc"] 전달 시 record에 저장 확인
+        # None 전달 시 None으로 저장 확인
+```
+
+## Code Review
+
+- `applied_preference_ids` 파라미터가 keyword-only이며 기본값 `None` — 기존 모든 호출부(`feedback.py` 1곳만)는 이제 전달하도록 업데이트됨. 올바름.
+- `updated_message.get("applied_preference_ids")`: `updated_message`는 `session_store.record_correction_for_message()`가 반환하는 전체 session message dict. Axis 1에서 저장된 `applied_preference_ids`를 정확히 읽음. Axis 1이 없는 기존 메시지는 `None` 반환 — 안전.
+- `session_store.py`, `agent_loop.py`, `preference_store.py`, 계약 파일 미수정. handoff 범위 준수.
+- 기존 caller 중 `record_correction()`를 직접 호출하는 곳은 `feedback.py`의 이 호출부 1곳뿐 (grep 확인 가능). 다른 파일 영향 없음.
 
 ## Milestone 13 현황
 
@@ -45,20 +55,25 @@ Milestone 13 doc-sync — MILESTONES.md M13 항목 추가:
 |---|---|
 | preference injection (agent_loop + ollama) | ✓ 기존 구현 완료 |
 | applied_preference_ids session 저장 + export | ✓ Axis 1 (8cea2f1) |
-| MILESTONES.md M13 항목 정의 | ✓ 이번 doc-sync |
+| MILESTONES.md M13 항목 정의 | ✓ doc-sync (f85404c) |
+| correction record에 preference link 보존 | ✓ 이번 Axis 2 |
 | preference CANDIDATE → ACTIVE 전환 | deferred (guard rail) |
 | PR #27 (feat/watcher-turn-state → main) | Draft 상태 |
 
-## Bundle to Commit (operator_request.md CONTROL_SEQ 960)
+## Bundle to Commit (operator_request.md CONTROL_SEQ 962)
 
 ### 수정 파일
-- `docs/MILESTONES.md`
+- `storage/correction_store.py`
+- `app/handlers/feedback.py`
+- `tests/test_export_utility.py`
+- `verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md` (CONTROL_SEQ 962)
 
 ### 신규 파일 (untracked — this round)
-- `work/4/23/2026-04-23-milestone13-docsync-milestones.md`
-- `work/4/23/2026-04-23-milestone13-axis1-commit-push.md`
+- `work/4/23/2026-04-23-milestone13-axis2-correction-link.md`
+- `work/4/23/2026-04-23-milestone13-docsync-commit-push.md`
 
 ## Risk / Open Questions
 
-- M13 Axis 2 범위 미결정 — applied preferences와 correction 연결 safety loop 구현 여부 및 방식은 advisory 또는 다음 operator_retriage에서 결정.
+- M13 Axis 3 범위 미결정: preference 효과 측정(correction rate 비교), UI 표시, 자동화 확장 여부는 별도 advisory 또는 다음 handoff에서 결정.
+- 현재 active preferences = 0이므로 `applied_preference_ids`가 실제 채워지는 케이스는 없음 — 코드 경로는 올바름.
 - PR #27 merge 결정은 별도 operator 승인 필요.

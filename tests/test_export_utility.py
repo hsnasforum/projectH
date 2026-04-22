@@ -183,5 +183,34 @@ class TestPreferenceExport(unittest.TestCase):
             })
 
 
+class TestCorrectionPreferenceLinks(unittest.TestCase):
+    def test_record_correction_stores_applied_preference_ids(self) -> None:
+        from storage.correction_store import CorrectionStore
+
+        with TemporaryDirectory() as base_dir:
+            store = CorrectionStore(base_dir=str(Path(base_dir) / "corrections"))
+            with_preferences = store.record_correction(
+                artifact_id="artifact-pref",
+                session_id="sess-pref",
+                source_message_id="msg-pref",
+                original_text="original text",
+                corrected_text="corrected text",
+                applied_preference_ids=["pref-abc"],
+            )
+            without_preferences = store.record_correction(
+                artifact_id="artifact-none",
+                session_id="sess-none",
+                source_message_id="msg-none",
+                original_text="another original text",
+                corrected_text="another corrected text",
+                applied_preference_ids=None,
+            )
+
+            self.assertIsNotNone(with_preferences)
+            self.assertEqual(with_preferences["applied_preference_ids"], ["pref-abc"])
+            self.assertIsNotNone(without_preferences)
+            self.assertIsNone(without_preferences["applied_preference_ids"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -128,6 +128,7 @@ class FeedbackHandlerMixin:
                         ),
                         original_text=original_draft,
                         corrected_text=serialized_corrected_text,
+                        applied_preference_ids=updated_message.get("applied_preference_ids"),
                     )
                 except Exception:
                     pass

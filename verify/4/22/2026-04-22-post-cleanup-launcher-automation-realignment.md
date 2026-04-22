@@ -1512,3 +1512,37 @@ CONTROL_SEQ 836 → `.pipeline/operator_request.md` (STATUS: needs_operator)
 
 CONTROL_SEQ 838 → `.pipeline/operator_request.md` (STATUS: needs_operator)
 - 이유: Milestone 8 service fixture set 완성 (7개 전 family). bundle commit/push는 operator 승인 경계.
+
+---
+
+## CONTROL_SEQ 839 구현 검증 (NEXT_CONTROL_SEQ: 840)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-milestone8-shipped-axis-doc-sync.md`
+
+### 검증 결과
+
+**docs/MILESTONES.md Milestone 8 섹션 (lines 431–434):**
+- `- Axis 1 shipped: core/eval_contracts.py — EvalFixtureFamily StrEnum (7 families), EVAL_QUALITY_AXES frozenset (6 axes), EVAL_FIXTURE_FAMILY_AXES mapping, EvalArtifactCoreTrace TypedDict (seq 826)` ✅
+- `- Axis 2 shipped: first service fixture correction_reuse_001.json + .gitignore !data/eval/ exception (seqs 830-831)` ✅
+- `- Axis 3 shipped: eval/fixture_loader.py unit helper + scope_suggestion_safety_001.json fixture (seq 835)` ✅
+- `- Axis 4 shipped: remaining 5 service fixtures completing all 7 families (seq 837); suggested_scope value constraints and family-specific trace extensions deferred until reviewed-memory planning opens` ✅
+- handoff 명세와 정확히 일치 ✅
+- `suggested_scope` value constraints + family-specific trace extensions deferred 상태 유지 ✅
+- Python source / fixture / eval 파일 무수정 ✅
+- `git diff --check -- docs/MILESTONES.md` → **OK** ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. 4줄 정확히 추가됨. deferred 상태 정확히 기록.
+
+### 남은 리스크 (CONTROL_SEQ 839 이후)
+
+- docs bundle commit/push 미처리 (docs/MILESTONES.md + work notes)
+- Milestone 8 deferred 항목: `CandidateReviewSuggestedScope` enum, storage enforcement, fixture unit tests, `eval/__init__.py` export, e2e later stage
+
+### 다음 control
+
+CONTROL_SEQ 840 → `.pipeline/operator_request.md` (STATUS: needs_operator)
+- 이유: Milestone 8 docs truth-sync 완료. docs/MILESTONES.md + work notes bundle commit/push는 operator 승인 경계.

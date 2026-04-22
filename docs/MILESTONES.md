@@ -428,6 +428,10 @@
 - keep approval-backed save as supporting evidence only and never treat it as content-quality improvement
 - stage the rollout as manual placeholder -> service fixture -> unit helper -> e2e later
 - measure whether stored memory reduces repeated mistakes on recurring document tasks without claiming model learning
+- Axis 1 shipped: `core/eval_contracts.py` — `EvalFixtureFamily` StrEnum (7 families), `EVAL_QUALITY_AXES` frozenset (6 axes), `EVAL_FIXTURE_FAMILY_AXES` mapping, `EvalArtifactCoreTrace` TypedDict (seq 826)
+- Axis 2 shipped: first service fixture `correction_reuse_001.json` + `.gitignore` `!data/eval/` exception (seqs 830-831)
+- Axis 3 shipped: `eval/fixture_loader.py` unit helper + `scope_suggestion_safety_001.json` fixture (seq 835)
+- Axis 4 shipped: remaining 5 service fixtures completing all 7 families (seq 837); `suggested_scope` value constraints and family-specific trace extensions deferred until reviewed-memory planning opens
 
 ## Later, After The Memory Phase
 

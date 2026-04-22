@@ -83,6 +83,47 @@ class TestExecuteOperatorAction(unittest.TestCase):
         finally:
             os.unlink(tmp_path)
 
+    def test_local_file_edit_rollback_restores_content(self) -> None:
+        from core.operator_executor import rollback_operator_action
+        with NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("original for rollback test")
+            tmp_path = f.name
+        backup_path = None
+        try:
+            write_record = {
+                "action_kind": "local_file_edit",
+                "target_id": tmp_path,
+                "content": "updated content",
+                "is_reversible": True,
+            }
+            write_result = execute_operator_action(write_record)
+            self.assertTrue(write_result.get("written"))
+            backup_path = write_result.get("backup_path")
+            self.assertIsNotNone(backup_path)
+            rollback_record = {
+                "action_kind": "local_file_edit",
+                "target_id": tmp_path,
+                "backup_path": backup_path,
+            }
+            rollback_result = rollback_operator_action(rollback_record)
+            self.assertTrue(rollback_result.get("restored"))
+            with open(tmp_path, encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), "original for rollback test")
+        finally:
+            os.unlink(tmp_path)
+            if backup_path and os.path.exists(backup_path):
+                os.unlink(backup_path)
+
+    def test_rollback_missing_backup_returns_error(self) -> None:
+        from core.operator_executor import rollback_operator_action
+        result = rollback_operator_action({
+            "action_kind": "local_file_edit",
+            "target_id": "/tmp/any_file.txt",
+            "backup_path": "/nonexistent/backup/path.txt",
+        })
+        self.assertFalse(result.get("restored"))
+        self.assertIn("백업 파일 없음", result.get("error", ""))
+
     def test_unsupported_kind_raises(self) -> None:
         with self.assertRaises(ValueError):
             execute_operator_action({"action_kind": "shell_execute", "target_id": "/tmp/x"})

@@ -52,3 +52,31 @@ def execute_operator_action(record: dict) -> dict:
         "action_kind": action_kind,
         "target_id": target_id,
     }
+
+
+def rollback_operator_action(record: dict) -> dict:
+    action_kind = str(record.get("action_kind") or "").strip()
+    if action_kind != OperatorActionKind.LOCAL_FILE_EDIT:
+        raise ValueError(f"Rollback unsupported for action kind: {action_kind!r}")
+    backup_path = str(record.get("backup_path") or "").strip()
+    if not backup_path:
+        raise ValueError("backup_path is required for rollback")
+    target_id = str(record.get("target_id") or "").strip()
+    if not target_id:
+        raise ValueError("target_id is required for rollback")
+    backup = Path(backup_path)
+    if not backup.exists():
+        return {
+            "restored": False,
+            "error": f"[백업 파일 없음: {backup_path}]",
+            "action_kind": action_kind,
+            "target_id": target_id,
+        }
+    original_content = backup.read_text(encoding="utf-8", errors="replace")
+    Path(target_id).write_text(original_content, encoding="utf-8")
+    return {
+        "restored": True,
+        "action_kind": action_kind,
+        "target_id": target_id,
+        "backup_path": backup_path,
+    }

@@ -74,6 +74,40 @@ class TestStreamTracePairs(unittest.TestCase):
             store._save("sess-3", data)
             self.assertEqual(list(store.stream_trace_pairs()), [])
 
+    def test_quality_score_in_range_is_high_quality(self) -> None:
+        from core.delta_analysis import compute_correction_delta
+        from scripts.export_traces import _is_high_quality
+        # Moderate rewrite: scores well within [0.20, 0.98]
+        delta = compute_correction_delta(
+            "The assistant summarized the document incorrectly.",
+            "The assistant provided an accurate summary of the document.",
+        )
+        self.assertIsNotNone(delta)
+        self.assertTrue(_is_high_quality(delta.similarity_score))
+
+    def test_trivial_fix_not_high_quality(self) -> None:
+        from core.delta_analysis import compute_correction_delta
+        from scripts.export_traces import _is_high_quality
+        # Single char change in a long string -> ratio > 0.98
+        original = "a" * 200 + "x"
+        corrected = "a" * 200 + "y"
+        delta = compute_correction_delta(original, corrected)
+        self.assertIsNotNone(delta)
+        self.assertFalse(_is_high_quality(delta.similarity_score))
+
+    def test_complete_rewrite_not_high_quality(self) -> None:
+        from core.delta_analysis import compute_correction_delta
+        from scripts.export_traces import _is_high_quality
+        # No shared characters -> ratio near 0
+        delta = compute_correction_delta("aaaaaaaaaaaa", "bbbbbbbbbbbb")
+        self.assertIsNotNone(delta)
+        self.assertFalse(_is_high_quality(delta.similarity_score))
+
+    def test_identical_texts_returns_none_delta(self) -> None:
+        from core.delta_analysis import compute_correction_delta
+        delta = compute_correction_delta("same text", "same text")
+        self.assertIsNone(delta)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -448,6 +448,7 @@
 - Execution stub shipped: `core/operator_executor.py` — `execute_operator_action()` read-only preview for `local_file_edit` (10 lines), ValueError for other kinds; `_execute_pending_approval` operator_action branch in `core/agent_loop.py` (seq 875)
 - Outcome & audit storage shipped: `operator_action_history` session field + `record_operator_action_outcome()` in `storage/session_store.py`; outcome written after successful execution in `core/agent_loop.py` (seq 879)
 - Failure outcome audit shipped: failed operator actions now recorded in `operator_action_history` with `status="failed"` + `error` field before returning error response in `core/agent_loop.py` (seq 883); Milestone 9 Axes 1–5 complete
+- **Milestone 9 closed** (seqs 866–883): observable and reversible `local_file_edit` action foundation established; actual file write, rollback, UI approval card, `shell_execute`/`session_mutation` execution deferred to a future milestone
 
 ### Why This Is Later
 - Program operation should follow stable correction and preference memory, not precede it.

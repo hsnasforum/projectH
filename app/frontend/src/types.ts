@@ -94,6 +94,10 @@ export interface PendingApproval {
   artifact_id?: string;
   source_message_id?: string;
   save_content_source?: string;
+  action_kind?: string;
+  target_id?: string;
+  audit_trace_required?: boolean;
+  is_reversible?: boolean;
 }
 
 export interface Session {

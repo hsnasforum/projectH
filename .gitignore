@@ -20,6 +20,7 @@ e2e/test-results/
 # Local runtime data
 data/*
 !data/.gitkeep
+!data/eval/
 !data/sessions/
 data/sessions/*
 !data/sessions/.gitkeep

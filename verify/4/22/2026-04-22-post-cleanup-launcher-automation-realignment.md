@@ -1350,3 +1350,76 @@ CONTROL_SEQ 824 → `.pipeline/operator_request.md` (STATUS: needs_operator)
 
 CONTROL_SEQ 827 → `.pipeline/operator_request.md` (STATUS: needs_operator)
 - 이유: Milestone 8 Axis 1 (eval_contracts.py) 완료. 신규 파일 + work notes bundle commit/push는 operator 승인 경계.
+
+---
+
+## CONTROL_SEQ 830 구현 검증 (NEXT_CONTROL_SEQ: 831)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-correction-reuse-service-fixture.md`
+
+### 검증 결과
+
+**data/eval/fixtures/correction_reuse_001.json (신규 파일):**
+- `artifact_id`: "correction_reuse_001" ✅
+- `session_id`: "eval_fixture_session_001" ✅
+- `fixture_family`: "correction_reuse" (= `EvalFixtureFamily.CORRECTION_REUSE`) ✅
+- `eval_axes`: ["correction_reuse", "trace_completeness"] (= `EVAL_FIXTURE_FAMILY_AXES[CORRECTION_REUSE]`) ✅
+- `trace_version`: "1.0" ✅
+- `recorded_at`: "2026-04-22T00:00:00Z" ✅
+- `EvalArtifactCoreTrace` shape 완전 준수 ✅
+- Python source 파일 무수정 확인 ✅
+- `python3 -c "...json.load...assert fixture_family...assert eval_axes..."` → **OK** ✅
+- `python3 -m unittest tests.test_smoke -q` → **150 tests OK** ✅
+- `git diff --check -- data/eval/fixtures/correction_reuse_001.json` → **OK** ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. 단, work note가 스스로 식별한 gitignore 리스크가 실제 존재:
+- `.gitignore` line 21: `data/*` 규칙이 `data/eval/fixtures/correction_reuse_001.json`을 적용
+- `git check-ignore -v` 결과: `.gitignore:21:data/*` 가 해당 파일을 ignore
+- 현재 `git status`에서 파일이 보이지 않음 → commit 불가 상태
+
+### 남은 리스크 (CONTROL_SEQ 830 이후)
+
+- **gitignore 미해결**: `data/eval/` 예외 없으면 fixture 추적 불가. 기존 패턴(`!data/sessions/`, `!data/web-search/`)에 `!data/eval/` 1줄 추가로 해결 가능.
+- eval fixture loader, unit helper, additional fixtures는 후속 슬라이스 대상
+- `suggested_scope` value constraints 미정의 (deferred 유지)
+
+### 다음 control
+
+CONTROL_SEQ 831 → `.pipeline/implement_handoff.md` (STATUS: implement)
+- 이유: `.gitignore` `!data/eval/` 예외 추가 (1줄 변경). 기존 `!data/sessions/` 패턴과 동일. commit 전 필수 선행.
+
+---
+
+## CONTROL_SEQ 831 구현 검증 (NEXT_CONTROL_SEQ: 832)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-eval-gitignore-exception.md`
+
+### 검증 결과
+
+**`.gitignore` 변경 (1줄 추가):**
+- `!data/eval/` — `!data/.gitkeep` 직후, `!data/sessions/` 직전에 삽입됨 ✅
+- `git check-ignore -v data/eval/fixtures/correction_reuse_001.json` → 빈 출력 (NOT ignored) ✅
+- `git status --short data/eval/` → `?? data/eval/` (untracked으로 표시) ✅
+- `git diff --check -- .gitignore` → OK ✅
+- Python source 파일 무수정 확인 ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. `.gitignore` 변경이 handoff 명세와 정확히 일치.
+
+### 남은 리스크 (CONTROL_SEQ 831 이후)
+
+- Milestone 8 Axis 2 bundle commit/push 미처리
+- bundle 구성: `.gitignore`, `data/eval/fixtures/correction_reuse_001.json`, work notes (830 closeout, 831 closeout, 827 closeout), Gemini report (seq 829), verify note
+- eval fixture loader, unit helper, additional fixtures, `suggested_scope` value constraints는 후속 슬라이스 대상
+
+### 다음 control
+
+CONTROL_SEQ 832 → `.pipeline/operator_request.md` (STATUS: needs_operator)
+- 이유: Milestone 8 Axis 2 첫 fixture + gitignore 예외 완료. bundle commit/push는 operator 승인 경계.

@@ -1309,3 +1309,44 @@ CONTROL_SEQ 820 → `.pipeline/operator_request.md` (STATUS: needs_operator)
 
 CONTROL_SEQ 824 → `.pipeline/operator_request.md` (STATUS: needs_operator)
 - 이유: docs/MILESTONES.md doc cleanup 완료. 1파일 docs + work notes bundle commit/push는 operator 승인 경계.
+
+---
+
+## CONTROL_SEQ 826 구현 검증 (NEXT_CONTROL_SEQ: 827)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-milestone8-eval-contracts.md`
+
+### 검증 결과
+
+**core/eval_contracts.py (신규 파일, 78줄):**
+- `EvalFixtureFamily` StrEnum — 7개 family (MILESTONES.md line ~425와 일치) ✅
+  - CORRECTION_REUSE, APPROVAL_FRICTION, REVIEWED_VS_UNREVIEWED_TRACE,
+    SCOPE_SUGGESTION_SAFETY, ROLLBACK_STOP_APPLY, CONFLICT_DEFER_TRACE,
+    EXPLICIT_VS_SAVE_SUPPORT
+- `EVAL_QUALITY_AXES` frozenset[str] — 6개 axis (MILESTONES.md line ~427과 일치) ✅
+  - correction_reuse, approval_friction, scope_safety, reviewability,
+    rollbackability, trace_completeness
+- `EVAL_FIXTURE_FAMILY_AXES` dict[str, frozenset[str]] — 7개 family → axes 매핑 ✅
+- `EvalArtifactCoreTrace` TypedDict (total=False) — 6개 core 필드 ✅
+  - artifact_id, session_id, fixture_family, eval_axes, trace_version, recorded_at
+- 기존 파일(core/contracts.py 등) 무수정 확인 ✅
+- `python3 -m py_compile core/eval_contracts.py` → **OK** ✅
+- `python3 -m unittest tests.test_smoke -q` → **150 tests OK** ✅
+- `git diff --check -- core/eval_contracts.py` → **OK** ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. 파일 내용이 handoff 명세와 정확히 일치.
+
+### 남은 리스크 (CONTROL_SEQ 826 이후)
+
+- Milestone 8 Axis 1 bundle commit/push 미처리
+- service fixtures, unit helpers, family-specific trace extensions 미구현
+- `suggested_scope` value constraints는 후속 Milestone 8 슬라이스 대상
+
+### 다음 control
+
+CONTROL_SEQ 827 → `.pipeline/operator_request.md` (STATUS: needs_operator)
+- 이유: Milestone 8 Axis 1 (eval_contracts.py) 완료. 신규 파일 + work notes bundle commit/push는 operator 승인 경계.

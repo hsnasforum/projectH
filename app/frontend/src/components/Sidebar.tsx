@@ -136,7 +136,7 @@ export default function Sidebar({
                     <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0" title="처리 중" />
                   )}
                   {!backgroundStreaming.has(s.session_id) && completedSessions.has(s.session_id) && (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="2.5" className="shrink-0" title="완료">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="2.5" className="shrink-0" aria-label="완료">
                       <path d="M20 6L9 17l-5-5" />
                     </svg>
                   )}

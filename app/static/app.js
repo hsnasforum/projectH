@@ -1341,6 +1341,7 @@
       if (normalized === "accept") return "검토 수락됨";
       if (normalized === "reject") return "검토 거절됨";
       if (normalized === "defer") return "검토 보류됨";
+      if (normalized === "edit") return "검토 편집됨";
       return "";
     }
 
@@ -2032,9 +2033,10 @@
       accept: "검토 후보를 수락했습니다. 아직 적용되지는 않았습니다.",
       reject: "검토 후보를 거절했습니다.",
       defer: "검토 후보를 보류했습니다.",
+      edit: "검토 후보에 편집 의견을 기록했습니다.",
     };
 
-    async function submitCandidateReview(item, reviewAction) {
+    async function submitCandidateReview(item, reviewAction, reasonNote) {
       if (state.isBusy || !item || typeof item !== "object") return;
       const sourceMessageId = String(item.source_message_id || "").trim();
       const candidateId = String(item.candidate_id || "").trim();
@@ -2053,6 +2055,7 @@
           candidate_id: candidateId,
           candidate_updated_at: candidateUpdatedAt,
           review_action: reviewAction,
+          ...(reasonNote ? { reason_note: reasonNote } : {}),
         }),
       });
       if (data.session) {
@@ -2696,6 +2699,36 @@
             submitCandidateReview(item, "defer");
           });
           actions.appendChild(deferButton);
+
+          const editButton = document.createElement("button");
+          editButton.type = "button";
+          editButton.className = "secondary";
+          editButton.textContent = "편집";
+          editButton.setAttribute("data-testid", "review-queue-edit");
+          editButton.addEventListener("click", () => {
+            const editArea = document.createElement("div");
+            editArea.className = "edit-note-area";
+            const textarea = document.createElement("textarea");
+            textarea.rows = 3;
+            textarea.style.width = "100%";
+            textarea.style.resize = "vertical";
+            textarea.placeholder = "편집 의견 (편집된 문장 또는 메모)";
+            textarea.value = String(item.statement || "").trim();
+            const confirmBtn = document.createElement("button");
+            confirmBtn.type = "button";
+            confirmBtn.className = "secondary";
+            confirmBtn.textContent = "확인";
+            confirmBtn.addEventListener("click", () => {
+              const note = textarea.value.trim();
+              if (!note) return;
+              editArea.remove();
+              submitCandidateReview(item, "edit", note);
+            });
+            editArea.appendChild(textarea);
+            editArea.appendChild(confirmBtn);
+            card.appendChild(editArea);
+          });
+          actions.appendChild(editButton);
 
           card.appendChild(actions);
         }

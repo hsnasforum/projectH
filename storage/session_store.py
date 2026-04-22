@@ -307,7 +307,7 @@ class SessionStore:
         if not artifact_id or not source_message_id:
             return None
 
-        return {
+        normalized = {
             "candidate_id": candidate_id,
             "candidate_updated_at": candidate_updated_at,
             "artifact_id": artifact_id,
@@ -317,6 +317,10 @@ class SessionStore:
             "review_status": review_status,
             "recorded_at": str(record.get("recorded_at") or self._now()),
         }
+        reason_note = self._normalize_multiline_text(record.get("reason_note"))
+        if reason_note:
+            normalized["reason_note"] = reason_note
+        return normalized
 
     def _build_original_response_snapshot_from_message(self, message: Dict[str, Any]) -> Dict[str, Any] | None:
         artifact_id = str(message.get("artifact_id") or "").strip()

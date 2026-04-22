@@ -126,6 +126,7 @@ export interface ChatResponse {
     search_results?: SearchResult[];
     web_search_record_path?: string;
     saved_note_path?: string;
+    applied_preferences?: { description: string; fingerprint: string }[];
   };
   session?: Session;
   error?: { message: string };

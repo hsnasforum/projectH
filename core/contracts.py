@@ -289,12 +289,14 @@ class CandidateReviewAction(StrEnum):
     ACCEPT = "accept"
     REJECT = "reject"
     DEFER = "defer"
+    EDIT = "edit"
 
 
 CANDIDATE_REVIEW_ACTION_TO_STATUS: dict[str, str] = {
     CandidateReviewAction.ACCEPT: "accepted",
     CandidateReviewAction.REJECT: "rejected",
     CandidateReviewAction.DEFER: "deferred",
+    CandidateReviewAction.EDIT: "edited",
 }
 
 

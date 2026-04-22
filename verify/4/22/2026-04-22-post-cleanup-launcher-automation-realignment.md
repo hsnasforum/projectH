@@ -908,3 +908,163 @@ CONTROL_SEQ 799 → `.pipeline/advisory_request.md` (STATUS: request_open)
 - 이유: (1) advisory seq 797 "Axis 4 verified 후 commit" 조건 충족 — bundle 범위 779-798 확정
   및 commit/push 최종 승인 advisory 재확인 필요,
   (2) Milestone 6 다음 sub-item(`session_local` memory signal 등) advisory 없이 자명하지 않음.
+
+---
+
+## CONTROL_SEQ 804 구현 검증 (NEXT_CONTROL_SEQ: 805)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-frontend-typescript-cleanup.md`
+
+### 검증 결과
+
+- `app/frontend/src/api/client.ts:115` `postCorrectedSave` 반환 타입 `Promise<ChatResponse>` 확인 ✅
+- `app/frontend/src/components/Sidebar.tsx:139` `aria-label="완료"` (기존 `title="완료"` 교체) 확인 ✅
+- `app/frontend/src/types.ts:129` `ChatResponse.response` 에 `applied_preferences?` 추가 확인 ✅
+- `app/frontend/src/vite-env.d.ts` 신규 파일, 내용: `/// <reference types="vite/client" />` ✅
+- `(cd app/frontend && npx tsc --noEmit)` → **0 errors** ✅
+- `git diff --check` (4개 파일) → **통과** ✅
+- `python3 -m unittest tests.test_smoke -q` → **150 tests OK** ✅ (Python 변경 없음 회귀 확인)
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. 4건의 TS 오류 모두 수정:
+- `client.ts` return type mismatch → `Promise<ChatResponse>` 교체
+- `Sidebar.tsx` SVG `title` prop 미지원 → `aria-label` 교체
+- `types.ts` `ChatResponse.response` `applied_preferences?` 누락 → 추가
+- CSS side-effect import 선언 없음 → `vite-env.d.ts` 신규 추가
+tsc clean (0 errors), git diff --check OK, test_smoke 150 OK.
+
+### 남은 리스크 (CONTROL_SEQ 804 이후)
+
+- seq 804 변경 (4개 파일 + vite-env.d.ts 신규) 미커밋.
+- `work/4/22/2026-04-22-launcher-milestone6-bundle-commit-push.md` untracked 잔존.
+- `report/gemini/2026-04-22-milestone6-complete-milestone7-entry.md` untracked 잔존.
+- Milestone 7 Axis 2 (CandidateReviewAction EDIT + frontend edit UI) scope 불충분:
+  EDIT status mapping, backend 변경 필요 여부, frontend UI 형태 미확정.
+
+### 다음 control
+
+CONTROL_SEQ 805 → `.pipeline/advisory_request.md` (STATUS: request_open)
+- 이유: (1) seq 804 commit/push 타이밍 확인 필요,
+  (2) Milestone 7 Axis 2 (CandidateReviewAction EDIT) 정확한 구현 scope —
+  EDIT status mapping, 필요한 backend 변경, frontend edit UI 형태 — advisory 없이 자명하지 않음.
+
+---
+
+## CONTROL_SEQ 807 구현 검증 + implement_blocked 트리아지 (NEXT_CONTROL_SEQ: 808)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-milestone7-axis2-candidate-review-edit.md`
+
+### 구현 상태
+
+CONTROL_SEQ 807 handoff 명시 3개 파일 변경 완료:
+- `core/contracts.py:288–298` `CandidateReviewAction.EDIT = "edit"` + `CANDIDATE_REVIEW_ACTION_TO_STATUS["edit"] = "edited"` 추가 ✅
+- `app/handlers/aggregate.py:113` `reason_note` 추출 + `candidate_review_record` dict 포함 ✅
+- `app/static/app.js` 4개 targeted 변경 (formatReviewOutcomeLabel, REVIEW_ACTION_NOTICES, submitCandidateReview, 편집 버튼) ✅
+
+### implement_blocked 블록 진실성 평가
+
+블록: `BLOCK_REASON: storage_reason_note_missing`, `BLOCK_REASON_CODE: contradictory_handoff`
+
+**블록 판정: 유효** — 실제로 `storage/session_store.py:_normalize_candidate_review_record` (lines 310–318) return dict에 `reason_note`가 없어 aggregate.py에서 전달한 `reason_note`가 storage 단에서 silently drop됨.
+
+CONTROL_SEQ 807 handoff의 "`session_store._normalize_candidate_review_record` (line ~232) already handles `reason_note`" 주장은 **오류**:
+- 실제 line 232는 `_normalize_content_reason_record` 안의 코드 (`reason_scope`, `reason_label` 처리 함수)
+- `_normalize_candidate_review_record`는 line 280–319에 위치하며, return dict (line 310–318)에 `reason_note` 처리 없음
+
+`ALLOWED_CANDIDATE_REVIEW_ACTION_TO_STATUS`는 `CANDIDATE_REVIEW_ACTION_TO_STATUS`의 alias (`session_store.py:38`)라 EDIT 검증은 이미 contracts.py 변경으로 OK.
+
+### 검증 실행 결과
+
+- `python3 -m py_compile core/contracts.py app/handlers/aggregate.py` → **OK** ✅
+- `python3 -m unittest tests.test_smoke -q` → **150 tests OK** ✅
+- `git diff --check -- core/contracts.py app/handlers/aggregate.py app/static/app.js` → **OK** ✅
+
+### 남은 리스크 (CONTROL_SEQ 807 이후)
+
+- `_normalize_candidate_review_record` storage gap → CONTROL_SEQ 808 storage 수정 대상
+- 편집 버튼 Playwright smoke 미실행 (EDIT action 브라우저 플로우 미검증)
+- doc sync (README, PRODUCT_SPEC, ACCEPTANCE_CRITERIA) 미처리
+- Axis 1 + Axis 2 bundle commit/push 미처리 (storage fix 완료 후 진행)
+
+### 다음 control
+
+CONTROL_SEQ 808 → `.pipeline/implement_handoff.md` (STATUS: implement)
+- 이유: 블록이 유효하고 수정 대상이 명확함 (`_normalize_candidate_review_record` return dict에
+  `reason_note` 처리 추가). advisory 없이 직접 handoff 가능한 single-function narrow fix.
+
+---
+
+## CONTROL_SEQ 808 구현 검증 (NEXT_CONTROL_SEQ: 809)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-candidate-review-reason-note-storage.md`
+
+### 검증 결과
+
+- `storage/session_store.py:_normalize_candidate_review_record` (line 280–323):
+  - return dict → `normalized` dict로 변경 후 반환 ✅
+  - `reason_note = self._normalize_multiline_text(record.get("reason_note"))` 추가 (line 320) ✅
+  - `if reason_note: normalized["reason_note"] = reason_note` (lines 321–322) ✅
+  - 기존 candidate_id, artifact_id, review_action, review_status 검증 로직 미변경 ✅
+- `python3 -m py_compile storage/session_store.py` → **OK** ✅
+- `python3 -m unittest tests.test_smoke -q` → **150 tests OK** ✅
+- `git diff --check -- storage/session_store.py` → **OK** ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. `_normalize_candidate_review_record` return dict 패턴을
+`_normalize_content_reason_record`와 동일하게 교체. `reason_note` optional field 처리 확인.
+기존 validation 로직(ALLOWED_CANDIDATE_REVIEW_ACTION_TO_STATUS 검증 등) 미변경.
+
+### Milestone 7 Axis 2 전체 구현 완료 상태
+
+| 파일 | 변경 내용 | 검증 |
+|------|----------|------|
+| `core/contracts.py` | EDIT = "edit" + CANDIDATE_REVIEW_ACTION_TO_STATUS["edit"] = "edited" | ✅ py_compile, smoke |
+| `app/handlers/aggregate.py` | reason_note 추출 + candidate_review_record 포함 | ✅ py_compile, smoke |
+| `app/static/app.js` | formatReviewOutcomeLabel, REVIEW_ACTION_NOTICES, submitCandidateReview, 편집 버튼 | ✅ diff --check, smoke |
+| `storage/session_store.py` | _normalize_candidate_review_record reason_note 보존 | ✅ py_compile, smoke |
+
+### 현재 dirty tree (번들 범위)
+
+**Axis 1 (TypeScript cleanup, seq 804):**
+- `app/frontend/src/api/client.ts` (modified)
+- `app/frontend/src/components/Sidebar.tsx` (modified)
+- `app/frontend/src/types.ts` (modified)
+- `app/frontend/src/vite-env.d.ts` (untracked/new)
+
+**Axis 2 (CandidateReviewAction EDIT, seqs 807+808):**
+- `core/contracts.py` (modified)
+- `app/handlers/aggregate.py` (modified)
+- `app/static/app.js` (modified)
+- `storage/session_store.py` (modified)
+
+**Work/verify notes (untracked):**
+- `work/4/22/2026-04-22-frontend-typescript-cleanup.md`
+- `work/4/22/2026-04-22-milestone7-axis2-candidate-review-edit.md`
+- `work/4/22/2026-04-22-candidate-review-reason-note-storage.md`
+- `verify/4/22/2026-04-22-post-cleanup-launcher-automation-realignment.md` (modified)
+
+**기타 untracked (별도 번들):**
+- `report/gemini/2026-04-22-milestone6-complete-milestone7-entry.md`
+- `report/gemini/2026-04-22-milestone7-axis2-review-edit-scope.md`
+- `work/4/22/2026-04-22-launcher-milestone6-bundle-commit-push.md`
+
+### 남은 리스크 (CONTROL_SEQ 808 이후)
+
+- Playwright browser smoke 미실행 (편집 버튼 UI 기능 정확성 미확인)
+- doc sync (README, PRODUCT_SPEC, ACCEPTANCE_CRITERIA) Axis 2 관련 업데이트 미처리
+- Axis 1 + Axis 2 bundle commit/push 미처리 (advisory seq 806: "verified 후 bundle")
+
+### 다음 control
+
+CONTROL_SEQ 809 → `.pipeline/operator_request.md` (STATUS: needs_operator)
+- 이유: Axis 1+2 전체 구현 완료 및 검증됨. advisory seq 806이 bundle commit 권고했으나
+  commit/push 실행은 operator 승인이 필요한 대규모 번들 경계임.
+  doc sync 포함 여부를 operator가 결정할 수 있도록 scope 명시.

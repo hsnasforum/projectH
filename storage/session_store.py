@@ -1051,6 +1051,7 @@ class SessionStore:
                 }
                 patched.pop("candidate_confirmation_record", None)
                 patched.pop("candidate_review_record", None)
+                patched.pop("content_reason_record", None)
                 normalized = self._normalize_message(patched)
                 messages[index] = normalized
                 updated_message = dict(normalized)
@@ -1125,6 +1126,8 @@ class SessionStore:
             if stored_outcome != "corrected":
                 patched.pop("candidate_confirmation_record", None)
                 patched.pop("candidate_review_record", None)
+            if stored_outcome == "accepted_as_is":
+                patched.pop("content_reason_record", None)
             normalized = self._normalize_message(patched)
             messages[index] = normalized
             updated_message = dict(normalized)

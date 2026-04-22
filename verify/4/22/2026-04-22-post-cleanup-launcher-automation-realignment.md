@@ -772,3 +772,40 @@ MILESTONES "keep that bridge action always visible in the correction area, but d
 CONTROL_SEQ 786 → `.pipeline/advisory_request.md` (STATUS: request_open)
 - 이유: (1) advisory seq 784이 "seqs 785까지 commit" 권고 — bundle 범위 확정 필요,
   (2) Milestone 6 Axis 1 이후 다음 sub-item advisory 없이 자명하지 않음.
+
+---
+
+## CONTROL_SEQ 789 구현 검증 (NEXT_CONTROL_SEQ: 790)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-stale-reject-note-surface.md`
+
+### 검증 결과
+
+- `storage/session_store.py:1054` `record_correction_for_message` — `candidate_*` pop 직후 `patched.pop("content_reason_record", None)` 추가 ✅
+- `storage/session_store.py:1129-1130` `record_corrected_outcome_for_artifact` — `if stored_outcome == "accepted_as_is": patched.pop("content_reason_record", None)` 추가 ✅
+- `app/frontend/src/components/MessageBubble.tsx:336-355` — `onContentVerdict && (rejected || message.content_verdict === "rejected")` 블록: "거절됨" 배지 + `content_reason_record?.reason_note` pre-populated `defaultValue`/`key` textarea + `onBlur` non-empty note 저장 ✅
+- 기존 `showRejectNote` popup / reject button / confirm 흐름 미변경 ✅
+- `python3 -m py_compile storage/session_store.py` → **통과** ✅
+- `python3 -m unittest tests.test_smoke` → **150 tests OK** ✅
+- `git diff --check` → **통과** ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. correction 제출과 accepted_as_is 전환 시 `content_reason_record`
+stale 데이터 제거 확인. MessageBubble의 persistent rejected block이 이미 기록된 노트를
+pre-populate하고 blur 시 업데이트. MILESTONES:221-223 준수.
+
+### 남은 리스크 (CONTROL_SEQ 789 이후)
+
+- seq 789 (`storage/session_store.py`, `MessageBubble.tsx`) 미커밋.
+- `work/4/22/2026-04-22-stale-reject-note-surface.md` untracked.
+- `work/4/22/2026-04-22-milestone6-axis1-bundle-commit-push.md` untracked (이전 commit/push 라운드).
+- Milestone 6 Axis 2 완료; 다음 Axis 또는 Milestone 6 잔여 sub-item 미식별.
+
+### 다음 control
+
+CONTROL_SEQ 790 → `.pipeline/advisory_request.md` (STATUS: request_open)
+- 이유: (1) seq 789 commit/push bundle 범위 확정 필요,
+  (2) Milestone 6 다음 sub-item advisory 없이 자명하지 않음 (`docs/MILESTONES.md:226-232` 포함).

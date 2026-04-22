@@ -322,11 +322,6 @@ export default function MessageBubble({
                   )}
                 </>
               )}
-              {onContentVerdict && (rejected || message.content_verdict === "rejected") && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-50 text-red-500">
-                  거절됨
-                </span>
-              )}
               {/* Feedback already given indicator */}
               {message.feedback && (
                 <span className={`
@@ -335,6 +330,26 @@ export default function MessageBubble({
                 `}>
                   {message.feedback === "helpful" ? "도움됨" : "부정확"}
                 </span>
+              )}
+            </div>
+          )}
+          {onContentVerdict && (rejected || message.content_verdict === "rejected") && (
+            <div className="mt-1 space-y-1">
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-50 text-red-500">거절됨</span>
+              {onContentReasonNote && (
+                <div className="flex flex-col gap-1">
+                  <textarea
+                    className="w-full text-[11px] resize-none border border-stone-200 rounded p-1 focus:outline-none"
+                    rows={2}
+                    placeholder="거절 이유 (선택)"
+                    defaultValue={message.content_reason_record?.reason_note ?? ""}
+                    key={message.content_reason_record?.reason_note ?? ""}
+                    onBlur={(e) => {
+                      const note = e.target.value.trim();
+                      if (note) onContentReasonNote(message.message_id, note);
+                    }}
+                  />
+                </div>
               )}
             </div>
           )}

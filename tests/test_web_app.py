@@ -6060,6 +6060,67 @@ class WebAppServiceTest(unittest.TestCase):
             log_text = (tmp_path / "task_log.jsonl").read_text(encoding="utf-8")
             self.assertIn("preference_candidate_recorded", log_text)
 
+    def test_list_preferences_payload_includes_reliability_stats(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                preferences_dir=str(tmp_path / "preferences"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "pref-reliability-session"
+            fingerprint = "pref-reliability-fingerprint"
+            preference = service.preference_store.record_reviewed_candidate_preference(
+                delta_fingerprint=fingerprint,
+                candidate_family="correction_rewrite",
+                description="반복 교정 선호",
+                source_refs={
+                    "session_id": session_id,
+                    "message_id": "msg-reliability-source",
+                    "candidate_id": "candidate-reliability",
+                },
+            )
+
+            session = service.session_store.get_session(session_id)
+            session["messages"].append({
+                "message_id": "msg-reliability-1",
+                "role": "assistant",
+                "artifact_id": "artifact-reliability-1",
+                "artifact_kind": "grounded_brief",
+                "applied_preference_ids": [fingerprint],
+                "corrected_text": "수정된 답변",
+                "original_response_snapshot": {
+                    "artifact_id": "artifact-reliability-1",
+                    "artifact_kind": "grounded_brief",
+                    "draft_text": "원본 답변",
+                    "source_paths": [],
+                },
+                "text": "원본 답변",
+            })
+            session["messages"].append({
+                "message_id": "msg-reliability-2",
+                "role": "assistant",
+                "artifact_kind": "grounded_brief",
+                "applied_preference_ids": [fingerprint],
+                "text": "교정되지 않은 답변",
+            })
+            service.session_store._save(session_id, session)
+
+            prefs = service.list_preferences_payload()
+
+            pref_record = [
+                p for p in prefs["preferences"]
+                if p.get("preference_id") == preference["preference_id"]
+            ][0]
+            self.assertIn("reliability_stats", pref_record)
+            self.assertIsInstance(pref_record["reliability_stats"]["applied_count"], int)
+            self.assertIsInstance(pref_record["reliability_stats"]["corrected_count"], int)
+            self.assertEqual(pref_record["reliability_stats"]["applied_count"], 2)
+            self.assertEqual(pref_record["reliability_stats"]["corrected_count"], 1)
+
     def test_submit_candidate_review_accept_persists_local_preference_candidate_with_sqlite_backend(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

@@ -7,6 +7,7 @@ Frontend JS constants are generated from this file.
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import TypedDict
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +297,20 @@ class CandidateReviewSuggestedScope(StrEnum):
     MESSAGE_ONLY = "message_only"
     FAMILY_SCOPED = "family_scoped"
     GLOBAL_PREFERENCE = "global_preference"
+
+
+class OperatorActionKind(StrEnum):
+    LOCAL_FILE_EDIT = "local_file_edit"
+    SHELL_EXECUTE = "shell_execute"
+    SESSION_MUTATION = "session_mutation"
+
+
+class OperatorActionContract(TypedDict, total=False):
+    action_kind: str
+    target_id: str
+    requested_at: str
+    audit_trace_required: bool
+    is_reversible: bool
 
 
 CANDIDATE_REVIEW_ACTION_TO_STATUS: dict[str, str] = {

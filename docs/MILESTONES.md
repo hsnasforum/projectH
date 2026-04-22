@@ -443,6 +443,7 @@
 - choose one narrow operator surface
 - define action approval, audit, and rollback expectations
 - keep local actions observable and reversible
+- Operator action contract shipped: `OperatorActionKind` StrEnum (`local_file_edit`, `shell_execute`, `session_mutation`) + `OperatorActionContract` TypedDict (5 fields, total=False) in `core/contracts.py` (seq 866); action execution, approval flow, and storage wire-up deferred
 
 ### Why This Is Later
 - Program operation should follow stable correction and preference memory, not precede it.

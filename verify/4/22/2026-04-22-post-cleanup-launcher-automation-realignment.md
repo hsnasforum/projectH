@@ -1806,3 +1806,51 @@ deferred 상태(scope enum, e2e) 보존. Python/test/fixture 파일 무수정.
 
 CONTROL_SEQ 855 → `.pipeline/operator_request.md` (STATUS: needs_operator)
 - 이유: Milestone 8 Axis 6 bundle(seqs 853–854: TypedDicts + docs sync) commit/push는 operator 승인 경계.
+
+---
+
+## CONTROL_SEQ 858 구현 검증 (NEXT_CONTROL_SEQ: 859)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-eval-fixture-family-field-enrichment.md`
+
+### 검증 결과
+
+**`data/eval/fixtures/` — 7개 fixture family-specific 필드 추가:**
+
+| 파일 | 추가 필드 | 값 |
+|------|----------|-----|
+| `correction_reuse_001.json` | `reused_artifact_id`, `reused_correction_id` | `"art_prior_001"`, `"corr_prior_001"` |
+| `approval_friction_001.json` | `approval_latency_sec`, `rejection_count` | `45.5`, `1` |
+| `reviewed_vs_unreviewed_trace_001.json` | `is_reviewed`, `review_action` | `true`, `"accept"` |
+| `scope_suggestion_safety_001.json` | `suggested_scope`, `safety_violation_count` | `"family_scoped"`, `0` |
+| `rollback_stop_apply_001.json` | `is_rollback_possible`, `rollback_target_artifact_id` | `true`, `"art_prev_002"` |
+| `conflict_defer_trace_001.json` | `conflict_type`, `deferral_count` | `"divergent_fact"`, `2` |
+| `explicit_vs_save_support_001.json` | `support_method`, `confidence_score` | `"explicit"`, `0.95` |
+
+- 필드명·타입 모두 `core/eval_contracts.py` TypedDicts(seq 853) 명세와 정확히 일치 ✅
+- advisory seq 857 지정 값과 정확히 일치 ✅
+- 기존 6개 core trace 필드 보존, fixture_family/eval_axes 변경 없음 ✅
+- Python source / test / docs 파일 무수정 ✅
+
+**실행 검증:**
+- `python3 -m unittest tests.test_eval_loader -v` → **Ran 7 tests, OK** ✅
+- `git diff --check -- data/eval/fixtures/` → **OK** ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. 7개 fixture 각각의 family-specific 필드가 TypedDict 명세·advisory 값과
+정확히 일치. core trace 필드 보존. 7 tests 통과. Python/test/docs 무수정.
+
+### 남은 리스크 (CONTROL_SEQ 858 이후)
+
+- 7개 fixture JSON + work note 미커밋.
+- `eval/fixture_loader.py` `_validate()`가 family-specific 필드를 type-check하지 않음 (scope-out 유지).
+- `docs/MILESTONES.md` Axis 7 기록 미추가. 동일 세션 4번째 Milestone 8 docs-only round → 3+ 규칙 적용: operator_request 커밋 지시에 inline MILESTONES.md 편집으로 처리.
+- e2e eval stage deferred 유지.
+
+### 다음 control
+
+CONTROL_SEQ 859 → `.pipeline/operator_request.md` (STATUS: needs_operator)
+- 이유: fixture enrichment bundle commit/push + MILESTONES.md Axis 7 inline 편집(3+ docs-only 규칙에 따라 operator commit 지시에 포함) — operator 승인 경계.

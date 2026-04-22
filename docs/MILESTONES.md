@@ -434,6 +434,7 @@
 - Axis 4 shipped: remaining 5 service fixtures completing all 7 families (seq 837); `suggested_scope` value constraints and family-specific trace extensions deferred until reviewed-memory planning opens
 - Axis 5 shipped: `tests/test_eval_loader.py` (7 unit tests: all-family load + _validate() reject paths) + `eval/__init__.py` `load_fixture` package-level export (seq 843); `CandidateReviewSuggestedScope` enum and e2e stage remain deferred
 - Axis 6 shipped: `core/eval_contracts.py` family-specific TypedDicts (`CorrectionReuseTrace`, `ApprovalFrictionTrace`, `ReviewabilityTrace`, `ScopeSafetyTrace`, `RollbackabilityTrace`, `ConflictDeferTrace`, `ExplicitVsSaveSupportTrace`) + `EVAL_FAMILY_TRACE_CLASS` mapping + `eval/__init__.py` export (seq 853); `CandidateReviewSuggestedScope` enum and e2e stage remain deferred
+- Axis 7 shipped: all 7 service fixtures enriched with family-specific TypedDict fields per seq 853 TypedDicts (seq 858); e2e eval stage remains deferred
 
 ## Later, After The Memory Phase
 

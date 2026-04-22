@@ -1,0 +1,8 @@
+{
+  "artifact_id": "approval_friction_001",
+  "session_id": "eval_fixture_session_003",
+  "fixture_family": "approval_friction",
+  "eval_axes": ["approval_friction", "trace_completeness"],
+  "trace_version": "1.0",
+  "recorded_at": "2026-04-22T00:00:00Z"
+}

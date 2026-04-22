@@ -1469,3 +1469,46 @@ CONTROL_SEQ 832 → `.pipeline/operator_request.md` (STATUS: needs_operator)
 
 CONTROL_SEQ 836 → `.pipeline/operator_request.md` (STATUS: needs_operator)
 - 이유: Milestone 8 Axis 3 (fixture loader + scope_suggestion_safety fixture) 완료. bundle commit/push는 operator 승인 경계.
+
+---
+
+## CONTROL_SEQ 837 구현 검증 (NEXT_CONTROL_SEQ: 838)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-remaining-eval-service-fixtures.md`
+
+### 검증 결과
+
+**data/eval/fixtures/ 신규 파일 5개:**
+
+| 파일 | fixture_family | eval_axes | EVAL_FIXTURE_FAMILY_AXES 일치 |
+|---|---|---|---|
+| approval_friction_001.json | approval_friction | approval_friction, trace_completeness | ✅ |
+| reviewed_vs_unreviewed_trace_001.json | reviewed_vs_unreviewed_trace | reviewability, trace_completeness | ✅ |
+| rollback_stop_apply_001.json | rollback_stop_apply | rollbackability, trace_completeness | ✅ |
+| conflict_defer_trace_001.json | conflict_defer_trace | reviewability, rollbackability, trace_completeness | ✅ |
+| explicit_vs_save_support_001.json | explicit_vs_save_support | approval_friction, trace_completeness | ✅ |
+
+- `load_fixture()` 5개 모두 통과 → **all 5 OK** ✅
+- `python3 -m unittest tests.test_smoke -q` → **150 tests OK** ✅
+- `git diff --check` → **OK** ✅ (Python source 무수정)
+- 총 fixture 7개: correction_reuse, scope_suggestion_safety, approval_friction,
+  reviewed_vs_unreviewed_trace, rollback_stop_apply, conflict_defer_trace,
+  explicit_vs_save_support — `EvalFixtureFamily` 7개 모두 커버 ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. 5개 파일 axes가 `EVAL_FIXTURE_FAMILY_AXES`와 정확히 일치.
+
+### 남은 리스크 (CONTROL_SEQ 837 이후)
+
+- Milestone 8 Axis 4 bundle commit/push 미처리
+- `CandidateReviewSuggestedScope` enum + storage enforcement deferred (valid values 미정의)
+- `eval/__init__.py` package-level export 미추가 (deferred)
+- fixture unit tests 미작성 (deferred)
+
+### 다음 control
+
+CONTROL_SEQ 838 → `.pipeline/operator_request.md` (STATUS: needs_operator)
+- 이유: Milestone 8 service fixture set 완성 (7개 전 family). bundle commit/push는 operator 승인 경계.

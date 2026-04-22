@@ -1,0 +1,8 @@
+{
+  "artifact_id": "explicit_vs_save_support_001",
+  "session_id": "eval_fixture_session_007",
+  "fixture_family": "explicit_vs_save_support",
+  "eval_axes": ["approval_friction", "trace_completeness"],
+  "trace_version": "1.0",
+  "recorded_at": "2026-04-22T00:00:00Z"
+}

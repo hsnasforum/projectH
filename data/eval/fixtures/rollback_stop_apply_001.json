@@ -1,0 +1,8 @@
+{
+  "artifact_id": "rollback_stop_apply_001",
+  "session_id": "eval_fixture_session_005",
+  "fixture_family": "rollback_stop_apply",
+  "eval_axes": ["rollbackability", "trace_completeness"],
+  "trace_version": "1.0",
+  "recorded_at": "2026-04-22T00:00:00Z"
+}

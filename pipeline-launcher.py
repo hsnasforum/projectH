@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from pipeline_gui.backend import (
+    PIPELINE_START_READY_TIMEOUT_SECONDS,
     confirm_pipeline_start as backend_confirm_pipeline_start,
     normalize_runtime_status,
     read_runtime_event_tail,
@@ -53,7 +54,7 @@ from pipeline_runtime.status_labels import (
     progress_phase_label,
 )
 
-_START_READY_TIMEOUT_SEC = 15.0
+_START_READY_TIMEOUT_SEC = float(PIPELINE_START_READY_TIMEOUT_SECONDS)
 _OPERATOR_CLASSIFICATION_GATE_REASON = "classification_fallback_detected"
 _AUTOMATION_HEALTH_LABELS = {
     "ok": "정상",

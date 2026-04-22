@@ -20,6 +20,13 @@ import tty
 from pathlib import Path
 
 from pipeline_gui.project import _session_name_for
+from pipeline_gui.setup import _find_cli_bin
+from pipeline_gui.setup_profile import (
+    join_display_resolver_messages,
+    resolve_project_active_profile,
+    resolve_project_runtime_adapter,
+)
+from pipeline_gui.platform import resolve_project_runtime_file
 
 from .lane_surface import READY_MARKERS as _READY_MARKERS
 from .lane_surface import busy_markers_for_lane
@@ -56,6 +63,11 @@ _CODEX_UPDATE_SKIP_MARKERS = (
     "update available",
     "skip until next version",
 )
+_AGENT_CLI_BY_LANE = {
+    "Claude": "claude",
+    "Codex": "codex",
+    "Gemini": "gemini",
+}
 _RUNTIME_RELOAD_SOURCE_NAMES = (
     "watcher_core.py",
     "watcher_dispatch.py",
@@ -268,6 +280,262 @@ def _status(args: argparse.Namespace) -> int:
         if status_path:
             print(f"status_path={status_path}")
     return 0
+
+
+def _doctor_check(
+    name: str,
+    status: str,
+    *,
+    severity: str,
+    detail: str = "",
+    hint: str = "",
+) -> dict[str, str]:
+    return {
+        "name": name,
+        "status": status,
+        "severity": severity,
+        "detail": detail,
+        "hint": hint,
+    }
+
+
+def _doctor_payload(project_root: Path, session_name: str) -> dict[str, object]:
+    checks: list[dict[str, str]] = []
+
+    if project_root.exists():
+        checks.append(_doctor_check("project_root", "ok", severity="required", detail=str(project_root)))
+    else:
+        checks.append(
+            _doctor_check(
+                "project_root",
+                "fail",
+                severity="required",
+                detail=str(project_root),
+                hint="Clone or copy the repository to this path first.",
+            )
+        )
+
+    agents_path = project_root / "AGENTS.md"
+    checks.append(
+        _doctor_check(
+            "AGENTS.md",
+            "ok" if agents_path.exists() else "fail",
+            severity="required",
+            detail=str(agents_path),
+            hint="" if agents_path.exists() else "Run the launcher setup flow or restore AGENTS.md.",
+        )
+    )
+
+    for cli_name, hint in (
+        ("python3", "sudo apt install python3"),
+        ("tmux", "sudo apt install tmux"),
+    ):
+        available = _find_cli_bin(cli_name)
+        checks.append(
+            _doctor_check(
+                f"cli:{cli_name}",
+                "ok" if available else "fail",
+                severity="required",
+                hint="" if available else hint,
+            )
+        )
+
+    for asset_name in ("start-pipeline.sh", "stop-pipeline.sh", "watcher_core.py"):
+        try:
+            asset_path = resolve_project_runtime_file(project_root, asset_name)
+            checks.append(
+                _doctor_check(
+                    f"runtime_asset:{asset_name}",
+                    "ok",
+                    severity="required",
+                    detail=str(asset_path),
+                )
+            )
+        except FileNotFoundError as exc:
+            checks.append(
+                _doctor_check(
+                    f"runtime_asset:{asset_name}",
+                    "fail",
+                    severity="required",
+                    detail=str(exc).splitlines()[0],
+                    hint="Refresh the checkout or rebuild/restage the packaged runtime.",
+                )
+            )
+
+    resolved_profile = resolve_project_active_profile(project_root)
+    profile_controls = dict(resolved_profile.get("controls") or {})
+    profile_detail = join_display_resolver_messages(resolved_profile) or str(
+        resolved_profile.get("support_level") or ""
+    )
+    profile_ok = bool(profile_controls.get("launch_allowed"))
+    checks.append(
+        _doctor_check(
+            "active_profile",
+            "ok" if profile_ok else "fail",
+            severity="required",
+            detail=profile_detail,
+            hint="" if profile_ok else "Open launcher setup, generate a preview, and apply a supported profile.",
+        )
+    )
+
+    runtime_adapter = resolve_project_runtime_adapter(project_root)
+    enabled_lanes = [str(item) for item in list(runtime_adapter.get("enabled_lanes") or [])]
+    lanes_to_check = enabled_lanes or list(_AGENT_CLI_BY_LANE)
+    for lane in lanes_to_check:
+        cli_name = _AGENT_CLI_BY_LANE.get(lane)
+        if not cli_name:
+            continue
+        available = _find_cli_bin(cli_name)
+        checks.append(
+            _doctor_check(
+                f"agent_cli:{cli_name}",
+                "ok" if available else "fail",
+                severity="required" if enabled_lanes else "advisory",
+                detail=f"lane={lane}",
+                hint="" if available else f"Install and initialize the {cli_name} CLI in this WSL environment.",
+            )
+        )
+
+    status_snapshot = _status_snapshot(project_root)
+    current_run = status_snapshot.get("current_run")
+    status_ok = bool(status_snapshot.get("ok"))
+    runtime_state = str(status_snapshot.get("runtime_state") or "STOPPED")
+    if status_ok:
+        checks.append(
+            _doctor_check(
+                "runtime_status",
+                "ok",
+                severity="advisory",
+                detail=f"{runtime_state} {status_snapshot.get('status_path') or ''}".strip(),
+            )
+        )
+    elif isinstance(current_run, dict) and current_run:
+        checks.append(
+            _doctor_check(
+                "runtime_status",
+                "warn",
+                severity="advisory",
+                detail=f"current_run points to missing/unreadable status: {status_snapshot.get('status_path') or ''}",
+                hint="Run stop once, or move stale .pipeline/current_run.json and .pipeline/runs aside before starting on a new PC.",
+            )
+        )
+    else:
+        checks.append(
+            _doctor_check(
+                "runtime_status",
+                "ok",
+                severity="advisory",
+                detail="No current run yet. This is normal before first start.",
+            )
+        )
+
+    live_supervisors = _list_supervisor_pids(project_root, session_name)
+    if len(live_supervisors) > 1:
+        checks.append(
+            _doctor_check(
+                "supervisor_processes",
+                "warn",
+                severity="advisory",
+                detail=",".join(str(pid) for pid in live_supervisors),
+                hint="Run pipeline_runtime.cli stop before starting again.",
+            )
+        )
+    elif live_supervisors:
+        checks.append(
+            _doctor_check(
+                "supervisor_processes",
+                "ok",
+                severity="advisory",
+                detail=str(live_supervisors[0]),
+            )
+        )
+    else:
+        checks.append(
+            _doctor_check(
+                "supervisor_processes",
+                "ok",
+                severity="advisory",
+                detail="none",
+            )
+        )
+
+    adapter = TmuxAdapter(project_root, session_name)
+    tmux_session_exists = adapter.session_exists()
+    checks.append(
+        _doctor_check(
+            "tmux_session",
+            "ok" if tmux_session_exists else "ok",
+            severity="advisory",
+            detail=f"{session_name}: {'exists' if tmux_session_exists else 'not found'}",
+        )
+    )
+
+    wsl_name = str(os.environ.get("WSL_DISTRO_NAME") or "").strip()
+    launcher_distro = str(os.environ.get("WSL_DISTRO") or "").strip()
+    if wsl_name and launcher_distro and wsl_name != launcher_distro:
+        checks.append(
+            _doctor_check(
+                "wsl_distro",
+                "warn",
+                severity="advisory",
+                detail=f"WSL_DISTRO={launcher_distro}, WSL_DISTRO_NAME={wsl_name}",
+                hint="Set Windows launcher WSL_DISTRO to the distro shown by wsl -l -v.",
+            )
+        )
+    elif wsl_name:
+        detail = f"WSL_DISTRO_NAME={wsl_name}"
+        if not launcher_distro:
+            detail += "; Windows .cmd launchers default to Ubuntu unless edited."
+        checks.append(_doctor_check("wsl_distro", "ok", severity="advisory", detail=detail))
+
+    if str(project_root).startswith("/mnt/"):
+        checks.append(
+            _doctor_check(
+                "project_location",
+                "warn",
+                severity="advisory",
+                detail=str(project_root),
+                hint="Running from /mnt works, but a WSL-native path is usually faster and avoids some file permission edge cases.",
+            )
+        )
+
+    return {
+        "ok": not any(item["status"] == "fail" for item in checks),
+        "project_root": str(project_root),
+        "session": session_name,
+        "checks": checks,
+        "summary": {
+            "fail": sum(1 for item in checks if item["status"] == "fail"),
+            "warn": sum(1 for item in checks if item["status"] == "warn"),
+            "ok": sum(1 for item in checks if item["status"] == "ok"),
+        },
+        "read_only": True,
+    }
+
+
+def _doctor(args: argparse.Namespace) -> int:
+    project_root = _project_root(args.project_root)
+    session_name = args.session or _session_name_for(project_root)
+    payload = _doctor_payload(project_root, session_name)
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(f"pipeline doctor: {payload['project_root']}")
+        print(f"session: {payload['session']}")
+        for item in list(payload.get("checks") or []):
+            name = str(item.get("name") or "")
+            status = str(item.get("status") or "")
+            detail = str(item.get("detail") or "")
+            hint = str(item.get("hint") or "")
+            line = f"[{status}] {name}"
+            if detail:
+                line += f" - {detail}"
+            print(line)
+            if hint:
+                print(f"  hint: {hint}")
+        summary = dict(payload.get("summary") or {})
+        print(f"summary: fail={summary.get('fail', 0)} warn={summary.get('warn', 0)} ok={summary.get('ok', 0)}")
+    return 0 if bool(payload.get("ok")) else 1
 
 
 def _wait_for_stop_completion(
@@ -976,6 +1244,11 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("project_root", nargs="?")
     status.add_argument("--json", action="store_true")
 
+    doctor = sub.add_parser("doctor")
+    doctor.add_argument("project_root", nargs="?")
+    doctor.add_argument("--session", default="")
+    doctor.add_argument("--json", action="store_true")
+
     lane_wrapper = sub.add_parser("lane-wrapper")
     lane_wrapper.add_argument("--project-root", default="")
     lane_wrapper.add_argument("--run-id", required=True)
@@ -1010,6 +1283,8 @@ def main(argv: list[str] | None = None) -> int:
         return _attach(args)
     if args.command == "status":
         return _status(args)
+    if args.command == "doctor":
+        return _doctor(args)
     if args.command == "lane-wrapper":
         return _lane_wrapper(args)
     parser.error("unknown command")

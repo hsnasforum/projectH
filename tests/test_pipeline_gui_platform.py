@@ -10,6 +10,26 @@ from pipeline_gui import platform as platform_module
 
 
 class PipelineGuiPlatformTest(unittest.TestCase):
+    def test_default_wsl_distro_uses_configured_env(self) -> None:
+        with mock.patch.dict(platform_module.os.environ, {"WSL_DISTRO": "Debian"}, clear=False), \
+             mock.patch.object(platform_module, "IS_WINDOWS", True), \
+             mock.patch.object(platform_module.subprocess, "run") as run_mock:
+            distro = platform_module._default_wsl_distro()
+
+        self.assertEqual(distro, "Debian")
+        run_mock.assert_not_called()
+
+    def test_default_wsl_distro_detects_first_non_docker_windows_distro(self) -> None:
+        completed = mock.Mock()
+        completed.stdout = "docker-desktop\nUbuntu-24.04\n".encode("utf-16le")
+        with mock.patch.dict(platform_module.os.environ, {}, clear=True), \
+             mock.patch.object(platform_module, "IS_WINDOWS", True), \
+             mock.patch.object(platform_module.subprocess, "run", return_value=completed) as run_mock:
+            distro = platform_module._default_wsl_distro()
+
+        self.assertEqual(distro, "Ubuntu-24.04")
+        run_mock.assert_called_once_with(["wsl.exe", "--list", "--quiet"], capture_output=True, timeout=2.0)
+
     def test_resolve_packaged_file_prefers_meipass_data_then_flattened(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -112,6 +132,29 @@ class PipelineGuiPlatformTest(unittest.TestCase):
                     (dest_root / "watcher_core.py").read_text(encoding="utf-8"),
                     "v2:watcher_core.py",
                 )
+
+    def test_ensure_staged_runtime_root_rejects_incomplete_staged_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            dest_root = Path(td) / "wsl-share" / "gui-runtime" / "_data"
+            dest_root.mkdir(parents=True, exist_ok=True)
+            (dest_root / "start-pipeline.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+            with (
+                mock.patch.object(platform_module, "resolve_packaged_file", side_effect=FileNotFoundError("missing")),
+                mock.patch.object(platform_module, "_wsl_to_windows_unc", return_value=dest_root),
+            ):
+                platform_module._STAGED_RUNTIME_KEYS.clear()
+                with self.assertRaises(FileNotFoundError):
+                    platform_module.ensure_staged_runtime_root(Path("/home/test/project"))
+
+    def test_normalize_picked_path_keeps_unc_when_distro_mismatches(self) -> None:
+        raw = r"\\wsl.localhost\Debian\home\test\project"
+        with mock.patch.object(platform_module, "WSL_DISTRO", "Ubuntu"):
+            self.assertEqual(platform_module._normalize_picked_path(raw), raw)
+
+    def test_normalize_picked_path_converts_unc_for_active_distro(self) -> None:
+        raw = r"\\wsl.localhost\Debian\home\test\project"
+        with mock.patch.object(platform_module, "WSL_DISTRO", "Debian"):
+            self.assertEqual(platform_module._normalize_picked_path(raw), "/home/test/project")
 
     def test_wsl_wrap_passes_args_directly_without_nested_bash_quoting(self) -> None:
         with mock.patch.object(platform_module, "IS_WINDOWS", True):

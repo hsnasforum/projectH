@@ -1715,3 +1715,94 @@ CONTROL_SEQ 850 → `.pipeline/operator_request.md` (STATUS: needs_operator)
 - REASON_CODE: commit_push_bundle_authorization
 - OPERATOR_POLICY: internal_only
 - 이유: pipeline-launcher risk burn-down + product milestone 변경(scope enum + chips frontend + MILESTONES.md sync)을 두 커밋으로 번들화.
+
+---
+
+## CONTROL_SEQ 853 구현 검증 (NEXT_CONTROL_SEQ: 854)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-eval-family-trace-typeddicts.md`
+
+### 검증 결과
+
+**`core/eval_contracts.py` — family-specific TypedDicts 7개:**
+- `CorrectionReuseTrace(EvalArtifactCoreTrace, total=False)` — `reused_artifact_id: str`, `reused_correction_id: str` ✅
+- `ApprovalFrictionTrace(EvalArtifactCoreTrace, total=False)` — `approval_latency_sec: float`, `rejection_count: int` ✅
+- `ReviewabilityTrace(EvalArtifactCoreTrace, total=False)` — `is_reviewed: bool`, `review_action: str` ✅
+- `ScopeSafetyTrace(EvalArtifactCoreTrace, total=False)` — `suggested_scope: str`, `safety_violation_count: int` ✅
+- `RollbackabilityTrace(EvalArtifactCoreTrace, total=False)` — `is_rollback_possible: bool`, `rollback_target_artifact_id: str` ✅
+- `ConflictDeferTrace(EvalArtifactCoreTrace, total=False)` — `conflict_type: str`, `deferral_count: int` ✅
+- `ExplicitVsSaveSupportTrace(EvalArtifactCoreTrace, total=False)` — `support_method: str`, `confidence_score: float` ✅
+- `EVAL_FAMILY_TRACE_CLASS: dict[str, type]` — 7개 family 전체 매핑 ✅
+- advisory seq 852 명세와 필드 이름·타입 정확히 일치 ✅
+
+**`eval/__init__.py` — export:**
+- 7개 TypedDict 클래스 + `EVAL_FAMILY_TRACE_CLASS` import + `__all__` 추가 ✅
+- `load_fixture`, `EvalHarness`, `EvalScenario`, `BUILTIN_SCENARIOS`, `EvalReport` 기존 export 유지 ✅
+
+**제약 준수:**
+- `eval/fixture_loader.py` 무수정 ✅
+- `data/eval/fixtures/` JSON 파일 무수정 ✅
+- `tests/test_eval_loader.py` 무수정 ✅
+- `docs/MILESTONES.md` 무수정 ✅
+
+**실행 검증:**
+- `python3 -m py_compile core/eval_contracts.py eval/__init__.py` → **OK** ✅
+- `python3 -m unittest tests.test_eval_loader -v` → **Ran 7 tests, OK** ✅
+- `git diff --check -- core/eval_contracts.py eval/__init__.py` → **OK** ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. 7개 TypedDict가 `EvalArtifactCoreTrace` 상속 + `total=False` + 2개 이하
+추가 필드로 정확히 정의됨. `EVAL_FAMILY_TRACE_CLASS`가 `EvalFixtureFamily` 7개 key 전체를 커버.
+`eval/__init__.py` export 완전. 기존 7 test suite 통과, 제약 파일 무수정.
+
+### 남은 리스크 (CONTROL_SEQ 853 이후)
+
+- `core/eval_contracts.py` + `eval/__init__.py` 미커밋.
+- `docs/MILESTONES.md` Axis 5 deferred 문구 (`family-specific trace extensions, and e2e stage remain deferred`)에서 `family-specific trace extensions`를 제거하고 Axis 6 shipped 줄 추가 필요.
+- `eval/fixture_loader.py` validation 로직에 family-specific trace class 연결은 handoff 범위 외 (scope-out).
+- Milestone 8 docs-only round 3번째: MILESTONES.md 업데이트를 bounded docs bundle로 한 번에 처리 후 commit/push 진행.
+
+### 다음 control
+
+CONTROL_SEQ 854 → `.pipeline/implement_handoff.md` (STATUS: implement)
+- 이유: MILESTONES.md Axis 5 deferred 목록에서 `family-specific trace extensions` 제거 + Axis 6 shipped 줄 추가 (1-2줄 변경). 3번째 Milestone 8 docs-only round → bounded docs bundle로 마무리. advisory 없이 자명한 docs truth-sync.
+
+---
+
+## CONTROL_SEQ 854 구현 검증 (NEXT_CONTROL_SEQ: 855)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-milestone8-axis6-doc-sync.md`
+
+### 검증 결과
+
+**`docs/MILESTONES.md` 변경 (docs-only):**
+- line 435 (Axis 5 shipped): `family-specific trace extensions,` 제거됨 → deferred 목록에 `CandidateReviewSuggestedScope enum and e2e stage` 만 남음 ✅
+- line 436 (Axis 6 shipped 신규): `CorrectionReuseTrace`, `ApprovalFrictionTrace`, `ReviewabilityTrace`, `ScopeSafetyTrace`, `RollbackabilityTrace`, `ConflictDeferTrace`, `ExplicitVsSaveSupportTrace` + `EVAL_FAMILY_TRACE_CLASS` + `eval/__init__.py` export (seq 853) ✅
+- `CandidateReviewSuggestedScope` enum + e2e stage deferred 상태 유지 ✅
+- handoff 명세와 정확히 일치 ✅
+- Python source / test / fixture 파일 무수정 ✅
+
+**실행 검증 (docs-only 범위):**
+- `git diff --check -- docs/MILESTONES.md` → **OK** ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. Axis 5 deferred 문구에서 `family-specific trace extensions` 정확히 제거됨.
+Axis 6 shipped 줄이 handoff 명세와 TypedDict 7개 클래스명·매핑·export 항목 모두 일치.
+deferred 상태(scope enum, e2e) 보존. Python/test/fixture 파일 무수정.
+
+### 남은 리스크 (CONTROL_SEQ 854 이후)
+
+- CONTROL_SEQ 853+854 bundle(`core/eval_contracts.py`, `eval/__init__.py`, `docs/MILESTONES.md`, work notes) 미커밋.
+- Milestone 8 Axis 1–6 모두 shipped. 잔여 deferred: `CandidateReviewSuggestedScope` enum(Milestone 7 Axis 4로 이미 shipped seq 849) 표기 정리 및 e2e eval stage.
+- 다음 Milestone 방향(Milestone 9 또는 다른 deferred 항목)은 commit/push 후 advisory 판단 필요.
+
+### 다음 control
+
+CONTROL_SEQ 855 → `.pipeline/operator_request.md` (STATUS: needs_operator)
+- 이유: Milestone 8 Axis 6 bundle(seqs 853–854: TypedDicts + docs sync) commit/push는 operator 승인 경계.

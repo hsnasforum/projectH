@@ -8,6 +8,7 @@ from unittest import mock
 
 import config.runtime_hosts as runtime_hosts
 import controller.server as controller_server
+from pipeline_gui.backend import PIPELINE_START_READY_TIMEOUT_SECONDS
 
 
 class ControllerServerHostTests(unittest.TestCase):
@@ -99,6 +100,27 @@ class ControllerServerLaunchGateTests(unittest.TestCase):
         self.assertEqual(data["prompt_owners"]["verify"], "Claude")
         self.assertEqual(data["enabled_lanes"], ["Codex", "Claude", "Gemini"])
 
+    def test_get_runtime_status_returns_stopped_placeholder_when_unavailable(self) -> None:
+        with (
+            mock.patch.object(controller_server, "read_runtime_status", return_value=None),
+            mock.patch.object(
+                controller_server,
+                "resolve_project_runtime_adapter",
+                return_value={
+                    "resolution_state": "ready",
+                    "role_owners": {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"},
+                    "prompt_owners": {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"},
+                    "enabled_lanes": ["Codex", "Claude", "Gemini"],
+                },
+            ),
+        ):
+            data, status = controller_server.get_runtime_status()
+
+        self.assertEqual(int(status), 200)
+        self.assertEqual(data["runtime_state"], "STOPPED")
+        self.assertEqual(data["project_root"], str(controller_server.PROJECT_ROOT))
+        self.assertEqual(data["role_owners"]["verify"], "Claude")
+
     def test_pipeline_start_propagates_launch_gate_error_from_backend(self) -> None:
         with mock.patch.object(controller_server, "backend_pipeline_start", return_value="실행 차단: active profile이 없습니다 (.pipeline/config/agent_profile.json)."):
             result = controller_server.pipeline_start()
@@ -120,12 +142,15 @@ class ControllerServerLaunchGateTests(unittest.TestCase):
             mock.patch.object(
                 controller_server,
                 "backend_confirm_pipeline_start",
-                return_value=(False, "시작 실패: 15초 안에 runtime READY 조건을 만족하지 못했습니다 — supervisor/status를 확인해 주세요"),
+                return_value=(
+                    False,
+                    f"시작 실패: {PIPELINE_START_READY_TIMEOUT_SECONDS}초 안에 runtime READY 조건을 만족하지 못했습니다 — supervisor/status를 확인해 주세요",
+                ),
             ),
         ):
             result = controller_server.pipeline_start()
         self.assertEqual(result["ok"], False)
-        self.assertIn("15초 안에 runtime READY 조건", result["error"])
+        self.assertIn(f"{PIPELINE_START_READY_TIMEOUT_SECONDS}초 안에 runtime READY 조건", result["error"])
 
     def test_controller_html_polls_runtime_api_only(self) -> None:
         controller_dir = Path(__file__).resolve().parents[1] / "controller"

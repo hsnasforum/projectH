@@ -11,12 +11,15 @@ from unittest import mock
 
 import pipeline_gui.backend
 from pipeline_gui.backend import (
+    PIPELINE_START_READY_TIMEOUT_SECONDS,
+    PIPELINE_STOP_COMMAND_TIMEOUT_SECONDS,
     confirm_pipeline_start,
     current_verify_activity,
     format_control_summary,
     normalize_runtime_status,
     parse_control_slots,
     pipeline_start,
+    pipeline_stop,
     pipeline_start_failure_hint,
     read_runtime_status,
     watcher_log_snapshot,
@@ -367,11 +370,13 @@ class TestPipelineStartLaunchGate(unittest.TestCase):
             with mock.patch("pipeline_gui.backend.resolve_project_runtime_file", return_value=script), \
                  mock.patch("pipeline_gui.backend.IS_WINDOWS", True), \
                  mock.patch("pipeline_gui.backend._windows_to_wsl_mount", return_value="/home/test/project/.pipeline/gui-runtime/_data/start-pipeline.sh"), \
+                 mock.patch("pipeline_gui.backend._wsl_to_windows_unc", side_effect=lambda path: Path(path)) as host_path, \
                  mock.patch("pipeline_gui.backend._wsl_path_str", side_effect=lambda path: str(path)), \
                  mock.patch("pipeline_gui.backend.subprocess.Popen") as popen:
                 message = pipeline_start(project, "aip-projectH")
             self.assertEqual(message, "시작 요청됨")
             self.assertEqual(log_path.read_text(encoding="utf-8"), "")
+            host_path.assert_called_once_with(log_path)
             popen.assert_called_once()
 
 
@@ -613,9 +618,30 @@ class TestPipelineStartDiagnostics(unittest.TestCase):
                     progress_callback=progress_updates.append,
                 )
             self.assertFalse(ok)
-            self.assertIn("15초 안에 runtime READY 조건을 만족하지 못했습니다", message)
+            self.assertIn(
+                f"{PIPELINE_START_READY_TIMEOUT_SECONDS}초 안에 runtime READY 조건을 만족하지 못했습니다",
+                message,
+            )
             self.assertIn("Launch blocked: Active profile is missing.", message)
             self.assertTrue(any("runtime STARTING 대기 중" in update for update in progress_updates))
+
+    def test_pipeline_stop_allows_runtime_cli_cleanup_window(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            script = project / "stop-pipeline.sh"
+            script.write_text("#!/bin/bash\n", encoding="utf-8")
+            with (
+                mock.patch("pipeline_gui.backend.resolve_project_runtime_file", return_value=script),
+                mock.patch("pipeline_gui.backend.IS_WINDOWS", False),
+                mock.patch(
+                    "pipeline_gui.backend.subprocess.run",
+                    return_value=mock.Mock(returncode=0, stdout=b"", stderr=b""),
+                ) as run_mock,
+            ):
+                message = pipeline_stop(project, "aip-projectH")
+
+            self.assertEqual(message, "중지 완료")
+            self.assertEqual(run_mock.call_args.kwargs["timeout"], PIPELINE_STOP_COMMAND_TIMEOUT_SECONDS)
 
 
 class TestTurnStateRead(unittest.TestCase):

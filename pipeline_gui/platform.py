@@ -14,7 +14,6 @@ from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 IS_WINDOWS = sys.platform == "win32"
-WSL_DISTRO = os.environ.get("WSL_DISTRO", "Ubuntu")
 WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[/\\]")
 CREATE_NO_WINDOW = 0x08000000
 TMUX_QUERY_TIMEOUT = 5.0 if IS_WINDOWS else 2.0
@@ -31,6 +30,41 @@ _RUNTIME_STAGE_REQUIRED = (
     "token_usage_shared.py",
     "token_dashboard_shared.py",
 )
+
+
+def _decode_wsl_list_output(raw: bytes) -> str:
+    if b"\x00" in raw:
+        return raw.decode("utf-16le", errors="replace").replace("\x00", "")
+    return raw.decode("utf-8", errors="replace")
+
+
+def _default_wsl_distro() -> str:
+    configured = os.environ.get("WSL_DISTRO")
+    if configured:
+        return configured
+    if not IS_WINDOWS:
+        return os.environ.get("WSL_DISTRO_NAME", "Ubuntu")
+    try:
+        result = subprocess.run(
+            ["wsl.exe", "--list", "--quiet"],
+            capture_output=True,
+            timeout=2.0,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return "Ubuntu"
+    text = _decode_wsl_list_output(result.stdout if isinstance(result.stdout, bytes) else b"")
+    for raw_line in text.splitlines():
+        name = raw_line.strip().strip("\ufeff")
+        if not name:
+            continue
+        lower = name.lower()
+        if lower.startswith("docker-desktop"):
+            continue
+        return name
+    return "Ubuntu"
+
+
+WSL_DISTRO = _default_wsl_distro()
 
 # PyInstaller onefile exe: runtime assets under sys._MEIPASS/_data/
 if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
@@ -156,7 +190,7 @@ def ensure_staged_runtime_root(project: Path | str) -> Path:
             source_root = resolve_packaged_file("start-pipeline.sh").parent
         except FileNotFoundError:
             # If packaged files are missing, check if staged dir is partially usable
-            if runtime_root_win.exists():
+            if runtime_root_win.exists() and _staged_runtime_complete(runtime_root_win):
                 _STAGED_RUNTIME_KEYS.add(project_key)
                 return Path(str(runtime_root_wsl))
             raise
@@ -286,6 +320,9 @@ def _normalize_picked_path(raw: str) -> str:
     """Convert Windows/tkinter file-picker path to WSL-internal path."""
     m = _WSL_UNC_RE.match(raw)
     if m:
+        distro = m.group(1).strip()
+        if distro and distro != WSL_DISTRO:
+            return raw
         remainder = m.group(2).replace("\\", "/")
         return "/" + remainder if remainder else "/"
     return raw

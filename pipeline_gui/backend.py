@@ -28,7 +28,8 @@ from .platform import (
     IS_WINDOWS, WSL_DISTRO,
     CREATE_NO_WINDOW, FILE_QUERY_TIMEOUT,
     _wsl_path_str, _windows_to_wsl_mount, _run, _hidden_subprocess_kwargs,
-    _normalize_token_runtime_asset_path, _wsl_wrap, resolve_packaged_file, resolve_project_runtime_file,
+    _normalize_token_runtime_asset_path, _wsl_to_windows_unc, _wsl_wrap,
+    resolve_packaged_file, resolve_project_runtime_file,
 )
 from .formatting import time_ago as time_ago  # noqa: F811 — canonical + re-export
 from .project import _session_name_for
@@ -43,6 +44,8 @@ _VERIFY_ACTIVITY_LABELS = {
 }
 
 SNAPSHOT_STALE_THRESHOLD = 15.0
+PIPELINE_START_READY_TIMEOUT_SECONDS = 45
+PIPELINE_STOP_COMMAND_TIMEOUT_SECONDS = 75
 
 
 def _read_log_lines(path: Path, *, tail_count: int) -> list[str]:
@@ -381,7 +384,7 @@ def confirm_pipeline_start(
     start_requested_at: float,
     action_label: str = "시작",
     progress_callback: Callable[[str], None] | None = None,
-    timeout_seconds: int = 15,
+    timeout_seconds: int = PIPELINE_START_READY_TIMEOUT_SECONDS,
     sleep_fn: Callable[[float], None] | None = None,
 ) -> tuple[bool, str]:
     sleeper = sleep_fn or time.sleep
@@ -407,7 +410,7 @@ def confirm_pipeline_start(
     suffix = f" — {hint}" if hint else ""
     return (
         False,
-        f"{action_label} 실패: 15초 안에 runtime READY 조건을 만족하지 못했습니다 "
+        f"{action_label} 실패: {timeout_seconds}초 안에 runtime READY 조건을 만족하지 못했습니다 "
         f"— supervisor/status를 확인해 주세요{suffix}",
     )
 
@@ -424,11 +427,12 @@ def pipeline_start(project: Path, session: str = "") -> str:
     except FileNotFoundError:
         return "start-pipeline.sh 없음"
     log_path = project / ".pipeline" / "logs" / "experimental" / "pipeline-launcher-start.log"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
+    host_log_path = _wsl_to_windows_unc(log_path) if IS_WINDOWS else log_path
+    host_log_path.parent.mkdir(parents=True, exist_ok=True)
     if IS_WINDOWS:
         wsl_script = _windows_to_wsl_mount(script)
         wsl_project = _wsl_path_str(project)
-        with log_path.open("w", encoding="utf-8") as logf:
+        with host_log_path.open("w", encoding="utf-8") as logf:
             subprocess.Popen(
                 ["wsl.exe", "-d", WSL_DISTRO, "--cd", wsl_project, "--",
                  "bash", "-l", wsl_script, wsl_project,
@@ -437,7 +441,7 @@ def pipeline_start(project: Path, session: str = "") -> str:
                 creationflags=CREATE_NO_WINDOW,
             )
     else:
-        with log_path.open("w", encoding="utf-8") as logf:
+        with host_log_path.open("w", encoding="utf-8") as logf:
             subprocess.Popen(
                 ["bash", "-l", str(script), str(project),
                  "--mode", "experimental", "--no-attach", "--session", sess],
@@ -459,13 +463,13 @@ def pipeline_stop(project: Path, session: str = "") -> str:
         result = subprocess.run(
             ["wsl.exe", "-d", WSL_DISTRO, "--cd", wsl_project, "--",
              "bash", wsl_script, wsl_project, "--session", sess],
-            capture_output=True, timeout=15,
+            capture_output=True, timeout=PIPELINE_STOP_COMMAND_TIMEOUT_SECONDS,
             **_hidden_subprocess_kwargs(),
         )
     else:
         result = subprocess.run(
             ["bash", str(script), str(project), "--session", sess],
-            capture_output=True, timeout=15,
+            capture_output=True, timeout=PIPELINE_STOP_COMMAND_TIMEOUT_SECONDS,
         )
     if result.returncode != 0:
         stderr = (result.stderr or b"").decode("utf-8", errors="replace") if isinstance(result.stderr, bytes) else str(result.stderr or "")

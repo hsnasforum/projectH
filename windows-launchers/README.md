@@ -5,19 +5,23 @@ Windows에서 pipeline GUI를 실행하는 두 가지 방법을 제공합니다.
 이 디렉터리의 launcher/controller 보조 도구는 현재 **operator tooling / experimental 축**이며,
 문서 비서 본체(`python3 -m app.web`) 릴리즈 게이트와는 별도로 취급합니다.
 
-대상 repo는 `projectH` 자체일 필요가 없습니다.
-`AGENTS.md`가 있는 임의의 WSL 내부 repo를 target으로 지정할 수 있습니다.
+기본 운용 대상은 `projectH` checkout입니다. `.cmd` launcher는 `WSL_LAUNCHER_ROOT`
+아래의 launcher source를 실행하고, `WSL_PROJECT`를 target project 인자로 넘깁니다.
+외부 repo를 target으로 지정하려면 같은 WSL distro 안에 `WSL_LAUNCHER_ROOT`
+projectH checkout이 있어야 하고, target repo에는 `AGENTS.md`가 있어야 합니다.
 launcher는 target repo에 `.pipeline/`, `work/`, `verify/`가 없으면 자동 bootstrap합니다.
 
 ## 방법 1: `.cmd` launcher (권장 — 설치 불필요)
 
 1. `.cmd` 파일을 **Windows 로컬 폴더**에 복사합니다.
    - 예: `C:\Users\사용자\Desktop\pipeline-gui.cmd`
-2. 파일 상단의 두 변수를 자기 환경에 맞게 수정합니다:
+2. 파일 상단의 변수를 자기 환경에 맞게 수정합니다:
    ```cmd
-   set "WSL_DISTRO=Ubuntu"
-   set "WSL_PROJECT=/home/xpdlqj/code/finance"
+   if not defined WSL_DISTRO set "WSL_DISTRO=Ubuntu"
+   if not defined WSL_LAUNCHER_ROOT set "WSL_LAUNCHER_ROOT=/home/xpdlqj/code/projectH"
+   if not defined WSL_PROJECT set "WSL_PROJECT=/home/xpdlqj/code/finance"
    ```
+   PowerShell이나 `cmd.exe`에서 `WSL_DISTRO` / `WSL_LAUNCHER_ROOT` / `WSL_PROJECT`를 미리 지정해도 됩니다.
 3. 더블클릭으로 실행합니다.
 
 `.cmd`는 별도 UI가 아니라 **같은 `pipeline-gui.py` GUI를 WSL에서 띄우는 Windows-side launcher**입니다.
@@ -104,7 +108,17 @@ Windows Python과 bash/WSL Python 환경이 분리된 상황일 가능성이 큽
 - Windows 11 + WSL2 + WSLg
 - WSL 내부: `python3`, `python3-tk` (GUI용), `tmux`
 - Agent CLI: `claude`, `codex`, `gemini` (npm global install, nvm으로 Node 20+ 권장)
-- Target repo: WSL 내부 git clone, `AGENTS.md` 필수
+- Launcher source: WSL 내부 `projectH` checkout
+- Target repo: 같은 WSL distro 내부 git clone, `AGENTS.md` 필수
+
+새 PC에서 막히면 WSL 안에서 먼저 아래 read-only 진단을 실행합니다.
+
+```bash
+cd /path/to/project
+python3 -m pipeline_runtime.cli doctor . --json
+```
+
+`active_profile`이 빠져 있으면 GUI의 `설정` 화면에서 profile preview를 생성하고 적용한 뒤 다시 실행합니다.
 
 ## `.cmd` vs `.exe` 비교
 
@@ -112,7 +126,7 @@ Windows Python과 bash/WSL Python 환경이 분리된 상황일 가능성이 큽
 |------|--------|--------|
 | 설치 | 없음 (텍스트 파일 복사) | PyInstaller 빌드 필요 |
 | Python 필요 | WSL 내부 python3 | exe에 번들됨 |
-| project path | `.cmd`의 `WSL_PROJECT`로 기본값 주입 + GUI에서 찾아보기…/적용/Recent 가능 | GUI 내 찾아보기…/적용/Recent |
+| project path | `.cmd`의 `WSL_LAUNCHER_ROOT`에서 launcher를 실행하고 `WSL_PROJECT`를 target으로 전달 | GUI 내 찾아보기…/적용/Recent |
 | 경로 저장 | GUI 최근 5개 저장 지원 (실행 기본값은 `.cmd`의 `WSL_PROJECT`) | GUI 최근 5개 저장 지원 |
 | multi-project | 가능 (기본값은 `.cmd`에서, 실행 후 GUI에서도 전환 가능) | 가능 (GUI에서 전환) |
 | 설정 점검 | 있음 | 있음 |

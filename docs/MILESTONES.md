@@ -459,16 +459,17 @@
 - Audit trail verification shipped: end-to-end integration test exercises full request → execute → outcome flow; all 5 history fields verified (seq 901)
 - **Milestone 10 closed** (seqs 893–901): local file operation and backup foundation established; actual rollback restore and sandbox path restrictions remain deferred
 
+### Milestone 11: Operator Action Reversibility & Sandbox
+- Rollback restore shipped: `rollback_operator_action(record)` reads `backup_path`, restores `target_id`; missing backup → soft failure `restored=False` (seq 908)
+- Path restriction sandbox shipped: `_validate_operator_action_target()` raises `ValueError` if `target_id` resolves outside `Path.cwd()`; all executor/audit tests updated to `dir="."` (seq 912)
+- Rollback trace shipped: `rollback_approval_id` dispatch + `_execute_operator_rollback()` records `status="rolled_back"` in `operator_action_history`; `get_operator_action_from_history()` added to `SessionStore` (seq 916)
+- **Milestone 11 closed** (seqs 908–916): operator action reversibility and sandbox complete; frontend rollback trigger and backup retention policy remain deferred
+
 ### Why This Is Later
 - Program operation should follow stable correction and preference memory, not precede it.
 - The system must prove alignment on document work before it expands into action.
 
 ## Long-Term
-
-### Milestone 11: Operator Action Reversibility & Sandbox
-- implement actual rollback restore for reversible file edits
-- define path restriction rules (sandbox) for `target_id` in operator actions
-- ensure rollback traces are observable in session history
 
 ### Milestone 12: Personalized Local Model Layer
 - promote high-quality local traces into personalization assets

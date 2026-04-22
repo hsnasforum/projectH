@@ -482,6 +482,12 @@
 - enough approval / rejection traces
 - enough workflow-level eval data
 
+#### Shipped Infrastructure (Axes 1–4, 2026-04-23)
+- Axis 1 (6838aba, seq 921): trace audit baseline — `scripts/audit_traces.py`, `get_global_audit_summary()` (267 sessions, 137 correction pairs)
+- Axis 2 (701166b, seq 925): trace export utility — `scripts/export_traces.py`, `stream_trace_pairs()`
+- Axis 3 (966fdb4, seq 929+933): quality scoring + threshold recalibration — `_is_high_quality()` (`0.05 ≤ score ≤ 0.98`); 137/137 pairs high-quality
+- Axis 4 (215096d, seq 935): asset promotion — `scripts/promote_assets.py` → `CorrectionStore.promote_correction()`; 137 pairs promoted
+
 ## Next 3 Implementation Priorities
 
 1. Keep the shipped read-only `reviewed_memory_boundary_draft` draft-only and do not widen it into readiness tracking or cross-session scope. The rollback / disable / conflict / operator-audit contracts and the reviewed-memory apply path are now shipped; boundary draft stays separate from apply result.

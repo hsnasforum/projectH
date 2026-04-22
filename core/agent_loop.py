@@ -15,6 +15,7 @@ from core.approval import (
     build_approval_reason_record,
 )
 from core.contracts import (
+    ApprovalKind,
     ApprovalReasonLabel,
     ApprovalReasonScope,
     ArtifactKind,
@@ -30,6 +31,7 @@ from core.contracts import (
     StreamEventType,
 )
 from core.models import RequestContext, SearchIntentResolution
+from core.operator_executor import execute_operator_action
 from core.request_intents import SearchIntentDecision, classify_search_intent
 from core.source_policy import build_source_policy, score_source_for_mode
 from core.web_claims import (
@@ -7493,6 +7495,21 @@ class AgentLoop:
                 text="승인 대상을 찾지 못했습니다. 이미 처리되었거나 만료되었을 수 있습니다.",
                 status=ResponseStatus.ERROR,
                 actions_taken=["approval_error"],
+            )
+
+        if str(approval_record.get("kind") or "").strip() == ApprovalKind.OPERATOR_ACTION:
+            try:
+                result = execute_operator_action(approval_record)
+            except ValueError as exc:
+                return AgentResponse(
+                    text=f"작업 실행 실패: {exc}",
+                    status=ResponseStatus.ERROR,
+                    actions_taken=["approval_error"],
+                )
+            return AgentResponse(
+                text=result.get("preview", ""),
+                status=ResponseStatus.SAVED,
+                actions_taken=["approval_granted", "operator_action_executed"],
             )
 
         approval = ApprovalRequest.from_record(approval_record)

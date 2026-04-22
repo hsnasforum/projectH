@@ -41,15 +41,26 @@ interface Props {
   message: Message;
   onCorrection?: (messageId: string, correctedText: string) => void;
   onFeedback?: (messageId: string, label: string) => void;
+  onContentVerdict?: (messageId: string, verdict: string) => void;
+  onContentReasonNote?: (messageId: string, note: string) => void;
 }
 
-export default function MessageBubble({ message, onCorrection, onFeedback }: Props) {
+export default function MessageBubble({
+  message,
+  onCorrection,
+  onFeedback,
+  onContentVerdict,
+  onContentReasonNote,
+}: Props) {
   const isUser = message.role === "user";
   const [hovered, setHovered] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState("");
   const [showDiff, setShowDiff] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showRejectNote, setShowRejectNote] = useState(false);
+  const [rejectNote, setRejectNote] = useState("");
+  const [rejected, setRejected] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -246,6 +257,62 @@ export default function MessageBubble({ message, onCorrection, onFeedback }: Pro
                   </svg>
                 </button>
               )}
+              {/* Content Reject */}
+              {onContentVerdict && !rejected && !message.content_verdict && (
+                <>
+                  <button
+                    onClick={() => setShowRejectNote(true)}
+                    className="w-7 h-7 rounded-full bg-white border border-stone-200 shadow-sm flex items-center justify-center text-muted/40 hover:text-red-500 hover:border-red-200 transition-all"
+                    title="내용 거절"
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                  </button>
+                  {showRejectNote && (
+                    <div className="absolute right-0 top-8 z-10 bg-white border border-stone-200 rounded-lg shadow-md p-2 w-48">
+                      <textarea
+                        className="w-full text-[11px] resize-none border border-stone-200 rounded p-1 mb-1 focus:outline-none"
+                        rows={2}
+                        placeholder="거절 이유 (선택)"
+                        value={rejectNote}
+                        onChange={(e) => setRejectNote(e.target.value)}
+                      />
+                      <div className="flex gap-1 justify-end">
+                        <button
+                          className="text-[11px] px-2 py-0.5 rounded bg-stone-100 hover:bg-stone-200"
+                          onClick={() => {
+                            setShowRejectNote(false);
+                            setRejectNote("");
+                          }}
+                        >
+                          취소
+                        </button>
+                        <button
+                          className="text-[11px] px-2 py-0.5 rounded bg-red-100 text-red-600 hover:bg-red-200"
+                          onClick={() => {
+                            onContentVerdict(message.message_id, "rejected");
+                            if (rejectNote.trim() && onContentReasonNote) {
+                              onContentReasonNote(message.message_id, rejectNote.trim());
+                            }
+                            setRejected(true);
+                            setShowRejectNote(false);
+                            setRejectNote("");
+                          }}
+                        >
+                          거절
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+              {onContentVerdict && (rejected || message.content_verdict === "rejected") && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-50 text-red-500">
+                  거절됨
+                </span>
+              )}
               {/* Feedback already given indicator */}
               {message.feedback && (
                 <span className={`
@@ -310,22 +377,26 @@ export default function MessageBubble({ message, onCorrection, onFeedback }: Pro
         {!isUser && message.claim_coverage && message.claim_coverage.length > 0 && (
           <div className="mt-3 px-1">
             <div className="flex flex-wrap gap-1.5">
-              {message.claim_coverage.map((item, i) => (
-                <span
-                  key={i}
-                  className={`
-                    text-[11px] font-medium px-2 py-0.5 rounded-full border
-                    ${item.status === "strong"
-                      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                      : item.status === "weak"
-                        ? "bg-amber-50 text-amber-700 border-amber-200"
-                        : "bg-stone-50 text-stone-500 border-stone-200"
-                    }
-                  `}
-                >
-                  {item.slot}{item.status === "strong" ? " ✓" : item.status === "weak" ? " ?" : " -"}
-                </span>
-              ))}
+              {message.claim_coverage.map((item, i) => {
+                const isTrustedWeak = item.status === "weak" && (item.trusted_source_count ?? 0) > 0;
+                return (
+                  <span
+                    key={i}
+                    title={item.source_role ? item.source_role.charAt(0).toUpperCase() + item.source_role.slice(1) : undefined}
+                    className={`
+                      text-[11px] font-medium px-2 py-0.5 rounded-full border
+                      ${item.status === "strong"
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        : isTrustedWeak
+                          ? "bg-amber-50 text-amber-700 border-amber-200"
+                          : "bg-stone-50 text-stone-500 border-stone-200"
+                      }
+                    `}
+                  >
+                    {item.slot}{item.status === "strong" ? " ✓" : isTrustedWeak ? " ?" : " -"}
+                  </span>
+                );
+              })}
             </div>
           </div>
         )}

@@ -4,7 +4,7 @@ import ChatArea from "./components/ChatArea";
 import Toast from "./components/Toast";
 import type { ToastItem } from "./components/Toast";
 import { useChat } from "./hooks/useChat";
-import { postCorrection, postFeedback } from "./api/client";
+import { postContentReasonNote, postContentVerdict, postCorrection, postFeedback } from "./api/client";
 import { DEFAULT_SETTINGS } from "./types";
 import type { AppSettings } from "./types";
 
@@ -43,6 +43,23 @@ export default function App() {
       addToast("error", "피드백 제출에 실패했습니다.");
     }
   }, [chat.sessionId, chat.loadSession, addToast]);
+
+  const handleContentVerdict = useCallback(async (messageId: string, verdict: string) => {
+    try {
+      await postContentVerdict(chat.sessionId, messageId, verdict);
+      await chat.loadSession(chat.sessionId);
+    } catch {
+      addToast("error", "내용 거절 제출에 실패했습니다.");
+    }
+  }, [chat.sessionId, chat.loadSession, addToast]);
+
+  const handleContentReasonNote = useCallback(async (messageId: string, note: string) => {
+    try {
+      await postContentReasonNote(chat.sessionId, messageId, note);
+    } catch {
+      addToast("error", "거절 이유 저장에 실패했습니다.");
+    }
+  }, [chat.sessionId, addToast]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-warm-50">
@@ -113,6 +130,8 @@ export default function App() {
         onCancel={chat.cancel}
         onCorrection={handleCorrection}
         onFeedback={handleFeedback}
+        onContentVerdict={handleContentVerdict}
+        onContentReasonNote={handleContentReasonNote}
         onToggleSidebar={toggleSidebar}
         sessionTitle={chat.sessionTitle}
         reviewQueueCount={chat.reviewQueueCount}

@@ -260,3 +260,383 @@ CONTROL_SEQ 754 → `.pipeline/advisory_request.md` (STATUS: request_open)
 - 이유: 4축 bundle 완료 — advisory (seq 752)가 Milestone 5/6 재개 경로 확보 확인.
   (1) 오늘 쌓인 작업의 commit/push 타이밍, (2) Milestone 6 첫 entry slice 선택,
   두 가지 모두 advisory 판단이 필요하여 advisory-first 적용
+
+---
+
+## CONTROL_SEQ 756 구현 검증 (NEXT_CONTROL_SEQ: 757)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-slot-coverage-trusted-count.md`
+
+### 검증 결과
+
+- `core/web_claims.py:30` `SlotCoverage.trusted_source_count: int = 0` 필드 존재 ✅
+- `core/web_claims.py:133` `_trusted_supporting_source_count(record)` helper 존재 ✅
+- `core/web_claims.py:193` `trusted_count = _trusted_supporting_source_count(primary)` 단일 호출 — 로직 중복 없음 ✅
+- `core/web_claims.py:189` MISSING 슬롯 `trusted_source_count=0` ✅
+- `core/web_claims.py:211` non-MISSING 슬롯 `trusted_source_count=trusted_count` ✅
+- `tests/test_smoke.py:2674,2676` 비신뢰 출처만 있는 weak slot → `trusted_source_count=0` 검사 ✅
+- `tests/test_smoke.py:2696` 공식 단일 출처 weak slot → `trusted_source_count >= 1` 검사 ✅
+- `tests/test_smoke.py:2718` strong slot → `trusted_source_count >= 2` 회귀 검사 ✅
+- `python3 -m py_compile core/web_claims.py core/contracts.py` → **통과** ✅
+- `python3 -m unittest tests.test_smoke` → **144 tests OK** ✅
+- UI / approval flow / 저장 스키마 / pipeline control 변경 없음 ✅
+- `git status`: `M core/web_claims.py`, `M tests/test_smoke.py`, `?? work/4/22/2026-04-22-slot-coverage-trusted-count.md` — 미커밋 상태
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. `trusted_source_count` 필드가 `SlotCoverage`에 additive하게 추가됐고,
+`summarize_slot_coverage()`가 `_trusted_supporting_source_count()` 기존 helper를 재사용해
+MISSING / non-MISSING 분기 모두에서 올바르게 채움. 3개 신규 회귀 테스트 모두 실제 line에 존재
+하며 144 tests 통과. 새 `CoverageStatus` 값이나 UI/저장 변경 없음.
+
+### 남은 리스크 (CONTROL_SEQ 756 이후)
+
+- `trusted_source_count`는 현재 `SlotCoverage` 내부 필드만. 브라우저 claim-coverage payload나
+  표시 문구로의 노출은 별도 슬라이스.
+- CONTROL_SEQ 756 변경(core/web_claims.py, tests/test_smoke.py, work note)은 미커밋 상태.
+  commit/push 타이밍 판단 필요.
+- advisory seq 755가 권고한 `richer_reason_labels`는 TASK_BACKLOG.md 제약으로 CONTROL_SEQ 756
+  handoff에서 명시적으로 defer됨. 이 deferral을 advisory가 확인해야 함.
+- Milestone 4 "better separation" 항목에서 내부 필드 분리(DONE) 이후 display-layer 노출 slice
+  scoping이 명확하지 않음.
+
+### 다음 control
+
+CONTROL_SEQ 757 → `.pipeline/advisory_request.md` (STATUS: request_open)
+- 이유: (1) CONTROL_SEQ 756 미커밋 작업의 commit/push 타이밍, (2) 내부 `trusted_source_count`
+  필드를 claim-coverage API/display에 노출하는 다음 슬라이스 scope, (3) advisory seq 755가
+  권고한 `richer_reason_labels`의 deferral 확인 — 세 가지 모두 advisory 판단이 필요.
+
+---
+
+## CONTROL_SEQ 759 구현 검증 (NEXT_CONTROL_SEQ: 760)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-claim-coverage-trusted-count-exposure.md`
+
+### 검증 결과
+
+- `core/agent_loop.py:4255` MISSING 슬롯 `"trusted_source_count": 0` ✅
+- `core/agent_loop.py:4304` non-MISSING 슬롯 `"trusted_source_count": int(getattr(slot_coverage, "trusted_source_count", 0) or 0)` ✅
+- `app/serializers.py:1027` `_serialize_claim_coverage()` `"trusted_source_count": int(item.get("trusted_source_count") or 0)` ✅
+- `app/frontend/src/types.ts:66` `ClaimCoverageItem` 인터페이스에 `trusted_source_count?: number` 추가 ✅
+- `app/frontend/src/components/MessageBubble.tsx:314` `isTrustedWeak = item.status === "weak" && (item.trusted_source_count ?? 0) > 0` — WEAK badge amber/stone 분기 ✅
+- `tests/test_smoke.py` lines 1345,1352,1359,1366,1382,1386,1389,1392,1395,1398,1420,1427,1434,1454-1457: `trusted_source_count` 전달 및 serializer 회귀 검사 ✅
+- `docs/PRODUCT_SPEC.md:267` slot object shape에 `trusted_source_count` 설명 추가 ✅
+- `docs/ARCHITECTURE.md:220` slot object shape에 `trusted_source_count` 설명 추가 ✅
+- `python3 -m py_compile core/agent_loop.py app/serializers.py` → **통과** ✅
+- `python3 -m unittest tests.test_smoke` → **144 tests OK** ✅
+- `git diff --check` → **통과** ✅
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "claim-coverage" --reporter=line` → **환경 차단** (sandbox socket permission 오류) — 코드 오류 아님, 소켓 허용 환경 재실행 필요 ⚠
+- `npx tsc --noEmit` → **기존 오류 존재** (Sidebar.tsx SVG prop, useChat.ts applied_preferences 타입, main.tsx index.css declaration) — 이번 변경과 무관, `trusted_source_count` 타입 오류 없음 ⚠
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. pipeline 4단계(agent_loop → serializers → types.ts → MessageBubble.tsx)
+가 모두 `trusted_source_count` 를 정확히 전달. badge 로직이 `isTrustedWeak` 변수로 amber/stone
+분기 구현. serializer 회귀 테스트가 실제 line에 존재하며 144 tests 통과.
+doc sync는 PRODUCT_SPEC과 ARCHITECTURE 두 파일에 동일 slot object shape 설명 추가.
+Playwright claim-coverage 슬라이스는 sandbox 소켓 권한 문제로 환경 차단 — 코드 오류가 아닌
+실행 환경 제약.
+
+### 남은 리스크 (CONTROL_SEQ 759 이후)
+
+- CONTROL_SEQ 756+759 변경(core/web_claims.py, core/agent_loop.py, app/serializers.py,
+  app/frontend/src/types.ts, MessageBubble.tsx, tests/test_smoke.py, docs/*)이 모두 미커밋.
+  advisory seq 758이 `commit_push_now`를 권고했으나 아직 실행되지 않음.
+- Playwright claim-coverage 슬라이스가 sandbox에서 소켓 권한 오류로 미실행. WEAK badge 렌더링
+  변경(untrusted-only → stone "–")에 대한 browser-visible 검증이 환경 허용 시 필요.
+- frontend TypeScript 기존 오류(Sidebar.tsx, useChat.ts, main.tsx)는 이번 변경과 무관하지만
+  전체 tsc 검사가 실패 중. 별도 정리 필요.
+- Milestone 4 "better separation" 항목은 내부 필드(seq 756)와 display 노출(seq 759) 모두 완료.
+  나머지 Milestone 4 sub-item(source role labeling, multi-source weighting, reinvestigation)
+  의 다음 구현 슬라이스가 advisory로 scope되지 않음.
+
+### 다음 control
+
+CONTROL_SEQ 760 → `.pipeline/advisory_request.md` (STATUS: request_open)
+- 이유: (1) advisory seq 758의 `commit_push_now`가 seq 756+759 bundle 양쪽 미커밋 상태에서
+  아직 미실행 — commit 범위 확정 필요, (2) Playground claim-coverage 슬라이스 환경 차단이
+  다음 슬라이스 진행을 gate해야 하는지 판단 필요, (3) Milestone 4 나머지 sub-item의 다음
+  구현 entry point가 현재 verify 범위에서 자명하지 않음.
+
+---
+
+## CONTROL_SEQ 762 구현 검증 (NEXT_CONTROL_SEQ: 763)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-second-pass-trusted-priority.md`
+
+### 검증 결과
+
+- `core/agent_loop.py:3805` `_pending_slot_sort_key()` 내부 helper 추출 존재 ✅
+- `core/agent_loop.py:3808` tier 0: `CONFLICT` ✅
+- `core/agent_loop.py:3810-3813` tier 1: non-MISSING + `getattr(slot_coverage, "trusted_source_count", 0) == 0` ✅
+- `core/agent_loop.py:3814-3815` tier 2: MISSING + `prior_probe_count >= 1` ✅
+- `core/agent_loop.py:3816-3817` tier 3: MISSING (첫 조사) ✅
+- `core/agent_loop.py:3818-3819` tier 4: non-MISSING + already probed ✅
+- `core/agent_loop.py:3820` tier 5: non-MISSING + not probed ✅
+- `core/agent_loop.py:3825` `pending_slots.sort(key=_pending_slot_sort_key)` ✅
+- backward compatibility: `getattr(slot_coverage, "trusted_source_count", 0)` 사용 ✅
+- `tests/test_smoke.py:2594` `test_second_pass_prioritizes_conflict_slot_over_weak_slot` ✅
+- `tests/test_smoke.py:2668` `test_second_pass_prioritizes_zero_trusted_weak_over_positive_trusted_weak` ✅
+- `python3 -m py_compile core/agent_loop.py` → **통과** ✅
+- `python3 -m unittest tests.test_smoke` → **146 tests OK** ✅ (신규 2개 포함)
+- `git diff --check` → **통과** ✅
+- UI / serializer / 저장 스키마 / pipeline control 변경 없음 ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. `_pending_slot_sort_key()` helper가 `pending_slots.sort()` inline lambda를
+대체해 6-tier 우선순위를 명시함. CONFLICT tier 0, untrusted-only(trusted_source_count==0) tier 1,
+기존 MISSING 내부 순서(re-probed > new) tiers 2-3 보존, positive-trusted non-MISSING tiers 4-5.
+신규 회귀 테스트 2개 실제 line에 존재하며 146 tests 통과.
+
+### 남은 리스크 (CONTROL_SEQ 762 이후)
+
+- seqs 756+759+762 변경이 모두 미커밋 상태. advisory seq 761이 `commit_push_now_bundle`(756+759)을
+  권고했으나 seq 762까지 포함한 전체 bundle은 아직 commit되지 않음.
+- Milestone 4 "reinvestigate weak or unresolved slots more effectively" ✅ DONE (seq 762).
+  나머지 Milestone 4 sub-item(source role labeling, multi-source weighting) entry point 미scope.
+- dirty tree에 이전 `/work`, `/verify`, `report/gemini` 파일과 frontend 변경이 함께 남아 있음.
+
+### 다음 control
+
+CONTROL_SEQ 763 → `.pipeline/advisory_request.md` (STATUS: request_open)
+- 이유: (1) seq 762 추가로 커밋 대상 bundle이 확장 — commit 범위 재확정 필요,
+  (2) 남은 Milestone 4 sub-item(source role labeling, multi-source weighting)의 다음 entry
+  point가 현재 verify 범위에서 자명하지 않음.
+
+---
+
+## CONTROL_SEQ 765 구현 검증 (NEXT_CONTROL_SEQ: 766)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-claim-sort-trusted-tier.md`
+
+### 검증 결과
+
+- `core/web_claims.py:62` `_claim_sort_key()` 반환 타입 7-tuple로 변경 ✅
+- `core/web_claims.py:63` `trusted_tier = 1 if record.source_role in TRUSTED_CLAIM_SOURCE_ROLES else 0` ✅
+- `core/web_claims.py:65` `trusted_tier`가 반환 tuple의 첫 번째 원소 ✅
+- `core/web_claims.py:114` `max([existing, current], key=_claim_sort_key)` — call site 변경 없음 ✅
+- `core/web_claims.py:194` `max(items, key=_claim_sort_key)` — call site 변경 없음 ✅
+- `TRUSTED_CLAIM_SOURCE_ROLES` 재정의/재임포트 없이 기존 module-level 상수 재사용 ✅
+- `tests/test_smoke.py:2967` `test_claim_sort_key_trusted_source_beats_high_volume_untrusted` ✅
+- `tests/test_smoke.py:2991` `test_claim_sort_key_higher_support_wins_within_trusted_tier` ✅
+- `python3 -m py_compile core/web_claims.py core/contracts.py` → **통과** ✅
+- `python3 -m unittest tests.test_smoke` → **148 tests OK** ✅ (신규 2개 포함)
+- `git diff --check` → **통과** ✅
+- UI / serializer / 저장 스키마 / pipeline control 변경 없음 ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. `_claim_sort_key()` 7-tuple 확장 확인. `trusted_tier` 첫 기준으로
+trusted source(OFFICIAL/WIKI/DATABASE/DESCRIPTIVE)가 untrusted(COMMUNITY/BLOG/PORTAL) volume보다
+우선. 같은 trusted tier 내부에서 `support_count` 우선순위 유지. 신규 테스트 2개 실제 line에 존재.
+148 tests 통과.
+
+### 남은 리스크 (CONTROL_SEQ 765 이후)
+
+- seqs 756+759+762+765 변경 모두 미커밋. advisory가 756+759+762 bundle commit을 권고했으나
+  seq 765까지 포함한 bundle은 commit되지 않음.
+- Milestone 4 "stronger official/news/wiki/community weighting" ✅ DONE (seq 765).
+  나머지 Milestone 4 항목 "source role labeling"의 정확한 scope/entry point 미확정.
+- frontend TypeScript 기존 오류(Sidebar.tsx, useChat.ts, main.tsx)는 이번 변경과 무관.
+
+### 다음 control
+
+CONTROL_SEQ 766 → `.pipeline/advisory_request.md` (STATUS: request_open)
+- 이유: (1) seq 765 추가로 commit bundle이 더 확장 — 전체 Milestone 4 bundle(seqs 756-765)
+  commit 타이밍 재확정 필요, (2) 남은 Milestone 4 "source role labeling" 항목의 정확한
+  entry point가 현재 verify 범위에서 자명하지 않음, (3) Milestone 4 완료 여부 advisory 판단 필요.
+
+---
+
+## CONTROL_SEQ 768 구현 검증 (NEXT_CONTROL_SEQ: 769)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-entity-claim-sort-trusted-tier.md`
+
+### 검증 결과
+
+- `core/agent_loop.py:4142` `_entity_claim_sort_key()` 반환 타입 7-tuple ✅
+- `core/agent_loop.py:4143` `trusted_tier = 1 if claim.source_role in TRUSTED_CLAIM_SOURCE_ROLES else 0` ✅
+- `core/agent_loop.py:4156` `trusted_tier` 첫 번째 원소 ✅
+- `core/agent_loop.py:4186,4205` `max()` call site 2개 변경 없음 ✅
+- inline `role_priority` dict 유지 (handoff 제약) ✅
+- `tests/test_smoke.py:3015` `test_entity_claim_sort_key_trusted_beats_high_volume_untrusted` ✅
+- `python3 -m py_compile core/agent_loop.py` → **통과** ✅
+- `python3 -m unittest tests.test_smoke` → **149 tests OK** ✅ (신규 1개 포함)
+- `git diff --check` → **통과** ✅
+- UI / serializer / 저장 스키마 / pipeline control 변경 없음 ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. `_entity_claim_sort_key()` 7-tuple 확장 확인. `trusted_tier` 첫 기준으로
+entity-card primary claim 선택에서 OFFICIAL/WIKI/DATABASE/DESCRIPTIVE 단건 claim이
+COMMUNITY/BLOG/PORTAL 다건 claim보다 우선. `max()` call site 2개 자동 혜택. 신규 테스트 1개 실제
+line에 존재. 149 tests 통과.
+
+이것으로 `core/web_claims.py:_claim_sort_key()` (seq 765)와 `core/agent_loop.py:_entity_claim_sort_key()`
+(seq 768) 간의 trusted-tier 계약 drift가 해소됨.
+
+### 남은 리스크 (CONTROL_SEQ 768 이후)
+
+- seqs 756+759+762+765+768 변경 모두 미커밋. advisory seq 767이 "sort-key truth-sync 검증 후
+  commit" 조건을 부여했으므로 seq 768 완료로 조건 충족.
+- Milestone 4 "source role labeling" 항목이 advisory seq 767에서 remaining으로 명시됐으나
+  정확한 entry point/scope 미확정.
+- frontend TypeScript 기존 오류(Sidebar.tsx, useChat.ts, main.tsx) 이번 변경과 무관.
+
+### 다음 control
+
+CONTROL_SEQ 769 → `.pipeline/advisory_request.md` (STATUS: request_open)
+- 이유: (1) advisory seq 767의 defer_commit_push 조건(sort-key truth-sync 검증)이 seq 768로
+  충족 — commit/push bundle 범위 재확정 필요, (2) 남은 Milestone 4 "source role labeling"
+  entry point가 자명하지 않음, (3) Milestone 4 최종 완료 여부 확인 필요.
+
+---
+
+## CONTROL_SEQ 771 구현 검증 (NEXT_CONTROL_SEQ: 772)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-claim-coverage-source-role-tooltip.md`
+
+### 검증 결과
+
+- `app/frontend/src/components/MessageBubble.tsx:318`
+  `title={item.source_role ? item.source_role.charAt(0).toUpperCase() + item.source_role.slice(1) : undefined}` ✅
+- `MessageBubble.tsx:314` `isTrustedWeak` 로직 변경 없음 ✅
+- `MessageBubble.tsx:323-329` badge className 분기, status suffix 변경 없음 ✅
+- `source_role` 없거나 빈 값이면 `title=undefined` — 기존 badge 동일 렌더링 ✅
+- `tests/test_smoke.py:1459` `test_serialize_claim_coverage_includes_source_role` ✅
+- `python3 -m py_compile app/serializers.py` → **통과** ✅
+- `python3 -m unittest tests.test_smoke` → **150 tests OK** ✅ (신규 1개 포함)
+- `git diff --check` → **통과** ✅
+- `app/serializers.py`, `app/frontend/src/types.ts`, `core/`, pipeline control 변경 없음 ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. `MessageBubble.tsx:318`에 `title` tooltip이 추가됐고, `source_role`이
+없거나 빈 값일 때 `undefined`로 graceful degradation. 기존 `isTrustedWeak` 판단, badge className,
+status suffix("✓"/"?"/"–")는 변경 없음. 신규 serializer 회귀 테스트 1개 실제 line에 존재.
+150 tests 통과.
+
+advisory seq 770이 "이 슬라이스로 Milestone 4 완전 종료" 확인 → Milestone 4 fully closed.
+
+### 남은 리스크 (CONTROL_SEQ 771 이후)
+
+- seqs 756+759+762+765+768+771 변경 모두 미커밋. advisory seq 770이 seqs 756-768 commit을
+  권고했고, seq 771까지 포함한 전체 bundle이 대기 중.
+- Milestone 4 "Secondary-Mode Investigation Hardening" ✅ 완료 (seqs 756+759+762+765+768+771).
+- 다음 Milestone 5 첫 entry slice scope 미확정.
+- frontend TypeScript 기존 오류(Sidebar.tsx, useChat.ts, main.tsx) 이번 변경과 무관.
+
+### 다음 control
+
+CONTROL_SEQ 772 → `.pipeline/advisory_request.md` (STATUS: request_open)
+- 이유: (1) Milestone 4 완료 — commit/push bundle(seqs 756-771) 최종 확정 필요,
+  (2) Milestone 5 첫 entry slice가 advisory 없이 자명하지 않음.
+
+---
+
+## CONTROL_SEQ 774 구현 검증 (NEXT_CONTROL_SEQ: 775)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-content-reject-note-surface.md`
+
+### 검증 결과
+
+- `app/frontend/src/api/client.ts:112` `postContentVerdict()` — `POST /api/content-verdict`, payload `{session_id, message_id, content_verdict}` ✅
+- `app/frontend/src/api/client.ts:129` `postContentReasonNote()` — `POST /api/content-reason-note`, payload `{session_id, message_id, reason_note}` ✅
+- `app/frontend/src/types.ts:30` `content_verdict?: string` on `Message` ✅
+- `app/frontend/src/types.ts:31` `content_reason_record?: ContentReasonRecord` on `Message` ✅
+- `app/frontend/src/types.ts:71` `ContentReasonRecord` interface (`reason_scope`, `reason_label`, `reason_note?`, `recorded_at`, `artifact_id`, `source_message_id`) ✅
+- `app/frontend/src/components/MessageBubble.tsx:44-45` `onContentVerdict?`, `onContentReasonNote?` props 추가 ✅
+- `app/frontend/src/components/MessageBubble.tsx:261` `onContentVerdict && !rejected && !message.content_verdict` guard ✅
+- `app/frontend/src/components/MessageBubble.tsx:295-297` reject 버튼 클릭 시 `onContentVerdict()` 호출, non-empty note면 `onContentReasonNote()` 호출 ✅
+- `app/frontend/src/components/MessageBubble.tsx:311` "거절됨" indicator (`rejected` state 또는 `message.content_verdict === "rejected"`) ✅
+- label dropdown, multi-select, multi-verdict 추가 없음 — plain textarea only ✅
+- `python3 -m unittest tests.test_smoke` → **150 tests OK** (이번 변경으로 신규 test 없음) ✅
+- `git diff --check` → **통과** ✅
+- `app/serializers.py`, `core/`, `storage/`, pipeline control 파일 변경 없음 ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. API helpers, types, MessageBubble props/state/UI 모두 code에서 확인됨.
+150 tests 통과. MILESTONES.md Milestone 5 "still later" 제약 준수 — narrow surface만 추가.
+
+**핵심 미완: parent call site 미연결.**
+`ChatArea.tsx:120` `<MessageBubble>` 렌더에 `onContentVerdict`/`onContentReasonNote`가 전달되지
+않음. `App.tsx`에도 핸들러 없음. 결과적으로 "내용 거절" 버튼은 현재 어떤 경로에서도 렌더되지 않음
+(`onContentVerdict` prop이 `undefined`이면 UI 숨김).
+
+### 남은 리스크 (CONTROL_SEQ 774 이후)
+
+- seqs 756+759+762+765+768+771+774 변경 모두 미커밋. commit/push bundle 미실행.
+- `ChatArea.tsx` + `App.tsx` parent wire-up 없으면 seq 774 content reject UI는 사실상 미동작.
+- TypeScript 기존 오류(Sidebar.tsx, useChat.ts, main.tsx) 이번 변경과 무관, 미수정.
+
+### 다음 control
+
+CONTROL_SEQ 775 → `.pipeline/implement_handoff.md` (STATUS: implement)
+- 이유: seq 774 content reject UI를 실동작하게 만드는 parent wire-up(ChatArea.tsx + App.tsx)이
+  명확한 다음 slice. advisory 없이 자명하고 안전 범위 내.
+
+---
+
+## CONTROL_SEQ 775 구현 검증 (NEXT_CONTROL_SEQ: 776)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-content-reject-parent-wire-up.md`
+
+### 검증 결과
+
+- `app/frontend/src/components/ChatArea.tsx:29-30` `onContentVerdict?`, `onContentReasonNote?` props interface 추가 ✅
+- `app/frontend/src/components/ChatArea.tsx:50-51` destructure 추가 ✅
+- `app/frontend/src/components/ChatArea.tsx:129-130` `messages.map()` `<MessageBubble>`에 두 prop 전달 ✅
+- streaming bubble(line 134+)에는 전달 없음 — handoff 제약 준수 ✅
+- `app/frontend/src/App.tsx:7` `postContentVerdict`, `postContentReasonNote` import 추가 ✅
+- `app/frontend/src/App.tsx:47-54` `handleContentVerdict` — `postContentVerdict` 호출, `chat.loadSession` reload, error toast ✅
+- `app/frontend/src/App.tsx:56-62` `handleContentReasonNote` — `postContentReasonNote` 호출, error toast ✅
+- `app/frontend/src/App.tsx:133-134` `<ChatArea>`에 두 핸들러 전달 ✅
+- `MessageBubble.tsx`, `api/client.ts`, `types.ts`, backend, docs 변경 없음 ✅
+- `python3 -m unittest tests.test_smoke` → **150 tests OK** ✅
+- `git diff --check -- app/frontend/src/components/ChatArea.tsx app/frontend/src/App.tsx` → **통과** ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. `App → ChatArea → MessageBubble` 전체 prop chain 완성.
+"내용 거절" 버튼이 이제 실제 backend(`POST /api/content-verdict`, `POST /api/content-reason-note`)를
+호출할 수 있는 경로가 닫혔음. streaming bubble 미전달 확인.
+
+**Milestone 5 "still later" 완전 종료:**
+`docs/MILESTONES.md:198-200`의 "keep the first optional reject-note surface narrow and separate
+from richer reject labels" 항목 = seqs 774(UI 추가) + 775(parent wire-up)로 완료.
+나머지 "still later" 항목(`keep corrected-save bridge expansion narrow`)은 구현 항목이 아닌
+constraint directive.
+
+### 남은 리스크 (CONTROL_SEQ 775 이후)
+
+- seqs 756+759+762+765+768+771+774+775 전체 미커밋.
+- Milestone 4("Secondary-Mode Investigation Hardening", seqs 756-771) ✅ 완료.
+- Milestone 5("Grounded Brief Contract", seqs 774-775 포함) ✅ 완료 추정.
+- Milestone 6 첫 entry slice 미확정 — advisory 확인 필요.
+- TypeScript 기존 오류(Sidebar.tsx, useChat.ts, main.tsx) 이번 변경과 무관.
+
+### 다음 control
+
+CONTROL_SEQ 776 → `.pipeline/advisory_request.md` (STATUS: request_open)
+- 이유: (1) Milestone 5 "still later" content reject surface 완료로 Milestone 5 전체 종료 확정 필요,
+  (2) commit/push bundle 범위가 756-771 → 756-775로 확대됐으므로 advisory 재확인 필요,
+  (3) Milestone 6 첫 entry slice advisory 없이 자명하지 않음.

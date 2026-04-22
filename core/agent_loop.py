@@ -3801,19 +3801,28 @@ class AgentLoop:
             for slot, slot_coverage in coverage.items()
             if slot_coverage.status != CoverageStatus.STRONG
         ]
-        pending_slots.sort(
-            key=lambda item: (
-                0
-                if item[1].status == CoverageStatus.MISSING and prior_slot_probe_counts.get(item[0], 0) >= 1
-                else 1
-                if item[1].status == CoverageStatus.MISSING
-                else 2
-                if prior_slot_probe_counts.get(item[0], 0) >= 1
-                else 3,
-                -prior_slot_probe_counts.get(item[0], 0),
-                slot_priority.get(item[0], 99),
-            )
-        )
+
+        def _pending_slot_sort_key(item: tuple[str, Any]) -> tuple[int, int, int]:
+            slot, slot_coverage = item
+            prior_probe_count = prior_slot_probe_counts.get(slot, 0)
+            if slot_coverage.status == CoverageStatus.CONFLICT:
+                tier = 0
+            elif (
+                slot_coverage.status != CoverageStatus.MISSING
+                and getattr(slot_coverage, "trusted_source_count", 0) == 0
+            ):
+                tier = 1
+            elif slot_coverage.status == CoverageStatus.MISSING and prior_probe_count >= 1:
+                tier = 2
+            elif slot_coverage.status == CoverageStatus.MISSING:
+                tier = 3
+            elif prior_probe_count >= 1:
+                tier = 4
+            else:
+                tier = 5
+            return (tier, -prior_probe_count, slot_priority.get(slot, 99))
+
+        pending_slots.sort(key=_pending_slot_sort_key)
         for label, slot_coverage in pending_slots:
             confirmation_variants: list[str] = []
             if slot_coverage.primary_claim is not None:
@@ -4130,7 +4139,8 @@ class AgentLoop:
                 )
         return merge_claim_records(records)
 
-    def _entity_claim_sort_key(self, claim: ClaimRecord) -> tuple[int, int, int, int, str, str]:
+    def _entity_claim_sort_key(self, claim: ClaimRecord) -> tuple[int, int, int, int, int, str, str]:
+        trusted_tier = 1 if claim.source_role in TRUSTED_CLAIM_SOURCE_ROLES else 0
         role_priority = {
             SourceRole.OFFICIAL: 5,
             SourceRole.WIKI: 4,
@@ -4143,6 +4153,7 @@ class AgentLoop:
             SourceRole.BLOG: 0,
         }
         return (
+            trusted_tier,
             claim.support_count,
             role_priority.get(claim.source_role, 0),
             int(claim.confidence * 1000),
@@ -4252,6 +4263,7 @@ class AgentLoop:
                         "rendered_as": "not_rendered",
                         "trust_tier": "",
                         "support_plurality": "",
+                        "trusted_source_count": 0,
                     }
                 )
                 continue
@@ -4300,6 +4312,7 @@ class AgentLoop:
                     "rendered_as": rendered_as,
                     "trust_tier": trust_tier,
                     "support_plurality": support_plurality,
+                    "trusted_source_count": int(getattr(slot_coverage, "trusted_source_count", 0) or 0),
                 }
             )
 

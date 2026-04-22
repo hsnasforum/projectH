@@ -26,6 +26,8 @@ interface Props {
   onCancel: () => void;
   onCorrection?: (messageId: string, correctedText: string) => void;
   onFeedback?: (messageId: string, label: string) => void;
+  onContentVerdict?: (messageId: string, verdict: string) => void;
+  onContentReasonNote?: (messageId: string, note: string) => void;
   onToggleSidebar: () => void;
   sessionTitle: string;
   reviewQueueCount?: number;
@@ -45,6 +47,8 @@ export default function ChatArea({
   onCancel,
   onCorrection,
   onFeedback,
+  onContentVerdict,
+  onContentReasonNote,
   onToggleSidebar,
   sessionTitle,
   reviewQueueCount = 0,
@@ -117,7 +121,14 @@ export default function ChatArea({
 
           <div className="space-y-6">
             {messages.map((msg) => (
-              <MessageBubble key={msg.message_id} message={msg} onCorrection={onCorrection} onFeedback={onFeedback} />
+              <MessageBubble
+                key={msg.message_id}
+                message={msg}
+                onCorrection={onCorrection}
+                onFeedback={onFeedback}
+                onContentVerdict={onContentVerdict}
+                onContentReasonNote={onContentReasonNote}
+              />
             ))}
 
             {isStreaming && streamingText && (

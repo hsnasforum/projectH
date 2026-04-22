@@ -1024,6 +1024,7 @@ class SerializerMixin:
                     "rendered_as": str(item.get("rendered_as") or "").strip(),
                     "support_plurality": str(item.get("support_plurality") or "").strip(),
                     "trust_tier": str(item.get("trust_tier") or "").strip(),
+                    "trusted_source_count": int(item.get("trusted_source_count") or 0),
                 }
             )
         return serialized

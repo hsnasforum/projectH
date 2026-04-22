@@ -109,6 +109,40 @@ export async function postCandidateReview(
   });
 }
 
+export async function postContentVerdict(
+  sessionId: string,
+  messageId: string,
+  contentVerdict: string,
+): Promise<Record<string, unknown>> {
+  const resp = await fetch(`${BASE}/api/content-verdict`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      session_id: sessionId,
+      message_id: messageId,
+      content_verdict: contentVerdict,
+    }),
+  });
+  return resp.json();
+}
+
+export async function postContentReasonNote(
+  sessionId: string,
+  messageId: string,
+  reasonNote: string,
+): Promise<Record<string, unknown>> {
+  const resp = await fetch(`${BASE}/api/content-reason-note`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      session_id: sessionId,
+      message_id: messageId,
+      reason_note: reasonNote,
+    }),
+  });
+  return resp.json();
+}
+
 // -- Session management API --
 
 export async function deleteSession(sessionId: string): Promise<{ ok: boolean; deleted: boolean }> {

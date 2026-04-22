@@ -491,6 +491,19 @@
 - Axis 6 (dbfbec0, seq 944): trace evaluation — `scripts/evaluate_traces.py`; model layer: JUSTIFIED (137 pairs ≥100, 100% HQ ≥50)
 - **Milestone 12 closed** (seqs 921–944): personalization pipeline infrastructure + evaluation complete; model-layer deployment and approval trace collection deferred
 
+### Milestone 13: Applied Preference Effectiveness Tracking
+- track which active preferences are applied to responses and correction traces
+- measure whether applied preferences improve later corrections before widening memory automation
+- keep preference activation explicit and auditable while the safety loop is validated
+
+#### Guardrails
+- repeated-signal promotion remains blocked until the safety loop is validated
+- cross-session counting remains later
+- CANDIDATE → ACTIVE auto-activation remains deferred
+
+#### Shipped Infrastructure (Axis 1, 2026-04-23)
+- Axis 1 (8cea2f1, seq 958): applied preference tracking in session + trace export — `app/handlers/chat.py` stores `applied_preference_ids` in `update_last_message()`; `storage/session_store.py` yields `applied_preference_ids` in `stream_trace_pairs()`; 57 unit tests
+
 ## Next 3 Implementation Priorities
 
 1. Keep the shipped read-only `reviewed_memory_boundary_draft` draft-only and do not widen it into readiness tracking or cross-session scope. The rollback / disable / conflict / operator-audit contracts and the reviewed-memory apply path are now shipped; boundary draft stays separate from apply result.

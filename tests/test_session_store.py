@@ -109,6 +109,26 @@ class SessionStoreTest(unittest.TestCase):
             self.assertIn("completed_at", history[0])
             self.assertEqual(history[0].get("preview"), "preview text")
 
+    def test_operator_action_failed_outcome_preserved(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            store = SessionStore(base_dir=tmp_dir)
+            store.record_operator_action_outcome(
+                "demo",
+                {
+                    "approval_id": "test-fail-id",
+                    "kind": "operator_action",
+                    "action_kind": "shell_execute",
+                    "status": "failed",
+                    "error": "Unsupported action kind: 'shell_execute'",
+                },
+            )
+            session = store.get_session("demo")
+            history = session.get("operator_action_history", [])
+            self.assertEqual(len(history), 1)
+            self.assertEqual(history[0]["status"], "failed")
+            self.assertEqual(history[0]["error"], "Unsupported action kind: 'shell_execute'")
+            self.assertIn("completed_at", history[0])
+
     def test_active_context_round_trip(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             store = SessionStore(base_dir=tmp_dir)

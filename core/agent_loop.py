@@ -7501,6 +7501,12 @@ class AgentLoop:
             try:
                 result = execute_operator_action(approval_record)
             except ValueError as exc:
+                outcome_record = dict(approval_record)
+                outcome_record["status"] = "failed"
+                outcome_record["error"] = str(exc)
+                self.session_store.record_operator_action_outcome(
+                    request.session_id, outcome_record
+                )
                 return AgentResponse(
                     text=f"작업 실행 실패: {exc}",
                     status=ResponseStatus.ERROR,

@@ -313,6 +313,7 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             "/api/aggregate-transition-conflict-check",
             "/api/content-verdict",
             "/api/content-reason-note",
+            "/api/content-reason-label",
             "/api/preferences/activate",
             "/api/preferences/pause",
             "/api/preferences/reject",
@@ -371,6 +372,10 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/content-reason-note":
                 response = self.server.service.submit_content_reason_note(payload)
+                self._send_json(HTTPStatus.OK, response)
+                return
+            if parsed.path == "/api/content-reason-label":
+                response = self.server.service.submit_content_reason_label(payload)
                 self._send_json(HTTPStatus.OK, response)
                 return
             if parsed.path == "/api/preferences/activate":

@@ -150,6 +150,23 @@ export async function postContentReasonNote(
   return resp.json();
 }
 
+export async function postContentReasonLabel(
+  sessionId: string,
+  messageId: string,
+  reasonLabel: string,
+): Promise<Record<string, unknown>> {
+  const resp = await fetch(`${BASE}/api/content-reason-label`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      session_id: sessionId,
+      message_id: messageId,
+      reason_label: reasonLabel,
+    }),
+  });
+  return resp.json();
+}
+
 // -- Session management API --
 
 export async function deleteSession(sessionId: string): Promise<{ ok: boolean; deleted: boolean }> {

@@ -250,10 +250,18 @@ class ContentReasonScope(StrEnum):
 
 class ContentReasonLabel(StrEnum):
     EXPLICIT_CONTENT_REJECTION = "explicit_content_rejection"
+    FACT_ERROR = "fact_error"
+    TONE_ERROR = "tone_error"
+    MISSING_INFO = "missing_info"
 
 
 ALLOWED_CONTENT_REASON_LABELS: dict[str, frozenset[str]] = {
-    ContentReasonScope.CONTENT_REJECT: frozenset({ContentReasonLabel.EXPLICIT_CONTENT_REJECTION}),
+    ContentReasonScope.CONTENT_REJECT: frozenset({
+        ContentReasonLabel.EXPLICIT_CONTENT_REJECTION,
+        ContentReasonLabel.FACT_ERROR,
+        ContentReasonLabel.TONE_ERROR,
+        ContentReasonLabel.MISSING_INFO,
+    }),
 }
 
 

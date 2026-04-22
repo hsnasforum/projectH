@@ -5,6 +5,7 @@ import Toast from "./components/Toast";
 import type { ToastItem } from "./components/Toast";
 import { useChat } from "./hooks/useChat";
 import {
+  postContentReasonLabel,
   postContentReasonNote,
   postContentVerdict,
   postCorrectedSave,
@@ -66,6 +67,15 @@ export default function App() {
       addToast("error", "거절 이유 저장에 실패했습니다.");
     }
   }, [chat.sessionId, addToast]);
+
+  const handleContentReasonLabel = useCallback(async (messageId: string, label: string) => {
+    try {
+      await postContentReasonLabel(chat.sessionId, messageId, label);
+      await chat.loadSession(chat.sessionId);
+    } catch {
+      // Label update is non-critical.
+    }
+  }, [chat.sessionId, chat.loadSession]);
 
   const handleCorrectedSave = useCallback(async (messageId: string) => {
     try {
@@ -147,6 +157,7 @@ export default function App() {
         onFeedback={handleFeedback}
         onContentVerdict={handleContentVerdict}
         onContentReasonNote={handleContentReasonNote}
+        onContentReasonLabel={handleContentReasonLabel}
         onCorrectedSave={handleCorrectedSave}
         onToggleSidebar={toggleSidebar}
         sessionTitle={chat.sessionTitle}

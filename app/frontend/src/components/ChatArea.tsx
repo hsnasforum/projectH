@@ -28,6 +28,7 @@ interface Props {
   onFeedback?: (messageId: string, label: string) => void;
   onContentVerdict?: (messageId: string, verdict: string) => void;
   onContentReasonNote?: (messageId: string, note: string) => void;
+  onContentReasonLabel?: (messageId: string, label: string) => void;
   onCorrectedSave?: (messageId: string) => void;
   onToggleSidebar: () => void;
   sessionTitle: string;
@@ -50,6 +51,7 @@ export default function ChatArea({
   onFeedback,
   onContentVerdict,
   onContentReasonNote,
+  onContentReasonLabel,
   onCorrectedSave,
   onToggleSidebar,
   sessionTitle,
@@ -130,6 +132,7 @@ export default function ChatArea({
                 onFeedback={onFeedback}
                 onContentVerdict={onContentVerdict}
                 onContentReasonNote={onContentReasonNote}
+                onContentReasonLabel={onContentReasonLabel}
                 onCorrectedSave={onCorrectedSave}
               />
             ))}

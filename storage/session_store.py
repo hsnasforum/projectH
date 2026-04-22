@@ -1277,6 +1277,79 @@ class SessionStore:
             self._save(session_id, data)
             return updated_message
 
+    def record_content_reason_label_for_message(
+        self,
+        session_id: str,
+        *,
+        message_id: str,
+        reason_label: str,
+    ) -> Dict[str, Any] | None:
+        normalized_message_id = str(message_id or "").strip()
+        normalized_reason_label = str(reason_label or "").strip()
+        if not normalized_message_id:
+            raise ValueError("레이블을 기록할 메시지 ID가 필요합니다.")
+        allowed = ALLOWED_CONTENT_REASON_LABELS.get(ContentReasonScope.CONTENT_REJECT, frozenset())
+        if normalized_reason_label not in allowed:
+            raise ValueError(f"허용되지 않은 reason_label: {normalized_reason_label!r}")
+
+        with self._lock:
+            data = self.get_session(session_id)
+            messages = data.get("messages", [])
+            updated_message: Dict[str, Any] | None = None
+            for index, message in enumerate(messages):
+                if str(message.get("message_id") or "").strip() != normalized_message_id:
+                    continue
+
+                if (
+                    message.get("role") != "assistant"
+                    or str(message.get("artifact_kind") or "").strip() != "grounded_brief"
+                    or not isinstance(message.get("original_response_snapshot"), dict)
+                ):
+                    raise ValueError("레이블을 기록할 grounded-brief 원문 응답을 찾지 못했습니다.")
+
+                artifact_id = str(message.get("artifact_id") or "").strip()
+                if not artifact_id:
+                    raise ValueError("레이블을 기록할 grounded-brief artifact anchor를 찾지 못했습니다.")
+
+                existing_outcome = self._normalize_corrected_outcome(
+                    message.get("corrected_outcome"),
+                    fallback_artifact_id=artifact_id,
+                    fallback_source_message_id=normalized_message_id,
+                )
+                if existing_outcome is None or existing_outcome.get("outcome") != "rejected":
+                    raise ValueError("현재 내용 거절로 기록된 grounded-brief 원문 응답에서만 레이블을 변경할 수 있습니다.")
+
+                existing_reason_record = self._normalize_content_reason_record(
+                    message.get("content_reason_record"),
+                    fallback_artifact_id=artifact_id,
+                    fallback_artifact_kind="grounded_brief",
+                    fallback_source_message_id=normalized_message_id,
+                )
+                if existing_reason_record is None:
+                    raise ValueError("레이블을 연결할 content reason record를 찾지 못했습니다.")
+
+                patched = dict(message)
+                patched["content_reason_record"] = {
+                    "reason_scope": str(existing_reason_record.get("reason_scope") or ContentReasonScope.CONTENT_REJECT),
+                    "reason_label": normalized_reason_label,
+                    "reason_note": existing_reason_record.get("reason_note"),
+                    "recorded_at": self._now(),
+                    "artifact_id": artifact_id,
+                    "artifact_kind": str(existing_reason_record.get("artifact_kind") or "grounded_brief"),
+                    "source_message_id": normalized_message_id,
+                }
+                normalized = self._normalize_message(patched)
+                messages[index] = normalized
+                updated_message = dict(normalized)
+                break
+
+            if updated_message is None:
+                return None
+
+            data["messages"] = messages
+            self._save(session_id, data)
+            return updated_message
+
     def record_candidate_confirmation_for_message(
         self,
         session_id: str,

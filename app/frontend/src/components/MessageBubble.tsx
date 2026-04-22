@@ -11,6 +11,13 @@ marked.setOptions({
 
 const URL_REGEX = /(https?:\/\/[^\s<>"')\]]+)/g;
 
+const CONTENT_REASON_LABELS = [
+  { value: "explicit_content_rejection", label: "일반 거절" },
+  { value: "fact_error", label: "사실 오류" },
+  { value: "tone_error", label: "문체 불만족" },
+  { value: "missing_info", label: "누락 정보" },
+] as const;
+
 /** Split text into plain segments and LinkChip elements, stripping "링크:" labels. */
 function renderTextWithLinks(text: string): ReactNode[] {
   const cleaned = text.replace(
@@ -43,6 +50,7 @@ interface Props {
   onFeedback?: (messageId: string, label: string) => void;
   onContentVerdict?: (messageId: string, verdict: string) => void;
   onContentReasonNote?: (messageId: string, note: string) => void;
+  onContentReasonLabel?: (messageId: string, label: string) => void;
   onCorrectedSave?: (messageId: string) => void;
 }
 
@@ -52,6 +60,7 @@ export default function MessageBubble({
   onFeedback,
   onContentVerdict,
   onContentReasonNote,
+  onContentReasonLabel,
   onCorrectedSave,
 }: Props) {
   const isUser = message.role === "user";
@@ -336,6 +345,27 @@ export default function MessageBubble({
           {onContentVerdict && (rejected || message.content_verdict === "rejected") && (
             <div className="mt-1 space-y-1">
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-50 text-red-500">거절됨</span>
+              {onContentReasonLabel && (
+                <div className="flex flex-wrap gap-1">
+                  {CONTENT_REASON_LABELS.map(({ value, label }) => {
+                    const active = (message.content_reason_record?.reason_label ?? "explicit_content_rejection") === value;
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => onContentReasonLabel(message.message_id, value)}
+                        className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                          active
+                            ? "bg-red-100 border-red-300 text-red-600"
+                            : "bg-stone-50 border-stone-200 text-stone-400 hover:border-stone-400"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               {onContentReasonNote && (
                 <div className="flex flex-col gap-1">
                   <textarea

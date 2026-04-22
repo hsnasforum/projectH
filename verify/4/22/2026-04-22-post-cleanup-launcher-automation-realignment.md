@@ -809,3 +809,102 @@ pre-populate하고 blur 시 업데이트. MILESTONES:221-223 준수.
 CONTROL_SEQ 790 → `.pipeline/advisory_request.md` (STATUS: request_open)
 - 이유: (1) seq 789 commit/push bundle 범위 확정 필요,
   (2) Milestone 6 다음 sub-item advisory 없이 자명하지 않음 (`docs/MILESTONES.md:226-232` 포함).
+
+---
+
+## CONTROL_SEQ 795 구현 검증 (NEXT_CONTROL_SEQ: 796)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-content-reason-label-chips.md`
+
+### 검증 결과
+
+- `core/contracts.py:251-255` `ContentReasonLabel` — `FACT_ERROR`, `TONE_ERROR`, `MISSING_INFO` 추가 확인, 기존 `EXPLICIT_CONTENT_REJECTION` 값 유지 ✅
+- `core/contracts.py:258-264` `ALLOWED_CONTENT_REASON_LABELS[CONTENT_REJECT]` frozenset에 새 3개 label 포함 ✅
+- `app/frontend/src/components/MessageBubble.tsx:14-18` `CONTENT_REASON_LABELS` 배열 상수 (4개 항목: explicit_content_rejection/일반 거절, fact_error/사실 오류, tone_error/문체 불만족, missing_info/누락 정보) ✅
+- `app/frontend/src/components/MessageBubble.tsx:53` `onContentReasonLabel?` prop interface 추가 ✅
+- `app/frontend/src/components/MessageBubble.tsx:63` destructure 추가 ✅
+- `app/frontend/src/components/MessageBubble.tsx:348-356` persistent rejected 블록 내 chip 행 — `onContentReasonLabel` undefined 시 렌더 안 함, active chip은 `content_reason_record?.reason_label` 기준 ✅
+- 기존 `showRejectNote` popup / reject button / `onContentReasonNote` textarea 변경 없음 ✅
+- `python3 -m py_compile core/contracts.py` → **통과** ✅
+- `python3 -m unittest tests.test_smoke` → **150 tests OK** ✅
+- `git diff --check -- core/contracts.py app/frontend/src/components/MessageBubble.tsx` → **통과** ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. `ContentReasonLabel` enum에 3개 label 추가(기존 값 보존), `ALLOWED_`
+딕셔너리 동기화. `MessageBubble`의 chip 행이 `onContentReasonLabel` guard 아래 렌더되어
+parent wire-up 전까지 숨겨짐. 150 tests 통과.
+
+**gap 식별 (advisory 확인 필요):**
+Advisory seq 794가 Axis 3 item 3으로 "wiring: selected labels captured alongside reason_note"를
+명시했으나, CONTROL_SEQ 795 handoff는 이를 Axis 4로 defer했음. chip UI는 클릭해도 실제 저장
+경로(backend `/api/content-reason-label` 엔드포인트, session_store 메서드, App/ChatArea 핸들러)가
+없어 현재 미동작 상태.
+
+### 남은 리스크 (CONTROL_SEQ 795 이후)
+
+- seqs 779+782+785+789+795 (Milestone 6 Axis 1+2+3 partial) 전체 미커밋.
+- Advisory seq 794 Axis 3 item 3 "wiring"이 Axis 4로 defer됨 — advisory 재확인 필요.
+- Axis 4 exact scope: `/api/content-reason-label` 엔드포인트, handler, session_store 메서드,
+  ChatArea/App wire-up — advisory 없이 자명하지 않음.
+- frontend TypeScript 기존 오류(Sidebar.tsx, useChat.ts, main.tsx) 이번 변경과 무관.
+
+### 다음 control
+
+CONTROL_SEQ 796 → `.pipeline/advisory_request.md` (STATUS: request_open)
+- 이유: (1) advisory seq 794 Axis 3 item 3 "wiring"이 seq 795 handoff에서 Axis 4로 defer됨 —
+  Axis 3 완료 여부 및 Axis 4 exact scope advisory 확인 필요,
+  (2) commit/push bundle(seqs 779-795, Milestone 6 Axis 1+2+3 partial) 타이밍 advisory 재확정 필요.
+
+---
+
+## CONTROL_SEQ 798 구현 검증 (NEXT_CONTROL_SEQ: 799)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-content-reason-label-wiring.md`
+
+### 검증 결과
+
+- `storage/session_store.py:1280` `record_content_reason_label_for_message` 메서드 존재 ✅
+  - `ALLOWED_CONTENT_REASON_LABELS[CONTENT_REJECT]` 기반 label 허용 검증 ✅
+  - rejected outcome + existing content_reason_record 존재 강제 ✅
+  - `reason_label`만 갱신, 기존 `reason_scope`/`reason_note`/`artifact_id` 보존 ✅
+- `app/handlers/feedback.py:284` `submit_content_reason_label` — validation→session_store→task_log→응답 ✅
+- `app/web.py:316` `/api/content-reason-label` 허용 경로 추가 ✅
+- `app/web.py:377-378` 라우팅 분기 추가 ✅
+- `app/frontend/src/api/client.ts:153` `postContentReasonLabel` 함수 — `POST /api/content-reason-label` ✅
+- `app/frontend/src/App.tsx:71,73,160` `handleContentReasonLabel` + `<ChatArea onContentReasonLabel>` 전달 ✅
+- `app/frontend/src/components/ChatArea.tsx:31,54,135` prop interface + destructure + MessageBubble 전달 ✅
+- streaming bubble에 미전달 (ChatArea.tsx 패턴 유지) ✅
+- `python3 -m py_compile storage/session_store.py app/handlers/feedback.py app/web.py` → **통과** ✅
+- `python3 -m unittest tests.test_smoke` → **150 tests OK** ✅
+- `git diff --check` (6개 파일 전체) → **통과** ✅
+- TypeScript 기존 오류(Sidebar.tsx, useChat.ts, main.tsx, client.ts line 116): 이번 변경과 무관, 신규 오류 없음 ⚠
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. backend(session_store + handler + web.py) + frontend(client.ts +
+App.tsx + ChatArea.tsx) 6개 파일 wiring 완결. chip 클릭 → `POST /api/content-reason-label` →
+`record_content_reason_label_for_message` → session reload 경로 닫힘.
+
+advisory seq 797이 "Axis 4 verified 후 bundle seqs 779-797 commit/push" 조건 명시.
+Axis 4(seq 798) 이제 verified — bundle 범위 extension(779-797 → 779-798) advisory 재확인 필요.
+
+### 남은 리스크 (CONTROL_SEQ 798 이후)
+
+- seqs 779+782+785+789+795+798 (Milestone 6 Axis 1+2+3+4) 전체 미커밋.
+  advisory seq 797이 Axis 4 verify 후 bundle commit 권고 — 조건 충족.
+- bundle 범위: advisory는 579-797을 명시했으나 Axis 4가 seq 798로 완료됨 → 579-798 확정 필요.
+- Milestone 6 다음 sub-item (`session_local` memory signal, promotion guardrail 등)이
+  `docs/MILESTONES.md:202-260` 범위에서 자명하지 않음.
+- TypeScript 기존 오류 미수정.
+
+### 다음 control
+
+CONTROL_SEQ 799 → `.pipeline/advisory_request.md` (STATUS: request_open)
+- 이유: (1) advisory seq 797 "Axis 4 verified 후 commit" 조건 충족 — bundle 범위 779-798 확정
+  및 commit/push 최종 승인 advisory 재확인 필요,
+  (2) Milestone 6 다음 sub-item(`session_local` memory signal 등) advisory 없이 자명하지 않음.

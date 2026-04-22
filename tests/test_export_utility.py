@@ -85,6 +85,16 @@ class TestStreamTracePairs(unittest.TestCase):
             self.assertIn("feedback", pairs[0])
             self.assertIsNone(pairs[0]["feedback"])
 
+    def test_stream_trace_pairs_includes_applied_preference_ids_key(self) -> None:
+        with TemporaryDirectory() as base_dir:
+            store = self._make_store_with_pair(
+                base_dir, "sess-pref", "original text", "corrected text"
+            )
+            pairs = list(store.stream_trace_pairs())
+            self.assertEqual(len(pairs), 1)
+            self.assertIn("applied_preference_ids", pairs[0])
+            self.assertIsNone(pairs[0]["applied_preference_ids"])
+
     def test_quality_score_in_range_is_high_quality(self) -> None:
         from core.delta_analysis import compute_correction_delta
         from scripts.export_traces import _is_high_quality

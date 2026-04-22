@@ -1053,6 +1053,7 @@ class SessionStore:
                     "session_id": session_id,
                     "message_id": str(msg.get("message_id") or ""),
                     "feedback": msg.get("feedback"),
+                    "applied_preference_ids": msg.get("applied_preference_ids"),
                 }
 
     def delete_session(self, session_id: str) -> bool:

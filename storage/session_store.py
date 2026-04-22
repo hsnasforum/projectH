@@ -172,7 +172,7 @@ class SessionStore:
             "status": status,
         }
         for field in (
-            "action_kind", "target_id", "requested_at",
+            "action_kind", "target_id", "content", "requested_at",
             "audit_trace_required", "is_reversible", "outcome_id",
         ):
             if field in approval:
@@ -1607,7 +1607,7 @@ class SessionStore:
             "status": "pending",
         }
         for field in (
-            "action_kind", "target_id", "requested_at",
+            "action_kind", "target_id", "content", "requested_at",
             "audit_trace_required", "is_reversible",
         ):
             if field in action_contract:

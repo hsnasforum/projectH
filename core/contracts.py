@@ -308,6 +308,7 @@ class OperatorActionKind(StrEnum):
 class OperatorActionContract(TypedDict, total=False):
     action_kind: str
     target_id: str
+    content: str
     requested_at: str
     audit_trace_required: bool
     is_reversible: bool
@@ -316,6 +317,7 @@ class OperatorActionContract(TypedDict, total=False):
 class OperatorActionRecord(TypedDict, total=False):
     action_kind: str
     target_id: str
+    content: str
     requested_at: str
     audit_trace_required: bool
     is_reversible: bool

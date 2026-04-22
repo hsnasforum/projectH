@@ -13,6 +13,17 @@ def execute_operator_action(record: dict) -> dict:
     if not target_id:
         raise ValueError("target_id is required for local_file_edit")
     path = Path(target_id)
+    content = record.get("content")
+    if content is not None:
+        write_content = str(content)
+        path.write_text(write_content, encoding="utf-8")
+        bytes_written = len(write_content.encode("utf-8"))
+        return {
+            "preview": f"파일 쓰기 완료: {target_id} ({bytes_written}바이트)",
+            "written": True,
+            "action_kind": action_kind,
+            "target_id": target_id,
+        }
     if not path.exists():
         return {
             "preview": f"[파일 없음: {target_id}]",

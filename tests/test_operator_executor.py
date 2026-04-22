@@ -23,6 +23,24 @@ class TestExecuteOperatorAction(unittest.TestCase):
         finally:
             os.unlink(tmp_path)
 
+    def test_local_file_edit_writes_to_disk(self) -> None:
+        with NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("original")
+            tmp_path = f.name
+        try:
+            record = {
+                "action_kind": "local_file_edit",
+                "target_id": tmp_path,
+                "content": "updated content",
+            }
+            result = execute_operator_action(record)
+            self.assertTrue(result.get("written"))
+            self.assertIn("파일 쓰기 완료", result.get("preview", ""))
+            with open(tmp_path, encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), "updated content")
+        finally:
+            os.unlink(tmp_path)
+
     def test_unsupported_kind_raises(self) -> None:
         with self.assertRaises(ValueError):
             execute_operator_action({"action_kind": "shell_execute", "target_id": "/tmp/x"})

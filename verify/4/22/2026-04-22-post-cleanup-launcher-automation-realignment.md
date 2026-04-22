@@ -1068,3 +1068,69 @@ CONTROL_SEQ 809 → `.pipeline/operator_request.md` (STATUS: needs_operator)
 - 이유: Axis 1+2 전체 구현 완료 및 검증됨. advisory seq 806이 bundle commit 권고했으나
   commit/push 실행은 operator 승인이 필요한 대규모 번들 경계임.
   doc sync 포함 여부를 operator가 결정할 수 있도록 scope 명시.
+
+---
+
+## CONTROL_SEQ 814 구현 검증 (NEXT_CONTROL_SEQ: 815)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-candidate-review-reason-note-serializer.md`
+
+### 검증 결과
+
+**app/serializers.py:_serialize_candidate_review_record (lines 911–924):**
+- 기존 hardcoded `return {...}` → `normalized = {...}` dict 패턴으로 교체 ✅
+- `reason_note = str(candidate_review_record.get("reason_note") or "").strip()` 추가 (line 921) ✅
+- `if reason_note: normalized["reason_note"] = reason_note` 추가 (lines 922–923) ✅
+- `session_store._normalize_candidate_review_record` (seq 808)와 동일한 optional-field 패턴 적용 ✅
+- `python3 -m py_compile app/serializers.py` → **OK** ✅
+- `python3 -m unittest tests.test_smoke -q` → **150 tests OK** ✅
+- `git diff --check -- app/serializers.py` → **OK** ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. `_serialize_candidate_review_record` return dict가 handoff 명세
+(lines 911–924)와 정확히 일치하는 normalized 패턴으로 교체됨. storage normalizer(seq 808)와
+대칭 구조 확인. 기존 callers(accept/reject/defer 레코드)는 reason_note 없으므로 regression 없음.
+
+### seq 813 부분 구현 완료 사실 확인
+
+seq 814 verify 중 dirty tree 검사 결과, Codex가 seq 813 serializer 차단 이전에
+Axis 3 doc+e2e 변경을 모두 적용했음을 확인:
+
+| 파일 | seq 813 변경 내용 | 상태 |
+|------|-----------------|------|
+| `README.md` | review action 목록에 `edit` 추가 (lines 75, 152, 416) | ✅ dirty tree 확인 |
+| `docs/PRODUCT_SPEC.md` | `- no edit` 제거, `edit` shipped 승격, reason_note 설명 추가 | ✅ dirty tree 확인 |
+| `docs/ACCEPTANCE_CRITERIA.md` | 4 → `four` actions, `edit`/`edited` 추가, reason_note 업데이트 | ✅ dirty tree 확인 |
+| `docs/MILESTONES.md` | `edit` "still later" 목록에서 제거, Axis 2 shipped 노트 추가 | ✅ dirty tree 확인 |
+| `app/static/app.js` | 상태 텍스트 `"…보류, 또는 편집 메모로 기록할 수 있습니다."` | ✅ dirty tree 확인 |
+| `e2e/tests/web-smoke.spec.mjs` | 상태 텍스트 assertion 업데이트 + editButton count/text + 편집 smoke test 추가 | ✅ dirty tree 확인 |
+
+### Milestone 7 Axis 3 전체 구현 완료 상태
+
+| 레이어 | 파일 | 변경 내용 | seq |
+|--------|------|----------|-----|
+| 계약 | `core/contracts.py` | EDIT + "edited" | 807 |
+| 핸들러 | `app/handlers/aggregate.py` | reason_note 추출 | 807 |
+| 프런트엔드 JS | `app/static/app.js` | 버튼, notice, submitCandidateReview, 상태 텍스트 | 807, 813 |
+| 스토리지 | `storage/session_store.py` | reason_note 보존 | 808 |
+| serializer | `app/serializers.py` | reason_note 직렬화 | 814 |
+| 문서 | `README.md`, `PRODUCT_SPEC.md`, `ACCEPTANCE_CRITERIA.md`, `MILESTONES.md` | edit 승격 | 813 |
+| E2E | `e2e/tests/web-smoke.spec.mjs` | 편집 smoke test | 813 |
+
+### 남은 리스크 (CONTROL_SEQ 814 이후)
+
+- Playwright browser smoke 미실행 (편집 버튼 UI 기능 정확성 live 확인 미완료)
+- Axis 3 + serializer bundle commit/push 미처리
+- 미커밋 untracked files: `work/4/22/2026-04-22-candidate-review-reason-note-serializer.md`,
+  `work/4/22/2026-04-22-content-reason-label-chips.md`,
+  `work/4/22/2026-04-22-pipeline-launcher-risk-burn-down.md`,
+  `report/gemini/` 2개 파일
+
+### 다음 control
+
+CONTROL_SEQ 815 → `.pipeline/operator_request.md` (STATUS: needs_operator)
+- 이유: Milestone 7 Axis 3 전체 구현(seqs 813–814) + serializer fix 완료. dirty tree의
+  7개 수정 파일 + work/verify notes bundle commit/push는 operator 승인 경계.

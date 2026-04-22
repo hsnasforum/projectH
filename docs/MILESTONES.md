@@ -411,11 +411,10 @@
 - implemented first slice:
   - one local pending review queue surface for eligible `durable_candidate` records
   - one compact existing-shell `검토 후보` section fed only by current session `review_queue_items`
-  - one same-source-message `candidate_review_record` may now be recorded through `accept`, `reject`, or `defer`
-  - all three outcomes stay reviewed-but-not-applied and the matching pending item leaves the queue
+  - one same-source-message `candidate_review_record` may now be recorded through `accept`, `reject`, `defer`, or `edit`
+  - all four outcomes stay reviewed-but-not-applied and the matching pending item leaves the queue
+- Axis 2 shipped: `CandidateReviewAction.EDIT = "edit"` -> status `"edited"` with optional `reason_note` storage (seqs 807-808)
 - still later inside this milestone:
-  - keep the source-message-anchored `candidate_review_record` vocabulary wider than the shipped slice:
-    - `edit`
   - keep scope suggestion fields later than the first review-action trace
   - define minimum scope, conflict, and rollback rules before future user-level memory
   - define a conservative default suggested-scope order and justification rule only when reviewed-memory planning opens

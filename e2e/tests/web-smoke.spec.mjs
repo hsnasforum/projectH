@@ -744,7 +744,7 @@ test("candidate confirmation path는 save support와 분리되어 기록되고 l
   await expect(page.locator("#response-candidate-confirmation-status")).toHaveText("현재 기록된 수정 방향을 나중에도 다시 써도 된다는 positive reuse confirmation만 남겼습니다. 저장 승인, 내용 거절, 거절 메모와는 별도입니다.");
   await expect(reviewQueueBox).toBeVisible();
   await expect(reviewQueueBox.locator(".sidebar-section-label")).toHaveText("검토 후보");
-  await expect(page.locator("#review-queue-status")).toHaveText("후보를 수락, 거절, 또는 보류할 수 있습니다. 아직 적용이나 편집은 열지 않았습니다.");
+  await expect(page.locator("#review-queue-status")).toHaveText("후보를 수락, 거절, 보류, 또는 편집 메모로 기록할 수 있습니다.");
   await expect(reviewQueueBox.getByTestId("review-queue-item").locator("strong").first()).toHaveText("explicit rewrite correction recorded for this grounded brief");
   await expect(reviewQueueBox.getByTestId("review-queue-item").locator(".history-item-title span")).toContainText("기준 명시 확인");
   await expect(reviewQueueBox.getByTestId("review-queue-item").locator(".history-item-title span")).toContainText("상태 검토 대기");
@@ -757,6 +757,9 @@ test("candidate confirmation path는 save support와 분리되어 기록되고 l
   const reviewDeferButton = reviewQueueBox.getByTestId("review-queue-defer");
   await expect(reviewDeferButton).toHaveCount(1);
   await expect(reviewDeferButton).toHaveText("보류");
+  const reviewEditButton = reviewQueueBox.getByTestId("review-queue-edit");
+  await expect(reviewEditButton).toHaveCount(1);
+  await expect(reviewEditButton).toHaveText("편집");
 
   const preAcceptPayload = await fetchSessionPayload(page, sessionId);
   expect(preAcceptPayload.session.review_queue_items).toHaveLength(1);
@@ -949,6 +952,54 @@ test("review-queue reject/defer는 accept와 동일한 quick-meta, transcript-me
   expect(messagesWithReview[0].candidate_review_record.review_status).toBe("rejected");
   expect(messagesWithReview[1].candidate_review_record.review_action).toBe("defer");
   expect(messagesWithReview[1].candidate_review_record.review_status).toBe("deferred");
+});
+
+test("review-queue 편집은 review_action='edit' review_status='edited' reason_note를 기록합니다", async ({ page }) => {
+  const correctedText = "편집 검토용 수정 방향입니다.\n핵심만 남겼습니다.";
+  const editNoteText = "수정된 표현입니다. 원래 내용보다 더 명확합니다.";
+
+  const sessionId = await prepareSession(page, "edit-note");
+  await page.getByTestId("source-path").fill(longFixturePath);
+  await page.getByTestId("submit-request").click();
+  await expect(page.getByTestId("response-text")).toBeVisible();
+
+  const confirmationButton = page.getByTestId("response-candidate-confirmation-submit");
+  const reviewQueueBox = page.getByTestId("review-queue-box");
+
+  await page.getByTestId("response-correction-input").fill(correctedText);
+  await page.getByTestId("response-correction-submit").click();
+  await expect(page.locator("#notice-box")).toHaveText("수정본을 기록했습니다. 저장 승인은 별도 흐름으로 유지됩니다.");
+
+  await confirmationButton.click();
+  await expect(page.locator("#notice-box")).toHaveText(
+    "현재 수정 방향을 나중에도 다시 써도 된다는 확인을 기록했습니다. 저장 승인과는 별도입니다."
+  );
+  await expect(reviewQueueBox).toBeVisible();
+
+  const editButton = reviewQueueBox.getByTestId("review-queue-edit");
+  await expect(editButton).toHaveCount(1);
+  await editButton.click();
+
+  const editTextarea = reviewQueueBox.locator(".edit-note-area textarea");
+  await expect(editTextarea).toBeVisible();
+  await editTextarea.fill(editNoteText);
+
+  const confirmBtn = reviewQueueBox.locator(".edit-note-area button");
+  await confirmBtn.click();
+
+  await expect(page.locator("#notice-box")).toHaveText("검토 후보에 편집 의견을 기록했습니다.");
+  await expect(reviewQueueBox).toBeHidden();
+  await expect(page.locator("#response-quick-meta-text")).toContainText("검토 편집됨");
+  await expect(page.getByTestId("transcript-meta").filter({ hasText: "검토 편집됨" })).toHaveCount(1);
+
+  const sessionPayload = await fetchSessionPayload(page, sessionId);
+  const reviewedMessage = sessionPayload.session?.messages?.find(
+    (m) => m.candidate_review_record?.review_action === "edit"
+  );
+  expect(reviewedMessage).toBeDefined();
+  expect(reviewedMessage.candidate_review_record.review_status).toBe("edited");
+  expect(reviewedMessage.candidate_review_record.reason_note).toBe(editNoteText);
+  expect(sessionPayload.session.review_queue_items).toEqual([]);
 });
 
 /**

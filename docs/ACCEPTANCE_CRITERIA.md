@@ -57,7 +57,7 @@
 - Serialized grounded-brief source messages can now also expose one optional source-message-anchored read-only `candidate_recurrence_key` draft derived only from the explicit original-vs-corrected pair when the same current source message still exposes a matching current `session_local_candidate`.
 - Serialized grounded-brief source messages can now also expose one optional source-message-anchored read-only `durable_candidate` projection when the same current source message still exposes both a matching `session_local_candidate` and `candidate_confirmation_record`.
 - Current session payloads can now also expose one optional top-level read-only `recurrence_aggregate_candidates` projection derived only from current same-session serialized source-message `candidate_recurrence_key` records when at least two distinct grounded-brief anchors share the same exact recurrence identity.
-- Current session payloads and the existing shell can now also expose one local `review_queue_items` / `검토 후보` surface fed only by current `durable_candidate` items with `promotion_eligibility = eligible_for_review`, with `accept`/`reject`/`defer` review actions that each record source-message `candidate_review_record` with the corresponding status, remove the item from the pending queue, and persistently show the review outcome label (`검토 수락됨`/`검토 거절됨`/`검토 보류됨`) on the source-message transcript meta and quick meta; a later correction clears the review outcome with the stale record.
+- Current session payloads and the existing shell can now also expose one local `review_queue_items` / `검토 후보` surface fed only by current `durable_candidate` items with `promotion_eligibility = eligible_for_review`, with `accept`/`reject`/`defer`/`edit` review actions that each record source-message `candidate_review_record` with the corresponding status, remove the item from the pending queue, and persistently show the review outcome label (`검토 수락됨`/`검토 거절됨`/`검토 보류됨`/`검토 편집됨`) on the source-message transcript meta and quick meta; a later correction clears the review outcome with the stale record.
 
 ### In Progress
 - (No web-investigation items currently in progress; see `docs/TASK_BACKLOG.md` Current Phase In Progress for future quality-improvement direction.)
@@ -370,8 +370,8 @@ These are placeholders for the next phase design target and its immediate follow
 - Current shipped first slice:
   - only current `durable_candidate` items with `promotion_eligibility = eligible_for_review` may enter the local read-only review queue
   - queue items are read-only inspection projections, not new canonical durable records
-  - `accept`, `reject`, and `defer` actions are available in the current slice
-  - all three actions record reviewed-but-not-applied state only
+  - `accept`, `reject`, `defer`, and `edit` actions are available in the current slice
+  - all four actions record reviewed-but-not-applied state only
 - Only `durable_candidate` items with trace-complete support and no final review outcome should enter a later action-capable local review queue.
 - `session_local` items should not become future user-level memory without first becoming `durable_candidate`.
 - First review-action trace contract should stay source-message-anchored:
@@ -384,22 +384,20 @@ These are placeholders for the next phase design target and its immediate follow
   - `artifact_id`
   - `source_message_id`
   - `review_scope = source_message_candidate_review`
-  - `review_action` ∈ { `accept`, `reject`, `defer` }
-  - `review_status` ∈ { `accepted`, `rejected`, `deferred` }
+  - `review_action` ∈ { `accept`, `reject`, `defer`, `edit` }
+  - `review_status` ∈ { `accepted`, `rejected`, `deferred`, `edited` }
   - `recorded_at`
-  - optional `reviewed_statement` only when a later `edit` action lands
+  - optional `reason_note` (present when `review_action = edit`)
 - Current shipped review actions:
-  - `accept`, `reject`, `defer`
-- Later review actions still include:
-  - `edit`
+  - `accept`, `reject`, `defer`, `edit`
 - Current pending queue rule should stay narrow even after actions exist:
   - `review_queue_items` should continue to include only current `durable_candidate` items with `promotion_eligibility = eligible_for_review`
   - a queue item should appear only when no matching current `candidate_review_record` exists on the same `artifact_id`, `source_message_id`, `candidate_id`, and `candidate_updated_at`
-  - after one matching review record (`accept`, `reject`, or `defer`) is present for that candidate version, the item should leave the pending queue
+  - after one matching review record (`accept`, `reject`, `defer`, or `edit`) is present for that candidate version, the item should leave the pending queue
   - reviewed items should not automatically open a second queue section, dashboard, or user-level memory surface in the same slice
   - aggregate-level reviewed-memory transition initiation must stay outside this queue:
     - `review_queue_items` must not host `future_reviewed_memory_apply`
-    - source-message review outcome (`accept`/`reject`/`defer`) must not be reinterpreted as reviewed-memory apply trigger
+    - source-message review outcome (`accept`/`reject`/`defer`/`edit`) must not be reinterpreted as reviewed-memory apply trigger
     - `candidate_review_record` must not become canonical transition identity, `operator_reason_or_note`, or `emitted_at` basis
 - Action meaning should stay distinct:
   - `accept` reviews the current `durable_candidate` as reusable, but does not apply user-level memory
@@ -417,10 +415,10 @@ These are placeholders for the next phase design target and its immediate follow
 - Approval-backed save should not be the sole reason a candidate becomes reviewed memory or receives a broader suggested scope.
 - This review surface is now a current acceptance gate for the narrow first slice.
 - Current shipped action-capable slice:
-  - `accept`, `reject`, `defer` are all implemented
+  - `accept`, `reject`, `defer`, `edit` are all implemented
   - record one source-message `candidate_review_record` with the corresponding `review_action` and `review_status`
-  - remove the matching item from pending `review_queue_items` after any of the three actions
-  - do not add edit controls, reviewed-memory application, or user-level memory in the same slice
+  - remove the matching item from pending `review_queue_items` after any of the four actions
+  - do not add reviewed-memory application or user-level memory in the same slice
 
 ### Acceptance Placeholder For Memory
 - The current implementation should keep the first source-message-anchored `session_local_memory_signal` projection stable before any review queue or durable-candidate surface is attempted.

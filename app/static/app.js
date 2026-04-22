@@ -2606,7 +2606,7 @@
         return;
       }
 
-      reviewQueueStatus.textContent = "후보를 수락, 거절, 또는 보류할 수 있습니다. 아직 적용이나 편집은 열지 않았습니다.";
+      reviewQueueStatus.textContent = "후보를 수락, 거절, 보류, 또는 편집 메모로 기록할 수 있습니다.";
       reviewItems.forEach((item) => {
         const card = document.createElement("article");
         card.className = "history-item";

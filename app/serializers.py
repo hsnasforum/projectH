@@ -908,7 +908,7 @@ class SerializerMixin:
         ):
             return None
 
-        return {
+        normalized = {
             "candidate_id": candidate_id,
             "candidate_updated_at": candidate_updated_at,
             "artifact_id": artifact_id,
@@ -918,6 +918,10 @@ class SerializerMixin:
             "review_status": review_status,
             "recorded_at": recorded_at,
         }
+        reason_note = str(candidate_review_record.get("reason_note") or "").strip()
+        if reason_note:
+            normalized["reason_note"] = reason_note
+        return normalized
 
     def _serialize_candidate_confirmation_record(
         self,

@@ -55,7 +55,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
   - one separate source-message `candidate_confirmation_record` for that same positive reuse confirmation, kept outside save approval and outside the candidate object itself
   - one optional source-message-anchored read-only `candidate_recurrence_key` draft derived only from the explicit original-vs-corrected pair when the same current source message still exposes a matching current `session_local_candidate`
   - one optional source-message-anchored read-only `durable_candidate` projection computed only when the same current source message still exposes both a matching `session_local_candidate` and `candidate_confirmation_record`
-  - one local `review_queue_items` session projection plus one compact existing-shell `검토 후보` section fed only by current `durable_candidate` items with `promotion_eligibility = eligible_for_review`, plus `accept`/`reject`/`defer` review actions that each record source-message `candidate_review_record` with the corresponding `review_status` (`accepted`/`rejected`/`deferred`), remove the item from pending `review_queue_items`, and persistently show the review outcome label on the source-message transcript meta and quick meta
+  - one local `review_queue_items` session projection plus one compact existing-shell `검토 후보` section fed only by current `durable_candidate` items with `promotion_eligibility = eligible_for_review`, plus `accept`/`reject`/`defer`/`edit` review actions that each record source-message `candidate_review_record` with the corresponding `review_status` (`accepted`/`rejected`/`deferred`/`edited`), remove the item from pending `review_queue_items`, and persistently show the review outcome label on the source-message transcript meta and quick meta
   - one optional top-level session read-only `recurrence_aggregate_candidates` projection derived only from current same-session serialized source-message `candidate_recurrence_key` records and emitted only when at least two distinct grounded-brief source-message anchors share the same exact recurrence identity; aggregates are current-version only and retired automatically when any supporting correction is superseded by a newer correction before transition emit; aggregates with a record-backed lifecycle (stored transition records) survive supporting correction supersession so the lifecycle controls remain visible
   - one separate existing-shell aggregate-level `검토 메모 적용 후보` section fed only by current `recurrence_aggregate_candidates`, rendered adjacent to `검토 후보` only when one or more aggregates exist; each aggregate card shows a visible review-support line (`검토 수락 N건 / 교정 M건 (거절·보류는 감사 기록만)`) derived from accept-only `supporting_review_refs` count vs `recurrence_count`, making clear that reject/defer stay audit-only and do not count as aggregate support; transition-backed aggregate cards prefix the review-support line with `[기록된 기준]` to indicate the displayed counts describe the persisted recorded basis behind the lifecycle card rather than freshly derived live support; the `검토 메모 적용 시작` submit boundary is now enabled when `capability_outcome = unblocked_all_required` and the user has entered a non-empty reason note (visible but disabled while blocked or while note is empty); clicking the enabled submit now emits one `reviewed_memory_transition_record` with `record_stage = emitted_record_only_not_applied` and persists it under `reviewed_memory_emitted_transition_records`; after emission the same aggregate card shows `검토 메모 적용 실행`, and clicking that apply boundary POSTs to `/api/aggregate-transition-apply` which changes `record_stage` to `applied_pending_result` with `applied_at` added; after the apply boundary the card shows `결과 확정`, and clicking it changes `record_stage` to `applied_with_result` and creates `apply_result` with `result_version = first_reviewed_memory_apply_result_v1`, `applied_effect_kind = reviewed_memory_correction_pattern`, `result_stage = effect_active`, and `result_at`; the memory effect on future responses is now active (`result_stage = effect_active`); active effects are stored on the session as `reviewed_memory_active_effects`; future responses include a `[검토 메모 활성]` prefix with the operator's reason and pattern fingerprint; stop-apply: after the effect is active the aggregate card shows `적용 중단`; clicking it changes `record_stage` to `stopped`, sets `apply_result.result_stage` to `effect_stopped`, and removes the effect from `reviewed_memory_active_effects`; reversal: after stop the card shows `적용 되돌리기`; clicking it changes `record_stage` to `reversed`, sets `apply_result.result_stage` to `effect_reversed`, and adds `reversed_at`; conflict-visibility: after reversal the card shows `충돌 확인`; clicking it creates a separate `reviewed_memory_conflict_visibility_record` with `transition_action = future_reviewed_memory_conflict_visibility`, `record_stage = conflict_visibility_checked`, `source_apply_transition_ref`, evaluated `conflict_entries`, and `conflict_entry_count`
 - each current `recurrence_aggregate_candidates` item now also exposes deterministic read-only projections (`aggregate_promotion_marker`, `reviewed_memory_precondition_status`, `reviewed_memory_boundary_draft`, `reviewed_memory_rollback_contract`, `reviewed_memory_disable_contract`, `reviewed_memory_conflict_contract`, `reviewed_memory_transition_audit_contract`, `reviewed_memory_unblock_contract`, `reviewed_memory_capability_status`, `reviewed_memory_planning_target_ref`), one conditional `reviewed_memory_capability_basis` (present only when `capability_outcome = unblocked_all_required`), and lifecycle records: one conditional `reviewed_memory_transition_record` (emitted / applied / stopped / reversed) and one optional `reviewed_memory_conflict_visibility_record` (conflict_visibility_checked)
@@ -165,7 +165,7 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - when the web shell runs inside WSL, the server binds to `0.0.0.0` by default and prints a Windows fallback browser URL using the current WSL IPv4 address
 - recent session list
 - conversation timeline with per-message timestamps
-- one compact `검토 후보` section inside the current session shell for eligible current `durable_candidate` items, with `accept`/`reject`/`defer` review actions
+- one compact `검토 후보` section inside the current session shell for eligible current `durable_candidate` items, with `accept`/`reject`/`defer`/`edit` review actions
 - advanced settings for provider/runtime/session/search permission
 - browser file picker and browser folder picker
 - streaming progress box and cancel interaction
@@ -1586,10 +1586,10 @@ The first official artifact is the `grounded brief`.
   - each queue item is only a repackaging of the current source-message `durable_candidate`, not a second canonical durable object
   - each queue item carries `item_type = durable_candidate` so it remains distinguishable from any future queue item family
   - queue items also carry the source-message projection's `derived_from` and `derived_at`
-  - the current queue supports three review actions:
-    - `accept` / `reject` / `defer`
-    - all three remain reviewed-but-not-applied only
-    - no edit
+  - the current queue supports four review actions:
+    - `accept` / `reject` / `defer` / `edit`
+    - all four remain reviewed-but-not-applied only
+    - `edit` carries an optional `reason_note` field (the operator's edited statement text)
 - `session_local` items should never skip directly into future user-level memory
 - first shipped review-outcome trace stays source-message-anchored instead of opening a second durable store:
   - one optional sibling `candidate_review_record` on the same grounded-brief source message
@@ -1602,8 +1602,9 @@ The first official artifact is the `grounded brief`.
   - `artifact_id`
   - `source_message_id`
   - `review_scope = source_message_candidate_review`
-  - `review_action` ∈ { `accept`, `reject`, `defer` }
-  - `review_status` ∈ { `accepted`, `rejected`, `deferred` } (mapped from `review_action` via `CANDIDATE_REVIEW_ACTION_TO_STATUS`)
+  - `review_action` ∈ { `accept`, `reject`, `defer`, `edit` }
+  - `review_status` ∈ { `accepted`, `rejected`, `deferred`, `edited` } (mapped from `review_action` via `CANDIDATE_REVIEW_ACTION_TO_STATUS`)
+  - optional `reason_note` (present only when `review_action = edit`)
   - `recorded_at`
 - shipped review action vocabulary:
   - `accept`
@@ -1617,36 +1618,37 @@ The first official artifact is the `grounded brief`.
     - means later revisit is needed for the current source-message `durable_candidate`
     - does not invalidate the underlying explicit corrected pair or explicit confirmation basis
     - does not mean queue-only clear of the source-message candidate basis
-- later review vocabulary still includes:
+- shipped review vocabulary for `edit`:
   - `edit`
-    - means the reviewed reusable statement is adjusted at review time through `reviewed_statement`
+    - means the operator recorded an edited version of the candidate statement at review time via `reason_note`
     - does not rewrite the original-vs-corrected pair or the source-message `durable_candidate.statement`
     - does not mean the source-message corrected text itself was edited again
+    - remains reviewed-but-not-applied only
 - first queue-transition contract:
   - `review_queue_items` remain the pending-only inspection surface
   - a queue item should appear only when the same current source message still exposes:
     - current `durable_candidate`
     - `promotion_eligibility = eligible_for_review`
     - no matching current `candidate_review_record` on the same `artifact_id`, `source_message_id`, `candidate_id`, and `candidate_updated_at`
-  - after one matching review record (`accept`, `reject`, or `defer`) is present for that current candidate version, the item should leave the pending queue
+  - after one matching review record (`accept`, `reject`, `defer`, or `edit`) is present for that current candidate version, the item should leave the pending queue
   - the current action-capable slice should not add a second queue section, tab, or page for accepted / rejected / deferred items
   - until a later reviewed-memory or review-history surface exists, actioned items remain visible only through the source-message anchor plus audit log
   - aggregate-level reviewed-memory transition initiation must stay outside this queue:
     - `review_queue_items` must not host `future_reviewed_memory_apply`
-    - source-message review outcome (`accept`/`reject`/`defer`) must not be reinterpreted as reviewed-memory apply trigger
+    - source-message review outcome (`accept`/`reject`/`defer`/`edit`) must not be reinterpreted as reviewed-memory apply trigger
     - `candidate_review_record` must not become canonical transition identity, `operator_reason_or_note`, or `emitted_at` basis
 - current shipped review action implementation:
-  - `accept`, `reject`, and `defer` are all implemented
+  - `accept`, `reject`, `defer`, and `edit` are all implemented
   - one source-message `candidate_review_record` is recorded with the corresponding `review_action` and `review_status`
-  - the matching item leaves pending `review_queue_items` after any of the three actions
+  - the matching item leaves pending `review_queue_items` after any of the four actions
   - the result stays reviewed-but-not-applied:
     - no user-level memory apply
     - no scope suggestion fields
     - no second review dashboard
-    - no edit UI in the current slice
+    - `edit` stores `reason_note` only and does not rewrite source-message text
 - review actor assumption:
   - the same local user on the same machine
-- current repo still does not implement `edit`, reviewed memory store, or user-level memory store
+- current repo still does not implement a reviewed memory store or user-level memory store
 
 #### 11. Scope / Conflict / Rollback Principles
 - these principles remain later than the first source-message `candidate_review_record`

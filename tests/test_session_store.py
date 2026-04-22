@@ -242,6 +242,51 @@ class SessionStoreTest(unittest.TestCase):
             self.assertEqual(session["messages"][0]["text"], f"msg-{over_limit - MAX_MESSAGES_PER_SESSION}")
             self.assertEqual(session["messages"][-1]["text"], f"msg-{over_limit - 1}")
 
+    def test_get_global_audit_summary(self) -> None:
+        with TemporaryDirectory() as base_dir:
+            store = SessionStore(base_dir=base_dir)
+            # Empty store
+            empty = store.get_global_audit_summary()
+            self.assertEqual(empty["session_count"], 0)
+            self.assertEqual(empty["correction_pair_count"], 0)
+
+            # Session with a correction pair and operator action
+            session_id = "audit-test-session"
+            data = store.get_session(session_id)
+            data["messages"].append({
+                "message_id": "msg-1",
+                "role": "assistant",
+                "artifact_id": "artifact-1",
+                "artifact_kind": "grounded_brief",
+                "corrected_text": "corrected content",
+                "feedback": {"label": "helpful"},
+                "original_response_snapshot": {
+                    "artifact_id": "artifact-1",
+                    "artifact_kind": "grounded_brief",
+                    "draft_text": "original",
+                    "source_paths": [],
+                },
+                "text": "original",
+            })
+            data["operator_action_history"].append({
+                "action_kind": "local_file_edit",
+                "status": "executed",
+            })
+            data["operator_action_history"].append({
+                "action_kind": "local_file_edit",
+                "status": "rolled_back",
+            })
+            store._save(session_id, data)
+
+            summary = store.get_global_audit_summary()
+            self.assertEqual(summary["session_count"], 1)
+            self.assertEqual(summary["correction_pair_count"], 1)
+            self.assertEqual(summary["feedback_like_count"], 1)
+            self.assertEqual(summary["feedback_dislike_count"], 0)
+            self.assertEqual(summary["operator_executed_count"], 1)
+            self.assertEqual(summary["operator_rolled_back_count"], 1)
+            self.assertEqual(summary["operator_failed_count"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

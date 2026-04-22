@@ -981,6 +981,52 @@ class SessionStore:
                 )
             return sorted(summaries, key=lambda item: item.get("updated_at", ""), reverse=True)
 
+    def get_global_audit_summary(self) -> Dict[str, Any]:
+        """Return aggregate trace counts across all sessions for precondition assessment."""
+        with self._lock:
+            summary: Dict[str, Any] = {
+                "session_count": 0,
+                "correction_pair_count": 0,
+                "feedback_like_count": 0,
+                "feedback_dislike_count": 0,
+                "operator_executed_count": 0,
+                "operator_rolled_back_count": 0,
+                "operator_failed_count": 0,
+            }
+            def count_feedback(feedback: Any) -> None:
+                if not isinstance(feedback, dict):
+                    return
+                label = str(feedback.get("label") or "").strip().lower()
+                if label in {"helpful", "like"}:
+                    summary["feedback_like_count"] += 1
+                elif label in {"unclear", "incorrect", "dislike"}:
+                    summary["feedback_dislike_count"] += 1
+
+            for path in sorted(self.base_dir.glob("*.json")):
+                try:
+                    session_id = path.stem
+                    data = self.get_session(session_id)
+                except Exception:
+                    continue
+                summary["session_count"] += 1
+                for msg in data.get("messages", []):
+                    if (
+                        str(msg.get("artifact_kind") or "") == "grounded_brief"
+                        and msg.get("corrected_text") is not None
+                    ):
+                        summary["correction_pair_count"] += 1
+                    count_feedback(msg.get("feedback"))
+                count_feedback(data.get("feedback"))
+                for action in data.get("operator_action_history", []):
+                    status = str(action.get("status") or "").strip()
+                    if status == "executed":
+                        summary["operator_executed_count"] += 1
+                    elif status == "rolled_back":
+                        summary["operator_rolled_back_count"] += 1
+                    elif status == "failed":
+                        summary["operator_failed_count"] += 1
+            return summary
+
     def delete_session(self, session_id: str) -> bool:
         with self._lock:
             path = self._path(session_id)

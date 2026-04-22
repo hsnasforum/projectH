@@ -7506,6 +7506,12 @@ class AgentLoop:
                     status=ResponseStatus.ERROR,
                     actions_taken=["approval_error"],
                 )
+            outcome_record = dict(approval_record)
+            outcome_record["status"] = "executed"
+            outcome_record["preview"] = result.get("preview", "")
+            self.session_store.record_operator_action_outcome(
+                request.session_id, outcome_record
+            )
             return AgentResponse(
                 text=result.get("preview", ""),
                 status=ResponseStatus.SAVED,

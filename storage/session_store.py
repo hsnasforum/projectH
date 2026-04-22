@@ -59,6 +59,7 @@ class SessionStore:
             "title": session_id,
             "messages": [],
             "pending_approvals": [],
+            "operator_action_history": [],
             "permissions": {"web_search": "disabled"},
             "active_context": None,
             "_version": 0,
@@ -1618,6 +1619,19 @@ class SessionStore:
             data["pending_approvals"] = pending
             self._save(session_id, data)
         return approval_id
+
+    def record_operator_action_outcome(
+        self, session_id: str, record: Dict[str, Any]
+    ) -> None:
+        with self._lock:
+            data = self.get_session(session_id)
+            outcome = dict(record)
+            outcome.setdefault("status", "executed")
+            outcome["completed_at"] = self._now()
+            history = data.get("operator_action_history", [])
+            history.append(outcome)
+            data["operator_action_history"] = history
+            self._save(session_id, data)
 
     def get_pending_approval(self, session_id: str, approval_id: str) -> Dict[str, Any] | None:
         with self._lock:

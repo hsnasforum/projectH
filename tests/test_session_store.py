@@ -89,6 +89,26 @@ class SessionStoreTest(unittest.TestCase):
             self.assertEqual(fetched["status"], "pending")
             self.assertEqual(fetched["action_kind"], "local_file_edit")
 
+    def test_operator_action_outcome_round_trip(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            store = SessionStore(base_dir=tmp_dir)
+            approval_id = store.record_operator_action_request(
+                "demo",
+                {"action_kind": "local_file_edit", "target_id": "/tmp/x.txt"},
+            )
+            record = store.pop_pending_approval("demo", approval_id)
+            self.assertIsNotNone(record)
+            record["status"] = "executed"
+            record["preview"] = "preview text"
+            store.record_operator_action_outcome("demo", record)
+            session = store.get_session("demo")
+            history = session.get("operator_action_history", [])
+            self.assertEqual(len(history), 1)
+            self.assertEqual(history[0]["approval_id"], approval_id)
+            self.assertEqual(history[0]["status"], "executed")
+            self.assertIn("completed_at", history[0])
+            self.assertEqual(history[0].get("preview"), "preview text")
+
     def test_active_context_round_trip(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             store = SessionStore(base_dir=tmp_dir)

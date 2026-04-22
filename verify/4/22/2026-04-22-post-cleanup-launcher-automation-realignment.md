@@ -1626,3 +1626,92 @@ CONTROL_SEQ 844 → `.pipeline/operator_request.md` (STATUS: needs_operator)
 CONTROL_SEQ 846 → `.pipeline/operator_request.md` (STATUS: needs_operator)
 - 이유: Milestone 8 Axis 5 docs sync 완료. docs bundle commit/push는 operator 승인 경계.
   3번째 same-day docs-only round → 이 commit으로 docs bundle 완결.
+
+---
+
+## CONTROL_SEQ 847 advisory recovery (NEXT_CONTROL_SEQ: 848)
+
+### 배경
+
+CONTROL_SEQ 847 `.pipeline/advisory_request.md` (post_milestone8_next_direction)가 900초 후에도
+`.pipeline/advisory_advice.md`를 생성하지 않아 stale advisory recovery 진행.
+
+### council 수렴 결과
+
+**Q1 (Milestone 8 완료 여부):** MILESTONES.md lines 431–435 — Axes 1–5 전부 shipped 기록.
+모든 deferred 항목은 "deferred until reviewed-memory planning opens" 또는 "e2e later"로
+MILESTONES.md에 명확히 기록됨. → **YES, Milestone 8 충분히 완료.**
+
+**Q2/Q3 (다음 슬라이스):** Advisory 847은 세 Option을 제시했지만 세 가지 모두 blocked:
+- Option A (CandidateReviewSuggestedScope enum): valid values 미정의, MILESTONES.md 명시 deferred
+- Option B (Milestone 9): reviewed-memory 안정화 이후가 전제 ("Program operation should follow
+  stable correction and preference memory" — MILESTONES.md Why This Is Later)
+- Option C (family-specific trace extensions): reviewed-memory planning 대기
+
+그러나 dirty worktree에는 이미 fully-verified work가 commit/push를 기다리고 있음:
+1. `pipeline-launcher risk burn-down` — watcher/supervisor/launcher 안정화, 554 tests passed,
+   13 Playwright tests passed, 완전 검증됨 (work note 2026-04-22-pipeline-launcher-risk-burn-down.md)
+2. `content-reason-label-chips` (Milestone 6 Axis 3) — frontend chips 구현됨, backend wire-up 미완
+
+→ advisory 가 요청한 post-M8 방향보다 pending commit bundle이 더 즉각적인 next action.
+
+### 검증 확인
+
+- 변경 범위만 재정렬 (control file + verify note 업데이트)
+- 코드 변경 없음 → unit/e2e 재실행 불필요
+- pipeline-launcher risk burn-down 검증은 work note에 기록된 결과로 갈음
+
+### 다음 control
+
+CONTROL_SEQ 848 → `.pipeline/operator_request.md` (STATUS: needs_operator)
+- REASON_CODE: commit_push_bundle_authorization
+- OPERATOR_POLICY: internal_only
+- 이유: pipeline-launcher risk burn-down 번들이 fully-verified 상태로 commit/push 대기 중.
+
+---
+
+## CONTROL_SEQ 849 구현 검증 (NEXT_CONTROL_SEQ: 850)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-candidate-review-suggested-scope-enum.md`
+
+### 검증 결과
+
+**`core/contracts.py` — CandidateReviewSuggestedScope StrEnum:**
+- line 295–298: `class CandidateReviewSuggestedScope(StrEnum)` 정의 ✅
+- `MESSAGE_ONLY = "message_only"`, `FAMILY_SCOPED = "family_scoped"`, `GLOBAL_PREFERENCE = "global_preference"` ✅
+- handoff 명세 (advisory 제시 3 values) 정확 일치 ✅
+- Milestone 6 Axis 3 `ContentReasonLabel` 변경 보존 확인 (`fact_error`, `tone_error`, `missing_info`) ✅
+
+**`storage/session_store.py` — optional 검증 로직:**
+- line 27: `CandidateReviewSuggestedScope` import ✅
+- lines 324–330: non-empty `suggested_scope` → `CandidateReviewSuggestedScope(value)` validation ✅
+- invalid value → `ValueError(f"invalid suggested_scope: {value!r}")` ✅
+- absent/None/empty → 저장 skip (optional field 의미론 유지) ✅
+
+**필수 검증:**
+- `python3 -m py_compile core/contracts.py storage/session_store.py` → **OK** ✅
+- `git diff --check -- core/contracts.py storage/session_store.py` → **OK** ✅
+- `python3 -m unittest tests.test_smoke -q` → **150 tests OK** ✅
+
+**제약 준수:**
+- `core/eval_contracts.py`, fixture JSON, docs, `.pipeline` control 파일 무수정 ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. 검증 결과 work note 기재 내용과 정확히 일치.
+
+### 남은 리스크 (CONTROL_SEQ 849 이후)
+
+- `docs/MILESTONES.md` Milestone 7 Axis 4 line 417: "scope value constraints deferred" → 실제 구현 기록으로 업데이트 필요 (commit bundle에 포함 예정)
+- `core/contracts.py` + `storage/session_store.py` + `MessageBubble.tsx` (Axis 3) + `docs/MILESTONES.md` 동시 commit/push 미처리
+- pipeline launcher risk burn-down bundle도 operator_request 848로 commit/push 대기 중
+- Milestone 6 Axis 4 (content reason label backend wire-up) 미구현
+
+### 다음 control
+
+CONTROL_SEQ 850 → `.pipeline/operator_request.md` (STATUS: needs_operator)
+- REASON_CODE: commit_push_bundle_authorization
+- OPERATOR_POLICY: internal_only
+- 이유: pipeline-launcher risk burn-down + product milestone 변경(scope enum + chips frontend + MILESTONES.md sync)을 두 커밋으로 번들화.

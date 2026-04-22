@@ -292,6 +292,12 @@ class CandidateReviewAction(StrEnum):
     EDIT = "edit"
 
 
+class CandidateReviewSuggestedScope(StrEnum):
+    MESSAGE_ONLY = "message_only"
+    FAMILY_SCOPED = "family_scoped"
+    GLOBAL_PREFERENCE = "global_preference"
+
+
 CANDIDATE_REVIEW_ACTION_TO_STATUS: dict[str, str] = {
     CandidateReviewAction.ACCEPT: "accepted",
     CandidateReviewAction.REJECT: "rejected",

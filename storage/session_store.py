@@ -24,6 +24,7 @@ from core.contracts import (
     ALLOWED_SESSION_LOCAL_CANDIDATE_FAMILIES,
     ALLOWED_WEB_SEARCH_PERMISSIONS,
     CANDIDATE_REVIEW_ACTION_TO_STATUS,
+    CandidateReviewSuggestedScope,
     ContentReasonLabel,
     ContentReasonScope,
     SESSION_LOCAL_MEMORY_SIGNAL_VERSION,
@@ -322,6 +323,10 @@ class SessionStore:
             normalized["reason_note"] = reason_note
         suggested_scope = self._normalize_multiline_text(record.get("suggested_scope"))
         if suggested_scope:
+            try:
+                CandidateReviewSuggestedScope(suggested_scope)
+            except ValueError as exc:
+                raise ValueError(f"invalid suggested_scope: {suggested_scope!r}") from exc
             normalized["suggested_scope"] = suggested_scope
         return normalized
 

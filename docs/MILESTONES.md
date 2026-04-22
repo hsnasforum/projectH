@@ -414,7 +414,7 @@
   - one same-source-message `candidate_review_record` may now be recorded through `accept`, `reject`, `defer`, or `edit`
   - all four outcomes stay reviewed-but-not-applied and the matching pending item leaves the queue
 - Axis 2 shipped: `CandidateReviewAction.EDIT = "edit"` -> status `"edited"` with optional `reason_note` storage (seqs 807-808)
-- Axis 4 shipped: `suggested_scope` optional free-text field added to `candidate_review_record` across 4 layers (seqs 818-819); scope value constraints deferred until reviewed-memory planning opens
+- Axis 4 shipped: `suggested_scope` optional free-text field added to `candidate_review_record` across 4 layers (seqs 818-819); `CandidateReviewSuggestedScope` StrEnum (`message_only`, `family_scoped`, `global_preference`) defined in `core/contracts.py` + `storage/session_store.py` optional validation (seq 849)
 - still later inside this milestone:
   - define minimum scope, conflict, and rollback rules before future user-level memory
   - define a conservative default suggested-scope order and justification rule only when reviewed-memory planning opens

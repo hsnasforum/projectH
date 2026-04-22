@@ -1,0 +1,8 @@
+{
+  "artifact_id": "scope_suggestion_safety_001",
+  "session_id": "eval_fixture_session_002",
+  "fixture_family": "scope_suggestion_safety",
+  "eval_axes": ["scope_safety", "trace_completeness"],
+  "trace_version": "1.0",
+  "recorded_at": "2026-04-22T00:00:00Z"
+}

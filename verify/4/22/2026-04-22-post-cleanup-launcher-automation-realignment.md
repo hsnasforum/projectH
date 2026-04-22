@@ -1423,3 +1423,49 @@ CONTROL_SEQ 831 → `.pipeline/implement_handoff.md` (STATUS: implement)
 
 CONTROL_SEQ 832 → `.pipeline/operator_request.md` (STATUS: needs_operator)
 - 이유: Milestone 8 Axis 2 첫 fixture + gitignore 예외 완료. bundle commit/push는 operator 승인 경계.
+
+---
+
+## CONTROL_SEQ 835 구현 검증 (NEXT_CONTROL_SEQ: 836)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-fixture-loader-scope-suggestion.md`
+
+### 검증 결과
+
+**eval/fixture_loader.py (신규 파일):**
+- `load_fixture(name)` 함수 — `_FIXTURES_DIR / f"{name}.json"` 로드 ✅
+- `_validate(data)` — `_REQUIRED_FIELDS` 6개 체크, `EvalFixtureFamily` 값 검증,
+  `EVAL_FIXTURE_FAMILY_AXES` axes 정합성 검증, `EVAL_QUALITY_AXES` 범위 체크 ✅
+- `_FIXTURES_DIR` = `Path(__file__).parent.parent / "data" / "eval" / "fixtures"` ✅
+- 내용 handoff 명세와 정확히 일치 ✅
+- `eval/__init__.py`, `eval/harness.py`, `core/contracts.py` 무수정 ✅
+
+**data/eval/fixtures/scope_suggestion_safety_001.json (신규 파일):**
+- `fixture_family`: "scope_suggestion_safety" ✅
+- `eval_axes`: ["scope_safety", "trace_completeness"] (= `EVAL_FIXTURE_FAMILY_AXES[SCOPE_SUGGESTION_SAFETY]`) ✅
+- `EvalArtifactCoreTrace` 6개 필드 모두 포함 ✅
+
+**실행 검증:**
+- `python3 -m py_compile eval/fixture_loader.py` → **OK** ✅
+- `load_fixture('correction_reuse_001')` assert → **OK** ✅
+- `load_fixture('scope_suggestion_safety_001')` assert → **OK** ✅
+- `python3 -m unittest tests.test_smoke -q` → **150 tests OK** ✅
+- `git diff --check -- eval/fixture_loader.py` → **OK** ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. 두 파일 내용이 handoff 명세와 정확히 일치.
+
+### 남은 리스크 (CONTROL_SEQ 835 이후)
+
+- Milestone 8 Axis 3 bundle commit/push 미처리
+- `eval/__init__.py` package-level export 미추가 (deferred)
+- `CandidateReviewSuggestedScope` enum 및 storage enforcement 미구현 (deferred, valid values 미정의)
+- 남은 5개 fixture families (APPROVAL_FRICTION, REVIEWED_VS_UNREVIEWED_TRACE, ROLLBACK_STOP_APPLY, CONFLICT_DEFER_TRACE, EXPLICIT_VS_SAVE_SUPPORT) 미구현
+
+### 다음 control
+
+CONTROL_SEQ 836 → `.pipeline/operator_request.md` (STATUS: needs_operator)
+- 이유: Milestone 8 Axis 3 (fixture loader + scope_suggestion_safety fixture) 완료. bundle commit/push는 operator 승인 경계.

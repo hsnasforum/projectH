@@ -73,10 +73,11 @@ from pipeline_runtime.lane_catalog import (
 )
 from pipeline_runtime.operator_autonomy import (
     OPERATOR_APPROVAL_COMPLETED_REASON,
-    allows_verified_blocker_auto_recovery,
     classify_operator_candidate,
+    evaluate_stale_operator_control,
     is_commit_push_approval_stop,
     normalize_reason_code,
+    operator_gate_marker_from_decision,
 )
 from pipeline_runtime.role_routes import (
     ADVISORY_RECOVERY_NOTIFY,
@@ -215,7 +216,6 @@ ROUND_NOTE_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-.+\.md$")
 ROUND_NOTE_SECTION_RE = re.compile(r"^##\s+(.+?)\s*$")
 ROUND_NOTE_PATH_RE = re.compile(r"(?<!@)(?:\./)?([A-Za-z0-9_.\-/]+?\.[A-Za-z0-9]+)")
 ROUND_NOTE_METADATA_ONLY_PREFIXES = ("work/", "verify/", "report/", ".pipeline/", "pipeline/")
-WORK_PATH_RE = re.compile(r"(work/\d+/\d+/[^\s`]+\.md)")
 _DISPATCH_LOCKS_GUARD = threading.Lock()
 _DISPATCH_LOCKS: dict[str, threading.Lock] = {}
 _DISPATCH_LOCK_TIMEOUT_SEC = 30.0
@@ -2485,31 +2485,14 @@ class WatcherCore:
         except OSError:
             return None
         control_meta = read_control_meta(self.operator_request_path)
-        if not allows_verified_blocker_auto_recovery(control_meta):
-            return None
-        based_on_work = self._normalize_artifact_path(control_meta.get("based_on_work"))
-        if based_on_work:
-            referenced_work_paths = [based_on_work]
-        else:
-            referenced_work_paths = sorted(
-                {
-                    self._normalize_artifact_path(match.group(1))
-                    for match in WORK_PATH_RE.finditer(control_text)
-                    if self._normalize_artifact_path(match.group(1))
-                }
-            )
-        if not referenced_work_paths:
-            return None
-        verified_work_paths = self._verified_work_paths()
-        unresolved = [path for path in referenced_work_paths if path not in verified_work_paths]
-        if unresolved:
-            return None
-        return {
-            "control_file": "operator_request.md",
-            "control_seq": self._read_control_seq_from_path(self.operator_request_path),
-            "reason": "verified_blockers_resolved",
-            "resolved_work_paths": referenced_work_paths,
-        }
+        return evaluate_stale_operator_control(
+            control_text=control_text,
+            control_meta=control_meta,
+            verified_work_paths=self._verified_work_paths(),
+            control_file="operator_request.md",
+            control_seq=self._read_control_seq_from_path(self.operator_request_path),
+            normalize_path=self._normalize_artifact_path,
+        )
 
     # ------------------------------------------------------------------
     def _operator_gate_marker(self) -> Optional[dict[str, object]]:
@@ -2520,11 +2503,12 @@ class WatcherCore:
         except OSError:
             return None
         control_meta = read_control_meta(self.operator_request_path)
+        control_seq = self._read_control_seq_from_path(self.operator_request_path)
         decision = classify_operator_candidate(
             control_text,
             control_meta=control_meta,
             control_path=str(self.operator_request_path),
-            control_seq=self._read_control_seq_from_path(self.operator_request_path),
+            control_seq=control_seq,
             control_mtime=self._get_path_mtime(self.operator_request_path),
             idle_stable=(
                 not self._latest_work_needs_verify_broad()
@@ -2533,21 +2517,11 @@ class WatcherCore:
                 and self._get_advisory_advice_mtime() == 0.0
             ),
         )
-        if bool(decision.get("operator_eligible")):
-            return None
-        return {
-            "control_file": "operator_request.md",
-            "control_seq": self._read_control_seq_from_path(self.operator_request_path),
-            "reason": str(decision.get("block_reason") or ""),
-            "reason_code": str(decision.get("reason_code") or ""),
-            "operator_policy": str(decision.get("operator_policy") or ""),
-            "decision_class": str(decision.get("decision_class") or ""),
-            "classification_source": str(decision.get("classification_source") or ""),
-            "mode": str(decision.get("suppressed_mode") or ""),
-            "routed_to": str(decision.get("routed_to") or ""),
-            "suppress_operator_until": str(decision.get("suppress_operator_until") or ""),
-            "fingerprint": str(decision.get("fingerprint") or ""),
-        }
+        return operator_gate_marker_from_decision(
+            decision,
+            control_file="operator_request.md",
+            control_seq=control_seq,
+        )
 
     # ------------------------------------------------------------------
     def _git_read(self, args: list[str]) -> Optional[str]:

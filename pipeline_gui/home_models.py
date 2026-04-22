@@ -39,6 +39,11 @@ class HomeSnapshot:
     automation_reason_code: str
     automation_incident_family: str
     automation_next_action: str
+    automation_health_detail: str
+    control_age_cycles: int
+    stale_control_seq: bool
+    stale_control_cycle_threshold: int
+    stale_advisory_pending: bool
     session_ok: bool
     watcher_alive: bool
     watcher_pid: int | None

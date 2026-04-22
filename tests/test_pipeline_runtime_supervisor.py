@@ -973,6 +973,110 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(current_run["status_path"], ".pipeline/runs/20260415T010203Z-p123/status.json")
             self.assertEqual(current_run["events_path"], ".pipeline/runs/20260415T010203Z-p123/events.jsonl")
 
+    def test_terminate_repo_watchers_prefers_current_run_fingerprint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor.current_run_path.parent.mkdir(parents=True, exist_ok=True)
+            supervisor.current_run_path.write_text(
+                json.dumps({"watcher_pid": 4242, "watcher_fingerprint": "fp-4242"}),
+                encoding="utf-8",
+            )
+            killed: list[int] = []
+
+            with (
+                mock.patch(
+                    "pipeline_runtime.supervisor.process_starttime_fingerprint",
+                    return_value="fp-4242",
+                ),
+                mock.patch.object(supervisor, "_kill_pid", side_effect=killed.append),
+                mock.patch(
+                    "pipeline_runtime.supervisor.subprocess.run",
+                    return_value=mock.Mock(returncode=1, stdout=""),
+                ),
+            ):
+                supervisor._terminate_repo_watchers()
+
+            self.assertEqual(killed, [4242])
+
+    def test_terminate_repo_watchers_does_not_kill_cmdline_path_match_without_repo_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            killed: list[int] = []
+
+            def cmdline(pid: int) -> str:
+                if pid == 101:
+                    return "python watcher_core.py"
+                return f"python watcher_core.py --note {root}"
+
+            def cwd(pid: int) -> str:
+                return str(root) if pid == 101 else "/tmp"
+
+            with (
+                mock.patch.object(supervisor, "_terminate_current_run_watcher", return_value=set()),
+                mock.patch.object(supervisor, "_process_cmdline", side_effect=cmdline),
+                mock.patch.object(supervisor, "_process_cwd", side_effect=cwd),
+                mock.patch.object(supervisor, "_kill_pid", side_effect=killed.append),
+                mock.patch(
+                    "pipeline_runtime.supervisor.subprocess.run",
+                    return_value=mock.Mock(returncode=0, stdout="101\n102\n"),
+                ),
+            ):
+                supervisor._terminate_repo_watchers()
+
+            self.assertEqual(killed, [101])
+
+    def test_lane_command_override_emits_hash_only_audit_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, run_id="run-override", start_runtime=False)
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "PIPELINE_RUNTIME_ALLOW_LANE_COMMAND_OVERRIDE": "1",
+                    "PIPELINE_RUNTIME_LANE_COMMAND_CLAUDE": "echo {lane} {project_root}",
+                },
+            ):
+                command = supervisor._lane_command_override("Claude")
+
+            self.assertIn("Claude", command)
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(events[0]["event_type"], "lane_command_override")
+            payload = events[0]["payload"]
+            self.assertEqual(payload["lane"], "Claude")
+            self.assertEqual(payload["source"], "PIPELINE_RUNTIME_LANE_COMMAND_CLAUDE")
+            self.assertIn("command_sha256", payload)
+            self.assertNotIn("echo", json.dumps(payload))
+
+    def test_lane_command_override_requires_explicit_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, run_id="run-override-denied", start_runtime=False)
+
+            with mock.patch.dict(
+                os.environ,
+                {"PIPELINE_RUNTIME_LANE_COMMAND_CLAUDE": "echo unsafe"},
+                clear=True,
+            ):
+                command = supervisor._lane_command_override("Claude")
+
+            self.assertEqual(command, "")
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(events[0]["event_type"], "lane_command_override_ignored")
+            self.assertEqual(events[0]["payload"]["reason"], "explicit_opt_in_required")
+
     def test_write_status_clears_stale_degraded_reason_after_runtime_has_stopped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -5005,6 +5109,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             with mock.patch.dict(
                 "os.environ",
                 {
+                    "PIPELINE_RUNTIME_ALLOW_LANE_COMMAND_OVERRIDE": "1",
                     "PIPELINE_RUNTIME_LANE_COMMAND_CODEX": "python3 fake.py --project-root {project_root_shlex} --lane {lane} --run {run_id}",
                 },
                 clear=False,

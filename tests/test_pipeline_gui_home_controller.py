@@ -48,6 +48,15 @@ class PipelineGuiHomeControllerTest(unittest.TestCase):
                 json.dumps(
                     {
                         "runtime_state": "RUNNING",
+                        "automation_health": "attention",
+                        "automation_reason_code": "stale_control_advisory",
+                        "automation_incident_family": "stale_control_advisory",
+                        "automation_next_action": "advisory_followup",
+                        "automation_health_detail": "제어 슬롯 고착 감지됨 (961 사이클)",
+                        "control_age_cycles": 961,
+                        "stale_control_seq": True,
+                        "stale_control_cycle_threshold": 900,
+                        "stale_advisory_pending": True,
                         "watcher": {"alive": True, "pid": 321},
                         "lanes": [
                             {"name": "Claude", "state": "READY", "attachable": True},
@@ -81,6 +90,13 @@ class PipelineGuiHomeControllerTest(unittest.TestCase):
             snapshot = controller.build_snapshot(selected_agent="Claude")
 
         self.assertEqual(snapshot.runtime_state, "RUNNING")
+        self.assertEqual(snapshot.automation_health, "attention")
+        self.assertEqual(snapshot.automation_reason_code, "stale_control_advisory")
+        self.assertEqual(snapshot.automation_health_detail, "제어 슬롯 고착 감지됨 (961 사이클)")
+        self.assertEqual(snapshot.control_age_cycles, 961)
+        self.assertTrue(snapshot.stale_control_seq)
+        self.assertEqual(snapshot.stale_control_cycle_threshold, 900)
+        self.assertTrue(snapshot.stale_advisory_pending)
         self.assertEqual(snapshot.token_dashboard, {"cached": True})
         self.assertEqual(snapshot.watcher_pid, 321)
         self.assertEqual(snapshot.log_lines, ["lane_working Codex"])

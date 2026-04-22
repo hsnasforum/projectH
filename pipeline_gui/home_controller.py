@@ -182,6 +182,11 @@ class HomeController:
         automation_reason_code = str(runtime_status.get("automation_reason_code") or "")
         automation_incident_family = str(runtime_status.get("automation_incident_family") or "")
         automation_next_action = str(runtime_status.get("automation_next_action") or "continue")
+        automation_health_detail = str(runtime_status.get("automation_health_detail") or "")
+        control_age_cycles = int(runtime_status.get("control_age_cycles") or 0)
+        stale_control_seq = bool(runtime_status.get("stale_control_seq"))
+        stale_control_cycle_threshold = int(runtime_status.get("stale_control_cycle_threshold") or 0)
+        stale_advisory_pending = bool(runtime_status.get("stale_advisory_pending"))
         watcher = dict(runtime_status.get("watcher") or {})
         watcher_ok = bool(watcher.get("alive"))
         watcher_pid = watcher.get("pid")
@@ -275,6 +280,11 @@ class HomeController:
             automation_reason_code=automation_reason_code,
             automation_incident_family=automation_incident_family,
             automation_next_action=automation_next_action,
+            automation_health_detail=automation_health_detail,
+            control_age_cycles=control_age_cycles,
+            stale_control_seq=stale_control_seq,
+            stale_control_cycle_threshold=stale_control_cycle_threshold,
+            stale_advisory_pending=stale_advisory_pending,
             session_ok=session_ok,
             watcher_alive=watcher_ok,
             watcher_pid=watcher_pid,

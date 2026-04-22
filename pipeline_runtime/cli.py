@@ -233,6 +233,43 @@ def _current_status_path(project_root: Path) -> Path | None:
     return project_root / ".pipeline" / "runs" / run_id / "status.json"
 
 
+def _status_snapshot(project_root: Path) -> dict[str, object]:
+    current_run = read_json(project_root / ".pipeline" / "current_run.json") or {}
+    status_path = _current_status_path(project_root)
+    status = read_json(status_path) if status_path else None
+    if isinstance(status, dict):
+        snapshot = dict(status)
+        snapshot["ok"] = True
+    else:
+        snapshot = {
+            "ok": False,
+            "runtime_state": "STOPPED",
+            "degraded_reason": "runtime status not available",
+            "degraded_reasons": ["runtime status not available"],
+        }
+    snapshot["project_root"] = str(project_root)
+    snapshot["current_run"] = current_run
+    snapshot["status_path"] = str(status_path) if status_path else ""
+    return snapshot
+
+
+def _status(args: argparse.Namespace) -> int:
+    project_root = _project_root(args.project_root)
+    snapshot = _status_snapshot(project_root)
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(snapshot, ensure_ascii=False, indent=2))
+    else:
+        runtime_state = str(snapshot.get("runtime_state") or "STOPPED")
+        run_id = str(snapshot.get("run_id") or (snapshot.get("current_run") or {}).get("run_id") or "")
+        status_path = str(snapshot.get("status_path") or "")
+        print(f"runtime_state={runtime_state}")
+        if run_id:
+            print(f"run_id={run_id}")
+        if status_path:
+            print(f"status_path={status_path}")
+    return 0
+
+
 def _wait_for_stop_completion(
     project_root: Path,
     session_name: str,
@@ -935,6 +972,10 @@ def build_parser() -> argparse.ArgumentParser:
     attach.add_argument("--session", default="")
     attach.add_argument("--lane", default=None)
 
+    status = sub.add_parser("status")
+    status.add_argument("project_root", nargs="?")
+    status.add_argument("--json", action="store_true")
+
     lane_wrapper = sub.add_parser("lane-wrapper")
     lane_wrapper.add_argument("--project-root", default="")
     lane_wrapper.add_argument("--run-id", required=True)
@@ -967,6 +1008,8 @@ def main(argv: list[str] | None = None) -> int:
         return supervisor.run()
     if args.command == "attach":
         return _attach(args)
+    if args.command == "status":
+        return _status(args)
     if args.command == "lane-wrapper":
         return _lane_wrapper(args)
     parser.error("unknown command")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 import time
+from collections.abc import Callable
 from typing import Any, Iterable, Mapping
 
 from .role_routes import (
@@ -62,6 +63,7 @@ _VOLATILE_CONTROL_LINE_RE = re.compile(
     r"(?:status|control_seq|source|supersedes|updated_at|written_at|created_at|timestamp)"
     r"\b\s*:?.*$"
 )
+_WORK_PATH_RE = re.compile(r"(work/\d+/\d+/[^\s`]+\.md)")
 _CHOICE_INTENT_MARKERS = (
     "choose",
     "pick",
@@ -346,6 +348,136 @@ def allows_verified_blocker_auto_recovery(control_meta: Mapping[str, Any] | None
     meta = _normalize_meta(control_meta)
     reason_code = normalize_reason_code(meta.get("reason_code"))
     return reason_code in _VERIFIED_BLOCKER_AUTO_RECOVERY_REASON_CODES
+
+
+def _default_normalize_artifact_path(value: object) -> str:
+    return str(value or "").strip().replace("\\", "/")
+
+
+def referenced_operator_work_paths(
+    control_text: object,
+    control_meta: Mapping[str, Any] | None = None,
+    *,
+    normalize_path: Callable[[object], str] | None = None,
+) -> list[str]:
+    """Return normalized /work paths referenced by an operator control."""
+    normalize = normalize_path or _default_normalize_artifact_path
+    meta = _normalize_meta(control_meta)
+    based_on_work = normalize(meta.get("based_on_work"))
+    if based_on_work:
+        return [based_on_work]
+    return sorted(
+        {
+            normalize(match.group(1))
+            for match in _WORK_PATH_RE.finditer(str(control_text or ""))
+            if normalize(match.group(1))
+        }
+    )
+
+
+def evaluate_stale_operator_control(
+    *,
+    control_text: object,
+    control_meta: Mapping[str, Any] | None,
+    verified_work_paths: Iterable[object],
+    control_file: str,
+    control_seq: int,
+    normalize_path: Callable[[object], str] | None = None,
+    turn_state_name: str = "",
+    turn_reason: str = "",
+    turn_control_seq: int = -1,
+) -> dict[str, object] | None:
+    """Classify operator controls that can safely route back to verify follow-up.
+
+    The helper is intentionally pure so watcher and supervisor use the same
+    recovery boundary while keeping their own file/status/event plumbing thin.
+    """
+    normalize = normalize_path or _default_normalize_artifact_path
+    meta = _normalize_meta(control_meta)
+
+    if (
+        str(turn_state_name or "") == "VERIFY_FOLLOWUP"
+        and str(turn_reason or "") == OPERATOR_APPROVAL_COMPLETED_REASON
+        and int(turn_control_seq or -1) == int(control_seq or -1)
+    ):
+        return {
+            "control_file": control_file,
+            "control_seq": control_seq,
+            "reason": OPERATOR_APPROVAL_COMPLETED_REASON,
+            "resolved_work_paths": [],
+        }
+
+    referenced_work_paths = referenced_operator_work_paths(
+        control_text,
+        meta,
+        normalize_path=normalize,
+    )
+    retriage_active = (
+        str(turn_state_name or "") == "VERIFY_FOLLOWUP"
+        and str(turn_reason or "") == "operator_wait_idle_retriage"
+    )
+    auto_recovery_allowed = allows_verified_blocker_auto_recovery(meta)
+    has_structured_operator_contract = any(
+        str(meta.get(key) or "").strip()
+        for key in ("reason_code", "operator_policy", "decision_class", "based_on_work")
+    )
+
+    if not referenced_work_paths:
+        if retriage_active:
+            return {
+                "control_file": control_file,
+                "control_seq": control_seq,
+                "reason": "operator_wait_idle_retriage",
+                "resolved_work_paths": [],
+            }
+        return None
+
+    if has_structured_operator_contract and not auto_recovery_allowed and not retriage_active:
+        return None
+
+    verified_paths = {normalize(path) for path in verified_work_paths if normalize(path)}
+    unresolved = [path for path in referenced_work_paths if path not in verified_paths]
+    if unresolved:
+        if retriage_active:
+            return {
+                "control_file": control_file,
+                "control_seq": control_seq,
+                "reason": "operator_wait_idle_retriage",
+                "resolved_work_paths": [],
+            }
+        return None
+
+    return {
+        "control_file": control_file,
+        "control_seq": control_seq,
+        "reason": "verified_blockers_resolved",
+        "resolved_work_paths": referenced_work_paths,
+    }
+
+
+def operator_gate_marker_from_decision(
+    decision: Mapping[str, Any],
+    *,
+    control_file: str,
+    control_seq: int,
+    fingerprint: str | None = None,
+) -> dict[str, object] | None:
+    """Return the shared watcher/supervisor marker for a gated operator stop."""
+    if bool(decision.get("operator_eligible")):
+        return None
+    return {
+        "control_file": control_file,
+        "control_seq": control_seq,
+        "reason": str(decision.get("block_reason") or ""),
+        "reason_code": str(decision.get("reason_code") or ""),
+        "operator_policy": str(decision.get("operator_policy") or ""),
+        "decision_class": str(decision.get("decision_class") or ""),
+        "classification_source": str(decision.get("classification_source") or ""),
+        "mode": str(decision.get("suppressed_mode") or decision.get("mode") or ""),
+        "routed_to": str(decision.get("routed_to") or ""),
+        "suppress_operator_until": str(decision.get("suppress_operator_until") or ""),
+        "fingerprint": str(fingerprint if fingerprint is not None else decision.get("fingerprint") or ""),
+    }
 
 
 def is_commit_push_approval_stop(

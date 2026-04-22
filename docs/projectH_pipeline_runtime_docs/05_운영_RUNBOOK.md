@@ -70,6 +70,7 @@
 - stop 성공은 supervisor pid 소멸만으로 판단하지 않습니다. final status에 `runtime_state=STOPPED`, `control=none`, `active_round=null`, watcher dead, lane inactive가 함께 flush되었는지 확인합니다.
 - final `STOPPED` status는 active incident를 비우더라도 `automation_health=attention`, `automation_reason_code=runtime_stopped`, `automation_next_action=operator_required`를 남겨야 합니다. `STOPPED + ok + continue`는 silent stall 표면 회귀입니다.
 - 최신 CLI stop은 먼저 graceful flush를 기다리고, timeout 뒤에만 강제 종료 fallback을 사용합니다. `STOPPING`이 오래 남았는데 supervisor가 이미 사라졌다면 graceful flush miss 가능성을 먼저 의심합니다.
+- 런타임 상태를 빠르게 확인할 때는 `python3 -m pipeline_runtime.cli status <project-root> --json`을 사용합니다. 이 명령은 read-only이며 `current_run.json`, run-scoped `status.json`, `status_path`를 함께 출력합니다.
 - supervisor가 이미 죽었지만 watcher/tmux session 같은 orphan runtime이 남아 있으면, stop CLI는 orphan cleanup 뒤 `status.json`을 `STOPPED + inactive truth`로 보정합니다.
 - controller가 오래된 `STOPPING` run을 다시 읽더라도 supervisor PID가 이미 없으면 UI는 이를 `STOPPED`로 정규화하고 `Control=none`, `Round=IDLE`로 보여야 합니다. 이 reader 정규화는 graceful flush 실패에 대비한 fallback safety net입니다.
 
@@ -98,6 +99,7 @@ launcher live stability gate는 아래를 현재 통과 기준으로 둡니다.
 - orphan watcher/session이 없을 것
 - dispatch/completion/receipt close incident가 named event로 surface될 것
 - 반복된 실전 incident가 replay test로 고정되어 재발 시 즉시 드러날 것
+- synthetic gate처럼 lane command override가 필요한 경우 `PIPELINE_RUNTIME_ALLOW_LANE_COMMAND_OVERRIDE=1`을 함께 설정할 것. opt-in 없이 override env만 있으면 supervisor는 override를 무시하고 `lane_command_override_ignored` event를 남깁니다.
 
 ## 3.6 자동화 완성 목표
 완성 목표는 ordinary next-step, ambiguity, stall, rollover, recovery 상황에서 사용자를 호출하지 않는 것입니다.

@@ -28,6 +28,25 @@ def _load_launcher_module():
 pipeline_launcher = _load_launcher_module()
 
 
+class FakeCursesScreen:
+    def __init__(self, height: int = 40, width: int = 220) -> None:
+        self.height = height
+        self.width = width
+        self.writes: list[str] = []
+
+    def erase(self) -> None:
+        self.writes.clear()
+
+    def getmaxyx(self) -> tuple[int, int]:
+        return self.height, self.width
+
+    def addstr(self, _row: int, _col: int, text: str, _attr: int = 0) -> None:
+        self.writes.append(text)
+
+    def refresh(self) -> None:
+        return None
+
+
 class TestPipelineLauncherSessionContract(unittest.TestCase):
     def test_resolved_session_name_matches_shared_project_rule(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-session-") as tmp:
@@ -786,6 +805,54 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
 
         self.assertTrue(any("어드바이저리 요청 대기 중" in line for line in lines))
         self.assertTrue(any("stale_advisory_pending=true" in line for line in lines))
+
+    def test_curses_draw_surfaces_same_automation_detail(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-curses-stale-detail-") as tmp:
+            project = Path(tmp).resolve()
+            session = _session_name_for(project)
+            screen = FakeCursesScreen()
+
+            with (
+                mock.patch.object(pipeline_launcher.curses, "init_pair"),
+                mock.patch.object(pipeline_launcher.curses, "color_pair", side_effect=lambda value: value),
+            ):
+                pipeline_launcher.draw(
+                    screen,
+                    project,
+                    session,
+                    "",
+                    runtime_view={
+                        "runtime_state": "RUNNING",
+                        "watcher_alive": True,
+                        "watcher_pid": 2020,
+                        "work_name": "—",
+                        "work_mtime": 0.0,
+                        "verify_name": "—",
+                        "verify_mtime": 0.0,
+                        "control_file": ".pipeline/implement_handoff.md",
+                        "control_seq": 700,
+                        "control_status": "implement",
+                        "autonomy_mode": "normal",
+                        "autonomy_reason": "",
+                        "automation_health": "attention",
+                        "automation_reason_code": "stale_control_advisory",
+                        "automation_incident_family": "stale_control_advisory",
+                        "automation_next_action": "advisory_followup",
+                        "automation_health_detail": f"제어 슬롯 고착 감지됨 ({STALE_CONTROL_CYCLE_THRESHOLD} 사이클)",
+                        "control_age_cycles": STALE_CONTROL_CYCLE_THRESHOLD,
+                        "stale_control_seq": True,
+                        "stale_control_cycle_threshold": STALE_CONTROL_CYCLE_THRESHOLD,
+                        "stale_advisory_pending": True,
+                        "active_round": {"state": "IDLE"},
+                        "lanes": [],
+                        "event_lines": [],
+                        "events": [],
+                    },
+                )
+
+        rendered = "\n".join(screen.writes)
+        self.assertIn("Auto detail:", rendered)
+        self.assertIn("stale_advisory_pending=true", rendered)
 
     def test_build_snapshot_surfaces_role_owners_from_runtime_adapter(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-role-owners-") as tmp:

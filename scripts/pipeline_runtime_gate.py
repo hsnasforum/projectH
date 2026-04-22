@@ -1240,7 +1240,10 @@ def _synthetic_lane_env() -> dict[str, str]:
         "Codex": "--gemini-every 5 --action-delay-sec 5.0",
         "Gemini": "--gemini-every 5 --action-delay-sec 5.0",
     }
-    env = {"PIPELINE_RUNTIME_DISABLE_TOKEN_COLLECTOR": "1"}
+    env = {
+        "PIPELINE_RUNTIME_DISABLE_TOKEN_COLLECTOR": "1",
+        "PIPELINE_RUNTIME_ALLOW_LANE_COMMAND_OVERRIDE": "1",
+    }
     for lane_name in physical_lane_order():
         suffix = command_suffixes.get(lane_name, "")
         env[f"PIPELINE_RUNTIME_LANE_COMMAND_{lane_name.upper()}"] = (

@@ -144,6 +144,46 @@ test.describe("controller office smoke", () => {
     await expect(page.locator("#status-badge")).toHaveText("RUNNING");
   });
 
+  test("controller surfaces automation attention detail from runtime status", async ({ page }) => {
+    await page.route("**/api/runtime/status", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          runtime_state: "RUNNING",
+          project_root: "/tmp/projectH",
+          automation_health: "attention",
+          automation_reason_code: "stale_control_advisory",
+          automation_incident_family: "stale_control_advisory",
+          automation_next_action: "advisory_followup",
+          automation_health_detail: "제어 슬롯 고착 감지됨 (900 사이클)",
+          control_age_cycles: 900,
+          stale_advisory_pending: true,
+          lanes: [
+            { name: "Claude", state: "ready", note: "waiting" },
+            { name: "Codex", state: "ready", note: "waiting" },
+            { name: "Gemini", state: "ready", note: "waiting" },
+          ],
+          control: { active_control_status: "implement", active_control_seq: 88 },
+          watcher: { alive: true },
+          active_round: { state: "IDLE" },
+          artifacts: {
+            latest_work: { path: "work/4/19/demo-work.md", mtime: "2026-04-19T00:00:00Z" },
+            latest_verify: { path: "verify/4/19/demo-verify.md", mtime: "2026-04-19T00:00:00Z" },
+          },
+        }),
+      }),
+    );
+
+    await page.goto("/controller");
+    await page.waitForTimeout(700);
+
+    await expect(page.locator("#status-badge")).toHaveText("RUNNING");
+    const incidentRoom = page.locator("#tab-content").filter({ hasText: "Incident Room" });
+    await expect(incidentRoom).toContainText("attention");
+    await expect(incidentRoom).toContainText("stale_control_advisory");
+    await expect(incidentRoom).toContainText("stale_advisory_pending");
+  });
+
   test("marquee text keeps moving when the polled runtime payload is unchanged", async ({
     page,
   }) => {

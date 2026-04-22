@@ -36,8 +36,9 @@ from .lane_catalog import (
 from .lane_surface import tail_has_busy_indicator, tail_has_ready_indicator, tail_surface_state
 from .operator_autonomy import (
     OPERATOR_APPROVAL_COMPLETED_REASON,
-    allows_verified_blocker_auto_recovery,
     classify_operator_candidate,
+    evaluate_stale_operator_control,
+    operator_gate_marker_from_decision,
 )
 from .role_routes import VERIFY_TRIAGE_ESCALATION
 from .receipts import (
@@ -80,7 +81,6 @@ from .turn_arbitration import (
 from .wrapper_events import append_wrapper_event, build_lane_read_models, iter_wrapper_task_events
 
 _DEFAULT_TOKEN_SINCE_DAYS = 7
-_WORK_PATH_RE = re.compile(r"(work/\d+/\d+/[^\s`]+\.md)")
 _AUTH_LOGIN_REASON = "auth_login_required"
 _AUTH_LOGIN_PATTERNS = (
     re.compile(r"invalid authentication credentials", re.IGNORECASE),
@@ -174,6 +174,7 @@ class RuntimeSupervisor:
         self._last_lane_states: dict[str, str] = {}
         self._last_degraded_reason = ""
         self._lane_restart_counts: dict[str, int] = {}
+        self._lane_override_events_emitted: set[str] = set()
         self._session_recovery_attempts = 0
         self._session_recovery_last_started_at = 0.0
         self._last_session_recovery_exhausted_key = ""
@@ -291,7 +292,13 @@ class RuntimeSupervisor:
 
     def _lane_command_override(self, lane_name: str) -> str:
         env_key = f"PIPELINE_RUNTIME_LANE_COMMAND_{lane_name.upper()}"
+        allow_override = str(os.environ.get("PIPELINE_RUNTIME_ALLOW_LANE_COMMAND_OVERRIDE") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
         template = str(os.environ.get(env_key) or "").strip()
+        source = env_key if template else ""
         if not template:
             raw_json = str(os.environ.get("PIPELINE_RUNTIME_LANE_COMMANDS_JSON") or "").strip()
             if raw_json:
@@ -301,7 +308,22 @@ class RuntimeSupervisor:
                     mapping = {}
                 if isinstance(mapping, dict):
                     template = str(mapping.get(lane_name) or "").strip()
+                    if template:
+                        source = "PIPELINE_RUNTIME_LANE_COMMANDS_JSON"
         if not template:
+            return ""
+        if not allow_override:
+            event_key = f"{lane_name}|{source}|ignored"
+            if event_key not in self._lane_override_events_emitted:
+                self._lane_override_events_emitted.add(event_key)
+                self._append_event(
+                    "lane_command_override_ignored",
+                    {
+                        "lane": lane_name,
+                        "source": source,
+                        "reason": "explicit_opt_in_required",
+                    },
+                )
             return ""
         context = {
             "project_root": str(self.project_root),
@@ -314,9 +336,21 @@ class RuntimeSupervisor:
             "session_name_shlex": shlex.quote(self.session_name),
         }
         try:
-            return template.format(**context)
+            command = template.format(**context)
         except KeyError:
-            return template
+            command = template
+        event_key = f"{lane_name}|{source}|{hashlib.sha256(command.encode('utf-8')).hexdigest()}"
+        if event_key not in self._lane_override_events_emitted:
+            self._lane_override_events_emitted.add(event_key)
+            self._append_event(
+                "lane_command_override",
+                {
+                    "lane": lane_name,
+                    "source": source,
+                    "command_sha256": hashlib.sha256(command.encode("utf-8")).hexdigest(),
+                },
+            )
+        return command
 
     def _write_pid(self) -> None:
         self.pid_path.parent.mkdir(parents=True, exist_ok=True)
@@ -681,76 +715,27 @@ class RuntimeSupervisor:
             control_text = control_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return None
-        based_on_work = self._normalize_artifact_path(control_meta.get("based_on_work"))
-        if based_on_work:
-            referenced_work_paths = [based_on_work]
-        else:
-            referenced_work_paths = sorted(
-                {
-                    self._normalize_artifact_path(match.group(1))
-                    for match in _WORK_PATH_RE.finditer(control_text)
-                    if self._normalize_artifact_path(match.group(1))
-                }
-            )
         reason = str((turn_state or {}).get("reason") or "")
         turn_state_name = canonical_turn_state_name(
             (turn_state or {}).get("state"),
             legacy_state=(turn_state or {}).get("legacy_state"),
         )
-        if (
-            turn_state_name == "VERIFY_FOLLOWUP"
-            and reason == OPERATOR_APPROVAL_COMPLETED_REASON
-            and snapshot_control_seq(turn_snapshot) == control_seq
-        ):
-            return {
-                "control_file": control_file,
-                "control_seq": control_seq,
-                "reason": OPERATOR_APPROVAL_COMPLETED_REASON,
-                "resolved_work_paths": [],
-            }
-        retriage_active = (
-            turn_state_name == "VERIFY_FOLLOWUP"
-            and reason == "operator_wait_idle_retriage"
-        )
-        auto_recovery_allowed = allows_verified_blocker_auto_recovery(control_meta)
-        has_structured_operator_contract = any(
-            str(control_meta.get(key) or "").strip()
-            for key in ("reason_code", "operator_policy", "decision_class", "based_on_work")
-        )
-        if not referenced_work_paths:
-            if retriage_active:
-                return {
-                    "control_file": control_file,
-                    "control_seq": control_seq,
-                    "reason": "operator_wait_idle_retriage",
-                    "resolved_work_paths": [],
-                }
-            if not auto_recovery_allowed:
-                return None
-            return None
-        if has_structured_operator_contract and not auto_recovery_allowed and not retriage_active:
-            return None
         verified_work_paths = {
             self._normalize_artifact_path(job_state.get("artifact_path"))
             for job_state in job_states
             if str(job_state.get("status") or "") == "VERIFY_DONE"
         }
-        unresolved = [path for path in referenced_work_paths if path not in verified_work_paths]
-        if unresolved:
-            if retriage_active:
-                return {
-                    "control_file": control_file,
-                    "control_seq": control_seq,
-                    "reason": "operator_wait_idle_retriage",
-                    "resolved_work_paths": [],
-                }
-            return None
-        return {
-            "control_file": control_file,
-            "control_seq": control_seq,
-            "reason": "verified_blockers_resolved",
-            "resolved_work_paths": referenced_work_paths,
-        }
+        return evaluate_stale_operator_control(
+            control_text=control_text,
+            control_meta=control_meta,
+            verified_work_paths=verified_work_paths,
+            control_file=control_file,
+            control_seq=control_seq,
+            normalize_path=self._normalize_artifact_path,
+            turn_state_name=turn_state_name,
+            turn_reason=reason,
+            turn_control_seq=snapshot_control_seq(turn_snapshot),
+        )
 
     def _operator_gate_marker(
         self,
@@ -836,22 +821,12 @@ class RuntimeSupervisor:
             ),
         }
 
-        if bool(decision.get("operator_eligible")):
-            return None, autonomy
-
-        marker = {
-            "control_file": control_file,
-            "control_seq": control_seq,
-            "reason": str(decision.get("block_reason") or ""),
-            "reason_code": str(decision.get("reason_code") or ""),
-            "operator_policy": str(decision.get("operator_policy") or ""),
-            "decision_class": str(decision.get("decision_class") or ""),
-            "classification_source": str(decision.get("classification_source") or ""),
-            "mode": str(decision.get("suppressed_mode") or ""),
-            "routed_to": str(decision.get("routed_to") or ""),
-            "suppress_operator_until": str(decision.get("suppress_operator_until") or ""),
-            "fingerprint": fingerprint,
-        }
+        marker = operator_gate_marker_from_decision(
+            decision,
+            control_file=control_file,
+            control_seq=control_seq,
+            fingerprint=fingerprint,
+        )
         return marker, autonomy
 
     def _active_lane_for_runtime(
@@ -2259,7 +2234,45 @@ class RuntimeSupervisor:
         except FileNotFoundError:
             pass
 
+    def _process_cmdline(self, pid: int) -> str:
+        try:
+            return (
+                Path(f"/proc/{pid}/cmdline")
+                .read_bytes()
+                .replace(b"\0", b" ")
+                .decode("utf-8", errors="replace")
+            )
+        except OSError:
+            return ""
+
+    def _process_cwd(self, pid: int) -> str:
+        try:
+            return str(Path(os.readlink(f"/proc/{pid}/cwd")).resolve())
+        except OSError:
+            return ""
+
+    def _terminate_current_run_watcher(self) -> set[int]:
+        killed: set[int] = set()
+        current_run = read_json(self.current_run_path) or {}
+        try:
+            pid = int(current_run.get("watcher_pid") or -1)
+        except (TypeError, ValueError):
+            pid = -1
+        if pid <= 0 or pid in {os.getpid(), os.getppid()}:
+            return killed
+        expected_fingerprint = str(current_run.get("watcher_fingerprint") or "").strip()
+        if expected_fingerprint:
+            live_fingerprint = process_starttime_fingerprint(pid)
+            if live_fingerprint != expected_fingerprint:
+                return killed
+        elif self._process_cwd(pid) != str(self.project_root.resolve()):
+            return killed
+        self._kill_pid(pid)
+        killed.add(pid)
+        return killed
+
     def _terminate_repo_watchers(self) -> None:
+        terminated = self._terminate_current_run_watcher()
         result = subprocess.run(
             ["pgrep", "-f", r"watcher_core\.py|pipeline-watcher-v3(\-logged)?\.sh"],
             capture_output=True,
@@ -2274,17 +2287,13 @@ class RuntimeSupervisor:
             if not raw_pid.isdigit():
                 continue
             pid = int(raw_pid)
-            if pid in {os.getpid(), os.getppid()}:
+            if pid in terminated or pid in {os.getpid(), os.getppid()}:
                 continue
-            try:
-                cmd = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", errors="replace")
-            except OSError:
-                cmd = ""
-            try:
-                cwd = str(Path(os.readlink(f"/proc/{pid}/cwd")).resolve())
-            except OSError:
-                cwd = ""
-            if cwd == project_abs or project_abs in cmd:
+            cmd = self._process_cmdline(pid)
+            cwd = self._process_cwd(pid)
+            if cwd == project_abs and (
+                "watcher_core.py" in cmd or "pipeline-watcher-v3" in cmd
+            ):
                 self._kill_pid(pid)
 
     def _usage_path(self, name: str) -> Path:

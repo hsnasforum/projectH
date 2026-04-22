@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import io
 import signal
 import tempfile
 import unittest
@@ -403,6 +404,35 @@ class WrapperEmitterTest(unittest.TestCase):
 
 
 class SupervisorCliTest(unittest.TestCase):
+    def test_status_json_reads_current_run_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            run_dir = project_root / ".pipeline" / "runs" / "run-status"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (project_root / ".pipeline" / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "run-status",
+                        "status_path": ".pipeline/runs/run-status/status.json",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "status.json").write_text(
+                json.dumps({"run_id": "run-status", "runtime_state": "RUNNING"}),
+                encoding="utf-8",
+            )
+            stdout = io.StringIO()
+
+            with patch("sys.stdout", stdout):
+                code = runtime_cli._status(Namespace(project_root=str(project_root), json=True))
+
+            self.assertEqual(code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["runtime_state"], "RUNNING")
+            self.assertEqual(payload["current_run"]["run_id"], "run-status")
+
     def test_list_supervisor_pids_filters_project_and_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

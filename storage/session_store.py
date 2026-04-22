@@ -1052,6 +1052,7 @@ class SessionStore:
                     "completion": str(corrected_text),
                     "session_id": session_id,
                     "message_id": str(msg.get("message_id") or ""),
+                    "feedback": msg.get("feedback"),
                 }
 
     def delete_session(self, session_id: str) -> bool:

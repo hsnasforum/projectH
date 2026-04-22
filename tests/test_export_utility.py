@@ -75,6 +75,16 @@ class TestStreamTracePairs(unittest.TestCase):
             store._save("sess-3", data)
             self.assertEqual(list(store.stream_trace_pairs()), [])
 
+    def test_stream_trace_pairs_includes_feedback_key(self) -> None:
+        with TemporaryDirectory() as base_dir:
+            store = self._make_store_with_pair(
+                base_dir, "sess-fb", "original text", "corrected text"
+            )
+            pairs = list(store.stream_trace_pairs())
+            self.assertEqual(len(pairs), 1)
+            self.assertIn("feedback", pairs[0])
+            self.assertIsNone(pairs[0]["feedback"])
+
     def test_quality_score_in_range_is_high_quality(self) -> None:
         from core.delta_analysis import compute_correction_delta
         from scripts.export_traces import _is_high_quality

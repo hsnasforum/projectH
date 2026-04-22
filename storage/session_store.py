@@ -1633,6 +1633,16 @@ class SessionStore:
             data["operator_action_history"] = history
             self._save(session_id, data)
 
+    def get_operator_action_from_history(
+        self, session_id: str, approval_id: str
+    ) -> Dict[str, Any] | None:
+        with self._lock:
+            data = self.get_session(session_id)
+            for entry in data.get("operator_action_history", []):
+                if entry.get("approval_id") == approval_id:
+                    return dict(entry)
+            return None
+
     def get_pending_approval(self, session_id: str, approval_id: str) -> Dict[str, Any] | None:
         with self._lock:
             data = self.get_session(session_id)

@@ -327,6 +327,43 @@ class SessionStoreTest(unittest.TestCase):
             self.assertEqual(summary["personalized_response_count"], 2)
             self.assertEqual(summary["personalized_correction_count"], 1)
 
+    def test_get_global_audit_summary_per_preference_stats(self) -> None:
+        with TemporaryDirectory() as base_dir:
+            store = SessionStore(base_dir=base_dir)
+            session_id = "per-pref-session"
+            data = store.get_session(session_id)
+
+            data["messages"].append({
+                "message_id": "msg-pp1",
+                "role": "assistant",
+                "artifact_id": "artifact-pp1",
+                "artifact_kind": "grounded_brief",
+                "applied_preference_ids": ["pref-A", "pref-B"],
+                "corrected_text": "corrected",
+                "original_response_snapshot": {
+                    "artifact_id": "artifact-pp1",
+                    "artifact_kind": "grounded_brief",
+                    "draft_text": "original",
+                    "source_paths": [],
+                },
+                "text": "original",
+            })
+            data["messages"].append({
+                "message_id": "msg-pp2",
+                "role": "assistant",
+                "artifact_kind": "grounded_brief",
+                "applied_preference_ids": ["pref-A"],
+                "text": "no correction",
+            })
+            store._save(session_id, data)
+
+            summary = store.get_global_audit_summary()
+            per = summary["per_preference_stats"]
+            self.assertEqual(per["pref-A"]["applied_count"], 2)
+            self.assertEqual(per["pref-A"]["corrected_count"], 1)
+            self.assertEqual(per["pref-B"]["applied_count"], 1)
+            self.assertEqual(per["pref-B"]["corrected_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

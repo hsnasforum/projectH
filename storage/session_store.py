@@ -991,6 +991,7 @@ class SessionStore:
                 "feedback_dislike_count": 0,
                 "personalized_response_count": 0,
                 "personalized_correction_count": 0,
+                "per_preference_stats": {},
                 "operator_executed_count": 0,
                 "operator_rolled_back_count": 0,
                 "operator_failed_count": 0,
@@ -1019,11 +1020,19 @@ class SessionStore:
                         summary["correction_pair_count"] += 1
                     if msg.get("applied_preference_ids"):
                         summary["personalized_response_count"] += 1
-                        if (
+                        is_personalized_correction = (
                             str(msg.get("artifact_kind") or "") == "grounded_brief"
                             and msg.get("corrected_text") is not None
-                        ):
+                        )
+                        if is_personalized_correction:
                             summary["personalized_correction_count"] += 1
+                        for pref_id in msg["applied_preference_ids"]:
+                            pstats = summary["per_preference_stats"].setdefault(
+                                pref_id, {"applied_count": 0, "corrected_count": 0}
+                            )
+                            pstats["applied_count"] += 1
+                            if is_personalized_correction:
+                                pstats["corrected_count"] += 1
                     count_feedback(msg.get("feedback"))
                 count_feedback(data.get("feedback"))
                 for action in data.get("operator_action_history", []):

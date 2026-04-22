@@ -42,6 +42,26 @@ def main() -> None:
         f"  Personalized corrections: {personalized_corrected}\n"
         f"  Personalization correction rate: {correction_rate}"
     )
+    per_pref = summary.get("per_preference_stats", {})
+    if per_pref:
+        sorted_prefs = sorted(
+            per_pref.items(),
+            key=lambda x: x[1]["corrected_count"] / x[1]["applied_count"]
+            if x[1]["applied_count"] > 0 else 0,
+            reverse=True,
+        )
+        print("\nPer-preference reliability:")
+        for pref_id, pstats in sorted_prefs:
+            rate = (
+                f"{pstats['corrected_count'] / pstats['applied_count']:.1%}"
+                if pstats["applied_count"] > 0 else "N/A"
+            )
+            print(
+                f"  {pref_id}: applied={pstats['applied_count']}, "
+                f"corrected={pstats['corrected_count']}, correction_rate={rate}"
+            )
+    else:
+        print("\nPer-preference reliability: N/A (no personalized responses yet)")
 
 
 if __name__ == "__main__":

@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import json
+import typing
 from pathlib import Path
 from typing import Any
 
 from core.eval_contracts import (
+    EVAL_FAMILY_TRACE_CLASS,
     EvalArtifactCoreTrace,
     EvalFixtureFamily,
     EVAL_FIXTURE_FAMILY_AXES,
@@ -46,3 +48,24 @@ def _validate(data: dict[str, Any]) -> None:
         raise ValueError(
             f"eval_axes mismatch for {family}: expected {expected_axes}, got {actual_axes}"
         )
+    trace_class = EVAL_FAMILY_TRACE_CLASS.get(family)
+    if trace_class is not None:
+        resolved_hints = typing.get_type_hints(trace_class)
+        family_field_types = {
+            k: resolved_hints[k]
+            for k in trace_class.__annotations__
+            if k not in _REQUIRED_FIELDS
+        }
+        allowed_keys = _REQUIRED_FIELDS | family_field_types.keys()
+        unknown = data.keys() - allowed_keys
+        if unknown:
+            raise ValueError(
+                f"fixture has unknown fields for {family!r}: {unknown}"
+            )
+        for field, expected_type in family_field_types.items():
+            if field in data and not isinstance(data[field], expected_type):
+                raise ValueError(
+                    f"field {field!r} has wrong type for {family!r}: "
+                    f"expected {expected_type.__name__}, "
+                    f"got {type(data[field]).__name__}"
+                )

@@ -74,6 +74,18 @@ class TestValidate(unittest.TestCase):
         with self.assertRaises(ValueError):
             _validate(data)
 
+    def test_unknown_family_field_raises(self):
+        data = self._base()
+        data["extra_unexpected_key"] = "value"
+        with self.assertRaises(ValueError):
+            _validate(data)
+
+    def test_field_type_mismatch_raises(self):
+        data = self._base()
+        data["reused_artifact_id"] = 999  # str expected, int given
+        with self.assertRaises(ValueError):
+            _validate(data)
+
 
 if __name__ == "__main__":
     unittest.main()

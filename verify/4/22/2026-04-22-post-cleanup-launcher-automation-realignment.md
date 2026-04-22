@@ -1854,3 +1854,56 @@ CONTROL_SEQ 855 → `.pipeline/operator_request.md` (STATUS: needs_operator)
 
 CONTROL_SEQ 859 → `.pipeline/operator_request.md` (STATUS: needs_operator)
 - 이유: fixture enrichment bundle commit/push + MILESTONES.md Axis 7 inline 편집(3+ docs-only 규칙에 따라 operator commit 지시에 포함) — operator 승인 경계.
+
+---
+
+## CONTROL_SEQ 862 구현 검증 (NEXT_CONTROL_SEQ: 863)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-fixture-loader-typeddict-validation.md`
+
+### 검증 결과
+
+**`eval/fixture_loader.py` 변경:**
+- `import typing` 추가 ✅
+- `EVAL_FAMILY_TRACE_CLASS` import 추가 ✅
+- `_validate()` 확장 (axes 검증 이후):
+  - `trace_class = EVAL_FAMILY_TRACE_CLASS.get(family)` ✅
+  - `resolved_hints = typing.get_type_hints(trace_class)` — string annotation 해소 ✅
+  - `family_field_types = {k: resolved_hints[k] for k in trace_class.__annotations__ if k not in _REQUIRED_FIELDS}` — own-only 필드, core 중복 제거 ✅
+  - `allowed_keys = _REQUIRED_FIELDS | family_field_types.keys()` ✅
+  - `data.keys() - allowed_keys` → unknown key 시 `ValueError` ✅
+  - `isinstance(data[field], expected_type)` 실패 시 `ValueError` ✅
+- 기존 `_validate()` 구조(missing field → unknown family → axes mismatch) 보존 ✅
+- `_base()` (core 필드만) 여전히 통과 — optional family 필드 부재는 거절 안 함 ✅
+
+**`tests/test_eval_loader.py` 변경:**
+- `test_unknown_family_field_raises`: `_base()` + unknown key → `ValueError` ✅
+- `test_field_type_mismatch_raises`: `_base()` + `reused_artifact_id=999` → `ValueError` ✅
+
+**실행 검증:**
+- `python3 -m py_compile eval/fixture_loader.py tests/test_eval_loader.py` → **OK** ✅
+- `python3 -m unittest tests.test_eval_loader -v` → **Ran 9 tests, OK** (기존 7 + 신규 2) ✅
+- `git diff --check -- eval/fixture_loader.py tests/test_eval_loader.py` → **OK** ✅
+
+**제약 준수:**
+- `core/eval_contracts.py`, `eval/__init__.py`, fixture JSON, docs 파일 무수정 ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. `typing.get_type_hints()`로 string annotation 정확히 해소.
+own-only 필드 필터(`if k not in _REQUIRED_FIELDS`)가 상속 필드 중복 방지. 9 tests 통과.
+기존 `test_valid_passes`도 계속 통과 (optional 부재는 거절 안 함).
+
+### 남은 리스크 (CONTROL_SEQ 862 이후)
+
+- `eval/fixture_loader.py` + `tests/test_eval_loader.py` 미커밋.
+- `docs/MILESTONES.md` Axis 8 기록 미추가 (5번째 이상 Milestone 8 docs round → inline 편집으로 처리).
+- e2e eval stage deferred 유지.
+- Milestone 9 방향 미결정.
+
+### 다음 control
+
+CONTROL_SEQ 863 → `.pipeline/operator_request.md` (STATUS: needs_operator)
+- 이유: fixture_loader validation bundle commit/push + MILESTONES.md Axis 8 inline 편집 — operator 승인 경계.

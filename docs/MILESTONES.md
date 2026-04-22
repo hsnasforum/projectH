@@ -450,13 +450,27 @@
 - Failure outcome audit shipped: failed operator actions now recorded in `operator_action_history` with `status="failed"` + `error` field before returning error response in `core/agent_loop.py` (seq 883); Milestone 9 Axes 1–5 complete
 - **Milestone 9 closed** (seqs 866–883): observable and reversible `local_file_edit` action foundation established; actual file write, rollback, UI approval card, `shell_execute`/`session_mutation` execution deferred to a future milestone
 
+### Milestone 10: Local Operator Operation
+- enable actual file write for `local_file_edit` under explicit approval
+- implement first rollback logic for reversible local actions
+- verify audit trail integrity for end-to-end operator effects
+- Local file edit active write shipped: `content: str` in contracts; `execute_operator_action()` performs `Path.write_text()` (seq 893)
+- Reversible backup mechanism shipped: `is_reversible=True` → backup saved to `backup/operator/`; `backup_path` preserved in `operator_action_history` (seq 897)
+- Audit trail verification shipped: end-to-end integration test exercises full request → execute → outcome flow; all 5 history fields verified (seq 901)
+- **Milestone 10 closed** (seqs 893–901): local file operation and backup foundation established; actual rollback restore and sandbox path restrictions remain deferred
+
 ### Why This Is Later
 - Program operation should follow stable correction and preference memory, not precede it.
 - The system must prove alignment on document work before it expands into action.
 
 ## Long-Term
 
-### Milestone 10: Personalized Local Model Layer
+### Milestone 11: Operator Action Reversibility & Sandbox
+- implement actual rollback restore for reversible file edits
+- define path restriction rules (sandbox) for `target_id` in operator actions
+- ensure rollback traces are observable in session history
+
+### Milestone 12: Personalized Local Model Layer
 - promote high-quality local traces into personalization assets
 - evaluate whether a local adaptive model layer is justified
 - keep deployment and rollback safe and measurable

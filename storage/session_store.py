@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import threading
-from typing import Any, Dict
+from typing import Any, Dict, Iterator
 from uuid import uuid4
 
 from core.approval import (
@@ -1026,6 +1026,33 @@ class SessionStore:
                     elif status == "failed":
                         summary["operator_failed_count"] += 1
             return summary
+
+    def stream_trace_pairs(self) -> Iterator[Dict[str, Any]]:
+        """Yield correction pairs (prompt/completion) from all sessions."""
+        for path in sorted(self.base_dir.glob("*.json")):
+            try:
+                session_id = path.stem
+                data = self.get_session(session_id)
+            except Exception:
+                continue
+            for msg in data.get("messages", []):
+                if str(msg.get("artifact_kind") or "") != "grounded_brief":
+                    continue
+                corrected_text = msg.get("corrected_text")
+                if corrected_text is None:
+                    continue
+                snapshot = msg.get("original_response_snapshot")
+                if not isinstance(snapshot, dict):
+                    continue
+                draft_text = str(snapshot.get("draft_text") or "").strip()
+                if not draft_text:
+                    continue
+                yield {
+                    "prompt": draft_text,
+                    "completion": str(corrected_text),
+                    "session_id": session_id,
+                    "message_id": str(msg.get("message_id") or ""),
+                }
 
     def delete_session(self, session_id: str) -> bool:
         with self._lock:

@@ -15,7 +15,7 @@ HQ_PATH = Path("data/high_quality_traces.jsonl")
 
 
 def _is_high_quality(similarity_score: float) -> bool:
-    return 0.20 <= similarity_score <= 0.98
+    return 0.05 <= similarity_score <= 0.98
 
 
 def main() -> None:

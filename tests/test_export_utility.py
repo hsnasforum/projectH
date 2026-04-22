@@ -108,6 +108,15 @@ class TestStreamTracePairs(unittest.TestCase):
         delta = compute_correction_delta("same text", "same text")
         self.assertIsNone(delta)
 
+    def test_grounded_brief_range_is_high_quality(self) -> None:
+        from scripts.export_traces import _is_high_quality
+        # Grounded-brief rewrites empirically score 0.067-0.090; must be accepted
+        self.assertTrue(_is_high_quality(0.075))
+        self.assertTrue(_is_high_quality(0.067))
+        self.assertTrue(_is_high_quality(0.090))
+        # Below new floor is not high quality
+        self.assertFalse(_is_high_quality(0.03))
+
 
 if __name__ == "__main__":
     unittest.main()

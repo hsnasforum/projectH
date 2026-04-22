@@ -13,18 +13,67 @@ from pipeline_runtime import schema as schema_module
 from pipeline_runtime.schema import (
     JOB_STATE_DIR_NAME,
     STATE_DIR_SHARED_FILES,
+    active_control_snapshot_from_entry,
+    active_control_snapshot_from_status,
+    control_block_from_snapshot,
+    control_seq_value,
     iter_job_state_paths,
     jobs_state_dir,
     latest_verify_note_for_work,
     latest_round_markdown,
     load_job_states,
     parse_control_slots,
+    parse_control_meta_text,
+    pipeline_control_snapshot_from_slots,
     process_starttime_fingerprint,
     read_control_meta,
+    read_pipeline_control_snapshot,
+    snapshot_control_seq,
 )
 
 
 class RuntimeSchemaTest(unittest.TestCase):
+    def test_control_seq_value_normalizes_runtime_seq_inputs(self) -> None:
+        self.assertEqual(control_seq_value("42", default=-1), 42)
+        self.assertEqual(control_seq_value(0, default=-1), 0)
+        self.assertEqual(control_seq_value(True, default=-1), -1)
+        self.assertEqual(control_seq_value("-1", default=None), None)
+        self.assertEqual(control_seq_value("not-a-number", default=-1), -1)
+
+    def test_parse_control_meta_text_uses_shared_seq_normalization(self) -> None:
+        meta = parse_control_meta_text(
+            "STATUS: implement\nCONTROL_SEQ: not-a-number\nCONTROL_SEQ: 9\n"
+        )
+
+        self.assertEqual(meta["status"], "implement")
+        self.assertEqual(meta["control_seq"], 9)
+
+    def test_control_block_from_snapshot_emits_status_shape(self) -> None:
+        snapshot = {
+            "control_file": ".pipeline/implement_handoff.md",
+            "control_seq": "41",
+            "control_status": "implement",
+            "control_updated_at": "2026-04-22T00:00:00Z",
+            "slot_id": "implement_handoff",
+            "canonical_file": ".pipeline/implement_handoff.md",
+        }
+
+        block = control_block_from_snapshot(snapshot, control_age_cycles=3)
+
+        self.assertEqual(block["active_control_file"], ".pipeline/implement_handoff.md")
+        self.assertEqual(block["active_control_seq"], 41)
+        self.assertEqual(block["active_control_status"], "implement")
+        self.assertEqual(block["control_age_cycles"], 3)
+        self.assertEqual(snapshot_control_seq(snapshot), 41)
+
+    def test_control_block_from_empty_snapshot_uses_inactive_defaults(self) -> None:
+        block = control_block_from_snapshot({}, control_age_cycles=2)
+
+        self.assertEqual(block["active_control_file"], "")
+        self.assertEqual(block["active_control_seq"], -1)
+        self.assertEqual(block["active_control_status"], "none")
+        self.assertEqual(block["control_age_cycles"], 2)
+
     def test_read_control_meta_reads_extended_operator_headers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             slot = Path(tmp) / "operator_request.md"
@@ -157,6 +206,73 @@ class RuntimeSchemaTest(unittest.TestCase):
             self.assertEqual(slots["active"]["file"], "gemini_request.md")
             self.assertEqual(slots["active"]["control_seq"], 1)
             self.assertEqual(slots["stale"], [])
+
+    def test_active_control_snapshot_roundtrip(self) -> None:
+        entry = {
+            "file": "advisory_request.md",
+            "status": "request_open",
+            "mtime": 1776800000.0,
+            "control_seq": 41,
+            "slot_id": "advisory_request",
+            "canonical_file": "advisory_request.md",
+        }
+
+        snapshot = active_control_snapshot_from_entry(entry)
+        status = {
+            "active_control_file": snapshot["control_file"],
+            "active_control_seq": snapshot["control_seq"],
+            "active_control_status": snapshot["control_status"],
+            "active_control_updated_at": snapshot["control_updated_at"],
+            "active_control_slot": snapshot["slot_id"],
+            "active_control_canonical_file": snapshot["canonical_file"],
+        }
+
+        self.assertEqual(
+            active_control_snapshot_from_status(status),
+            snapshot,
+        )
+        self.assertEqual(snapshot["control_file"], ".pipeline/advisory_request.md")
+        self.assertEqual(snapshot["canonical_file"], ".pipeline/advisory_request.md")
+
+    def test_active_control_snapshot_missing_keys(self) -> None:
+        self.assertEqual(active_control_snapshot_from_entry({}), {})
+        self.assertEqual(active_control_snapshot_from_status({}), {})
+        self.assertEqual(
+            active_control_snapshot_from_entry({"file": "", "control_seq": None}),
+            {},
+        )
+        self.assertEqual(
+            active_control_snapshot_from_status({"active_control_seq": -1}),
+            {},
+        )
+
+    def test_pipeline_control_snapshot_includes_active_and_stale_slots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pipeline = Path(tmp)
+            (pipeline / "implement_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: 20\n",
+                encoding="utf-8",
+            )
+            (pipeline / "advisory_request.md").write_text(
+                "STATUS: request_open\nCONTROL_SEQ: 19\n",
+                encoding="utf-8",
+            )
+
+            snapshot = read_pipeline_control_snapshot(pipeline)
+
+            self.assertEqual(snapshot["active"]["control_file"], ".pipeline/implement_handoff.md")
+            self.assertEqual(snapshot["active"]["control_seq"], 20)
+            self.assertEqual(snapshot["active"]["slot_id"], "implement_handoff")
+            self.assertEqual(snapshot["stale"][0]["control_file"], ".pipeline/advisory_request.md")
+            self.assertEqual(snapshot["stale_entries"][0]["slot_id"], "advisory_request")
+            self.assertEqual(snapshot["slots"]["active"]["file"], "implement_handoff.md")
+
+    def test_pipeline_control_snapshot_accepts_empty_slots(self) -> None:
+        snapshot = pipeline_control_snapshot_from_slots({"active": None, "stale": []})
+
+        self.assertNotIn("active", snapshot)
+        self.assertEqual(snapshot["stale"], [])
+        self.assertEqual(snapshot["stale_entries"], [])
 
     def test_latest_round_markdown_ignores_root_readme(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

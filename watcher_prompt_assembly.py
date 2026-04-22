@@ -14,7 +14,7 @@ from pipeline_runtime.role_routes import (
     normalize_verify_triage_escalation,
 )
 from pipeline_runtime.role_harness import role_harness_path
-from pipeline_runtime.schema import control_slot_id_for_filename
+from pipeline_runtime.schema import control_seq_value, control_slot_id_for_filename
 
 
 DEFAULT_IMPLEMENT_PROMPT = (
@@ -729,7 +729,7 @@ class WatcherPromptAssembler:
             "request_open",
             self.advisory_request_path,
         )
-        control_seq = int(marker.get("control_seq") or -1)
+        control_seq = control_seq_value(marker.get("control_seq"), default=-1)
         identity = self._lane_identity(
             functional_role="verify",
             notify_kind=ADVISORY_RECOVERY_NOTIFY,
@@ -770,7 +770,7 @@ class WatcherPromptAssembler:
         marker: Mapping[str, object],
         reason: str,
     ) -> PromptDispatchSpec:
-        control_seq = int(marker.get("control_seq") or -1)
+        control_seq = control_seq_value(marker.get("control_seq"), default=-1)
         identity = self._lane_identity(
             functional_role="verify",
             notify_kind="verify_control_recovery",
@@ -810,7 +810,7 @@ class WatcherPromptAssembler:
         marker: Mapping[str, object],
         reason: str,
     ) -> PromptDispatchSpec:
-        control_seq = int(marker.get("control_seq") or -1)
+        control_seq = control_seq_value(marker.get("control_seq"), default=-1)
         identity = self._lane_identity(
             functional_role="verify",
             notify_kind="verify_operator_retriage",

@@ -11,7 +11,7 @@ from collections import deque
 from dataclasses import dataclass
 from functools import cmp_to_key
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, TypedDict
 
 from .lane_catalog import physical_lane_order
 
@@ -74,6 +74,23 @@ CONTROL_SLOT_STATUSES: dict[str, str] = {
 CONTROL_SLOT_LABELS: dict[str, str] = {
     filename: spec.label for filename, spec in _CONTROL_SLOT_BY_FILENAME.items()
 }
+
+
+class ActiveControlSnapshot(TypedDict, total=False):
+    control_file: str
+    control_seq: int
+    control_status: str
+    control_updated_at: str
+    slot_id: str
+    canonical_file: str
+
+
+class PipelineControlSnapshot(TypedDict, total=False):
+    active: ActiveControlSnapshot
+    stale: list[ActiveControlSnapshot]
+    active_entry: dict[str, Any]
+    stale_entries: list[dict[str, Any]]
+    slots: dict[str, Any]
 
 
 def iter_control_slot_specs() -> tuple[ControlSlotSpec, ...]:
@@ -492,13 +509,26 @@ def latest_verify_note_for_work(
     return None
 
 
-def read_control_meta(path: Path, *, max_lines: int = 20) -> dict[str, Any]:
-    if not path.exists():
-        return {}
+def control_seq_value(value: Any, *, default: int | None = None) -> int | None:
+    if isinstance(value, bool):
+        return default
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return {}
+        seq = int(value)
+    except (TypeError, ValueError):
+        return default
+    return seq if seq >= 0 else default
+
+
+def snapshot_control_seq(
+    snapshot: Mapping[str, Any] | None,
+    *,
+    default: int = -1,
+) -> int:
+    value = control_seq_value((snapshot or {}).get("control_seq"), default=default)
+    return value if isinstance(value, int) else default
+
+
+def parse_control_meta_text(text: str, *, max_lines: int = 20) -> dict[str, Any]:
     meta: dict[str, Any] = {}
     for line in text.splitlines()[:max_lines]:
         match = _CONTROL_HEADER_LINE_RE.match(line)
@@ -509,22 +539,29 @@ def read_control_meta(path: Path, *, max_lines: int = 20) -> dict[str, Any]:
             continue
         raw_value = match.group(2).strip()
         if key == "control_seq":
-            try:
-                parsed = int(raw_value)
-            except ValueError:
+            parsed = control_seq_value(raw_value, default=None)
+            if parsed is None:
                 continue
-            meta[key] = parsed if parsed >= 0 else None
+            meta[key] = parsed
             continue
         meta[key] = raw_value
     return meta
 
 
+def read_control_meta(path: Path, *, max_lines: int = 20) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    return parse_control_meta_text(text, max_lines=max_lines)
+
+
 def _read_control_header(path: Path) -> tuple[str | None, int | None]:
     meta = read_control_meta(path, max_lines=12)
     status = str(meta.get("status") or "").strip() or None
-    control_seq = meta.get("control_seq")
-    if not isinstance(control_seq, int) or control_seq < 0:
-        control_seq = None
+    control_seq = control_seq_value(meta.get("control_seq"), default=None)
     return status, control_seq
 
 
@@ -591,6 +628,135 @@ def parse_control_slots(pipeline_dir: Path) -> dict[str, Any]:
         return {"active": None, "stale": []}
     entries = sort_control_slot_entries(entries)
     return {"active": entries[0], "stale": entries[1:]}
+
+
+def _pipeline_control_filename(value: Any) -> str:
+    text = str(value or "").strip().replace("\\", "/")
+    if not text:
+        return ""
+    if text.startswith(".pipeline/"):
+        return text
+    return f".pipeline/{Path(text).name}"
+
+
+def active_control_snapshot_from_entry(entry: dict[str, Any]) -> ActiveControlSnapshot:
+    """Build an active-control snapshot from a parse_control_slots active entry."""
+    snapshot: ActiveControlSnapshot = {}
+    if not isinstance(entry, dict) or not entry:
+        return snapshot
+
+    control_file = _pipeline_control_filename(entry.get("file"))
+    if control_file:
+        snapshot["control_file"] = control_file
+
+    control_seq = control_seq_value(entry.get("control_seq"), default=None)
+    if control_seq is not None:
+        snapshot["control_seq"] = control_seq
+
+    control_status = str(entry.get("status") or "").strip()
+    if control_status:
+        snapshot["control_status"] = control_status
+
+    try:
+        mtime = float(entry.get("mtime") or 0.0)
+    except (TypeError, ValueError):
+        mtime = 0.0
+    if mtime > 0.0:
+        snapshot["control_updated_at"] = iso_utc(mtime)
+
+    slot_id = str(entry.get("slot_id") or "").strip()
+    if slot_id:
+        snapshot["slot_id"] = slot_id
+
+    canonical_file = _pipeline_control_filename(entry.get("canonical_file"))
+    if canonical_file:
+        snapshot["canonical_file"] = canonical_file
+
+    return snapshot
+
+
+def active_control_snapshot_from_status(status: dict[str, Any]) -> ActiveControlSnapshot:
+    """Read an active-control snapshot from status.json / turn_state keys."""
+    snapshot: ActiveControlSnapshot = {}
+    if not isinstance(status, dict) or not status:
+        return snapshot
+
+    control_file = str(status.get("active_control_file") or "").strip()
+    if control_file:
+        snapshot["control_file"] = control_file
+
+    control_seq = control_seq_value(status.get("active_control_seq"), default=None)
+    if control_seq is not None:
+        snapshot["control_seq"] = control_seq
+
+    control_status = str(status.get("active_control_status") or "").strip()
+    if control_status:
+        snapshot["control_status"] = control_status
+
+    control_updated_at = str(status.get("active_control_updated_at") or "").strip()
+    if control_updated_at:
+        snapshot["control_updated_at"] = control_updated_at
+
+    slot_id = str(status.get("active_control_slot") or "").strip()
+    if slot_id:
+        snapshot["slot_id"] = slot_id
+
+    canonical_file = str(status.get("active_control_canonical_file") or "").strip()
+    if canonical_file:
+        snapshot["canonical_file"] = canonical_file
+
+    return snapshot
+
+
+def control_block_from_snapshot(
+    snapshot: Mapping[str, Any] | None,
+    *,
+    control_age_cycles: int,
+    is_legacy_alias: bool = False,
+) -> dict[str, Any]:
+    snapshot = snapshot or {}
+    return {
+        "active_control_file": str(snapshot.get("control_file") or ""),
+        "active_control_slot": str(snapshot.get("slot_id") or ""),
+        "active_control_canonical_file": str(snapshot.get("canonical_file") or ""),
+        "active_control_is_legacy_alias": is_legacy_alias,
+        "active_control_seq": snapshot_control_seq(snapshot),
+        "active_control_status": str(snapshot.get("control_status") or "none"),
+        "active_control_updated_at": str(snapshot.get("control_updated_at") or ""),
+        "control_age_cycles": control_age_cycles,
+    }
+
+
+def pipeline_control_snapshot_from_slots(slots: dict[str, Any]) -> PipelineControlSnapshot:
+    """Build active/stale snapshots from parse_control_slots output."""
+    active_entry = dict(slots.get("active") or {}) if isinstance(slots, dict) else {}
+    stale_entries = [
+        dict(entry)
+        for entry in list((slots or {}).get("stale") or [])
+        if isinstance(entry, dict)
+    ]
+    snapshot: PipelineControlSnapshot = {
+        "stale": [
+            stale_snapshot
+            for stale_snapshot in (
+                active_control_snapshot_from_entry(entry) for entry in stale_entries
+            )
+            if stale_snapshot
+        ],
+        "stale_entries": stale_entries,
+        "slots": slots if isinstance(slots, dict) else {"active": None, "stale": []},
+    }
+    active_snapshot = active_control_snapshot_from_entry(active_entry)
+    if active_snapshot:
+        snapshot["active"] = active_snapshot
+    if active_entry:
+        snapshot["active_entry"] = active_entry
+    return snapshot
+
+
+def read_pipeline_control_snapshot(pipeline_dir: Path) -> PipelineControlSnapshot:
+    """Parse pipeline control slots and return one shared active/stale snapshot."""
+    return pipeline_control_snapshot_from_slots(parse_control_slots(pipeline_dir))
 
 
 def load_job_states(

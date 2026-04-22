@@ -10,7 +10,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from pipeline_runtime.schema import jobs_state_dir, read_json
+from pipeline_runtime.schema import (
+    PipelineControlSnapshot,
+    append_jsonl,
+    jobs_state_dir,
+    read_json,
+    read_pipeline_control_snapshot,
+)
 from pipeline_runtime.wrapper_events import build_lane_read_models
 
 log = logging.getLogger("watcher_core")
@@ -224,6 +230,7 @@ class StateMachine:
         normalize_prompt_text: Callable[[str], str],
         send_keys: Callable[[str, str, bool, str], bool],
         dry_run: bool = False,
+        pipeline_dir: Optional[Path] = None,
     ) -> None:
         self.project_root = project_root
         self.verify_lane_name = verify_lane_name
@@ -253,6 +260,33 @@ class StateMachine:
         self.normalize_prompt_text = normalize_prompt_text
         self.send_keys = send_keys
         self.dry_run = dry_run
+        self.pipeline_dir = pipeline_dir
+
+    def _pipeline_control_seq(self) -> int:
+        if self.pipeline_dir is None:
+            return -1
+        pipeline_snapshot: PipelineControlSnapshot = read_pipeline_control_snapshot(self.pipeline_dir)
+        active_snapshot = pipeline_snapshot.get("active") or {}
+        raw_seq = active_snapshot.get("control_seq")
+        if isinstance(raw_seq, bool):
+            return -1
+        try:
+            return int(raw_seq)
+        except (TypeError, ValueError):
+            return -1
+
+    def _release_verify_lease(self, slot: str, job: JobState | None = None, *, reason: str = "") -> None:
+        self.lease.release(slot)
+        if self.error_log and reason:
+            append_jsonl(
+                self.error_log,
+                {
+                    "event": "lease_released",
+                    "slot": slot,
+                    "job_id": job.job_id if job else "",
+                    "reason": reason,
+                },
+            )
 
     def _dispatch_stall_fingerprint(self, job: JobState, stage: str = "") -> str:
         source = "|".join(
@@ -550,7 +584,7 @@ class StateMachine:
         job.accepted_dispatch_id = ""
         job.accepted_at = 0.0
         job.degraded_reason = "dispatch_stall"
-        self.lease.release("slot_verify")
+        self._release_verify_lease("slot_verify", job, reason="dispatch_stall_degraded")
         job.transition(JobStatus.VERIFY_PENDING, reason)
         job.save(self.state_dir)
         return job
@@ -592,7 +626,7 @@ class StateMachine:
         job.accepted_at = 0.0
         self._clear_done_tracking(job)
         job.degraded_reason = "post_accept_completion_stall"
-        self.lease.release("slot_verify")
+        self._release_verify_lease("slot_verify", job, reason="completion_stall_degraded")
         job.transition(JobStatus.VERIFY_PENDING, reason)
         job.save(self.state_dir)
         return job
@@ -641,7 +675,7 @@ class StateMachine:
         job.accepted_dispatch_id = ""
         job.accepted_at = 0.0
         self._clear_done_tracking(job)
-        self.lease.release("slot_verify")
+        self._release_verify_lease("slot_verify", job, reason="requeue_verify_pending")
         job.transition(JobStatus.VERIFY_PENDING, reason)
         job.save(self.state_dir)
         return job
@@ -766,8 +800,14 @@ class StateMachine:
             if self.feedback_sig_builder is not None:
                 job.feedback_baseline_sig, job.verify_feedback_baseline_sig = self.feedback_sig_builder(job)
             else:
-                job.feedback_baseline_sig = compute_multi_file_sig(self.completion_paths)
+                job.feedback_baseline_sig = (
+                    "" if self.pipeline_dir is not None else compute_multi_file_sig(self.completion_paths)
+                )
                 job.verify_feedback_baseline_sig = ""
+            if self.pipeline_dir is not None:
+                pipeline_control_seq = self._pipeline_control_seq()
+                if pipeline_control_seq >= 0:
+                    job.dispatch_control_seq = pipeline_control_seq
             if self.verify_receipt_builder is not None:
                 job.verify_receipt_baseline_path, job.verify_receipt_baseline_mtime = self.verify_receipt_builder(job)
             else:
@@ -777,7 +817,7 @@ class StateMachine:
             job.transition(JobStatus.VERIFY_RUNNING, f"dispatched to {slot}")
             job.save(self.state_dir)
             if self.dry_run:
-                self.lease.release(slot)
+                self._release_verify_lease(slot, job, reason="dispatch_dry_run")
         else:
             job.last_failed_dispatch_at = time.time()
             job.dispatch_fail_count += 1
@@ -790,7 +830,7 @@ class StateMachine:
             job.accepted_at = 0.0
             self._clear_done_tracking(job)
             job.save(self.state_dir)
-            self.lease.release(slot)
+            self._release_verify_lease(slot, job, reason="dispatch_failed")
         return job
 
     def _handle_verify_running(self, job: JobState) -> JobState:
@@ -799,14 +839,18 @@ class StateMachine:
             if self.feedback_sig_builder is not None:
                 fb_sig, verify_sig = self.feedback_sig_builder(job)
             else:
-                fb_sig = compute_multi_file_sig(self.completion_paths)
+                fb_sig = "" if self.pipeline_dir is not None else compute_multi_file_sig(self.completion_paths)
                 verify_sig = ""
             if self.verify_receipt_builder is not None:
                 verify_receipt_path, verify_receipt_mtime = self.verify_receipt_builder(job)
             else:
                 verify_receipt_path, verify_receipt_mtime = "", 0.0
 
-            control_changed = bool(fb_sig and fb_sig != job.feedback_baseline_sig)
+            if self.pipeline_dir is not None:
+                current_seq = self._pipeline_control_seq()
+                control_changed = job.dispatch_control_seq >= 0 and current_seq != job.dispatch_control_seq
+            else:
+                control_changed = bool(fb_sig and fb_sig != job.feedback_baseline_sig)
             verify_changed = bool(verify_sig and verify_sig != job.verify_feedback_baseline_sig)
             verify_receipt_present = bool(
                 verify_receipt_path
@@ -882,7 +926,7 @@ class StateMachine:
                 job.accepted_dispatch_id = ""
                 job.accepted_at = 0.0
                 self._clear_done_tracking(job)
-                self.lease.release("slot_verify")
+                self._release_verify_lease("slot_verify", job, reason="startup_recovery")
                 job.transition(
                     JobStatus.VERIFY_PENDING,
                     f"startup recovery after stale dispatch ({elapsed_since_dispatch:.0f}s old, pane idle)",
@@ -991,7 +1035,7 @@ class StateMachine:
                 job.validation_score = 1.0
                 job.blocker_count = 0
                 self._clear_dispatch_stall_state(job)
-                self.lease.release("slot_verify")
+                self._release_verify_lease("slot_verify", job, reason="feedback_verify_complete")
                 job.transition(JobStatus.VERIFY_DONE, "current-round verify receipt + control changed after TASK_DONE")
                 job.save(self.state_dir)
                 return job
@@ -1050,7 +1094,7 @@ class StateMachine:
         job.verify_result = "failed" if job.blocker_count > 0 else "passed"
 
         self._clear_dispatch_stall_state(job)
-        self.lease.release("slot_verify")
+        self._release_verify_lease("slot_verify", job, reason="manifest_verify_complete")
         job.transition(
             JobStatus.VERIFY_DONE,
             f"manifest valid: result={job.verify_result} score={job.validation_score:.3f} blockers={job.blocker_count}",

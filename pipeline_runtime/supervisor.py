@@ -49,8 +49,12 @@ from .receipts import (
 )
 from .schema import (
     RUNTIME_LANE_ORDER,
+    ActiveControlSnapshot,
+    active_control_snapshot_from_status,
     atomic_write_json,
     append_jsonl,
+    control_block_from_snapshot,
+    control_seq_value,
     control_slot_spec_for_filename,
     iter_control_slot_specs,
     iso_utc,
@@ -60,10 +64,12 @@ from .schema import (
     load_job_states,
     parse_iso_utc,
     parse_control_slots,
+    pipeline_control_snapshot_from_slots,
     process_starttime_fingerprint,
     read_control_meta,
     read_json,
     repo_relative,
+    snapshot_control_seq,
 )
 from .tmux_adapter import TmuxAdapter
 from .turn_arbitration import (
@@ -108,6 +114,7 @@ _CONTROL_SEQ_AGE_SLOT_FILES = frozenset(
     if spec.slot_id != "advisory_advice"
     for filename in spec.accepted_filenames
 )
+
 
 class RuntimeSupervisor:
     def __init__(
@@ -401,7 +408,7 @@ class RuntimeSupervisor:
                 "lane": str(event.get("lane") or raw_payload.get("lane") or ""),
                 "job_id": str(raw_payload.get("job_id") or ""),
                 "dispatch_id": str(raw_payload.get("dispatch_id") or ""),
-                "control_seq": int(raw_payload.get("control_seq") or -1),
+                "control_seq": control_seq_value(raw_payload.get("control_seq"), default=-1),
                 "derived_from": str(event.get("derived_from") or ""),
                 "wrapper_ts": str(event.get("ts") or ""),
             }
@@ -481,7 +488,8 @@ class RuntimeSupervisor:
         }
 
     def _control_path(self, control: dict[str, Any]) -> Path | None:
-        control_file = str(control.get("active_control_file") or control.get("file") or "").strip()
+        snapshot = active_control_snapshot_from_status(control)
+        control_file = str(snapshot.get("control_file") or control.get("file") or "").strip()
         if not control_file:
             return None
         normalized = control_file.replace("\\", "/")
@@ -501,8 +509,22 @@ class RuntimeSupervisor:
             return ""
         return hashlib.sha256(control_path.read_bytes()).hexdigest()
 
+    def _control_block_from_snapshot(
+        self,
+        snapshot: ActiveControlSnapshot,
+        *,
+        control_age_cycles: int,
+        is_legacy_alias: bool = False,
+    ) -> dict[str, Any]:
+        return control_block_from_snapshot(
+            snapshot,
+            control_age_cycles=control_age_cycles,
+            is_legacy_alias=is_legacy_alias,
+        )
+
     def _duplicate_control_marker(self, control: dict[str, Any]) -> dict[str, Any] | None:
-        if str(control.get("active_control_status") or "") != "implement":
+        snapshot = active_control_snapshot_from_status(control)
+        if str(snapshot.get("control_status") or "") != "implement":
             return None
         control_path = self._control_path(control)
         if control_path is None or not control_path.exists():
@@ -517,8 +539,8 @@ class RuntimeSupervisor:
             raw_lines = raw_log.read_text(encoding="utf-8").splitlines()
         except OSError:
             return None
-        control_seq = int(control.get("active_control_seq") or -1)
-        active_control_updated_at = parse_iso_utc(str(control.get("active_control_updated_at") or ""))
+        control_seq = snapshot_control_seq(snapshot)
+        active_control_updated_at = parse_iso_utc(str(snapshot.get("control_updated_at") or ""))
         fallback: dict[str, Any] | None = None
         for raw in reversed(raw_lines[-400:]):
             raw = raw.strip()
@@ -539,7 +561,7 @@ class RuntimeSupervisor:
             if float(entry.get("at") or 0.0) and float(entry.get("at") or 0.0) < active_control_updated_at:
                 continue
             marker = {
-                "control_file": str(control.get("active_control_file") or ""),
+                "control_file": str(snapshot.get("control_file") or ""),
                 "control_seq": control_seq,
                 "handoff_sha": handoff_sha,
                 "reason": "handoff_already_completed",
@@ -608,12 +630,8 @@ class RuntimeSupervisor:
         for entry in entries:
             if str(entry.get("file") or "") not in _CONTROL_SEQ_AGE_SLOT_FILES:
                 continue
-            raw_seq = entry.get("control_seq")
-            if isinstance(raw_seq, bool):
-                continue
-            try:
-                seq = int(raw_seq)
-            except (TypeError, ValueError):
+            seq = control_seq_value(entry.get("control_seq"), default=None)
+            if seq is None:
                 continue
             if seq >= 0:
                 seqs.append(seq)
@@ -648,9 +666,13 @@ class RuntimeSupervisor:
         job_states: list[dict[str, Any]],
         turn_state: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        control_status = str(control.get("active_control_status") or control.get("status") or "")
+        snapshot = active_control_snapshot_from_status(control)
+        turn_snapshot = active_control_snapshot_from_status(turn_state or {})
+        control_status = str(snapshot.get("control_status") or "")
         if control_status != "needs_operator":
             return None
+        control_file = str(snapshot.get("control_file") or "")
+        control_seq = snapshot_control_seq(snapshot)
         control_path = self._control_path(control)
         if control_path is None or not control_path.exists():
             return None
@@ -678,12 +700,11 @@ class RuntimeSupervisor:
         if (
             turn_state_name == "VERIFY_FOLLOWUP"
             and reason == OPERATOR_APPROVAL_COMPLETED_REASON
-            and int((turn_state or {}).get("active_control_seq") or -1)
-            == int(control.get("active_control_seq") or control.get("control_seq") or -1)
+            and snapshot_control_seq(turn_snapshot) == control_seq
         ):
             return {
-                "control_file": str(control.get("active_control_file") or control.get("file") or ""),
-                "control_seq": int(control.get("active_control_seq") or control.get("control_seq") or -1),
+                "control_file": control_file,
+                "control_seq": control_seq,
                 "reason": OPERATOR_APPROVAL_COMPLETED_REASON,
                 "resolved_work_paths": [],
             }
@@ -699,8 +720,8 @@ class RuntimeSupervisor:
         if not referenced_work_paths:
             if retriage_active:
                 return {
-                    "control_file": str(control.get("active_control_file") or control.get("file") or ""),
-                    "control_seq": int(control.get("active_control_seq") or control.get("control_seq") or -1),
+                    "control_file": control_file,
+                    "control_seq": control_seq,
                     "reason": "operator_wait_idle_retriage",
                     "resolved_work_paths": [],
                 }
@@ -718,15 +739,15 @@ class RuntimeSupervisor:
         if unresolved:
             if retriage_active:
                 return {
-                    "control_file": str(control.get("active_control_file") or control.get("file") or ""),
-                    "control_seq": int(control.get("active_control_seq") or control.get("control_seq") or -1),
+                    "control_file": control_file,
+                    "control_seq": control_seq,
                     "reason": "operator_wait_idle_retriage",
                     "resolved_work_paths": [],
                 }
             return None
         return {
-            "control_file": str(control.get("active_control_file") or control.get("file") or ""),
-            "control_seq": int(control.get("active_control_seq") or control.get("control_seq") or -1),
+            "control_file": control_file,
+            "control_seq": control_seq,
             "reason": "verified_blockers_resolved",
             "resolved_work_paths": referenced_work_paths,
         }
@@ -740,9 +761,12 @@ class RuntimeSupervisor:
         wrapper_models: dict[str, dict[str, Any]],
     ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
         autonomy = self._default_autonomy_block()
-        control_status = str(control.get("active_control_status") or control.get("status") or "")
+        snapshot = active_control_snapshot_from_status(control)
+        control_status = str(snapshot.get("control_status") or "")
         if control_status != "needs_operator":
             return None, autonomy
+        control_file = str(snapshot.get("control_file") or "")
+        control_seq = snapshot_control_seq(snapshot)
 
         control_path = self._control_path(control)
         if control_path is None or not control_path.exists():
@@ -757,7 +781,7 @@ class RuntimeSupervisor:
         classify_kwargs = {
             "control_meta": control_meta,
             "control_path": str(control_path),
-            "control_seq": int(control.get("active_control_seq") or control.get("control_seq") or -1),
+            "control_seq": control_seq,
             "control_mtime": control_mtime,
             "turn_reason": str((turn_state or {}).get("reason") or ""),
             "lane_notes": [
@@ -816,8 +840,8 @@ class RuntimeSupervisor:
             return None, autonomy
 
         marker = {
-            "control_file": str(control.get("active_control_file") or control.get("file") or ""),
-            "control_seq": int(control.get("active_control_seq") or control.get("control_seq") or -1),
+            "control_file": control_file,
+            "control_seq": control_seq,
             "reason": str(decision.get("block_reason") or ""),
             "reason_code": str(decision.get("reason_code") or ""),
             "operator_policy": str(decision.get("operator_policy") or ""),
@@ -856,9 +880,15 @@ class RuntimeSupervisor:
         self,
         job_states: list[dict[str, Any]],
         last_receipt: dict[str, Any] | None,
+        *,
+        active_control: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         if not job_states:
             return None
+
+        active_control_seq = snapshot_control_seq(
+            active_control_snapshot_from_status(active_control or {})
+        )
 
         # 동일 run 안에서도 실제 live verify 중인 job이나 receipt-close를 기다리는 job이
         # `updated_at`/`last_activity_at` 비교에서 stale real job에게 밀리지 않도록,
@@ -874,6 +904,14 @@ class RuntimeSupervisor:
                 and int(last_receipt.get("round") or -1) == int(data.get("round") or 0)
             )
 
+        def _dispatch_control_seq(data: dict[str, Any]) -> int:
+            return control_seq_value(data.get("dispatch_control_seq"), default=-1)
+
+        def _control_seq_rank(data: dict[str, Any]) -> int:
+            if active_control_seq < 0:
+                return 0
+            return 1 if _dispatch_control_seq(data) == active_control_seq else 0
+
         def _liveness_rank(data: dict[str, Any]) -> int:
             status = str(data.get("status") or "")
             if status in {"VERIFY_PENDING", "VERIFY_RUNNING"}:
@@ -885,6 +923,7 @@ class RuntimeSupervisor:
         latest_job = max(
             job_states,
             key=lambda data: (
+                _control_seq_rank(data),
                 _liveness_rank(data),
                 float(data.get("updated_at") or 0.0),
                 float(data.get("last_activity_at") or 0.0),
@@ -922,7 +961,7 @@ class RuntimeSupervisor:
             "artifact_path": str(latest_job.get("artifact_path") or ""),
             "status": status,
             "dispatch_id": dispatch_id,
-            "dispatch_control_seq": int(latest_job.get("dispatch_control_seq") or -1),
+            "dispatch_control_seq": _dispatch_control_seq(latest_job),
             "dispatch_stage": str(latest_job.get("dispatch_stall_stage") or ""),
             "completion_stage": completion_stage,
             "note": str(latest_job.get("lane_note") or ""),
@@ -1125,8 +1164,11 @@ class RuntimeSupervisor:
         self.task_hints_dir.mkdir(parents=True, exist_ok=True)
         active_job_id = str((active_round or {}).get("job_id") or "")
         active_dispatch_id = str((active_round or {}).get("dispatch_id") or "")
-        active_dispatch_control_seq = int((active_round or {}).get("dispatch_control_seq") or -1)
-        active_control_seq = int(control.get("active_control_seq") or -1)
+        active_dispatch_control_seq = (
+            control_seq_value((active_round or {}).get("dispatch_control_seq"), default=-1)
+        )
+        control_snapshot = active_control_snapshot_from_status(control)
+        active_control_seq = snapshot_control_seq(control_snapshot)
         turn_state_name = canonical_turn_state_name(
             (turn_state or {}).get("state"),
             legacy_state=(turn_state or {}).get("legacy_state"),
@@ -1257,8 +1299,9 @@ class RuntimeSupervisor:
         verify_mtime = float(latest_verify.get("mtime") or 0.0)
         work_current = bool(entered_at and work_mtime and work_mtime >= entered_at)
         verify_current = bool(entered_at and verify_mtime and verify_mtime >= entered_at)
-        control_status = str(control.get("active_control_status") or "none")
-        control_file = str(control.get("active_control_file") or "")
+        control_snapshot = active_control_snapshot_from_status(control)
+        control_status = str(control_snapshot.get("control_status") or "none")
+        control_file = str(control_snapshot.get("control_file") or "")
         autonomy_mode = str(autonomy.get("mode") or "normal")
         autonomy_reason = str(autonomy.get("reason_code") or autonomy.get("block_reason") or "")
         round_state = str((active_round or {}).get("state") or "")
@@ -1333,6 +1376,9 @@ class RuntimeSupervisor:
         implement_owner = self._prompt_owner("implement")
         verify_owner = self._prompt_owner("verify")
         control = control or {}
+        control_snapshot = active_control_snapshot_from_status(control)
+        control_status = str(control_snapshot.get("control_status") or "")
+        active_control_seq = snapshot_control_seq(control_snapshot)
         lane_configs = self.runtime_lane_configs or build_lane_configs(
             enabled_lanes=self.enabled_lanes,
             role_owners=self.role_owners,
@@ -1398,7 +1444,7 @@ class RuntimeSupervisor:
                     or (
                         duplicate_control is None
                         and lane_name == implement_owner
-                        and str(control.get("active_control_status") or "") == "implement"
+                        and control_status == "implement"
                     )
                 )
                 if should_capture_tail:
@@ -1409,7 +1455,7 @@ class RuntimeSupervisor:
                     tail_surface = self._tail_surface_state(lane_name, tail_text)
                 if has_accepted_task:
                     state = "WORKING"
-                    if lane_name == implement_owner and str(control.get("active_control_status") or "") == "implement":
+                    if lane_name == implement_owner and control_status == "implement":
                         note = "implement"
                     elif lane_name == verify_owner:
                         round_state_note = str((active_round or {}).get("state") or "").strip().lower()
@@ -1419,21 +1465,22 @@ class RuntimeSupervisor:
                 elif (
                     duplicate_control is None
                     and lane_name == implement_owner
-                    and str(control.get("active_control_status") or "") == "implement"
+                    and control_status == "implement"
                     and tail_surface == "WORKING"
                 ):
                     seen_task = dict(model.get("seen_task") or {})
-                    active_control_seq = int(control.get("active_control_seq") or -1)
                     if active_control_seq < 0:
                         state = "WORKING"
                         if note in {"", "prompt_visible"}:
                             note = "implement"
                     else:
                         activity_reason = str((turn_state or {}).get("reason") or "")
-                        done_correlated = int(done_task.get("control_seq") or -1) == active_control_seq
+                        done_correlated = (
+                            control_seq_value(done_task.get("control_seq"), default=-1) == active_control_seq
+                        )
                         dispatch_correlated = (
-                            int(seen_task.get("control_seq") or -1) == active_control_seq
-                            or int(accepted_task.get("control_seq") or -1) == active_control_seq
+                            control_seq_value(seen_task.get("control_seq"), default=-1) == active_control_seq
+                            or control_seq_value(accepted_task.get("control_seq"), default=-1) == active_control_seq
                             or done_correlated
                             or activity_reason == "implement_activity_detected"
                             or activity_reason == f"{lane_name.lower()}_activity_detected"
@@ -1477,7 +1524,7 @@ class RuntimeSupervisor:
                         if note in {"", "prompt_visible"} or model_state == "WORKING":
                             note = "prompt_visible"
                     elif note in {"", "prompt_visible"}:
-                        if lane_name == implement_owner and str(control.get("active_control_status") or "") == "implement":
+                        if lane_name == implement_owner and control_status == "implement":
                             note = "implement"
                         elif lane_name == verify_owner and active_round_note:
                             note = active_round_note
@@ -1561,7 +1608,9 @@ class RuntimeSupervisor:
             if verify_path is None or not verify_path.exists():
                 degraded_reason = f"receipt_verify_missing:{job_id}"
                 continue
-            control_seq = int((active_control or {}).get("control_seq") or -1)
+            control_snapshot = active_control_snapshot_from_status(active_control or {})
+            control_file = str(control_snapshot.get("control_file") or "")
+            control_seq = snapshot_control_seq(control_snapshot)
             receipt = build_receipt(
                 run_id=self.run_id,
                 job_state=job_state,
@@ -1580,6 +1629,8 @@ class RuntimeSupervisor:
                     "job_id": job_id,
                     "round": round_number,
                     "verify_result": receipt.get("verify_result"),
+                    "control_file": control_file,
+                    "control_seq": control_seq,
                 },
             )
         return latest_receipt(self.receipts_dir), degraded_reason
@@ -1645,8 +1696,17 @@ class RuntimeSupervisor:
     def _write_status(self) -> dict[str, Any]:
         turn_state = read_json(self.base_dir / "state" / "turn_state.json")
         control_slots = parse_control_slots(self.base_dir)
+        pipeline_control_snapshot = pipeline_control_snapshot_from_slots(control_slots)
         control_age_cycles = self._refresh_control_seq_age(control_slots)
-        active_control = dict(control_slots.get("active") or {})
+        active_control = dict(pipeline_control_snapshot.get("active_entry") or {})
+        active_control_snapshot = dict(pipeline_control_snapshot.get("active") or {})
+        if not active_control_snapshot and isinstance(turn_state, dict):
+            active_control_snapshot = active_control_snapshot_from_status(turn_state)
+        active_control_block = self._control_block_from_snapshot(
+            active_control_snapshot,
+            control_age_cycles=control_age_cycles,
+            is_legacy_alias=bool(active_control.get("is_legacy_alias")),
+        )
         job_states = load_job_states(
             self.base_dir / "state",
             run_id=self.run_id,
@@ -1655,13 +1715,17 @@ class RuntimeSupervisor:
         wrapper_models = build_lane_read_models(self.wrapper_events_dir)
         self._mirror_wrapper_task_events()
         force_stopped_surface = bool(self._force_stopped_surface)
-        active_round_preview = self._build_active_round(job_states, latest_receipt(self.receipts_dir))
-        stale_operator_control = self._stale_operator_control_marker(active_control, job_states, turn_state)
+        active_round_preview = self._build_active_round(
+            job_states,
+            latest_receipt(self.receipts_dir),
+            active_control=active_control_block,
+        )
+        stale_operator_control = self._stale_operator_control_marker(active_control_block, job_states, turn_state)
         operator_gate, autonomy = (
             (None, self._default_autonomy_block())
             if stale_operator_control is not None
             else self._operator_gate_marker(
-                active_control,
+                active_control_block,
                 turn_state=turn_state if isinstance(turn_state, dict) else None,
                 active_round=active_round_preview,
                 wrapper_models=wrapper_models,
@@ -1669,60 +1733,30 @@ class RuntimeSupervisor:
         )
         self._current_stale_operator_control_marker = stale_operator_control
         self._current_operator_gate_marker = operator_gate
-        effective_control = {} if stale_operator_control is not None or operator_gate is not None else active_control
+        effective_control = {} if stale_operator_control is not None or operator_gate is not None else active_control_block
         last_receipt, receipt_degraded = self._reconcile_receipts(
             job_states=job_states,
             active_control=effective_control or None,
         )
-        active_round = self._build_active_round(job_states, last_receipt)
+        active_round = self._build_active_round(
+            job_states,
+            last_receipt,
+            active_control=active_control_block,
+        )
         if stale_operator_control is not None or operator_gate is not None:
-            control_block = {
-                "active_control_file": "",
-                "active_control_slot": "",
-                "active_control_canonical_file": "",
-                "active_control_is_legacy_alias": False,
-                "active_control_seq": -1,
-                "active_control_status": "none",
-                "active_control_updated_at": "",
-                "control_age_cycles": control_age_cycles,
-            }
+            control_block = self._control_block_from_snapshot(
+                {},
+                control_age_cycles=control_age_cycles,
+            )
         else:
-            control_block = {
-                "active_control_file": (
-                    f".pipeline/{active_control.get('file')}"
-                    if active_control.get("file")
-                    else str((turn_state or {}).get("active_control_file") or "")
-                ),
-                "active_control_slot": str(active_control.get("slot_id") or ""),
-                "active_control_canonical_file": (
-                    f".pipeline/{active_control.get('canonical_file')}"
-                    if active_control.get("canonical_file")
-                    else ""
-                ),
-                "active_control_is_legacy_alias": bool(active_control.get("is_legacy_alias")),
-                "active_control_seq": int(
-                    active_control.get("control_seq")
-                    if active_control.get("control_seq") is not None
-                    else (turn_state or {}).get("active_control_seq") or -1
-                ),
-                "active_control_status": str(active_control.get("status") or "none"),
-                "active_control_updated_at": (
-                    iso_utc(float(active_control.get("mtime") or time.time()))
-                    if active_control.get("mtime")
-                    else ""
-                ),
-                "control_age_cycles": control_age_cycles,
-            }
+            control_block = active_control_block
         duplicate_control = self._duplicate_control_marker(control_block)
         self._current_duplicate_control_marker = duplicate_control
         if duplicate_control is not None:
-            control_block = {
-                "active_control_file": "",
-                "active_control_seq": -1,
-                "active_control_status": "none",
-                "active_control_updated_at": "",
-                "control_age_cycles": control_age_cycles,
-            }
+            control_block = self._control_block_from_snapshot(
+                {},
+                control_age_cycles=control_age_cycles,
+            )
         active_lane = self._active_lane_for_runtime(
             turn_state,
             active_round,
@@ -1871,8 +1905,9 @@ class RuntimeSupervisor:
             self.runtime_state = "STOPPED"
 
         persisted_autonomy = self._load_autonomy_state()
+        control_snapshot = active_control_snapshot_from_status(control_block)
         stable_idle = (
-            control_block.get("active_control_status") == "none"
+            str(control_snapshot.get("control_status") or "none") == "none"
             and duplicate_control is None
             and stale_operator_control is None
             and operator_gate is None
@@ -1919,13 +1954,10 @@ class RuntimeSupervisor:
                 "active_role": "",
                 "active_lane": "",
             }
-            control_block = {
-                "active_control_file": "",
-                "active_control_seq": -1,
-                "active_control_status": "none",
-                "active_control_updated_at": "",
-                "control_age_cycles": control_age_cycles,
-            }
+            control_block = self._control_block_from_snapshot(
+                {},
+                control_age_cycles=control_age_cycles,
+            )
             surfaced_active_round = None
             watcher = {"alive": False, "pid": None}
             lanes = [
@@ -1946,13 +1978,10 @@ class RuntimeSupervisor:
                 duplicate_control=duplicate_control,
             )
         elif self.runtime_state in {"STOPPING", "STOPPED", "BROKEN"}:
-            control_block = {
-                "active_control_file": "",
-                "active_control_seq": -1,
-                "active_control_status": "none",
-                "active_control_updated_at": "",
-                "control_age_cycles": control_age_cycles,
-            }
+            control_block = self._control_block_from_snapshot(
+                {},
+                control_age_cycles=control_age_cycles,
+            )
             # stopped runtime에서도 receipt-close를 기다리는 round는 launcher/controller가
             # current truth로 계속 보이게 유지합니다. live verify(`VERIFY_PENDING` /
             # `VERIFYING`) 같은 surface는 fail-safe 원칙에 따라 여전히 비우고, task hint도
@@ -2017,15 +2046,16 @@ class RuntimeSupervisor:
 
     def _record_status_events(self, status: dict[str, Any]) -> None:
         control = dict(status.get("control") or {})
+        control_snapshot = active_control_snapshot_from_status(control)
         duplicate_control = dict(self._current_duplicate_control_marker or {})
         stale_operator_control = dict(self._current_stale_operator_control_marker or {})
         operator_gate = dict(self._current_operator_gate_marker or {})
         autonomy = dict(status.get("autonomy") or {})
         control_key = "|".join(
             [
-                str(control.get("active_control_file") or ""),
-                str(control.get("active_control_seq") or ""),
-                str(control.get("active_control_status") or ""),
+                str(control_snapshot.get("control_file") or ""),
+                str(control_snapshot.get("control_seq") or ""),
+                str(control_snapshot.get("control_status") or ""),
             ]
         )
         if control_key != self._last_control_key:
@@ -2047,7 +2077,7 @@ class RuntimeSupervisor:
                     "control_duplicate_ignored",
                     {
                         "control_file": str(duplicate_control.get("control_file") or ""),
-                        "control_seq": int(duplicate_control.get("control_seq") or -1),
+                        "control_seq": control_seq_value(duplicate_control.get("control_seq"), default=-1),
                         "handoff_sha": str(duplicate_control.get("handoff_sha") or ""),
                         "reason": str(duplicate_control.get("reason") or ""),
                         "routed_to": str(duplicate_control.get("routed_to") or ""),
@@ -2069,7 +2099,7 @@ class RuntimeSupervisor:
                     "control_operator_stale_ignored",
                     {
                         "control_file": str(stale_operator_control.get("control_file") or ""),
-                        "control_seq": int(stale_operator_control.get("control_seq") or -1),
+                        "control_seq": control_seq_value(stale_operator_control.get("control_seq"), default=-1),
                         "reason": str(stale_operator_control.get("reason") or ""),
                         "resolved_work_paths": list(stale_operator_control.get("resolved_work_paths") or []),
                     },
@@ -2091,7 +2121,7 @@ class RuntimeSupervisor:
                     "control_operator_gated",
                     {
                         "control_file": str(operator_gate.get("control_file") or ""),
-                        "control_seq": int(operator_gate.get("control_seq") or -1),
+                        "control_seq": control_seq_value(operator_gate.get("control_seq"), default=-1),
                         "reason": str(operator_gate.get("reason") or ""),
                         "mode": str(operator_gate.get("mode") or ""),
                         "routed_to": str(operator_gate.get("routed_to") or ""),

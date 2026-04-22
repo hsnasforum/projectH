@@ -97,3 +97,37 @@ CONTROL_SEQ 736 목표("stalled advisory → one next control without calling op
 
 CONTROL_SEQ 737 → `.pipeline/advisory_request.md` (STATUS: request_open)
 - 이유: cleanup 잔여 항목 우선순위가 비슷하고(config key alias / physical file archive / lane_surface.py adapter), 방향 전환(product milestone 복귀 여부) 결정이 필요해 advisory-first 적용
+
+---
+
+## CONTROL_SEQ 739 구현 검증 (NEXT_CONTROL_SEQ: 740)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-runtime-legacy-control-cleanup-closeout.md`
+
+### 검증 결과
+
+- `watcher_core.py:1497` `config.get("verify_blocked_triage_prompt")` canonical key 존재 확인 ✅
+- `watcher_core.py:1499` `config.get("codex_blocked_triage_prompt")` fallback alias 존재 확인 ✅
+- `watcher_core.py:1504-1506` sig 변수 `_last_implement_handoff_sig`, `_last_advisory_request_sig`, `_last_advisory_advice_sig` rename 완료 확인 ✅
+- 레거시 물리 파일 `claude_handoff.md`, `gemini_request.md`, `gemini_advice.md`: 모두 부재 (`ls` 에러로 확인) ✅
+- `python3 -m unittest tests.test_watcher_core` → **191 tests, OK** ✅
+- `git diff --check` → 통과, 워크트리 clean ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. work note가 명시한 대로, seq 739 handoff의 3가지 항목(config key canonical 추가 / 물리 파일 archive / sig 변수 rename)은 모두 이미 워크트리에 반영된 상태였고, 이번 implement round는 확인 및 archive-script dry-run + legacy 명시 실행만 수행했다.
+
+### 남은 리스크 (CONTROL_SEQ 739 이후)
+
+- `lane_surface.py` Codex/Gemini activity detector 어댑터 이름: 명시적으로 cleanup 범위 밖으로 제외, 선택적 후속 슬라이스
+- `.pipeline/archive-stale-control-slots.sh` executable bit 없음: `bash` 호출로 우회 가능, 권한 변경은 seq 739 범위 아님
+- `codex_operator_retriage` 입력 alias: 의도적으로 read-only 유지
+- `--all-stale` 실행 미완료: canonical advisory/operator slot을 보호하기 위한 올바른 결정이었음
+- **infrastructure cleanup family 완료**: advisory (seq 738)가 product milestone 복귀 전 인프라 안정화 완료를 권고했고, 해당 scope의 3개 항목이 모두 확인됨
+
+### 다음 control
+
+CONTROL_SEQ 740 → `.pipeline/advisory_request.md` (STATUS: request_open)
+- 이유: 인프라 cleanup family가 scope 기준으로 완료되었고, 다음 방향(product milestone / 구조 4축 owner bundle / 나머지 lane_surface cleanup)이 ambiguous하여 advisory-first 적용

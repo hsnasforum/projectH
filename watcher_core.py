@@ -89,17 +89,22 @@ from pipeline_runtime.role_routes import (
     normalize_verify_triage_escalation,
 )
 from pipeline_runtime.schema import (
+    active_control_snapshot_from_entry,
+    active_control_snapshot_from_status,
     atomic_write_text,
+    control_block_from_snapshot,
     control_filenames_equivalent,
+    control_seq_value,
     control_slot_spec,
     control_slot_spec_for_filename,
-    iter_control_slot_specs,
     iter_job_state_paths,
     latest_verify_note_for_work,
     process_starttime_fingerprint,
     read_control_meta,
     read_json,
+    read_pipeline_control_snapshot,
     same_day_verify_dir_for_work,
+    snapshot_control_seq,
 )
 from pipeline_runtime.turn_arbitration import (
     WatcherTurnInputs,
@@ -1686,6 +1691,7 @@ class WatcherCore:
                 pane_type=pane_type,
             ),
             dry_run=self.dry_run,
+            pipeline_dir=self.pipeline_dir,
         )
         if self._runtime_export_enabled:
             self._write_current_run_pointer()
@@ -1984,27 +1990,27 @@ class WatcherCore:
         now = time.time()
         now_iso = self._iso_utc(now)
         active_control = self._get_active_control_signal()
-        control_file = ""
-        control_seq = self._turn_active_control_seq
-        control_status = "none"
-        control_updated_at = ""
-        control_slot = ""
-        control_canonical_file = ""
+        control_snapshot = {}
         control_is_legacy_alias = False
         if active_control is not None:
-            control_file = f".pipeline/{active_control.path.name}"
-            control_seq = active_control.control_seq
-            control_status = active_control.status
-            control_updated_at = self._iso_utc(active_control.mtime)
-            control_slot = active_control.slot_id
-            control_canonical_file = (
-                f".pipeline/{active_control.canonical_file}"
-                if active_control.canonical_file
-                else ""
+            control_snapshot = active_control_snapshot_from_entry(
+                {
+                    "file": active_control.path.name,
+                    "control_seq": active_control.control_seq,
+                    "status": active_control.status,
+                    "mtime": active_control.mtime,
+                    "slot_id": active_control.slot_id,
+                    "canonical_file": active_control.canonical_file,
+                }
             )
             control_is_legacy_alias = active_control.is_legacy_alias
         elif self._turn_active_control_file:
-            control_file = f".pipeline/{self._turn_active_control_file}"
+            control_snapshot = active_control_snapshot_from_status(
+                {
+                    "active_control_file": f".pipeline/{self._turn_active_control_file}",
+                    "active_control_seq": self._turn_active_control_seq,
+                }
+            )
         data = {
             "schema_version": 1,
             "run_id": self.run_id,
@@ -2013,16 +2019,11 @@ class WatcherCore:
             "turn_state": self._current_turn_state.value,
             "legacy_turn_state": legacy_turn_state_name(self._current_turn_state.value),
             "degraded_reason": "",
-            "control": {
-                "active_control_file": control_file,
-                "active_control_slot": control_slot,
-                "active_control_canonical_file": control_canonical_file,
-                "active_control_is_legacy_alias": control_is_legacy_alias,
-                "active_control_seq": control_seq,
-                "active_control_status": control_status,
-                "active_control_updated_at": control_updated_at,
-                "control_age_cycles": self._control_seq_age_cycles,
-            },
+            "control": control_block_from_snapshot(
+                control_snapshot,
+                control_age_cycles=self._control_seq_age_cycles,
+                is_legacy_alias=control_is_legacy_alias,
+            ),
             "control_age_cycles": self._control_seq_age_cycles,
             "lanes": self._build_lane_statuses(now_iso),
             "last_receipt_id": "",
@@ -2048,10 +2049,21 @@ class WatcherCore:
         """Transition to a new turn state and write turn_state.json atomically."""
         old_state = self._current_turn_state
         now = time.time()
+        control_snapshot = active_control_snapshot_from_status(
+            {
+                "active_control_file": active_control_file,
+                "active_control_seq": active_control_seq,
+            }
+        )
+        transition_control_file = str(control_snapshot.get("control_file") or active_control_file)
+        transition_control_seq = snapshot_control_seq(
+            control_snapshot,
+            default=control_seq_value(active_control_seq, default=-1),
+        )
         self._current_turn_state = new_state
         self._turn_entered_at = now
-        self._turn_active_control_file = active_control_file
-        self._turn_active_control_seq = active_control_seq
+        self._turn_active_control_file = transition_control_file
+        self._turn_active_control_seq = transition_control_seq
         active_role = self._active_role_for_turn(new_state)
         active_lane = self._active_lane_name_for_turn(new_state)
         legacy_state = legacy_turn_state_name(new_state.value)
@@ -2072,8 +2084,8 @@ class WatcherCore:
                 "from_legacy": legacy_turn_state_name(old_state.value),
                 "to_legacy": legacy_state,
                 "reason": reason,
-                "active_control_file": active_control_file,
-                "active_control_seq": active_control_seq,
+                "active_control_file": transition_control_file,
+                "active_control_seq": transition_control_seq,
                 "active_role": active_role,
                 "active_lane": active_lane,
             },
@@ -2084,8 +2096,8 @@ class WatcherCore:
             "legacy_state": legacy_state,
             "entered_at": now,
             "reason": reason,
-            "active_control_file": active_control_file,
-            "active_control_seq": active_control_seq,
+            "active_control_file": transition_control_file,
+            "active_control_seq": transition_control_seq,
             "active_role": active_role,
             "active_lane": active_lane,
         }
@@ -2101,8 +2113,8 @@ class WatcherCore:
                 "turn_state": new_state.value,
                 "legacy_turn_state": legacy_state,
                 "reason": reason,
-                "active_control_file": active_control_file,
-                "active_control_seq": active_control_seq,
+                "active_control_file": transition_control_file,
+                "active_control_seq": transition_control_seq,
                 "active_role": active_role,
                 "active_lane": active_lane,
             },
@@ -2160,69 +2172,61 @@ class WatcherCore:
         return None
 
     # ------------------------------------------------------------------
-    def _get_valid_control_signal(self, path: Path, expected_status: str, kind: str) -> Optional[ControlSignal]:
-        spec = control_slot_spec_for_filename(path.name)
-        slot_id = spec.slot_id if spec is not None else kind
+    def _control_signal_from_entry(self, entry: dict[str, object]) -> Optional[ControlSignal]:
+        slot_id = str(entry.get("slot_id") or "").strip()
         if slot_id in {"advisory_request", "advisory_advice"} and not self._advisory_enabled():
             return None
         if slot_id == "operator_request" and not self._operator_stop_enabled():
             return None
-        status = self._read_status_from_path(path)
-        if status != expected_status:
+        filename = str(entry.get("file") or "").strip()
+        status = str(entry.get("status") or "").strip()
+        if not filename or not status:
             return None
-        mtime = self._get_path_mtime(path)
+        path = self.pipeline_dir / filename
+        try:
+            mtime = float(entry.get("mtime") or 0.0)
+        except (TypeError, ValueError):
+            mtime = 0.0
         if mtime == 0.0:
             return None
+        control_seq = control_seq_value(entry.get("control_seq"), default=-1)
         return ControlSignal(
-            kind=kind,
+            kind=slot_id or filename,
             path=path,
             status=status,
             mtime=mtime,
             sig=self._get_path_sig(path),
-            control_seq=self._read_control_seq_from_path(path),
+            control_seq=control_seq,
             slot_id=slot_id,
-            canonical_file=spec.canonical_filename if spec is not None else path.name,
-            is_legacy_alias=bool(spec is not None and path.name != spec.canonical_filename),
+            canonical_file=str(entry.get("canonical_file") or filename),
+            is_legacy_alias=bool(entry.get("is_legacy_alias")),
         )
 
     # ------------------------------------------------------------------
     def _iter_valid_control_signals(self, *, include_advisory_advice: bool = True) -> list[ControlSignal]:
+        snapshot = read_pipeline_control_snapshot(self.pipeline_dir)
+        entries: list[dict[str, object]] = []
+        active_entry = snapshot.get("active_entry")
+        if isinstance(active_entry, dict):
+            entries.append(active_entry)
+        entries.extend(
+            entry
+            for entry in list(snapshot.get("stale_entries") or [])
+            if isinstance(entry, dict)
+        )
         candidates: list[ControlSignal] = []
-        for spec in iter_control_slot_specs():
-            if spec.slot_id == "advisory_advice" and not include_advisory_advice:
+        for entry in entries:
+            if not include_advisory_advice and str(entry.get("slot_id") or "") == "advisory_advice":
                 continue
-            for filename in spec.accepted_filenames:
-                signal = self._get_valid_control_signal(
-                    self.pipeline_dir / filename,
-                    spec.status,
-                    spec.slot_id,
-                )
-                if signal is not None:
-                    candidates.append(signal)
+            signal = self._control_signal_from_entry(entry)
+            if signal is not None:
+                candidates.append(signal)
         return candidates
 
     def _newest_control_signal(self, signals: list[ControlSignal]) -> Optional[ControlSignal]:
         if not signals:
             return None
-        best = signals[0]
-        for signal in signals[1:]:
-            best = signal if self._control_signal_is_newer(signal, best) else best
-        return best
-
-    def _control_signal_is_newer(self, left: ControlSignal, right: ControlSignal) -> bool:
-        left_has_seq = left.control_seq >= 0
-        right_has_seq = right.control_seq >= 0
-        if left_has_seq != right_has_seq:
-            return left_has_seq
-        if left_has_seq and right_has_seq and left.control_seq != right.control_seq:
-            return left.control_seq > right.control_seq
-        if left.slot_id == right.slot_id and left.is_legacy_alias != right.is_legacy_alias:
-            return not left.is_legacy_alias
-        if left.mtime != right.mtime:
-            return left.mtime > right.mtime
-        if left.is_legacy_alias != right.is_legacy_alias:
-            return not left.is_legacy_alias
-        return left.path.name < right.path.name
+        return signals[0]
 
     def _control_signal_matches(self, signal: Optional[ControlSignal], path: Path, expected_status: str) -> bool:
         if signal is None or signal.status != expected_status:
@@ -2882,20 +2886,7 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _read_control_seq_from_path(self, path: Path) -> int:
         """지정 control 파일의 CONTROL_SEQ 값을 읽는다. 없거나 invalid면 -1."""
-        try:
-            with path.open() as f:
-                for line in f:
-                    stripped = line.strip()
-                    if stripped.startswith("CONTROL_SEQ:"):
-                        raw = stripped.split(":", 1)[1].strip()
-                        try:
-                            value = int(raw)
-                        except ValueError:
-                            return -1
-                        return value if value >= 0 else -1
-        except OSError:
-            return -1
-        return -1
+        return control_seq_value(read_control_meta(path).get("control_seq"), default=-1)
 
     # ------------------------------------------------------------------
     def _supersede_stale_advisory_slots_for_operator_boundary(
@@ -3179,7 +3170,7 @@ class WatcherCore:
         if marker is None:
             return False
 
-        request_seq = int(marker.get("control_seq") or -1)
+        request_seq = control_seq_value(marker.get("control_seq"), default=-1)
         request_sig = str(marker.get("request_sig") or "")
         self._last_advisory_recovery_sig = request_sig
         self._last_advisory_recovery_at = time.time()
@@ -3432,6 +3423,7 @@ class WatcherCore:
                 active_jobs.append(job)
                 continue
             self.stabilizer.clear(job.job_id)
+            log.info("lease released: slot=slot_verify reason=archive_matching_verified_pending")
             self.lease.release("slot_verify")
             if job.artifact_hash:
                 self.dedupe.forget(job.job_id, job.round, job.artifact_hash, "slot_verify")
@@ -3545,7 +3537,7 @@ class WatcherCore:
             WatcherTurnState.VERIFY_FOLLOWUP,
             "operator_wait_idle_retriage",
             active_control_file="operator_request.md",
-            active_control_seq=int(marker.get("control_seq") or -1),
+            active_control_seq=control_seq_value(marker.get("control_seq"), default=-1),
         )
         self._log_raw(
             "operator_request_idle_retriage",
@@ -3579,7 +3571,7 @@ class WatcherCore:
         ):
             return None
 
-        operator_seq = int(marker.get("control_seq") or -1)
+        operator_seq = control_seq_value(marker.get("control_seq"), default=-1)
         if self._turn_active_control_seq >= 0 and operator_seq < self._turn_active_control_seq:
             return None
 
@@ -3634,7 +3626,7 @@ class WatcherCore:
             if path and path != "없음" and path not in read_first:
                 read_first.append(path)
         read_first_lines = "\n".join(f"- {path}" for path in read_first)
-        operator_seq = int(marker.get("control_seq") or -1)
+        operator_seq = control_seq_value(marker.get("control_seq"), default=-1)
         reason_code = str(marker.get("reason_code") or marker.get("reason") or "slice_ambiguity")
         decision_class = str(marker.get("decision_class") or "next_slice_selection")
         return (
@@ -3676,7 +3668,7 @@ class WatcherCore:
         if marker is None:
             return False
 
-        operator_seq = int(marker.get("control_seq") or -1)
+        operator_seq = control_seq_value(marker.get("control_seq"), default=-1)
         next_control_seq = max(self._get_next_control_seq(), operator_seq + 1)
         request_text = self._render_operator_retriage_advisory_request(
             marker=marker,
@@ -3766,7 +3758,7 @@ class WatcherCore:
         if not handoff_sig or handoff_sig != str(pending.get("sig") or ""):
             self._pending_idle_release_handoff = None
             return False
-        handoff_seq = int(pending.get("control_seq") or -1)
+        handoff_seq = control_seq_value(pending.get("control_seq"), default=-1)
         if (
             handoff_control is None
             or handoff_control.control_seq != handoff_seq
@@ -3934,7 +3926,7 @@ class WatcherCore:
                 event_name,
                 {
                     "control_file": "operator_request.md",
-                    "control_seq": int(marker.get("control_seq") or -1),
+                    "control_seq": control_seq_value(marker.get("control_seq"), default=-1),
                     "branch": str(marker.get("branch") or ""),
                     "head_sha": str(marker.get("head_sha") or ""),
                     "upstream": str(marker.get("upstream") or ""),
@@ -4675,7 +4667,10 @@ class WatcherCore:
                         WatcherTurnState.VERIFY_FOLLOWUP,
                         recovery_reason,
                         active_control_file="operator_request.md",
-                        active_control_seq=int(operator_recovery.get("control_seq") or -1),
+                        active_control_seq=control_seq_value(
+                            operator_recovery.get("control_seq"),
+                            default=-1,
+                        ),
                     )
                     if recovery_reason == "operator_wait_idle_retriage":
                         self._mark_operator_retriage_started(

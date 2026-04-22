@@ -8,6 +8,7 @@ from .role_routes import (
     VERIFY_FOLLOWUP_ROUTE,
     is_verify_followup_route,
 )
+from .schema import active_control_snapshot_from_status, control_seq_value, snapshot_control_seq
 
 TURN_IMPLEMENT = "implement"
 TURN_VERIFY = "verify"
@@ -185,10 +186,10 @@ def active_lane_for_runtime(
     )
     round_state = str((active_round or {}).get("state") or "")
     completion_stage = str((active_round or {}).get("completion_stage") or "")
-    control = control or {}
-    control_status = str(control.get("active_control_status") or "")
-    control_seq = int(control.get("active_control_seq") or -1)
-    last_receipt_seq = int((last_receipt or {}).get("control_seq") or -1)
+    control_snapshot = active_control_snapshot_from_status(dict(control or {}))
+    control_status = str(control_snapshot.get("control_status") or "")
+    control_seq = snapshot_control_seq(control_snapshot)
+    last_receipt_seq = control_seq_value((last_receipt or {}).get("control_seq"), default=-1)
 
     if (
         state == TURN_STATE_IMPLEMENT_ACTIVE

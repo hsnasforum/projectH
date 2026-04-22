@@ -242,6 +242,47 @@ class TestParseControlSlotsWindowsBranch(unittest.TestCase):
             self.assertEqual(result["active"]["file"], "gemini_request.md")
             self.assertAlmostEqual(result["active"]["mtime"], 1712700000.8, places=1)
 
+    def test_windows_branch_uses_shared_control_seq_parser(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            pipeline = project / ".pipeline"
+            pipeline.mkdir()
+            (pipeline / "claude_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: not-a-number\n",
+                encoding="utf-8",
+            )
+            (pipeline / "operator_request.md").write_text(
+                "STATUS: needs_operator\nCONTROL_SEQ: 3\n",
+                encoding="utf-8",
+            )
+
+            find_responses = {
+                "claude_handoff.md": "1712700001.0000000000",
+                "operator_request.md": "1712700000.1000000000",
+            }
+
+            def fake_run(cmd, **kwargs):
+                if isinstance(cmd, list) and cmd[0] == "find":
+                    for fname, resp in find_responses.items():
+                        if fname in str(cmd[1]):
+                            return 0, resp + "\n"
+                    return 1, ""
+                if isinstance(cmd, list) and cmd[0] == "head":
+                    for fname in find_responses:
+                        if fname in str(cmd[-1]):
+                            return 0, (pipeline / fname).read_text()
+                    return 1, ""
+                return 1, ""
+
+            with mock.patch("pipeline_gui.backend.IS_WINDOWS", True), \
+                 mock.patch("pipeline_gui.backend._run", side_effect=fake_run), \
+                 mock.patch("pipeline_gui.backend._wsl_path_str", side_effect=str):
+                result = parse_control_slots(project)
+
+            self.assertEqual(result["active"]["file"], "operator_request.md")
+            self.assertEqual(result["active"]["control_seq"], 3)
+            self.assertIsNone(result["stale"][0]["control_seq"])
+
 
 class TestPipelineStartLaunchGate(unittest.TestCase):
     def test_pipeline_start_blocks_when_active_profile_is_missing(self):

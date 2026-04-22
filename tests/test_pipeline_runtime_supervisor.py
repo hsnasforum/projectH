@@ -199,6 +199,75 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(active_round["round"], 2)
             self.assertEqual(active_round["state"], "RECEIPT_PENDING")
 
+    def test_build_active_round_prefers_current_control_seq_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            job_states = [
+                {
+                    "job_id": "job-newer",
+                    "status": "VERIFY_RUNNING",
+                    "round": 1,
+                    "dispatch_control_seq": 10,
+                    "updated_at": 200.0,
+                    "last_activity_at": 200.0,
+                },
+                {
+                    "job_id": "job-active-control",
+                    "status": "VERIFY_RUNNING",
+                    "round": 2,
+                    "dispatch_control_seq": 42,
+                    "updated_at": 100.0,
+                    "last_activity_at": 100.0,
+                },
+            ]
+
+            active_round = supervisor._build_active_round(
+                job_states,
+                last_receipt=None,
+                active_control={
+                    "active_control_seq": 42,
+                    "active_control_status": "implement",
+                },
+            )
+
+            self.assertIsNotNone(active_round)
+            self.assertEqual(active_round["job_id"], "job-active-control")
+            self.assertEqual(active_round["dispatch_control_seq"], 42)
+
+    def test_build_active_round_falls_back_to_timestamp_without_active_control(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            job_states = [
+                {
+                    "job_id": "job-newer",
+                    "status": "VERIFY_RUNNING",
+                    "round": 1,
+                    "dispatch_control_seq": 10,
+                    "updated_at": 200.0,
+                    "last_activity_at": 200.0,
+                },
+                {
+                    "job_id": "job-older",
+                    "status": "VERIFY_RUNNING",
+                    "round": 2,
+                    "dispatch_control_seq": 42,
+                    "updated_at": 100.0,
+                    "last_activity_at": 100.0,
+                },
+            ]
+
+            active_round = supervisor._build_active_round(job_states, last_receipt=None)
+
+            self.assertIsNotNone(active_round)
+            self.assertEqual(active_round["job_id"], "job-newer")
+            self.assertEqual(active_round["dispatch_control_seq"], 10)
+
     def test_build_artifacts_uses_canonical_round_notes_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

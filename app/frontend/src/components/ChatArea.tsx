@@ -28,6 +28,7 @@ interface Props {
   onFeedback?: (messageId: string, label: string) => void;
   onContentVerdict?: (messageId: string, verdict: string) => void;
   onContentReasonNote?: (messageId: string, note: string) => void;
+  onCorrectedSave?: (messageId: string) => void;
   onToggleSidebar: () => void;
   sessionTitle: string;
   reviewQueueCount?: number;
@@ -49,6 +50,7 @@ export default function ChatArea({
   onFeedback,
   onContentVerdict,
   onContentReasonNote,
+  onCorrectedSave,
   onToggleSidebar,
   sessionTitle,
   reviewQueueCount = 0,
@@ -128,6 +130,7 @@ export default function ChatArea({
                 onFeedback={onFeedback}
                 onContentVerdict={onContentVerdict}
                 onContentReasonNote={onContentReasonNote}
+                onCorrectedSave={onCorrectedSave}
               />
             ))}
 

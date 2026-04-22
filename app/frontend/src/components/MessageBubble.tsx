@@ -43,6 +43,7 @@ interface Props {
   onFeedback?: (messageId: string, label: string) => void;
   onContentVerdict?: (messageId: string, verdict: string) => void;
   onContentReasonNote?: (messageId: string, note: string) => void;
+  onCorrectedSave?: (messageId: string) => void;
 }
 
 export default function MessageBubble({
@@ -51,6 +52,7 @@ export default function MessageBubble({
   onFeedback,
   onContentVerdict,
   onContentReasonNote,
+  onCorrectedSave,
 }: Props) {
   const isUser = message.role === "user";
   const [hovered, setHovered] = useState(false);
@@ -196,6 +198,18 @@ export default function MessageBubble({
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+              {!isUser && onCorrectedSave && (
+                <div className="mt-1 flex items-center gap-1">
+                  <button
+                    onClick={() => onCorrectedSave(message.message_id)}
+                    disabled={!message.corrected_text}
+                    className="text-[11px] px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    title={message.corrected_text ? "수정본을 저장 요청으로 보냅니다" : "수정본을 먼저 기록해 주세요"}
+                  >
+                    수정본 저장
+                  </button>
                 </div>
               )}
             </>

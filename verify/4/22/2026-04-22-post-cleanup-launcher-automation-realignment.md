@@ -640,3 +640,135 @@ CONTROL_SEQ 776 → `.pipeline/advisory_request.md` (STATUS: request_open)
 - 이유: (1) Milestone 5 "still later" content reject surface 완료로 Milestone 5 전체 종료 확정 필요,
   (2) commit/push bundle 범위가 756-771 → 756-775로 확대됐으므로 advisory 재확인 필요,
   (3) Milestone 6 첫 entry slice advisory 없이 자명하지 않음.
+
+---
+
+## CONTROL_SEQ 779 구현 검증 (NEXT_CONTROL_SEQ: 780)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-reason-label-constants.md`
+
+### 검증 결과
+
+- `core/contracts.py:228-231` `ApprovalReasonLabel(StrEnum)` — `EXPLICIT_REJECTION`, `PATH_CHANGE`, `CORRECTED_TEXT_REISSUE` ✅
+- `core/contracts.py:234-240` `ALLOWED_APPROVAL_REASON_LABELS` — `ApprovalReasonLabel` 상수 사용 ✅
+- `core/contracts.py:251-252` `ContentReasonLabel(StrEnum)` — `EXPLICIT_CONTENT_REJECTION` ✅
+- `core/contracts.py:255-256` `ALLOWED_CONTENT_REASON_LABELS` — `ContentReasonLabel.EXPLICIT_CONTENT_REJECTION` 사용 ✅
+- `storage/session_store.py:27-28` `ContentReasonLabel`, `ContentReasonScope` import 추가 ✅
+- `storage/session_store.py:1182-1183` `record_rejected_content_verdict_for_message` — enum 상수 사용 ✅
+- 문자열 값 변경 없음, label set 확장 없음, write/approval 불변식 변경 없음 ✅
+- `python3 -m py_compile core/contracts.py storage/session_store.py` → **통과** ✅
+- `python3 -m unittest tests.test_smoke` → **150 tests OK** ✅
+- `git diff --check -- core/contracts.py storage/session_store.py` → **통과** ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. `ApprovalReasonLabel` + `ContentReasonLabel` enum 추가, `ALLOWED_`
+딕셔너리 및 `record_rejected_content_verdict_for_message:1182-1183` 모두 enum 상수 사용 확인.
+
+**소규모 gap 식별** (handoff 범위 외):
+`session_store.py:1255-1256` — `record_content_reason_note_for_message` 내부에 fallback 용도의
+`"content_reject"` / `"explicit_content_rejection"` raw string literal 잔존. handoff가 명시한
+대상(`record_rejected_content_verdict_for_message:1180-1181`)이 아니라 claim 위반이 아님.
+
+### 남은 리스크 (CONTROL_SEQ 779 이후)
+
+- seqs 756-775: e5a3749로 커밋·푸시 완료.
+- seqs 779: 미커밋 (`core/contracts.py`, `storage/session_store.py`).
+- `work/4/22/2026-04-22-milestone4-5-bundle-commit-push.md` untracked.
+- `session_store.py:1255-1256` raw string fallback 잔존 (scope-out).
+- Milestone 6 잔여 sub-item 복잡 — advisory 필요.
+
+### 다음 control
+
+CONTROL_SEQ 780 → `.pipeline/advisory_request.md` (STATUS: request_open)
+- 이유: (1) seq 779가 Milestone 6 "define shared reason fields" 항목을 완료했는지 확정 필요,
+  (2) `session_store.py:1255-1256` gap이 독립 micro-slice인지 상위 항목에 흡수되는지 판단 필요,
+  (3) Milestone 6 다음 구체적 구현 항목이 `docs/MILESTONES.md:207-225` 중 어느 것인지 advisory
+  없이 자명하지 않음.
+
+---
+
+## CONTROL_SEQ 782 구현 검증 (NEXT_CONTROL_SEQ: 783)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-approval-outcome-artifact-linkage.md`
+
+### 검증 결과
+
+- `storage/session_store.py:1255` `reason_scope` fallback → `ContentReasonScope.CONTENT_REJECT` ✅
+- `storage/session_store.py:1257` `reason_label` fallback → `ContentReasonLabel.EXPLICIT_CONTENT_REJECTION` ✅
+- `core/agent_loop.py:7636-7643` `_reissue_pending_approval` — task_logger 직후, `if reissued.overwrite:` 직전에 `artifact_store.record_outcome(..., outcome="approval_reissued")` guarded call 추가 ✅
+- `core/agent_loop.py:7711-7718` `_reject_pending_approval` — task_logger 직후, `return AgentResponse(...)` 직전에 `artifact_store.record_outcome(..., outcome="approval_rejected")` guarded call 추가 ✅
+- 두 call 모두 `self.artifact_store and artifact_id` guard + `try/except Exception: pass` — 기존 lines 7438-7452 패턴 동일 ✅
+- `_build_approval_reason_record` raw strings 미변경 — handoff 제약 준수 ✅
+- `python3 -m py_compile storage/session_store.py core/agent_loop.py` → **통과** ✅
+- `python3 -m unittest tests.test_smoke` → **150 tests OK** ✅
+- `git diff --check` → **통과** ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. 두 메서드 모두 artifact store에 outcome이 기록되는 경로가 닫혔음.
+session_store.py 1255-1257 fallback 상수화도 확인.
+
+### 남은 리스크 (CONTROL_SEQ 782 이후)
+
+- seqs 779(contracts.py, session_store.py) + 782(agent_loop.py, session_store.py) 미커밋.
+  advisory seq 781이 "Milestone 6 Axis 1" 단일 bundle commit/push 권고.
+- `core/agent_loop.py:7609-7614, 7687-7688` `_build_approval_reason_record` 호출 시 raw string
+  `"approval_reject"` / `"approval_reissue"` / `"explicit_rejection"` / `"path_change"` /
+  `"corrected_text_reissue"` 잔존 — 이번 handoff 제약 외(scope-out).
+- Milestone 6 다음 sub-item 미식별.
+
+### 다음 control
+
+CONTROL_SEQ 783 → `.pipeline/advisory_request.md` (STATUS: request_open)
+- 이유: (1) advisory seq 781의 "Milestone 6 Axis 1 bundle commit/push" 권고를 실행하기 전
+  seqs 779+782 완전 종료 및 bundle 범위를 advisory에게 재확인 필요,
+  (2) Milestone 6 다음 sub-item advisory 없이 자명하지 않음.
+
+---
+
+## CONTROL_SEQ 785 구현 검증 (NEXT_CONTROL_SEQ: 786)
+
+### 검증 대상 work note
+
+`work/4/22/2026-04-22-corrected-save-bridge-ui.md`
+
+### 검증 결과
+
+**Part 1 — approval reason enum constants (agent_loop.py):**
+- `core/agent_loop.py:7611` `reason_scope=ApprovalReasonScope.APPROVAL_REISSUE` ✅
+- `core/agent_loop.py:7613-7615` `ApprovalReasonLabel.CORRECTED_TEXT_REISSUE` / `ApprovalReasonLabel.PATH_CHANGE` ✅
+- `core/agent_loop.py:7697-7698` `ApprovalReasonScope.APPROVAL_REJECT` / `ApprovalReasonLabel.EXPLICIT_REJECTION` ✅
+
+**Part 2 — Corrected-Save Bridge UI:**
+- `app/frontend/src/api/client.ts:112-116` `postCorrectedSave()` — `postChat({ corrected_save_message_id })` 래핑 ✅
+- `app/frontend/src/components/MessageBubble.tsx:46,55` `onCorrectedSave?` prop 추가 ✅
+- `app/frontend/src/components/MessageBubble.tsx:203-213` "수정본 저장" 버튼 — assistant message에서 항상 렌더, `corrected_text` 없으면 disabled ✅
+- `app/frontend/src/components/ChatArea.tsx:31,53,133` `onCorrectedSave?` props + 전달, streaming bubble 미전달 ✅
+- `app/frontend/src/App.tsx:10,70-77,150` `postCorrectedSave` import, `handleCorrectedSave` handler (`loadSession` + error toast), ChatArea 전달 ✅
+- `useChat.ts` 미수정 ✅
+- `python3 -m py_compile core/agent_loop.py` → **통과** ✅
+- `python3 -m unittest tests.test_smoke` → **150 tests OK** ✅
+- `git diff --check` → **통과** ✅
+
+### work note 클레임 진실성 평가
+
+모든 클레임 **truthful**. approval reason raw string이 모두 enum 상수로 교체됨.
+"수정본 저장" 버튼 prop chain (`App → ChatArea → MessageBubble`) 완결.
+MILESTONES "keep that bridge action always visible in the correction area, but disabled" 준수.
+
+### 남은 리스크 (CONTROL_SEQ 785 이후)
+
+- seqs 779+782+785 (contracts/session_store/agent_loop/frontend 5개 파일) 전체 미커밋.
+  advisory seq 784이 "Milestone 6 Axis 1" bundle commit/push 권고.
+- Milestone 6 다음 sub-item 미식별 — advisory 확인 필요.
+
+### 다음 control
+
+CONTROL_SEQ 786 → `.pipeline/advisory_request.md` (STATUS: request_open)
+- 이유: (1) advisory seq 784이 "seqs 785까지 commit" 권고 — bundle 범위 확정 필요,
+  (2) Milestone 6 Axis 1 이후 다음 sub-item advisory 없이 자명하지 않음.

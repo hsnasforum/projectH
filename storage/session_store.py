@@ -24,6 +24,8 @@ from core.contracts import (
     ALLOWED_SESSION_LOCAL_CANDIDATE_FAMILIES,
     ALLOWED_WEB_SEARCH_PERMISSIONS,
     CANDIDATE_REVIEW_ACTION_TO_STATUS,
+    ContentReasonLabel,
+    ContentReasonScope,
     SESSION_LOCAL_MEMORY_SIGNAL_VERSION,
     WebSearchPermission,
 )
@@ -1177,8 +1179,8 @@ class SessionStore:
                     "source_message_id": normalized_message_id,
                 }
                 patched["content_reason_record"] = {
-                    "reason_scope": "content_reject",
-                    "reason_label": "explicit_content_rejection",
+                    "reason_scope": ContentReasonScope.CONTENT_REJECT,
+                    "reason_label": ContentReasonLabel.EXPLICIT_CONTENT_REJECTION,
                     "recorded_at": recorded_at,
                     "artifact_id": artifact_id,
                     "artifact_kind": "grounded_brief",
@@ -1250,8 +1252,10 @@ class SessionStore:
 
                 patched = dict(message)
                 patched["content_reason_record"] = {
-                    "reason_scope": str(existing_reason_record.get("reason_scope") or "content_reject"),
-                    "reason_label": str(existing_reason_record.get("reason_label") or "explicit_content_rejection"),
+                    "reason_scope": str(existing_reason_record.get("reason_scope") or ContentReasonScope.CONTENT_REJECT),
+                    "reason_label": str(
+                        existing_reason_record.get("reason_label") or ContentReasonLabel.EXPLICIT_CONTENT_REJECTION
+                    ),
                     "reason_note": normalized_reason_note,
                     "recorded_at": self._now(),
                     "artifact_id": artifact_id,

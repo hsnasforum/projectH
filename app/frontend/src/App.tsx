@@ -4,7 +4,13 @@ import ChatArea from "./components/ChatArea";
 import Toast from "./components/Toast";
 import type { ToastItem } from "./components/Toast";
 import { useChat } from "./hooks/useChat";
-import { postContentReasonNote, postContentVerdict, postCorrection, postFeedback } from "./api/client";
+import {
+  postContentReasonNote,
+  postContentVerdict,
+  postCorrectedSave,
+  postCorrection,
+  postFeedback,
+} from "./api/client";
 import { DEFAULT_SETTINGS } from "./types";
 import type { AppSettings } from "./types";
 
@@ -60,6 +66,15 @@ export default function App() {
       addToast("error", "거절 이유 저장에 실패했습니다.");
     }
   }, [chat.sessionId, addToast]);
+
+  const handleCorrectedSave = useCallback(async (messageId: string) => {
+    try {
+      await postCorrectedSave(chat.sessionId, messageId);
+      await chat.loadSession(chat.sessionId);
+    } catch {
+      addToast("error", "수정본 저장 요청에 실패했습니다.");
+    }
+  }, [chat.sessionId, chat.loadSession, addToast]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-warm-50">
@@ -132,6 +147,7 @@ export default function App() {
         onFeedback={handleFeedback}
         onContentVerdict={handleContentVerdict}
         onContentReasonNote={handleContentReasonNote}
+        onCorrectedSave={handleCorrectedSave}
         onToggleSidebar={toggleSidebar}
         sessionTitle={chat.sessionTitle}
         reviewQueueCount={chat.reviewQueueCount}

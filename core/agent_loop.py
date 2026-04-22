@@ -15,6 +15,8 @@ from core.approval import (
     build_approval_reason_record,
 )
 from core.contracts import (
+    ApprovalReasonLabel,
+    ApprovalReasonScope,
     ArtifactKind,
     AnswerMode,
     CoverageStatus,
@@ -7606,11 +7608,11 @@ class AgentLoop:
             artifact_id=reissued.artifact_id,
             approval_id=reissued.approval_id,
             source_message_id=reissued.source_message_id,
-            reason_scope="approval_reissue",
+            reason_scope=ApprovalReasonScope.APPROVAL_REISSUE,
             reason_label=(
-                "corrected_text_reissue"
+                ApprovalReasonLabel.CORRECTED_TEXT_REISSUE
                 if (approval.save_content_source or "").strip() == SAVE_CONTENT_SOURCE_CORRECTED_TEXT
-                else "path_change"
+                else ApprovalReasonLabel.PATH_CHANGE
             ),
         )
         reissued.approval_reason_record = approval_reason_record
@@ -7633,6 +7635,14 @@ class AgentLoop:
                 "approval_reason_record": approval_reason_record,
             },
         )
+        if self.artifact_store and reissued.artifact_id:
+            try:
+                self.artifact_store.record_outcome(
+                    reissued.artifact_id,
+                    outcome="approval_reissued",
+                )
+            except Exception:
+                pass
 
         if reissued.overwrite:
             text = (
@@ -7684,8 +7694,8 @@ class AgentLoop:
             artifact_id=approval.artifact_id,
             approval_id=approval.approval_id,
             source_message_id=approval.source_message_id,
-            reason_scope="approval_reject",
-            reason_label="explicit_rejection",
+            reason_scope=ApprovalReasonScope.APPROVAL_REJECT,
+            reason_label=ApprovalReasonLabel.EXPLICIT_REJECTION,
         )
         self.task_logger.log(
             session_id=request.session_id,
@@ -7700,6 +7710,14 @@ class AgentLoop:
                 "approval_reason_record": approval_reason_record,
             },
         )
+        if self.artifact_store and approval.artifact_id:
+            try:
+                self.artifact_store.record_outcome(
+                    approval.artifact_id,
+                    outcome="approval_rejected",
+                )
+            except Exception:
+                pass
         return AgentResponse(
             text="저장 승인을 취소했습니다.",
             status=ResponseStatus.ANSWER,

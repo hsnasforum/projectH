@@ -109,6 +109,13 @@ export async function postCandidateReview(
   });
 }
 
+export async function postCorrectedSave(
+  sessionId: string,
+  messageId: string,
+): Promise<Record<string, unknown>> {
+  return postChat({ session_id: sessionId, corrected_save_message_id: messageId });
+}
+
 export async function postContentVerdict(
   sessionId: string,
   messageId: string,

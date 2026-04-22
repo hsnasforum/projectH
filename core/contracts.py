@@ -225,9 +225,18 @@ class ApprovalReasonScope(StrEnum):
     APPROVAL_REISSUE = "approval_reissue"
 
 
+class ApprovalReasonLabel(StrEnum):
+    EXPLICIT_REJECTION = "explicit_rejection"
+    PATH_CHANGE = "path_change"
+    CORRECTED_TEXT_REISSUE = "corrected_text_reissue"
+
+
 ALLOWED_APPROVAL_REASON_LABELS: dict[str, frozenset[str]] = {
-    ApprovalReasonScope.APPROVAL_REJECT: frozenset({"explicit_rejection"}),
-    ApprovalReasonScope.APPROVAL_REISSUE: frozenset({"path_change", "corrected_text_reissue"}),
+    ApprovalReasonScope.APPROVAL_REJECT: frozenset({ApprovalReasonLabel.EXPLICIT_REJECTION}),
+    ApprovalReasonScope.APPROVAL_REISSUE: frozenset({
+        ApprovalReasonLabel.PATH_CHANGE,
+        ApprovalReasonLabel.CORRECTED_TEXT_REISSUE,
+    }),
 }
 
 
@@ -239,8 +248,12 @@ class ContentReasonScope(StrEnum):
     CONTENT_REJECT = "content_reject"
 
 
+class ContentReasonLabel(StrEnum):
+    EXPLICIT_CONTENT_REJECTION = "explicit_content_rejection"
+
+
 ALLOWED_CONTENT_REASON_LABELS: dict[str, frozenset[str]] = {
-    ContentReasonScope.CONTENT_REJECT: frozenset({"explicit_content_rejection"}),
+    ContentReasonScope.CONTENT_REJECT: frozenset({ContentReasonLabel.EXPLICIT_CONTENT_REJECTION}),
 }
 
 

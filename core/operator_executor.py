@@ -6,6 +6,13 @@ from pathlib import Path
 from core.contracts import OperatorActionKind
 
 
+def _validate_operator_action_target(target_id: str) -> None:
+    resolved = Path(target_id).resolve()
+    cwd = Path.cwd().resolve()
+    if not resolved.is_relative_to(cwd):
+        raise ValueError(f"target_id resolves outside project root: {target_id!r}")
+
+
 def execute_operator_action(record: dict) -> dict:
     action_kind = str(record.get("action_kind") or "").strip()
     if action_kind != OperatorActionKind.LOCAL_FILE_EDIT:
@@ -13,6 +20,7 @@ def execute_operator_action(record: dict) -> dict:
     target_id = str(record.get("target_id") or "").strip()
     if not target_id:
         raise ValueError("target_id is required for local_file_edit")
+    _validate_operator_action_target(target_id)
     path = Path(target_id)
     content = record.get("content")
     if content is not None:
@@ -64,6 +72,7 @@ def rollback_operator_action(record: dict) -> dict:
     target_id = str(record.get("target_id") or "").strip()
     if not target_id:
         raise ValueError("target_id is required for rollback")
+    _validate_operator_action_target(target_id)
     backup = Path(backup_path)
     if not backup.exists():
         return {

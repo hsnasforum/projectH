@@ -1,5 +1,6 @@
 import os
 import unittest
+from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 from core.operator_executor import execute_operator_action
@@ -8,7 +9,7 @@ from core.operator_executor import execute_operator_action
 class TestExecuteOperatorAction(unittest.TestCase):
     def test_local_file_edit_returns_preview(self) -> None:
         content = "\n".join(f"line {i}" for i in range(1, 16))
-        with NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+        with NamedTemporaryFile(mode="w", suffix=".txt", dir=".", delete=False) as f:
             f.write(content)
             tmp_path = f.name
         try:
@@ -24,7 +25,7 @@ class TestExecuteOperatorAction(unittest.TestCase):
             os.unlink(tmp_path)
 
     def test_local_file_edit_writes_to_disk(self) -> None:
-        with NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+        with NamedTemporaryFile(mode="w", suffix=".txt", dir=".", delete=False) as f:
             f.write("original")
             tmp_path = f.name
         try:
@@ -42,7 +43,7 @@ class TestExecuteOperatorAction(unittest.TestCase):
             os.unlink(tmp_path)
 
     def test_local_file_edit_backup_on_reversible_write(self) -> None:
-        with NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+        with NamedTemporaryFile(mode="w", suffix=".txt", dir=".", delete=False) as f:
             f.write("original backup test")
             tmp_path = f.name
         backup_path = None
@@ -67,7 +68,7 @@ class TestExecuteOperatorAction(unittest.TestCase):
                 os.unlink(backup_path)
 
     def test_local_file_edit_no_backup_when_not_reversible(self) -> None:
-        with NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+        with NamedTemporaryFile(mode="w", suffix=".txt", dir=".", delete=False) as f:
             f.write("original")
             tmp_path = f.name
         try:
@@ -85,7 +86,7 @@ class TestExecuteOperatorAction(unittest.TestCase):
 
     def test_local_file_edit_rollback_restores_content(self) -> None:
         from core.operator_executor import rollback_operator_action
-        with NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+        with NamedTemporaryFile(mode="w", suffix=".txt", dir=".", delete=False) as f:
             f.write("original for rollback test")
             tmp_path = f.name
         backup_path = None
@@ -118,8 +119,8 @@ class TestExecuteOperatorAction(unittest.TestCase):
         from core.operator_executor import rollback_operator_action
         result = rollback_operator_action({
             "action_kind": "local_file_edit",
-            "target_id": "/tmp/any_file.txt",
-            "backup_path": "/nonexistent/backup/path.txt",
+            "target_id": str(Path.cwd() / "nonexistent_target_for_test.txt"),
+            "backup_path": str(Path.cwd() / "nonexistent_backup_for_test.txt"),
         })
         self.assertFalse(result.get("restored"))
         self.assertIn("백업 파일 없음", result.get("error", ""))
@@ -133,10 +134,27 @@ class TestExecuteOperatorAction(unittest.TestCase):
             execute_operator_action({"action_kind": "local_file_edit", "target_id": ""})
 
     def test_missing_file_returns_not_found(self) -> None:
+        target = str(Path.cwd() / "nonexistent_test_file_verify_xyz.txt")
         result = execute_operator_action(
-            {"action_kind": "local_file_edit", "target_id": "/nonexistent/path/file.txt"}
+            {"action_kind": "local_file_edit", "target_id": target}
         )
         self.assertIn("파일 없음", result["preview"])
+
+    def test_local_file_edit_path_restriction(self) -> None:
+        with self.assertRaises(ValueError):
+            execute_operator_action({
+                "action_kind": "local_file_edit",
+                "target_id": "/etc/passwd",
+            })
+
+    def test_rollback_path_restriction(self) -> None:
+        from core.operator_executor import rollback_operator_action
+        with self.assertRaises(ValueError):
+            rollback_operator_action({
+                "action_kind": "local_file_edit",
+                "target_id": "/etc/passwd",
+                "backup_path": str(Path.cwd() / "backup" / "operator" / "some.txt"),
+            })
 
 
 if __name__ == "__main__":

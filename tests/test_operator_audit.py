@@ -11,7 +11,7 @@ from storage.session_store import SessionStore
 class TestOperatorAuditTrail(unittest.TestCase):
     def test_end_to_end_audit_trail_with_backup(self) -> None:
         with TemporaryDirectory() as store_dir:
-            with NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            with NamedTemporaryFile(mode="w", suffix=".txt", dir=".", delete=False) as f:
                 f.write("original content for audit test")
                 target_path = f.name
             backup_path = None

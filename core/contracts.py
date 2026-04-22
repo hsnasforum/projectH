@@ -324,6 +324,7 @@ class OperatorActionRecord(TypedDict, total=False):
     approval_id: str
     status: str
     outcome_id: str
+    backup_path: str
 
 
 CANDIDATE_REVIEW_ACTION_TO_STATUS: dict[str, str] = {

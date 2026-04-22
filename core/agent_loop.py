@@ -7515,6 +7515,8 @@ class AgentLoop:
             outcome_record = dict(approval_record)
             outcome_record["status"] = "executed"
             outcome_record["preview"] = result.get("preview", "")
+            if "backup_path" in result:
+                outcome_record["backup_path"] = result["backup_path"]
             self.session_store.record_operator_action_outcome(
                 request.session_id, outcome_record
             )

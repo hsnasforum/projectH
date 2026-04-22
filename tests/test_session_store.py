@@ -287,6 +287,46 @@ class SessionStoreTest(unittest.TestCase):
             self.assertEqual(summary["operator_rolled_back_count"], 1)
             self.assertEqual(summary["operator_failed_count"], 0)
 
+    def test_get_global_audit_summary_personalization_counts(self) -> None:
+        with TemporaryDirectory() as base_dir:
+            store = SessionStore(base_dir=base_dir)
+            session_id = "pref-audit-session"
+            data = store.get_session(session_id)
+
+            data["messages"].append({
+                "message_id": "msg-p1",
+                "role": "assistant",
+                "artifact_id": "artifact-p1",
+                "artifact_kind": "grounded_brief",
+                "applied_preference_ids": ["pref-abc"],
+                "corrected_text": "corrected",
+                "original_response_snapshot": {
+                    "artifact_id": "artifact-p1",
+                    "artifact_kind": "grounded_brief",
+                    "draft_text": "original",
+                    "source_paths": [],
+                },
+                "text": "original",
+            })
+            data["messages"].append({
+                "message_id": "msg-p2",
+                "role": "assistant",
+                "artifact_kind": "grounded_brief",
+                "applied_preference_ids": ["pref-abc"],
+                "text": "not corrected",
+            })
+            data["messages"].append({
+                "message_id": "msg-p3",
+                "role": "assistant",
+                "artifact_kind": "grounded_brief",
+                "text": "no prefs",
+            })
+            store._save(session_id, data)
+
+            summary = store.get_global_audit_summary()
+            self.assertEqual(summary["personalized_response_count"], 2)
+            self.assertEqual(summary["personalized_correction_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

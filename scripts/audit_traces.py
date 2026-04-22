@@ -20,6 +20,13 @@ def main() -> None:
 
     print(json.dumps(summary, indent=2, ensure_ascii=False))
     total_feedback = summary["feedback_like_count"] + summary["feedback_dislike_count"]
+    personalized_total = summary["personalized_response_count"]
+    personalized_corrected = summary["personalized_correction_count"]
+    correction_rate = (
+        f"{personalized_corrected / personalized_total:.1%}"
+        if personalized_total > 0
+        else "N/A (no personalized responses yet)"
+    )
     print(
         f"\nSummary:\n"
         f"  Sessions:          {summary['session_count']}\n"
@@ -30,7 +37,10 @@ def main() -> None:
         f"executed={summary['operator_executed_count']}, "
         f"rolled_back={summary['operator_rolled_back_count']}, "
         f"failed={summary['operator_failed_count']}\n"
-        f"  Preferences:       candidate={len(candidates)}, active={len(active_prefs)}"
+        f"  Preferences:       candidate={len(candidates)}, active={len(active_prefs)}\n"
+        f"  Personalized responses:   {personalized_total}\n"
+        f"  Personalized corrections: {personalized_corrected}\n"
+        f"  Personalization correction rate: {correction_rate}"
     )
 
 

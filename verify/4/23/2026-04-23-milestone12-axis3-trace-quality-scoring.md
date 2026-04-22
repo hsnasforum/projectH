@@ -1,53 +1,64 @@
 STATUS: verified
-CONTROL_SEQ: 962
-BASED_ON_WORK: work/4/23/2026-04-23-milestone13-axis2-correction-link.md
-HANDOFF_SHA: f85404c
+CONTROL_SEQ: 966
+BASED_ON_WORK: work/4/23/2026-04-23-milestone13-axis3-effectiveness-metric.md
+HANDOFF_SHA: a4f4cbd
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 960
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 962
 
 ## Claim
 
-Milestone 13 Axis 2 — Applied Preference → Correction Link:
-- `storage/correction_store.py`: `record_correction()`에 `applied_preference_ids: list[str] | None = None` 파라미터 추가, record dict에 저장
-- `app/handlers/feedback.py`: `record_correction()` 호출부에 `applied_preference_ids=updated_message.get("applied_preference_ids")` 전달
-- `tests/test_export_utility.py`: `TestCorrectionPreferenceLinks.test_record_correction_stores_applied_preference_ids` 1건 추가 (`["pref-abc"]` 및 `None` 두 케이스 검증)
+Milestone 13 Axis 3 — Personalization Effectiveness Metric Baseline:
+- `storage/session_store.py`: `get_global_audit_summary()`에 `personalized_response_count`, `personalized_correction_count` 카운터 추가
+- `scripts/audit_traces.py`: 새 카운터 + correction rate(0 나누기 방지 포함) 출력 추가
+- `tests/test_session_store.py`: `test_get_global_audit_summary_personalization_counts` 1건 추가 (3개 fixture 메시지 — response 2건, correction 1건)
 
 ## Checks Run
 
-- `python3 -m py_compile storage/correction_store.py app/handlers/feedback.py` → OK (exit 0)
-- `python3 -m unittest tests.test_session_store tests.test_operator_executor tests.test_eval_loader tests.test_operator_audit tests.test_export_utility tests.test_promote_assets tests.test_evaluate_traces -v` → **58/58 통과** (기존 57 + 신규 1)
-- `git diff --check -- storage/correction_store.py app/handlers/feedback.py tests/test_export_utility.py` → OK (exit 0)
+- `python3 -m py_compile storage/session_store.py scripts/audit_traces.py` → OK (exit 0)
+- `python3 -m unittest tests.test_session_store ... tests.test_evaluate_traces -v` → **59/59 통과** (기존 58 + 신규 1)
+- `python3 scripts/audit_traces.py` → `personalized_response_count: 0`, `Personalization correction rate: N/A (no personalized responses yet)` 출력 OK
+- `git diff --check -- storage/session_store.py scripts/audit_traces.py tests/test_session_store.py` → OK (exit 0)
 
 ## Actual Diff (added lines)
 
-**`storage/correction_store.py`** — 시그니처 + record dict:
+**`storage/session_store.py`** — summary dict + 카운팅 로직:
 ```python
-# 파라미터 추가:
-applied_preference_ids: list[str] | None = None,
+# 초기화 dict에 추가:
+"personalized_response_count": 0,
+"personalized_correction_count": 0,
 
-# record dict에 추가 (pattern_family 다음):
-"applied_preference_ids": applied_preference_ids,
+# message 루프 내 추가:
+if msg.get("applied_preference_ids"):
+    summary["personalized_response_count"] += 1
+    if (
+        str(msg.get("artifact_kind") or "") == "grounded_brief"
+        and msg.get("corrected_text") is not None
+    ):
+        summary["personalized_correction_count"] += 1
 ```
 
-**`app/handlers/feedback.py`** — `record_correction()` 호출부:
+**`scripts/audit_traces.py`** — 출력 추가:
 ```python
-applied_preference_ids=updated_message.get("applied_preference_ids"),
-```
-
-**`tests/test_export_utility.py`** — 신규 테스트 클래스:
-```python
-class TestCorrectionPreferenceLinks(unittest.TestCase):
-    def test_record_correction_stores_applied_preference_ids(self) -> None:
-        # ["pref-abc"] 전달 시 record에 저장 확인
-        # None 전달 시 None으로 저장 확인
+personalized_total = summary["personalized_response_count"]
+personalized_corrected = summary["personalized_correction_count"]
+correction_rate = (
+    f"{personalized_corrected / personalized_total:.1%}"
+    if personalized_total > 0
+    else "N/A (no personalized responses yet)"
+)
+# print 블록에:
+f"  Personalized responses:   {personalized_total}\n"
+f"  Personalized corrections: {personalized_corrected}\n"
+f"  Personalization correction rate: {correction_rate}"
 ```
 
 ## Code Review
 
-- `applied_preference_ids` 파라미터가 keyword-only이며 기본값 `None` — 기존 모든 호출부(`feedback.py` 1곳만)는 이제 전달하도록 업데이트됨. 올바름.
-- `updated_message.get("applied_preference_ids")`: `updated_message`는 `session_store.record_correction_for_message()`가 반환하는 전체 session message dict. Axis 1에서 저장된 `applied_preference_ids`를 정확히 읽음. Axis 1이 없는 기존 메시지는 `None` 반환 — 안전.
-- `session_store.py`, `agent_loop.py`, `preference_store.py`, 계약 파일 미수정. handoff 범위 준수.
-- 기존 caller 중 `record_correction()`를 직접 호출하는 곳은 `feedback.py`의 이 호출부 1곳뿐 (grep 확인 가능). 다른 파일 영향 없음.
+- `msg.get("applied_preference_ids")` truthy 체크: None과 빈 리스트 모두 제외 — Axis 1 저장 방식(empty list 미저장)과 일관됨.
+- `personalized_correction_count`는 `artifact_kind == "grounded_brief"` AND `corrected_text is not None` 조건 — 기존 `correction_pair_count` 패턴과 동일. 올바름.
+- `correction_rate` 계산 시 `personalized_total > 0` 가드 — 현재 active preferences = 0이므로 항상 N/A. 올바름.
+- `preference_store.py`, `agent_loop.py`, `correction_store.py`, 계약 파일 미수정. handoff 범위 준수.
+- work note: 최초 테스트 실패 후 fixture에 `artifact_id`/`artifact_kind`/`original_response_snapshot` 추가로 수정 — 최종 diff에서 올바른 fixture 확인됨.
 
 ## Milestone 13 현황
 
@@ -56,24 +67,26 @@ class TestCorrectionPreferenceLinks(unittest.TestCase):
 | preference injection (agent_loop + ollama) | ✓ 기존 구현 완료 |
 | applied_preference_ids session 저장 + export | ✓ Axis 1 (8cea2f1) |
 | MILESTONES.md M13 항목 정의 | ✓ doc-sync (f85404c) |
-| correction record에 preference link 보존 | ✓ 이번 Axis 2 |
+| correction record에 preference link 보존 | ✓ Axis 2 (a4f4cbd) |
+| personalization effectiveness metric baseline | ✓ 이번 Axis 3 |
 | preference CANDIDATE → ACTIVE 전환 | deferred (guard rail) |
 | PR #27 (feat/watcher-turn-state → main) | Draft 상태 |
 
-## Bundle to Commit (operator_request.md CONTROL_SEQ 962)
+## Bundle to Commit (operator_request.md CONTROL_SEQ 966)
 
 ### 수정 파일
-- `storage/correction_store.py`
-- `app/handlers/feedback.py`
-- `tests/test_export_utility.py`
-- `verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md` (CONTROL_SEQ 962)
+- `storage/session_store.py`
+- `scripts/audit_traces.py`
+- `tests/test_session_store.py`
+- `verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md` (CONTROL_SEQ 966)
 
-### 신규 파일 (untracked — this round)
-- `work/4/23/2026-04-23-milestone13-axis2-correction-link.md`
-- `work/4/23/2026-04-23-milestone13-docsync-commit-push.md`
+### 신규 파일 (untracked)
+- `work/4/23/2026-04-23-milestone13-axis3-effectiveness-metric.md`
+- `work/4/23/2026-04-23-milestone13-axis2-commit-push.md`
+- `report/gemini/2026-04-23-m13-effectiveness-metric-scoping.md`
 
 ## Risk / Open Questions
 
-- M13 Axis 3 범위 미결정: preference 효과 측정(correction rate 비교), UI 표시, 자동화 확장 여부는 별도 advisory 또는 다음 handoff에서 결정.
-- 현재 active preferences = 0이므로 `applied_preference_ids`가 실제 채워지는 케이스는 없음 — 코드 경로는 올바름.
+- 현재 active preferences = 0이므로 personalized_response_count는 항상 0. 실제 데이터는 preference 활성화 이후 수집됨.
+- M13 Axes 1–3이 safety loop 데이터 수집 인프라를 완성함. Axis 4+ 방향(UI 표시, guard rail 해제 조건, preference 활성화 정책)은 현재 guard rail 내에서는 bounded scope 미존재 — 다음 단계는 PR #27 merge 또는 별도 operator 결정이 필요할 수 있음.
 - PR #27 merge 결정은 별도 operator 승인 필요.

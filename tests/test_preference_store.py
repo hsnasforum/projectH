@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from time import sleep
 
 from core.contracts import PreferenceStatus
 from storage.correction_store import CorrectionStore
@@ -40,6 +41,24 @@ class PreferenceStoreTest(unittest.TestCase):
                 fp = r["delta_fingerprint"]
         return fp
 
+    def _record_same_fingerprint_correction(
+        self,
+        corr: CorrectionStore,
+        *,
+        artifact_id: str,
+        session_id: str,
+        filler: str,
+    ) -> dict:
+        record = corr.record_correction(
+            artifact_id=artifact_id,
+            session_id=session_id,
+            source_message_id=f"msg-{artifact_id}",
+            original_text=f"{filler} old {filler}",
+            corrected_text=f"{filler} new {filler}",
+        )
+        self.assertIsNotNone(record)
+        return record
+
     def test_promote_from_corrections_cross_session(self) -> None:
         with TemporaryDirectory() as tmp:
             pref, corr = self._make_stores(tmp)
@@ -50,6 +69,130 @@ class PreferenceStoreTest(unittest.TestCase):
             self.assertEqual(result["cross_session_count"], 2)
             self.assertEqual(result["evidence_count"], 2)
             self.assertTrue(result["description"])
+
+    def test_promote_stores_avg_similarity_score(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, corr = self._make_stores(tmp)
+            records = [
+                self._record_same_fingerprint_correction(
+                    corr,
+                    artifact_id="quality-a",
+                    session_id="s1",
+                    filler="short",
+                ),
+                self._record_same_fingerprint_correction(
+                    corr,
+                    artifact_id="quality-b",
+                    session_id="s2",
+                    filler="long" * 20,
+                ),
+            ]
+            fp = records[0]["delta_fingerprint"]
+            self.assertEqual(records[1]["delta_fingerprint"], fp)
+
+            result = pref.promote_from_corrections(fp, corr)
+
+            expected = round(sum(r["similarity_score"] for r in records) / len(records), 4)
+            self.assertEqual(result["avg_similarity_score"], expected)
+
+    def test_promote_stores_original_corrected_snippets(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, corr = self._make_stores(tmp)
+            fp = self._seed_corrections(corr, sessions=["s1", "s2"])
+
+            result = pref.promote_from_corrections(fp, corr)
+
+            self.assertEqual(result["original_snippet"], "프로젝트H는 문서 비서입니다."[:400])
+            self.assertEqual(result["corrected_snippet"], "프로젝트H는 로컬 퍼스트 문서 비서입니다."[:400])
+
+    def test_refresh_updates_avg_similarity_score(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, corr = self._make_stores(tmp)
+            records = [
+                self._record_same_fingerprint_correction(
+                    corr,
+                    artifact_id="quality-a",
+                    session_id="s1",
+                    filler="short",
+                ),
+                self._record_same_fingerprint_correction(
+                    corr,
+                    artifact_id="quality-b",
+                    session_id="s2",
+                    filler="long" * 20,
+                ),
+            ]
+            fp = records[0]["delta_fingerprint"]
+            created = pref.promote_from_corrections(fp, corr)
+
+            new_record = self._record_same_fingerprint_correction(
+                corr,
+                artifact_id="quality-c",
+                session_id="s3",
+                filler="medium" * 8,
+            )
+            self.assertEqual(new_record["delta_fingerprint"], fp)
+            refreshed = pref.promote_from_corrections(fp, corr)
+
+            records.append(new_record)
+            expected = round(sum(r["similarity_score"] for r in records) / len(records), 4)
+            self.assertNotEqual(created["avg_similarity_score"], expected)
+            self.assertEqual(refreshed["avg_similarity_score"], expected)
+
+    def test_auto_activation_keeps_candidate_below_threshold(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, corr = self._make_stores(tmp)
+            fp = self._seed_corrections(corr, sessions=["s1", "s2"])
+            result = pref.promote_from_corrections(fp, corr)
+            self.assertEqual(result["status"], PreferenceStatus.CANDIDATE)
+            self.assertIsNone(result["activated_at"])
+
+    def test_auto_activation_promotes_candidate_at_threshold(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, corr = self._make_stores(tmp)
+            fp = self._seed_corrections(corr, sessions=["s1", "s2", "s3"])
+            result = pref.promote_from_corrections(fp, corr)
+            self.assertEqual(result["cross_session_count"], 3)
+            self.assertEqual(result["status"], PreferenceStatus.ACTIVE)
+            self.assertIsNotNone(result["activated_at"])
+
+    def test_auto_activation_leaves_active_preference_unchanged(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, corr = self._make_stores(tmp)
+            fp = self._seed_corrections(corr, sessions=["s1", "s2"])
+            created = pref.promote_from_corrections(fp, corr)
+            activated = pref.activate_preference(created["preference_id"])
+
+            corr.record_correction(
+                artifact_id="a3",
+                session_id="s3",
+                source_message_id="m3",
+                original_text="프로젝트H는 문서 비서입니다.",
+                corrected_text="프로젝트H는 로컬 퍼스트 문서 비서입니다.",
+            )
+            refreshed = pref.promote_from_corrections(fp, corr)
+            self.assertEqual(refreshed["cross_session_count"], 3)
+            self.assertEqual(refreshed["status"], PreferenceStatus.ACTIVE)
+            self.assertEqual(refreshed["activated_at"], activated["activated_at"])
+
+    def test_auto_activation_leaves_rejected_preference_unchanged(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, corr = self._make_stores(tmp)
+            fp = self._seed_corrections(corr, sessions=["s1", "s2"])
+            created = pref.promote_from_corrections(fp, corr)
+            rejected = pref.reject_preference(created["preference_id"])
+
+            corr.record_correction(
+                artifact_id="a3",
+                session_id="s3",
+                source_message_id="m3",
+                original_text="프로젝트H는 문서 비서입니다.",
+                corrected_text="프로젝트H는 로컬 퍼스트 문서 비서입니다.",
+            )
+            refreshed = pref.promote_from_corrections(fp, corr)
+            self.assertEqual(refreshed["cross_session_count"], 3)
+            self.assertEqual(refreshed["status"], PreferenceStatus.REJECTED)
+            self.assertEqual(refreshed["rejected_at"], rejected["rejected_at"])
 
     def test_promote_requires_2_sessions(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -111,6 +254,31 @@ class PreferenceStoreTest(unittest.TestCase):
 
             rejected = pref.reject_preference(created["preference_id"])
             self.assertEqual(rejected["status"], PreferenceStatus.REJECTED)
+
+    def test_update_description_changes_field(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, _ = self._make_stores(tmp)
+            created = pref.record_reviewed_candidate_preference(
+                delta_fingerprint="sha256:test_update_description",
+                candidate_family="correction_rewrite",
+                description="기존 설명",
+                source_refs={"candidate_id": "cand-update-description"},
+            )
+            sleep(0.001)
+
+            updated = pref.update_description(created["preference_id"], "새 설명")
+
+            self.assertIsNotNone(updated)
+            self.assertEqual(updated["description"], "새 설명")
+            self.assertGreater(updated["updated_at"], created["created_at"])
+            stored = pref.get(created["preference_id"])
+            self.assertEqual(stored["description"], "새 설명")
+
+    def test_update_description_returns_none_for_missing(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, _ = self._make_stores(tmp)
+
+            self.assertIsNone(pref.update_description("nonexistent-id", "text"))
 
     def test_lifecycle_candidate_to_active_to_paused_to_active(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -218,6 +386,66 @@ class PreferenceStoreTest(unittest.TestCase):
             all_prefs = pref.list_all()
             self.assertEqual(len(all_prefs), 1)
 
+    def test_record_reviewed_candidate_stores_avg_similarity_score(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, _ = self._make_stores(tmp)
+
+            record = pref.record_reviewed_candidate_preference(
+                delta_fingerprint="sha256:test_avg_similarity",
+                candidate_family="correction_rewrite",
+                description="검토 수락된 교정 패턴",
+                source_refs={"candidate_id": "cand-quality"},
+                avg_similarity_score=0.25,
+            )
+
+            self.assertEqual(record["avg_similarity_score"], 0.25)
+            stored = pref.get(record["preference_id"])
+            self.assertEqual(stored["avg_similarity_score"], 0.25)
+
+    def test_record_reviewed_candidate_stores_snippets(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, _ = self._make_stores(tmp)
+
+            record = pref.record_reviewed_candidate_preference(
+                delta_fingerprint="sha256:test_snippets",
+                candidate_family="correction_rewrite",
+                description="검토 수락된 교정 패턴",
+                source_refs={"candidate_id": "cand-snippet"},
+                original_snippet="hello",
+                corrected_snippet="world",
+            )
+
+            self.assertEqual(record["original_snippet"], "hello")
+            self.assertEqual(record["corrected_snippet"], "world")
+            stored = pref.get(record["preference_id"])
+            self.assertEqual(stored["original_snippet"], "hello")
+            self.assertEqual(stored["corrected_snippet"], "world")
+
+    def test_record_reviewed_candidate_update_preserves_score_when_none_passed(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, _ = self._make_stores(tmp)
+            fp = "sha256:test_avg_similarity_preserve"
+            created = pref.record_reviewed_candidate_preference(
+                delta_fingerprint=fp,
+                candidate_family="correction_rewrite",
+                description="검토 수락된 교정 패턴",
+                source_refs={"candidate_id": "cand-quality-a"},
+                avg_similarity_score=0.3,
+            )
+
+            updated = pref.record_reviewed_candidate_preference(
+                delta_fingerprint=fp,
+                candidate_family="correction_rewrite",
+                description="검토 수락된 교정 패턴",
+                source_refs={"candidate_id": "cand-quality-b"},
+                avg_similarity_score=None,
+            )
+
+            self.assertEqual(updated["preference_id"], created["preference_id"])
+            self.assertEqual(updated["avg_similarity_score"], 0.3)
+            stored = pref.get(created["preference_id"])
+            self.assertEqual(stored["avg_similarity_score"], 0.3)
+
     def test_refresh_evidence_on_new_correction(self) -> None:
         with TemporaryDirectory() as tmp:
             pref, corr = self._make_stores(tmp)
@@ -236,3 +464,5 @@ class PreferenceStoreTest(unittest.TestCase):
             refreshed = pref.promote_from_corrections(fp, corr)
             self.assertEqual(refreshed["evidence_count"], 3)
             self.assertEqual(refreshed["cross_session_count"], 3)
+            self.assertEqual(refreshed["status"], PreferenceStatus.ACTIVE)
+            self.assertIsNotNone(refreshed["activated_at"])

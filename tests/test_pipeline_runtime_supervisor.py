@@ -3957,7 +3957,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(status["automation_reason_code"], "external_publication_boundary")
             self.assertEqual(status["automation_next_action"], "pr_boundary")
 
-    def test_write_status_keeps_pr_merge_gate_operator_visible_without_gated_event(self) -> None:
+    def test_write_status_routes_internal_pr_merge_gate_to_verify_followup_backlog(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write_active_profile(root)
@@ -4005,13 +4005,17 @@ class RuntimeSupervisorTest(unittest.TestCase):
             ]
             gated_events = [event for event in events if event.get("event_type") == "control_operator_gated"]
 
-            self.assertEqual(status["control"]["active_control_status"], "needs_operator")
-            self.assertEqual(status["autonomy"]["mode"], "needs_operator")
+            self.assertEqual(status["control"]["active_control_status"], "none")
+            self.assertEqual(status["compat"]["control_slots"]["active"]["file"], "operator_request.md")
+            self.assertEqual(status["compat"]["control_slots"]["active"]["status"], "needs_operator")
+            self.assertEqual(status["autonomy"]["mode"], "triage")
             self.assertEqual(status["autonomy"]["reason_code"], PR_MERGE_GATE_REASON)
-            self.assertEqual(status["automation_health"], "needs_operator")
+            self.assertEqual(status["autonomy"]["decision_class"], "merge_gate")
+            self.assertEqual(status["automation_health"], "attention")
             self.assertEqual(status["automation_reason_code"], PR_MERGE_GATE_REASON)
-            self.assertEqual(status["automation_next_action"], "pr_boundary")
-            self.assertEqual(gated_events, [])
+            self.assertEqual(status["automation_next_action"], "verify_followup")
+            self.assertEqual(gated_events[-1]["payload"]["reason"], PR_MERGE_GATE_REASON)
+            self.assertEqual(gated_events[-1]["payload"]["routed_to"], "verify_followup")
 
     def test_write_status_ignores_pr_merge_gate_after_pr_is_merged(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

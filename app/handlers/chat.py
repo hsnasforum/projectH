@@ -353,7 +353,7 @@ class ChatHandlerMixin:
                 }
             )
 
-        model_router = self._build_model_router()
+        model_router = self._build_model_router(provider=provider)
         loop = AgentLoop(
             model=model,
             session_store=self.session_store,
@@ -471,9 +471,10 @@ class ChatHandlerMixin:
 
         return response
 
-    def _build_model_router(self) -> Any:
+    def _build_model_router(self, *, provider: str | None = None) -> Any:
         """Build model router config if provider is ollama."""
-        if self.settings.model_provider != "ollama":
+        normalized_provider = (provider or self.settings.model_provider or "").strip().lower()
+        if normalized_provider != "ollama":
             return None
         try:
             from model_adapter.router import ModelConfig

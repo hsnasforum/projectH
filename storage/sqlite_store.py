@@ -17,6 +17,15 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from core.contracts import CandidateFamily, CorrectionStatus
+
+try:
+    from storage.preference_store import (
+        AUTO_ACTIVATE_CROSS_SESSION_THRESHOLD as _SQLITE_AUTO_ACTIVATE_THRESHOLD,
+    )
+except ImportError:
+    _SQLITE_AUTO_ACTIVATE_THRESHOLD = 3
+
 SCHEMA_VERSION = 1
 
 _SCHEMA_SQL = """
@@ -479,6 +488,22 @@ class SQLitePreferenceStore:
     def reject_preference(self, preference_id: str) -> dict[str, Any] | None:
         return self._update_status(preference_id, "rejected")
 
+    def update_description(self, preference_id: str, description: str) -> dict[str, Any] | None:
+        """Update the description of an existing preference. Returns None if not found."""
+        now = _now_iso()
+        row = self._db.fetchone("SELECT * FROM preferences WHERE preference_id = ?", (preference_id,))
+        if not row:
+            return None
+        data = json.loads(row["data"])
+        data["description"] = description
+        data["updated_at"] = now
+        self._db.execute(
+            "UPDATE preferences SET description = ?, data = ?, updated_at = ? WHERE preference_id = ?",
+            (description, json.dumps(data, ensure_ascii=False, default=str), now, preference_id),
+        )
+        self._db.commit()
+        return self.get(preference_id)
+
     def record_reviewed_candidate_preference(
         self,
         *,
@@ -486,6 +511,9 @@ class SQLitePreferenceStore:
         candidate_family: str,
         description: str,
         source_refs: dict[str, Any],
+        avg_similarity_score: float | None = None,
+        original_snippet: str | None = None,
+        corrected_snippet: str | None = None,
     ) -> dict[str, Any]:
         """Persist one local preference candidate from an accepted reviewed candidate."""
         row = self._db.fetchone(
@@ -511,11 +539,29 @@ class SQLitePreferenceStore:
             }
             if str(source_refs.get("candidate_id") or "") not in existing_ref_ids:
                 data["reviewed_candidate_source_refs"].append(source_refs)
+                try:
+                    cross_session_count = int(data.get("cross_session_count") or 0)
+                except (TypeError, ValueError):
+                    cross_session_count = 0
+                data["cross_session_count"] = cross_session_count + 1
+            if avg_similarity_score is not None:
+                data["avg_similarity_score"] = avg_similarity_score
+            if original_snippet is not None:
+                data["original_snippet"] = original_snippet
+            if corrected_snippet is not None:
+                data["corrected_snippet"] = corrected_snippet
             data["updated_at"] = now
+            self._auto_activate_candidate_if_ready(data, now)
             blob = json.dumps(data, ensure_ascii=False, default=str)
             self._db.execute(
-                "UPDATE preferences SET data = ?, updated_at = ? WHERE preference_id = ?",
-                (blob, now, data["preference_id"]),
+                "UPDATE preferences SET status = ?, activated_at = ?, data = ?, updated_at = ? WHERE preference_id = ?",
+                (
+                    data.get("status", row["status"]),
+                    data.get("activated_at"),
+                    blob,
+                    data.get("updated_at", now),
+                    data["preference_id"],
+                ),
             )
             self._db.commit()
             return data
@@ -530,6 +576,9 @@ class SQLitePreferenceStore:
             "reviewed_candidate_source_refs": [source_refs],
             "evidence_count": 1,
             "cross_session_count": 0,
+            "avg_similarity_score": avg_similarity_score,
+            "original_snippet": original_snippet,
+            "corrected_snippet": corrected_snippet,
             "delta_summary": {},
             "status": "candidate",
             "activated_at": None,
@@ -538,13 +587,42 @@ class SQLitePreferenceStore:
             "created_at": now,
             "updated_at": now,
         }
+        self._auto_activate_candidate_if_ready(data, now)
         blob = json.dumps(data, ensure_ascii=False, default=str)
         self._db.execute(
             "INSERT INTO preferences (preference_id, delta_fingerprint, description, status, data, created_at, updated_at, activated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (preference_id, delta_fingerprint, description, "candidate", blob, now, now, None),
+            (
+                preference_id,
+                delta_fingerprint,
+                description,
+                data["status"],
+                blob,
+                data["created_at"],
+                data["updated_at"],
+                data["activated_at"],
+            ),
         )
         self._db.commit()
         return data
+
+    def _auto_activate_candidate_if_ready(self, preference: dict[str, Any], now: str) -> None:
+        if preference.get("status") != "candidate":
+            return
+        try:
+            cross_session_count = int(preference.get("cross_session_count") or 0)
+        except (TypeError, ValueError):
+            return
+        if cross_session_count < _SQLITE_AUTO_ACTIVATE_THRESHOLD:
+            return
+
+        preference["status"] = "active"
+        preference["activated_at"] = now
+        preference["updated_at"] = now
+        blob = json.dumps(preference, ensure_ascii=False, default=str)
+        self._db.execute(
+            "UPDATE preferences SET status = ?, activated_at = ?, data = ?, updated_at = ? WHERE preference_id = ?",
+            ("active", now, blob, now, preference["preference_id"]),
+        )
 
     def _update_status(self, preference_id: str, new_status: str) -> dict[str, Any] | None:
         now = _now_iso()
@@ -559,38 +637,255 @@ class SQLitePreferenceStore:
         return self.get(preference_id)
 
 
+# ── SQLite Correction Store ───────────────────────────────────────
+
+class SQLiteCorrectionStore:
+    """Core CorrectionStore lookup parity, backed by SQLite."""
+
+    def __init__(self, db: SQLiteDatabase) -> None:
+        self._db = db
+        self._lock = threading.RLock()
+
+    def record_correction(
+        self,
+        *,
+        artifact_id: str,
+        session_id: str,
+        source_message_id: str,
+        original_text: str,
+        corrected_text: str,
+        pattern_family: str = CandidateFamily.CORRECTION_REWRITE,
+        applied_preference_ids: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        """Record a correction and compute its delta. Returns None if no delta."""
+        from core.delta_analysis import compute_correction_delta
+
+        delta = compute_correction_delta(original_text, corrected_text)
+        if delta is None:
+            return None
+
+        with self._lock:
+            duplicate_rows = self._db.fetchall(
+                "SELECT * FROM corrections WHERE delta_fingerprint = ? AND artifact_id = ? AND session_id = ?",
+                (delta.delta_fingerprint, artifact_id, session_id),
+            )
+            for row in duplicate_rows:
+                existing = self._row_to_dict(row)
+                if existing.get("source_message_id") == source_message_id:
+                    return existing
+
+            existing_rows = self._db.fetchall(
+                "SELECT * FROM corrections WHERE delta_fingerprint = ? ORDER BY created_at",
+                (delta.delta_fingerprint,),
+            )
+            recurrence_count = len(existing_rows) + 1
+            now = _now_iso()
+
+            for row in existing_rows:
+                existing = self._row_to_dict(row)
+                existing["recurrence_count"] = recurrence_count
+                existing["last_seen_at"] = now
+                existing["updated_at"] = now
+                self._db.execute(
+                    "UPDATE corrections SET data = ?, updated_at = ? WHERE correction_id = ?",
+                    (
+                        json.dumps(existing, ensure_ascii=False, default=str),
+                        now,
+                        row["correction_id"],
+                    ),
+                )
+
+            correction_id = f"correction-{uuid4().hex[:12]}"
+            record: dict[str, Any] = {
+                "correction_id": correction_id,
+                "artifact_id": artifact_id,
+                "session_id": session_id,
+                "source_message_id": source_message_id,
+                "original_text": original_text,
+                "corrected_text": corrected_text,
+                "delta_fingerprint": delta.delta_fingerprint,
+                "delta_summary": delta.delta_summary,
+                "similarity_score": delta.similarity_score,
+                "rewrite_dimensions": delta.rewrite_dimensions,
+                "pattern_family": pattern_family,
+                "applied_preference_ids": applied_preference_ids,
+                "recurrence_count": recurrence_count,
+                "first_seen_at": now,
+                "last_seen_at": now,
+                "status": CorrectionStatus.RECORDED,
+                "confirmed_at": None,
+                "promoted_at": None,
+                "activated_at": None,
+                "stopped_at": None,
+                "created_at": now,
+                "updated_at": now,
+            }
+            self._db.execute(
+                "INSERT INTO corrections "
+                "(correction_id, artifact_id, session_id, delta_fingerprint, status, data, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    correction_id,
+                    artifact_id,
+                    session_id,
+                    delta.delta_fingerprint,
+                    record["status"],
+                    json.dumps(record, ensure_ascii=False, default=str),
+                    record["created_at"],
+                    record["updated_at"],
+                ),
+            )
+            self._db.commit()
+            return record
+
+    def get(self, correction_id: str) -> dict[str, Any] | None:
+        row = self._db.fetchone("SELECT * FROM corrections WHERE correction_id = ?", (correction_id,))
+        if not row:
+            return None
+        return self._row_to_dict(row)
+
+    def find_by_fingerprint(self, delta_fingerprint: str) -> list[dict[str, Any]]:
+        rows = self._db.fetchall(
+            "SELECT * FROM corrections WHERE delta_fingerprint = ? ORDER BY created_at",
+            (delta_fingerprint,),
+        )
+        return [self._row_to_dict(row) for row in rows]
+
+    def find_by_artifact(self, artifact_id: str) -> list[dict[str, Any]]:
+        rows = self._db.fetchall(
+            "SELECT * FROM corrections WHERE artifact_id = ? ORDER BY created_at",
+            (artifact_id,),
+        )
+        return [self._row_to_dict(row) for row in rows]
+
+    def find_by_session(self, session_id: str) -> list[dict[str, Any]]:
+        rows = self._db.fetchall(
+            "SELECT * FROM corrections WHERE session_id = ? ORDER BY created_at",
+            (session_id,),
+        )
+        return [self._row_to_dict(row) for row in rows]
+
+    def list_recent(self, limit: int = 20) -> list[dict[str, Any]]:
+        rows = self._db.fetchall(
+            "SELECT * FROM corrections ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        return [self._row_to_dict(row) for row in rows]
+
+    def find_recurring_patterns(self, *, session_id: str | None = None) -> list[dict[str, Any]]:
+        """Return correction groups with recurrence_count >= 2, matching CorrectionStore contract."""
+        if session_id:
+            fp_rows = self._db.fetchall(
+                "SELECT delta_fingerprint FROM corrections WHERE session_id = ? "
+                "GROUP BY delta_fingerprint HAVING COUNT(*) >= 2",
+                (session_id,),
+            )
+        else:
+            fp_rows = self._db.fetchall(
+                "SELECT delta_fingerprint FROM corrections "
+                "GROUP BY delta_fingerprint HAVING COUNT(DISTINCT session_id) >= 2"
+            )
+
+        patterns: list[dict[str, Any]] = []
+        for fp_row in fp_rows:
+            fp = fp_row["delta_fingerprint"]
+            if not fp:
+                continue
+            if session_id:
+                rows = self._db.fetchall(
+                    "SELECT * FROM corrections WHERE delta_fingerprint = ? AND session_id = ? "
+                    "ORDER BY created_at",
+                    (fp, session_id),
+                )
+            else:
+                rows = self._db.fetchall(
+                    "SELECT * FROM corrections WHERE delta_fingerprint = ? ORDER BY created_at",
+                    (fp,),
+                )
+            records = [self._row_to_dict(row) for row in rows]
+            if len(records) < 2:
+                continue
+            patterns.append({
+                "delta_fingerprint": fp,
+                "pattern_family": records[0].get("pattern_family", ""),
+                "recurrence_count": len(records),
+                "corrections": records,
+                "first_seen_at": min(
+                    (record.get("first_seen_at") or record.get("created_at") or "")
+                    for record in records
+                ),
+                "last_seen_at": max(
+                    (record.get("last_seen_at") or record.get("updated_at") or "")
+                    for record in records
+                ),
+            })
+        return patterns
+
+    def _row_to_dict(self, row: dict[str, Any]) -> dict[str, Any]:
+        data = json.loads(row["data"]) if isinstance(row.get("data"), str) else {}
+        data.update({
+            "correction_id": row["correction_id"],
+            "artifact_id": row["artifact_id"],
+            "session_id": row["session_id"],
+            "delta_fingerprint": row["delta_fingerprint"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        })
+        return data
+
+
 # ── Migration utility ─────────────────────────────────────────────
 
 def migrate_json_to_sqlite(
     *,
-    sessions_dir: str = "data/sessions",
-    artifacts_dir: str = "data/artifacts",
+    sessions_dir: str | None = "data/sessions",
+    artifacts_dir: str | None = "data/artifacts",
     corrections_dir: str = "data/corrections",
-    preferences_dir: str = "data/preferences",
+    preferences_dir: str | None = "data/preferences",
     db_path: str = "data/projecth.db",
 ) -> dict[str, int]:
     """Migrate JSON file stores to SQLite. Returns counts per table.
 
-    NOTE: Corrections are NOT migrated (CorrectionStore stays JSON-based).
-    The corrections_dir parameter is accepted for future use but currently ignored.
+    Pass None for an optional directory to skip that table family.
     """
-    import sys
-
     db = SQLiteDatabase(db_path)
     counts: dict[str, int] = {}
     errors: list[str] = []
 
-    # Corrections: explicitly not migrated
+    # Corrections
     corrections_path = Path(corrections_dir)
-    if corrections_path.is_dir() and list(corrections_path.glob("*.json")):
-        msg = f"WARNING: corrections ({corrections_dir}) are NOT migrated — CorrectionStore stays JSON-based."
-        print(msg, file=sys.stderr)
-        errors.append(msg)
+    count = 0
+    if corrections_path.is_dir():
+        for f in corrections_path.glob("*.json"):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                now = data.get("created_at", _now_iso())
+                cursor = db.execute(
+                    "INSERT OR IGNORE INTO corrections "
+                    "(correction_id, artifact_id, session_id, delta_fingerprint, status, data, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        data["correction_id"],
+                        data.get("artifact_id", ""),
+                        data.get("session_id", ""),
+                        data.get("delta_fingerprint", ""),
+                        data.get("status", "recorded"),
+                        json.dumps(data, ensure_ascii=False, default=str),
+                        now,
+                        data.get("updated_at", now),
+                    ),
+                )
+                count += max(cursor.rowcount, 0)
+            except Exception as exc:
+                errors.append(f"correction {f.name}: {exc}")
+                continue
+    db.commit()
+    counts["corrections"] = count
 
     # Sessions
-    sessions_path = Path(sessions_dir)
     count = 0
-    if sessions_path.is_dir():
+    if sessions_dir is not None and (sessions_path := Path(sessions_dir)).is_dir():
         for f in sessions_path.glob("*.json"):
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
@@ -604,9 +899,8 @@ def migrate_json_to_sqlite(
     counts["sessions"] = count
 
     # Artifacts
-    artifacts_path = Path(artifacts_dir)
     count = 0
-    if artifacts_path.is_dir():
+    if artifacts_dir is not None and (artifacts_path := Path(artifacts_dir)).is_dir():
         for f in artifacts_path.glob("*.json"):
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
@@ -623,9 +917,8 @@ def migrate_json_to_sqlite(
     counts["artifacts"] = count
 
     # Preferences
-    prefs_path = Path(preferences_dir)
     count = 0
-    if prefs_path.is_dir():
+    if preferences_dir is not None and (prefs_path := Path(preferences_dir)).is_dir():
         for f in prefs_path.glob("*.json"):
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))

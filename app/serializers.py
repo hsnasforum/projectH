@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.localization import localize_text, localize_session
+from core.delta_analysis import is_high_quality
 from core.contracts import (
     CANDIDATE_REVIEW_ACTION_TO_STATUS,
     AnswerMode,
@@ -4428,6 +4429,37 @@ class SerializerMixin:
             if self._serialize_candidate_review_record(message.get("candidate_review_record")) is not None:
                 continue
 
+            corrections = self.correction_store.find_by_artifact(artifact_id)
+            scores = [
+                float(c["similarity_score"])
+                for c in corrections
+                if isinstance(c.get("similarity_score"), (int, float))
+            ]
+            avg_similarity_score = round(sum(scores) / len(scores), 4) if scores else None
+            quality_info = {
+                "avg_similarity_score": avg_similarity_score,
+                "is_high_quality": (
+                    is_high_quality(avg_similarity_score)
+                    if avg_similarity_score is not None
+                    else None
+                ),
+            }
+            delta_summary = None
+            for correction in corrections:
+                candidate_delta_summary = correction.get("delta_summary")
+                if isinstance(candidate_delta_summary, dict) and candidate_delta_summary:
+                    delta_summary = candidate_delta_summary
+                    break
+            original_snippet = None
+            corrected_snippet = None
+            for correction in corrections:
+                original_text = correction.get("original_text")
+                corrected_text = correction.get("corrected_text")
+                if isinstance(original_text, str) and isinstance(corrected_text, str) and original_text and corrected_text:
+                    original_snippet = original_text[:400]
+                    corrected_snippet = corrected_text[:400]
+                    break
+
             review_queue_items.append(
                 {
                     "item_type": "durable_candidate",
@@ -4455,6 +4487,11 @@ class SerializerMixin:
                     ],
                     "created_at": durable_candidate["created_at"],
                     "updated_at": durable_candidate["updated_at"],
+                    "quality_info": quality_info,
+                    "delta_summary": delta_summary,
+                    "original_snippet": original_snippet,
+                    "corrected_snippet": corrected_snippet,
+                    "is_global": False,
                 }
             )
 
@@ -4468,6 +4505,113 @@ class SerializerMixin:
             ),
             reverse=True,
         )
+        try:
+            recurring = self.correction_store.find_recurring_patterns()
+            session_fps = {
+                str(item.get("derived_from", {}).get("normalized_delta_fingerprint") or "")
+                for item in review_queue_items
+            }
+            try:
+                pref_descriptions: set[str] = set()
+                for pref in self.preference_store.list_all(limit=200):
+                    desc = str(pref.get("description") or "").strip().lower()
+                    if desc:
+                        pref_descriptions.add(desc)
+            except Exception:
+                pref_descriptions = set()
+            session_local_statements = {
+                str(item.get("statement") or "").strip().lower()
+                for item in review_queue_items
+                if str(item.get("statement") or "").strip()
+            }
+            find_preference_by_fingerprint = getattr(self.preference_store, "find_by_fingerprint", None)
+            list_preferences = getattr(self.preference_store, "list_all", None)
+            for pattern in recurring:
+                fp = str(pattern.get("delta_fingerprint") or "").strip()
+                if not fp or fp in session_fps:
+                    continue
+                existing_preference = (
+                    find_preference_by_fingerprint(fp)
+                    if callable(find_preference_by_fingerprint)
+                    else None
+                )
+                if existing_preference is None and callable(list_preferences):
+                    existing_preference = next(
+                        (
+                            preference
+                            for preference in list_preferences(limit=1000)
+                            if str(preference.get("delta_fingerprint") or "").strip() == fp
+                        ),
+                        None,
+                    )
+                if existing_preference is not None:
+                    continue
+
+                corrections = pattern.get("corrections", [])
+                first_correction = corrections[0] if corrections else {}
+                delta_summary = first_correction.get("delta_summary") if isinstance(first_correction, dict) else None
+                replacements = (
+                    delta_summary.get("replacements", [])
+                    if isinstance(delta_summary, dict)
+                    else []
+                )
+                first_replacement = replacements[0] if replacements and isinstance(replacements[0], dict) else {}
+                statement = str(first_replacement.get("to") or "").strip() or fp[:60]
+                statement_key = str(statement or "").strip().lower()
+                if statement_key and (
+                    statement_key in pref_descriptions
+                    or statement_key in session_local_statements
+                ):
+                    continue
+                corr_scores = [
+                    float(correction["similarity_score"])
+                    for correction in corrections
+                    if isinstance(correction, dict)
+                    and isinstance(correction.get("similarity_score"), (int, float))
+                ]
+                avg_score = round(sum(corr_scores) / len(corr_scores), 4) if corr_scores else None
+                quality_info = {
+                    "avg_similarity_score": avg_score,
+                    "is_high_quality": (
+                        is_high_quality(avg_score)
+                        if avg_score is not None
+                        else None
+                    ),
+                }
+                review_queue_items.append({
+                    "item_type": "global_candidate",
+                    "candidate_id": f"global:{fp}",
+                    "candidate_scope": "global",
+                    "candidate_family": pattern.get("pattern_family", "correction_rewrite"),
+                    "statement": statement,
+                    "derived_from": {"normalized_delta_fingerprint": fp, "record_type": "global_recurrence"},
+                    "derived_at": pattern.get("last_seen_at", ""),
+                    "promotion_basis": f"cross_session_recurrence:{pattern.get('recurrence_count', 0)}",
+                    "promotion_eligibility": "eligible_for_review",
+                    "artifact_id": first_correction.get("artifact_id", "") if isinstance(first_correction, dict) else "",
+                    "source_message_id": "global",
+                    "supporting_artifact_ids": [
+                        correction.get("artifact_id", "")
+                        for correction in corrections
+                        if isinstance(correction, dict) and correction.get("artifact_id")
+                    ],
+                    "supporting_source_message_ids": [],
+                    "supporting_signal_refs": [],
+                    "supporting_confirmation_refs": [],
+                    "created_at": pattern.get("first_seen_at", ""),
+                    "updated_at": pattern.get("last_seen_at", ""),
+                    "quality_info": quality_info,
+                    "delta_summary": delta_summary,
+                    "original_snippet": (
+                        str(first_correction.get("original_text") or "")[:400] or None
+                    ) if isinstance(first_correction, dict) else None,
+                    "corrected_snippet": (
+                        str(first_correction.get("corrected_text") or "")[:400] or None
+                    ) if isinstance(first_correction, dict) else None,
+                    "is_global": True,
+                })
+        except Exception:
+            pass
         return review_queue_items
 
     def _normalize_text_block(self, raw_value: Any) -> str | None:

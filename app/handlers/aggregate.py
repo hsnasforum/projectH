@@ -7,12 +7,22 @@ from uuid import uuid4
 from app.errors import WebApiError
 from core.contracts import (
     CANDIDATE_REVIEW_ACTION_TO_STATUS,
+    CandidateFamily,
     CandidateConfirmationScope,
     CandidateReviewAction,
     RecordStage,
     ResultStage,
     sanitize_supporting_review_refs,
 )
+
+
+def _first_correction_snippets(corrections: list[dict[str, Any]]) -> tuple[str | None, str | None]:
+    for correction in corrections:
+        original_text = correction.get("original_text") or ""
+        corrected_text = correction.get("corrected_text") or ""
+        if original_text and corrected_text:
+            return str(original_text)[:400], str(corrected_text)[:400]
+    return None, None
 
 
 class AggregateHandlerMixin:
@@ -113,6 +123,64 @@ class AggregateHandlerMixin:
         review_action = self._normalize_optional_text(payload.get("review_action"))
         reason_note = self._normalize_optional_text(payload.get("reason_note"))
         suggested_scope = self._normalize_optional_text(payload.get("suggested_scope"))
+        statement_override = self._normalize_optional_text(payload.get("statement"))
+
+        if str(message_id or "").strip() == "global":
+            review_status = CANDIDATE_REVIEW_ACTION_TO_STATUS.get(review_action or "")
+            if not review_status:
+                raise WebApiError(400, "지원하지 않는 review action입니다.")
+            fingerprint = str(candidate_id or "").removeprefix("global:").strip()
+            if not fingerprint:
+                raise WebApiError(400, "글로벌 후보 fingerprint를 확인할 수 없습니다.")
+            if review_action == CandidateReviewAction.ACCEPT:
+                corrections = self.correction_store.find_by_fingerprint(fingerprint)
+                original_snippet, corrected_snippet = _first_correction_snippets(corrections)
+                first_correction = corrections[0] if corrections else {}
+                delta_summary = (
+                    first_correction.get("delta_summary")
+                    if isinstance(first_correction, dict)
+                    else None
+                )
+                replacements = (
+                    delta_summary.get("replacements", [])
+                    if isinstance(delta_summary, dict)
+                    else []
+                )
+                first_replacement = (
+                    replacements[0]
+                    if replacements and isinstance(replacements[0], dict)
+                    else {}
+                )
+                default_description = str(first_replacement.get("to") or "").strip() or fingerprint[:60]
+                description = str(statement_override or default_description)
+                self.preference_store.record_reviewed_candidate_preference(
+                    delta_fingerprint=fingerprint,
+                    candidate_family=str(first_correction.get("pattern_family") or CandidateFamily.CORRECTION_REWRITE),
+                    description=description,
+                    source_refs={
+                        "candidate_id": candidate_id or "",
+                        "candidate_updated_at": candidate_updated_at or "",
+                        "artifact_id": first_correction.get("artifact_id", ""),
+                        "source_message_id": "global",
+                        "review_action": review_action,
+                        "session_id": session_id,
+                    },
+                    original_snippet=original_snippet,
+                    corrected_snippet=corrected_snippet,
+                )
+            self.task_logger.log(
+                session_id=session_id,
+                action="global_candidate_review_recorded",
+                detail={
+                    "candidate_id": candidate_id,
+                    "fingerprint": fingerprint,
+                    "review_action": review_action,
+                },
+            )
+            return {
+                "ok": True,
+                "session": self._serialize_session(self.session_store.get_session(session_id)),
+            }
 
         if not message_id:
             raise WebApiError(400, "검토 결과를 기록할 메시지 ID가 필요합니다.")
@@ -224,18 +292,30 @@ class AggregateHandlerMixin:
             if candidate_recurrence_key is not None:
                 fingerprint = str(candidate_recurrence_key.get("normalized_delta_fingerprint") or "").strip()
                 if fingerprint:
+                    artifact_id = str(source_message.get("artifact_id") or "").strip()
+                    corrections = self.correction_store.find_by_artifact(artifact_id) if artifact_id else []
+                    scores = [
+                        float(c["similarity_score"])
+                        for c in corrections
+                        if isinstance(c.get("similarity_score"), (int, float))
+                    ]
+                    avg_similarity_score = round(sum(scores) / len(scores), 4) if scores else None
+                    original_snippet, corrected_snippet = _first_correction_snippets(corrections)
                     self.preference_store.record_reviewed_candidate_preference(
                         delta_fingerprint=fingerprint,
                         candidate_family=str(durable_candidate.get("candidate_family") or ""),
-                        description=str(durable_candidate.get("statement") or "검토 수락된 교정 패턴"),
+                        description=str(statement_override or durable_candidate.get("statement") or "검토 수락된 교정 패턴"),
                         source_refs={
                             "candidate_id": candidate_id,
                             "candidate_updated_at": candidate_updated_at,
-                            "artifact_id": str(source_message.get("artifact_id") or ""),
+                            "artifact_id": artifact_id,
                             "source_message_id": str(source_message.get("message_id") or ""),
                             "review_action": review_action,
                             "session_id": session_id,
                         },
+                        avg_similarity_score=avg_similarity_score,
+                        original_snippet=original_snippet,
+                        corrected_snippet=corrected_snippet,
                     )
                     self.task_logger.log(
                         session_id=session_id,

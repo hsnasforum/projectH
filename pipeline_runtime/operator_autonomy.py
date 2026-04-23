@@ -841,7 +841,10 @@ def classify_operator_candidate(
             mode = "needs_operator"
             routed_to = "operator"
     elif operator_policy == "internal_only":
-        if resolved_reason in _IMMEDIATE_REASON_CODES:
+        if resolved_reason == PR_MERGE_GATE_REASON:
+            mode = "triage"
+            routed_to = VERIFY_FOLLOWUP_ROUTE
+        elif resolved_reason in _IMMEDIATE_REASON_CODES:
             mode = "needs_operator"
             routed_to = "operator"
         elif (

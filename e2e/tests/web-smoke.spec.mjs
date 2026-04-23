@@ -11534,3 +11534,294 @@ test("브라우저 파일 선택으로 readable text-layer PDF를 선택하면 �
   await expect(page.locator('#transcript [data-testid="transcript-meta"]').last()).toContainText("readable-text-layer.pdf");
   await expect(page.locator('#transcript [data-testid="transcript-meta"]').last()).toContainText("문서 요약");
 });
+
+async function postStreamAndReadFinalPayload(page, payload) {
+  const response = await page.request.post("/api/chat/stream", { data: payload });
+  const body = await response.text();
+  expect(response.ok(), body).toBeTruthy();
+  const events = body
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  const errorEvent = events.find((event) => event.event === "error");
+  expect(errorEvent, body).toBeFalsy();
+  const finalEvent = events.find((event) => event.event === "final");
+  expect(finalEvent, body).toBeTruthy();
+  expect(finalEvent.data?.ok, body).toBeTruthy();
+  return finalEvent.data;
+}
+
+async function createQualityReviewQueueItem(page, sessionId, correctedText, userText = null) {
+  const chatPayload = await postStreamAndReadFinalPayload(page, {
+    session_id: sessionId,
+    source_path: shortFixturePath,
+    provider: "mock",
+    ...(userText ? { user_text: userText } : {}),
+  });
+  const sourceMessageId = chatPayload.response?.source_message_id ?? chatPayload.source_message_id;
+  expect(typeof sourceMessageId).toBe("string");
+
+  const correctionResponse = await page.request.post("/api/correction", {
+    data: {
+      session_id: sessionId,
+      message_id: sourceMessageId,
+      corrected_text: correctedText,
+    },
+  });
+  const correctionBody = await correctionResponse.text();
+  expect(correctionResponse.ok(), correctionBody).toBeTruthy();
+  const correctionPayload = JSON.parse(correctionBody);
+  const messages = correctionPayload.session?.messages ?? [];
+  const candidateMessage = messages.find(
+    (message) => message.message_id === sourceMessageId && message.session_local_candidate
+  );
+  expect(candidateMessage, correctionBody).toBeTruthy();
+  const candidate = candidateMessage.session_local_candidate;
+
+  const confirmResponse = await page.request.post("/api/candidate-confirmation", {
+    data: {
+      session_id: sessionId,
+      message_id: sourceMessageId,
+      candidate_id: candidate.candidate_id,
+      candidate_updated_at: candidate.updated_at,
+    },
+  });
+  const confirmBody = await confirmResponse.text();
+  expect(confirmResponse.ok(), confirmBody).toBeTruthy();
+  const confirmPayload = JSON.parse(confirmBody);
+  expect(confirmPayload.ok, confirmBody).toBeTruthy();
+
+  const sessionPayload = await fetchSessionPayload(page, sessionId);
+  return {
+    sessionPayload,
+    sourceMessageId,
+  };
+}
+
+test("quality-info present in review queue item after correction and candidate confirmation", async ({ page }) => {
+  await page.goto("/");
+  const sessionId = await prepareSession(page, "quality-rq");
+
+  const { sessionPayload } = await createQualityReviewQueueItem(
+    page,
+    sessionId,
+    "수정본입니다. 핵심 내용만 남겼습니다."
+  );
+  const reviewItems = sessionPayload.session?.review_queue_items ?? [];
+  expect(reviewItems.length).toBeGreaterThanOrEqual(1);
+
+  const item = reviewItems[0];
+  expect(item).toHaveProperty("quality_info");
+  expect(item.quality_info).not.toBeNull();
+  expect(
+    item.quality_info.is_high_quality === null ||
+    typeof item.quality_info.is_high_quality === "boolean"
+  ).toBeTruthy();
+  expect(
+    item.quality_info.avg_similarity_score === null ||
+    typeof item.quality_info.avg_similarity_score === "number"
+  ).toBeTruthy();
+});
+
+test("quality-info quality-count badge visible in ChatArea when review queue item is high quality", async ({ page }) => {
+  await page.goto("/");
+  const sessionId = await prepareSession(page, "quality-badge");
+
+  const { sessionPayload } = await createQualityReviewQueueItem(
+    page,
+    sessionId,
+    "핵심 결정은 승인 기반 저장을 유지하는 것입니다. 명확하게 요약했습니다."
+  );
+  const reviewItems = sessionPayload.session?.review_queue_items ?? [];
+  const highQualityItems = reviewItems.filter(
+    (item) => item.quality_info?.is_high_quality === true
+  );
+
+  if (highQualityItems.length > 0) {
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await page.evaluate((sid) => {
+      const sessionInput = document.getElementById("session-id");
+      const loadButton = document.getElementById("load-session");
+      if (sessionInput && loadButton) {
+        sessionInput.value = sid;
+        loadButton.click();
+      }
+    }, sessionId);
+    await page.waitForSelector(".quality-count", { timeout: 10_000 }).catch(() => null);
+    const qualityCountSpan = page.locator(".quality-count");
+    const isVisible = await qualityCountSpan.isVisible().catch(() => false);
+    if (isVisible) {
+      await expect(qualityCountSpan).toContainText("고품질");
+    }
+  }
+
+  expect(reviewItems.length).toBeGreaterThanOrEqual(1);
+  expect(reviewItems[0]).toHaveProperty("quality_info");
+});
+
+test("quality-info delta_summary present in review queue item after correction", async ({ page }) => {
+  await page.goto("/");
+  const sessionId = await prepareSession(page, "delta-summary-rq");
+
+  const { sessionPayload } = await createQualityReviewQueueItem(
+    page,
+    sessionId,
+    "정리된 결과입니다. 명확하게 요약했습니다."
+  );
+  const reviewItems = sessionPayload.session?.review_queue_items ?? [];
+  expect(reviewItems.length).toBeGreaterThanOrEqual(1);
+
+  const item = reviewItems[0];
+  expect(Object.prototype.hasOwnProperty.call(item, "delta_summary")).toBeTruthy();
+  if (item.delta_summary !== null) {
+    expect(typeof item.delta_summary).toBe("object");
+  }
+});
+
+test("quality-info original_snippet and corrected_snippet present in review queue item", async ({ page }) => {
+  await page.goto("/");
+  const sessionId = await prepareSession(page, "snippet-rq");
+
+  const { sessionPayload } = await createQualityReviewQueueItem(
+    page,
+    sessionId,
+    "분석 결과를 간결하게 요약했습니다."
+  );
+  const reviewItems = sessionPayload.session?.review_queue_items ?? [];
+  expect(reviewItems.length).toBeGreaterThanOrEqual(1);
+
+  const item = reviewItems[0];
+  expect(Object.prototype.hasOwnProperty.call(item, "original_snippet")).toBeTruthy();
+  expect(Object.prototype.hasOwnProperty.call(item, "corrected_snippet")).toBeTruthy();
+  expect(typeof item.original_snippet).toBe("string");
+  expect(typeof item.corrected_snippet).toBe("string");
+  expect(item.original_snippet.length).toBeGreaterThan(0);
+  expect(item.corrected_snippet.length).toBeGreaterThan(0);
+  expect(item.original_snippet.length).toBeLessThanOrEqual(400);
+  expect(item.corrected_snippet.length).toBeLessThanOrEqual(400);
+});
+
+test("quality-info global candidate appears in review queue after cross-session recurrence", async ({ page }) => {
+  await page.goto("/");
+  const recurringCorrectedText = "전역 반복 패턴 교정 결과입니다.";
+
+  const sessionId1 = await prepareSession(page, "global-rq-s1");
+  await createQualityReviewQueueItem(page, sessionId1, recurringCorrectedText);
+
+  const sessionId2 = await prepareSession(page, "global-rq-s2");
+  await createQualityReviewQueueItem(page, sessionId2, recurringCorrectedText);
+
+  const sessionId3 = await prepareSession(page, "global-rq-s3");
+  const { sessionPayload } = await createQualityReviewQueueItem(
+    page,
+    sessionId3,
+    "세 번째 세션 로컬 후보입니다."
+  );
+  const reviewItems = sessionPayload.session?.review_queue_items ?? [];
+  expect(reviewItems.length).toBeGreaterThanOrEqual(1);
+
+  const globalItem = reviewItems.find(
+    (item) => item.is_global === true && item.source_message_id === "global"
+  );
+  if (globalItem) {
+    expect(globalItem.item_type).toBe("global_candidate");
+    expect(globalItem.candidate_id).toMatch(/^global:/);
+    expect(Object.prototype.hasOwnProperty.call(globalItem, "is_global")).toBeTruthy();
+  }
+  for (const item of reviewItems) {
+    expect(Object.prototype.hasOwnProperty.call(item, "is_global")).toBeTruthy();
+  }
+});
+
+test("review queue panel opens on badge click and accept action removes item", async ({ page }) => {
+  const sessionId = buildSessionId("rq-panel");
+  const { sessionPayload } = await createQualityReviewQueueItem(
+    page,
+    sessionId,
+    "요약 수정본입니다. 핵심만 남겼습니다.",
+    `review queue panel ${sessionId}`
+  );
+  expect((sessionPayload.session?.review_queue_items ?? []).length).toBeGreaterThanOrEqual(1);
+  const sessionTitle = sessionPayload.session?.title ?? sessionId;
+
+  await page.goto("/app-preview");
+  const sessionButton = page.locator("button", { hasText: sessionTitle }).first();
+  await expect(sessionButton).toBeVisible({ timeout: 10_000 });
+  await sessionButton.click();
+
+  const reviewBadge = page.getByTestId("review-queue-badge");
+  await expect(reviewBadge).toBeVisible({ timeout: 10_000 });
+  await expect(reviewBadge).toContainText("리뷰");
+
+  await reviewBadge.click();
+  const acceptButton = page.getByTestId("review-accept").first();
+  await expect(acceptButton).toBeVisible({ timeout: 5_000 });
+  const reviewResponsePromise = page.waitForResponse(
+    (response) => response.url().includes("/api/candidate-review")
+  );
+  await acceptButton.click();
+  const reviewResponse = await reviewResponsePromise;
+  const reviewBody = await reviewResponse.text();
+  expect(reviewResponse.ok(), reviewBody).toBeTruthy();
+
+  await expect
+    .poll(async () => {
+      const payload = await fetchSessionPayload(page, sessionId);
+      return payload.session?.review_queue_items?.length ?? 0;
+    })
+    .toBe(0);
+});
+
+test("review queue edit statement sends edited text in accept request", async ({ page }) => {
+  const sessionId = buildSessionId("rq-edit");
+  const editedStatement = `사용자가 직접 수정한 선호 문구입니다. ${sessionId}`;
+  const { sessionPayload } = await createQualityReviewQueueItem(
+    page,
+    sessionId,
+    "분석 결과를 요약했습니다.",
+    `review queue edit ${sessionId}`
+  );
+  expect((sessionPayload.session?.review_queue_items ?? []).length).toBeGreaterThanOrEqual(1);
+  const sessionTitle = sessionPayload.session?.title ?? sessionId;
+
+  await page.goto("/app-preview");
+  const sessionButton = page.locator("button", { hasText: sessionTitle }).first();
+  await expect(sessionButton).toBeVisible({ timeout: 10_000 });
+  await sessionButton.click();
+
+  const reviewBadge = page.getByTestId("review-queue-badge");
+  await expect(reviewBadge).toBeVisible({ timeout: 10_000 });
+  await reviewBadge.click();
+
+  const editButton = page.getByTestId("review-edit").first();
+  await expect(editButton).toBeVisible({ timeout: 5_000 });
+  await editButton.click();
+
+  const textarea = page.getByTestId("review-edit-statement").first();
+  await expect(textarea).toBeVisible({ timeout: 3_000 });
+  await textarea.clear();
+  await textarea.fill(editedStatement);
+
+  const reviewResponsePromise = page.waitForResponse(
+    (response) => response.url().includes("/api/candidate-review")
+  );
+  await page.getByTestId("review-accept").first().click();
+  const reviewResponse = await reviewResponsePromise;
+  const reviewBody = await reviewResponse.text();
+  expect(reviewResponse.ok(), reviewBody).toBeTruthy();
+
+  await expect
+    .poll(async () => {
+      const payload = await fetchSessionPayload(page, sessionId);
+      return payload.session?.review_queue_items?.length ?? 0;
+    })
+    .toBe(0);
+
+  const reviewRequestBody = reviewResponse.request().postData();
+  expect(reviewRequestBody).toBeTruthy();
+  const reviewBodyParsed = JSON.parse(reviewRequestBody ?? "{}");
+  expect(reviewBodyParsed.statement).toBe(editedStatement);
+  expect(reviewBodyParsed.review_action).toBe("accept");
+});

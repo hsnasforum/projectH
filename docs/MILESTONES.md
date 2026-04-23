@@ -495,19 +495,122 @@
 ### Milestone 13: Applied Preference Effectiveness Tracking
 - track which active preferences are applied to responses and correction traces
 - measure whether applied preferences improve later corrections before widening memory automation
-- keep preference activation explicit and auditable while the safety loop is validated
+- keep preference activation thresholded and auditable while the safety loop is validated
 
 #### Guardrails
-- repeated-signal promotion remains blocked until the safety loop is validated
-- cross-session counting remains later
-- CANDIDATE → ACTIVE auto-activation remains deferred
+- repeated-signal promotion is limited to `cross_session_count >= 3` auto-activation for `CANDIDATE` preferences
+- cross-session counting remains local preference evidence, not broader user-level memory
+- `ACTIVE`, `REJECTED`, and `PAUSED` preferences remain on their existing lifecycle state during threshold checks
 
-#### Shipped Infrastructure (Axes 1–5, 2026-04-23)
+#### Shipped Infrastructure (Axes 1–6, 2026-04-23)
 - Axis 1 (8cea2f1, seq 958): applied preference tracking in session + trace export — `app/handlers/chat.py` stores `applied_preference_ids` in `update_last_message()`; `storage/session_store.py` yields `applied_preference_ids` in `stream_trace_pairs()`; 57 unit tests
 - Axis 2 (a4f4cbd, seq 962): correction link — `storage/correction_store.py` `record_correction()` stores `applied_preference_ids`; `app/handlers/feedback.py` passes ids from session message; 58 unit tests
 - Axis 3 (399122f, seq 966): effectiveness metric baseline — `storage/session_store.py` `get_global_audit_summary()` adds `personalized_response_count` / `personalized_correction_count`; `scripts/audit_traces.py` displays personalization correction rate; 59 unit tests
 - Axis 4 (fc86577, seq 970): per-preference reliability — `get_global_audit_summary()` adds `per_preference_stats` map (`applied_count`/`corrected_count` per fingerprint); `scripts/audit_traces.py` displays per-preference correction rates sorted descending; 60 unit tests
-- Axis 5 (80fe1dd, seq 974): preference reliability API — `list_preferences_payload()` enriches each record with `reliability_stats` (`applied_count`/`corrected_count` via `per_preference_stats`); SQLiteSessionStore fallback returns 0 counts; frontend display deferred
+- Axis 5 (80fe1dd, seq 974): preference reliability API — `list_preferences_payload()` enriches each record with `reliability_stats` (`applied_count`/`corrected_count` via `per_preference_stats`); SQLiteSessionStore fallback returns 0 counts; frontend display shipped as Axis 5b (ebd82cb, seq 16)
+- Axis 5b (ebd82cb, seq 16): preference reliability frontend — `PreferencePanel.tsx` renders 적용 N회 · 교정 M회 from live `reliability_stats`; `api/client.ts` adds optional `reliability_stats` field
+- Axis 6 (seq 21): auto-activation — `storage/preference_store.py` auto-activates `CANDIDATE` preferences to `ACTIVE` when `cross_session_count >= 3`, while leaving other lifecycle states unchanged
+
+### Milestone 14: Personalization Integrity and Trace Quality Integration
+- keep personalization infrastructure consistent across local storage backends before adding user-visible memory expansion
+- integrate trace quality and preference lifecycle surfaces only after backend parity is truthful
+- keep cross-session preference handling bounded to reviewed evidence and existing lifecycle states
+
+#### Guardrails
+- backend parity comes before user-visible expansion
+- no user-level memory widening in this milestone definition
+- SQLite and JSON preference lifecycle behavior must not diverge on activation thresholds
+
+#### Shipped Infrastructure (Axis 1, 2026-04-23)
+- Axis 1 (seq 24): SQLite preference auto-activation parity — `storage/sqlite_store.py` `SQLitePreferenceStore` increments `cross_session_count` for new reviewed-candidate source refs and auto-activates `CANDIDATE` preferences when `cross_session_count >= 3`, matching JSON-backed `PreferenceStore` while leaving `ACTIVE`, `REJECTED`, and `PAUSED` statuses unchanged
+- Axis 2 (seq 27): quality integration — `core/delta_analysis.py` exports `is_high_quality()`; `storage/preference_store.py` stores `avg_similarity_score` during `promote_from_corrections`; `list_preferences_payload` enriches with `quality_info`; `PreferencePanel.tsx` displays 고품질 badge
+- Axis 3 (seq 30): review queue quality integration — `serializers.py` `_build_review_queue_items` enriches each item with `quality_info`; `ReviewQueueItem` type added to `client.ts`; `ChatArea.tsx` shows 고품질 N건 count in review badge
+
+### Milestone 15: Personalization Stability and Review Surface Expansion
+- stabilize quality data foundation across all storage backends before UI expansion
+- Axis 1, 2, 3 ordered: backend parity → smoke coverage → review queue UX
+
+#### Guardrails
+- no user-level memory widening
+- SQLite and JSON preference quality behavior must not diverge
+
+#### Shipped Infrastructure (Axis 1, 2026-04-23)
+- Axis 1 (seq 33): SQLite quality parity — `record_reviewed_candidate_preference` accepts `avg_similarity_score` in both JSON and SQLite backends; `aggregate.py` computes score from `correction_store` before accept; `quality_info` now populated for reviewed-candidate preferences
+- Axis 2 (seq 37): quality integration smoke tests — `web-smoke.spec.mjs` gains two targeted scenarios verifying `quality_info` shape in review queue items (API contract) and `quality-count` badge visibility (browser DOM, conditional on mock correction score range)
+- Axis 3 (seq 40): review queue list UI — `ReviewQueuePanel.tsx` renders individual items with statement, 고품질 badge, and accept/defer/reject actions; `Sidebar.tsx` includes panel above `PreferencePanel`; `ChatArea` review badge becomes clickable button (`data-testid="review-queue-badge"`); `postCandidateReview` extended with `candidate_id` + `candidate_updated_at`; smoke test confirms badge click → panel → accept flow
+
+### Milestone 16: Review Evidence Enrichment and Decision Clarity
+- make review candidates easier to judge before broader preference management work
+- keep enrichment read-only until the user explicitly accepts/defer/rejects a candidate
+- Axis 1, 2, 3 ordered: correction evidence → source/effect context → targeted regression guard
+
+#### Guardrails
+- no user-level memory widening
+- no automatic preference status changes from evidence display alone
+- review queue enrichment must stay compact and local to existing candidate evidence
+
+#### Shipped Infrastructure (Axes 1–3, 2026-04-23)
+- Axis 1 (seq 43): review evidence enrichment — expose compact `delta_summary` on each `review_queue_items[]` entry and render a single-line correction pattern in `ReviewQueuePanel`
+- Axis 2 (seq 44): UI resilience — `handleCandidateReview` in `App.tsx` surfaces review action errors via `addToast("error", ...)`, matching the existing handler pattern
+- Axis 3 (seq 47): integrity consolidation — `OllamaModelAdapter` caches `list_models()` result; `_routed_model` degrades gracefully through HEAVY→MEDIUM→LIGHT when target model unavailable; `vite.config.ts` outputs fixed-name assets (`index.js`/`index.css`); full smoke gate confirmed passing (139 tests)
+
+### Milestone 17: Personalization Refinement — Editing and Evidence Detail
+- transition from fixed observation to active user control of preference wording
+- Axis 1, 2, 3 ordered: statement editing → evidence detail view → release stabilization
+
+#### Guardrails
+- no new backend API routes (reuse `/api/candidate-review` with optional statement payload)
+- no user-level memory widening beyond current preference lifecycle
+- edit path only affects description/statement, not fingerprint or lifecycle
+
+#### Shipped Infrastructure (Axes 1-3, 2026-04-23)
+- Axis 1 (seq 50): inline statement editing in `ReviewQueuePanel`; `aggregate.py` uses `statement_override` when provided; `postCandidateReview` extended with optional statement param; smoke test confirms edited text appears in preference
+- Axis 2 (seq 54): detailed evidence view — `serializers.py` `_build_review_queue_items` adds `original_snippet` / `corrected_snippet` (≤400 chars) from the first correction with both source and corrected text; `ReviewQueueItem` carries the fields; `ReviewQueuePanel` adds `상세 보기` / `접기` to compare original and corrected snippets without rich diff styling
+- Axis 3 (seq 55, verify lane): release stabilization — full `make e2e-test` smoke gate confirmed **141 passed** (20.2m) on 2026-04-23; includes all M17 Axis 1-2 scenarios; branch `feat/watcher-turn-state` is release-ready pending operator PR merge approval
+
+- **Milestone 17 closed** (Axes 1–3): review statement editing, evidence detail view, and release gate complete
+
+### Milestone 18: Cross-Session Signal Infrastructure
+- establish SQLite correction store parity as the foundation for efficient cross-session recurrence discovery
+- Axis 1, 2, 3 ordered: SQLite correction store → SQL recurrence indexing → review queue global candidates
+
+#### Guardrails
+- no user-visible feature changes in Axis 1 (backend-only)
+- JSON CorrectionStore remains the default until explicit SQLite backend switch
+- migration is additive (INSERT OR IGNORE) and safe to re-run
+
+#### Shipped Infrastructure (Axes 1-3, 2026-04-23)
+- Axis 1 (seq 60): SQLiteCorrectionStore — `record_correction`, `get`, `find_by_fingerprint`, `find_by_artifact`, `find_by_session`, `list_recent`; corrections table schema already existed; `migrate_json_to_sqlite` updated to migrate 8,000+ correction JSON files
+- Axis 2 (seq 63): SQL recurrence indexing & server wiring — `SQLiteCorrectionStore.find_recurring_patterns()` uses `GROUP BY delta_fingerprint HAVING COUNT(*) >= 2`; `app/web.py` sqlite branch wires `SQLiteCorrectionStore(db)` replacing JSON fallback
+- Axis 3 (seq 66): global candidate review UI — `_build_review_queue_items` appends cross-session recurring patterns not yet in `PreferenceStore` as `is_global=True` `ReviewQueueItem`s; `ReviewQueuePanel` shows `범용` badge; `submit_candidate_review` handles `source_message_id="global"` path; smoke test verifies `is_global` field presence
+
+- **Milestone 18 closed** (Axes 1–3): SQLite correction store parity, SQL recurrence indexing + server wiring, global candidate review UI complete
+
+### Milestone 19: Durable Preference Depth and Interaction Integrity
+- stabilize and enrich the lifecycle of learned personalization rules
+- Axis 1, 2, 3 ordered: evidence persistence → discovery integrity → post-learning refinement
+
+#### Guardrails
+- no user-level memory widening beyond current preference lifecycle
+- snippets are read-only display; no fingerprint or lifecycle changes
+
+#### Shipped Infrastructure (Axes 1-3, 2026-04-23)
+- Axis 1 (seq 69): preference evidence persistence — `promote_from_corrections` and `record_reviewed_candidate_preference` store `original_snippet` / `corrected_snippet` (≤400 chars) from source corrections; `aggregate.py` passes snippets on accept; `PreferenceRecord` type updated; `PreferencePanel.tsx` adds `상세 보기` / `접기` toggle
+- Axis 2 (seq 72): discovery integrity guards — `find_recurring_patterns()` global path uses `COUNT(DISTINCT session_id) >= 2`; `_build_review_queue_items` deduplicates global candidates by statement against preference descriptions and session-local items; global candidates get real `quality_info` from corrections; global accept path respects `statement_override`
+- Axis 3 (seq 75): durable preference editing — `update_description()` in JSON and SQLite stores; `POST /api/preferences/update-description` endpoint; `PreferencePanel.tsx` inline edit mode (`편집`, textarea, `저장` / `취소`); M19 milestone closed
+
+- **Milestone 19 closed** (Axes 1–3): evidence persistence, discovery integrity, and post-learning refinement complete
+
+### Milestone 20: Personalization Scaling and Conflict Integrity
+- transition the system into a production-ready, high-performance state
+- Axis 1, 2, 3 ordered: SQLite default + migration → conflict detection → release consolidation
+
+#### Guardrails
+- JSON backend preserved via `LOCAL_AI_STORAGE_BACKEND=json` env override
+- migration is idempotent (`INSERT OR IGNORE`); startup migration never blocks server
+
+#### Shipped Infrastructure (Axis 1, 2026-04-23)
+- Axis 1 (seq 78): SQLite default — `config/settings.py` default changed to `"sqlite"`; `app/web.py` sqlite branch conditionally runs `migrate_json_to_sqlite` for corrections on first startup; migration idempotency verified by test
 
 ## Next 3 Implementation Priorities
 

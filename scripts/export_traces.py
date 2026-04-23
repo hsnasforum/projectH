@@ -8,16 +8,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core.delta_analysis import compute_correction_delta
+from core.delta_analysis import is_high_quality as _is_high_quality
 from storage.preference_store import PreferenceStore
 from storage.session_store import SessionStore
 
 ALL_PATH = Path("data/all_traces.jsonl")
 HQ_PATH = Path("data/high_quality_traces.jsonl")
 PREF_PATH = Path("data/preference_assets.jsonl")
-
-
-def _is_high_quality(similarity_score: float) -> bool:
-    return 0.05 <= similarity_score <= 0.98
 
 
 def main() -> None:

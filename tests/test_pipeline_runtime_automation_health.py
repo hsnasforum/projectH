@@ -238,6 +238,23 @@ class PipelineRuntimeAutomationHealthTest(unittest.TestCase):
         self.assertEqual(health["automation_reason_code"], PR_MERGE_GATE_REASON)
         self.assertEqual(health["automation_next_action"], "pr_boundary")
 
+    def test_pr_merge_gate_backlog_routes_to_verify_followup_attention(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "autonomy": {
+                    "mode": "triage",
+                    "reason_code": PR_MERGE_GATE_REASON,
+                    "operator_policy": "internal_only",
+                    "decision_class": "merge_gate",
+                },
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "attention")
+        self.assertEqual(health["automation_reason_code"], PR_MERGE_GATE_REASON)
+        self.assertEqual(health["automation_next_action"], "verify_followup")
+
     def test_recovery_exhaustion_requires_operator(self) -> None:
         health = derive_automation_health(
             {

@@ -100,12 +100,22 @@ export async function postCorrection(
 export async function postCandidateReview(
   sessionId: string,
   messageId: string,
+  candidateId: string,
+  candidateUpdatedAt: string,
   action: "accept" | "reject" | "defer",
+  statement?: string,
 ): Promise<void> {
   await fetch(`${BASE}/api/candidate-review`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId, message_id: messageId, review_action: action }),
+    body: JSON.stringify({
+      session_id: sessionId,
+      message_id: messageId,
+      candidate_id: candidateId,
+      candidate_updated_at: candidateUpdatedAt,
+      review_action: action,
+      ...(statement !== undefined ? { statement } : {}),
+    }),
   });
 }
 
@@ -200,6 +210,10 @@ export interface PreferenceRecord {
     applied_count?: number | null;
     corrected_count?: number | null;
   } | null;
+  quality_info?: {
+    avg_similarity_score: number | null;
+    is_high_quality: boolean | null;
+  } | null;
   activated_at: string | null;
   created_at: string;
   updated_at: string;
@@ -208,6 +222,40 @@ export interface PreferenceRecord {
     removals?: string[];
     replacements?: Array<{ from: string; to: string }>;
   };
+  original_snippet?: string | null;
+  corrected_snippet?: string | null;
+}
+
+export interface ReviewQueueItem {
+  item_type: string;
+  candidate_id: string;
+  candidate_scope: string;
+  candidate_family: string;
+  statement: string;
+  derived_from: Record<string, unknown>;
+  derived_at: string;
+  promotion_basis: string;
+  promotion_eligibility: string;
+  artifact_id: string;
+  source_message_id: string;
+  supporting_artifact_ids: string[];
+  supporting_source_message_ids: string[];
+  supporting_signal_refs: Record<string, unknown>[];
+  supporting_confirmation_refs: Record<string, unknown>[];
+  created_at: string;
+  updated_at: string;
+  quality_info: {
+    avg_similarity_score: number | null;
+    is_high_quality: boolean | null;
+  } | null;
+  delta_summary?: {
+    additions?: string[];
+    removals?: string[];
+    replacements?: Array<{ from: string; to: string }>;
+  } | null;
+  original_snippet?: string | null;
+  corrected_snippet?: string | null;
+  is_global?: boolean | null;
 }
 
 export interface PreferencesPayload {
@@ -245,6 +293,18 @@ export async function rejectPreference(preferenceId: string): Promise<{ ok: bool
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ preference_id: preferenceId }),
+  });
+  return res.json();
+}
+
+export async function updatePreferenceDescription(
+  preferenceId: string,
+  description: string,
+): Promise<{ ok: boolean; preference: PreferenceRecord }> {
+  const res = await fetch(`${BASE}/api/preferences/update-description`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ preference_id: preferenceId, description }),
   });
   return res.json();
 }

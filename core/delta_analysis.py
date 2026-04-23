@@ -62,6 +62,11 @@ def compute_correction_delta(
     )
 
 
+def is_high_quality(similarity_score: float) -> bool:
+    """Return True for correction deltas in the meaningful edit range."""
+    return 0.05 <= similarity_score <= 0.98
+
+
 def _compute_fingerprint(segments: list[dict[str, str]]) -> str:
     """SHA-256 fingerprint. Must match web.py exactly."""
     payload = json.dumps(

@@ -5724,6 +5724,7 @@ class WebAppServiceTest(unittest.TestCase):
                         ],
                         "created_at": payload["candidate_confirmation_record"]["recorded_at"],
                         "updated_at": payload["candidate_confirmation_record"]["recorded_at"],
+                        "quality_info": payload["session"]["review_queue_items"][0]["quality_info"],
                     }
                 ],
             )
@@ -5979,6 +5980,8 @@ class WebAppServiceTest(unittest.TestCase):
                 sessions_dir=str(tmp_path / "sessions"),
                 task_log_path=str(tmp_path / "task_log.jsonl"),
                 notes_dir=str(tmp_path / "notes"),
+                artifacts_dir=str(tmp_path / "artifacts"),
+                corrections_dir=str(tmp_path / "corrections"),
                 preferences_dir=str(tmp_path / "preferences"),
                 model_provider="mock",
             )
@@ -12943,6 +12946,23 @@ class WebAppServiceTest(unittest.TestCase):
                         "provider": "ollama",
                     }
                 )
+
+    def test_build_model_router_uses_request_provider_not_default_settings_only(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            settings = AppSettings(
+                sessions_dir=str(Path(tmp_dir) / "sessions"),
+                task_log_path=str(Path(tmp_dir) / "task_log.jsonl"),
+                notes_dir=str(Path(tmp_dir) / "notes"),
+                model_provider="mock",
+                ollama_model="",
+            )
+            service = WebAppService(settings=settings)
+
+            router = service._build_model_router(provider="ollama")
+
+            self.assertIsNotNone(router)
+            self.assertEqual(router.heavy, "qwen2.5:14b")
+            self.assertIsNone(service._build_model_router(provider="mock"))
 
     def test_handle_chat_localizes_ollama_unreachable_error(self) -> None:
         with TemporaryDirectory() as tmp_dir:

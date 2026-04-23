@@ -49,16 +49,31 @@ class WebAppService(ChatHandlerMixin, AggregateHandlerMixin, FeedbackHandlerMixi
         if settings.storage_backend == "sqlite":
             from storage.sqlite_store import (
                 SQLiteDatabase, SQLiteSessionStore, SQLiteTaskLogger,
-                SQLiteArtifactStore, SQLitePreferenceStore,
+                SQLiteArtifactStore, SQLitePreferenceStore, SQLiteCorrectionStore,
             )
             db = SQLiteDatabase(db_path=settings.sqlite_db_path)
             self.session_store = SQLiteSessionStore(db)  # type: ignore[assignment]
             self.task_logger = SQLiteTaskLogger(db)  # type: ignore[assignment]
             self.artifact_store = SQLiteArtifactStore(db)  # type: ignore[assignment]
             self.preference_store = SQLitePreferenceStore(db)  # type: ignore[assignment]
-            # Correction store stays JSON for now (complex lifecycle)
-            from storage.correction_store import CorrectionStore
-            self.correction_store = CorrectionStore(base_dir=settings.corrections_dir)
+            self.correction_store = SQLiteCorrectionStore(db)  # type: ignore[assignment]
+            try:
+                correction_count = db.fetchone(
+                    "SELECT COUNT(*) as cnt FROM corrections", ()
+                )
+                if (correction_count or {}).get("cnt", 0) == 0:
+                    corrections_path = Path(settings.corrections_dir)
+                    if corrections_path.is_dir() and any(corrections_path.glob("*.json")):
+                        from storage.sqlite_store import migrate_json_to_sqlite
+                        migrate_json_to_sqlite(
+                            corrections_dir=str(corrections_path),
+                            sessions_dir=None,
+                            artifacts_dir=None,
+                            preferences_dir=None,
+                            db_path=settings.sqlite_db_path,
+                        )
+            except Exception:
+                pass
         else:
             self.session_store = SessionStore(base_dir=settings.sessions_dir)
             self.task_logger = TaskLogger(path=settings.task_log_path)
@@ -317,6 +332,7 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             "/api/preferences/activate",
             "/api/preferences/pause",
             "/api/preferences/reject",
+            "/api/preferences/update-description",
             "/api/sessions/delete",
             "/api/sessions/delete-all",
         }:
@@ -388,6 +404,10 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/preferences/reject":
                 response = self.server.service.reject_preference(payload)
+                self._send_json(HTTPStatus.OK, response)
+                return
+            if parsed.path == "/api/preferences/update-description":
+                response = self.server.service.update_preference_description(payload)
                 self._send_json(HTTPStatus.OK, response)
                 return
             if parsed.path == "/api/sessions/delete":

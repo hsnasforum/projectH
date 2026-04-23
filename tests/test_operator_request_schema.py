@@ -271,7 +271,7 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
         self.assertEqual(decision["decision_class"], "release_gate")
         self.assertFalse(decision["operator_eligible"])
 
-    def test_pr_merge_gate_stays_operator_visible_without_gate_marker(self) -> None:
+    def test_pr_merge_gate_internal_only_routes_to_verify_followup_backlog(self) -> None:
         self.assertIn(PR_MERGE_GATE_REASON, SUPPORTED_REASON_CODES)
         self.assertIn("merge_gate", SUPPORTED_DECISION_CLASSES)
 
@@ -299,13 +299,15 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
             control_seq=1718,
         )
 
-        self.assertEqual(decision["mode"], "needs_operator")
-        self.assertEqual(decision["suppressed_mode"], "needs_operator")
-        self.assertEqual(decision["routed_to"], "operator")
+        self.assertEqual(decision["mode"], "triage")
+        self.assertEqual(decision["suppressed_mode"], "triage")
+        self.assertEqual(decision["routed_to"], "verify_followup")
         self.assertEqual(decision["operator_policy"], "internal_only")
         self.assertEqual(decision["decision_class"], "merge_gate")
         self.assertFalse(decision["operator_eligible"])
-        self.assertIsNone(marker)
+        self.assertIsNotNone(marker)
+        self.assertEqual(marker["reason"], PR_MERGE_GATE_REASON)
+        self.assertEqual(marker["routed_to"], "verify_followup")
 
     def test_pr_merge_gate_is_recoverable_after_referenced_pr_is_completed(self) -> None:
         marker = evaluate_stale_operator_control(

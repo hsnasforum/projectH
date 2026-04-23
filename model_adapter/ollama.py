@@ -33,6 +33,7 @@ class OllamaModelAdapter(ModelAdapter):
         self.model = model
         self.timeout_seconds = timeout_seconds
         self._active_model: str | None = None  # per-call override
+        self._cached_available_models: frozenset[str] | None = None
 
     # Models at or below this parameter threshold get simplified Korean-first prompts.
     _COMPACT_MODEL_PATTERNS = re.compile(
@@ -1045,7 +1046,17 @@ class OllamaModelAdapter(ModelAdapter):
         for item in models:
             if isinstance(item, dict) and isinstance(item.get("name"), str):
                 names.append(item["name"])
+        self._cached_available_models = frozenset(names)
         return names
+
+    def is_model_available(self, model_name: str) -> bool:
+        """Check local model availability using the cached model list."""
+        if self._cached_available_models is None:
+            try:
+                self.list_models()
+            except Exception:
+                return True
+        return model_name in (self._cached_available_models or frozenset())
 
     def health_check(self) -> ModelRuntimeStatus:
         version_payload = self._request_json("GET", "/api/version")

@@ -1,6 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
 import type { PreferenceRecord } from "../api/client";
-import { fetchPreferences, activatePreference, pausePreference, rejectPreference } from "../api/client";
+import {
+  fetchPreferences,
+  activatePreference,
+  pausePreference,
+  rejectPreference,
+  updatePreferenceDescription,
+} from "../api/client";
 
 const STATUS_LABELS: Record<string, string> = {
   candidate: "후보",
@@ -27,6 +33,8 @@ export default function PreferencePanel() {
   const [preferences, setPreferences] = useState<PreferenceRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(true);
+  const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+  const [editDescriptions, setEditDescriptions] = useState<Record<string, string | null>>({});
   const [fadingOut, setFadingOut] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
@@ -64,6 +72,23 @@ export default function PreferencePanel() {
       // silent
     }
   }, [load]);
+
+  const handleDescriptionSave = useCallback(async (id: string) => {
+    const draft = editDescriptions[id];
+    const description = draft?.trim();
+    if (!description) return;
+    try {
+      await updatePreferenceDescription(id, description);
+      setEditDescriptions((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      await load();
+    } catch {
+      // silent
+    }
+  }, [editDescriptions, load]);
 
   // Visible count for header
   const activeCount = preferences.filter((p) => p.status === "active").length;
@@ -117,6 +142,11 @@ export default function PreferencePanel() {
         <div className="max-h-[200px] overflow-y-auto space-y-1 mt-1 pr-0.5">
           {preferences.map((pref) => {
             const reliability = preferenceReliabilityCounts(pref);
+            const isHighQuality = pref.quality_info?.is_high_quality === true;
+            const hasEvidenceDetail = Boolean(pref.original_snippet && pref.corrected_snippet);
+            const isDetailExpanded = expandedItems.has(pref.preference_id);
+            const isDescriptionEditing = editDescriptions[pref.preference_id] !== undefined;
+            const descriptionDraft = editDescriptions[pref.preference_id] ?? pref.description;
             return (
               <div
                 key={pref.preference_id}
@@ -136,13 +166,74 @@ export default function PreferencePanel() {
                 </div>
 
                 {/* Description */}
-                <p className="text-[11px] text-sidebar-text/80 leading-snug mb-1 line-clamp-2">
-                  {pref.description}
-                </p>
+                {isDescriptionEditing ? (
+                  <div className="mb-1.5 space-y-1">
+                    <textarea
+                      data-testid="pref-description-textarea"
+                      className="min-h-[72px] w-full resize-none rounded border border-white/10 bg-sidebar px-2 py-1.5 text-[12px] leading-snug text-sidebar-text outline-none focus:border-sky-300/60"
+                      rows={3}
+                      value={descriptionDraft}
+                      onChange={(event) =>
+                        setEditDescriptions((prev) => ({
+                          ...prev,
+                          [pref.preference_id]: event.target.value,
+                        }))
+                      }
+                    />
+                    <div className="flex gap-1.5">
+                      <button
+                        data-testid="pref-description-save"
+                        className="rounded bg-sky-500/15 px-2 py-1 text-[11px] font-medium text-sky-300 transition-colors hover:bg-sky-500/25 disabled:cursor-not-allowed disabled:opacity-40"
+                        disabled={!descriptionDraft.trim()}
+                        onClick={() => handleDescriptionSave(pref.preference_id)}
+                      >
+                        저장
+                      </button>
+                      <button
+                        data-testid="pref-description-cancel"
+                        className="rounded bg-white/5 px-2 py-1 text-[11px] font-medium text-sidebar-muted transition-colors hover:bg-white/10 hover:text-sidebar-text"
+                        onClick={() =>
+                          setEditDescriptions((prev) => {
+                            const next = { ...prev };
+                            delete next[pref.preference_id];
+                            return next;
+                          })
+                        }
+                      >
+                        취소
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-sidebar-text/80 leading-snug mb-1 line-clamp-2">
+                    {pref.description}
+                    {isHighQuality && (
+                      <span className="ml-1 inline-flex items-center rounded-full bg-sky-500/15 px-1 py-0.5 text-[9px] font-semibold text-sky-300">
+                        고품질
+                      </span>
+                    )}
+                  </p>
+                )}
 
-                <p className="text-[9px] text-sidebar-muted/50 mb-1 line-clamp-1">
-                  적용 {reliability.applied}회 · 교정 {reliability.corrected}회
-                </p>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <p className="min-w-0 text-[9px] text-sidebar-muted/50 line-clamp-1">
+                    적용 {reliability.applied}회 · 교정 {reliability.corrected}회
+                  </p>
+                  {!isDescriptionEditing && (
+                    <button
+                      data-testid="pref-edit-description"
+                      className="shrink-0 text-[11px] font-medium text-sky-300 transition-colors hover:text-sky-200 hover:underline"
+                      onClick={() =>
+                        setEditDescriptions((prev) => ({
+                          ...prev,
+                          [pref.preference_id]: pref.description,
+                        }))
+                      }
+                    >
+                      편집
+                    </button>
+                  )}
+                </div>
 
                 {/* Promotion reason (delta summary) */}
                 {pref.delta_summary && (
@@ -156,6 +247,42 @@ export default function PreferencePanel() {
                           : `${pref.cross_session_count}개 세션에서 반복 감지`
                     }
                   </p>
+                )}
+
+                {hasEvidenceDetail && (
+                  <button
+                    data-testid="pref-detail-toggle"
+                    className="mb-1.5 text-[11px] font-medium text-sky-300 transition-colors hover:text-sky-200 hover:underline"
+                    onClick={() =>
+                      setExpandedItems((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(pref.preference_id)) {
+                          next.delete(pref.preference_id);
+                        } else {
+                          next.add(pref.preference_id);
+                        }
+                        return next;
+                      })
+                    }
+                  >
+                    {isDetailExpanded ? "접기" : "상세 보기"}
+                  </button>
+                )}
+                {hasEvidenceDetail && isDetailExpanded && (
+                  <div className="mb-2 space-y-1 text-[11px] leading-snug">
+                    <div>
+                      <p className="mb-0.5 font-medium text-sidebar-muted">원문</p>
+                      <p className="whitespace-pre-wrap break-words rounded bg-red-500/10 p-1.5 text-red-200">
+                        {pref.original_snippet}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="mb-0.5 font-medium text-sidebar-muted">교정</p>
+                      <p className="whitespace-pre-wrap break-words rounded bg-emerald-500/10 p-1.5 text-emerald-200">
+                        {pref.corrected_snippet}
+                      </p>
+                    </div>
+                  </div>
                 )}
 
                 {/* Compact actions */}

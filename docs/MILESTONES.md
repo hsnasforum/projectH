@@ -655,9 +655,9 @@
 
 ## Next 3 Implementation Priorities
 
-1. Keep the shipped read-only `reviewed_memory_boundary_draft` draft-only and do not widen it into readiness tracking or cross-session scope. The rollback / disable / conflict / operator-audit contracts and the reviewed-memory apply path are now shipped; boundary draft stays separate from apply result.
-2. Keep merge-helper reopen, broader save-history replay, durable-candidate application, user-level memory, and broader operator work in later slices until the recurrence boundary and review boundary both stay small and non-confusing. (`reject`, `defer`, `edit`, and the basic `suggested_scope` field are now shipped.)
-3. The reviewed-memory apply result, stop-apply (`future_reviewed_memory_stop_apply`), reversal (`future_reviewed_memory_reversal`), and conflict visibility (`future_reviewed_memory_conflict_visibility`) are now all implemented: after the effect is reversed (`record_stage = reversed`), the aggregate card shows a `충돌 확인` button; clicking it creates a separate conflict-visibility transition record with `transition_action = future_reviewed_memory_conflict_visibility`, `record_stage = conflict_visibility_checked`, evaluated `conflict_entries` and `conflict_entry_count`, and `source_apply_transition_ref` linking back to the original apply record; the conflict visibility record is separate from the apply transition record and does not mutate it; aggregate identity, supporting refs, and contracts are retained. Keep repeated-signal promotion, broader durable promotion, and cross-session counting later than the now-shipped conflict visibility.
+1. **Global candidate E2E test isolation**: cross-session fingerprint collisions in smoke tests are currently prevented by fixture-level uniqueness conventions. A temp-DB-per-test-run isolation mechanism would eliminate this class of flakiness permanently.
+2. **PR #32 merge**: feat/watcher-turn-state (M20 Axis 2 – M22 Axes 1–3) is open and awaiting operator merge approval. No local implementation work is blocked by this, but shipped features become part of main only after merge.
+3. **Next milestone direction**: M20–M23 closed the correction lifecycle, preference lifecycle, and global-candidate review loop. The next milestone should be defined via advisory to choose between test infrastructure improvements, new user-facing features, or further storage consolidation.
 
 ## Do Not Pull Forward
 

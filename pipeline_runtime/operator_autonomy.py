@@ -17,10 +17,12 @@ OPERATOR_SUPPRESS_WINDOW_SEC = 24 * 60 * 60
 OPERATOR_APPROVAL_COMPLETED_REASON = "operator_approval_completed"
 COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON = "commit_push_bundle_authorization"
 PR_CREATION_GATE_REASON = "pr_creation_gate"
+PR_MERGE_GATE_REASON = "pr_merge_gate"
 PUBLICATION_BOUNDARY_REASON_CODES = frozenset({
     "pr_boundary",
     "publication_boundary",
     "external_publication_boundary",
+    PR_MERGE_GATE_REASON,
 })
 
 _SPACE_RE = re.compile(r"\s+")
@@ -64,6 +66,9 @@ _VOLATILE_CONTROL_LINE_RE = re.compile(
     r"\b\s*:?.*$"
 )
 _WORK_PATH_RE = re.compile(r"(work/\d+/\d+/[^\s`]+\.md)")
+_PR_NUMBER_RE = re.compile(
+    r"(?i)(?:\bPR\s*#\s*|/pull/)([1-9][0-9]*)\b"
+)
 _CHOICE_INTENT_MARKERS = (
     "choose",
     "pick",
@@ -184,6 +189,7 @@ SUPPORTED_DECISION_CLASSES: frozenset[str] = frozenset(
         "next_slice_selection",
         "internal_only",
         "release_gate",
+        "merge_gate",
         "truth_sync_scope",
         "red_test_family_scope_decision",
     }
@@ -375,11 +381,39 @@ def referenced_operator_work_paths(
     )
 
 
+def referenced_operator_pr_numbers(
+    control_text: object,
+    control_meta: Mapping[str, Any] | None = None,
+) -> list[int]:
+    """Return PR numbers referenced by an operator control."""
+    meta = _normalize_meta(control_meta)
+    text = _raw_text(
+        [
+            meta.get("decision_required"),
+            control_text,
+        ]
+    )
+    numbers: list[int] = []
+    seen: set[int] = set()
+    for match in _PR_NUMBER_RE.finditer(text):
+        try:
+            number = int(match.group(1))
+        except (TypeError, ValueError):
+            continue
+        if number <= 0 or number in seen:
+            continue
+        numbers.append(number)
+        seen.add(number)
+    return numbers
+
+
 def evaluate_stale_operator_control(
     *,
     control_text: object,
     control_meta: Mapping[str, Any] | None,
     verified_work_paths: Iterable[object],
+    completed_pr_numbers: Iterable[object] = (),
+    mismatched_pr_numbers: Iterable[object] = (),
     control_file: str,
     control_seq: int,
     normalize_path: Callable[[object], str] | None = None,
@@ -406,6 +440,43 @@ def evaluate_stale_operator_control(
             "reason": OPERATOR_APPROVAL_COMPLETED_REASON,
             "resolved_work_paths": [],
         }
+
+    completed_prs: set[int] = set()
+    for value in completed_pr_numbers:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            completed_prs.add(number)
+    mismatched_prs: set[int] = set()
+    for value in mismatched_pr_numbers:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            mismatched_prs.add(number)
+    if normalize_reason_code(meta.get("reason_code")) == PR_MERGE_GATE_REASON and (completed_prs or mismatched_prs):
+        referenced_prs = referenced_operator_pr_numbers(control_text, meta)
+        resolved_prs = [number for number in referenced_prs if number in completed_prs]
+        if resolved_prs:
+            return {
+                "control_file": control_file,
+                "control_seq": control_seq,
+                "reason": "pr_merge_completed",
+                "resolved_work_paths": [],
+                "resolved_pr_numbers": resolved_prs,
+            }
+        mismatched = [number for number in referenced_prs if number in mismatched_prs]
+        if mismatched:
+            return {
+                "control_file": control_file,
+                "control_seq": control_seq,
+                "reason": "pr_merge_head_mismatch",
+                "resolved_work_paths": [],
+                "resolved_pr_numbers": mismatched,
+            }
 
     referenced_work_paths = referenced_operator_work_paths(
         control_text,
@@ -463,6 +534,10 @@ def operator_gate_marker_from_decision(
     fingerprint: str | None = None,
 ) -> dict[str, object] | None:
     """Return the shared watcher/supervisor marker for a gated operator stop."""
+    routed_to = str(decision.get("routed_to") or "")
+    mode = str(decision.get("suppressed_mode") or decision.get("mode") or "")
+    if routed_to == "operator" or mode == "needs_operator":
+        return None
     if bool(decision.get("operator_eligible")):
         return None
     return {

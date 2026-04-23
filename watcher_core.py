@@ -79,6 +79,7 @@ from pipeline_runtime.operator_autonomy import (
     normalize_reason_code,
     operator_gate_marker_from_decision,
 )
+from pipeline_runtime.pr_merge_state import PrMergeStatusCache
 from pipeline_runtime.role_routes import (
     ADVISORY_RECOVERY_NOTIFY,
     VERIFY_FOLLOWUP_ROUTE,
@@ -1440,6 +1441,7 @@ class WatcherCore:
         self.runtime_role_owners = dict(self.runtime_adapter.get("role_owners") or {})
         self.runtime_prompt_owners = dict(self.runtime_adapter.get("prompt_owners") or self.runtime_role_owners)
         self.runtime_lane_configs = list(self.runtime_adapter.get("lane_configs") or [])
+        self._pr_merge_status_cache = PrMergeStatusCache()
 
         # rolling control slots (role-based canonical filenames; historical names are read-only aliases)
         implement_spec = control_slot_spec("implement_handoff")
@@ -2485,10 +2487,17 @@ class WatcherCore:
         except OSError:
             return None
         control_meta = read_control_meta(self.operator_request_path)
+        pr_merge_resolution = self._pr_merge_status_cache.control_resolution(
+            self.repo_root,
+            control_text,
+            control_meta,
+        )
         return evaluate_stale_operator_control(
             control_text=control_text,
             control_meta=control_meta,
             verified_work_paths=self._verified_work_paths(),
+            completed_pr_numbers=pr_merge_resolution.completed_pr_numbers,
+            mismatched_pr_numbers=pr_merge_resolution.head_mismatch_pr_numbers,
             control_file="operator_request.md",
             control_seq=self._read_control_seq_from_path(self.operator_request_path),
             normalize_path=self._normalize_artifact_path,

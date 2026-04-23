@@ -7,6 +7,7 @@ from pipeline_runtime.operator_autonomy import (
     COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
     PUBLICATION_BOUNDARY_REASON_CODES,
     PR_CREATION_GATE_REASON,
+    PR_MERGE_GATE_REASON,
     SUPPORTED_DECISION_CLASSES,
     SUPPORTED_OPERATOR_POLICIES,
     SUPPORTED_REASON_CODES,
@@ -268,6 +269,101 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
         self.assertEqual(decision["operator_policy"], "gate_24h")
         self.assertEqual(decision["decision_class"], "release_gate")
         self.assertFalse(decision["operator_eligible"])
+
+    def test_pr_merge_gate_stays_operator_visible_without_gate_marker(self) -> None:
+        self.assertIn(PR_MERGE_GATE_REASON, SUPPORTED_REASON_CODES)
+        self.assertIn("merge_gate", SUPPORTED_DECISION_CLASSES)
+
+        decision = classify_operator_candidate(
+            "STATUS: needs_operator\n"
+            f"REASON_CODE: {PR_MERGE_GATE_REASON}\n"
+            "OPERATOR_POLICY: internal_only\n"
+            "DECISION_CLASS: merge_gate\n"
+            "DECISION_REQUIRED: PR #27 merge approval\n",
+            control_meta={
+                "status": "needs_operator",
+                "reason_code": PR_MERGE_GATE_REASON,
+                "operator_policy": "internal_only",
+                "decision_class": "merge_gate",
+                "decision_required": "PR #27 merge approval",
+            },
+            idle_stable=True,
+            control_mtime=1_000.0,
+            now_ts=1_000.0,
+        )
+
+        marker = operator_gate_marker_from_decision(
+            decision,
+            control_file="operator_request.md",
+            control_seq=1718,
+        )
+
+        self.assertEqual(decision["mode"], "needs_operator")
+        self.assertEqual(decision["suppressed_mode"], "needs_operator")
+        self.assertEqual(decision["routed_to"], "operator")
+        self.assertEqual(decision["operator_policy"], "internal_only")
+        self.assertEqual(decision["decision_class"], "merge_gate")
+        self.assertFalse(decision["operator_eligible"])
+        self.assertIsNone(marker)
+
+    def test_pr_merge_gate_is_recoverable_after_referenced_pr_is_completed(self) -> None:
+        marker = evaluate_stale_operator_control(
+            control_text=(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 1721\n"
+                f"REASON_CODE: {PR_MERGE_GATE_REASON}\n"
+                "OPERATOR_POLICY: internal_only\n"
+                "DECISION_CLASS: merge_gate\n"
+                "DECISION_REQUIRED: PR #27 merge approval\n"
+                "PR #27: https://github.com/hsnasforum/projectH/pull/27\n"
+            ),
+            control_meta={
+                "status": "needs_operator",
+                "control_seq": 1721,
+                "reason_code": PR_MERGE_GATE_REASON,
+                "operator_policy": "internal_only",
+                "decision_class": "merge_gate",
+                "decision_required": "PR #27 merge approval",
+            },
+            verified_work_paths=[],
+            completed_pr_numbers=[27],
+            control_file="operator_request.md",
+            control_seq=1721,
+        )
+
+        self.assertIsNotNone(marker)
+        self.assertEqual(marker["reason"], "pr_merge_completed")
+        self.assertEqual(marker["resolved_pr_numbers"], [27])
+
+    def test_pr_merge_gate_head_mismatch_routes_to_recovery(self) -> None:
+        marker = evaluate_stale_operator_control(
+            control_text=(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 2\n"
+                f"REASON_CODE: {PR_MERGE_GATE_REASON}\n"
+                "OPERATOR_POLICY: internal_only\n"
+                "DECISION_CLASS: merge_gate\n"
+                "DECISION_REQUIRED: PR #27 merge approval\n"
+                "- HEAD: `77d1827`\n"
+                "PR #27: https://github.com/hsnasforum/projectH/pull/27\n"
+            ),
+            control_meta={
+                "status": "needs_operator",
+                "control_seq": 2,
+                "reason_code": PR_MERGE_GATE_REASON,
+                "operator_policy": "internal_only",
+                "decision_class": "merge_gate",
+                "decision_required": "PR #27 merge approval",
+            },
+            verified_work_paths=[],
+            mismatched_pr_numbers=[27],
+            control_file="operator_request.md",
+            control_seq=2,
+        )
+
+        self.assertIsNotNone(marker)
+        self.assertEqual(marker["reason"], "pr_merge_head_mismatch")
+        self.assertEqual(marker["resolved_pr_numbers"], [27])
 
     def test_external_publication_boundary_stays_operator_visible(self) -> None:
         for reason in PUBLICATION_BOUNDARY_REASON_CODES:

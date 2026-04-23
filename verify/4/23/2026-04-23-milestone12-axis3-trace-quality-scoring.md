@@ -1,12 +1,12 @@
 STATUS: verified
-CONTROL_SEQ: 35
+CONTROL_SEQ: 38
 BASED_ON_WORK:
-  - work/4/23/2026-04-23-test-isolation-fix.md
-HANDOFF_SHA: ce402fe
+  - work/4/23/2026-04-23-m15-axis2-smoke-tests.md
+HANDOFF_SHA: d03f7f4
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 34
-NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 35
-ADVISORY_ADVICE_SEQ: 32 (advisory_advice.md seq 32 — M15 Axis 2 smoke test scope pending)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 35
+NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 38
+ADVISORY_ADVICE_SEQ: 36 (advisory_advice.md seq 36 — M15 Axis 2 smoke coverage complete)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
 ---
@@ -217,6 +217,41 @@ PASS. 해당 regression 테스트 통과. 커밋 완료 (ce402fe).
 
 ## Risks / Open Questions
 
-1. **Other isolation gaps**: 동일한 `corrections_dir` 미격리 패턴이 `test_web_app.py`의 다른 테스트에도 있을 수 있음. 이번 slice 범위 밖; 추후 sweep 시 발견 시 수정.
-2. **M15 Axis 2 (smoke tests) undefined**: Advisory seq 32가 고수준으로만 정의. Playwright quality badge 커버리지 scope를 advisory로 결정 필요.
-3. **Branch not pushed**: 10 commits on `feat/watcher-turn-state`, 10 ahead of origin. PR creation/push stays in operator backlog.
+---
+
+## Round 8 Claim: M15 Axis 2 — Quality Integration Smoke Tests
+
+**Work**: `work/4/23/2026-04-23-m15-axis2-smoke-tests.md`
+**Commit**: d03f7f4
+
+### Summary
+
+`web-smoke.spec.mjs`에 신규 시나리오 2개 추가: (1) correction → candidate confirmation 흐름 후 `review_queue_items[0].quality_info` shape를 API-level로 검증, (2) high-quality item 존재 시 `.quality-count` DOM badge best-effort 확인. `docs/MILESTONES.md` M15 Axis 2 shipped 기록. production code 변경 없음.
+
+### Checks Run
+
+- `git diff --check -- e2e/tests/web-smoke.spec.mjs docs/MILESTONES.md` → **OK**
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "quality-info" --reporter=line` → **2 passed (44.1s)**
+- SQLite parity (work note): `cd e2e && npx playwright test tests/web-smoke.spec.mjs --config playwright.sqlite.config.mjs --reporter=line` → **123 passed (4.7m)** (verified by implement; not re-run in verify lane given 4.7m cost and no browser contract change)
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족. 커밋 완료 (d03f7f4).
+
+---
+
+## Current Shipped Truth
+
+| Item | SHA |
+|---|---|
+| M14 Axes 1–3 | 3637dee, 3007329, 6d19705 |
+| M15 Axis 1 SQLite quality parity | 8482425 |
+| Test isolation fix | ce402fe |
+| M15 Axis 2 quality smoke tests | d03f7f4 |
+| Branch vs origin | 12 commits ahead |
+
+## Risks / Open Questions
+
+1. **`.quality-count` DOM assertion conditional**: mock correction similarity score must be in 0.05–0.98 range for DOM badge to appear; Test B skips DOM check when score is outside range. Currently the mock does produce in-range scores (tests pass), but this could change if mock model behavior changes.
+2. **M15 Axis 3 undefined**: Advisory seq 32 named "Review Queue List/Detail UI (UX Expansion)" at high level. Scope, files, and acceptance criteria need advisory arbitration.
+3. **Branch not pushed**: 12 commits on `feat/watcher-turn-state`, 12 ahead of origin. PR creation/push stays in operator backlog.

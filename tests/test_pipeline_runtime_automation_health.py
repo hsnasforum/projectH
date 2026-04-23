@@ -11,6 +11,7 @@ from pipeline_runtime.operator_autonomy import (
     COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
     OPERATOR_APPROVAL_COMPLETED_REASON,
     PR_CREATION_GATE_REASON,
+    PR_MERGE_GATE_REASON,
 )
 
 
@@ -201,6 +202,41 @@ class PipelineRuntimeAutomationHealthTest(unittest.TestCase):
         self.assertEqual(health["automation_health"], "attention")
         self.assertEqual(health["automation_reason_code"], PR_CREATION_GATE_REASON)
         self.assertEqual(health["automation_next_action"], "verify_followup")
+
+    def test_pr_merge_completed_recovery_routes_to_verify_followup(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "autonomy": {
+                    "mode": "recovery",
+                    "reason_code": "pr_merge_completed",
+                    "operator_policy": "internal_only",
+                    "decision_class": "merge_gate",
+                },
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "recovering")
+        self.assertEqual(health["automation_reason_code"], "pr_merge_completed")
+        self.assertEqual(health["automation_next_action"], "verify_followup")
+
+    def test_pr_merge_gate_without_completion_stays_pr_boundary(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "control": {"active_control_status": "needs_operator"},
+                "autonomy": {
+                    "mode": "needs_operator",
+                    "reason_code": PR_MERGE_GATE_REASON,
+                    "operator_policy": "internal_only",
+                    "decision_class": "merge_gate",
+                },
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "needs_operator")
+        self.assertEqual(health["automation_reason_code"], PR_MERGE_GATE_REASON)
+        self.assertEqual(health["automation_next_action"], "pr_boundary")
 
     def test_recovery_exhaustion_requires_operator(self) -> None:
         health = derive_automation_health(

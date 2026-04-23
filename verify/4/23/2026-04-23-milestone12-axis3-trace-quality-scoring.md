@@ -1,56 +1,60 @@
 STATUS: verified
-CONTROL_SEQ: 14
-BASED_ON_WORK: work/4/23/2026-04-23-gui-automation-health-presenter.md
+CONTROL_SEQ: 16
+BASED_ON_WORK: work/4/23/2026-04-23-runtime-pr-merge-recovery-routing.md
 HANDOFF_SHA: pending-commit
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 13
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 14
 
-## Claim (seq 13 — GUI automation_health presenter)
+## Claim (seq 15 — runtime PR merge recovery routing)
 
-`pipeline_gui/home_presenter.py`:
-- `build_control_presentation()`: `automation_health` 파라미터 추가
-- `verify_activity` 있고 `automation_health != "needs_operator"`이면 compat operator slot보다 verify/recovery 표시 우선
-- 실제 `needs_operator` 상태에서는 operator wait red palette 유지
+`pipeline_runtime/automation_health.py`:
+- `VERIFY_FOLLOWUP_REASONS`에 `pr_merge_completed`, `pr_merge_head_mismatch` 추가 (+2 lines)
 
-`pipeline_gui/app.py`:
-- runtime snapshot의 `automation_health` 값을 `build_control_presentation()`에 전달
+`pipeline_runtime/supervisor.py`:
+- `_DUPLICATE_HANDOFF_BLOCK_REASONS` frozenset 추가 (handoff_already_completed / already_done / already_implemented)
+- `_surface_turn_state_for_stale_operator_control()`: stale operator control 해소 후 idle/operator-wait을 `VERIFY_FOLLOWUP` turn state로 노출
 
-`tests/test_pipeline_gui_home_presenter.py`:
-- `test_build_control_presentation_prefers_recovery_verify_over_compat_operator_slot`: head_mismatch recovery 중 verify activity 우선 검증
-- `test_build_control_presentation_keeps_real_operator_wait_red`: 실제 needs_operator 상태 유지 검증
+`watcher_core.py`:
+- `_operator_recovery_without_idle_marker()`: idle marker 없이 recoverable operator control 감지
+- `_operator_recovery_key()` / `_route_operator_recovery()`: 중복 recovery dispatch 방지
+
+**추가 발견 (work note 누락):**
+- `tests/test_pipeline_runtime_automation_health.py`: +36 lines — `pr_merge_completed` → verify_followup 검증, `pr_merge_gate` (미완료) → pr_boundary 유지 검증
+- `tests/test_pipeline_runtime_supervisor.py`: +156 lines — 새 supervisor 동작 검증 (stale task ignoring 등)
+- `tests/test_watcher_core.py`: +66 lines — watcher recovery routing 검증
 
 ## Checks Run
 
-- `python3 -m py_compile pipeline_gui/app.py pipeline_gui/home_presenter.py tests/test_pipeline_gui_home_presenter.py` → OK
-- `python3 -m unittest tests.test_pipeline_gui_home_presenter -v` → **20/20 OK**
-- `git diff --check -- pipeline_gui/app.py pipeline_gui/home_presenter.py tests/test_pipeline_gui_home_presenter.py` → OK
+- `python3 -m py_compile pipeline_runtime/automation_health.py pipeline_runtime/supervisor.py watcher_core.py` → OK
+- `python3 -m py_compile tests/test_pipeline_runtime_automation_health.py tests/test_pipeline_runtime_supervisor.py tests/test_watcher_core.py` → OK
+- `python3 -m unittest tests.test_pipeline_runtime_automation_health tests.test_pipeline_runtime_supervisor tests.test_watcher_core -v` → **358/358 OK**
+- `git diff --check -- pipeline_runtime/automation_health.py pipeline_runtime/supervisor.py watcher_core.py` → OK
+
+## Work Note Truth Gap
+
+작업 노트가 3개 테스트 파일(automation_health, supervisor, watcher_core)을 변경 파일 목록에서 누락했습니다. 333 tests 주장은 실제 358 tests로 정정됩니다.
 
 ## 이전 라운드 요약
 
-### seq 12 (8226cd7) — 이미 push 완료
-- `referenced_operator_pr_numbers()` structured field 우선 파싱
-- CONTROL_SEQ 8–9 `pr_merge_head_mismatch` 루프 근본 원인 수정
-- 357/357 tests
-
-### seq 5–6 + PR #28 merge
-- `PrMergeStatusCache` `pr_merge_completed` / `pr_merge_head_mismatch` recovery
-- PR #28 merged 2026-04-23T06:39:10Z → main 포함
-- `feat/watcher-turn-state` HEAD `3968fab` → main
+- PR #29 merged (seqs 12–13: parser fix + GUI automation-health presenter) → main 포함
+- seq 12: `referenced_operator_pr_numbers()` structured field 우선 파싱 (CONTROL_SEQ 8–9 루프 수정)
+- seq 13: `build_control_presentation()` automation_health 기반 표시
 
 ## 현재 브랜치 상태 (커밋 전)
 
-- `feat/watcher-turn-state` HEAD: `8226cd7` (origin 동기화)
-- main 대비: 1 커밋 ahead (`8226cd7`, seq 12)
-- **미커밋 (seq 13 범위)**: `pipeline_gui/app.py`, `pipeline_gui/home_presenter.py`, `tests/test_pipeline_gui_home_presenter.py`, `work/4/23/2026-04-23-gui-automation-health-presenter.md`
+- HEAD: `ca6333f` (PR #29 merge 이후, 이미 main에 포함)
+- **미커밋**: runtime 3파일 + test 3파일 + work note (seq 15 scope)
+- `latest_verify` `—` artifact 문제: 이전 라운드 deferred, 미해소
+- **Axis 5b (PreferencePanel.tsx)**: M13 Axis 5 백엔드 완료 후 대기 중인 프론트엔드 슬라이스
 
 ## Checks Not Run
 
-- Playwright E2E — 이번 변경이 Tk GUI presenter unit test 전용, browser-visible contract 미변경
-- Tk GUI 시각 확인 — unit test acceptance 범위 내에서 생략 (work note 명시)
+- live runtime restart / soak — 이번 변경이 unit test 전용 routing surface; 이전 라운드 기록 있음
+- Playwright E2E — browser-visible contract 미변경
 
 ## Risk / Open Questions
 
-1. **seq 13 미커밋**: GUI 3파일 + work note가 아직 커밋/푸시 안 됨. 이번 verify 라운드에서 커밋 예정.
-2. **새 PR 필요**: seq 12 + seq 13 커밋이 main에 없음. 이번 verify 라운드에서 draft PR 생성 예정.
-3. **`latest_verify` `—` artifact 문제**: 이전 라운드 deferred. 미해소.
-4. **Axis 5b (PreferencePanel.tsx)**: PR merge 후 별도 라운드. 미착수.
+1. **미커밋**: seq 15 파일들 이번 verify 라운드에서 커밋 예정.
+2. **새 PR 필요**: 커밋 이후 main 대비 새 커밋이 생김.
+3. **Axis 5b**: CONTROL_SEQ 16 implement_handoff → PreferencePanel.tsx에 reliability_stats 표시.
+4. **`latest_verify` artifact**: 계속 deferred.

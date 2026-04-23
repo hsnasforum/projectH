@@ -1517,6 +1517,7 @@ class WatcherCore:
         self._last_operator_retriage_sig: str = ""
         self._last_operator_retriage_fingerprint: str = ""
         self._operator_retriage_started_at: float = 0.0
+        self._last_operator_recovery_key: str = ""
         self._last_session_arbitration_draft_sig: str = self._get_path_sig(self.session_arbitration_draft_path)
         self._last_session_arbitration_fingerprint: str = ""
         self._session_arbitration_snapshot_fingerprints: dict[str, str] = {}
@@ -2683,6 +2684,97 @@ class WatcherCore:
         if stale is not None:
             return stale
         return self._idle_operator_retriage_marker()
+
+    # ------------------------------------------------------------------
+    def _operator_recovery_without_idle_marker(self) -> Optional[dict[str, object]]:
+        satisfied = self._satisfied_operator_approval_marker()
+        if satisfied is not None:
+            return satisfied
+        return self._stale_operator_control_marker()
+
+    # ------------------------------------------------------------------
+    def _operator_recovery_key(self, operator_sig: str, marker: dict[str, object]) -> str:
+        resolved_work = ",".join(str(item) for item in list(marker.get("resolved_work_paths") or []))
+        resolved_prs = ",".join(str(item) for item in list(marker.get("resolved_pr_numbers") or []))
+        return "|".join(
+            [
+                operator_sig,
+                str(marker.get("control_seq") or ""),
+                str(marker.get("reason") or ""),
+                resolved_work,
+                resolved_prs,
+            ]
+        )
+
+    # ------------------------------------------------------------------
+    def _route_operator_recovery(
+        self,
+        *,
+        operator_sig: str,
+        operator_path: Path,
+        status: str,
+        marker: dict[str, object],
+        source: str,
+    ) -> bool:
+        recovery_reason = str(marker.get("reason") or "verified_blockers_resolved")
+        control_seq = control_seq_value(marker.get("control_seq"), default=-1)
+        recovery_key = self._operator_recovery_key(operator_sig, marker)
+        if (
+            recovery_key
+            and recovery_key == self._last_operator_recovery_key
+            and self._current_turn_state == WatcherTurnState.VERIFY_FOLLOWUP
+            and control_seq == self._turn_active_control_seq
+        ):
+            return True
+        self._last_operator_recovery_key = recovery_key
+        if operator_sig:
+            self._last_operator_request_sig = operator_sig
+        log.info("operator request recoverable without operator action: verify follow-up resumes (%s)", recovery_reason)
+        self._clear_implement_blocked_state(recovery_reason)
+        self._transition_turn(
+            WatcherTurnState.VERIFY_FOLLOWUP,
+            recovery_reason,
+            active_control_file=operator_path.name,
+            active_control_seq=control_seq,
+        )
+        if recovery_reason == "operator_wait_idle_retriage":
+            self._mark_operator_retriage_started(operator_sig, marker)
+        recovery_event = self._record_operator_recovery_marker(
+            recovery_reason=recovery_reason,
+            status=status,
+            marker=marker,
+            source=source,
+        )
+        if recovery_reason == "operator_wait_idle_retriage":
+            self._notify_verify_operator_retriage(recovery_reason, marker)
+        else:
+            self._notify_verify_control_recovery(recovery_event, marker)
+        return True
+
+    # ------------------------------------------------------------------
+    def _check_operator_recovery_without_signal(self) -> bool:
+        active_control = self._get_active_control_signal()
+        operator_control = self._control_signal_for_slot(
+            active_control,
+            "operator_request",
+            "needs_operator",
+        )
+        if operator_control is None:
+            return False
+        if operator_control.control_seq < self._turn_active_control_seq:
+            return False
+        marker = self._operator_recovery_without_idle_marker()
+        if marker is None:
+            return False
+        operator_sig = operator_control.sig or self._get_path_sig(operator_control.path)
+        status = self._read_status_from_path(operator_control.path) or "missing"
+        return self._route_operator_recovery(
+            operator_sig=operator_sig,
+            operator_path=operator_control.path,
+            status=status,
+            marker=marker,
+            source="turn_signal",
+        )
 
     # ------------------------------------------------------------------
     def _path_mention(self, path: Optional[Path]) -> str:
@@ -4028,27 +4120,13 @@ class WatcherCore:
                 and operator_control.control_seq >= self._turn_active_control_seq
             ):
                 if operator_recovery is not None:
-                    recovery_reason = str(operator_recovery.get("reason") or "verified_blockers_resolved")
-                    log.info("operator request updated but recoverable: verify follow-up resumes (%s)", recovery_reason)
-                    self._clear_implement_blocked_state(recovery_reason)
-                    self._transition_turn(
-                        WatcherTurnState.VERIFY_FOLLOWUP,
-                        recovery_reason,
-                        active_control_file=operator_path.name,
-                        active_control_seq=operator_control.control_seq,
-                    )
-                    if recovery_reason == "operator_wait_idle_retriage":
-                        self._mark_operator_retriage_started(operator_sig, operator_recovery)
-                    recovery_event = self._record_operator_recovery_marker(
-                        recovery_reason=recovery_reason,
+                    self._route_operator_recovery(
+                        operator_sig=operator_sig,
+                        operator_path=operator_path,
                         status=status,
                         marker=operator_recovery,
                         source="turn_signal",
                     )
-                    if recovery_reason == "operator_wait_idle_retriage":
-                        self._notify_verify_operator_retriage(recovery_reason, operator_recovery)
-                    else:
-                        self._notify_verify_control_recovery(recovery_event, operator_recovery)
                     return
                 if operator_gate is not None:
                     gate_reason = str(operator_gate.get("reason") or "operator_candidate_pending")
@@ -4696,6 +4774,8 @@ class WatcherCore:
 
         # --- rolling handoff / operator 슬롯 감시 (verify → implement / operator 방향) ---
         self._check_pipeline_signal_updates()
+        if self._check_operator_recovery_without_signal():
+            return
         self._check_operator_wait_idle_timeout()
         if self._promote_operator_retriage_no_next_control():
             return

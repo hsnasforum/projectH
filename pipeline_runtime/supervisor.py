@@ -107,6 +107,11 @@ _WATCHER_SELF_RESTART_SOURCE_NAMES = (
     "pipeline_runtime/pr_merge_state.py",
     "pipeline_runtime/wrapper_events.py",
 )
+_DUPLICATE_HANDOFF_BLOCK_REASONS = frozenset({
+    "handoff_already_completed",
+    "already_done",
+    "already_implemented",
+})
 _WATCHER_SELF_RESTART_COOLDOWN_SEC = 10.0
 _SESSION_RECOVERY_RETRY_LIMIT = 1
 _SESSION_RECOVERY_RESET_STABLE_SEC = 300.0
@@ -559,6 +564,35 @@ class RuntimeSupervisor:
             is_legacy_alias=is_legacy_alias,
         )
 
+    def _surface_turn_state_for_stale_operator_control(
+        self,
+        turn_state: dict[str, Any] | None,
+        stale_operator_control: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if stale_operator_control is None:
+            return turn_state if isinstance(turn_state, dict) else None
+        current = dict(turn_state or {})
+        current_state = canonical_turn_state_name(
+            current.get("state"),
+            legacy_state=current.get("legacy_state"),
+        )
+        if current_state == "VERIFY_FOLLOWUP":
+            return current
+        if current_state not in {"OPERATOR_WAIT", "IDLE"}:
+            return current
+        control_seq = control_seq_value(stale_operator_control.get("control_seq"), default=-1)
+        control_file = str(stale_operator_control.get("control_file") or "operator_request.md")
+        return {
+            "state": "VERIFY_FOLLOWUP",
+            "legacy_state": "CODEX_FOLLOWUP",
+            "entered_at": float(current.get("entered_at") or time.time()),
+            "reason": str(stale_operator_control.get("reason") or "verified_blockers_resolved"),
+            "active_control_file": control_file,
+            "active_control_seq": control_seq,
+            "active_role": "verify",
+            "active_lane": self._prompt_owner("verify"),
+        }
+
     def _duplicate_control_marker(self, control: dict[str, Any]) -> dict[str, Any] | None:
         snapshot = active_control_snapshot_from_status(control)
         if str(snapshot.get("control_status") or "") != "implement":
@@ -589,7 +623,8 @@ class RuntimeSupervisor:
                 continue
             if not isinstance(entry, dict):
                 continue
-            if str(entry.get("blocked_reason") or "") != "handoff_already_completed":
+            blocked_reason = str(entry.get("blocked_reason") or "").strip().lower()
+            if blocked_reason not in _DUPLICATE_HANDOFF_BLOCK_REASONS:
                 continue
             if str(entry.get("path") or "") != str(control_path):
                 continue
@@ -1377,7 +1412,16 @@ class RuntimeSupervisor:
             lane_models[lane_name] = model
             accepted_task = dict(model.get("accepted_task") or {})
             done_task = dict(model.get("done_task") or {})
+            accepted_control_seq = control_seq_value(accepted_task.get("control_seq"), default=-1)
             has_accepted_task = bool(str(accepted_task.get("job_id") or ""))
+            if (
+                has_accepted_task
+                and lane_name == implement_owner
+                and control_status == "implement"
+                and active_control_seq >= 0
+                and 0 <= accepted_control_seq < active_control_seq
+            ):
+                has_accepted_task = False
             health = self.adapter.lane_health(lane_name) if enabled else {
                 "alive": False,
                 "pid": None,
@@ -1478,8 +1522,16 @@ class RuntimeSupervisor:
                             if note in {"", "prompt_visible"}:
                                 note = "implement"
                         else:
+                            model_control_seq = max(
+                                control_seq_value(seen_task.get("control_seq"), default=-1),
+                                control_seq_value(accepted_task.get("control_seq"), default=-1),
+                                control_seq_value(done_task.get("control_seq"), default=-1),
+                            )
                             state = model_state if model_state and model_state != "WORKING" else "READY"
-                            note = "signal_mismatch"
+                            if 0 <= model_control_seq < active_control_seq:
+                                note = "prompt_visible"
+                            else:
+                                note = "signal_mismatch"
                 elif surface_working and tail_surface == "READY":
                     state = "READY"
                     if lane_name == verify_owner and active_round_note:
@@ -1595,7 +1647,9 @@ class RuntimeSupervisor:
                 continue
             control_snapshot = active_control_snapshot_from_status(active_control or {})
             control_file = str(control_snapshot.get("control_file") or "")
-            control_seq = snapshot_control_seq(control_snapshot)
+            active_control_seq = snapshot_control_seq(control_snapshot)
+            dispatch_control_seq = control_seq_value(job_state.get("dispatch_control_seq"), default=-1)
+            control_seq = dispatch_control_seq if dispatch_control_seq >= 0 else active_control_seq
             receipt = build_receipt(
                 run_id=self.run_id,
                 job_state=job_state,
@@ -1742,8 +1796,12 @@ class RuntimeSupervisor:
                 {},
                 control_age_cycles=control_age_cycles,
             )
+        status_turn_state = self._surface_turn_state_for_stale_operator_control(
+            turn_state if isinstance(turn_state, dict) else None,
+            stale_operator_control,
+        )
         active_lane = self._active_lane_for_runtime(
-            turn_state,
+            status_turn_state,
             active_round,
             control=control_block,
             last_receipt=last_receipt,
@@ -1753,12 +1811,12 @@ class RuntimeSupervisor:
         self._write_task_hints(
             active_lane=active_lane,
             active_round=active_round,
-            turn_state=turn_state if isinstance(turn_state, dict) else None,
+            turn_state=status_turn_state,
             control=control_block,
             duplicate_control=duplicate_control,
         )
         suppress_active_round = self._suppress_active_round_for_turn(
-            turn_state=turn_state if isinstance(turn_state, dict) else None,
+            turn_state=status_turn_state,
             active_round=active_round,
         )
         surfaced_active_round = None if suppress_active_round else active_round
@@ -1766,7 +1824,7 @@ class RuntimeSupervisor:
             wrapper_models=wrapper_models,
             active_lane=active_lane,
             active_round=surfaced_active_round,
-            turn_state=turn_state if isinstance(turn_state, dict) else None,
+            turn_state=status_turn_state,
             control=control_block,
             duplicate_control=duplicate_control,
         )
@@ -1929,7 +1987,7 @@ class RuntimeSupervisor:
             self._save_autonomy_state(desired_autonomy_state)
 
         if force_stopped_surface:
-            turn_state = {
+            status_turn_state = {
                 "state": "IDLE",
                 "legacy_state": "IDLE",
                 "entered_at": time.time(),
@@ -1958,7 +2016,7 @@ class RuntimeSupervisor:
             self._write_task_hints(
                 active_lane="",
                 active_round=None,
-                turn_state=turn_state,
+                turn_state=status_turn_state,
                 control=control_block,
                 duplicate_control=duplicate_control,
             )
@@ -1979,7 +2037,7 @@ class RuntimeSupervisor:
             self._write_task_hints(
                 active_lane="",
                 active_round=None,
-                turn_state=turn_state if isinstance(turn_state, dict) else None,
+                turn_state=status_turn_state,
                 control=control_block,
                 duplicate_control=duplicate_control,
             )
@@ -1990,7 +2048,7 @@ class RuntimeSupervisor:
         progress = self._build_progress_hint(
             active_lane=active_lane,
             active_round=surfaced_active_round,
-            turn_state=turn_state if isinstance(turn_state, dict) else None,
+            turn_state=status_turn_state,
             control=control_block,
             autonomy=autonomy,
             artifacts=artifacts,
@@ -2010,7 +2068,7 @@ class RuntimeSupervisor:
             "control": control_block,
             "lanes": lanes,
             "active_round": surfaced_active_round,
-            "turn_state": turn_state if isinstance(turn_state, dict) else None,
+            "turn_state": status_turn_state,
             "progress": progress,
             "last_receipt": last_receipt,
             "last_receipt_id": str((last_receipt or {}).get("receipt_id") or ""),
@@ -2018,7 +2076,7 @@ class RuntimeSupervisor:
             "artifacts": artifacts,
             "compat": {
                 "control_slots": control_slots,
-                "turn_state": turn_state,
+                "turn_state": status_turn_state,
             },
             "last_heartbeat_at": iso_utc(),
             "updated_at": iso_utc(),

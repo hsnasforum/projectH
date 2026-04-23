@@ -1,12 +1,12 @@
 STATUS: verified
-CONTROL_SEQ: 38
+CONTROL_SEQ: 41
 BASED_ON_WORK:
-  - work/4/23/2026-04-23-m15-axis2-smoke-tests.md
-HANDOFF_SHA: d03f7f4
+  - work/4/23/2026-04-23-m15-axis3-review-queue-ui.md
+HANDOFF_SHA: 4d80074
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 35
-NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 38
-ADVISORY_ADVICE_SEQ: 36 (advisory_advice.md seq 36 — M15 Axis 2 smoke coverage complete)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 38
+NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 41
+ADVISORY_ADVICE_SEQ: 39 (advisory_advice.md seq 39 — M15 Axis 3 complete; M15 milestone closed)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
 ---
@@ -252,6 +252,50 @@ PASS. 모든 acceptance criteria 충족. 커밋 완료 (d03f7f4).
 
 ## Risks / Open Questions
 
-1. **`.quality-count` DOM assertion conditional**: mock correction similarity score must be in 0.05–0.98 range for DOM badge to appear; Test B skips DOM check when score is outside range. Currently the mock does produce in-range scores (tests pass), but this could change if mock model behavior changes.
-2. **M15 Axis 3 undefined**: Advisory seq 32 named "Review Queue List/Detail UI (UX Expansion)" at high level. Scope, files, and acceptance criteria need advisory arbitration.
-3. **Branch not pushed**: 12 commits on `feat/watcher-turn-state`, 12 ahead of origin. PR creation/push stays in operator backlog.
+---
+
+## Round 9 Claim: M15 Axis 3 — Review Queue List UI
+
+**Work**: `work/4/23/2026-04-23-m15-axis3-review-queue-ui.md`
+**Commit**: 4d80074
+
+### Summary
+
+`ReviewQueuePanel.tsx` 신규 컴포넌트: item 카드에 statement, 고품질 badge, 수락/보류/거절 버튼 렌더링. `Sidebar.tsx`에 PreferencePanel 위에 ReviewQueuePanel 추가. `ChatArea.tsx` 리뷰 배지를 `data-testid="review-queue-badge"` 클릭 가능 버튼으로 변경. `useChat`에서 `reviewQueueItems[]` 노출. `postCandidateReview`에 `candidate_id` + `candidate_updated_at` 추가. Vite dist 빌드 산출물 갱신. Playwright smoke test로 배지 클릭 → 패널 표시 → 수락 → queue 제거 확인.
+
+### Checks Run
+
+- `cd app/frontend && npx tsc --noEmit` → **OK**
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "review queue panel" --reporter=line` → **1 passed (24.5s)**
+- `git diff --check` (frontend source + docs + e2e) → **OK**
+
+### Checks Not Run
+
+- Full Playwright suite / SQLite browser suite — M15 Axis 3 widened browser-visible contract (new panel, clickable badge); broad suite should be run before release claim but not blocking this slice acceptance
+- Non-200 UI error handling — deferred per handoff boundaries
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족. 커밋 완료 (4d80074).
+
+---
+
+## Current Shipped Truth
+
+| Item | SHA |
+|---|---|
+| M14 Axes 1–3 | 3637dee, 3007329, 6d19705 |
+| M15 Axis 1 SQLite quality parity | 8482425 |
+| Test isolation fix | ce402fe |
+| M15 Axis 2 quality smoke tests | d03f7f4 |
+| **M15 Axis 3 review queue list UI** | **4d80074** |
+| **Milestone 15** | **All 3 axes complete** |
+| Branch vs origin | 14 commits ahead |
+
+## Risks / Open Questions
+
+1. **Full browser suite not run**: M15 Axis 3 added ReviewQueuePanel + clickable badge — browser contract widened. Full `make e2e-test` should be run before a release or PR merge claim.
+2. **dist asset hash inconsistency**: `app/static/dist` files overwrite tracked filenames in-place rather than adopting Vite's hash-renamed outputs. Functional tests pass; packaging policy cleanup deferred.
+3. **No UI error handling** for non-200 from `postCandidateReview` — silent failure for now.
+4. **M16 undefined**: M15 Axes 1–3 complete. Next milestone scope needs advisory definition.
+5. **Branch not pushed**: 14 commits on `feat/watcher-turn-state`, 14 ahead of origin. PR creation/push stays in operator backlog.

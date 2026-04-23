@@ -5980,6 +5980,8 @@ class WebAppServiceTest(unittest.TestCase):
                 sessions_dir=str(tmp_path / "sessions"),
                 task_log_path=str(tmp_path / "task_log.jsonl"),
                 notes_dir=str(tmp_path / "notes"),
+                artifacts_dir=str(tmp_path / "artifacts"),
+                corrections_dir=str(tmp_path / "corrections"),
                 preferences_dir=str(tmp_path / "preferences"),
                 model_provider="mock",
             )

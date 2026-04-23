@@ -1,5 +1,5 @@
 STATUS: verified
-CONTROL_SEQ: 92
+CONTROL_SEQ: 94
 BASED_ON_WORK:
   - work/4/23/2026-04-23-m20-axis2-conflict-detection.md
   - work/4/23/2026-04-23-m20-axis3-smoke-test-fix.md
@@ -9,7 +9,7 @@ BASED_ON_WORK:
 HANDOFF_SHA: 6fc42e2
 VERIFIED_BY: Claude
 SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 91
-NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 92
+NEXT_CONTROL: .pipeline/implement_handoff.md CONTROL_SEQ 94
 PR_MERGE_STATUS: PR #31 MERGED (2026-04-23); PR #32 OPEN https://github.com/hsnasforum/projectH/pull/32 (M20 Axis 2–M21 bundle, operator merge pending)
 PUSH_RESULT: feat/watcher-turn-state c7b658d..6fc42e2 pushed to origin (2026-04-23)
 

@@ -111,6 +111,35 @@ class CorrectionStoreTest(unittest.TestCase):
             r = store.stop_correction(cid)
             self.assertEqual(r["status"], CorrectionStatus.STOPPED)
 
+    def test_transition_guard_rejects_out_of_order(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._make_store(tmp)
+            record = self._record_sample(store)
+            cid = record["correction_id"]
+
+            result = store.activate_correction(cid)
+
+            self.assertIsNone(result)
+            fetched = store.get(cid)
+            self.assertEqual(fetched["status"], CorrectionStatus.RECORDED)
+
+    def test_transition_guard_rejects_from_stopped(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._make_store(tmp)
+            record = self._record_sample(store)
+            cid = record["correction_id"]
+
+            store.confirm_correction(cid)
+            store.promote_correction(cid)
+            store.activate_correction(cid)
+            store.stop_correction(cid)
+
+            result = store.confirm_correction(cid)
+
+            self.assertIsNone(result)
+            fetched = store.get(cid)
+            self.assertEqual(fetched["status"], CorrectionStatus.STOPPED)
+
     def test_recurrence_count_incremented(self) -> None:
         with TemporaryDirectory() as tmp:
             store = self._make_store(tmp)

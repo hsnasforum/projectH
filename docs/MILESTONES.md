@@ -641,6 +641,18 @@
 
 - **Milestone 22 closed** (Axes 1–3): SQLite correction lifecycle state-order guard, global reject permanence browser coverage, and release gate complete
 
+### Milestone 23: Correction Lifecycle Integrity — JSON Parity
+
+#### Guardrails
+- guard returns `None` (not raise) — same convention as M22 Axis 1 SQLite guard
+- do not change the four public lifecycle methods; only `_transition()` needs the guard
+- existing `test_lifecycle_transitions` already covers the valid chain; add only invalid-transition tests
+
+#### Shipped Infrastructure (Axis 1, 2026-04-24)
+- Axis 1 (seq 98): JSON CorrectionStore state-order guard — `CORRECTION_STATUS_TRANSITIONS` from `core/contracts.py` enforced in `CorrectionStore._transition()`; invalid transitions return `None`; 2 new unit tests cover out-of-order and from-stopped cases
+
+- **Milestone 23 closed** (Axis 1): JSON CorrectionStore state-order guard complete; both JSON and SQLite correction lifecycle paths now enforce `CORRECTION_STATUS_TRANSITIONS`
+
 ## Next 3 Implementation Priorities
 
 1. Keep the shipped read-only `reviewed_memory_boundary_draft` draft-only and do not widen it into readiness tracking or cross-session scope. The rollback / disable / conflict / operator-audit contracts and the reviewed-memory apply path are now shipped; boundary draft stays separate from apply result.

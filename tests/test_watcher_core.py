@@ -4407,6 +4407,72 @@ class TurnResolutionTest(unittest.TestCase):
                 self.assertEqual(marker["reason"], "pr_merge_completed")
                 self.assertEqual(core._resolve_turn(), "verify_followup")
 
+    def test_operator_wait_recovers_pr_merge_completion_without_operator_file_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            operator_path = base_dir / "operator_request.md"
+            operator_path.write_text(
+                "\n".join(
+                    [
+                        "STATUS: needs_operator",
+                        "CONTROL_SEQ: 1721",
+                        f"REASON_CODE: {PR_MERGE_GATE_REASON}",
+                        "OPERATOR_POLICY: internal_only",
+                        "DECISION_CLASS: merge_gate",
+                        "DECISION_REQUIRED: PR #27 merge approval",
+                        "PR #27: https://github.com/hsnasforum/projectH/pull/27",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+            operator_sig = core._get_path_sig(operator_path)
+            core._last_operator_request_sig = operator_sig
+            core._transition_turn(
+                watcher_core.WatcherTurnState.OPERATOR_WAIT,
+                "test_operator_wait",
+                active_control_file="operator_request.md",
+                active_control_seq=1721,
+            )
+
+            with (
+                mock.patch.object(
+                    core._pr_merge_status_cache,
+                    "control_resolution",
+                    return_value=PrMergeGateResolution(completed_pr_numbers=(27,)),
+                ),
+                mock.patch.object(core, "_notify_verify_control_recovery") as recovery_notify,
+            ):
+                self.assertTrue(core._check_operator_recovery_without_signal())
+                self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
+                self.assertEqual(core._turn_active_control_seq, 1721)
+                recovery_notify.assert_called_once()
+
+            with (
+                mock.patch.object(
+                    core._pr_merge_status_cache,
+                    "control_resolution",
+                    return_value=PrMergeGateResolution(completed_pr_numbers=(27,)),
+                ),
+                mock.patch.object(core, "_notify_verify_control_recovery") as duplicate_notify,
+            ):
+                self.assertTrue(core._check_operator_recovery_without_signal())
+                duplicate_notify.assert_not_called()
+
     def test_pr_merge_gate_head_mismatch_routes_to_verify_followup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

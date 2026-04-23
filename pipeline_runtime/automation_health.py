@@ -55,6 +55,8 @@ VERIFY_FOLLOWUP_REASONS = frozenset({
     "duplicate_handoff",
     "waiting_next_control",
     "verified_blockers_resolved",
+    "pr_merge_completed",
+    "pr_merge_head_mismatch",
     OPERATOR_APPROVAL_COMPLETED_REASON,
     COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
     PR_CREATION_GATE_REASON,

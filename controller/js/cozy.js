@@ -32,6 +32,11 @@ const LOG_REFRESH_MS = 1000;
 const EVENT_LIMIT = 40;
 const INACTIVE_RUNTIME_STATES = new Set(['STOPPED', 'STOPPING', 'BROKEN']);
 const UNCERTAIN_RUNTIME_REASONS = new Set(['supervisor_missing_recent_ambiguous', 'supervisor_missing_snapshot_undated']);
+const TERMINAL_TURN_STATES = new Set(['', 'IDLE', 'CLOSED', 'DONE']);
+const ACTIVE_ROUND_ROLE_BY_STATE = Object.freeze({
+  VERIFYING: 'verify',
+  RECEIPT_PENDING: 'verify',
+});
 const AGENT_NAMES = Object.freeze(['Claude', 'Codex', 'Gemini']);
 const ROLE_NAMES = Object.freeze(['implement', 'verify', 'advisory']);
 const DEFAULT_ROLE_OWNERS = Object.freeze({
@@ -137,6 +142,33 @@ function currentTurnState(data = runtimeStateStore.data) {
   if (data && data.turn_state && typeof data.turn_state === 'object') return data.turn_state;
   if (data && data.compat && data.compat.turn_state && typeof data.compat.turn_state === 'object') return data.compat.turn_state;
   return {};
+}
+
+function liveRoundState(data = runtimeStateStore.data) {
+  const round = (data && data.active_round) || {};
+  const turn = currentTurnState(data);
+  const roundState = String(round.state || '').trim().toUpperCase();
+  const turnState = String(turn.state || '').trim().toUpperCase();
+  if (roundState && roundState !== 'IDLE') return roundState;
+  return turnState || roundState || 'IDLE';
+}
+
+function activeWorkLaneName(data = runtimeStateStore.data) {
+  const turn = currentTurnState(data);
+  const activeRole = String(turn.active_role || '').trim().toLowerCase();
+  const activeLane = String(turn.active_lane || '').trim();
+  const turnState = String(turn.state || '').trim().toUpperCase();
+  if (activeLane && AGENT_NAMES.includes(activeLane) && ROLE_NAMES.includes(activeRole) && !TERMINAL_TURN_STATES.has(turnState)) {
+    return activeLane;
+  }
+  const role = ACTIVE_ROUND_ROLE_BY_STATE[liveRoundState(data)] || '';
+  return role ? currentRoleOwners(data)[role] || '' : '';
+}
+
+function effectiveLaneState(agentName, lane, data = runtimeStateStore.data) {
+  const rawState = String((lane || {}).state || 'off').toLowerCase();
+  if (rawState !== 'ready' && rawState !== 'idle') return rawState;
+  return agentName === activeWorkLaneName(data) ? 'working' : rawState;
 }
 
 function zoneKeyForRole(role) {
@@ -3094,7 +3126,6 @@ function getPresentation(data) {
   const runtimeState = String(payload.runtime_state || 'STOPPED').toUpperCase();
   const control = payload.control || {};
   const watcher = payload.watcher || {};
-  const round = payload.active_round || {};
   const turn = currentTurnState(payload);
   const degradedReasons = (payload.degraded_reasons || []).filter(Boolean);
   const degradedReason = degradedReasons[0] || String(payload.degraded_reason || '').trim();
@@ -3109,7 +3140,7 @@ function getPresentation(data) {
   const inactive = INACTIVE_RUNTIME_STATES.has(runtimeState);
   const showLive = !inactive && !uncertain;
   const controlStatus = showLive ? (control.active_control_status || 'none') : (uncertain ? 'uncertain' : 'none');
-  const roundState = showLive ? (turn.state || round.state || 'IDLE') : (uncertain ? 'uncertain' : 'IDLE');
+  const roundState = showLive ? liveRoundState(payload) : (uncertain ? 'uncertain' : 'IDLE');
   let watcherStatus = 'Dead';
   let watcherClass = 'dim';
   if (uncertain) {
@@ -3272,7 +3303,7 @@ function syncAgentsFromRuntime(data) {
     const previousState = agent.state;
     const previousNote = agent.note;
     if (lane) {
-      agent.state = String(lane.state || 'off').toLowerCase();
+      agent.state = effectiveLaneState(agent.name, lane, data);
       agent.note = lane.note || lane.status_note || '';
       agent.pid = lane.pid || null;
       agent.lastEventAt = lane.last_event_at || '';

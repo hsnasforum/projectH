@@ -535,6 +535,57 @@ class TestSQLiteCorrectionStore(unittest.TestCase):
 
         self.assertEqual(len(matches), 2)
 
+    def test_list_incomplete_corrections_returns_only_non_terminal_records(self) -> None:
+        recorded = self._record(
+            artifact_id="artifact-incomplete-recorded",
+            source_message_id="message-incomplete-recorded",
+        )
+
+        confirmed = self._record(
+            artifact_id="artifact-incomplete-confirmed",
+            source_message_id="message-incomplete-confirmed",
+        )
+        self.assertIsNotNone(self.store.confirm_correction(confirmed["correction_id"]))
+
+        promoted = self._record(
+            artifact_id="artifact-incomplete-promoted",
+            source_message_id="message-incomplete-promoted",
+        )
+        self.assertIsNotNone(self.store.confirm_correction(promoted["correction_id"]))
+        self.assertIsNotNone(self.store.promote_correction(promoted["correction_id"]))
+
+        active = self._record(
+            artifact_id="artifact-incomplete-active",
+            source_message_id="message-incomplete-active",
+        )
+        self.assertIsNotNone(self.store.confirm_correction(active["correction_id"]))
+        self.assertIsNotNone(self.store.promote_correction(active["correction_id"]))
+        self.assertIsNotNone(self.store.activate_correction(active["correction_id"]))
+
+        stopped = self._record(
+            artifact_id="artifact-incomplete-stopped",
+            source_message_id="message-incomplete-stopped",
+        )
+        self.assertIsNotNone(self.store.confirm_correction(stopped["correction_id"]))
+        self.assertIsNotNone(self.store.promote_correction(stopped["correction_id"]))
+        self.assertIsNotNone(self.store.activate_correction(stopped["correction_id"]))
+        self.assertIsNotNone(self.store.stop_correction(stopped["correction_id"]))
+
+        incomplete = self.store.list_incomplete_corrections()
+
+        self.assertEqual(
+            {record["correction_id"] for record in incomplete},
+            {
+                recorded["correction_id"],
+                confirmed["correction_id"],
+                promoted["correction_id"],
+            },
+        )
+        self.assertEqual(
+            {record["status"] for record in incomplete},
+            {"recorded", "confirmed", "promoted"},
+        )
+
     def test_find_recurring_patterns_detects_cross_occurrence(self) -> None:
         self._record(
             artifact_id="art1",

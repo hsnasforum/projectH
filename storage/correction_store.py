@@ -177,3 +177,12 @@ class CorrectionStore:
             all_records = self._scan_all()
             all_records.sort(key=lambda d: d.get("updated_at", ""), reverse=True)
             return all_records[:limit]
+
+    def list_incomplete_corrections(self) -> list[dict[str, Any]]:
+        _INCOMPLETE = {
+            CorrectionStatus.RECORDED,
+            CorrectionStatus.CONFIRMED,
+            CorrectionStatus.PROMOTED,
+        }
+        with self._lock:
+            return [r for r in self._scan_all() if r.get("status") in _INCOMPLETE]

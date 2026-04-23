@@ -210,6 +210,49 @@ class CorrectionStoreTest(unittest.TestCase):
             recent = store.list_recent(limit=1)
             self.assertEqual(len(recent), 1)
 
+    def test_list_incomplete_corrections_returns_only_non_terminal_records(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._make_store(tmp)
+
+            recorded = self._record_sample(store, artifact_id="a-recorded", source_message_id="m-recorded")
+
+            confirmed = self._record_sample(store, artifact_id="a-confirmed", source_message_id="m-confirmed")
+            store.confirm_correction(confirmed["correction_id"])
+
+            promoted = self._record_sample(store, artifact_id="a-promoted", source_message_id="m-promoted")
+            store.confirm_correction(promoted["correction_id"])
+            store.promote_correction(promoted["correction_id"])
+
+            active = self._record_sample(store, artifact_id="a-active", source_message_id="m-active")
+            store.confirm_correction(active["correction_id"])
+            store.promote_correction(active["correction_id"])
+            store.activate_correction(active["correction_id"])
+
+            stopped = self._record_sample(store, artifact_id="a-stopped", source_message_id="m-stopped")
+            store.confirm_correction(stopped["correction_id"])
+            store.promote_correction(stopped["correction_id"])
+            store.activate_correction(stopped["correction_id"])
+            store.stop_correction(stopped["correction_id"])
+
+            incomplete = store.list_incomplete_corrections()
+
+            self.assertEqual(
+                {record["correction_id"] for record in incomplete},
+                {
+                    recorded["correction_id"],
+                    confirmed["correction_id"],
+                    promoted["correction_id"],
+                },
+            )
+            self.assertEqual(
+                {record["status"] for record in incomplete},
+                {
+                    CorrectionStatus.RECORDED,
+                    CorrectionStatus.CONFIRMED,
+                    CorrectionStatus.PROMOTED,
+                },
+            )
+
     def test_corrupt_file_returns_none(self) -> None:
         with TemporaryDirectory() as tmp:
             store = self._make_store(tmp)

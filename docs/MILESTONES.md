@@ -653,6 +653,18 @@
 
 - **Milestone 23 closed** (Axis 1): JSON CorrectionStore state-order guard complete; both JSON and SQLite correction lifecycle paths now enforce `CORRECTION_STATUS_TRANSITIONS`
 
+### Milestone 24: Correction Lifecycle Observability
+
+#### Guardrails
+- audit output is read-only; no lifecycle state is mutated
+- JSON and SQLite stores both get parity implementation
+- script change uses the JSON CorrectionStore default path (`data/corrections`)
+
+#### Shipped Infrastructure (Axis 1, 2026-04-24)
+- Axis 1 (seq 101): `list_incomplete_corrections()` — returns corrections with RECORDED/CONFIRMED/PROMOTED status; JSON store uses `_scan_all()` filter; SQLite store uses `WHERE status IN (…)` query; `scripts/audit_traces.py` prints incomplete count and first 5 entries
+
+- **Milestone 24 closed** (Axis 1): correction lifecycle observability complete; both stores expose `list_incomplete_corrections()`; audit script surfaces count
+
 ## Next 3 Implementation Priorities
 
 1. **Global candidate E2E test isolation**: cross-session fingerprint collisions in smoke tests are currently prevented by fixture-level uniqueness conventions. A temp-DB-per-test-run isolation mechanism would eliminate this class of flakiness permanently.

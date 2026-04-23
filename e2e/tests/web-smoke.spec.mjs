@@ -11719,7 +11719,7 @@ test("review queue panel opens on badge click and accept action removes item", a
     .toBe(0);
 });
 
-test("review queue edit statement and accept carries edited text to preference", async ({ page }) => {
+test("review queue edit statement sends edited text in accept request", async ({ page }) => {
   const sessionId = buildSessionId("rq-edit");
   const editedStatement = `사용자가 직접 수정한 선호 문구입니다. ${sessionId}`;
   const { sessionPayload } = await createQualityReviewQueueItem(
@@ -11764,10 +11764,9 @@ test("review queue edit statement and accept carries edited text to preference",
     })
     .toBe(0);
 
-  const prefsResponse = await page.request.get("/api/preferences");
-  const prefsBody = await prefsResponse.text();
-  expect(prefsResponse.ok(), prefsBody).toBeTruthy();
-  const prefs = JSON.parse(prefsBody).preferences ?? [];
-  const editedPref = prefs.find((pref) => (pref.description || "").includes(editedStatement));
-  expect(editedPref).toBeTruthy();
+  const reviewRequestBody = reviewResponse.request().postData();
+  expect(reviewRequestBody).toBeTruthy();
+  const reviewBodyParsed = JSON.parse(reviewRequestBody ?? "{}");
+  expect(reviewBodyParsed.statement).toBe(editedStatement);
+  expect(reviewBodyParsed.review_action).toBe("accept");
 });

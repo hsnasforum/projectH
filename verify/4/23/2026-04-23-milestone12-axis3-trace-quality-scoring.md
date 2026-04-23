@@ -1,12 +1,12 @@
 STATUS: verified
-CONTROL_SEQ: 41
+CONTROL_SEQ: 44
 BASED_ON_WORK:
-  - work/4/23/2026-04-23-m15-axis3-review-queue-ui.md
-HANDOFF_SHA: 4d80074
+  - work/4/23/2026-04-23-m16-axis1-review-evidence.md
+HANDOFF_SHA: 2f95c1f
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 38
-NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 41
-ADVISORY_ADVICE_SEQ: 39 (advisory_advice.md seq 39 — M15 Axis 3 complete; M15 milestone closed)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 41
+NEXT_CONTROL: .pipeline/implement_handoff.md CONTROL_SEQ 44
+ADVISORY_ADVICE_SEQ: 42 (advisory_advice.md seq 42 — M16 Axis 1 done; Axis 2 = UI resilience)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
 ---
@@ -292,10 +292,46 @@ PASS. 모든 acceptance criteria 충족. 커밋 완료 (4d80074).
 | **Milestone 15** | **All 3 axes complete** |
 | Branch vs origin | 14 commits ahead |
 
+---
+
+## Round 10 Claim: M16 Axis 1 — Review Evidence Enrichment
+
+**Work**: `work/4/23/2026-04-23-m16-axis1-review-evidence.md`
+**Commit**: 2f95c1f
+
+### Summary
+
+`_build_review_queue_items()`가 `corrections`에서 첫 번째 non-empty `delta_summary`를 추출해 각 review queue item에 추가. `ReviewQueueItem` TypeScript 타입에 optional `delta_summary` 추가. `ReviewQueuePanel.tsx`가 statement 아래 compact 교정 패턴 텍스트 표시. smoke spec에 `delta_summary` key 존재 확인 시나리오 추가.
+
+### Checks Run
+
+- `python3 -m py_compile app/serializers.py` → **OK**
+- `cd app/frontend && npx tsc --noEmit` → **OK**
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "quality-info" --reporter=line` → **3 passed (53.4s)** (기존 2개 + 신규 delta_summary 1개)
+- `git diff --check` (변경 파일 전체) → **OK**
+
+### Checks Not Run
+
+- Vite build / full Playwright suite — handoff boundary 범위 밖; TypeScript pass로 frontend 계약 확인
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족. 커밋 완료 (2f95c1f).
+
+---
+
+## Current Shipped Truth
+
+| Item | SHA |
+|---|---|
+| M14 Axes 1–3 | 3637dee, 3007329, 6d19705 |
+| M15 Axes 1–3 | 8482425, d03f7f4, 4d80074 |
+| M16 Axis 1 review evidence enrichment | 2f95c1f |
+| Branch vs origin | 16 commits ahead |
+
 ## Risks / Open Questions
 
-1. **Full browser suite not run**: M15 Axis 3 added ReviewQueuePanel + clickable badge — browser contract widened. Full `make e2e-test` should be run before a release or PR merge claim.
-2. **dist asset hash inconsistency**: `app/static/dist` files overwrite tracked filenames in-place rather than adopting Vite's hash-renamed outputs. Functional tests pass; packaging policy cleanup deferred.
-3. **No UI error handling** for non-200 from `postCandidateReview` — silent failure for now.
-4. **M16 undefined**: M15 Axes 1–3 complete. Next milestone scope needs advisory definition.
-5. **Branch not pushed**: 14 commits on `feat/watcher-turn-state`, 14 ahead of origin. PR creation/push stays in operator backlog.
+1. **M16 Axis 2 (UI error handling)**: `handleCandidateReview` in `App.tsx` has a try/catch that silently discards errors. `addToast("error", ...)` pattern is fully in place (used by all other handlers). Next implement slice is bounded to this one function.
+2. **Full browser suite not run**: ReviewQueuePanel added M15 Axis 3; M16 Axis 1 adds text rendering. Full `make e2e-test` needed before release/PR merge claim.
+3. **dist asset tracking**: packaging policy deferred to M16 Axis 3.
+4. **Branch not pushed**: 16 commits on `feat/watcher-turn-state`, 16 ahead of origin. PR creation/push in operator backlog.

@@ -184,6 +184,51 @@ test.describe("controller office smoke", () => {
     await expect(incidentRoom).toContainText("stale_advisory_pending");
   });
 
+  test("controller shows active verify owner as working even when lane snapshot is ready", async ({
+    page,
+  }) => {
+    await page.route("**/api/runtime/status", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          runtime_state: "RUNNING",
+          project_root: "/tmp/projectH",
+          role_owners: { implement: "Codex", verify: "Claude", advisory: "Gemini" },
+          lanes: [
+            { name: "Claude", state: "ready", note: "prompt visible" },
+            { name: "Codex", state: "ready", note: "waiting" },
+            { name: "Gemini", state: "ready", note: "waiting" },
+          ],
+          control: { active_control_status: "none", active_control_seq: -1 },
+          watcher: { alive: true },
+          active_round: { job_id: "verify-1", state: "VERIFYING" },
+          turn_state: { state: "IDLE", active_role: "", active_lane: "" },
+          artifacts: {
+            latest_work: { path: "work/4/23/demo-work.md", mtime: "2026-04-23T00:00:00Z" },
+            latest_verify: { path: "verify/4/23/demo-verify.md", mtime: "2026-04-23T00:00:00Z" },
+          },
+        }),
+      }),
+    );
+    await page.route("**/api/runtime/capture-tail**", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, text: "verification running" }),
+      }),
+    );
+
+    await page.goto("/controller");
+    await page.waitForFunction(() => window.getAgentPositions?.()?.Claude?.state === "working");
+
+    const positions = await page.evaluate(() => window.getAgentPositions());
+    expect(positions.Claude.state).toBe("working");
+    expect(positions.Codex.state).toBe("ready");
+    await expect(page.locator("#tab-content")).toContainText("VERIFYING");
+
+    await page.locator('.agent-card[data-agent="Claude"]').click();
+    await expect(page.locator("#lm-state")).toHaveText("WORKING");
+  });
+
   test("marquee text keeps moving when the polled runtime payload is unchanged", async ({
     page,
   }) => {

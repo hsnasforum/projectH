@@ -3,6 +3,14 @@ import { POLL_MS, INACTIVE_RUNTIME_STATES, UNCERTAIN_RUNTIME_REASONS } from './c
 
 const MAX_EVENTS = 40;
 
+function liveRoundState(data, turn) {
+  const round = (data && data.active_round) || {};
+  const roundState = String(round.state || '').trim().toUpperCase();
+  const turnState = String((turn || {}).state || '').trim().toUpperCase();
+  if (roundState && roundState !== 'IDLE') return roundState;
+  return turnState || roundState || 'IDLE';
+}
+
 class _PipelineState {
   constructor() {
     this.data = null;
@@ -40,7 +48,6 @@ class _PipelineState {
     const runtimeState = String(d.runtime_state || 'STOPPED').toUpperCase();
     const control = d.control || {};
     const watcher = d.watcher || {};
-    const round = d.active_round || {};
     const turn = this._currentTurn(d);
     const degradedReasons = (d.degraded_reasons || []).filter(Boolean);
     const degradedReason = degradedReasons[0] || String(d.degraded_reason || '').trim();
@@ -55,7 +62,7 @@ class _PipelineState {
     const inactive = INACTIVE_RUNTIME_STATES.has(runtimeState);
     const showLive = !inactive && !uncertain;
     const controlStatus = showLive ? (control.active_control_status || 'none') : (uncertain ? 'uncertain' : 'none');
-    const roundState = showLive ? (turn.state || round.state || 'IDLE') : (uncertain ? 'uncertain' : 'IDLE');
+    const roundState = showLive ? liveRoundState(d, turn) : (uncertain ? 'uncertain' : 'IDLE');
     let watcherStatus = 'Dead', watcherClass = 'dim';
     if (uncertain) { watcherStatus = 'Unknown'; watcherClass = 'warn'; }
     else if (watcher.alive) { watcherStatus = 'Alive'; watcherClass = 'ok'; }

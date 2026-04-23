@@ -1,7 +1,9 @@
 # 2026-04-23 Ollama routing activation
 
 ## 변경 파일
+- `app/handlers/chat.py`
 - `core/agent_loop.py`
+- `tests/test_web_app.py`
 - `tests/test_agent_loop_model_routing.py`
 - `work/4/23/2026-04-23-ollama-routing-activation.md`
 
@@ -13,21 +15,28 @@
 - 사용자 피드백은 `mock`과 `ollama`의 체감 성능/품질 차이가 예전과 거의 같다는 것이었습니다.
 - 확인 결과 `model_adapter.router`에는 light/medium/heavy tier가 이미 정의되어 있었지만, `AgentLoop._respond_with_active_context()`에서 `_routed_model(...)` context를 열었다가 바로 닫은 뒤 실제 모델 호출을 실행하는 경로가 있었습니다.
 - 일반 응답과 요약 경로도 active preference budget은 tier 기준으로 계산하면서, 실제 Ollama 모델 호출 자체는 routed context로 감싸지 않아 선택 모델 하나만 계속 쓰는 구조였습니다.
+- 추가 확인 결과 서버 기본 provider가 `mock`이고 요청 payload에서만 `provider=ollama`를 선택한 경우, `ChatHandlerMixin._build_model_router()`가 settings 기준으로만 판단해 router를 아예 켜지 않는 경로도 있었습니다. 이 경우 UI에서 Ollama를 골라도 14B heavy tier가 빠진 것처럼 보일 수 있었습니다.
 
 ## 핵심 변경
 - `core/agent_loop.py`의 short summary, chunk summary, reduce summary 호출을 `with self._routed_model(task="summarize", ...)` 안에서 실행하도록 변경했습니다.
 - active context 답변 경로는 `_routed_model(...)` context가 `stream_answer_with_context()` 생성과 `_collect_model_stream()` 실행 전체를 감싸도록 수정했습니다.
 - 일반 응답 경로도 `with self._routed_model(task="respond")` 안에서 `stream_respond()`를 실행하도록 변경했습니다.
+- `app/handlers/chat.py`는 settings 기본값이 아니라 현재 요청의 normalized `provider`를 기준으로 `ModelConfig()`를 생성하도록 바꿨습니다. 따라서 서버 기본 provider가 `mock`이어도 UI/payload가 `ollama`면 3B/7B/14B router가 켜집니다.
 - 신규 `tests/test_agent_loop_model_routing.py`는 기본 Ollama model이 `qwen2.5:3b`일 때도 summarize/respond는 routed medium `qwen2.5:7b`, entity-card context는 routed heavy `qwen2.5:14b`로 실제 stream 호출 중 전환되는지 검증합니다.
+- `tests/test_web_app.py`는 settings 기본 provider가 `mock`이어도 request provider가 `ollama`면 router가 생성되고 `heavy=qwen2.5:14b`를 유지하는지 검증합니다.
 
 ## 검증
 - `python3 -m py_compile core/agent_loop.py tests/test_agent_loop_model_routing.py`
   - 통과: 출력 없음
 - `python3 -m unittest tests.test_agent_loop_model_routing -v`
   - 통과: `3 tests`
+- `python3 -m py_compile app/handlers/chat.py core/agent_loop.py tests/test_web_app.py tests/test_agent_loop_model_routing.py`
+  - 통과: 출력 없음
+- `python3 -m unittest tests.test_web_app.WebAppServiceTest.test_build_model_router_uses_request_provider_not_default_settings_only tests.test_agent_loop_model_routing -v`
+  - 통과: `4 tests`
 - `python3 -m unittest tests.test_ollama_adapter -v`
   - 통과: `29 tests`
-- `git diff --check -- core/agent_loop.py tests/test_agent_loop_model_routing.py`
+- `git diff --check -- app/handlers/chat.py core/agent_loop.py tests/test_web_app.py tests/test_agent_loop_model_routing.py`
   - 통과: 출력 없음
 
 ## 남은 리스크

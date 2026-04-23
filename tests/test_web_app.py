@@ -12947,6 +12947,23 @@ class WebAppServiceTest(unittest.TestCase):
                     }
                 )
 
+    def test_build_model_router_uses_request_provider_not_default_settings_only(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            settings = AppSettings(
+                sessions_dir=str(Path(tmp_dir) / "sessions"),
+                task_log_path=str(Path(tmp_dir) / "task_log.jsonl"),
+                notes_dir=str(Path(tmp_dir) / "notes"),
+                model_provider="mock",
+                ollama_model="",
+            )
+            service = WebAppService(settings=settings)
+
+            router = service._build_model_router(provider="ollama")
+
+            self.assertIsNotNone(router)
+            self.assertEqual(router.heavy, "qwen2.5:14b")
+            self.assertIsNone(service._build_model_router(provider="mock"))
+
     def test_handle_chat_localizes_ollama_unreachable_error(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             settings = AppSettings(

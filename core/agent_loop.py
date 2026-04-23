@@ -144,16 +144,23 @@ class AgentLoop:
         if self._model_router is None:
             return _NoOpContext(self.model)
         try:
-            from model_adapter.router import route, RoutingHint, ModelConfig
+            from model_adapter.router import route, RoutingHint, ModelConfig, ModelTier
             from model_adapter.ollama import OllamaModelAdapter
             config = self._model_router
             if not isinstance(config, ModelConfig):
                 return _NoOpContext(self.model)
             hint = RoutingHint(task=task, **kwargs)
             tier = route(hint)
-            resolved = config.resolve(tier)
             if isinstance(self.model, OllamaModelAdapter):
-                return self.model.use_model(resolved)
+                fallback_order: list[ModelTier] = {
+                    ModelTier.HEAVY: [ModelTier.HEAVY, ModelTier.MEDIUM, ModelTier.LIGHT],
+                    ModelTier.MEDIUM: [ModelTier.MEDIUM, ModelTier.LIGHT],
+                    ModelTier.LIGHT: [ModelTier.LIGHT],
+                }.get(tier, [tier])
+                for fallback_tier in fallback_order:
+                    candidate = config.resolve(fallback_tier)
+                    if self.model.is_model_available(candidate):
+                        return self.model.use_model(candidate)
         except Exception:
             pass
         return _NoOpContext(self.model)

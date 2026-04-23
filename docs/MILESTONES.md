@@ -549,12 +549,10 @@
 - no automatic preference status changes from evidence display alone
 - review queue enrichment must stay compact and local to existing candidate evidence
 
-#### Shipped Infrastructure (Axes 1–2, 2026-04-23)
+#### Shipped Infrastructure (Axes 1–3, 2026-04-23)
 - Axis 1 (seq 43): review evidence enrichment — expose compact `delta_summary` on each `review_queue_items[]` entry and render a single-line correction pattern in `ReviewQueuePanel`
 - Axis 2 (seq 44): UI resilience — `handleCandidateReview` in `App.tsx` surfaces review action errors via `addToast("error", ...)`, matching the existing handler pattern
-
-#### Planned Infrastructure (Axis 3)
-- Axis 3: regression guard — add targeted smoke coverage for enriched review candidates and existing accept/defer/reject flow
+- Axis 3 (seq 47): integrity consolidation — `OllamaModelAdapter` caches `list_models()` result; `_routed_model` degrades gracefully through HEAVY→MEDIUM→LIGHT when target model unavailable; `vite.config.ts` outputs fixed-name assets (`index.js`/`index.css`); full smoke gate confirmed passing (139 tests)
 
 ## Next 3 Implementation Priorities
 

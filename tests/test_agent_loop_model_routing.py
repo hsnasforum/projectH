@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from tempfile import TemporaryDirectory
 
-from core.agent_loop import AgentLoop, UserRequest
+from core.agent_loop import AgentLoop, UserRequest, _NoOpContext
 from core.contracts import AnswerMode, StreamEventType
 from core.models import RequestContext
 from model_adapter.base import ModelStreamEvent
@@ -17,6 +17,10 @@ class _RecordingOllamaAdapter(OllamaModelAdapter):
     def __init__(self) -> None:
         super().__init__(base_url="http://localhost:11434", model="qwen2.5:3b")
         self.calls: list[tuple[str, str]] = []
+        self.available_models: set[str] = {"qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b"}
+
+    def is_model_available(self, model_name: str) -> bool:
+        return model_name in self.available_models
 
     def stream_summarize(self, text: str):
         self.calls.append(("summarize", self._effective_model))
@@ -108,6 +112,29 @@ class AgentLoopModelRoutingTest(unittest.TestCase):
             self.assertEqual(response.text, "문맥 응답")
             self.assertEqual(model.calls, [("answer_context", "qwen2.5:14b")])
             self.assertEqual(model._effective_model, "qwen2.5:3b")
+
+    def test_heavy_model_unavailable_falls_back_to_medium(self) -> None:
+        with TemporaryDirectory() as tmp:
+            model = _RecordingOllamaAdapter()
+            model.available_models = {"qwen2.5:3b", "qwen2.5:7b"}
+            loop = _build_loop(tmp, model)
+
+            with loop._routed_model(task="respond", answer_mode=AnswerMode.ENTITY_CARD):
+                self.assertEqual(model._effective_model, "qwen2.5:7b")
+
+            self.assertEqual(model._effective_model, "qwen2.5:3b")
+
+    def test_all_tier_models_unavailable_uses_noop(self) -> None:
+        with TemporaryDirectory() as tmp:
+            model = _RecordingOllamaAdapter()
+            model.available_models = set()
+            loop = _build_loop(tmp, model)
+
+            routed_context = loop._routed_model(task="respond", answer_mode=AnswerMode.ENTITY_CARD)
+
+            self.assertIsInstance(routed_context, _NoOpContext)
+            with routed_context:
+                self.assertEqual(model._effective_model, "qwen2.5:3b")
 
 
 if __name__ == "__main__":

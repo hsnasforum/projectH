@@ -432,7 +432,10 @@
 - Axis 2 shipped: first service fixture `correction_reuse_001.json` + `.gitignore` `!data/eval/` exception (seqs 830-831)
 - Axis 3 shipped: `eval/fixture_loader.py` unit helper + `scope_suggestion_safety_001.json` fixture (seq 835)
 - Axis 4 shipped: remaining 5 service fixtures completing all 7 families (seq 837); `suggested_scope` value constraints and family-specific trace extensions deferred until reviewed-memory planning opens
-- Axis 5 shipped: `tests/test_eval_loader.py` (7 unit tests: all-family load + _validate() reject paths) + `eval/__init__.py` `load_fixture` package-level export (seq 843); `CandidateReviewSuggestedScope` enum, family-specific trace extensions, and e2e stage remain deferred
+- Axis 5 shipped: `tests/test_eval_loader.py` (7 unit tests: all-family load + _validate() reject paths) + `eval/__init__.py` `load_fixture` package-level export (seq 843); `CandidateReviewSuggestedScope` enum and e2e stage remain deferred
+- Axis 6 shipped: `core/eval_contracts.py` family-specific TypedDicts (`CorrectionReuseTrace`, `ApprovalFrictionTrace`, `ReviewabilityTrace`, `ScopeSafetyTrace`, `RollbackabilityTrace`, `ConflictDeferTrace`, `ExplicitVsSaveSupportTrace`) + `EVAL_FAMILY_TRACE_CLASS` mapping + `eval/__init__.py` export (seq 853); `CandidateReviewSuggestedScope` enum and e2e stage remain deferred
+- Axis 7 shipped: all 7 service fixtures enriched with family-specific TypedDict fields per seq 853 TypedDicts (seq 858); e2e eval stage remains deferred
+- Axis 8 shipped: `eval/fixture_loader.py` extended with `EVAL_FAMILY_TRACE_CLASS`-based validation — unknown key rejection and isinstance type-check for family-specific fields via `typing.get_type_hints()`; `tests/test_eval_loader.py` +2 tests (9 total) (seq 862); e2e eval stage remains deferred
 
 ## Later, After The Memory Phase
 
@@ -440,6 +443,27 @@
 - choose one narrow operator surface
 - define action approval, audit, and rollback expectations
 - keep local actions observable and reversible
+- Operator action contract shipped: `OperatorActionKind` StrEnum (`local_file_edit`, `shell_execute`, `session_mutation`) + `OperatorActionContract` TypedDict (5 fields, total=False) in `core/contracts.py` (seq 866); action execution, approval flow, and storage wire-up deferred
+- Storage & approval wiring shipped: `OperatorActionRecord` TypedDict + `ApprovalKind.OPERATOR_ACTION` in `core/contracts.py`; `record_operator_action_request()` + session-reload normalization (`_normalize_pending_approval_record`) in `storage/session_store.py` (seq 871)
+- Execution stub shipped: `core/operator_executor.py` — `execute_operator_action()` read-only preview for `local_file_edit` (10 lines), ValueError for other kinds; `_execute_pending_approval` operator_action branch in `core/agent_loop.py` (seq 875)
+- Outcome & audit storage shipped: `operator_action_history` session field + `record_operator_action_outcome()` in `storage/session_store.py`; outcome written after successful execution in `core/agent_loop.py` (seq 879)
+- Failure outcome audit shipped: failed operator actions now recorded in `operator_action_history` with `status="failed"` + `error` field before returning error response in `core/agent_loop.py` (seq 883); Milestone 9 Axes 1–5 complete
+- **Milestone 9 closed** (seqs 866–883): observable and reversible `local_file_edit` action foundation established; actual file write, rollback, UI approval card, `shell_execute`/`session_mutation` execution deferred to a future milestone
+
+### Milestone 10: Local Operator Operation
+- enable actual file write for `local_file_edit` under explicit approval
+- implement first rollback logic for reversible local actions
+- verify audit trail integrity for end-to-end operator effects
+- Local file edit active write shipped: `content: str` in contracts; `execute_operator_action()` performs `Path.write_text()` (seq 893)
+- Reversible backup mechanism shipped: `is_reversible=True` → backup saved to `backup/operator/`; `backup_path` preserved in `operator_action_history` (seq 897)
+- Audit trail verification shipped: end-to-end integration test exercises full request → execute → outcome flow; all 5 history fields verified (seq 901)
+- **Milestone 10 closed** (seqs 893–901): local file operation and backup foundation established; actual rollback restore and sandbox path restrictions remain deferred
+
+### Milestone 11: Operator Action Reversibility & Sandbox
+- Rollback restore shipped: `rollback_operator_action(record)` reads `backup_path`, restores `target_id`; missing backup → soft failure `restored=False` (seq 908)
+- Path restriction sandbox shipped: `_validate_operator_action_target()` raises `ValueError` if `target_id` resolves outside `Path.cwd()`; all executor/audit tests updated to `dir="."` (seq 912)
+- Rollback trace shipped: `rollback_approval_id` dispatch + `_execute_operator_rollback()` records `status="rolled_back"` in `operator_action_history`; `get_operator_action_from_history()` added to `SessionStore` (seq 916)
+- **Milestone 11 closed** (seqs 908–916): operator action reversibility and sandbox complete; frontend rollback trigger and backup retention policy remain deferred
 
 ### Why This Is Later
 - Program operation should follow stable correction and preference memory, not precede it.
@@ -447,7 +471,7 @@
 
 ## Long-Term
 
-### Milestone 10: Personalized Local Model Layer
+### Milestone 12: Personalized Local Model Layer
 - promote high-quality local traces into personalization assets
 - evaluate whether a local adaptive model layer is justified
 - keep deployment and rollback safe and measurable
@@ -457,6 +481,32 @@
 - enough preference traces
 - enough approval / rejection traces
 - enough workflow-level eval data
+
+#### Shipped Infrastructure (Axes 1–6, 2026-04-23)
+- Axis 1 (6838aba, seq 921): trace audit baseline — `scripts/audit_traces.py`, `get_global_audit_summary()` (267 sessions, 137 correction pairs)
+- Axis 2 (701166b, seq 925): trace export utility — `scripts/export_traces.py`, `stream_trace_pairs()`
+- Axis 3 (966fdb4, seq 929+933): quality scoring + threshold recalibration — `_is_high_quality()` (`0.05 ≤ score ≤ 0.98`); 137/137 pairs high-quality
+- Axis 4 (215096d, seq 935): asset promotion — `scripts/promote_assets.py` → `CorrectionStore.promote_correction()`; 137 pairs promoted
+- Axis 5 (c3e46ab, seq 941): preference visibility — `audit_traces.py` PreferenceStore counts + `data/preference_assets.jsonl`; 23 candidate preferences
+- Axis 6 (dbfbec0, seq 944): trace evaluation — `scripts/evaluate_traces.py`; model layer: JUSTIFIED (137 pairs ≥100, 100% HQ ≥50)
+- **Milestone 12 closed** (seqs 921–944): personalization pipeline infrastructure + evaluation complete; model-layer deployment and approval trace collection deferred
+
+### Milestone 13: Applied Preference Effectiveness Tracking
+- track which active preferences are applied to responses and correction traces
+- measure whether applied preferences improve later corrections before widening memory automation
+- keep preference activation explicit and auditable while the safety loop is validated
+
+#### Guardrails
+- repeated-signal promotion remains blocked until the safety loop is validated
+- cross-session counting remains later
+- CANDIDATE → ACTIVE auto-activation remains deferred
+
+#### Shipped Infrastructure (Axes 1–5, 2026-04-23)
+- Axis 1 (8cea2f1, seq 958): applied preference tracking in session + trace export — `app/handlers/chat.py` stores `applied_preference_ids` in `update_last_message()`; `storage/session_store.py` yields `applied_preference_ids` in `stream_trace_pairs()`; 57 unit tests
+- Axis 2 (a4f4cbd, seq 962): correction link — `storage/correction_store.py` `record_correction()` stores `applied_preference_ids`; `app/handlers/feedback.py` passes ids from session message; 58 unit tests
+- Axis 3 (399122f, seq 966): effectiveness metric baseline — `storage/session_store.py` `get_global_audit_summary()` adds `personalized_response_count` / `personalized_correction_count`; `scripts/audit_traces.py` displays personalization correction rate; 59 unit tests
+- Axis 4 (fc86577, seq 970): per-preference reliability — `get_global_audit_summary()` adds `per_preference_stats` map (`applied_count`/`corrected_count` per fingerprint); `scripts/audit_traces.py` displays per-preference correction rates sorted descending; 60 unit tests
+- Axis 5 (80fe1dd, seq 974): preference reliability API — `list_preferences_payload()` enriches each record with `reliability_stats` (`applied_count`/`corrected_count` via `per_preference_stats`); SQLiteSessionStore fallback returns 0 counts; frontend display deferred
 
 ## Next 3 Implementation Priorities
 

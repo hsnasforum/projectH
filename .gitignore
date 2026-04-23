@@ -42,6 +42,7 @@ output/playwright/fixtures/*
 dist/
 build/
 *.spec
+!windows-launchers/pipeline-gui.spec
 
 # Pipeline runtime (logs, state, locks, pid)
 .pipeline/logs/

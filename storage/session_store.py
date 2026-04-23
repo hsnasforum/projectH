@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import threading
-from typing import Any, Dict
+from typing import Any, Dict, Iterator
 from uuid import uuid4
 
 from core.approval import (
@@ -59,6 +59,7 @@ class SessionStore:
             "title": session_id,
             "messages": [],
             "pending_approvals": [],
+            "operator_action_history": [],
             "permissions": {"web_search": "disabled"},
             "active_context": None,
             "_version": 0,
@@ -154,6 +155,44 @@ class SessionStore:
         if approval_reason_record is not None:
             normalized["approval_reason_record"] = approval_reason_record
         return normalized
+
+    def _normalize_operator_action_record(self, approval: Any) -> Dict[str, Any] | None:
+        if not isinstance(approval, dict):
+            return None
+
+        approval_id = str(approval.get("approval_id") or "").strip()
+        kind = str(approval.get("kind") or "").strip()
+        status = str(approval.get("status") or "").strip()
+        if not approval_id or kind != "operator_action" or not status:
+            return None
+
+        normalized: Dict[str, Any] = {
+            "approval_id": approval_id,
+            "kind": "operator_action",
+            "status": status,
+        }
+        for field in (
+            "action_kind", "target_id", "content", "requested_at",
+            "audit_trace_required", "is_reversible", "outcome_id",
+        ):
+            if field in approval:
+                normalized[field] = approval[field]
+        return normalized
+
+    def _normalize_pending_approval_record(
+        self,
+        approval: Any,
+        *,
+        include_note_text: bool = False,
+        artifact_source_message_ids: dict[str, str] | None = None,
+    ) -> Dict[str, Any] | None:
+        if isinstance(approval, dict) and str(approval.get("kind") or "").strip() == "operator_action":
+            return self._normalize_operator_action_record(approval)
+        return self._normalize_approval_record(
+            approval,
+            include_note_text=include_note_text,
+            artifact_source_message_ids=artifact_source_message_ids,
+        )
 
     def _normalize_corrected_outcome(
         self,
@@ -812,7 +851,7 @@ class SessionStore:
             normalized_approval
             for approval in pending_approvals
             if (
-                normalized_approval := self._normalize_approval_record(
+                normalized_approval := self._normalize_pending_approval_record(
                     approval,
                     include_note_text=True,
                     artifact_source_message_ids=artifact_source_message_ids,
@@ -941,6 +980,99 @@ class SessionStore:
                     }
                 )
             return sorted(summaries, key=lambda item: item.get("updated_at", ""), reverse=True)
+
+    def get_global_audit_summary(self) -> Dict[str, Any]:
+        """Return aggregate trace counts across all sessions for precondition assessment."""
+        with self._lock:
+            summary: Dict[str, Any] = {
+                "session_count": 0,
+                "correction_pair_count": 0,
+                "feedback_like_count": 0,
+                "feedback_dislike_count": 0,
+                "personalized_response_count": 0,
+                "personalized_correction_count": 0,
+                "per_preference_stats": {},
+                "operator_executed_count": 0,
+                "operator_rolled_back_count": 0,
+                "operator_failed_count": 0,
+            }
+            def count_feedback(feedback: Any) -> None:
+                if not isinstance(feedback, dict):
+                    return
+                label = str(feedback.get("label") or "").strip().lower()
+                if label in {"helpful", "like"}:
+                    summary["feedback_like_count"] += 1
+                elif label in {"unclear", "incorrect", "dislike"}:
+                    summary["feedback_dislike_count"] += 1
+
+            for path in sorted(self.base_dir.glob("*.json")):
+                try:
+                    session_id = path.stem
+                    data = self.get_session(session_id)
+                except Exception:
+                    continue
+                summary["session_count"] += 1
+                for msg in data.get("messages", []):
+                    if (
+                        str(msg.get("artifact_kind") or "") == "grounded_brief"
+                        and msg.get("corrected_text") is not None
+                    ):
+                        summary["correction_pair_count"] += 1
+                    if msg.get("applied_preference_ids"):
+                        summary["personalized_response_count"] += 1
+                        is_personalized_correction = (
+                            str(msg.get("artifact_kind") or "") == "grounded_brief"
+                            and msg.get("corrected_text") is not None
+                        )
+                        if is_personalized_correction:
+                            summary["personalized_correction_count"] += 1
+                        for pref_id in msg["applied_preference_ids"]:
+                            pstats = summary["per_preference_stats"].setdefault(
+                                pref_id, {"applied_count": 0, "corrected_count": 0}
+                            )
+                            pstats["applied_count"] += 1
+                            if is_personalized_correction:
+                                pstats["corrected_count"] += 1
+                    count_feedback(msg.get("feedback"))
+                count_feedback(data.get("feedback"))
+                for action in data.get("operator_action_history", []):
+                    status = str(action.get("status") or "").strip()
+                    if status == "executed":
+                        summary["operator_executed_count"] += 1
+                    elif status == "rolled_back":
+                        summary["operator_rolled_back_count"] += 1
+                    elif status == "failed":
+                        summary["operator_failed_count"] += 1
+            return summary
+
+    def stream_trace_pairs(self) -> Iterator[Dict[str, Any]]:
+        """Yield correction pairs (prompt/completion) from all sessions."""
+        for path in sorted(self.base_dir.glob("*.json")):
+            try:
+                session_id = path.stem
+                data = self.get_session(session_id)
+            except Exception:
+                continue
+            for msg in data.get("messages", []):
+                if str(msg.get("artifact_kind") or "") != "grounded_brief":
+                    continue
+                corrected_text = msg.get("corrected_text")
+                if corrected_text is None:
+                    continue
+                snapshot = msg.get("original_response_snapshot")
+                if not isinstance(snapshot, dict):
+                    continue
+                draft_text = str(snapshot.get("draft_text") or "").strip()
+                if not draft_text:
+                    continue
+                yield {
+                    "prompt": draft_text,
+                    "completion": str(corrected_text),
+                    "session_id": session_id,
+                    "message_id": str(msg.get("message_id") or ""),
+                    "feedback": msg.get("feedback"),
+                    "applied_preference_ids": msg.get("applied_preference_ids"),
+                }
 
     def delete_session(self, session_id: str) -> bool:
         with self._lock:
@@ -1557,6 +1689,52 @@ class SessionStore:
             pending.append(normalized_approval)
             data["pending_approvals"] = pending
             self._save(session_id, data)
+
+    def record_operator_action_request(
+        self, session_id: str, action_contract: Dict[str, Any]
+    ) -> str:
+        approval_id = str(uuid4())
+        record: Dict[str, Any] = {
+            "approval_id": approval_id,
+            "kind": "operator_action",
+            "status": "pending",
+        }
+        for field in (
+            "action_kind", "target_id", "content", "requested_at",
+            "audit_trace_required", "is_reversible",
+        ):
+            if field in action_contract:
+                record[field] = action_contract[field]
+        with self._lock:
+            data = self.get_session(session_id)
+            pending = data.get("pending_approvals", [])
+            pending.append(record)
+            data["pending_approvals"] = pending
+            self._save(session_id, data)
+        return approval_id
+
+    def record_operator_action_outcome(
+        self, session_id: str, record: Dict[str, Any]
+    ) -> None:
+        with self._lock:
+            data = self.get_session(session_id)
+            outcome = dict(record)
+            outcome.setdefault("status", "executed")
+            outcome["completed_at"] = self._now()
+            history = data.get("operator_action_history", [])
+            history.append(outcome)
+            data["operator_action_history"] = history
+            self._save(session_id, data)
+
+    def get_operator_action_from_history(
+        self, session_id: str, approval_id: str
+    ) -> Dict[str, Any] | None:
+        with self._lock:
+            data = self.get_session(session_id)
+            for entry in data.get("operator_action_history", []):
+                if entry.get("approval_id") == approval_id:
+                    return dict(entry)
+            return None
 
     def get_pending_approval(self, session_id: str, approval_id: str) -> Dict[str, Any] | None:
         with self._lock:

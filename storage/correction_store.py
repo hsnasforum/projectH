@@ -41,6 +41,7 @@ class CorrectionStore:
         original_text: str,
         corrected_text: str,
         pattern_family: str = CandidateFamily.CORRECTION_REWRITE,
+        applied_preference_ids: list[str] | None = None,
     ) -> dict[str, Any] | None:
         """Record a correction and compute its delta. Returns None if no delta."""
         delta = compute_correction_delta(original_text, corrected_text)
@@ -80,6 +81,7 @@ class CorrectionStore:
                 "similarity_score": delta.similarity_score,
                 "rewrite_dimensions": delta.rewrite_dimensions,
                 "pattern_family": pattern_family,
+                "applied_preference_ids": applied_preference_ids,
                 "recurrence_count": recurrence_count,
                 "first_seen_at": now,
                 "last_seen_at": now,

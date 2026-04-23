@@ -152,6 +152,14 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 python3 -m pipeline_runtime.cli status . --json
 ```
 
+새 컴퓨터에서 pipeline launcher를 처음 실행할 때는 먼저 read-only preflight를 확인합니다.
+
+```bash
+python3 -m pipeline_runtime.cli doctor . --json
+```
+
+`active_profile`이 빠져 있으면 GUI의 `설정` 화면에서 profile preview를 생성하고 적용한 뒤 다시 확인합니다. 이전 컴퓨터에서 복사한 `.pipeline/current_run.json`이나 `.pipeline/runs/`가 stale이면 `doctor`가 `runtime_status` warning으로 알려 줍니다. 이 경우 한 번 stop을 실행하거나 stale runtime 파일을 백업 위치로 옮긴 뒤 다시 start하면 됩니다.
+
 ## Run
 
 - CLI:

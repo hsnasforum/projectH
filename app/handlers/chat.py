@@ -417,6 +417,11 @@ class ChatHandlerMixin:
             {
                 "response_origin": dict(response.response_origin),
                 **({"original_response_snapshot": dict(snapshot)} if snapshot else {}),
+                **(
+                    {"applied_preference_ids": [p["fingerprint"] for p in response.applied_preferences]}
+                    if response.applied_preferences
+                    else {}
+                ),
             },
         )
         session_payload = self.session_store.get_session(session_id)

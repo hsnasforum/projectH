@@ -53,10 +53,10 @@ from .agents import (
     format_elapsed,
 )
 from .setup import (
-    _HARD_BLOCKERS, _SOFT_WARNINGS,
+    _SOFT_WARNINGS,
     _find_cli_bin, _file_exists,
-    _check_hard_blockers, _check_soft_warnings,
     _check_missing_guides, _create_guide_file, _GUIDE_TEMPLATES,
+    hard_blockers_for_project,
 )
 from .setup_controller import SetupController
 from .setup_models import RuntimeLaunchPresentation, SetupActionState, SetupStatusPresentation
@@ -2294,12 +2294,13 @@ class PipelineGUI:
     def _run_setup_check_silent(self) -> None:
         """앱 시작 시 자동 점검 — dialog 없이 상태만 갱신."""
         self.root.after(0, lambda: self._set_setup_state("checking"))
-        total = len(_HARD_BLOCKERS) + len(_SOFT_WARNINGS)
+        hard_blockers = hard_blockers_for_project(self.project)
+        total = len(hard_blockers) + len(_SOFT_WARNINGS)
         step = 0
 
         # Hard blockers
         missing_hard: list[tuple[str, str]] = []
-        for label, check_type, target, hint in _HARD_BLOCKERS:
+        for label, check_type, target, hint in hard_blockers:
             step += 1
             self.root.after(0, lambda n=label, s=step: self._set_setup_state(
                 "checking", f"({s}/{total}) {n}"))
@@ -2355,12 +2356,13 @@ class PipelineGUI:
 
     def _do_setup_check(self) -> None:
         """Hard blocker + soft warning 점검 → 누락 guide 승인 생성 → 설치 제안."""
-        total = len(_HARD_BLOCKERS) + len(_SOFT_WARNINGS)
+        hard_blockers = hard_blockers_for_project(self.project)
+        total = len(hard_blockers) + len(_SOFT_WARNINGS)
         step = 0
 
         # ── 1. Hard blockers 점검 ──
         missing_hard: list[tuple[str, str]] = []
-        for label, check_type, target, hint in _HARD_BLOCKERS:
+        for label, check_type, target, hint in hard_blockers:
             step += 1
             self._msg(f"⚙ 점검 ({step}/{total}) {label}...")
             self.root.after(0, lambda n=label, s=step: self._set_setup_state(
@@ -2423,7 +2425,7 @@ class PipelineGUI:
                 # AGENTS.md가 hard blocker이므로 재점검
                 missing_hard = [(l, h) for l, h in missing_hard if not _file_exists(
                     self.project if l == "AGENTS.md" else APP_ROOT,
-                    next((t for la, _, t, _ in _HARD_BLOCKERS if la == l), l))]
+                    next((t for la, _, t, _ in hard_blockers if la == l), l))]
 
         # ── 4. Hard blocker 결과 처리 ──
         installable = [(n, h) for n, h in missing_hard if h]

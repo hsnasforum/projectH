@@ -15,6 +15,7 @@ from core.approval import (
     build_approval_reason_record,
 )
 from core.contracts import (
+    ApprovalKind,
     ApprovalReasonLabel,
     ApprovalReasonScope,
     ArtifactKind,
@@ -30,6 +31,7 @@ from core.contracts import (
     StreamEventType,
 )
 from core.models import RequestContext, SearchIntentResolution
+from core.operator_executor import execute_operator_action
 from core.request_intents import SearchIntentDecision, classify_search_intent
 from core.source_policy import build_source_policy, score_source_for_mode
 from core.web_claims import (
@@ -65,6 +67,7 @@ class UserRequest:
     approved_approval_id: str | None = None
     rejected_approval_id: str | None = None
     reissue_approval_id: str | None = None
+    rollback_approval_id: str | None = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -7495,6 +7498,35 @@ class AgentLoop:
                 actions_taken=["approval_error"],
             )
 
+        if str(approval_record.get("kind") or "").strip() == ApprovalKind.OPERATOR_ACTION:
+            try:
+                result = execute_operator_action(approval_record)
+            except ValueError as exc:
+                outcome_record = dict(approval_record)
+                outcome_record["status"] = "failed"
+                outcome_record["error"] = str(exc)
+                self.session_store.record_operator_action_outcome(
+                    request.session_id, outcome_record
+                )
+                return AgentResponse(
+                    text=f"작업 실행 실패: {exc}",
+                    status=ResponseStatus.ERROR,
+                    actions_taken=["approval_error"],
+                )
+            outcome_record = dict(approval_record)
+            outcome_record["status"] = "executed"
+            outcome_record["preview"] = result.get("preview", "")
+            if "backup_path" in result:
+                outcome_record["backup_path"] = result["backup_path"]
+            self.session_store.record_operator_action_outcome(
+                request.session_id, outcome_record
+            )
+            return AgentResponse(
+                text=result.get("preview", ""),
+                status=ResponseStatus.SAVED,
+                actions_taken=["approval_granted", "operator_action_executed"],
+            )
+
         approval = ApprovalRequest.from_record(approval_record)
         if approval.kind != "save_note":
             return AgentResponse(
@@ -7553,6 +7585,47 @@ class AgentLoop:
             artifact_kind=ArtifactKind.GROUNDED_BRIEF if approval.artifact_id else None,
             source_message_id=approval.source_message_id,
             save_content_source=approval.save_content_source,
+        )
+
+    def _execute_operator_rollback(self, request: UserRequest) -> AgentResponse:
+        from core.operator_executor import rollback_operator_action
+
+        approval_id = request.rollback_approval_id
+        if not approval_id:
+            return AgentResponse(
+                text="롤백할 작업 ID가 없습니다.",
+                status=ResponseStatus.ERROR,
+                actions_taken=["rollback_error"],
+            )
+
+        record = self.session_store.get_operator_action_from_history(
+            request.session_id, approval_id
+        )
+        if record is None:
+            return AgentResponse(
+                text="롤백 대상 기록을 찾지 못했습니다.",
+                status=ResponseStatus.ERROR,
+                actions_taken=["rollback_error"],
+            )
+
+        result = rollback_operator_action(record)
+        outcome = dict(record)
+        outcome["status"] = "rolled_back"
+        outcome["restored"] = result.get("restored", False)
+        if "error" in result:
+            outcome["error"] = result["error"]
+        self.session_store.record_operator_action_outcome(request.session_id, outcome)
+
+        if not result.get("restored"):
+            return AgentResponse(
+                text=result.get("error", "롤백 실패"),
+                status=ResponseStatus.ERROR,
+                actions_taken=["rollback_failed"],
+            )
+        return AgentResponse(
+            text=f"롤백 완료: {record.get('target_id', '')}",
+            status=ResponseStatus.SAVED,
+            actions_taken=["rollback_executed"],
         )
 
     def _reissue_pending_approval(self, request: UserRequest) -> AgentResponse:
@@ -7884,6 +7957,16 @@ class AgentLoop:
                 note="파일은 저장되지 않습니다.",
             )
             return self._reject_pending_approval(request)
+
+        if request.rollback_approval_id:
+            self._emit_phase(
+                phase_event_callback,
+                phase="rollback_execute",
+                title="롤백 실행 중",
+                detail="승인된 작업의 원본 파일을 복원하는 중입니다.",
+                note="backup 파일에서 target_id를 복원합니다.",
+            )
+            return self._execute_operator_rollback(request)
 
         return None
 

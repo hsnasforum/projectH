@@ -4,5 +4,7 @@
   "fixture_family": "reviewed_vs_unreviewed_trace",
   "eval_axes": ["reviewability", "trace_completeness"],
   "trace_version": "1.0",
-  "recorded_at": "2026-04-22T00:00:00Z"
+  "recorded_at": "2026-04-22T00:00:00Z",
+  "is_reviewed": true,
+  "review_action": "accept"
 }

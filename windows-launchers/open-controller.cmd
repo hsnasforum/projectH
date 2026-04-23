@@ -4,8 +4,8 @@ setlocal enabledelayedexpansion
 rem Open Pipeline Controller in the Windows default browser using the current WSL IP.
 rem This is a fallback for environments where Windows localhost -> WSL forwarding is broken.
 
-set "WSL_DISTRO=Ubuntu"
-set "CONTROLLER_PORT=8780"
+if not defined WSL_DISTRO set "WSL_DISTRO=Ubuntu"
+if not defined CONTROLLER_PORT set "CONTROLLER_PORT=8780"
 set "WSL_IP="
 
 where wsl.exe >nul 2>nul

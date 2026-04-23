@@ -78,6 +78,27 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                 action="start",
             )
 
+    def test_wait_for_pipeline_ready_uses_shared_start_timeout(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-start-ready-") as tmp:
+            project = Path(tmp).resolve()
+            with mock.patch.object(
+                pipeline_launcher,
+                "backend_confirm_pipeline_start",
+                return_value=(True, "ready"),
+            ) as confirm:
+                ok, message = pipeline_launcher.wait_for_pipeline_ready(project, "aip-test")
+
+            self.assertTrue(ok)
+            self.assertEqual(message, "ready")
+            self.assertEqual(
+                pipeline_launcher._START_READY_TIMEOUT_SEC,
+                float(pipeline_launcher.PIPELINE_START_READY_TIMEOUT_SECONDS),
+            )
+            self.assertEqual(
+                confirm.call_args.kwargs["timeout_seconds"],
+                pipeline_launcher.PIPELINE_START_READY_TIMEOUT_SECONDS,
+            )
+
     def test_pipeline_start_returns_already_running_when_runtime_active(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-start-active-") as tmp:
             project = Path(tmp).resolve()

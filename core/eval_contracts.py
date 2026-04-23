@@ -76,3 +76,49 @@ class EvalArtifactCoreTrace(TypedDict, total=False):
     eval_axes: list[str]
     trace_version: str
     recorded_at: str
+
+
+class CorrectionReuseTrace(EvalArtifactCoreTrace, total=False):
+    reused_artifact_id: str
+    reused_correction_id: str
+
+
+class ApprovalFrictionTrace(EvalArtifactCoreTrace, total=False):
+    approval_latency_sec: float
+    rejection_count: int
+
+
+class ReviewabilityTrace(EvalArtifactCoreTrace, total=False):
+    is_reviewed: bool
+    review_action: str
+
+
+class ScopeSafetyTrace(EvalArtifactCoreTrace, total=False):
+    suggested_scope: str
+    safety_violation_count: int
+
+
+class RollbackabilityTrace(EvalArtifactCoreTrace, total=False):
+    is_rollback_possible: bool
+    rollback_target_artifact_id: str
+
+
+class ConflictDeferTrace(EvalArtifactCoreTrace, total=False):
+    conflict_type: str
+    deferral_count: int
+
+
+class ExplicitVsSaveSupportTrace(EvalArtifactCoreTrace, total=False):
+    support_method: str
+    confidence_score: float
+
+
+EVAL_FAMILY_TRACE_CLASS: dict[str, type] = {
+    EvalFixtureFamily.CORRECTION_REUSE: CorrectionReuseTrace,
+    EvalFixtureFamily.APPROVAL_FRICTION: ApprovalFrictionTrace,
+    EvalFixtureFamily.REVIEWED_VS_UNREVIEWED_TRACE: ReviewabilityTrace,
+    EvalFixtureFamily.SCOPE_SUGGESTION_SAFETY: ScopeSafetyTrace,
+    EvalFixtureFamily.ROLLBACK_STOP_APPLY: RollbackabilityTrace,
+    EvalFixtureFamily.CONFLICT_DEFER_TRACE: ConflictDeferTrace,
+    EvalFixtureFamily.EXPLICIT_VS_SAVE_SUPPORT: ExplicitVsSaveSupportTrace,
+}

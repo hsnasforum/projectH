@@ -4,5 +4,7 @@
   "fixture_family": "rollback_stop_apply",
   "eval_axes": ["rollbackability", "trace_completeness"],
   "trace_version": "1.0",
-  "recorded_at": "2026-04-22T00:00:00Z"
+  "recorded_at": "2026-04-22T00:00:00Z",
+  "is_rollback_possible": true,
+  "rollback_target_artifact_id": "art_prev_002"
 }

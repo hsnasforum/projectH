@@ -10,11 +10,32 @@ class PreferenceHandlerMixin:
 
     def list_preferences_payload(self) -> dict[str, Any]:
         all_prefs = self.preference_store.list_all()
+        get_summary = getattr(self.session_store, "get_global_audit_summary", None)
+        summary = get_summary() if callable(get_summary) else {}
+        per_pref_stats = summary.get("per_preference_stats", {}) if isinstance(summary, dict) else {}
+        if not isinstance(per_pref_stats, dict):
+            per_pref_stats = {}
+
+        enriched = []
+        for pref in all_prefs:
+            pref_copy = dict(pref)
+            fingerprint = str(pref_copy.get("fingerprint") or pref_copy.get("delta_fingerprint") or "")
+            stats = per_pref_stats.get(fingerprint, {})
+            if not isinstance(stats, dict):
+                stats = {}
+            applied_count = stats.get("applied_count", 0)
+            corrected_count = stats.get("corrected_count", 0)
+            pref_copy["reliability_stats"] = {
+                "applied_count": applied_count if isinstance(applied_count, int) else 0,
+                "corrected_count": corrected_count if isinstance(corrected_count, int) else 0,
+            }
+            enriched.append(pref_copy)
+
         return {
             "ok": True,
-            "preferences": all_prefs,
-            "active_count": sum(1 for p in all_prefs if p.get("status") == "active"),
-            "candidate_count": sum(1 for p in all_prefs if p.get("status") == "candidate"),
+            "preferences": enriched,
+            "active_count": sum(1 for p in enriched if p.get("status") == "active"),
+            "candidate_count": sum(1 for p in enriched if p.get("status") == "candidate"),
         }
 
     def activate_preference(self, payload: dict[str, Any]) -> dict[str, Any]:

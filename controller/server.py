@@ -194,10 +194,7 @@ def _normalize_capture_tail_text(text: str) -> str:
 def get_runtime_status() -> tuple[dict, HTTPStatus]:
     status = normalize_runtime_status(read_runtime_status(PROJECT_ROOT))
     if not status:
-        return {
-            "ok": False,
-            "error": "runtime status not available",
-        }, HTTPStatus.SERVICE_UNAVAILABLE
+        return _runtime_status_or_placeholder(), HTTPStatus.OK
     return {**status, "project_root": str(PROJECT_ROOT), **_runtime_role_metadata()}, HTTPStatus.OK
 
 

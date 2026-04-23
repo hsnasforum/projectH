@@ -4,5 +4,7 @@
   "fixture_family": "correction_reuse",
   "eval_axes": ["correction_reuse", "trace_completeness"],
   "trace_version": "1.0",
-  "recorded_at": "2026-04-22T00:00:00Z"
+  "recorded_at": "2026-04-22T00:00:00Z",
+  "reused_artifact_id": "art_prior_001",
+  "reused_correction_id": "corr_prior_001"
 }

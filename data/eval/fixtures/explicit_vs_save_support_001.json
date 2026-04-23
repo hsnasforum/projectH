@@ -4,5 +4,7 @@
   "fixture_family": "explicit_vs_save_support",
   "eval_axes": ["approval_friction", "trace_completeness"],
   "trace_version": "1.0",
-  "recorded_at": "2026-04-22T00:00:00Z"
+  "recorded_at": "2026-04-22T00:00:00Z",
+  "support_method": "explicit",
+  "confidence_score": 0.95
 }

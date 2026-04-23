@@ -4,19 +4,23 @@ from __future__ import annotations
 from pathlib import Path
 
 from .platform import IS_WINDOWS, APP_ROOT, _wsl_path_str, _run, resolve_packaged_file
+from .setup_profile import resolve_project_runtime_adapter
 
 # ── Hard blockers ──
-_HARD_BLOCKERS: list[tuple[str, str, str, str]] = [
+_BASE_HARD_BLOCKERS: list[tuple[str, str, str, str]] = [
     ("tmux",               "cli",  "tmux",                "sudo apt install tmux"),
     ("python3",            "cli",  "python3",             "sudo apt install python3"),
-    ("claude",             "cli",  "claude",              "npm install -g @anthropic-ai/claude-code"),
-    ("codex",              "cli",  "codex",               "npm install -g codex"),
-    ("gemini",             "cli",  "gemini",              "npm install -g @google/gemini-cli"),
     ("start-pipeline.sh",  "launcher_file", "start-pipeline.sh",  ""),
     ("stop-pipeline.sh",   "launcher_file", "stop-pipeline.sh",   ""),
     ("watcher_core.py",    "launcher_file", "watcher_core.py",    ""),
     ("AGENTS.md",          "repo_file",     "AGENTS.md",          ""),
 ]
+_AGENT_CLI_BLOCKERS: dict[str, tuple[str, str, str, str]] = {
+    "Claude": ("claude", "cli", "claude", "npm install -g @anthropic-ai/claude-code"),
+    "Codex": ("codex", "cli", "codex", "npm install -g codex"),
+    "Gemini": ("gemini", "cli", "gemini", "npm install -g @google/gemini-cli"),
+}
+_HARD_BLOCKERS: list[tuple[str, str, str, str]] = list(_BASE_HARD_BLOCKERS)
 
 # ── Soft warnings ──
 _SOFT_WARNINGS: list[tuple[str, str, str]] = [
@@ -53,6 +57,34 @@ def _find_cli_bin(name: str) -> bool:
     return code == 0
 
 
+def _required_agent_cli_blockers(project: Path) -> list[tuple[str, str, str, str]]:
+    """Return CLI blockers for the active launch profile only.
+
+    Without an active profile, setup can still proceed far enough for the user
+    to create/apply one; launch itself remains blocked by the profile resolver.
+    """
+    try:
+        resolved = resolve_project_runtime_adapter(project)
+    except Exception:
+        return []
+    controls = dict(resolved.get("controls") or {})
+    if not bool(controls.get("launch_allowed")):
+        return []
+    blockers: list[tuple[str, str, str, str]] = []
+    seen: set[str] = set()
+    for lane_name in list(resolved.get("enabled_lanes") or []):
+        blocker = _AGENT_CLI_BLOCKERS.get(str(lane_name or "").strip())
+        if blocker is None or blocker[0] in seen:
+            continue
+        seen.add(blocker[0])
+        blockers.append(blocker)
+    return blockers
+
+
+def hard_blockers_for_project(project: Path) -> list[tuple[str, str, str, str]]:
+    return [*_BASE_HARD_BLOCKERS, *_required_agent_cli_blockers(project)]
+
+
 def _file_exists(base: Path, rel: str) -> bool:
     if base == APP_ROOT and rel in _PACKAGED_GUI_FILES:
         try:
@@ -71,7 +103,7 @@ def _file_exists(base: Path, rel: str) -> bool:
 
 def _check_hard_blockers(project: Path) -> list[tuple[str, str]]:
     missing: list[tuple[str, str]] = []
-    for label, check_type, target, hint in _HARD_BLOCKERS:
+    for label, check_type, target, hint in hard_blockers_for_project(project):
         if check_type == "cli":
             ok = _find_cli_bin(target)
         elif check_type == "launcher_file":

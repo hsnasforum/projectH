@@ -67,6 +67,68 @@ class SessionStoreTest(unittest.TestCase):
             self.assertIsNotNone(popped)
             self.assertEqual(session["pending_approvals"], [])
 
+    def test_operator_action_request_round_trip(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            store = SessionStore(base_dir=tmp_dir)
+
+            approval_id = store.record_operator_action_request(
+                "demo",
+                {
+                    "action_kind": "local_file_edit",
+                    "target_id": "/tmp/x.txt",
+                    "audit_trace_required": True,
+                    "is_reversible": True,
+                },
+            )
+            fetched = store.get_pending_approval("demo", approval_id)
+
+            self.assertIsInstance(approval_id, str)
+            self.assertTrue(approval_id)
+            self.assertIsNotNone(fetched)
+            self.assertEqual(fetched["kind"], "operator_action")
+            self.assertEqual(fetched["status"], "pending")
+            self.assertEqual(fetched["action_kind"], "local_file_edit")
+
+    def test_operator_action_outcome_round_trip(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            store = SessionStore(base_dir=tmp_dir)
+            approval_id = store.record_operator_action_request(
+                "demo",
+                {"action_kind": "local_file_edit", "target_id": "/tmp/x.txt"},
+            )
+            record = store.pop_pending_approval("demo", approval_id)
+            self.assertIsNotNone(record)
+            record["status"] = "executed"
+            record["preview"] = "preview text"
+            store.record_operator_action_outcome("demo", record)
+            session = store.get_session("demo")
+            history = session.get("operator_action_history", [])
+            self.assertEqual(len(history), 1)
+            self.assertEqual(history[0]["approval_id"], approval_id)
+            self.assertEqual(history[0]["status"], "executed")
+            self.assertIn("completed_at", history[0])
+            self.assertEqual(history[0].get("preview"), "preview text")
+
+    def test_operator_action_failed_outcome_preserved(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            store = SessionStore(base_dir=tmp_dir)
+            store.record_operator_action_outcome(
+                "demo",
+                {
+                    "approval_id": "test-fail-id",
+                    "kind": "operator_action",
+                    "action_kind": "shell_execute",
+                    "status": "failed",
+                    "error": "Unsupported action kind: 'shell_execute'",
+                },
+            )
+            session = store.get_session("demo")
+            history = session.get("operator_action_history", [])
+            self.assertEqual(len(history), 1)
+            self.assertEqual(history[0]["status"], "failed")
+            self.assertEqual(history[0]["error"], "Unsupported action kind: 'shell_execute'")
+            self.assertIn("completed_at", history[0])
+
     def test_active_context_round_trip(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             store = SessionStore(base_dir=tmp_dir)
@@ -179,6 +241,128 @@ class SessionStoreTest(unittest.TestCase):
             self.assertEqual(len(session["messages"]), MAX_MESSAGES_PER_SESSION)
             self.assertEqual(session["messages"][0]["text"], f"msg-{over_limit - MAX_MESSAGES_PER_SESSION}")
             self.assertEqual(session["messages"][-1]["text"], f"msg-{over_limit - 1}")
+
+    def test_get_global_audit_summary(self) -> None:
+        with TemporaryDirectory() as base_dir:
+            store = SessionStore(base_dir=base_dir)
+            # Empty store
+            empty = store.get_global_audit_summary()
+            self.assertEqual(empty["session_count"], 0)
+            self.assertEqual(empty["correction_pair_count"], 0)
+
+            # Session with a correction pair and operator action
+            session_id = "audit-test-session"
+            data = store.get_session(session_id)
+            data["messages"].append({
+                "message_id": "msg-1",
+                "role": "assistant",
+                "artifact_id": "artifact-1",
+                "artifact_kind": "grounded_brief",
+                "corrected_text": "corrected content",
+                "feedback": {"label": "helpful"},
+                "original_response_snapshot": {
+                    "artifact_id": "artifact-1",
+                    "artifact_kind": "grounded_brief",
+                    "draft_text": "original",
+                    "source_paths": [],
+                },
+                "text": "original",
+            })
+            data["operator_action_history"].append({
+                "action_kind": "local_file_edit",
+                "status": "executed",
+            })
+            data["operator_action_history"].append({
+                "action_kind": "local_file_edit",
+                "status": "rolled_back",
+            })
+            store._save(session_id, data)
+
+            summary = store.get_global_audit_summary()
+            self.assertEqual(summary["session_count"], 1)
+            self.assertEqual(summary["correction_pair_count"], 1)
+            self.assertEqual(summary["feedback_like_count"], 1)
+            self.assertEqual(summary["feedback_dislike_count"], 0)
+            self.assertEqual(summary["operator_executed_count"], 1)
+            self.assertEqual(summary["operator_rolled_back_count"], 1)
+            self.assertEqual(summary["operator_failed_count"], 0)
+
+    def test_get_global_audit_summary_personalization_counts(self) -> None:
+        with TemporaryDirectory() as base_dir:
+            store = SessionStore(base_dir=base_dir)
+            session_id = "pref-audit-session"
+            data = store.get_session(session_id)
+
+            data["messages"].append({
+                "message_id": "msg-p1",
+                "role": "assistant",
+                "artifact_id": "artifact-p1",
+                "artifact_kind": "grounded_brief",
+                "applied_preference_ids": ["pref-abc"],
+                "corrected_text": "corrected",
+                "original_response_snapshot": {
+                    "artifact_id": "artifact-p1",
+                    "artifact_kind": "grounded_brief",
+                    "draft_text": "original",
+                    "source_paths": [],
+                },
+                "text": "original",
+            })
+            data["messages"].append({
+                "message_id": "msg-p2",
+                "role": "assistant",
+                "artifact_kind": "grounded_brief",
+                "applied_preference_ids": ["pref-abc"],
+                "text": "not corrected",
+            })
+            data["messages"].append({
+                "message_id": "msg-p3",
+                "role": "assistant",
+                "artifact_kind": "grounded_brief",
+                "text": "no prefs",
+            })
+            store._save(session_id, data)
+
+            summary = store.get_global_audit_summary()
+            self.assertEqual(summary["personalized_response_count"], 2)
+            self.assertEqual(summary["personalized_correction_count"], 1)
+
+    def test_get_global_audit_summary_per_preference_stats(self) -> None:
+        with TemporaryDirectory() as base_dir:
+            store = SessionStore(base_dir=base_dir)
+            session_id = "per-pref-session"
+            data = store.get_session(session_id)
+
+            data["messages"].append({
+                "message_id": "msg-pp1",
+                "role": "assistant",
+                "artifact_id": "artifact-pp1",
+                "artifact_kind": "grounded_brief",
+                "applied_preference_ids": ["pref-A", "pref-B"],
+                "corrected_text": "corrected",
+                "original_response_snapshot": {
+                    "artifact_id": "artifact-pp1",
+                    "artifact_kind": "grounded_brief",
+                    "draft_text": "original",
+                    "source_paths": [],
+                },
+                "text": "original",
+            })
+            data["messages"].append({
+                "message_id": "msg-pp2",
+                "role": "assistant",
+                "artifact_kind": "grounded_brief",
+                "applied_preference_ids": ["pref-A"],
+                "text": "no correction",
+            })
+            store._save(session_id, data)
+
+            summary = store.get_global_audit_summary()
+            per = summary["per_preference_stats"]
+            self.assertEqual(per["pref-A"]["applied_count"], 2)
+            self.assertEqual(per["pref-A"]["corrected_count"], 1)
+            self.assertEqual(per["pref-B"]["applied_count"], 1)
+            self.assertEqual(per["pref-B"]["corrected_count"], 1)
 
 
 if __name__ == "__main__":

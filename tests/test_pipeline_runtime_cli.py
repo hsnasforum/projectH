@@ -433,6 +433,129 @@ class SupervisorCliTest(unittest.TestCase):
             self.assertEqual(payload["runtime_state"], "RUNNING")
             self.assertEqual(payload["current_run"]["run_id"], "run-status")
 
+    def test_doctor_json_reports_ready_project_without_current_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            (project_root / "AGENTS.md").write_text("# Agents\n", encoding="utf-8")
+            profile_path = project_root / ".pipeline" / "config" / "agent_profile.json"
+            profile_path.parent.mkdir(parents=True, exist_ok=True)
+            profile_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "selected_agents": ["Codex"],
+                        "role_bindings": {"implement": "Codex", "verify": "Codex", "advisory": ""},
+                        "role_options": {
+                            "advisory_enabled": False,
+                            "operator_stop_enabled": True,
+                            "session_arbitration_enabled": False,
+                        },
+                        "mode_flags": {
+                            "single_agent_mode": True,
+                            "self_verify_allowed": True,
+                            "self_advisory_allowed": False,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            stdout = io.StringIO()
+            adapter = Mock()
+            adapter.session_exists.return_value = False
+
+            with (
+                patch.object(runtime_cli, "_find_cli_bin", return_value=True),
+                patch.object(runtime_cli, "_list_supervisor_pids", return_value=[]),
+                patch.object(runtime_cli, "TmuxAdapter", return_value=adapter),
+                patch("sys.stdout", stdout),
+            ):
+                code = runtime_cli._doctor(
+                    Namespace(project_root=str(project_root), session="aip-test", json=True)
+                )
+
+            self.assertEqual(code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertTrue(payload["ok"])
+            self.assertTrue(payload["read_only"])
+            checks = {item["name"]: item for item in payload["checks"]}
+            self.assertEqual(checks["runtime_status"]["status"], "ok")
+            self.assertIn("No current run yet", checks["runtime_status"]["detail"])
+            self.assertEqual(checks["agent_cli:codex"]["status"], "ok")
+
+    def test_doctor_fails_when_active_profile_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            (project_root / "AGENTS.md").write_text("# Agents\n", encoding="utf-8")
+            stdout = io.StringIO()
+            adapter = Mock()
+            adapter.session_exists.return_value = False
+
+            with (
+                patch.object(runtime_cli, "_find_cli_bin", return_value=True),
+                patch.object(runtime_cli, "_list_supervisor_pids", return_value=[]),
+                patch.object(runtime_cli, "TmuxAdapter", return_value=adapter),
+                patch("sys.stdout", stdout),
+            ):
+                code = runtime_cli._doctor(
+                    Namespace(project_root=str(project_root), session="aip-test", json=True)
+                )
+
+            self.assertEqual(code, 1)
+            payload = json.loads(stdout.getvalue())
+            checks = {item["name"]: item for item in payload["checks"]}
+            self.assertEqual(checks["active_profile"]["status"], "fail")
+            self.assertIn("미리보기 생성 후 적용", checks["active_profile"]["detail"])
+
+    def test_doctor_warns_on_stale_current_run_pointer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            (project_root / "AGENTS.md").write_text("# Agents\n", encoding="utf-8")
+            profile_path = project_root / ".pipeline" / "config" / "agent_profile.json"
+            profile_path.parent.mkdir(parents=True, exist_ok=True)
+            profile_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "selected_agents": ["Codex"],
+                        "role_bindings": {"implement": "Codex", "verify": "Codex", "advisory": ""},
+                        "role_options": {
+                            "advisory_enabled": False,
+                            "operator_stop_enabled": True,
+                            "session_arbitration_enabled": False,
+                        },
+                        "mode_flags": {
+                            "single_agent_mode": True,
+                            "self_verify_allowed": True,
+                            "self_advisory_allowed": False,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (project_root / ".pipeline" / "current_run.json").write_text(
+                json.dumps({"run_id": "missing-run", "status_path": ".pipeline/runs/missing-run/status.json"}),
+                encoding="utf-8",
+            )
+            stdout = io.StringIO()
+            adapter = Mock()
+            adapter.session_exists.return_value = False
+
+            with (
+                patch.object(runtime_cli, "_find_cli_bin", return_value=True),
+                patch.object(runtime_cli, "_list_supervisor_pids", return_value=[]),
+                patch.object(runtime_cli, "TmuxAdapter", return_value=adapter),
+                patch("sys.stdout", stdout),
+            ):
+                code = runtime_cli._doctor(
+                    Namespace(project_root=str(project_root), session="aip-test", json=True)
+                )
+
+            self.assertEqual(code, 0)
+            payload = json.loads(stdout.getvalue())
+            checks = {item["name"]: item for item in payload["checks"]}
+            self.assertEqual(checks["runtime_status"]["status"], "warn")
+            self.assertIn("current_run points to missing", checks["runtime_status"]["detail"])
+
     def test_list_supervisor_pids_filters_project_and_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

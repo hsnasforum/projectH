@@ -1,42 +1,59 @@
 STATUS: verified
-CONTROL_SEQ: 1
-BASED_ON_WORK: work/4/23/2026-04-23-pr-merge-gate-loop-guard.md
-HANDOFF_SHA: 1b23edf
+CONTROL_SEQ: 3
+BASED_ON_WORK: work/4/23/2026-04-23-pr-merge-gate-commit-push.md
+HANDOFF_SHA: 77d1827
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 974
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 1
 
-## Claim
+## Claim (commit/push closeout)
 
-PR merge gate 반복 루프 방지 (pr-merge-gate-loop-guard):
-- `pipeline_runtime/operator_autonomy.py` — `operator_gate_marker_from_decision()`에 `routed_to == "operator"` 또는 `mode == "needs_operator"` 시 gate marker 미생성 guard 추가 (line 471)
-- `PR_MERGE_GATE_REASON = "pr_merge_gate"` 등록 (line 20), `merge_gate` decision class 지원 추가 (line 189)
-- 3개 신규 회귀 테스트: schema helper(gate marker 없음), watcher(OPERATOR_WAIT 유지 + verify retriage 미호출), supervisor(needs_operator+pr_boundary surface + control_operator_gated event 미발생)
-- 문서 5종: README.md, .pipeline/README.md, docs/MILESTONES.md, 03_기술설계_명세서.md, 05_운영_RUNBOOK.md — `pr_merge_gate`를 draft PR creation follow-up이 아닌 실제 PR merge publication boundary로 기록
+pr-merge-gate-loop-guard 커밋/푸시 closeout:
+- Commit 1 (0b5c420): 구현 번들 11 files, 272↑ 73↓
+- Commit 2 (77d1827): MILESTONES.md doc-sync
+- Push: 1b23edf..77d1827 → origin/feat/watcher-turn-state OK
 
-## Checks Run
+## Checks Run (commit/push closeout 기준)
 
-- `python3 -m py_compile pipeline_runtime/operator_autonomy.py` → OK
-- `git diff --check -- pipeline_runtime/operator_autonomy.py tests/test_operator_request_schema.py tests/test_watcher_core.py tests/test_pipeline_runtime_supervisor.py README.md .pipeline/README.md docs/MILESTONES.md` → OK (whitespace clean)
-- `python3 -m unittest tests.test_operator_request_schema.OperatorRequestHeaderSchemaTests.test_pr_merge_gate_stays_operator_visible_without_gate_marker tests.test_watcher_core.TurnResolutionTest.test_pr_merge_gate_stays_operator_wait_without_verify_retriage tests.test_pipeline_runtime_supervisor.RuntimeSupervisorTest.test_write_status_keeps_pr_merge_gate_operator_visible_without_gated_event -v` → 3/3 OK
-- `python3 -m unittest tests.test_pipeline_runtime_supervisor tests.test_turn_arbitration -v` → 147/147 OK
-- `python3 -m unittest tests.test_operator_request_schema tests.test_watcher_core tests.test_pipeline_runtime_automation_health tests.test_pipeline_runtime_control_writers -v` → 236/236 OK (skipped=1)
+- `git log --oneline -6` → 77d1827, 0b5c420 모두 존재 확인
+- `git status --short` (closeout 검증 시점) → 신규 uncommitted changes 발견 (아래 참조)
+- Push result `1b23edf..77d1827 → origin/feat/watcher-turn-state` → OK
 
-## Code Review
+## Git 상태 (CONTROL_SEQ 3 기준)
 
-- `operator_gate_marker_from_decision()` guard (line 471): `if routed_to == "operator" or mode == "needs_operator": return None` — 핵심 수정 확인. `routed_to=operator`인 실제 operator stop은 gate marker를 받지 않으므로 watcher/supervisor의 verify retriage 루프 재진입 차단. **올바름.**
-- `PR_MERGE_GATE_REASON = "pr_merge_gate"` (line 20), `merge_gate` in supported decision classes (line 189) — 등록 완료. **올바름.**
-- 3개 신규 테스트는 이번 사고 패턴(RETRIAGE_COUNT 746 증가)을 재현하는 replay test. 회귀 방지 coverage 충분. **올바름.**
-- 문서 5종 업데이트 범위: `pr_merge_gate`가 draft creation이 아닌 merge publication boundary임을 명시. 기존 기술설계/운영 runbook과 README 일관성 확보. **올바름.**
+- HEAD: 77d1827 (feat/watcher-turn-state, pushed)
+- **신규 uncommitted 변경** (implement lane 작성, implement_handoff.md 없이 추가됨):
+  - ` M pipeline_runtime/operator_autonomy.py`
+  - ` M pipeline_runtime/supervisor.py`
+  - ` M tests/test_operator_request_schema.py`
+  - ` M tests/test_pipeline_runtime_supervisor.py`
+  - ` M watcher_core.py`
+  - `?? pipeline_runtime/pr_merge_state.py` (NEW)
+  - `?? work/4/23/2026-04-23-pr-merge-gate-commit-push.md` (verify/handoff closeout)
 
-## Git 상태
+## 신규 구현 슬라이스 요약 (미인가, advisory 확인 필요)
 
-- 수정 파일 (uncommitted): `pipeline_runtime/operator_autonomy.py`, `tests/test_operator_request_schema.py`, `tests/test_watcher_core.py`, `tests/test_pipeline_runtime_supervisor.py`, `README.md`, `.pipeline/README.md`, `docs/MILESTONES.md`, `docs/projectH_pipeline_runtime_docs/03_기술설계_명세서.md`, `docs/projectH_pipeline_runtime_docs/05_운영_RUNBOOK.md`
-- HEAD: 1b23edf (Milestone 13 Axis 5 doc-sync, 이미 origin에 push됨)
-- Milestone 13 Axes 1–5 전부 커밋·푸시 완료 (feat/watcher-turn-state)
+구현 내용 (PR merge auto-detection):
+- `pipeline_runtime/pr_merge_state.py`: `PrMergeStatusCache` — `gh pr view` 로 PR merged 여부 조회 (TTL: success=5min, miss=15sec, timeout=4sec). `shutil.which("gh") is None` guard, `OSError`/`TimeoutExpired`/`JSONDecodeError` 방어 포함.
+- `pipeline_runtime/operator_autonomy.py`: `_PR_NUMBER_RE` + `referenced_operator_pr_numbers()` 추가; `evaluate_stale_operator_control()`에 `completed_pr_numbers` 파라미터 추가 — `pr_merge_gate` reason이고 해당 PR이 completed_prs에 있으면 `{"reason": "pr_merge_completed"}` 자동 해소 반환
+- `pipeline_runtime/supervisor.py`, `watcher_core.py`: `PrMergeStatusCache` 인스턴스 통합, `completed_pr_numbers` 전달
+
+신규 테스트 결과 (모두 통과):
+- `python3 -m py_compile pipeline_runtime/operator_autonomy.py pipeline_runtime/supervisor.py pipeline_runtime/pr_merge_state.py watcher_core.py` → OK
+- `tests.test_operator_request_schema...test_pr_merge_gate_is_recoverable_after_referenced_pr_is_completed` → OK
+- `tests.test_pipeline_runtime_supervisor...test_write_status_ignores_pr_merge_gate_after_pr_is_merged` → OK
+- `tests.test_operator_request_schema tests.test_pipeline_runtime_supervisor tests.test_turn_arbitration` → 167/167 OK
+- `tests.test_watcher_core` → 193/193 OK
+
+## 승인 경계 플래그
+
+- **외부 shell 실행**: `gh pr view <number>` — read-only GitHub API 호출이지만 runtime이 외부 CLI에 의존
+- **operator stop 자동 해소**: `pr_merge_gate` operator stop을 PR merged 감지 시 자동 해소 — approval 모델에 미치는 영향 advisory 확인 필요
+- **구현 인가 부재**: implement_handoff.md 없이 작성된 슬라이스. 작업 노트(work note) 미작성.
 
 ## Risk / Open Questions
 
-- **Commit/push 미실행**: pr-merge-gate-loop-guard 변경 전체가 uncommitted 상태. operator 인가 후 커밋/푸시 필요.
-- **PR #27 merge**: 실제 operator 결정. 새 코드 기준 `mode=needs_operator, routed_to=operator` 판정으로 verify retriage 루프 없이 operator wait 유지됨.
-- **latest_verify `—` artifact 선택 문제**: 이번 라운드에서 수정하지 않음. 별도 라운드 deferred.
-- **현재 runtime 없음**: supervisor.pid, experimental.pid 파일은 존재하나 runtime 프로세스 없음. 재시작은 operator 결정.
+- PR merge auto-detection 슬라이스가 승인 기반 안전 모델 범위 내인지 advisory 확인 필요
+- 해소 결론에 따라 work note 소급 작성 + commit, 또는 rollback 결정
+- PR #27 merge: operator 결정 (CONTROL_SEQ 2 operator_request에 기록)
+- Axis 5b (PreferencePanel.tsx): PR merge 후 별도 라운드
+- latest_verify `—` artifact: deferred

@@ -40,6 +40,7 @@ from .operator_autonomy import (
     evaluate_stale_operator_control,
     operator_gate_marker_from_decision,
 )
+from .pr_merge_state import PrMergeStatusCache
 from .role_routes import VERIFY_TRIAGE_ESCALATION
 from .receipts import (
     build_receipt,
@@ -103,6 +104,7 @@ _WATCHER_SELF_RESTART_SOURCE_NAMES = (
     "pipeline_runtime/schema.py",
     "pipeline_runtime/turn_arbitration.py",
     "pipeline_runtime/operator_autonomy.py",
+    "pipeline_runtime/pr_merge_state.py",
     "pipeline_runtime/wrapper_events.py",
 )
 _WATCHER_SELF_RESTART_COOLDOWN_SEC = 10.0
@@ -193,6 +195,7 @@ class RuntimeSupervisor:
         self._last_watcher_source_restart_at = 0.0
         self._last_seen_control_seq: int | None = None
         self._control_seq_age_cycles = 0
+        self._pr_merge_status_cache = PrMergeStatusCache()
 
     def _make_run_id(self) -> str:
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -715,6 +718,11 @@ class RuntimeSupervisor:
             control_text = control_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return None
+        pr_merge_resolution = self._pr_merge_status_cache.control_resolution(
+            self.project_root,
+            control_text,
+            control_meta,
+        )
         reason = str((turn_state or {}).get("reason") or "")
         turn_state_name = canonical_turn_state_name(
             (turn_state or {}).get("state"),
@@ -729,6 +737,8 @@ class RuntimeSupervisor:
             control_text=control_text,
             control_meta=control_meta,
             verified_work_paths=verified_work_paths,
+            completed_pr_numbers=pr_merge_resolution.completed_pr_numbers,
+            mismatched_pr_numbers=pr_merge_resolution.head_mismatch_pr_numbers,
             control_file=control_file,
             control_seq=control_seq,
             normalize_path=self._normalize_artifact_path,

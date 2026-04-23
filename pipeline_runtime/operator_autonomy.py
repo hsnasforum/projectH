@@ -66,6 +66,9 @@ _VOLATILE_CONTROL_LINE_RE = re.compile(
     r"\b\s*:?.*$"
 )
 _WORK_PATH_RE = re.compile(r"(work/\d+/\d+/[^\s`]+\.md)")
+_PR_NUMBER_RE = re.compile(
+    r"(?i)(?:\bPR\s*#\s*|/pull/)([1-9][0-9]*)\b"
+)
 _CHOICE_INTENT_MARKERS = (
     "choose",
     "pick",
@@ -378,11 +381,39 @@ def referenced_operator_work_paths(
     )
 
 
+def referenced_operator_pr_numbers(
+    control_text: object,
+    control_meta: Mapping[str, Any] | None = None,
+) -> list[int]:
+    """Return PR numbers referenced by an operator control."""
+    meta = _normalize_meta(control_meta)
+    text = _raw_text(
+        [
+            meta.get("decision_required"),
+            control_text,
+        ]
+    )
+    numbers: list[int] = []
+    seen: set[int] = set()
+    for match in _PR_NUMBER_RE.finditer(text):
+        try:
+            number = int(match.group(1))
+        except (TypeError, ValueError):
+            continue
+        if number <= 0 or number in seen:
+            continue
+        numbers.append(number)
+        seen.add(number)
+    return numbers
+
+
 def evaluate_stale_operator_control(
     *,
     control_text: object,
     control_meta: Mapping[str, Any] | None,
     verified_work_paths: Iterable[object],
+    completed_pr_numbers: Iterable[object] = (),
+    mismatched_pr_numbers: Iterable[object] = (),
     control_file: str,
     control_seq: int,
     normalize_path: Callable[[object], str] | None = None,
@@ -409,6 +440,43 @@ def evaluate_stale_operator_control(
             "reason": OPERATOR_APPROVAL_COMPLETED_REASON,
             "resolved_work_paths": [],
         }
+
+    completed_prs: set[int] = set()
+    for value in completed_pr_numbers:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            completed_prs.add(number)
+    mismatched_prs: set[int] = set()
+    for value in mismatched_pr_numbers:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            mismatched_prs.add(number)
+    if normalize_reason_code(meta.get("reason_code")) == PR_MERGE_GATE_REASON and (completed_prs or mismatched_prs):
+        referenced_prs = referenced_operator_pr_numbers(control_text, meta)
+        resolved_prs = [number for number in referenced_prs if number in completed_prs]
+        if resolved_prs:
+            return {
+                "control_file": control_file,
+                "control_seq": control_seq,
+                "reason": "pr_merge_completed",
+                "resolved_work_paths": [],
+                "resolved_pr_numbers": resolved_prs,
+            }
+        mismatched = [number for number in referenced_prs if number in mismatched_prs]
+        if mismatched:
+            return {
+                "control_file": control_file,
+                "control_seq": control_seq,
+                "reason": "pr_merge_head_mismatch",
+                "resolved_work_paths": [],
+                "resolved_pr_numbers": mismatched,
+            }
 
     referenced_work_paths = referenced_operator_work_paths(
         control_text,

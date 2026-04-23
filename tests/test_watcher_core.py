@@ -19,6 +19,7 @@ from pipeline_runtime.operator_autonomy import (
     PR_CREATION_GATE_REASON,
     PR_MERGE_GATE_REASON,
 )
+from pipeline_runtime.pr_merge_state import PrMergeGateResolution
 from pipeline_runtime.wrapper_events import append_wrapper_event
 
 
@@ -4349,14 +4350,107 @@ class TurnResolutionTest(unittest.TestCase):
             )
             core._last_operator_request_sig = ""
 
-            self.assertIsNone(core._operator_gate_marker())
-            self.assertEqual(core._resolve_turn(), "operator")
+            with mock.patch.object(core._pr_merge_status_cache, "control_resolution", return_value=PrMergeGateResolution()):
+                self.assertIsNone(core._operator_gate_marker())
+                self.assertEqual(core._resolve_turn(), "operator")
 
-            with mock.patch.object(core, "_notify_verify_operator_retriage") as retriage_notify:
+            with (
+                mock.patch.object(core._pr_merge_status_cache, "control_resolution", return_value=PrMergeGateResolution()),
+                mock.patch.object(core, "_notify_verify_operator_retriage") as retriage_notify,
+            ):
                 core._check_pipeline_signal_updates()
 
             retriage_notify.assert_not_called()
             self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.OPERATOR_WAIT)
+
+    def test_pr_merge_gate_recovers_after_referenced_pr_is_merged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            operator_path = base_dir / "operator_request.md"
+            operator_path.write_text(
+                "\n".join(
+                    [
+                        "STATUS: needs_operator",
+                        "CONTROL_SEQ: 1721",
+                        f"REASON_CODE: {PR_MERGE_GATE_REASON}",
+                        "OPERATOR_POLICY: internal_only",
+                        "DECISION_CLASS: merge_gate",
+                        "DECISION_REQUIRED: PR #27 merge approval",
+                        "PR #27: https://github.com/hsnasforum/projectH/pull/27",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+
+            with mock.patch.object(
+                core._pr_merge_status_cache,
+                "control_resolution",
+                return_value=PrMergeGateResolution(completed_pr_numbers=(27,)),
+            ):
+                marker = core._stale_operator_control_marker()
+                self.assertIsNotNone(marker)
+                self.assertEqual(marker["reason"], "pr_merge_completed")
+                self.assertEqual(core._resolve_turn(), "verify_followup")
+
+    def test_pr_merge_gate_head_mismatch_routes_to_verify_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            operator_path = base_dir / "operator_request.md"
+            operator_path.write_text(
+                "\n".join(
+                    [
+                        "STATUS: needs_operator",
+                        "CONTROL_SEQ: 2",
+                        f"REASON_CODE: {PR_MERGE_GATE_REASON}",
+                        "OPERATOR_POLICY: internal_only",
+                        "DECISION_CLASS: merge_gate",
+                        "DECISION_REQUIRED: PR #27 merge approval",
+                        "- HEAD: `77d1827`",
+                        "PR #27: https://github.com/hsnasforum/projectH/pull/27",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+
+            with mock.patch.object(
+                core._pr_merge_status_cache,
+                "control_resolution",
+                return_value=PrMergeGateResolution(head_mismatch_pr_numbers=(27,)),
+            ):
+                marker = core._stale_operator_control_marker()
+                self.assertIsNotNone(marker)
+                self.assertEqual(marker["reason"], "pr_merge_head_mismatch")
+                self.assertEqual(core._resolve_turn(), "verify_followup")
 
     def test_real_operator_boundary_supersedes_lower_seq_advisory_slots(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

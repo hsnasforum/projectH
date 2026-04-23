@@ -609,15 +609,21 @@
 - JSON backend preserved via `LOCAL_AI_STORAGE_BACKEND=json` env override
 - migration is idempotent (`INSERT OR IGNORE`); startup migration never blocks server
 
-#### Shipped Infrastructure (Axes 1-2, 2026-04-23)
+#### Shipped Infrastructure (Axes 1-3, 2026-04-23)
 - Axis 1 (seq 78): SQLite default — `config/settings.py` default changed to `"sqlite"`; `app/web.py` sqlite branch conditionally runs `migrate_json_to_sqlite` for corrections on first startup; migration idempotency verified by test
 - Axis 2 (seq 81): preference conflict detection — `list_preferences_payload` enriches each preference with `conflict_info` (`has_conflict` + `conflicting_preference_ids`) using Jaccard word-token similarity > 0.7 between ACTIVE preferences; `PreferencePanel.tsx` shows `⚠ 충돌` badge and activate confirmation when conflicts exist
+- Axis 3 (seq 84/85, verify lane): release consolidation smoke gate — fixed 6 failing E2E tests caused by cross-session fingerprint collision in test fixtures and stale global-candidate assertions; full `make e2e-test` confirmed **142 passed (7.5m)** on 2026-04-23
+
+- **Milestone 20 closed** (Axes 1–3): SQLite default + migration, preference conflict detection, and release consolidation smoke gate complete
 
 ### Milestone 21: Personalization Maturity and Release Bundle
 
-#### Shipped Infrastructure (Axes 1-2, 2026-04-23)
+#### Shipped Infrastructure (Axes 1-3, 2026-04-23)
 - Axis 1 (seq 87): SQLite correction lifecycle parity — `SQLiteCorrectionStore` now implements `confirm_correction`, `promote_correction`, `activate_correction`, `stop_correction` matching JSON `CorrectionStore` contract; 5 new unit tests cover status column and `data` JSON blob updates plus missing-id behavior
 - Axis 2 (seq 90): durable global reject persistence — `record_reviewed_candidate_preference` accepts optional `status=` parameter; global reject path in `submit_candidate_review` records REJECTED preference, permanently silencing the fingerprint via existing `_build_review_queue_items` dedup
+- Axis 3 (seq 91, verify lane): release gate — full `make e2e-test` confirmed **142 passed (8.3m)** on 2026-04-23; no regressions from Axes 1–2 backend changes
+
+- **Milestone 21 closed** (Axes 1–3): SQLite correction lifecycle parity, durable global reject persistence, and release gate complete
 
 ## Next 3 Implementation Priorities
 

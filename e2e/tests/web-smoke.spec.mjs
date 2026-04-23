@@ -34,6 +34,23 @@ async function fetchSessionPayload(page, sessionId) {
   return await response.json();
 }
 
+function sessionLocalReviewQueueItems(sessionPayload) {
+  return (sessionPayload.session?.review_queue_items ?? []).filter((item) => item.is_global !== true);
+}
+
+async function expectSessionLocalReviewQueueCount(page, sessionId, expectedCount) {
+  await expect
+    .poll(async () => {
+      const payload = await fetchSessionPayload(page, sessionId);
+      return sessionLocalReviewQueueItems(payload).length;
+    })
+    .toBe(expectedCount);
+}
+
+function sessionLocalReviewQueueItem(reviewQueueBox) {
+  return reviewQueueBox.getByTestId("review-queue-item").filter({ hasText: "기준 명시 확인" }).first();
+}
+
 function findLatestCandidateSourceMessage(messages) {
   return [...(Array.isArray(messages) ? messages : [])]
     .reverse()
@@ -578,8 +595,9 @@ test("corrected follow-up basis는 기록된 수정본을 같은 세션의 후�
 });
 
 test("corrected-save 저장 뒤 늦게 내용 거절하고 다시 수정해도 saved snapshot과 latest state가 분리됩니다", async ({ page }) => {
-  const correctedTextA = "수정본 A입니다.\n핵심만 남겼습니다.";
-  const correctedTextB = "수정본 B입니다.\n다시 손봤습니다.";
+  // NOTE: these corrected texts must stay unique across all tests — duplicate (fixture, correctedText) pairs across sessions trigger find_recurring_patterns() and pollute later tests' review queues
+  const correctedTextA = "저장 이력 수정본 A입니다.\n핵심만 남겼습니다.";
+  const correctedTextB = "저장 이력 수정본 B입니다.\n다시 손봤습니다.";
   const rejectNote = "초기 수정본의 결론이 여전히 과장되어 있습니다.";
 
   await prepareSession(page, "corrected-long-history");
@@ -664,7 +682,7 @@ test("candidate confirmation path는 save support와 분리되어 기록되고 l
   await expect(page.getByTestId("response-text")).toBeVisible();
   await expect(page.getByTestId("response-text")).toContainText(middleSignal);
   await expect(confirmationBox).toBeHidden();
-  await expect(reviewQueueBox).toBeHidden();
+  await expectSessionLocalReviewQueueCount(page, sessionId, 0);
 
   await page.getByTestId("response-correction-input").fill(correctedTextA);
   await page.getByTestId("response-correction-submit").click();
@@ -745,32 +763,30 @@ test("candidate confirmation path는 save support와 분리되어 기록되고 l
   await expect(reviewQueueBox).toBeVisible();
   await expect(reviewQueueBox.locator(".sidebar-section-label")).toHaveText("검토 후보");
   await expect(page.locator("#review-queue-status")).toHaveText("후보를 수락, 거절, 보류, 또는 편집 메모로 기록할 수 있습니다.");
-  await expect(reviewQueueBox.getByTestId("review-queue-item").locator("strong").first()).toHaveText("explicit rewrite correction recorded for this grounded brief");
-  await expect(reviewQueueBox.getByTestId("review-queue-item").locator(".history-item-title span")).toContainText("기준 명시 확인");
-  await expect(reviewQueueBox.getByTestId("review-queue-item").locator(".history-item-title span")).toContainText("상태 검토 대기");
-  const reviewAcceptButton = reviewQueueBox.getByTestId("review-queue-accept");
-  await expect(reviewAcceptButton).toHaveCount(1);
+  const localReviewItem = sessionLocalReviewQueueItem(reviewQueueBox);
+  await expect(localReviewItem.locator("strong")).toHaveText("explicit rewrite correction recorded for this grounded brief");
+  await expect(localReviewItem.locator(".history-item-title span")).toContainText("기준 명시 확인");
+  await expect(localReviewItem.locator(".history-item-title span")).toContainText("상태 검토 대기");
+  const reviewAcceptButton = localReviewItem.getByTestId("review-queue-accept");
   await expect(reviewAcceptButton).toHaveText("검토 수락");
-  const reviewRejectButton = reviewQueueBox.getByTestId("review-queue-reject");
-  await expect(reviewRejectButton).toHaveCount(1);
+  const reviewRejectButton = localReviewItem.getByTestId("review-queue-reject");
   await expect(reviewRejectButton).toHaveText("거절");
-  const reviewDeferButton = reviewQueueBox.getByTestId("review-queue-defer");
-  await expect(reviewDeferButton).toHaveCount(1);
+  const reviewDeferButton = localReviewItem.getByTestId("review-queue-defer");
   await expect(reviewDeferButton).toHaveText("보류");
-  const reviewEditButton = reviewQueueBox.getByTestId("review-queue-edit");
-  await expect(reviewEditButton).toHaveCount(1);
+  const reviewEditButton = localReviewItem.getByTestId("review-queue-edit");
   await expect(reviewEditButton).toHaveText("편집");
 
   const preAcceptPayload = await fetchSessionPayload(page, sessionId);
-  expect(preAcceptPayload.session.review_queue_items).toHaveLength(1);
-  expect(preAcceptPayload.session.review_queue_items[0].item_type).toBe("durable_candidate");
-  expect(preAcceptPayload.session.review_queue_items[0].derived_from.record_type).toBe("candidate_confirmation_record");
-  expect(typeof preAcceptPayload.session.review_queue_items[0].derived_at).toBe("string");
-  expect(preAcceptPayload.session.review_queue_items[0].derived_at.length).toBeGreaterThan(0);
+  const preAcceptLocalItems = sessionLocalReviewQueueItems(preAcceptPayload);
+  expect(preAcceptLocalItems).toHaveLength(1);
+  expect(preAcceptLocalItems[0].item_type).toBe("durable_candidate");
+  expect(preAcceptLocalItems[0].derived_from.record_type).toBe("candidate_confirmation_record");
+  expect(typeof preAcceptLocalItems[0].derived_at).toBe("string");
+  expect(preAcceptLocalItems[0].derived_at.length).toBeGreaterThan(0);
   await reviewAcceptButton.click();
 
   await expect(page.locator("#notice-box")).toHaveText("검토 후보를 수락했습니다. 아직 적용되지는 않았습니다.");
-  await expect(reviewQueueBox).toBeHidden();
+  await expectSessionLocalReviewQueueCount(page, sessionId, 0);
   await expect(page.locator("#response-quick-meta-text")).toContainText("검토 수락됨");
   await expect(page.getByTestId("transcript-meta").filter({ hasText: "검토 수락됨" })).toHaveCount(1);
 
@@ -820,7 +836,7 @@ test("candidate confirmation path는 save support와 분리되어 기록되고 l
     review_status: "accepted",
     recorded_at: sourceMessage.candidate_review_record.recorded_at,
   });
-  expect(sessionPayload.session.review_queue_items).toEqual([]);
+  expect(sessionLocalReviewQueueItems(sessionPayload)).toEqual([]);
 
   await page.locator('input[name="request_mode"][value="chat"]').check();
   await page.locator("#user-text").fill("follow-up after review accept");
@@ -839,7 +855,7 @@ test("candidate confirmation path는 save support와 분리되어 기록되고 l
   await page.getByTestId("response-correction-submit").click();
 
   await expect(page.locator("#notice-box")).toHaveText("수정본을 기록했습니다. 저장 승인은 별도 흐름으로 유지됩니다.");
-  await expect(reviewQueueBox).toBeHidden();
+  await expectSessionLocalReviewQueueCount(page, sessionId, 0);
   await expect(page.locator("#response-quick-meta-text")).not.toContainText("검토 수락됨");
   // The originally reviewed source message retains its own candidate_review_record
   // in the transcript — that is factual history, not a stale label.
@@ -880,10 +896,10 @@ test("review-queue reject/defer는 accept와 동일한 quick-meta, transcript-me
 
   await confirmationButton.click();
   await expect(reviewQueueBox).toBeVisible();
-  await reviewQueueBox.getByTestId("review-queue-reject").click();
+  await sessionLocalReviewQueueItem(reviewQueueBox).getByTestId("review-queue-reject").click();
 
   await expect(page.locator("#notice-box")).toHaveText("검토 후보를 거절했습니다.");
-  await expect(reviewQueueBox).toBeHidden();
+  await expectSessionLocalReviewQueueCount(page, sessionId, 0);
   await expect(page.locator("#response-quick-meta-text")).toContainText("검토 거절됨");
   await expect(page.getByTestId("transcript-meta").filter({ hasText: "검토 거절됨" })).toHaveCount(1);
 
@@ -912,10 +928,10 @@ test("review-queue reject/defer는 accept와 동일한 quick-meta, transcript-me
   // --- defer path ---
   await confirmationButton.click();
   await expect(reviewQueueBox).toBeVisible();
-  await reviewQueueBox.getByTestId("review-queue-defer").click();
+  await sessionLocalReviewQueueItem(reviewQueueBox).getByTestId("review-queue-defer").click();
 
   await expect(page.locator("#notice-box")).toHaveText("검토 후보를 보류했습니다.");
-  await expect(reviewQueueBox).toBeHidden();
+  await expectSessionLocalReviewQueueCount(page, sessionId, 0);
   await expect(page.locator("#response-quick-meta-text")).toContainText("검토 보류됨");
   await expect(page.getByTestId("transcript-meta").filter({ hasText: "검토 보류됨" })).toHaveCount(1);
 
@@ -976,19 +992,20 @@ test("review-queue 편집은 review_action='edit' review_status='edited' reason_
   );
   await expect(reviewQueueBox).toBeVisible();
 
-  const editButton = reviewQueueBox.getByTestId("review-queue-edit");
-  await expect(editButton).toHaveCount(1);
+  const localEditItem = sessionLocalReviewQueueItem(reviewQueueBox);
+  const editButton = localEditItem.getByTestId("review-queue-edit");
+  await expect(editButton).toBeVisible();
   await editButton.click();
 
-  const editTextarea = reviewQueueBox.locator(".edit-note-area textarea");
+  const editTextarea = localEditItem.locator(".edit-note-area textarea");
   await expect(editTextarea).toBeVisible();
   await editTextarea.fill(editNoteText);
 
-  const confirmBtn = reviewQueueBox.locator(".edit-note-area button");
+  const confirmBtn = localEditItem.locator(".edit-note-area button");
   await confirmBtn.click();
 
   await expect(page.locator("#notice-box")).toHaveText("검토 후보에 편집 의견을 기록했습니다.");
-  await expect(reviewQueueBox).toBeHidden();
+  await expectSessionLocalReviewQueueCount(page, sessionId, 0);
   await expect(page.locator("#response-quick-meta-text")).toContainText("검토 편집됨");
   await expect(page.getByTestId("transcript-meta").filter({ hasText: "검토 편집됨" })).toHaveCount(1);
 
@@ -999,7 +1016,7 @@ test("review-queue 편집은 review_action='edit' review_status='edited' reason_
   expect(reviewedMessage).toBeDefined();
   expect(reviewedMessage.candidate_review_record.review_status).toBe("edited");
   expect(reviewedMessage.candidate_review_record.reason_note).toBe(editNoteText);
-  expect(sessionPayload.session.review_queue_items).toEqual([]);
+  expect(sessionLocalReviewQueueItems(sessionPayload)).toEqual([]);
 });
 
 /**
@@ -1075,7 +1092,7 @@ test("same-session recurrence aggregate는 emitted-apply-confirm lifecycle으로
 
   await expect(page.getByTestId("response-text")).toBeVisible();
   await expect(page.getByTestId("response-text")).toContainText(middleSignal);
-  await expect(reviewQueueBox).toBeHidden();
+  await expectSessionLocalReviewQueueCount(page, sessionId, 0);
   await expect(aggregateTriggerBox).toBeHidden();
 
   await page.getByTestId("response-correction-input").fill(correctedText);
@@ -1121,9 +1138,10 @@ test("same-session recurrence aggregate는 emitted-apply-confirm lifecycle으로
   await expect(page.locator("#notice-box")).toContainText("transition record가 발행되었습니다.");
 
   await expect(reviewQueueBox).toBeVisible();
-  await expect(reviewQueueBox.getByTestId("review-queue-accept")).toHaveText("검토 수락");
-  await expect(reviewQueueBox.getByTestId("review-queue-reject")).toHaveText("거절");
-  await expect(reviewQueueBox.getByTestId("review-queue-defer")).toHaveText("보류");
+  const aggregateLocalReviewItem = sessionLocalReviewQueueItem(reviewQueueBox);
+  await expect(aggregateLocalReviewItem.getByTestId("review-queue-accept")).toHaveText("검토 수락");
+  await expect(aggregateLocalReviewItem.getByTestId("review-queue-reject")).toHaveText("거절");
+  await expect(aggregateLocalReviewItem.getByTestId("review-queue-defer")).toHaveText("보류");
 
   const emittedPayload = await fetchSessionPayload(page, sessionId);
   expect(emittedPayload.session.recurrence_aggregate_candidates).toHaveLength(1);
@@ -11769,7 +11787,8 @@ test("review queue panel opens on badge click and accept action removes item", a
   await expect
     .poll(async () => {
       const payload = await fetchSessionPayload(page, sessionId);
-      return payload.session?.review_queue_items?.length ?? 0;
+      const items = payload.session?.review_queue_items ?? [];
+      return items.filter((item) => item.is_global !== true).length;
     })
     .toBe(0);
 });
@@ -11815,7 +11834,8 @@ test("review queue edit statement sends edited text in accept request", async ({
   await expect
     .poll(async () => {
       const payload = await fetchSessionPayload(page, sessionId);
-      return payload.session?.review_queue_items?.length ?? 0;
+      const items = payload.session?.review_queue_items ?? [];
+      return items.filter((item) => item.is_global !== true).length;
     })
     .toBe(0);
 

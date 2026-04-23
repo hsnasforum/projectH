@@ -570,6 +570,18 @@
 
 - **Milestone 17 closed** (Axes 1–3): review statement editing, evidence detail view, and release gate complete
 
+### Milestone 18: Cross-Session Signal Infrastructure
+- establish SQLite correction store parity as the foundation for efficient cross-session recurrence discovery
+- Axis 1, 2, 3 ordered: SQLite correction store → SQL recurrence indexing → review queue global candidates
+
+#### Guardrails
+- no user-visible feature changes in Axis 1 (backend-only)
+- JSON CorrectionStore remains the default until explicit SQLite backend switch
+- migration is additive (INSERT OR IGNORE) and safe to re-run
+
+#### Shipped Infrastructure (Axis 1, 2026-04-23)
+- Axis 1 (seq 60): SQLiteCorrectionStore — `record_correction`, `get`, `find_by_fingerprint`, `find_by_artifact`, `find_by_session`, `list_recent`; corrections table schema already existed; `migrate_json_to_sqlite` updated to migrate 8,000+ correction JSON files
+
 ## Next 3 Implementation Priorities
 
 1. Keep the shipped read-only `reviewed_memory_boundary_draft` draft-only and do not widen it into readiness tracking or cross-session scope. The rollback / disable / conflict / operator-audit contracts and the reviewed-memory apply path are now shipped; boundary draft stays separate from apply result.

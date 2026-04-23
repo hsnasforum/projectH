@@ -1,5 +1,10 @@
 import unittest
-from storage.sqlite_store import SQLiteDatabase, SQLitePreferenceStore, SQLiteSessionStore
+from storage.sqlite_store import (
+    SQLiteCorrectionStore,
+    SQLiteDatabase,
+    SQLitePreferenceStore,
+    SQLiteSessionStore,
+)
 
 
 class TestSQLiteSessionStoreAdoptionList(unittest.TestCase):
@@ -154,6 +159,154 @@ class TestSQLitePreferenceStoreAutoActivation(unittest.TestCase):
         stored = self.store.get(created["preference_id"])
         self.assertIsNotNone(stored)
         self.assertEqual(stored["avg_similarity_score"], 0.3)
+
+
+class TestSQLiteCorrectionStore(unittest.TestCase):
+    def setUp(self) -> None:
+        self.db = SQLiteDatabase(":memory:")
+        self.store = SQLiteCorrectionStore(self.db)
+
+    def tearDown(self) -> None:
+        self.db.close()
+
+    def _record(
+        self,
+        *,
+        artifact_id: str = "artifact-1",
+        session_id: str = "session-1",
+        source_message_id: str = "message-1",
+        original_text: str = "alpha foo omega",
+        corrected_text: str = "alpha bar omega",
+    ) -> dict:
+        record = self.store.record_correction(
+            artifact_id=artifact_id,
+            session_id=session_id,
+            source_message_id=source_message_id,
+            original_text=original_text,
+            corrected_text=corrected_text,
+        )
+        self.assertIsNotNone(record)
+        return record
+
+    def test_record_returns_none_for_identical_texts(self) -> None:
+        record = self.store.record_correction(
+            artifact_id="artifact-same",
+            session_id="session-same",
+            source_message_id="message-same",
+            original_text="same text",
+            corrected_text="same text",
+        )
+
+        self.assertIsNone(record)
+
+    def test_record_creates_correction_with_fields(self) -> None:
+        record = self._record()
+
+        self.assertTrue(record["correction_id"].startswith("correction-"))
+        self.assertTrue(record["delta_fingerprint"].startswith("sha256:"))
+        self.assertIsInstance(record["similarity_score"], float)
+        self.assertEqual(record["original_text"], "alpha foo omega")
+        self.assertEqual(record["corrected_text"], "alpha bar omega")
+
+    def test_record_idempotent_for_same_artifact_source_fingerprint(self) -> None:
+        first = self._record(
+            artifact_id="artifact-idempotent",
+            session_id="session-idempotent",
+            source_message_id="message-idempotent",
+            original_text="alpha foo omega",
+            corrected_text="alpha bar omega",
+        )
+        second = self._record(
+            artifact_id="artifact-idempotent",
+            session_id="session-idempotent",
+            source_message_id="message-idempotent",
+            original_text="beta foo omega",
+            corrected_text="beta bar omega",
+        )
+
+        self.assertEqual(second["correction_id"], first["correction_id"])
+
+    def test_find_by_fingerprint(self) -> None:
+        first = self._record(
+            artifact_id="artifact-fingerprint-1",
+            source_message_id="message-fingerprint-1",
+            original_text="alpha foo omega",
+            corrected_text="alpha bar omega",
+        )
+        second = self._record(
+            artifact_id="artifact-fingerprint-2",
+            source_message_id="message-fingerprint-2",
+            original_text="beta foo omega",
+            corrected_text="beta bar omega",
+        )
+
+        matches = self.store.find_by_fingerprint(first["delta_fingerprint"])
+
+        self.assertEqual(len(matches), 2)
+        self.assertEqual(
+            {match["correction_id"] for match in matches},
+            {first["correction_id"], second["correction_id"]},
+        )
+
+    def test_find_by_artifact(self) -> None:
+        first = self._record(
+            artifact_id="artifact-target",
+            source_message_id="message-artifact-1",
+        )
+        self._record(
+            artifact_id="artifact-other",
+            source_message_id="message-artifact-2",
+            original_text="beta foo omega",
+            corrected_text="beta bar omega",
+        )
+
+        matches = self.store.find_by_artifact("artifact-target")
+
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]["correction_id"], first["correction_id"])
+
+    def test_find_by_session(self) -> None:
+        first = self._record(
+            session_id="session-target",
+            artifact_id="artifact-session-1",
+            source_message_id="message-session-1",
+        )
+        self._record(
+            session_id="session-other",
+            artifact_id="artifact-session-2",
+            source_message_id="message-session-2",
+            original_text="beta foo omega",
+            corrected_text="beta bar omega",
+        )
+
+        matches = self.store.find_by_session("session-target")
+
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]["correction_id"], first["correction_id"])
+
+    def test_list_recent(self) -> None:
+        self._record(
+            artifact_id="artifact-recent-1",
+            source_message_id="message-recent-1",
+            original_text="alpha foo omega",
+            corrected_text="alpha bar omega",
+        )
+        self._record(
+            artifact_id="artifact-recent-2",
+            source_message_id="message-recent-2",
+            original_text="beta foo omega",
+            corrected_text="beta bar omega",
+        )
+        self._record(
+            artifact_id="artifact-recent-3",
+            source_message_id="message-recent-3",
+            original_text="gamma foo omega",
+            corrected_text="gamma bar omega",
+        )
+
+        matches = self.store.list_recent(2)
+
+        self.assertEqual(len(matches), 2)
 
 
 if __name__ == "__main__":

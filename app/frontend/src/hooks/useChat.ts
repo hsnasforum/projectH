@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Message, SessionSummary, PendingApproval, AppSettings } from "../types";
+import type { ReviewQueueItem } from "../api/client";
 import { fetchSessions, fetchSession, streamChat, deleteSession as apiDeleteSession, deleteAllSessions as apiDeleteAllSessions } from "../api/client";
 
 const DEFAULT_SESSION = "demo-session";
@@ -15,6 +16,13 @@ interface SessionState {
   abort: AbortController | null;
   justCompleted: boolean;
   reviewQueueCount: number;
+  highQualityReviewCount: number;
+}
+
+function countHighQualityReviewItems(items: ReviewQueueItem[] | undefined): number {
+  return (items ?? []).filter(
+    (item: ReviewQueueItem) => item.quality_info?.is_high_quality === true,
+  ).length;
 }
 
 function emptyState(title: string): SessionState {
@@ -28,6 +36,7 @@ function emptyState(title: string): SessionState {
     abort: null,
     justCompleted: false,
     reviewQueueCount: 0,
+    highQualityReviewCount: 0,
   };
 }
 
@@ -71,6 +80,7 @@ export function useChat(settings: AppSettings) {
       title: session.title,
       pendingApproval: approvals.length > 0 ? approvals[approvals.length - 1] : null,
       reviewQueueCount: (session.review_queue_items ?? []).length,
+      highQualityReviewCount: countHighQualityReviewItems(session.review_queue_items),
     });
   }, [updateState]);
 
@@ -196,6 +206,8 @@ export function useChat(settings: AppSettings) {
               messages: session.messages,
               title: session.title,
               pendingApproval: approvals.length > 0 ? approvals[approvals.length - 1] : null,
+              reviewQueueCount: (session.review_queue_items ?? []).length,
+              highQualityReviewCount: countHighQualityReviewItems(session.review_queue_items),
             });
           } else if (resp) {
             const assistantMsg: Message = {
@@ -308,6 +320,7 @@ export function useChat(settings: AppSettings) {
     isStreaming: current.isStreaming,
     thinkingStatus: current.thinkingStatus,
     reviewQueueCount: current.reviewQueueCount,
+    highQualityReviewCount: current.highQualityReviewCount,
     backgroundStreaming,
     completedSessions,
     notifications,

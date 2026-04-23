@@ -524,6 +524,7 @@
 #### Shipped Infrastructure (Axis 1, 2026-04-23)
 - Axis 1 (seq 24): SQLite preference auto-activation parity — `storage/sqlite_store.py` `SQLitePreferenceStore` increments `cross_session_count` for new reviewed-candidate source refs and auto-activates `CANDIDATE` preferences when `cross_session_count >= 3`, matching JSON-backed `PreferenceStore` while leaving `ACTIVE`, `REJECTED`, and `PAUSED` statuses unchanged
 - Axis 2 (seq 27): quality integration — `core/delta_analysis.py` exports `is_high_quality()`; `storage/preference_store.py` stores `avg_similarity_score` during `promote_from_corrections`; `list_preferences_payload` enriches with `quality_info`; `PreferencePanel.tsx` displays 고품질 badge
+- Axis 3 (seq 30): review queue quality integration — `serializers.py` `_build_review_queue_items` enriches each item with `quality_info`; `ReviewQueueItem` type added to `client.ts`; `ChatArea.tsx` shows 고품질 N건 count in review badge
 
 ## Next 3 Implementation Priorities
 

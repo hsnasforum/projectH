@@ -5724,6 +5724,7 @@ class WebAppServiceTest(unittest.TestCase):
                         ],
                         "created_at": payload["candidate_confirmation_record"]["recorded_at"],
                         "updated_at": payload["candidate_confirmation_record"]["recorded_at"],
+                        "quality_info": payload["session"]["review_queue_items"][0]["quality_info"],
                     }
                 ],
             )

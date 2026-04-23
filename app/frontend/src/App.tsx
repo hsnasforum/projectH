@@ -162,6 +162,7 @@ export default function App() {
         onToggleSidebar={toggleSidebar}
         sessionTitle={chat.sessionTitle}
         reviewQueueCount={chat.reviewQueueCount}
+        highQualityReviewCount={chat.highQualityReviewCount}
       />
 
       {/* Error/success toasts — bottom right */}

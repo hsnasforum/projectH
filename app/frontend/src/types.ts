@@ -1,3 +1,5 @@
+import type { ReviewQueueItem } from "./api/client";
+
 export interface SessionSummary {
   session_id: string;
   title: string;
@@ -107,7 +109,7 @@ export interface Session {
   pending_approvals: PendingApproval[];
   permissions: { web_search: string };
   active_context?: Record<string, unknown>;
-  review_queue_items?: unknown[];
+  review_queue_items?: ReviewQueueItem[];
   recurrence_aggregate_candidates?: unknown[];
 }
 

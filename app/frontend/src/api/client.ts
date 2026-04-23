@@ -214,6 +214,30 @@ export interface PreferenceRecord {
   };
 }
 
+export interface ReviewQueueItem {
+  item_type: string;
+  candidate_id: string;
+  candidate_scope: string;
+  candidate_family: string;
+  statement: string;
+  derived_from: Record<string, unknown>;
+  derived_at: string;
+  promotion_basis: string;
+  promotion_eligibility: string;
+  artifact_id: string;
+  source_message_id: string;
+  supporting_artifact_ids: string[];
+  supporting_source_message_ids: string[];
+  supporting_signal_refs: Record<string, unknown>[];
+  supporting_confirmation_refs: Record<string, unknown>[];
+  created_at: string;
+  updated_at: string;
+  quality_info: {
+    avg_similarity_score: number | null;
+    is_high_quality: boolean | null;
+  } | null;
+}
+
 export interface PreferencesPayload {
   ok: boolean;
   preferences: PreferenceRecord[];

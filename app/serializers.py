@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.localization import localize_text, localize_session
+from core.delta_analysis import is_high_quality
 from core.contracts import (
     CANDIDATE_REVIEW_ACTION_TO_STATUS,
     AnswerMode,
@@ -4428,6 +4429,22 @@ class SerializerMixin:
             if self._serialize_candidate_review_record(message.get("candidate_review_record")) is not None:
                 continue
 
+            corrections = self.correction_store.find_by_artifact(artifact_id)
+            scores = [
+                float(c["similarity_score"])
+                for c in corrections
+                if isinstance(c.get("similarity_score"), (int, float))
+            ]
+            avg_similarity_score = round(sum(scores) / len(scores), 4) if scores else None
+            quality_info = {
+                "avg_similarity_score": avg_similarity_score,
+                "is_high_quality": (
+                    is_high_quality(avg_similarity_score)
+                    if avg_similarity_score is not None
+                    else None
+                ),
+            }
+
             review_queue_items.append(
                 {
                     "item_type": "durable_candidate",
@@ -4455,6 +4472,7 @@ class SerializerMixin:
                     ],
                     "created_at": durable_candidate["created_at"],
                     "updated_at": durable_candidate["updated_at"],
+                    "quality_info": quality_info,
                 }
             )
 

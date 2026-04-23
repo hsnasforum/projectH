@@ -33,6 +33,7 @@ interface Props {
   onToggleSidebar: () => void;
   sessionTitle: string;
   reviewQueueCount?: number;
+  highQualityReviewCount?: number;
 }
 
 export default function ChatArea({
@@ -56,6 +57,7 @@ export default function ChatArea({
   onToggleSidebar,
   sessionTitle,
   reviewQueueCount = 0,
+  highQualityReviewCount = 0,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -99,6 +101,9 @@ export default function ChatArea({
         {reviewQueueCount > 0 && (
           <span className="shrink-0 text-[11px] font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
             리뷰 {reviewQueueCount}건
+            {highQualityReviewCount > 0 && (
+              <span className="quality-count"> · 고품질 {highQualityReviewCount}건</span>
+            )}
           </span>
         )}
       </header>

@@ -837,7 +837,12 @@ class PipelineGUI:
         elif self._auto_focus_agent and working_labels:
             self.selected_agent = working_labels[0]
 
-        control_presentation = build_control_presentation(control_slots, verify_activity, turn_state=turn_state)
+        control_presentation = build_control_presentation(
+            control_slots,
+            verify_activity,
+            turn_state=turn_state,
+            automation_health=automation_health,
+        )
         self._set_var_if_changed(self.active_control_var, control_presentation.active_text)
         self._configure_widget_if_changed(
             self.active_control_box,

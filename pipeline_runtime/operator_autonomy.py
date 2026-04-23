@@ -69,6 +69,34 @@ _WORK_PATH_RE = re.compile(r"(work/\d+/\d+/[^\s`]+\.md)")
 _PR_NUMBER_RE = re.compile(
     r"(?i)(?:\bPR\s*#\s*|/pull/)([1-9][0-9]*)\b"
 )
+_CURRENT_PR_FIELD_KEYS = (
+    "pr",
+    "pr_number",
+    "pr_url",
+    "pull_request",
+    "pull_request_number",
+    "pull_request_url",
+    "current_pr",
+    "current_pr_number",
+    "current_pr_url",
+    "gate_pr",
+    "gate_pr_number",
+    "gate_pr_url",
+    "merge_pr",
+    "merge_pr_number",
+    "merge_pr_url",
+)
+_CURRENT_PR_FIELD_LINE_RE = re.compile(
+    r"(?im)^\s*(?:[-*]\s*)?(?:\*\*)?`?"
+    r"(?:PR|PR_NUMBER|PR_URL|PULL_REQUEST|PULL_REQUEST_NUMBER|PULL_REQUEST_URL|"
+    r"CURRENT_PR|CURRENT_PR_NUMBER|CURRENT_PR_URL|GATE_PR|GATE_PR_NUMBER|GATE_PR_URL|"
+    r"MERGE_PR|MERGE_PR_NUMBER|MERGE_PR_URL)"
+    r"`?(?:\*\*)?\s*:\s*(?P<value>.*)$"
+)
+_CURRENT_PR_NUMBER_RE = re.compile(
+    r"(?i)(?:\bPR\s*#\s*|#\s*|/pull/)([1-9][0-9]*)\b"
+)
+_BARE_PR_NUMBER_RE = re.compile(r"^\s*([1-9][0-9]*)\s*$")
 _CHOICE_INTENT_MARKERS = (
     "choose",
     "pick",
@@ -381,12 +409,62 @@ def referenced_operator_work_paths(
     )
 
 
+def _append_pr_numbers_from_field_value(
+    numbers: list[int],
+    seen: set[int],
+    value: object,
+) -> None:
+    text = str(value or "").strip()
+    if not text:
+        return
+    matched = False
+    for match in _CURRENT_PR_NUMBER_RE.finditer(text):
+        try:
+            number = int(match.group(1))
+        except (TypeError, ValueError):
+            continue
+        matched = True
+        if number <= 0 or number in seen:
+            continue
+        numbers.append(number)
+        seen.add(number)
+    if matched:
+        return
+    bare_match = _BARE_PR_NUMBER_RE.match(text)
+    if not bare_match:
+        return
+    try:
+        number = int(bare_match.group(1))
+    except (TypeError, ValueError):
+        return
+    if number > 0 and number not in seen:
+        numbers.append(number)
+        seen.add(number)
+
+
+def _current_operator_pr_numbers(
+    control_text: object,
+    control_meta: Mapping[str, Any] | None = None,
+) -> list[int]:
+    meta = _normalize_meta(control_meta)
+    numbers: list[int] = []
+    seen: set[int] = set()
+    for key in _CURRENT_PR_FIELD_KEYS:
+        _append_pr_numbers_from_field_value(numbers, seen, meta.get(key))
+    for match in _CURRENT_PR_FIELD_LINE_RE.finditer(str(control_text or "")):
+        _append_pr_numbers_from_field_value(numbers, seen, match.group("value"))
+    return numbers
+
+
 def referenced_operator_pr_numbers(
     control_text: object,
     control_meta: Mapping[str, Any] | None = None,
 ) -> list[int]:
     """Return PR numbers referenced by an operator control."""
     meta = _normalize_meta(control_meta)
+    current_numbers = _current_operator_pr_numbers(control_text, meta)
+    if current_numbers:
+        return current_numbers
     text = _raw_text(
         [
             meta.get("decision_required"),

@@ -135,6 +135,49 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
         self.assertIn("implement_handoff.md", presentation.active_text)
         self.assertEqual(presentation.active_fg, "#93c5fd")
 
+    def test_build_control_presentation_prefers_recovery_verify_over_compat_operator_slot(self) -> None:
+        presentation = build_control_presentation(
+            {
+                "active": {"file": "operator_request.md", "status": "needs_operator", "label": "operator wait", "mtime": 1.0, "control_seq": 5},
+                "stale": [],
+            },
+            {
+                "status": "VERIFY_RUNNING",
+                "label": "Claude 검증 실행 중",
+                "artifact_name": "2026-04-23-pr-merge-head-mismatch-recovery.md",
+            },
+            turn_state={
+                "state": "VERIFY_ACTIVE",
+                "active_lane": "Claude",
+                "active_role": "verify",
+                "active_control_file": "",
+                "active_control_seq": -1,
+            },
+            automation_health="recovering",
+        )
+
+        self.assertIn("Claude 검증 중", presentation.active_text)
+        self.assertEqual(presentation.active_fg, "#93c5fd")
+        self.assertEqual(presentation.active_box_bg, "#101826")
+        self.assertEqual(presentation.active_box_border, "#1d4ed8")
+
+    def test_build_control_presentation_keeps_real_operator_wait_red(self) -> None:
+        presentation = build_control_presentation(
+            {
+                "active": {"file": "operator_request.md", "status": "needs_operator", "label": "operator wait", "mtime": 1.0, "control_seq": 5},
+                "stale": [],
+            },
+            {
+                "status": "VERIFY_RUNNING",
+                "label": "verify 실행 중",
+                "artifact_name": "latest /work",
+            },
+            automation_health="needs_operator",
+        )
+
+        self.assertIn("operator wait", presentation.active_text)
+        self.assertEqual(presentation.active_fg, "#fca5a5")
+
     def test_build_control_presentation_mtime_fallback_without_seq(self) -> None:
         presentation = build_control_presentation(
             {

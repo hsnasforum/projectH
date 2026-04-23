@@ -1,12 +1,12 @@
 STATUS: verified
-CONTROL_SEQ: 52
+CONTROL_SEQ: 55
 BASED_ON_WORK:
-  - work/4/23/2026-04-23-m17-axis1-smoke-fix.md
-HANDOFF_SHA: 89851bf
+  - work/4/23/2026-04-23-m17-axis2-evidence-view.md
+HANDOFF_SHA: 4d62440
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 51
-NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 52
-ADVISORY_ADVICE_SEQ: 49 (advisory_advice.md seq 49 — M17 Axis 1 done; Axis 2 vs Axis 3 prioritization needed)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 52
+NEXT_CONTROL: .pipeline/operator_request.md CONTROL_SEQ 55
+ADVISORY_ADVICE_SEQ: 53 (advisory_advice.md seq 53 — M17 Axis 2 done; Axis 3 = release gate)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
 ---
@@ -500,9 +500,40 @@ PASS. M17 Axis 1 smoke 검증 완료. 커밋 완료 (89851bf).
 | M15 Axes 1–3 | 8482425, d03f7f4, 4d80074 |
 | M16 Axes 1–3 | 2f95c1f, 740b6e9, 384595a |
 | M17 Axis 1 statement editing + smoke fix | 7fc4edc, 89851bf |
-| Branch vs origin | 25 commits ahead |
+| M17 Axis 2 detailed evidence view | 4d62440 |
+| **Milestone 17** | **All 3 axes complete** |
+| Full smoke gate (M17 Axis 3 release gate) | **141 passed (20.2m)** |
+| Branch vs origin | 27 commits ahead |
+
+---
+
+## Round 16 Claim: M17 Axis 2 — Detailed Evidence View
+
+**Work**: `work/4/23/2026-04-23-m17-axis2-evidence-view.md`
+**Commit**: 4d62440
+
+### Summary
+
+`_build_review_queue_items`가 첫 correction에서 `original_snippet`/`corrected_snippet` (≤400자) 추출. `ReviewQueueItem` 타입에 nullable 필드 추가. `ReviewQueuePanel`에 `상세 보기`/`접기` 토글 추가 — 원문/교정 비교 블록. smoke spec에 snippet key 존재 + 길이 ≤400 API 계약 확인 4번째 시나리오 추가.
+
+### Checks Run
+
+- `python3 -m py_compile app/serializers.py` → **OK**
+- `cd app/frontend && npx tsc --noEmit` → **OK**
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "quality-info" --reporter=line` → **4 passed (1.1m)**
+- `git diff --check` → **OK**
+
+### M17 Axis 3 — Release Stabilization (verify lane)
+
+`make e2e-test` (full suite) → **141 passed (20.2m)** — includes all M17 Axis 1–2 scenarios, all existing scenarios.
+
+### Verdict
+
+PASS. M17 Axes 1–3 모두 완료. 릴리즈 게이트 통과. 커밋: 4d62440. MILESTONES.md M17 Axis 3 기록 완료.
+
+---
 
 ## Risks / Open Questions
 
-1. **M17 Axis 2 vs Axis 3 priority**: M17 Axis 2 (Detailed Evidence View) adds more information to review cards; Axis 3 (Release Stabilization) runs the full smoke gate on 25 accumulated commits. Advisory needed to determine which comes first.
-2. **Branch not pushed**: 25 commits ahead. PR creation/push in operator backlog.
+1. **PR merge pending**: 27 commits on `feat/watcher-turn-state`, 27 ahead of origin. PR creation/merge is an operator decision. Routed to operator_request.md CONTROL_SEQ 55.
+2. **Ollama model cache stale on restart**: known limitation from M16 Axis 3.

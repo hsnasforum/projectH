@@ -563,9 +563,12 @@
 - no user-level memory widening beyond current preference lifecycle
 - edit path only affects description/statement, not fingerprint or lifecycle
 
-#### Shipped Infrastructure (Axes 1-2, 2026-04-23)
+#### Shipped Infrastructure (Axes 1-3, 2026-04-23)
 - Axis 1 (seq 50): inline statement editing in `ReviewQueuePanel`; `aggregate.py` uses `statement_override` when provided; `postCandidateReview` extended with optional statement param; smoke test confirms edited text appears in preference
 - Axis 2 (seq 54): detailed evidence view — `serializers.py` `_build_review_queue_items` adds `original_snippet` / `corrected_snippet` (≤400 chars) from the first correction with both source and corrected text; `ReviewQueueItem` carries the fields; `ReviewQueuePanel` adds `상세 보기` / `접기` to compare original and corrected snippets without rich diff styling
+- Axis 3 (seq 55, verify lane): release stabilization — full `make e2e-test` smoke gate confirmed **141 passed** (20.2m) on 2026-04-23; includes all M17 Axis 1-2 scenarios; branch `feat/watcher-turn-state` is release-ready pending operator PR merge approval
+
+- **Milestone 17 closed** (Axes 1–3): review statement editing, evidence detail view, and release gate complete
 
 ## Next 3 Implementation Priorities
 

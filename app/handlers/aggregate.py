@@ -7,6 +7,7 @@ from uuid import uuid4
 from app.errors import WebApiError
 from core.contracts import (
     CANDIDATE_REVIEW_ACTION_TO_STATUS,
+    CandidateFamily,
     CandidateConfirmationScope,
     CandidateReviewAction,
     RecordStage,
@@ -114,6 +115,59 @@ class AggregateHandlerMixin:
         reason_note = self._normalize_optional_text(payload.get("reason_note"))
         suggested_scope = self._normalize_optional_text(payload.get("suggested_scope"))
         statement_override = self._normalize_optional_text(payload.get("statement"))
+
+        if str(message_id or "").strip() == "global":
+            review_status = CANDIDATE_REVIEW_ACTION_TO_STATUS.get(review_action or "")
+            if not review_status:
+                raise WebApiError(400, "지원하지 않는 review action입니다.")
+            fingerprint = str(candidate_id or "").removeprefix("global:").strip()
+            if not fingerprint:
+                raise WebApiError(400, "글로벌 후보 fingerprint를 확인할 수 없습니다.")
+            if review_action == CandidateReviewAction.ACCEPT:
+                corrections = self.correction_store.find_by_fingerprint(fingerprint)
+                first_correction = corrections[0] if corrections else {}
+                delta_summary = (
+                    first_correction.get("delta_summary")
+                    if isinstance(first_correction, dict)
+                    else None
+                )
+                replacements = (
+                    delta_summary.get("replacements", [])
+                    if isinstance(delta_summary, dict)
+                    else []
+                )
+                first_replacement = (
+                    replacements[0]
+                    if replacements and isinstance(replacements[0], dict)
+                    else {}
+                )
+                description = str(first_replacement.get("to") or "").strip() or fingerprint[:60]
+                self.preference_store.record_reviewed_candidate_preference(
+                    delta_fingerprint=fingerprint,
+                    candidate_family=str(first_correction.get("pattern_family") or CandidateFamily.CORRECTION_REWRITE),
+                    description=description,
+                    source_refs={
+                        "candidate_id": candidate_id or "",
+                        "candidate_updated_at": candidate_updated_at or "",
+                        "artifact_id": first_correction.get("artifact_id", ""),
+                        "source_message_id": "global",
+                        "review_action": review_action,
+                        "session_id": session_id,
+                    },
+                )
+            self.task_logger.log(
+                session_id=session_id,
+                action="global_candidate_review_recorded",
+                detail={
+                    "candidate_id": candidate_id,
+                    "fingerprint": fingerprint,
+                    "review_action": review_action,
+                },
+            )
+            return {
+                "ok": True,
+                "session": self._serialize_session(self.session_store.get_session(session_id)),
+            }
 
         if not message_id:
             raise WebApiError(400, "검토 결과를 기록할 메시지 ID가 필요합니다.")

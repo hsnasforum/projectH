@@ -83,6 +83,11 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
                     고품질
                   </span>
                 )}
+                {item.is_global && (
+                  <span className="shrink-0 rounded-full border border-violet-400/20 bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-violet-300">
+                    범용
+                  </span>
+                )}
               </div>
               {deltaSummaryText && (
                 <p className="mb-2 truncate text-[11px] text-sidebar-muted">

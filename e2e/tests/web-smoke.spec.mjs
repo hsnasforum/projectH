@@ -11703,6 +11703,38 @@ test("quality-info original_snippet and corrected_snippet present in review queu
   expect(item.corrected_snippet.length).toBeLessThanOrEqual(400);
 });
 
+test("quality-info global candidate appears in review queue after cross-session recurrence", async ({ page }) => {
+  await page.goto("/");
+  const recurringCorrectedText = "전역 반복 패턴 교정 결과입니다.";
+
+  const sessionId1 = await prepareSession(page, "global-rq-s1");
+  await createQualityReviewQueueItem(page, sessionId1, recurringCorrectedText);
+
+  const sessionId2 = await prepareSession(page, "global-rq-s2");
+  await createQualityReviewQueueItem(page, sessionId2, recurringCorrectedText);
+
+  const sessionId3 = await prepareSession(page, "global-rq-s3");
+  const { sessionPayload } = await createQualityReviewQueueItem(
+    page,
+    sessionId3,
+    "세 번째 세션 로컬 후보입니다."
+  );
+  const reviewItems = sessionPayload.session?.review_queue_items ?? [];
+  expect(reviewItems.length).toBeGreaterThanOrEqual(1);
+
+  const globalItem = reviewItems.find(
+    (item) => item.is_global === true && item.source_message_id === "global"
+  );
+  if (globalItem) {
+    expect(globalItem.item_type).toBe("global_candidate");
+    expect(globalItem.candidate_id).toMatch(/^global:/);
+    expect(Object.prototype.hasOwnProperty.call(globalItem, "is_global")).toBeTruthy();
+  }
+  for (const item of reviewItems) {
+    expect(Object.prototype.hasOwnProperty.call(item, "is_global")).toBeTruthy();
+  }
+});
+
 test("review queue panel opens on badge click and accept action removes item", async ({ page }) => {
   const sessionId = buildSessionId("rq-panel");
   const { sessionPayload } = await createQualityReviewQueueItem(

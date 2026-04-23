@@ -253,6 +253,7 @@ export interface ReviewQueueItem {
   } | null;
   original_snippet?: string | null;
   corrected_snippet?: string | null;
+  is_global?: boolean | null;
 }
 
 export interface PreferencesPayload {

@@ -579,9 +579,12 @@
 - JSON CorrectionStore remains the default until explicit SQLite backend switch
 - migration is additive (INSERT OR IGNORE) and safe to re-run
 
-#### Shipped Infrastructure (Axes 1-2, 2026-04-23)
+#### Shipped Infrastructure (Axes 1-3, 2026-04-23)
 - Axis 1 (seq 60): SQLiteCorrectionStore — `record_correction`, `get`, `find_by_fingerprint`, `find_by_artifact`, `find_by_session`, `list_recent`; corrections table schema already existed; `migrate_json_to_sqlite` updated to migrate 8,000+ correction JSON files
 - Axis 2 (seq 63): SQL recurrence indexing & server wiring — `SQLiteCorrectionStore.find_recurring_patterns()` uses `GROUP BY delta_fingerprint HAVING COUNT(*) >= 2`; `app/web.py` sqlite branch wires `SQLiteCorrectionStore(db)` replacing JSON fallback
+- Axis 3 (seq 66): global candidate review UI — `_build_review_queue_items` appends cross-session recurring patterns not yet in `PreferenceStore` as `is_global=True` `ReviewQueueItem`s; `ReviewQueuePanel` shows `범용` badge; `submit_candidate_review` handles `source_message_id="global"` path; smoke test verifies `is_global` field presence
+
+- **Milestone 18 closed** (Axes 1–3): SQLite correction store parity, SQL recurrence indexing + server wiring, global candidate review UI complete
 
 ## Next 3 Implementation Priorities
 

@@ -345,6 +345,7 @@ def normalize_reason_code(value: object) -> str:
         "branch_commit_milestone_transition": "approval_required",
         "branch_complete_pending_milestone_transition": "approval_required",
         "gemini_axis_switch_without_exact_slice": "slice_ambiguity",
+        "m21_complete_push_and_pr_bundle": COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
     }
     return normalize_verify_triage_reason(aliases.get(text, text))
 

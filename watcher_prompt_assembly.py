@@ -198,6 +198,7 @@ DEFAULT_OPERATOR_RETRIAGE_PROMPT = (
     "- write exactly one next control\n"
     "- do not hand commit/push/PR work to the implement lane; implement prompts forbid commit, push, branch/PR publish\n"
     "- if you write `.pipeline/implement_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
+    "- for `.pipeline/operator_request.md`, use canonical shared-helper metadata only; prefer `commit_push_bundle_authorization`, `pr_creation_gate`, or `pr_merge_gate` over ad hoc publish/merge reason labels\n"
     "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
     "- prefer .pipeline/advisory_request.md before .pipeline/operator_request.md when the only blocker is next-slice ambiguity\n"
     "- only keep STATUS: needs_operator if a real operator-only decision, approval/truth-sync blocker, external publication boundary, or immediate safety stop must block local work right now"

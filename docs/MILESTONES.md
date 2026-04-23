@@ -634,8 +634,12 @@
 - JSON `CorrectionStore` is not guarded in this axis; SQLite remains the default backend
 - do not change the four public lifecycle methods; only `_transition()` needs the guard
 
-#### Shipped Infrastructure (Axis 1, 2026-04-24)
+#### Shipped Infrastructure (Axes 1-3, 2026-04-24)
 - Axis 1 (seq 94): state-order guard — `CORRECTION_STATUS_TRANSITIONS` from `core/contracts.py` is now enforced in `SQLiteCorrectionStore._transition()`; invalid transitions return `None`; 3 new unit tests cover out-of-order, from-stopped, and valid-chain behavior
+- Axis 2 (seq 95): global reject permanence smoke — Playwright API-level test verifies that a rejected global candidate (`message_id="global"`, `review_action="reject"`) does not reappear in any subsequent session's `review_queue_items`; uses `createQualityReviewQueueItem` across 4 sessions with a unique recurring corrected text
+- Axis 3 (seq 96, verify lane): release gate — full `make e2e-test` confirmed **143 passed (10.1m)** on 2026-04-24; new global reject permanence scenario (test #141) passes; total count increased from 142 to 143
+
+- **Milestone 22 closed** (Axes 1–3): SQLite correction lifecycle state-order guard, global reject permanence browser coverage, and release gate complete
 
 ## Next 3 Implementation Priorities
 

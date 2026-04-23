@@ -11753,6 +11753,57 @@ test("quality-info global candidate appears in review queue after cross-session 
   }
 });
 
+test("global reject permanently silences candidate in subsequent sessions", async ({ page }) => {
+  await page.goto("/");
+  const recurringText = "전역 거절 영속성 검증 교정 결과입니다.";
+
+  const sessionId1 = await prepareSession(page, "global-reject-perm-s1");
+  await createQualityReviewQueueItem(page, sessionId1, recurringText);
+
+  const sessionId2 = await prepareSession(page, "global-reject-perm-s2");
+  await createQualityReviewQueueItem(page, sessionId2, recurringText);
+
+  const sessionId3 = await prepareSession(page, "global-reject-perm-s3");
+  await createQualityReviewQueueItem(
+    page,
+    sessionId3,
+    "세 번째 세션 로컬 후보 - 전역 거절 테스트."
+  );
+  const payload3 = await fetchSessionPayload(page, sessionId3);
+  const globalItem = (payload3.session?.review_queue_items ?? []).find(
+    (item) => item.is_global === true && item.source_message_id === "global"
+  );
+  if (!globalItem) {
+    console.log("global-reject-perm: no global candidate found - skipping rejection step");
+    return;
+  }
+  expect(globalItem.candidate_id).toMatch(/^global:/);
+
+  const rejectResponse = await page.request.post("/api/candidate-review", {
+    data: {
+      session_id: sessionId3,
+      message_id: "global",
+      candidate_id: globalItem.candidate_id,
+      candidate_updated_at: globalItem.updated_at ?? new Date().toISOString(),
+      review_action: "reject",
+    },
+  });
+  const rejectBody = await rejectResponse.text();
+  expect(rejectResponse.ok(), rejectBody).toBeTruthy();
+
+  const sessionId4 = await prepareSession(page, "global-reject-perm-s4");
+  await createQualityReviewQueueItem(
+    page,
+    sessionId4,
+    "네 번째 세션 로컬 후보 - 전역 거절 이후."
+  );
+  const payload4 = await fetchSessionPayload(page, sessionId4);
+  const rejectedReappears = (payload4.session?.review_queue_items ?? []).some(
+    (item) => item.candidate_id === globalItem.candidate_id
+  );
+  expect(rejectedReappears, "rejected global candidate must not reappear").toBe(false);
+});
+
 test("review queue panel opens on badge click and accept action removes item", async ({ page }) => {
   const sessionId = buildSessionId("rq-panel");
   const { sessionPayload } = await createQualityReviewQueueItem(

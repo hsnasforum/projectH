@@ -11680,6 +11680,29 @@ test("quality-info delta_summary present in review queue item after correction",
   }
 });
 
+test("quality-info original_snippet and corrected_snippet present in review queue item", async ({ page }) => {
+  await page.goto("/");
+  const sessionId = await prepareSession(page, "snippet-rq");
+
+  const { sessionPayload } = await createQualityReviewQueueItem(
+    page,
+    sessionId,
+    "분석 결과를 간결하게 요약했습니다."
+  );
+  const reviewItems = sessionPayload.session?.review_queue_items ?? [];
+  expect(reviewItems.length).toBeGreaterThanOrEqual(1);
+
+  const item = reviewItems[0];
+  expect(Object.prototype.hasOwnProperty.call(item, "original_snippet")).toBeTruthy();
+  expect(Object.prototype.hasOwnProperty.call(item, "corrected_snippet")).toBeTruthy();
+  expect(typeof item.original_snippet).toBe("string");
+  expect(typeof item.corrected_snippet).toBe("string");
+  expect(item.original_snippet.length).toBeGreaterThan(0);
+  expect(item.corrected_snippet.length).toBeGreaterThan(0);
+  expect(item.original_snippet.length).toBeLessThanOrEqual(400);
+  expect(item.corrected_snippet.length).toBeLessThanOrEqual(400);
+});
+
 test("review queue panel opens on badge click and accept action removes item", async ({ page }) => {
   const sessionId = buildSessionId("rq-panel");
   const { sessionPayload } = await createQualityReviewQueueItem(

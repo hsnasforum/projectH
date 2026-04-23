@@ -251,6 +251,8 @@ export interface ReviewQueueItem {
     removals?: string[];
     replacements?: Array<{ from: string; to: string }>;
   } | null;
+  original_snippet?: string | null;
+  corrected_snippet?: string | null;
 }
 
 export interface PreferencesPayload {

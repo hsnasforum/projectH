@@ -42,6 +42,7 @@ function summarizeDelta(item: ReviewQueueItem): string | null {
 
 export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) {
   const [editDrafts, setEditDrafts] = useState<Record<string, string | null>>({});
+  const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
   if (items.length === 0) return null;
 
@@ -55,6 +56,8 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
           const deltaSummaryText = summarizeDelta(item);
           const isEditing = editDrafts[item.candidate_id] !== undefined;
           const statementDraft = editDrafts[item.candidate_id] ?? item.statement;
+          const isExpanded = expandedItems.has(item.candidate_id);
+          const hasEvidenceDetail = Boolean(item.original_snippet && item.corrected_snippet);
           return (
             <li
               key={`${item.source_message_id}:${item.candidate_id}`}
@@ -85,6 +88,41 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
                 <p className="mb-2 truncate text-[11px] text-sidebar-muted">
                   {deltaSummaryText}
                 </p>
+              )}
+              {hasEvidenceDetail && (
+                <button
+                  data-testid="review-detail-toggle"
+                  className="mb-2 text-[11px] font-medium text-sky-300 transition-colors hover:text-sky-200 hover:underline"
+                  onClick={() =>
+                    setExpandedItems((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(item.candidate_id)) {
+                        next.delete(item.candidate_id);
+                      } else {
+                        next.add(item.candidate_id);
+                      }
+                      return next;
+                    })
+                  }
+                >
+                  {isExpanded ? "접기" : "상세 보기"}
+                </button>
+              )}
+              {hasEvidenceDetail && isExpanded && (
+                <div className="mb-2 space-y-1 text-[11px] leading-snug">
+                  <div>
+                    <p className="mb-0.5 font-medium text-sidebar-muted">원문</p>
+                    <p className="whitespace-pre-wrap break-words rounded bg-red-500/10 p-1.5 text-red-200">
+                      {item.original_snippet}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="mb-0.5 font-medium text-sidebar-muted">교정</p>
+                    <p className="whitespace-pre-wrap break-words rounded bg-emerald-500/10 p-1.5 text-emerald-200">
+                      {item.corrected_snippet}
+                    </p>
+                  </div>
+                </div>
               )}
               <div className="flex gap-1.5">
                 <button

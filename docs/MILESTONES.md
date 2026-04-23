@@ -563,8 +563,9 @@
 - no user-level memory widening beyond current preference lifecycle
 - edit path only affects description/statement, not fingerprint or lifecycle
 
-#### Shipped Infrastructure (Axis 1, 2026-04-23)
+#### Shipped Infrastructure (Axes 1-2, 2026-04-23)
 - Axis 1 (seq 50): inline statement editing in `ReviewQueuePanel`; `aggregate.py` uses `statement_override` when provided; `postCandidateReview` extended with optional statement param; smoke test confirms edited text appears in preference
+- Axis 2 (seq 54): detailed evidence view — `serializers.py` `_build_review_queue_items` adds `original_snippet` / `corrected_snippet` (≤400 chars) from the first correction with both source and corrected text; `ReviewQueueItem` carries the fields; `ReviewQueuePanel` adds `상세 보기` / `접기` to compare original and corrected snippets without rich diff styling
 
 ## Next 3 Implementation Priorities
 

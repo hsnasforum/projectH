@@ -4450,6 +4450,15 @@ class SerializerMixin:
                 if isinstance(candidate_delta_summary, dict) and candidate_delta_summary:
                     delta_summary = candidate_delta_summary
                     break
+            original_snippet = None
+            corrected_snippet = None
+            for correction in corrections:
+                original_text = correction.get("original_text")
+                corrected_text = correction.get("corrected_text")
+                if isinstance(original_text, str) and isinstance(corrected_text, str) and original_text and corrected_text:
+                    original_snippet = original_text[:400]
+                    corrected_snippet = corrected_text[:400]
+                    break
 
             review_queue_items.append(
                 {
@@ -4480,6 +4489,8 @@ class SerializerMixin:
                     "updated_at": durable_candidate["updated_at"],
                     "quality_info": quality_info,
                     "delta_summary": delta_summary,
+                    "original_snippet": original_snippet,
+                    "corrected_snippet": corrected_snippet,
                 }
             )
 

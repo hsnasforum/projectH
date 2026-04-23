@@ -19,6 +19,7 @@ from pipeline_runtime.operator_autonomy import (
     normalize_operator_policy,
     normalize_reason_code,
     operator_gate_marker_from_decision,
+    referenced_operator_pr_numbers,
 )
 
 FIXTURE_HEADER: str = r"""STATUS: needs_operator
@@ -364,6 +365,50 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
         self.assertIsNotNone(marker)
         self.assertEqual(marker["reason"], "pr_merge_head_mismatch")
         self.assertEqual(marker["resolved_pr_numbers"], [27])
+
+    def test_referenced_operator_pr_numbers_prefers_current_pr_field(self) -> None:
+        numbers = referenced_operator_pr_numbers(
+            control_text=(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 12\n"
+                f"REASON_CODE: {PR_MERGE_GATE_REASON}\n"
+                "OPERATOR_POLICY: internal_only\n"
+                "DECISION_CLASS: merge_gate\n"
+                "DECISION_REQUIRED: merge current PR gate\n"
+                "PR: https://github.com/hsnasforum/projectH/pull/28\n"
+                "\n"
+                "Background:\n"
+                "- Earlier PR #27 was merged at an older HEAD.\n"
+            ),
+            control_meta={
+                "status": "needs_operator",
+                "reason_code": PR_MERGE_GATE_REASON,
+                "operator_policy": "internal_only",
+                "decision_class": "merge_gate",
+                "decision_required": "merge current PR gate",
+            },
+        )
+
+        self.assertEqual(numbers, [28])
+
+    def test_referenced_operator_pr_numbers_prefers_structured_metadata(self) -> None:
+        numbers = referenced_operator_pr_numbers(
+            control_text=(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 13\n"
+                f"REASON_CODE: {PR_MERGE_GATE_REASON}\n"
+                "\n"
+                "Background:\n"
+                "- Earlier PR #27 was merged at an older HEAD.\n"
+            ),
+            control_meta={
+                "reason_code": PR_MERGE_GATE_REASON,
+                "pr_url": "https://github.com/hsnasforum/projectH/pull/28",
+                "decision_required": "merge current PR gate",
+            },
+        )
+
+        self.assertEqual(numbers, [28])
 
     def test_external_publication_boundary_stays_operator_visible(self) -> None:
         for reason in PUBLICATION_BOUNDARY_REASON_CODES:

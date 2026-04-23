@@ -1,12 +1,12 @@
 STATUS: verified
-CONTROL_SEQ: 76
+CONTROL_SEQ: 79
 BASED_ON_WORK:
-  - work/4/23/2026-04-23-m19-axis3-preference-editing.md
-HANDOFF_SHA: 21eb13e
+  - work/4/23/2026-04-23-m20-axis1-sqlite-default.md
+HANDOFF_SHA: 346c4a1
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 73
-NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 76
-ADVISORY_ADVICE_SEQ: 74 (advisory_advice.md seq 74 — M19 Axis 3 done; M19 closed)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 76
+NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 79
+ADVISORY_ADVICE_SEQ: 77 (advisory_advice.md seq 77 — M20 Axis 1 done; Axis 2 or smoke gate next)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
 ---
@@ -698,7 +698,39 @@ PASS. 모든 acceptance criteria 충족. M19 Axes 1–3 완료. 커밋 완료 (2
 
 ## Risks / Open Questions
 
+---
+
+## Round 23 Claim: M20 Axis 1 — SQLite Default + Startup Migration
+
+**Work**: `work/4/23/2026-04-23-m20-axis1-sqlite-default.md`
+**Commit**: 346c4a1
+
+### Summary
+
+`config/settings.py` `storage_backend` 기본값 `"json"` → `"sqlite"`. `from_env()` fallback도 동일 변경. `app/web.py` sqlite branch가 startup 시 corrections table COUNT 확인 후 조건부 migration 실행 (try/except, 실패 시 서버 시작 유지). `migrate_json_to_sqlite`가 optional directory skip 지원. migration idempotency test 추가.
+
+### Checks Run
+
+- `python3 -m py_compile config/settings.py app/web.py storage/sqlite_store.py` → **OK**
+- `python3 -m unittest tests.test_sqlite_store -v` → **20 tests OK** (신규 1개 포함)
+- `git diff --check` → **OK**
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족. 커밋 완료 (346c4a1).
+
+---
+
+## Current Shipped Truth
+
+| Item | SHA |
+|---|---|
+| M19 Axes 1–3 | 5fecc47, 4f15c96, 21eb13e |
+| M20 Axis 1 SQLite default + startup migration | 346c4a1 |
+
+## Risks / Open Questions
+
 1. **PR #31 merge pending**: operator decision. Local work continues.
-2. **M20 undefined**: M19 closed. Next milestone scope advisory needed.
-3. **JSON→SQLite migration not run**: 8,029 correction files not yet migrated.
-4. **Preference edit/snippet browser interaction not Playwright-tested**: TypeScript compile only for both M19 Axis 1 and 3 frontend changes.
+2. **Full smoke gate not run since M17 Axis 3**: M18–M20 Axis 1 added significant backend + frontend + SQLite default changes. Full `make e2e-test` needed before M20 Axis 3 release consolidation claim.
+3. **Startup migration one-time latency**: 8,029+ correction JSON files will be migrated on first SQLite default startup. Magnitude unknown without timing test.
+4. **M20 Axis 2 scope undefined**: "Preference Conflict Detection" needs advisory arbitration.

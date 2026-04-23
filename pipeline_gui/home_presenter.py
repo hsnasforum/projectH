@@ -128,14 +128,16 @@ def build_control_presentation(
     control_slots: object,
     verify_activity: object | None,
     turn_state: dict[str, object] | None = None,
+    automation_health: str = "ok",
 ) -> ControlPresentation:
     active_text, stale_text = format_control_summary(control_slots, verify_activity=verify_activity, turn_state=turn_state)
+    health = str(automation_health or "ok")
     active = None
     if isinstance(control_slots, dict):
         raw_active = control_slots.get("active")
         if isinstance(raw_active, dict):
             active = raw_active
-    if verify_activity is not None and not (active is not None and active.get("status") == "needs_operator"):
+    if verify_activity is not None and health != "needs_operator":
         return ControlPresentation(
             active_text=active_text,
             stale_text=stale_text,

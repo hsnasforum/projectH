@@ -1,12 +1,12 @@
 STATUS: verified
-CONTROL_SEQ: 25
+CONTROL_SEQ: 28
 BASED_ON_WORK:
-  - work/4/23/2026-04-23-m14-axis1-sqlite-parity.md
-HANDOFF_SHA: 3637dee
+  - work/4/23/2026-04-23-m14-axis2-quality-integration.md
+HANDOFF_SHA: 3007329
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 22
-NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 25
-ADVISORY_ADVICE_SEQ: 23 (advisory_advice.md seq 23 — M14 Axis 2 pre-empted by CONTROL_SEQ 16; advisory re-open for M14 Axis 2/3 definition)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 25
+NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 28
+ADVISORY_ADVICE_SEQ: 26 (advisory_advice.md seq 26 — M14 Axis 2 quality integration bundle implemented and verified)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
 ---
@@ -92,19 +92,49 @@ Advisory seq 23 추천 M14 Axis 2 = "PreferencePanel reliability stats frontend"
 
 ---
 
+---
+
+## Round 4 Claim: M14 Axis 2 — Quality Integration Bundle
+
+**Work**: `work/4/23/2026-04-23-m14-axis2-quality-integration.md`
+**Commit**: 3007329
+
+### Summary
+
+`core/delta_analysis.py`에 공개 `is_high_quality()` 추가 (0.05 ≤ score ≤ 0.98). `scripts/export_traces.py`는 로컬 정의 대신 re-import로 전환. `PreferenceStore.promote_from_corrections()` / `_refresh_evidence()`가 correction `similarity_score` 평균을 `avg_similarity_score`로 저장. `list_preferences_payload()`가 `quality_info` ({avg_similarity_score, is_high_quality}) 포함. `PreferenceRecord` 타입에 optional `quality_info` 추가. `PreferencePanel.tsx`가 `is_high_quality === true` 일 때 `고품질` badge 표시. MILESTONES.md에 M13 Axis 5b(ebd82cb) 및 M14 Axis 2(seq 28) 기록.
+
+### Checks Run
+
+- `python3 -m py_compile core/delta_analysis.py scripts/export_traces.py storage/preference_store.py app/handlers/preferences.py` → **OK**
+- `python3 -m unittest tests.test_preference_store tests.test_export_utility tests.test_preference_handler -v` → **38 tests OK** (신규 avg_similarity_score 2개 + handler quality_info 2개 포함)
+- `git diff --check` (모든 변경 파일) → **OK**
+- `cd app/frontend && npx tsc --noEmit` → **OK**
+
+### Checks Not Run
+
+- 전체 test suite / Playwright — 신규 badge는 새 UI 요소 추가이나 기존 scenario 변경 없음; TypeScript pass로 계약 확인
+- SQLite quality parity — handoff boundary에 따라 제외; SQLitePreferenceStore record_reviewed_candidate_preference 경로는 correction-level similarity_score 없음
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족. 커밋 완료 (3007329).
+
+---
+
 ## Current Shipped Truth
 
 | Item | Status |
 |---|---|
 | PR #30 (feat/watcher-turn-state → main) | MERGED (2026-04-23T07:37:03Z) |
-| M13 Axes 1–6 (JSON backend + M13 Axis 5b frontend) | Shipped, all tests pass |
+| M13 Axes 1–6 + Axis 5b frontend | All committed and shipped |
 | pr_merge_gate backlog triage | Committed (4e03ccd) |
 | M14 Axis 1 SQLitePreferenceStore auto-activation parity | Committed (3637dee) |
-| MILESTONES.md M13 Axis 5 doc-sync gap | Open — "frontend display deferred" 표기 but CONTROL_SEQ 16 (ebd82cb) shipped frontend |
-| M14 Axis 2 definition | Pending advisory re-arbitration |
+| M14 Axis 2 quality integration bundle | Committed (3007329) |
+| MILESTONES.md M13 Axis 5b + M14 Axis 2 | Updated in 3007329 |
+| Branch vs origin | 4 commits ahead of origin/feat/watcher-turn-state |
 
 ## Risks / Open Questions
 
-1. **MILESTONES.md M13 Axis 5b gap**: `ebd82cb` (CONTROL_SEQ 16) shipped PreferencePanel reliability stats frontend but MILESTONES.md M13 Axis 5 still shows "frontend display deferred". Advisory seq 23 recommended M14 Axis 2 = this frontend, but it's already done.
-2. **M14 Axis 2 re-definition**: Advisory seq 23 M14 Axis 2 pre-empted. Next M14 Axis 2 slice needs advisory arbitration — likely doc-sync bundle (M13 Axis 5b) + M14 Axis 3 (Trace Quality Scoring in review queue UI).
-3. **Branch not pushed**: 2 new commits (4e03ccd, 3637dee) on `feat/watcher-turn-state`, 2 ahead of origin. PR creation/push stays in operator backlog.
+1. **SQLite quality parity**: `SQLitePreferenceStore.record_reviewed_candidate_preference()` 경로는 correction `similarity_score`가 없어 `avg_similarity_score`를 저장하지 않음. `quality_info`는 해당 경로 선호에 대해 null을 반환하며, badge 미표시는 설계상 올바름.
+2. **M14 Axis 3 미정의**: Advisory seq 23이 언급한 "review queue UI quality integration"이 Axis 2 PreferencePanel badge로 커버되는지, 별도 Axis 3이 필요한지 미결. Advisory 재요청으로 M14 완료 여부 또는 다음 slice 확정 필요.
+3. **Branch not pushed**: 4 new commits on `feat/watcher-turn-state`, 4 ahead of origin. PR creation/push stays in operator backlog.

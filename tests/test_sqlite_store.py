@@ -1,5 +1,5 @@
 import unittest
-from storage.sqlite_store import SQLiteSessionStore
+from storage.sqlite_store import SQLiteDatabase, SQLitePreferenceStore, SQLiteSessionStore
 
 
 class TestSQLiteSessionStoreAdoptionList(unittest.TestCase):
@@ -41,6 +41,82 @@ class TestSQLiteSessionStoreAdoptionList(unittest.TestCase):
                     hasattr(SQLiteSessionStore, name),
                     f"SQLiteSessionStore is missing required method: {name}",
                 )
+
+
+class TestSQLitePreferenceStoreAutoActivation(unittest.TestCase):
+    def setUp(self) -> None:
+        self.db = SQLiteDatabase(":memory:")
+        self.store = SQLitePreferenceStore(self.db)
+
+    def tearDown(self) -> None:
+        self.db.close()
+
+    def _record(
+        self,
+        *,
+        delta_fingerprint: str = "fingerprint-auto-activation",
+        candidate_id: str,
+    ) -> dict:
+        return self.store.record_reviewed_candidate_preference(
+            delta_fingerprint=delta_fingerprint,
+            candidate_family="correction_rewrite",
+            description="Prefer concise answers",
+            source_refs={"candidate_id": candidate_id, "session_id": candidate_id},
+        )
+
+    def test_sqlite_auto_activation_keeps_candidate_below_threshold(self) -> None:
+        self._record(candidate_id="candidate-0")
+        self._record(candidate_id="candidate-1")
+        record = self._record(candidate_id="candidate-2")
+
+        self.assertEqual(record["cross_session_count"], 2)
+        self.assertEqual(record["status"], "candidate")
+        stored = self.store.get(record["preference_id"])
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["status"], "candidate")
+        self.assertIsNone(stored["activated_at"])
+
+    def test_sqlite_auto_activation_promotes_candidate_at_threshold(self) -> None:
+        self._record(candidate_id="candidate-0")
+        self._record(candidate_id="candidate-1")
+        self._record(candidate_id="candidate-2")
+        record = self._record(candidate_id="candidate-3")
+
+        self.assertEqual(record["cross_session_count"], 3)
+        self.assertEqual(record["status"], "active")
+        self.assertIsNotNone(record["activated_at"])
+        stored = self.store.get(record["preference_id"])
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["status"], "active")
+        self.assertIsNotNone(stored["activated_at"])
+
+    def test_sqlite_auto_activation_leaves_active_unchanged(self) -> None:
+        record = self._record(candidate_id="candidate-0")
+        active_record = self.store.activate_preference(record["preference_id"])
+        self.assertIsNotNone(active_record)
+        activated_at = active_record["activated_at"]
+
+        updated = self._record(candidate_id="candidate-1")
+
+        self.assertEqual(updated["status"], "active")
+        self.assertEqual(updated["activated_at"], activated_at)
+        stored = self.store.get(record["preference_id"])
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["status"], "active")
+        self.assertEqual(stored["activated_at"], activated_at)
+
+    def test_sqlite_auto_activation_leaves_rejected_unchanged(self) -> None:
+        record = self._record(candidate_id="candidate-0")
+        rejected_record = self.store.reject_preference(record["preference_id"])
+        self.assertIsNotNone(rejected_record)
+
+        updated = self._record(candidate_id="candidate-1")
+
+        self.assertEqual(updated["status"], "rejected")
+        stored = self.store.get(record["preference_id"])
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["status"], "rejected")
+        self.assertIsNone(stored["activated_at"])
 
 
 if __name__ == "__main__":

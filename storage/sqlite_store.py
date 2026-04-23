@@ -17,6 +17,13 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+try:
+    from storage.preference_store import (
+        AUTO_ACTIVATE_CROSS_SESSION_THRESHOLD as _SQLITE_AUTO_ACTIVATE_THRESHOLD,
+    )
+except ImportError:
+    _SQLITE_AUTO_ACTIVATE_THRESHOLD = 3
+
 SCHEMA_VERSION = 1
 
 _SCHEMA_SQL = """
@@ -511,11 +518,23 @@ class SQLitePreferenceStore:
             }
             if str(source_refs.get("candidate_id") or "") not in existing_ref_ids:
                 data["reviewed_candidate_source_refs"].append(source_refs)
+                try:
+                    cross_session_count = int(data.get("cross_session_count") or 0)
+                except (TypeError, ValueError):
+                    cross_session_count = 0
+                data["cross_session_count"] = cross_session_count + 1
             data["updated_at"] = now
+            self._auto_activate_candidate_if_ready(data, now)
             blob = json.dumps(data, ensure_ascii=False, default=str)
             self._db.execute(
-                "UPDATE preferences SET data = ?, updated_at = ? WHERE preference_id = ?",
-                (blob, now, data["preference_id"]),
+                "UPDATE preferences SET status = ?, activated_at = ?, data = ?, updated_at = ? WHERE preference_id = ?",
+                (
+                    data.get("status", row["status"]),
+                    data.get("activated_at"),
+                    blob,
+                    data.get("updated_at", now),
+                    data["preference_id"],
+                ),
             )
             self._db.commit()
             return data
@@ -538,13 +557,42 @@ class SQLitePreferenceStore:
             "created_at": now,
             "updated_at": now,
         }
+        self._auto_activate_candidate_if_ready(data, now)
         blob = json.dumps(data, ensure_ascii=False, default=str)
         self._db.execute(
             "INSERT INTO preferences (preference_id, delta_fingerprint, description, status, data, created_at, updated_at, activated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (preference_id, delta_fingerprint, description, "candidate", blob, now, now, None),
+            (
+                preference_id,
+                delta_fingerprint,
+                description,
+                data["status"],
+                blob,
+                data["created_at"],
+                data["updated_at"],
+                data["activated_at"],
+            ),
         )
         self._db.commit()
         return data
+
+    def _auto_activate_candidate_if_ready(self, preference: dict[str, Any], now: str) -> None:
+        if preference.get("status") != "candidate":
+            return
+        try:
+            cross_session_count = int(preference.get("cross_session_count") or 0)
+        except (TypeError, ValueError):
+            return
+        if cross_session_count < _SQLITE_AUTO_ACTIVATE_THRESHOLD:
+            return
+
+        preference["status"] = "active"
+        preference["activated_at"] = now
+        preference["updated_at"] = now
+        blob = json.dumps(preference, ensure_ascii=False, default=str)
+        self._db.execute(
+            "UPDATE preferences SET status = ?, activated_at = ?, data = ?, updated_at = ? WHERE preference_id = ?",
+            ("active", now, blob, now, preference["preference_id"]),
+        )
 
     def _update_status(self, preference_id: str, new_status: str) -> dict[str, Any] | None:
         now = _now_iso()

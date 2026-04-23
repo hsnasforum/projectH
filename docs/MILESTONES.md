@@ -510,6 +510,19 @@
 - Axis 5 (80fe1dd, seq 974): preference reliability API — `list_preferences_payload()` enriches each record with `reliability_stats` (`applied_count`/`corrected_count` via `per_preference_stats`); SQLiteSessionStore fallback returns 0 counts; frontend display deferred
 - Axis 6 (seq 21): auto-activation — `storage/preference_store.py` auto-activates `CANDIDATE` preferences to `ACTIVE` when `cross_session_count >= 3`, while leaving other lifecycle states unchanged
 
+### Milestone 14: Personalization Integrity and Trace Quality Integration
+- keep personalization infrastructure consistent across local storage backends before adding user-visible memory expansion
+- integrate trace quality and preference lifecycle surfaces only after backend parity is truthful
+- keep cross-session preference handling bounded to reviewed evidence and existing lifecycle states
+
+#### Guardrails
+- backend parity comes before user-visible expansion
+- no user-level memory widening in this milestone definition
+- SQLite and JSON preference lifecycle behavior must not diverge on activation thresholds
+
+#### Shipped Infrastructure (Axis 1, 2026-04-23)
+- Axis 1 (seq 24): SQLite preference auto-activation parity — `storage/sqlite_store.py` `SQLitePreferenceStore` increments `cross_session_count` for new reviewed-candidate source refs and auto-activates `CANDIDATE` preferences when `cross_session_count >= 3`, matching JSON-backed `PreferenceStore` while leaving `ACTIVE`, `REJECTED`, and `PAUSED` statuses unchanged
+
 ## Next 3 Implementation Priorities
 
 1. Keep the shipped read-only `reviewed_memory_boundary_draft` draft-only and do not widen it into readiness tracking or cross-session scope. The rollback / disable / conflict / operator-audit contracts and the reviewed-memory apply path are now shipped; boundary draft stays separate from apply result.

@@ -579,8 +579,9 @@
 - JSON CorrectionStore remains the default until explicit SQLite backend switch
 - migration is additive (INSERT OR IGNORE) and safe to re-run
 
-#### Shipped Infrastructure (Axis 1, 2026-04-23)
+#### Shipped Infrastructure (Axes 1-2, 2026-04-23)
 - Axis 1 (seq 60): SQLiteCorrectionStore — `record_correction`, `get`, `find_by_fingerprint`, `find_by_artifact`, `find_by_session`, `list_recent`; corrections table schema already existed; `migrate_json_to_sqlite` updated to migrate 8,000+ correction JSON files
+- Axis 2 (seq 63): SQL recurrence indexing & server wiring — `SQLiteCorrectionStore.find_recurring_patterns()` uses `GROUP BY delta_fingerprint HAVING COUNT(*) >= 2`; `app/web.py` sqlite branch wires `SQLiteCorrectionStore(db)` replacing JSON fallback
 
 ## Next 3 Implementation Priorities
 

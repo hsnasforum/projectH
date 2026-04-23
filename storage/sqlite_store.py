@@ -748,6 +748,55 @@ class SQLiteCorrectionStore:
         )
         return [self._row_to_dict(row) for row in rows]
 
+    def find_recurring_patterns(self, *, session_id: str | None = None) -> list[dict[str, Any]]:
+        """Return correction groups with recurrence_count >= 2, matching CorrectionStore contract."""
+        if session_id:
+            fp_rows = self._db.fetchall(
+                "SELECT delta_fingerprint FROM corrections WHERE session_id = ? "
+                "GROUP BY delta_fingerprint HAVING COUNT(*) >= 2",
+                (session_id,),
+            )
+        else:
+            fp_rows = self._db.fetchall(
+                "SELECT delta_fingerprint FROM corrections "
+                "GROUP BY delta_fingerprint HAVING COUNT(*) >= 2"
+            )
+
+        patterns: list[dict[str, Any]] = []
+        for fp_row in fp_rows:
+            fp = fp_row["delta_fingerprint"]
+            if not fp:
+                continue
+            if session_id:
+                rows = self._db.fetchall(
+                    "SELECT * FROM corrections WHERE delta_fingerprint = ? AND session_id = ? "
+                    "ORDER BY created_at",
+                    (fp, session_id),
+                )
+            else:
+                rows = self._db.fetchall(
+                    "SELECT * FROM corrections WHERE delta_fingerprint = ? ORDER BY created_at",
+                    (fp,),
+                )
+            records = [self._row_to_dict(row) for row in rows]
+            if len(records) < 2:
+                continue
+            patterns.append({
+                "delta_fingerprint": fp,
+                "pattern_family": records[0].get("pattern_family", ""),
+                "recurrence_count": len(records),
+                "corrections": records,
+                "first_seen_at": min(
+                    (record.get("first_seen_at") or record.get("created_at") or "")
+                    for record in records
+                ),
+                "last_seen_at": max(
+                    (record.get("last_seen_at") or record.get("updated_at") or "")
+                    for record in records
+                ),
+            })
+        return patterns
+
     def _row_to_dict(self, row: dict[str, Any]) -> dict[str, Any]:
         data = json.loads(row["data"]) if isinstance(row.get("data"), str) else {}
         data.update({

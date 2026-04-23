@@ -308,6 +308,66 @@ class TestSQLiteCorrectionStore(unittest.TestCase):
 
         self.assertEqual(len(matches), 2)
 
+    def test_find_recurring_patterns_detects_cross_occurrence(self) -> None:
+        self._record(
+            artifact_id="art1",
+            session_id="sess1",
+            source_message_id="msg1",
+            original_text="hello world",
+            corrected_text="hello there",
+        )
+        self._record(
+            artifact_id="art2",
+            session_id="sess2",
+            source_message_id="msg2",
+            original_text="hello world",
+            corrected_text="hello there",
+        )
+        self._record(
+            artifact_id="art3",
+            session_id="sess3",
+            source_message_id="msg3",
+            original_text="unique text here",
+            corrected_text="unique text changed",
+        )
+
+        patterns = self.store.find_recurring_patterns()
+
+        recur_fps = {pattern["delta_fingerprint"] for pattern in patterns}
+        self.assertEqual(len(recur_fps), 1)
+        self.assertEqual(patterns[0]["recurrence_count"], 2)
+        self.assertEqual(len(patterns[0]["corrections"]), 2)
+
+    def test_find_recurring_patterns_session_filter(self) -> None:
+        self._record(
+            artifact_id="art1",
+            session_id="s1",
+            source_message_id="m1",
+            original_text="hello world",
+            corrected_text="hello there",
+        )
+        self._record(
+            artifact_id="art1",
+            session_id="s1",
+            source_message_id="m1b",
+            original_text="hello world",
+            corrected_text="hello there",
+        )
+        self._record(
+            artifact_id="art2",
+            session_id="s2",
+            source_message_id="m2",
+            original_text="hello world",
+            corrected_text="hello there",
+        )
+
+        s1_patterns = self.store.find_recurring_patterns(session_id="s1")
+        s2_patterns = self.store.find_recurring_patterns(session_id="s2")
+
+        self.assertEqual(len(s1_patterns), 1)
+        self.assertEqual(s1_patterns[0]["recurrence_count"], 2)
+        self.assertEqual(len(s2_patterns), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

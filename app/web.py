@@ -49,16 +49,14 @@ class WebAppService(ChatHandlerMixin, AggregateHandlerMixin, FeedbackHandlerMixi
         if settings.storage_backend == "sqlite":
             from storage.sqlite_store import (
                 SQLiteDatabase, SQLiteSessionStore, SQLiteTaskLogger,
-                SQLiteArtifactStore, SQLitePreferenceStore,
+                SQLiteArtifactStore, SQLitePreferenceStore, SQLiteCorrectionStore,
             )
             db = SQLiteDatabase(db_path=settings.sqlite_db_path)
             self.session_store = SQLiteSessionStore(db)  # type: ignore[assignment]
             self.task_logger = SQLiteTaskLogger(db)  # type: ignore[assignment]
             self.artifact_store = SQLiteArtifactStore(db)  # type: ignore[assignment]
             self.preference_store = SQLitePreferenceStore(db)  # type: ignore[assignment]
-            # Correction store stays JSON for now (complex lifecycle)
-            from storage.correction_store import CorrectionStore
-            self.correction_store = CorrectionStore(base_dir=settings.corrections_dir)
+            self.correction_store = SQLiteCorrectionStore(db)  # type: ignore[assignment]
         else:
             self.session_store = SessionStore(base_dir=settings.sessions_dir)
             self.task_logger = TaskLogger(path=settings.task_log_path)

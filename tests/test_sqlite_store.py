@@ -1,4 +1,6 @@
 import unittest
+from time import sleep
+
 from storage.sqlite_store import (
     SQLiteCorrectionStore,
     SQLiteDatabase,
@@ -153,6 +155,19 @@ class TestSQLitePreferenceStoreAutoActivation(unittest.TestCase):
         self.assertIsNotNone(stored)
         self.assertEqual(stored["original_snippet"], "hello")
         self.assertEqual(stored["corrected_snippet"], "world")
+
+    def test_sqlite_update_description_changes_field(self) -> None:
+        created = self._record(candidate_id="candidate-update-description")
+        sleep(0.001)
+
+        updated = self.store.update_description(created["preference_id"], "Prefer structured answers")
+
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["description"], "Prefer structured answers")
+        self.assertGreater(updated["updated_at"], created["created_at"])
+        stored = self.store.get(created["preference_id"])
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["description"], "Prefer structured answers")
 
     def test_sqlite_record_reviewed_candidate_update_preserves_score_when_none_passed(self) -> None:
         created = self.store.record_reviewed_candidate_preference(

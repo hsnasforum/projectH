@@ -296,3 +296,15 @@ export async function rejectPreference(preferenceId: string): Promise<{ ok: bool
   });
   return res.json();
 }
+
+export async function updatePreferenceDescription(
+  preferenceId: string,
+  description: string,
+): Promise<{ ok: boolean; preference: PreferenceRecord }> {
+  const res = await fetch(`${BASE}/api/preferences/update-description`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ preference_id: preferenceId, description }),
+  });
+  return res.json();
+}

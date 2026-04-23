@@ -488,6 +488,22 @@ class SQLitePreferenceStore:
     def reject_preference(self, preference_id: str) -> dict[str, Any] | None:
         return self._update_status(preference_id, "rejected")
 
+    def update_description(self, preference_id: str, description: str) -> dict[str, Any] | None:
+        """Update the description of an existing preference. Returns None if not found."""
+        now = _now_iso()
+        row = self._db.fetchone("SELECT * FROM preferences WHERE preference_id = ?", (preference_id,))
+        if not row:
+            return None
+        data = json.loads(row["data"])
+        data["description"] = description
+        data["updated_at"] = now
+        self._db.execute(
+            "UPDATE preferences SET description = ?, data = ?, updated_at = ? WHERE preference_id = ?",
+            (description, json.dumps(data, ensure_ascii=False, default=str), now, preference_id),
+        )
+        self._db.commit()
+        return self.get(preference_id)
+
     def record_reviewed_candidate_preference(
         self,
         *,

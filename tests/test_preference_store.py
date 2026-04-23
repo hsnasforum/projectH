@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from time import sleep
 
 from core.contracts import PreferenceStatus
 from storage.correction_store import CorrectionStore
@@ -253,6 +254,31 @@ class PreferenceStoreTest(unittest.TestCase):
 
             rejected = pref.reject_preference(created["preference_id"])
             self.assertEqual(rejected["status"], PreferenceStatus.REJECTED)
+
+    def test_update_description_changes_field(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, _ = self._make_stores(tmp)
+            created = pref.record_reviewed_candidate_preference(
+                delta_fingerprint="sha256:test_update_description",
+                candidate_family="correction_rewrite",
+                description="기존 설명",
+                source_refs={"candidate_id": "cand-update-description"},
+            )
+            sleep(0.001)
+
+            updated = pref.update_description(created["preference_id"], "새 설명")
+
+            self.assertIsNotNone(updated)
+            self.assertEqual(updated["description"], "새 설명")
+            self.assertGreater(updated["updated_at"], created["created_at"])
+            stored = pref.get(created["preference_id"])
+            self.assertEqual(stored["description"], "새 설명")
+
+    def test_update_description_returns_none_for_missing(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, _ = self._make_stores(tmp)
+
+            self.assertIsNone(pref.update_description("nonexistent-id", "text"))
 
     def test_lifecycle_candidate_to_active_to_paused_to_active(self) -> None:
         with TemporaryDirectory() as tmp:

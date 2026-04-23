@@ -594,9 +594,12 @@
 - no user-level memory widening beyond current preference lifecycle
 - snippets are read-only display; no fingerprint or lifecycle changes
 
-#### Shipped Infrastructure (Axes 1-2, 2026-04-23)
+#### Shipped Infrastructure (Axes 1-3, 2026-04-23)
 - Axis 1 (seq 69): preference evidence persistence — `promote_from_corrections` and `record_reviewed_candidate_preference` store `original_snippet` / `corrected_snippet` (≤400 chars) from source corrections; `aggregate.py` passes snippets on accept; `PreferenceRecord` type updated; `PreferencePanel.tsx` adds `상세 보기` / `접기` toggle
 - Axis 2 (seq 72): discovery integrity guards — `find_recurring_patterns()` global path uses `COUNT(DISTINCT session_id) >= 2`; `_build_review_queue_items` deduplicates global candidates by statement against preference descriptions and session-local items; global candidates get real `quality_info` from corrections; global accept path respects `statement_override`
+- Axis 3 (seq 75): durable preference editing — `update_description()` in JSON and SQLite stores; `POST /api/preferences/update-description` endpoint; `PreferencePanel.tsx` inline edit mode (`편집`, textarea, `저장` / `취소`); M19 milestone closed
+
+- **Milestone 19 closed** (Axes 1–3): evidence persistence, discovery integrity, and post-learning refinement complete
 
 ## Next 3 Implementation Priorities
 

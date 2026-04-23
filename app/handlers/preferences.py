@@ -81,3 +81,20 @@ class PreferenceHandlerMixin:
             raise WebApiError(404, "해당 선호를 찾을 수 없습니다.")
         self.task_logger.log(session_id="system", action="preference_rejected", detail={"preference_id": preference_id})
         return {"ok": True, "preference": result}
+
+    def update_preference_description(self, payload: dict[str, Any]) -> dict[str, Any]:
+        preference_id = self._normalize_optional_text(payload.get("preference_id"))
+        description = self._normalize_optional_text(payload.get("description"))
+        if not preference_id:
+            raise WebApiError(400, "설명을 수정할 선호 ID가 필요합니다.")
+        if not description:
+            raise WebApiError(400, "새 설명이 필요합니다.")
+        result = self.preference_store.update_description(preference_id, description)
+        if result is None:
+            raise WebApiError(404, "해당 선호를 찾을 수 없습니다.")
+        self.task_logger.log(
+            session_id="system",
+            action="preference_description_updated",
+            detail={"preference_id": preference_id},
+        )
+        return {"ok": True, "preference": result}

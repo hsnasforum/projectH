@@ -1,12 +1,12 @@
 STATUS: verified
-CONTROL_SEQ: 28
+CONTROL_SEQ: 31
 BASED_ON_WORK:
-  - work/4/23/2026-04-23-m14-axis2-quality-integration.md
-HANDOFF_SHA: 3007329
+  - work/4/23/2026-04-23-m14-axis3-review-queue-quality.md
+HANDOFF_SHA: 6d19705
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 25
-NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 28
-ADVISORY_ADVICE_SEQ: 26 (advisory_advice.md seq 26 — M14 Axis 2 quality integration bundle implemented and verified)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 28
+NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 31
+ADVISORY_ADVICE_SEQ: 29 (advisory_advice.md seq 29 — M14 Axis 3 complete; M14 milestone closed)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
 ---
@@ -121,20 +121,48 @@ PASS. 모든 acceptance criteria 충족. 커밋 완료 (3007329).
 
 ---
 
+## Round 5 Claim: M14 Axis 3 — Review Queue Quality Integration
+
+**Work**: `work/4/23/2026-04-23-m14-axis3-review-queue-quality.md`
+**Commit**: 6d19705
+
+### Summary
+
+`_build_review_queue_items()`가 각 item의 `artifact_id`로 `self.correction_store.find_by_artifact()`를 조회하고 correction `similarity_score` 평균을 `quality_info.avg_similarity_score`로 직렬화, `is_high_quality()` 기준으로 `quality_info.is_high_quality`를 설정. `ReviewQueueItem` 타입 추가, `Session.review_queue_items`를 `unknown[]`에서 `ReviewQueueItem[]`으로 좁힘. `useChat`이 `highQualityReviewCount`를 계산하고 `App.tsx`가 `ChatArea`로 전달, `ChatArea.tsx`에서 `고품질 N건` 보조 count 표시. MILESTONES.md M14 Axis 3 shipped 기록.
+
+### Checks Run
+
+- `python3 -m py_compile app/serializers.py` → **OK**
+- `python3 -m unittest tests.test_serializers -v` → **2 tests OK** (includes_quality_info, quality_info_none_when_no_corrections)
+- `cd app/frontend && npx tsc --noEmit` → **OK**
+- `git diff --check` (모든 변경 파일) → **OK**
+- `python3 -m unittest tests.test_web_app.WebAppServiceTest.test_submit_candidate_confirmation_records_candidate_linked_trace_and_stays_separate_from_save_support -v` → **1 test OK** (focused regression)
+
+### Checks Not Run
+
+- 전체 test suite / Playwright — 기존 review badge 카운트 동작 변경 없음; TypeScript pass + focused regression으로 계약 확인
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족. 커밋 완료 (6d19705).
+
+---
+
 ## Current Shipped Truth
 
 | Item | Status |
 |---|---|
 | PR #30 (feat/watcher-turn-state → main) | MERGED (2026-04-23T07:37:03Z) |
-| M13 Axes 1–6 + Axis 5b frontend | All committed and shipped |
+| M13 Axes 1–6 + Axis 5b frontend | All committed |
 | pr_merge_gate backlog triage | Committed (4e03ccd) |
 | M14 Axis 1 SQLitePreferenceStore auto-activation parity | Committed (3637dee) |
 | M14 Axis 2 quality integration bundle | Committed (3007329) |
-| MILESTONES.md M13 Axis 5b + M14 Axis 2 | Updated in 3007329 |
-| Branch vs origin | 4 commits ahead of origin/feat/watcher-turn-state |
+| M14 Axis 3 review queue quality integration | Committed (6d19705) |
+| **Milestone 14** | **All 3 axes complete** |
+| Branch vs origin | 6 commits ahead of origin/feat/watcher-turn-state |
 
 ## Risks / Open Questions
 
-1. **SQLite quality parity**: `SQLitePreferenceStore.record_reviewed_candidate_preference()` 경로는 correction `similarity_score`가 없어 `avg_similarity_score`를 저장하지 않음. `quality_info`는 해당 경로 선호에 대해 null을 반환하며, badge 미표시는 설계상 올바름.
-2. **M14 Axis 3 미정의**: Advisory seq 23이 언급한 "review queue UI quality integration"이 Axis 2 PreferencePanel badge로 커버되는지, 별도 Axis 3이 필요한지 미결. Advisory 재요청으로 M14 완료 여부 또는 다음 slice 확정 필요.
-3. **Branch not pushed**: 4 new commits on `feat/watcher-turn-state`, 4 ahead of origin. PR creation/push stays in operator backlog.
+1. **SQLite quality parity (deferred)**: `SQLitePreferenceStore.record_reviewed_candidate_preference()` 경로는 correction `similarity_score`가 없어 `avg_similarity_score` 없음. `quality_info: null` 반환이 설계상 올바름 (advisory seq 29 명시 deferred).
+2. **M15 미정의**: M14 Axes 1–3 완료. M15 scope 결정 필요. Advisory 재요청으로 다음 milestone 정의 필요.
+3. **Branch not pushed**: 6 new commits on `feat/watcher-turn-state`, 6 ahead of origin. PR creation/push stays in operator backlog.

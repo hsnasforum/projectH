@@ -526,6 +526,17 @@
 - Axis 2 (seq 27): quality integration — `core/delta_analysis.py` exports `is_high_quality()`; `storage/preference_store.py` stores `avg_similarity_score` during `promote_from_corrections`; `list_preferences_payload` enriches with `quality_info`; `PreferencePanel.tsx` displays 고품질 badge
 - Axis 3 (seq 30): review queue quality integration — `serializers.py` `_build_review_queue_items` enriches each item with `quality_info`; `ReviewQueueItem` type added to `client.ts`; `ChatArea.tsx` shows 고품질 N건 count in review badge
 
+### Milestone 15: Personalization Stability and Review Surface Expansion
+- stabilize quality data foundation across all storage backends before UI expansion
+- Axis 1, 2, 3 ordered: backend parity → smoke coverage → review queue UX
+
+#### Guardrails
+- no user-level memory widening
+- SQLite and JSON preference quality behavior must not diverge
+
+#### Shipped Infrastructure (Axis 1, 2026-04-23)
+- Axis 1 (seq 33): SQLite quality parity — `record_reviewed_candidate_preference` accepts `avg_similarity_score` in both JSON and SQLite backends; `aggregate.py` computes score from `correction_store` before accept; `quality_info` now populated for reviewed-candidate preferences
+
 ## Next 3 Implementation Priorities
 
 1. Keep the shipped read-only `reviewed_memory_boundary_draft` draft-only and do not widen it into readiness tracking or cross-session scope. The rollback / disable / conflict / operator-audit contracts and the reviewed-memory apply path are now shipped; boundary draft stays separate from apply result.

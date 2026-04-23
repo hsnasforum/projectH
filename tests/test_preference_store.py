@@ -350,6 +350,47 @@ class PreferenceStoreTest(unittest.TestCase):
             all_prefs = pref.list_all()
             self.assertEqual(len(all_prefs), 1)
 
+    def test_record_reviewed_candidate_stores_avg_similarity_score(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, _ = self._make_stores(tmp)
+
+            record = pref.record_reviewed_candidate_preference(
+                delta_fingerprint="sha256:test_avg_similarity",
+                candidate_family="correction_rewrite",
+                description="검토 수락된 교정 패턴",
+                source_refs={"candidate_id": "cand-quality"},
+                avg_similarity_score=0.25,
+            )
+
+            self.assertEqual(record["avg_similarity_score"], 0.25)
+            stored = pref.get(record["preference_id"])
+            self.assertEqual(stored["avg_similarity_score"], 0.25)
+
+    def test_record_reviewed_candidate_update_preserves_score_when_none_passed(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, _ = self._make_stores(tmp)
+            fp = "sha256:test_avg_similarity_preserve"
+            created = pref.record_reviewed_candidate_preference(
+                delta_fingerprint=fp,
+                candidate_family="correction_rewrite",
+                description="검토 수락된 교정 패턴",
+                source_refs={"candidate_id": "cand-quality-a"},
+                avg_similarity_score=0.3,
+            )
+
+            updated = pref.record_reviewed_candidate_preference(
+                delta_fingerprint=fp,
+                candidate_family="correction_rewrite",
+                description="검토 수락된 교정 패턴",
+                source_refs={"candidate_id": "cand-quality-b"},
+                avg_similarity_score=None,
+            )
+
+            self.assertEqual(updated["preference_id"], created["preference_id"])
+            self.assertEqual(updated["avg_similarity_score"], 0.3)
+            stored = pref.get(created["preference_id"])
+            self.assertEqual(stored["avg_similarity_score"], 0.3)
+
     def test_refresh_evidence_on_new_correction(self) -> None:
         with TemporaryDirectory() as tmp:
             pref, corr = self._make_stores(tmp)

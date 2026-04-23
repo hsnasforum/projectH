@@ -224,6 +224,14 @@ class AggregateHandlerMixin:
             if candidate_recurrence_key is not None:
                 fingerprint = str(candidate_recurrence_key.get("normalized_delta_fingerprint") or "").strip()
                 if fingerprint:
+                    artifact_id = str(source_message.get("artifact_id") or "").strip()
+                    corrections = self.correction_store.find_by_artifact(artifact_id) if artifact_id else []
+                    scores = [
+                        float(c["similarity_score"])
+                        for c in corrections
+                        if isinstance(c.get("similarity_score"), (int, float))
+                    ]
+                    avg_similarity_score = round(sum(scores) / len(scores), 4) if scores else None
                     self.preference_store.record_reviewed_candidate_preference(
                         delta_fingerprint=fingerprint,
                         candidate_family=str(durable_candidate.get("candidate_family") or ""),
@@ -231,11 +239,12 @@ class AggregateHandlerMixin:
                         source_refs={
                             "candidate_id": candidate_id,
                             "candidate_updated_at": candidate_updated_at,
-                            "artifact_id": str(source_message.get("artifact_id") or ""),
+                            "artifact_id": artifact_id,
                             "source_message_id": str(source_message.get("message_id") or ""),
                             "review_action": review_action,
                             "session_id": session_id,
                         },
+                        avg_similarity_score=avg_similarity_score,
                     )
                     self.task_logger.log(
                         session_id=session_id,

@@ -225,6 +225,7 @@ class PreferenceStore:
         candidate_family: str,
         description: str,
         source_refs: dict[str, Any],
+        avg_similarity_score: float | None = None,
     ) -> dict[str, Any]:
         """Persist one local preference candidate from an accepted reviewed candidate.
 
@@ -244,6 +245,8 @@ class PreferenceStore:
                 }
                 if str(source_refs.get("candidate_id") or "") not in existing_ref_ids:
                     existing["reviewed_candidate_source_refs"].append(source_refs)
+                if avg_similarity_score is not None:
+                    existing["avg_similarity_score"] = avg_similarity_score
                 atomic_write(self._path(existing["preference_id"]), existing)
                 return existing
 
@@ -258,6 +261,7 @@ class PreferenceStore:
                 "reviewed_candidate_source_refs": [source_refs],
                 "evidence_count": 1,
                 "cross_session_count": 0,
+                "avg_similarity_score": avg_similarity_score,
                 "delta_summary": {},
                 "status": PreferenceStatus.CANDIDATE,
                 "activated_at": None,

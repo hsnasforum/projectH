@@ -118,6 +118,43 @@ class TestSQLitePreferenceStoreAutoActivation(unittest.TestCase):
         self.assertEqual(stored["status"], "rejected")
         self.assertIsNone(stored["activated_at"])
 
+    def test_sqlite_record_reviewed_candidate_stores_avg_similarity_score(self) -> None:
+        record = self.store.record_reviewed_candidate_preference(
+            delta_fingerprint="fingerprint-avg-similarity",
+            candidate_family="correction_rewrite",
+            description="Prefer concise answers",
+            source_refs={"candidate_id": "candidate-quality"},
+            avg_similarity_score=0.25,
+        )
+
+        self.assertEqual(record["avg_similarity_score"], 0.25)
+        stored = self.store.get(record["preference_id"])
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["avg_similarity_score"], 0.25)
+
+    def test_sqlite_record_reviewed_candidate_update_preserves_score_when_none_passed(self) -> None:
+        created = self.store.record_reviewed_candidate_preference(
+            delta_fingerprint="fingerprint-avg-similarity-preserve",
+            candidate_family="correction_rewrite",
+            description="Prefer concise answers",
+            source_refs={"candidate_id": "candidate-quality-a"},
+            avg_similarity_score=0.3,
+        )
+
+        updated = self.store.record_reviewed_candidate_preference(
+            delta_fingerprint="fingerprint-avg-similarity-preserve",
+            candidate_family="correction_rewrite",
+            description="Prefer concise answers",
+            source_refs={"candidate_id": "candidate-quality-b"},
+            avg_similarity_score=None,
+        )
+
+        self.assertEqual(updated["preference_id"], created["preference_id"])
+        self.assertEqual(updated["avg_similarity_score"], 0.3)
+        stored = self.store.get(created["preference_id"])
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["avg_similarity_score"], 0.3)
+
 
 if __name__ == "__main__":
     unittest.main()

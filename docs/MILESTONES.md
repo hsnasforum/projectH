@@ -613,6 +613,11 @@
 - Axis 1 (seq 78): SQLite default — `config/settings.py` default changed to `"sqlite"`; `app/web.py` sqlite branch conditionally runs `migrate_json_to_sqlite` for corrections on first startup; migration idempotency verified by test
 - Axis 2 (seq 81): preference conflict detection — `list_preferences_payload` enriches each preference with `conflict_info` (`has_conflict` + `conflicting_preference_ids`) using Jaccard word-token similarity > 0.7 between ACTIVE preferences; `PreferencePanel.tsx` shows `⚠ 충돌` badge and activate confirmation when conflicts exist
 
+### Milestone 21: Personalization Maturity and Release Bundle
+
+#### Shipped Infrastructure (Axis 1, 2026-04-23)
+- Axis 1 (seq 87): SQLite correction lifecycle parity — `SQLiteCorrectionStore` now implements `confirm_correction`, `promote_correction`, `activate_correction`, `stop_correction` matching JSON `CorrectionStore` contract; 5 new unit tests cover status column and `data` JSON blob updates plus missing-id behavior
+
 ## Next 3 Implementation Priorities
 
 1. Keep the shipped read-only `reviewed_memory_boundary_draft` draft-only and do not widen it into readiness tracking or cross-session scope. The rollback / disable / conflict / operator-audit contracts and the reviewed-memory apply path are now shipped; boundary draft stays separate from apply result.

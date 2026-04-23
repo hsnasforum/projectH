@@ -266,6 +266,39 @@ class TestSQLiteCorrectionStore(unittest.TestCase):
         self.assertIsNotNone(record)
         return record
 
+    def _assert_lifecycle_transition(
+        self,
+        method_name: str,
+        expected_status: str,
+        timestamp_field: str,
+    ) -> None:
+        record = self._record(
+            artifact_id=f"artifact-{method_name}",
+            session_id=f"session-{method_name}",
+            source_message_id=f"message-{method_name}",
+        )
+        sleep(0.001)
+
+        updated = getattr(self.store, method_name)(record["correction_id"])
+
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["status"], expected_status)
+        self.assertIsNotNone(updated[timestamp_field])
+        self.assertGreater(updated["updated_at"], record["updated_at"])
+        stored = self.store.get(record["correction_id"])
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["status"], expected_status)
+        self.assertEqual(stored[timestamp_field], updated[timestamp_field])
+        raw_row = self.db.fetchone(
+            "SELECT status, data FROM corrections WHERE correction_id = ?",
+            (record["correction_id"],),
+        )
+        self.assertIsNotNone(raw_row)
+        self.assertEqual(raw_row["status"], expected_status)
+        raw_data = json.loads(raw_row["data"])
+        self.assertEqual(raw_data["status"], expected_status)
+        self.assertEqual(raw_data[timestamp_field], updated[timestamp_field])
+
     def test_record_returns_none_for_identical_texts(self) -> None:
         record = self.store.record_correction(
             artifact_id="artifact-same",
@@ -285,6 +318,39 @@ class TestSQLiteCorrectionStore(unittest.TestCase):
         self.assertIsInstance(record["similarity_score"], float)
         self.assertEqual(record["original_text"], "alpha foo omega")
         self.assertEqual(record["corrected_text"], "alpha bar omega")
+
+    def test_sqlite_confirm_correction_updates_status(self) -> None:
+        self._assert_lifecycle_transition(
+            "confirm_correction",
+            "confirmed",
+            "confirmed_at",
+        )
+
+    def test_sqlite_promote_correction_updates_status(self) -> None:
+        self._assert_lifecycle_transition(
+            "promote_correction",
+            "promoted",
+            "promoted_at",
+        )
+
+    def test_sqlite_activate_correction_updates_status(self) -> None:
+        self._assert_lifecycle_transition(
+            "activate_correction",
+            "active",
+            "activated_at",
+        )
+
+    def test_sqlite_stop_correction_updates_status(self) -> None:
+        self._assert_lifecycle_transition(
+            "stop_correction",
+            "stopped",
+            "stopped_at",
+        )
+
+    def test_sqlite_transition_returns_none_for_missing_id(self) -> None:
+        self.assertIsNone(
+            self.store._transition("correction-missing", "confirmed", "confirmed_at")
+        )
 
     def test_record_idempotent_for_same_artifact_source_fingerprint(self) -> None:
         first = self._record(

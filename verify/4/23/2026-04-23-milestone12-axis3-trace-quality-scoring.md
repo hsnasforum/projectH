@@ -1,12 +1,12 @@
 STATUS: verified
-CONTROL_SEQ: 34
+CONTROL_SEQ: 35
 BASED_ON_WORK:
-  - work/4/23/2026-04-23-m15-axis1-sqlite-quality-parity.md
-HANDOFF_SHA: 8482425
+  - work/4/23/2026-04-23-test-isolation-fix.md
+HANDOFF_SHA: ce402fe
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 31
-NEXT_CONTROL: .pipeline/implement_handoff.md CONTROL_SEQ 34
-ADVISORY_ADVICE_SEQ: 32 (advisory_advice.md seq 32 — M15 Axis 1 SQLite quality parity)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 34
+NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 35
+ADVISORY_ADVICE_SEQ: 32 (advisory_advice.md seq 32 — M15 Axis 2 smoke test scope pending)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
 ---
@@ -189,10 +189,34 @@ PASS for M15 Axis 1 core changes. One pre-existing regression test isolation fai
 | M14 Axis 2 quality integration bundle | Committed (3007329) |
 | M14 Axis 3 review queue quality integration | Committed (6d19705) |
 | **Milestone 14** | **All 3 axes complete** |
-| Branch vs origin | 6 commits ahead of origin/feat/watcher-turn-state |
+| M15 Axis 1 SQLite quality parity (reviewed-candidate path) | Committed (8482425) |
+| Test isolation fix (corrections_dir + artifacts_dir) | Committed (ce402fe) |
+| Branch vs origin | 10 commits ahead of origin/feat/watcher-turn-state |
+
+---
+
+## Round 7 Claim: Test Isolation Fix
+
+**Work**: `work/4/23/2026-04-23-test-isolation-fix.md`
+**Commit**: ce402fe
+
+### Summary
+
+`test_submit_candidate_review_accept_persists_local_preference_candidate`의 `AppSettings` 호출에 `artifacts_dir=str(tmp_path / "artifacts")`와 `corrections_dir=str(tmp_path / "corrections")`를 추가. 이제 테스트가 real `data/corrections` (8,029개 실제 파일) 대신 격리된 temp 디렉터리를 사용. production 코드 변경 없음.
+
+### Checks Run
+
+- `python3 -m unittest tests.test_web_app.WebAppServiceTest.test_submit_candidate_review_accept_persists_local_preference_candidate -v` → **1 test OK**
+- `git diff --check -- tests/test_web_app.py` → **OK**
+
+### Verdict
+
+PASS. 해당 regression 테스트 통과. 커밋 완료 (ce402fe).
+
+---
 
 ## Risks / Open Questions
 
-1. **Test isolation gap**: `tests.test_web_app.WebAppServiceTest.test_submit_candidate_review_accept_persists_local_preference_candidate` fails because `AppSettings` in that test doesn't set `corrections_dir`, defaulting to repo-local `data/corrections` (8,029 real files). Fix: add `corrections_dir=str(tmp_path / "corrections")` to that test's `AppSettings`. Routed to implement_handoff CONTROL_SEQ 34.
-2. **M15 Axis 2 (smoke tests) undefined**: Advisory seq 32 named it at a high level. Scope for Playwright quality badge coverage pending advisory after test isolation fix.
-3. **Branch not pushed**: 8 new commits on `feat/watcher-turn-state`, 8 ahead of origin. PR creation/push stays in operator backlog.
+1. **Other isolation gaps**: 동일한 `corrections_dir` 미격리 패턴이 `test_web_app.py`의 다른 테스트에도 있을 수 있음. 이번 slice 범위 밖; 추후 sweep 시 발견 시 수정.
+2. **M15 Axis 2 (smoke tests) undefined**: Advisory seq 32가 고수준으로만 정의. Playwright quality badge 커버리지 scope를 advisory로 결정 필요.
+3. **Branch not pushed**: 10 commits on `feat/watcher-turn-state`, 10 ahead of origin. PR creation/push stays in operator backlog.

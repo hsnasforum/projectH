@@ -14,6 +14,15 @@ const STATUS_COLORS: Record<string, string> = {
   paused: "bg-stone-100 text-stone-500",
 };
 
+function preferenceReliabilityCounts(pref: PreferenceRecord) {
+  const appliedCount = pref.reliability_stats?.applied_count;
+  const correctedCount = pref.reliability_stats?.corrected_count;
+  return {
+    applied: typeof appliedCount === "number" && Number.isFinite(appliedCount) ? appliedCount : 0,
+    corrected: typeof correctedCount === "number" && Number.isFinite(correctedCount) ? correctedCount : 0,
+  };
+}
+
 export default function PreferencePanel() {
   const [preferences, setPreferences] = useState<PreferenceRecord[]>([]);
   const [loading, setLoading] = useState(false);
@@ -106,88 +115,95 @@ export default function PreferencePanel() {
       {/* Collapsible list with max height */}
       {expanded && (
         <div className="max-h-[200px] overflow-y-auto space-y-1 mt-1 pr-0.5">
-          {preferences.map((pref) => (
-            <div
-              key={pref.preference_id}
-              className={`
-                rounded-lg bg-sidebar-hover/50 px-2.5 py-2 transition-all duration-500
-                ${fadingOut.has(pref.preference_id) ? "opacity-0 scale-95" : "opacity-100"}
-              `}
-            >
-              {/* Status + evidence */}
-              <div className="flex items-center gap-1.5 mb-1">
-                <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${STATUS_COLORS[pref.status] ?? "bg-stone-100 text-stone-500"}`}>
-                  {STATUS_LABELS[pref.status] ?? pref.status}
-                </span>
-                <span className="text-[9px] text-sidebar-muted/60">
-                  {pref.cross_session_count}세션 · {pref.evidence_count}건
-                </span>
-              </div>
+          {preferences.map((pref) => {
+            const reliability = preferenceReliabilityCounts(pref);
+            return (
+              <div
+                key={pref.preference_id}
+                className={`
+                  rounded-lg bg-sidebar-hover/50 px-2.5 py-2 transition-all duration-500
+                  ${fadingOut.has(pref.preference_id) ? "opacity-0 scale-95" : "opacity-100"}
+                `}
+              >
+                {/* Status + evidence */}
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${STATUS_COLORS[pref.status] ?? "bg-stone-100 text-stone-500"}`}>
+                    {STATUS_LABELS[pref.status] ?? pref.status}
+                  </span>
+                  <span className="text-[9px] text-sidebar-muted/60">
+                    {pref.cross_session_count}세션 · {pref.evidence_count}건
+                  </span>
+                </div>
 
-              {/* Description */}
-              <p className="text-[11px] text-sidebar-text/80 leading-snug mb-1 line-clamp-2">
-                {pref.description}
-              </p>
-
-              {/* Promotion reason (delta summary) */}
-              {pref.delta_summary && (
-                <p className="text-[9px] text-sidebar-muted/50 mb-1.5 line-clamp-1">
-                  {pref.delta_summary.replacements?.length
-                    ? `교정: ${pref.delta_summary.replacements.map(r => `${r.from}→${r.to}`).join(', ')}`
-                    : pref.delta_summary.additions?.length
-                      ? `추가: ${pref.delta_summary.additions.join(', ')}`
-                      : pref.delta_summary.removals?.length
-                        ? `제거: ${pref.delta_summary.removals.join(', ')}`
-                        : `${pref.cross_session_count}개 세션에서 반복 감지`
-                  }
+                {/* Description */}
+                <p className="text-[11px] text-sidebar-text/80 leading-snug mb-1 line-clamp-2">
+                  {pref.description}
                 </p>
-              )}
 
-              {/* Compact actions */}
-              <div className="flex items-center gap-1">
-                {pref.status === "candidate" && (
-                  <>
-                    <button
-                      onClick={() => handleAction(pref.preference_id, "activate")}
-                      className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 transition-colors"
-                    >
-                      활성화
-                    </button>
-                    <button
-                      onClick={() => handleAction(pref.preference_id, "reject")}
-                      className="text-[10px] px-1.5 py-0.5 rounded text-sidebar-muted/40 hover:text-red-400 transition-colors"
-                    >
-                      거부
-                    </button>
-                  </>
+                <p className="text-[9px] text-sidebar-muted/50 mb-1 line-clamp-1">
+                  적용 {reliability.applied}회 · 교정 {reliability.corrected}회
+                </p>
+
+                {/* Promotion reason (delta summary) */}
+                {pref.delta_summary && (
+                  <p className="text-[9px] text-sidebar-muted/50 mb-1.5 line-clamp-1">
+                    {pref.delta_summary.replacements?.length
+                      ? `교정: ${pref.delta_summary.replacements.map(r => `${r.from}→${r.to}`).join(', ')}`
+                      : pref.delta_summary.additions?.length
+                        ? `추가: ${pref.delta_summary.additions.join(', ')}`
+                        : pref.delta_summary.removals?.length
+                          ? `제거: ${pref.delta_summary.removals.join(', ')}`
+                          : `${pref.cross_session_count}개 세션에서 반복 감지`
+                    }
+                  </p>
                 )}
-                {pref.status === "active" && (
-                  <button
-                    onClick={() => handleAction(pref.preference_id, "pause")}
-                    className="text-[10px] px-1.5 py-0.5 rounded text-sidebar-muted/40 hover:text-sidebar-text transition-colors"
-                  >
-                    일시중지
-                  </button>
-                )}
-                {pref.status === "paused" && (
-                  <>
+
+                {/* Compact actions */}
+                <div className="flex items-center gap-1">
+                  {pref.status === "candidate" && (
+                    <>
+                      <button
+                        onClick={() => handleAction(pref.preference_id, "activate")}
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 transition-colors"
+                      >
+                        활성화
+                      </button>
+                      <button
+                        onClick={() => handleAction(pref.preference_id, "reject")}
+                        className="text-[10px] px-1.5 py-0.5 rounded text-sidebar-muted/40 hover:text-red-400 transition-colors"
+                      >
+                        거부
+                      </button>
+                    </>
+                  )}
+                  {pref.status === "active" && (
                     <button
-                      onClick={() => handleAction(pref.preference_id, "activate")}
-                      className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 transition-colors"
+                      onClick={() => handleAction(pref.preference_id, "pause")}
+                      className="text-[10px] px-1.5 py-0.5 rounded text-sidebar-muted/40 hover:text-sidebar-text transition-colors"
                     >
-                      재활성
+                      일시중지
                     </button>
-                    <button
-                      onClick={() => handleAction(pref.preference_id, "reject")}
-                      className="text-[10px] px-1.5 py-0.5 rounded text-sidebar-muted/40 hover:text-red-400 transition-colors"
-                    >
-                      거부
-                    </button>
-                  </>
-                )}
+                  )}
+                  {pref.status === "paused" && (
+                    <>
+                      <button
+                        onClick={() => handleAction(pref.preference_id, "activate")}
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 transition-colors"
+                      >
+                        재활성
+                      </button>
+                      <button
+                        onClick={() => handleAction(pref.preference_id, "reject")}
+                        className="text-[10px] px-1.5 py-0.5 rounded text-sidebar-muted/40 hover:text-red-400 transition-colors"
+                      >
+                        거부
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

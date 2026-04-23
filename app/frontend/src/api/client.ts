@@ -196,6 +196,10 @@ export interface PreferenceRecord {
   status: string;
   evidence_count: number;
   cross_session_count: number;
+  reliability_stats?: {
+    applied_count?: number | null;
+    corrected_count?: number | null;
+  } | null;
   activated_at: string | null;
   created_at: string;
   updated_at: string;

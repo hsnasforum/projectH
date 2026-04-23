@@ -1,12 +1,12 @@
 STATUS: verified
-CONTROL_SEQ: 61
+CONTROL_SEQ: 64
 BASED_ON_WORK:
-  - work/4/23/2026-04-23-m18-axis1-sqlite-correction-store.md
-HANDOFF_SHA: 05195d4
+  - work/4/23/2026-04-23-m18-axis2-recurrence-wiring.md
+HANDOFF_SHA: aa5133c
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 55
-NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 61
-ADVISORY_ADVICE_SEQ: 59 (advisory_advice.md seq 59 — M18 Axis 1 done; Axis 2 scope needed)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 61
+NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 64
+ADVISORY_ADVICE_SEQ: 62 (advisory_advice.md seq 62 — M18 Axis 2 done; Axis 3 scope needed)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
 ---
@@ -556,6 +556,29 @@ PASS. 모든 acceptance criteria 충족. 커밋 완료 (05195d4).
 
 ---
 
+---
+
+## Round 18 Claim: M18 Axis 2 — SQL Recurrence Indexing + Server Wiring
+
+**Work**: `work/4/23/2026-04-23-m18-axis2-recurrence-wiring.md`
+**Commit**: aa5133c
+
+### Summary
+
+`SQLiteCorrectionStore.find_recurring_patterns()` 추가: `GROUP BY delta_fingerprint HAVING COUNT(*) >= 2` SQL로 반복 패턴 탐색. `session_id` 필터 지원. `app/web.py` sqlite 분기에서 `SQLiteCorrectionStore(db)` active wiring. JSON 분기 및 `correction_store.py` 미변경. 신규 recurrence 테스트 2개.
+
+### Checks Run
+
+- `python3 -m py_compile storage/sqlite_store.py app/web.py` → **OK**
+- `python3 -m unittest tests.test_sqlite_store -v` → **16 tests OK** (기존 14 + 신규 2)
+- `git diff --check` → **OK**
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족. 커밋 완료 (aa5133c).
+
+---
+
 ## Current Shipped Truth
 
 | Item | SHA |
@@ -563,9 +586,10 @@ PASS. 모든 acceptance criteria 충족. 커밋 완료 (05195d4).
 | M17 Axes 1–3 + smoke fix | 7fc4edc, 89851bf, 4d62440 |
 | PR #31 (feat/watcher-turn-state → main) | OPEN draft — operator merge pending |
 | M18 Axis 1 SQLiteCorrectionStore | 05195d4 |
+| M18 Axis 2 SQL recurrence + server wiring | aa5133c |
 
 ## Risks / Open Questions
 
 1. **PR #31 merge pending**: operator decision. Local work continues.
-2. **M18 Axis 2 scope undefined**: advisory needed for SQL-based cross-session recurrence indexing exact scope.
-3. **SQLiteCorrectionStore not wired to server**: JSON CorrectionStore remains default until explicit wiring (M18 Axis 2+).
+2. **M18 Axis 3 scope undefined**: advisory needed for "Review Queue Integration for Global Candidates."
+3. **Large JSON→SQLite migration not run**: 8,029 correction files not migrated yet; sqlite backend accumulates new corrections only.

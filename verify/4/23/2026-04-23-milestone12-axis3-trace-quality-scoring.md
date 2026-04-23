@@ -1,12 +1,12 @@
 STATUS: verified
-CONTROL_SEQ: 31
+CONTROL_SEQ: 34
 BASED_ON_WORK:
-  - work/4/23/2026-04-23-m14-axis3-review-queue-quality.md
-HANDOFF_SHA: 6d19705
+  - work/4/23/2026-04-23-m15-axis1-sqlite-quality-parity.md
+HANDOFF_SHA: 8482425
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 28
-NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 31
-ADVISORY_ADVICE_SEQ: 29 (advisory_advice.md seq 29 — M14 Axis 3 complete; M14 milestone closed)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 31
+NEXT_CONTROL: .pipeline/implement_handoff.md CONTROL_SEQ 34
+ADVISORY_ADVICE_SEQ: 32 (advisory_advice.md seq 32 — M15 Axis 1 SQLite quality parity)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
 ---
@@ -148,6 +148,36 @@ PASS. 모든 acceptance criteria 충족. 커밋 완료 (6d19705).
 
 ---
 
+---
+
+## Round 6 Claim: M15 Axis 1 — SQLite Quality Parity (reviewed-candidate path)
+
+**Work**: `work/4/23/2026-04-23-m15-axis1-sqlite-quality-parity.md`
+**Commit**: 8482425
+
+### Summary
+
+`record_reviewed_candidate_preference()`에 `avg_similarity_score: float | None = None` 파라미터 추가 (JSON/SQLite 모두). JSON create path에서 score 저장; update path는 새 score가 None이면 기존 값 보존. SQLite도 동일 policy. `AggregateHandlerMixin.submit_candidate_review()` accept branch가 `correction_store.find_by_artifact(artifact_id)`로 correction similarity score 평균을 계산해 전달. JSON/SQLite 단위 테스트 4개 추가. MILESTONES.md M15 정의 + Axis 1 shipped 기록.
+
+### Checks Run
+
+- `python3 -m py_compile storage/preference_store.py storage/sqlite_store.py app/handlers/aggregate.py` → **OK**
+- `python3 -m unittest tests.test_preference_store tests.test_sqlite_store -v` → **31 tests OK** (신규 4개 포함)
+- `git diff --check` (모든 변경 파일) → **OK**
+
+### Checks Not Run / Failed
+
+- `tests.test_web_app.WebAppServiceTest.test_submit_candidate_review_accept_persists_local_preference_candidate` → **FAIL** (pre-existing fixture isolation issue: `corrections_dir` not set in `AppSettings`, defaults to repo-local `data/corrections` with 8,029 real files; `promote_from_corrections` reads those and auto-activates preference before `record_reviewed_candidate_preference` can create a candidate record)
+- Root cause: pre-existing test isolation gap, NOT caused by M15 Axis 1 changes (the M15 change only adds a read-only `find_by_artifact` call and `avg_similarity_score` storage)
+- Fix required: add `corrections_dir=str(tmp_path / "corrections")` to `AppSettings` in the failing test
+- Full test suite / Playwright: not run
+
+### Verdict
+
+PASS for M15 Axis 1 core changes. One pre-existing regression test isolation failure noted separately — exact fix is clear, routed to implement_handoff CONTROL_SEQ 34.
+
+---
+
 ## Current Shipped Truth
 
 | Item | Status |
@@ -163,6 +193,6 @@ PASS. 모든 acceptance criteria 충족. 커밋 완료 (6d19705).
 
 ## Risks / Open Questions
 
-1. **SQLite quality parity (deferred)**: `SQLitePreferenceStore.record_reviewed_candidate_preference()` 경로는 correction `similarity_score`가 없어 `avg_similarity_score` 없음. `quality_info: null` 반환이 설계상 올바름 (advisory seq 29 명시 deferred).
-2. **M15 미정의**: M14 Axes 1–3 완료. M15 scope 결정 필요. Advisory 재요청으로 다음 milestone 정의 필요.
-3. **Branch not pushed**: 6 new commits on `feat/watcher-turn-state`, 6 ahead of origin. PR creation/push stays in operator backlog.
+1. **Test isolation gap**: `tests.test_web_app.WebAppServiceTest.test_submit_candidate_review_accept_persists_local_preference_candidate` fails because `AppSettings` in that test doesn't set `corrections_dir`, defaulting to repo-local `data/corrections` (8,029 real files). Fix: add `corrections_dir=str(tmp_path / "corrections")` to that test's `AppSettings`. Routed to implement_handoff CONTROL_SEQ 34.
+2. **M15 Axis 2 (smoke tests) undefined**: Advisory seq 32 named it at a high level. Scope for Playwright quality badge coverage pending advisory after test isolation fix.
+3. **Branch not pushed**: 8 new commits on `feat/watcher-turn-state`, 8 ahead of origin. PR creation/push stays in operator backlog.

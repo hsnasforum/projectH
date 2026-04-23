@@ -1,12 +1,12 @@
 STATUS: verified
-CONTROL_SEQ: 70
+CONTROL_SEQ: 73
 BASED_ON_WORK:
-  - work/4/23/2026-04-23-m19-axis1-preference-evidence.md
-HANDOFF_SHA: 5fecc47
+  - work/4/23/2026-04-23-m19-axis2-discovery-integrity.md
+HANDOFF_SHA: 4f15c96
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 67
-NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 70
-ADVISORY_ADVICE_SEQ: 68 (advisory_advice.md seq 68 — M19 Axis 1 done; Axis 2 scope needed)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 70
+NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 73
+ADVISORY_ADVICE_SEQ: 71 (advisory_advice.md seq 71 — M19 Axis 2 done; Axis 3 scope needed)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
 ---
@@ -639,9 +639,40 @@ PASS. 모든 acceptance criteria 충족. 커밋 완료 (5fecc47).
 
 ---
 
+---
+
+## Round 21 Claim: M19 Axis 2 — Discovery Integrity Guards
+
+**Work**: `work/4/23/2026-04-23-m19-axis2-discovery-integrity.md`
+**Commit**: 4f15c96
+
+### Summary
+
+`find_recurring_patterns()` global path → `COUNT(DISTINCT session_id) >= 2`. `_build_review_queue_items` global block에 preference description + session-local statement dedup 추가 (try/except best-effort). 글로벌 후보 `quality_info` 실제 avg score 계산. 글로벌 accept path `statement_override` 우선 사용. sqlite 18개 테스트 통과.
+
+### Checks Run
+
+- `python3 -m py_compile storage/sqlite_store.py app/serializers.py app/handlers/aggregate.py` → **OK**
+- `python3 -m unittest tests.test_sqlite_store -v` → **18 tests OK** (신규 1개 distinct-session 포함)
+- `git diff --check` → **OK**
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족. 커밋 완료 (4f15c96).
+
+---
+
+## Current Shipped Truth
+
+| Item | SHA |
+|---|---|
+| M18 Axes 1–3 | 05195d4, aa5133c, 01167e6 |
+| M19 Axis 1 preference evidence | 5fecc47 |
+| M19 Axis 2 discovery integrity | 4f15c96 |
+
 ## Risks / Open Questions
 
 1. **PR #31 merge pending**: operator decision. Local work continues.
-2. **M19 Axis 2 scope undefined**: advisory needed for "Discovery Integrity (Duplicate/Conflict guards for global candidates)."
-3. **PreferencePanel snippet toggle not Playwright-tested**: TypeScript compile verifies the toggle; browser interaction not smoke-tested this slice.
-4. **JSON→SQLite migration not run**: 8,029 correction files not yet migrated.
+2. **M19 Axis 3 scope undefined**: advisory needed for "Post-Learning Refinement (Inline description editing in PreferencePanel)."
+3. **JSON→SQLite migration not run**: 8,029 correction files not yet migrated.
+4. **PreferencePanel snippet toggle not Playwright-tested**: TypeScript compile only.

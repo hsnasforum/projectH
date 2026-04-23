@@ -13,6 +13,7 @@ from pipeline_runtime.cli import build_parser
 from pipeline_runtime.operator_autonomy import (
     COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
     OPERATOR_APPROVAL_COMPLETED_REASON,
+    PR_MERGE_GATE_REASON,
     SUPPORTED_DECISION_CLASSES,
     classify_operator_candidate,
 )
@@ -3815,6 +3816,62 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(status["automation_health"], "needs_operator")
             self.assertEqual(status["automation_reason_code"], "external_publication_boundary")
             self.assertEqual(status["automation_next_action"], "pr_boundary")
+
+    def test_write_status_keeps_pr_merge_gate_operator_visible_without_gated_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "operator_request.md").write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 1718\n"
+                f"REASON_CODE: {PR_MERGE_GATE_REASON}\n"
+                "OPERATOR_POLICY: internal_only\n"
+                "DECISION_CLASS: merge_gate\n"
+                "DECISION_REQUIRED: PR #27 merge approval\n",
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                            {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+                supervisor._record_status_events(status)
+
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            gated_events = [event for event in events if event.get("event_type") == "control_operator_gated"]
+
+            self.assertEqual(status["control"]["active_control_status"], "needs_operator")
+            self.assertEqual(status["autonomy"]["mode"], "needs_operator")
+            self.assertEqual(status["autonomy"]["reason_code"], PR_MERGE_GATE_REASON)
+            self.assertEqual(status["automation_health"], "needs_operator")
+            self.assertEqual(status["automation_reason_code"], PR_MERGE_GATE_REASON)
+            self.assertEqual(status["automation_next_action"], "pr_boundary")
+            self.assertEqual(gated_events, [])
 
     def test_write_status_preserves_operator_gate_first_seen_across_seq_only_bump(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

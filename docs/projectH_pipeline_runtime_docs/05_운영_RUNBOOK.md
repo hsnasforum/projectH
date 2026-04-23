@@ -363,7 +363,7 @@ controller browser UI의 active runtime contract는 아래로 제한합니다.
 - 예외적으로 `internal_only + next_slice_selection + waiting_next_control` 조합은 idle hibernate가 아니라 `triage`로 보고 verify/handoff-owner follow-up을 다시 여는 편이 맞습니다. genuine `idle_hibernate + internal_only`만 unattended idle로 남깁니다.
 - `pending_operator`가 보이면 legacy/전환기 surface로 보고 `reason_code`를 먼저 확인합니다. `approval_required`, `safety_stop`, `truth_sync_required` 같은 real-risk reason은 즉시 `needs_operator` current truth여야 하며, 반복 advisory로 재승격되면 operator gate 회귀로 봅니다.
 - `pr_creation_gate + gate_24h + release_gate`는 operator publication boundary가 아니라 draft PR 생성 publish follow-up입니다. 이 reason이 `needs_operator` 또는 `hibernate + ok`로 보이면 자동 PR 라우팅 회귀입니다.
-- `external_publication_boundary` / `publication_boundary` / `pr_boundary`는 merge/release/destructive publication 경계입니다. 이 reason이 `hibernate + ok`로 보이면 no-silent-stall surface 회귀이며, 정상 표시는 `needs_operator + pr_boundary`입니다.
+- `external_publication_boundary` / `publication_boundary` / `pr_boundary` / `pr_merge_gate`는 merge/release/destructive publication 경계입니다. 이 reason이 `hibernate + ok` 또는 반복 verify follow-up으로 보이면 no-silent-stall surface 회귀이며, 정상 표시는 `needs_operator + pr_boundary`입니다.
 - 같은 결정을 `CONTROL_SEQ`만 올려 다시 쓴 경우에는 suppress deadline과 retriage age가 이어져야 합니다. seq-only bump가 보이는데 `operator_retriage_no_next_control` age가 0초로 돌아가면 watcher/supervisor semantic fingerprint 회귀로 봅니다.
 - 이 상태에서 operator는 stop 파일만 보고 즉시 재기동/강제 attach하지 말고, verify follow-up 또는 gate window 경과 여부를 먼저 확인해야 합니다.
 

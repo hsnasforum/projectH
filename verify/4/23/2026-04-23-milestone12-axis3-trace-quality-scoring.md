@@ -1,79 +1,42 @@
 STATUS: verified
-CONTROL_SEQ: 974
-BASED_ON_WORK: work/4/23/2026-04-23-milestone13-axis5-preference-reliability-api.md
-HANDOFF_SHA: 4b04ee1
+CONTROL_SEQ: 1
+BASED_ON_WORK: work/4/23/2026-04-23-pr-merge-gate-loop-guard.md
+HANDOFF_SHA: 1b23edf
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 970
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 974
 
 ## Claim
 
-Milestone 13 Axis 5 — Preference Reliability API Enrichment (백엔드 전용):
-- `app/handlers/preferences.py`: `list_preferences_payload()`가 `session_store.get_global_audit_summary()` → `per_preference_stats`를 읽어 각 preference record에 `reliability_stats: {applied_count, corrected_count}` 추가
-- `fingerprint` / `delta_fingerprint` 양쪽을 lookup key로 지원
-- SQLiteSessionStore는 `get_global_audit_summary` 없음 → `getattr` 방어로 graceful fallback (기본값 0)
-- `tests/test_web_app.py`: `test_list_preferences_payload_includes_reliability_stats` 1건 추가 — end-to-end: 2회 적용 1회 교정 → `applied_count=2, corrected_count=1` 검증
+PR merge gate 반복 루프 방지 (pr-merge-gate-loop-guard):
+- `pipeline_runtime/operator_autonomy.py` — `operator_gate_marker_from_decision()`에 `routed_to == "operator"` 또는 `mode == "needs_operator"` 시 gate marker 미생성 guard 추가 (line 471)
+- `PR_MERGE_GATE_REASON = "pr_merge_gate"` 등록 (line 20), `merge_gate` decision class 지원 추가 (line 189)
+- 3개 신규 회귀 테스트: schema helper(gate marker 없음), watcher(OPERATOR_WAIT 유지 + verify retriage 미호출), supervisor(needs_operator+pr_boundary surface + control_operator_gated event 미발생)
+- 문서 5종: README.md, .pipeline/README.md, docs/MILESTONES.md, 03_기술설계_명세서.md, 05_운영_RUNBOOK.md — `pr_merge_gate`를 draft PR creation follow-up이 아닌 실제 PR merge publication boundary로 기록
 
 ## Checks Run
 
-- `python3 -m py_compile app/handlers/preferences.py` → OK (exit 0)
-- `python3 -m unittest tests.test_web_app.WebAppServiceTest.test_list_preferences_payload_includes_reliability_stats -v` → 1/1 OK
-- `python3 -m unittest tests.test_session_store ... tests.test_evaluate_traces -v` → 60/60 OK (기존 테스트 회귀 없음)
-- `git diff --check -- app/handlers/preferences.py tests/test_web_app.py` → OK (exit 0)
-
-## Actual Diff (key changes)
-
-**`app/handlers/preferences.py`** — `list_preferences_payload()` 확장:
-```python
-get_summary = getattr(self.session_store, "get_global_audit_summary", None)
-summary = get_summary() if callable(get_summary) else {}
-per_pref_stats = summary.get("per_preference_stats", {})
-...
-for pref in all_prefs:
-    fingerprint = str(pref_copy.get("fingerprint") or pref_copy.get("delta_fingerprint") or "")
-    stats = per_pref_stats.get(fingerprint, {})
-    pref_copy["reliability_stats"] = {
-        "applied_count": stats.get("applied_count", 0),
-        "corrected_count": stats.get("corrected_count", 0),
-    }
-```
+- `python3 -m py_compile pipeline_runtime/operator_autonomy.py` → OK
+- `git diff --check -- pipeline_runtime/operator_autonomy.py tests/test_operator_request_schema.py tests/test_watcher_core.py tests/test_pipeline_runtime_supervisor.py README.md .pipeline/README.md docs/MILESTONES.md` → OK (whitespace clean)
+- `python3 -m unittest tests.test_operator_request_schema.OperatorRequestHeaderSchemaTests.test_pr_merge_gate_stays_operator_visible_without_gate_marker tests.test_watcher_core.TurnResolutionTest.test_pr_merge_gate_stays_operator_wait_without_verify_retriage tests.test_pipeline_runtime_supervisor.RuntimeSupervisorTest.test_write_status_keeps_pr_merge_gate_operator_visible_without_gated_event -v` → 3/3 OK
+- `python3 -m unittest tests.test_pipeline_runtime_supervisor tests.test_turn_arbitration -v` → 147/147 OK
+- `python3 -m unittest tests.test_operator_request_schema tests.test_watcher_core tests.test_pipeline_runtime_automation_health tests.test_pipeline_runtime_control_writers -v` → 236/236 OK (skipped=1)
 
 ## Code Review
 
-- `getattr` 방어: SQLiteSessionStore에 `get_global_audit_summary` 없음 — 실제 발생 케이스에 대한 정당한 방어. 올바름.
-- `isinstance` 과잉 방어: `summary`, `per_pref_stats`, `applied_count`, `corrected_count` 모두 내부 코드 반환값인데 타입 체크 — CLAUDE.md 기준 "Trust internal code and framework guarantees" 위반 소지. 기능 오류는 없지만 불필요한 방어임. **비블로킹 — 코드 동작에 영향 없음.**
-- `delta_fingerprint` / `fingerprint` dual-key 지원: `per_preference_stats`는 `applied_preference_ids` 기반(Axis 1 저장값), preference record는 `delta_fingerprint` 보관. 양쪽 지원이 정확한 매칭을 보장. 올바름.
-- 프론트엔드 미수정 ✓, `preference_store.py` 미수정 ✓, `agent_loop.py` 미수정 ✓. handoff 범위 준수.
+- `operator_gate_marker_from_decision()` guard (line 471): `if routed_to == "operator" or mode == "needs_operator": return None` — 핵심 수정 확인. `routed_to=operator`인 실제 operator stop은 gate marker를 받지 않으므로 watcher/supervisor의 verify retriage 루프 재진입 차단. **올바름.**
+- `PR_MERGE_GATE_REASON = "pr_merge_gate"` (line 20), `merge_gate` in supported decision classes (line 189) — 등록 완료. **올바름.**
+- 3개 신규 테스트는 이번 사고 패턴(RETRIAGE_COUNT 746 증가)을 재현하는 replay test. 회귀 방지 coverage 충분. **올바름.**
+- 문서 5종 업데이트 범위: `pr_merge_gate`가 draft creation이 아닌 merge publication boundary임을 명시. 기존 기술설계/운영 runbook과 README 일관성 확보. **올바름.**
 
-## Milestone 13 현황
+## Git 상태
 
-| Axis | 내용 | SHA |
-|---|---|---|
-| Axis 1 | applied_preference_ids session 저장 + trace export | 8cea2f1 |
-| Axis 2 | correction record preference link | a4f4cbd |
-| Axis 3 | global effectiveness metric baseline | 399122f |
-| Axis 4 | per-preference reliability analysis | fc86577 |
-| Axis 5 | preference reliability API enrichment (백엔드) | 미커밋 |
-| Axis 5b (UI) | PreferencePanel.tsx reliability 표시 | deferred |
-| MILESTONES.md | Axes 1-4 기록; Axis 5 추가 예정 | 4b04ee1 |
-
-## Bundle to Commit (operator_request.md CONTROL_SEQ 974)
-
-### 수정 파일
-- `app/handlers/preferences.py`
-- `tests/test_web_app.py`
-- `verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md` (CONTROL_SEQ 974)
-
-### 신규 파일 (untracked)
-- `work/4/23/2026-04-23-milestone13-axis5-preference-reliability-api.md`
-- `work/4/23/2026-04-23-milestone13-axis4-commit-push.md`
-- `report/gemini/2026-04-23-m13-axis5-reliability-visibility-scoping.md`
-
-### Commit 2 (same retriage) — MILESTONES.md Axis 5 doc-sync
-- `docs/MILESTONES.md`: Axes 1-4 → 1-5, Axis 5 항목 추가
+- 수정 파일 (uncommitted): `pipeline_runtime/operator_autonomy.py`, `tests/test_operator_request_schema.py`, `tests/test_watcher_core.py`, `tests/test_pipeline_runtime_supervisor.py`, `README.md`, `.pipeline/README.md`, `docs/MILESTONES.md`, `docs/projectH_pipeline_runtime_docs/03_기술설계_명세서.md`, `docs/projectH_pipeline_runtime_docs/05_운영_RUNBOOK.md`
+- HEAD: 1b23edf (Milestone 13 Axis 5 doc-sync, 이미 origin에 push됨)
+- Milestone 13 Axes 1–5 전부 커밋·푸시 완료 (feat/watcher-turn-state)
 
 ## Risk / Open Questions
 
-- `isinstance` 과잉 방어 (비블로킹): 내부 코드 반환값에 대한 불필요한 타입 가드. 기능 오류 없음.
-- SQLite backend: `reliability_stats` 키는 붙지만 counts 항상 0 — SQLite parity는 별도 라운드.
-- Axis 5b (PreferencePanel.tsx): 브라우저 테스트 필요 — PR merge 후 별도 라운드로 defer.
-- M13 Axes 1-5 완료 후 다음 결정: PR #27 merge authorization — 실제 operator 결정.
+- **Commit/push 미실행**: pr-merge-gate-loop-guard 변경 전체가 uncommitted 상태. operator 인가 후 커밋/푸시 필요.
+- **PR #27 merge**: 실제 operator 결정. 새 코드 기준 `mode=needs_operator, routed_to=operator` 판정으로 verify retriage 루프 없이 operator wait 유지됨.
+- **latest_verify `—` artifact 선택 문제**: 이번 라운드에서 수정하지 않음. 별도 라운드 deferred.
+- **현재 runtime 없음**: supervisor.pid, experimental.pid 파일은 존재하나 runtime 프로세스 없음. 재시작은 operator 결정.

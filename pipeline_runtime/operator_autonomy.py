@@ -17,10 +17,12 @@ OPERATOR_SUPPRESS_WINDOW_SEC = 24 * 60 * 60
 OPERATOR_APPROVAL_COMPLETED_REASON = "operator_approval_completed"
 COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON = "commit_push_bundle_authorization"
 PR_CREATION_GATE_REASON = "pr_creation_gate"
+PR_MERGE_GATE_REASON = "pr_merge_gate"
 PUBLICATION_BOUNDARY_REASON_CODES = frozenset({
     "pr_boundary",
     "publication_boundary",
     "external_publication_boundary",
+    PR_MERGE_GATE_REASON,
 })
 
 _SPACE_RE = re.compile(r"\s+")
@@ -184,6 +186,7 @@ SUPPORTED_DECISION_CLASSES: frozenset[str] = frozenset(
         "next_slice_selection",
         "internal_only",
         "release_gate",
+        "merge_gate",
         "truth_sync_scope",
         "red_test_family_scope_decision",
     }
@@ -463,6 +466,10 @@ def operator_gate_marker_from_decision(
     fingerprint: str | None = None,
 ) -> dict[str, object] | None:
     """Return the shared watcher/supervisor marker for a gated operator stop."""
+    routed_to = str(decision.get("routed_to") or "")
+    mode = str(decision.get("suppressed_mode") or decision.get("mode") or "")
+    if routed_to == "operator" or mode == "needs_operator":
+        return None
     if bool(decision.get("operator_eligible")):
         return None
     return {

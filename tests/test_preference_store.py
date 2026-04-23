@@ -51,6 +51,61 @@ class PreferenceStoreTest(unittest.TestCase):
             self.assertEqual(result["evidence_count"], 2)
             self.assertTrue(result["description"])
 
+    def test_auto_activation_keeps_candidate_below_threshold(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, corr = self._make_stores(tmp)
+            fp = self._seed_corrections(corr, sessions=["s1", "s2"])
+            result = pref.promote_from_corrections(fp, corr)
+            self.assertEqual(result["status"], PreferenceStatus.CANDIDATE)
+            self.assertIsNone(result["activated_at"])
+
+    def test_auto_activation_promotes_candidate_at_threshold(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, corr = self._make_stores(tmp)
+            fp = self._seed_corrections(corr, sessions=["s1", "s2", "s3"])
+            result = pref.promote_from_corrections(fp, corr)
+            self.assertEqual(result["cross_session_count"], 3)
+            self.assertEqual(result["status"], PreferenceStatus.ACTIVE)
+            self.assertIsNotNone(result["activated_at"])
+
+    def test_auto_activation_leaves_active_preference_unchanged(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, corr = self._make_stores(tmp)
+            fp = self._seed_corrections(corr, sessions=["s1", "s2"])
+            created = pref.promote_from_corrections(fp, corr)
+            activated = pref.activate_preference(created["preference_id"])
+
+            corr.record_correction(
+                artifact_id="a3",
+                session_id="s3",
+                source_message_id="m3",
+                original_text="프로젝트H는 문서 비서입니다.",
+                corrected_text="프로젝트H는 로컬 퍼스트 문서 비서입니다.",
+            )
+            refreshed = pref.promote_from_corrections(fp, corr)
+            self.assertEqual(refreshed["cross_session_count"], 3)
+            self.assertEqual(refreshed["status"], PreferenceStatus.ACTIVE)
+            self.assertEqual(refreshed["activated_at"], activated["activated_at"])
+
+    def test_auto_activation_leaves_rejected_preference_unchanged(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, corr = self._make_stores(tmp)
+            fp = self._seed_corrections(corr, sessions=["s1", "s2"])
+            created = pref.promote_from_corrections(fp, corr)
+            rejected = pref.reject_preference(created["preference_id"])
+
+            corr.record_correction(
+                artifact_id="a3",
+                session_id="s3",
+                source_message_id="m3",
+                original_text="프로젝트H는 문서 비서입니다.",
+                corrected_text="프로젝트H는 로컬 퍼스트 문서 비서입니다.",
+            )
+            refreshed = pref.promote_from_corrections(fp, corr)
+            self.assertEqual(refreshed["cross_session_count"], 3)
+            self.assertEqual(refreshed["status"], PreferenceStatus.REJECTED)
+            self.assertEqual(refreshed["rejected_at"], rejected["rejected_at"])
+
     def test_promote_requires_2_sessions(self) -> None:
         with TemporaryDirectory() as tmp:
             pref, corr = self._make_stores(tmp)
@@ -236,3 +291,5 @@ class PreferenceStoreTest(unittest.TestCase):
             refreshed = pref.promote_from_corrections(fp, corr)
             self.assertEqual(refreshed["evidence_count"], 3)
             self.assertEqual(refreshed["cross_session_count"], 3)
+            self.assertEqual(refreshed["status"], PreferenceStatus.ACTIVE)
+            self.assertIsNotNone(refreshed["activated_at"])

@@ -20,6 +20,9 @@ if TYPE_CHECKING:
     from storage.correction_store import CorrectionStore
 
 
+AUTO_ACTIVATE_CROSS_SESSION_THRESHOLD = 3
+
+
 class PreferenceStore:
     def __init__(self, base_dir: str = "data/preferences") -> None:
         self.base_dir = Path(base_dir)
@@ -82,6 +85,7 @@ class PreferenceStore:
                 "created_at": now,
                 "updated_at": now,
             }
+            self._auto_activate_candidate_if_ready(record, now)
             atomic_write(self._path(preference_id), record)
             return record
 
@@ -107,9 +111,24 @@ class PreferenceStore:
 
         preference["evidence_count"] = len(corrections)
         preference["cross_session_count"] = len(session_ids)
-        preference["updated_at"] = utc_now_iso()
+        now = utc_now_iso()
+        preference["updated_at"] = now
+        self._auto_activate_candidate_if_ready(preference, now)
         atomic_write(self._path(preference["preference_id"]), preference)
         return preference
+
+    def _auto_activate_candidate_if_ready(self, preference: dict[str, Any], now: str) -> None:
+        if preference.get("status") != PreferenceStatus.CANDIDATE:
+            return
+        try:
+            cross_session_count = int(preference.get("cross_session_count") or 0)
+        except (TypeError, ValueError):
+            return
+        if cross_session_count < AUTO_ACTIVATE_CROSS_SESSION_THRESHOLD:
+            return
+        preference["status"] = PreferenceStatus.ACTIVE
+        preference["activated_at"] = now
+        preference["updated_at"] = now
 
     def _generate_description(self, delta_summary: dict[str, Any]) -> str:
         parts: list[str] = []

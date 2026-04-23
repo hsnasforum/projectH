@@ -190,6 +190,8 @@ DEFAULT_OPERATOR_RETRIAGE_PROMPT = (
     "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/implement_handoff.md [implement] | .pipeline/advisory_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
     "- for `commit_push_bundle_authorization + internal_only`: perform the scoped commit/push in this verify/handoff round, write a `/work` closeout with commit SHA and push result, then write the next control\n"
     "- for `pr_creation_gate + gate_24h + release_gate`: create or reuse a draft PR for the pushed branch in this verify/handoff round, record the PR URL in `/work`, then write the next control\n"
+    "- if an older draft PR is still waiting for merge approval, keep that pending merge candidate stable by default; publish the next verified bundle as a stacked child branch/PR with the parent branch as its base, record the parent/child linkage in `/work`, and retarget the child to the repository default base branch after the parent merges\n"
+    "- for `pr_merge_gate + internal_only + merge_gate`: keep the PR merge as a pending operator backlog, do not merge it yourself, and write the next safe local control so implementation can continue\n"
     "RULES:\n"
     "- use ROLE_HARNESS and COUNCIL_HARNESS before preserving operator wait\n"
     "- keep `READ_FIRST` to the listed verify-owner root doc only\n"
@@ -198,7 +200,7 @@ DEFAULT_OPERATOR_RETRIAGE_PROMPT = (
     "- if you write `.pipeline/implement_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
     "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
     "- prefer .pipeline/advisory_request.md before .pipeline/operator_request.md when the only blocker is next-slice ambiguity\n"
-    "- only keep STATUS: needs_operator if a real operator-only decision, approval/truth-sync blocker, or immediate safety stop still remains right now"
+    "- only keep STATUS: needs_operator if a real operator-only decision, approval/truth-sync blocker, external publication boundary, or immediate safety stop must block local work right now"
 )
 
 DEFAULT_VERIFY_TRIAGE_PROMPT = (

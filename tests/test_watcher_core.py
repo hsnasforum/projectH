@@ -1462,6 +1462,48 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
             prompt = core.prompt_assembler.format_operator_retriage_prompt(marker or {})
             self.assertIn("pr_creation_gate + gate_24h + release_gate", prompt)
             self.assertIn("create or reuse a draft PR", prompt)
+            self.assertIn("stacked child branch/PR", prompt)
+
+    def test_pr_merge_gate_internal_only_routes_to_verify_followup_backlog(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            operator_path = base_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 53\n"
+                f"REASON_CODE: {PR_MERGE_GATE_REASON}\n"
+                "OPERATOR_POLICY: internal_only\n"
+                "DECISION_CLASS: merge_gate\n"
+                "DECISION_REQUIRED: PR #30 merge approval\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+
+            marker = core._operator_gate_marker()
+            self.assertIsNotNone(marker)
+            self.assertEqual(marker["reason"], PR_MERGE_GATE_REASON)
+            self.assertEqual(marker["mode"], "triage")
+            self.assertEqual(marker["routed_to"], "verify_followup")
+            self.assertEqual(core._resolve_turn(), "verify_followup")
+
+            prompt = core.prompt_assembler.format_operator_retriage_prompt(marker or {})
+            self.assertIn("pr_merge_gate + internal_only + merge_gate", prompt)
+            self.assertIn("keep the PR merge as a pending operator backlog", prompt)
+            self.assertIn("do not merge it yourself", prompt)
 
     def test_blocked_triage_prompt_rejects_commit_push_reissue_to_implement(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4314,7 +4356,7 @@ class TurnResolutionTest(unittest.TestCase):
             self.assertIsNone(core._operator_gate_marker())
             self.assertEqual(core._resolve_turn(), "operator")
 
-    def test_pr_merge_gate_stays_operator_wait_without_verify_retriage(self) -> None:
+    def test_pr_merge_gate_notifies_verify_retriage_without_blocking_operator_wait(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -4351,8 +4393,10 @@ class TurnResolutionTest(unittest.TestCase):
             core._last_operator_request_sig = ""
 
             with mock.patch.object(core._pr_merge_status_cache, "control_resolution", return_value=PrMergeGateResolution()):
-                self.assertIsNone(core._operator_gate_marker())
-                self.assertEqual(core._resolve_turn(), "operator")
+                marker = core._operator_gate_marker()
+                self.assertIsNotNone(marker)
+                self.assertEqual(marker["reason"], PR_MERGE_GATE_REASON)
+                self.assertEqual(core._resolve_turn(), "verify_followup")
 
             with (
                 mock.patch.object(core._pr_merge_status_cache, "control_resolution", return_value=PrMergeGateResolution()),
@@ -4360,8 +4404,8 @@ class TurnResolutionTest(unittest.TestCase):
             ):
                 core._check_pipeline_signal_updates()
 
-            retriage_notify.assert_not_called()
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.OPERATOR_WAIT)
+            retriage_notify.assert_called_once()
+            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
 
     def test_pr_merge_gate_recovers_after_referenced_pr_is_merged(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

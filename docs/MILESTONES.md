@@ -495,19 +495,20 @@
 ### Milestone 13: Applied Preference Effectiveness Tracking
 - track which active preferences are applied to responses and correction traces
 - measure whether applied preferences improve later corrections before widening memory automation
-- keep preference activation explicit and auditable while the safety loop is validated
+- keep preference activation thresholded and auditable while the safety loop is validated
 
 #### Guardrails
-- repeated-signal promotion remains blocked until the safety loop is validated
-- cross-session counting remains later
-- CANDIDATE → ACTIVE auto-activation remains deferred
+- repeated-signal promotion is limited to `cross_session_count >= 3` auto-activation for `CANDIDATE` preferences
+- cross-session counting remains local preference evidence, not broader user-level memory
+- `ACTIVE`, `REJECTED`, and `PAUSED` preferences remain on their existing lifecycle state during threshold checks
 
-#### Shipped Infrastructure (Axes 1–5, 2026-04-23)
+#### Shipped Infrastructure (Axes 1–6, 2026-04-23)
 - Axis 1 (8cea2f1, seq 958): applied preference tracking in session + trace export — `app/handlers/chat.py` stores `applied_preference_ids` in `update_last_message()`; `storage/session_store.py` yields `applied_preference_ids` in `stream_trace_pairs()`; 57 unit tests
 - Axis 2 (a4f4cbd, seq 962): correction link — `storage/correction_store.py` `record_correction()` stores `applied_preference_ids`; `app/handlers/feedback.py` passes ids from session message; 58 unit tests
 - Axis 3 (399122f, seq 966): effectiveness metric baseline — `storage/session_store.py` `get_global_audit_summary()` adds `personalized_response_count` / `personalized_correction_count`; `scripts/audit_traces.py` displays personalization correction rate; 59 unit tests
 - Axis 4 (fc86577, seq 970): per-preference reliability — `get_global_audit_summary()` adds `per_preference_stats` map (`applied_count`/`corrected_count` per fingerprint); `scripts/audit_traces.py` displays per-preference correction rates sorted descending; 60 unit tests
 - Axis 5 (80fe1dd, seq 974): preference reliability API — `list_preferences_payload()` enriches each record with `reliability_stats` (`applied_count`/`corrected_count` via `per_preference_stats`); SQLiteSessionStore fallback returns 0 counts; frontend display deferred
+- Axis 6 (seq 21): auto-activation — `storage/preference_store.py` auto-activates `CANDIDATE` preferences to `ACTIVE` when `cross_session_count >= 3`, while leaving other lifecycle states unchanged
 
 ## Next 3 Implementation Priorities
 

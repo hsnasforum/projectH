@@ -200,6 +200,10 @@ export interface PreferenceRecord {
     applied_count?: number | null;
     corrected_count?: number | null;
   } | null;
+  quality_info?: {
+    avg_similarity_score: number | null;
+    is_high_quality: boolean | null;
+  } | null;
   activated_at: string | null;
   created_at: string;
   updated_at: string;

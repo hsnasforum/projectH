@@ -507,7 +507,8 @@
 - Axis 2 (a4f4cbd, seq 962): correction link — `storage/correction_store.py` `record_correction()` stores `applied_preference_ids`; `app/handlers/feedback.py` passes ids from session message; 58 unit tests
 - Axis 3 (399122f, seq 966): effectiveness metric baseline — `storage/session_store.py` `get_global_audit_summary()` adds `personalized_response_count` / `personalized_correction_count`; `scripts/audit_traces.py` displays personalization correction rate; 59 unit tests
 - Axis 4 (fc86577, seq 970): per-preference reliability — `get_global_audit_summary()` adds `per_preference_stats` map (`applied_count`/`corrected_count` per fingerprint); `scripts/audit_traces.py` displays per-preference correction rates sorted descending; 60 unit tests
-- Axis 5 (80fe1dd, seq 974): preference reliability API — `list_preferences_payload()` enriches each record with `reliability_stats` (`applied_count`/`corrected_count` via `per_preference_stats`); SQLiteSessionStore fallback returns 0 counts; frontend display deferred
+- Axis 5 (80fe1dd, seq 974): preference reliability API — `list_preferences_payload()` enriches each record with `reliability_stats` (`applied_count`/`corrected_count` via `per_preference_stats`); SQLiteSessionStore fallback returns 0 counts; frontend display shipped as Axis 5b (ebd82cb, seq 16)
+- Axis 5b (ebd82cb, seq 16): preference reliability frontend — `PreferencePanel.tsx` renders 적용 N회 · 교정 M회 from live `reliability_stats`; `api/client.ts` adds optional `reliability_stats` field
 - Axis 6 (seq 21): auto-activation — `storage/preference_store.py` auto-activates `CANDIDATE` preferences to `ACTIVE` when `cross_session_count >= 3`, while leaving other lifecycle states unchanged
 
 ### Milestone 14: Personalization Integrity and Trace Quality Integration
@@ -522,6 +523,7 @@
 
 #### Shipped Infrastructure (Axis 1, 2026-04-23)
 - Axis 1 (seq 24): SQLite preference auto-activation parity — `storage/sqlite_store.py` `SQLitePreferenceStore` increments `cross_session_count` for new reviewed-candidate source refs and auto-activates `CANDIDATE` preferences when `cross_session_count >= 3`, matching JSON-backed `PreferenceStore` while leaving `ACTIVE`, `REJECTED`, and `PAUSED` statuses unchanged
+- Axis 2 (seq 27): quality integration — `core/delta_analysis.py` exports `is_high_quality()`; `storage/preference_store.py` stores `avg_similarity_score` during `promote_from_corrections`; `list_preferences_payload` enriches with `quality_info`; `PreferencePanel.tsx` displays 고품질 badge
 
 ## Next 3 Implementation Priorities
 

@@ -40,6 +40,24 @@ class PreferenceStoreTest(unittest.TestCase):
                 fp = r["delta_fingerprint"]
         return fp
 
+    def _record_same_fingerprint_correction(
+        self,
+        corr: CorrectionStore,
+        *,
+        artifact_id: str,
+        session_id: str,
+        filler: str,
+    ) -> dict:
+        record = corr.record_correction(
+            artifact_id=artifact_id,
+            session_id=session_id,
+            source_message_id=f"msg-{artifact_id}",
+            original_text=f"{filler} old {filler}",
+            corrected_text=f"{filler} new {filler}",
+        )
+        self.assertIsNotNone(record)
+        return record
+
     def test_promote_from_corrections_cross_session(self) -> None:
         with TemporaryDirectory() as tmp:
             pref, corr = self._make_stores(tmp)
@@ -50,6 +68,65 @@ class PreferenceStoreTest(unittest.TestCase):
             self.assertEqual(result["cross_session_count"], 2)
             self.assertEqual(result["evidence_count"], 2)
             self.assertTrue(result["description"])
+
+    def test_promote_stores_avg_similarity_score(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, corr = self._make_stores(tmp)
+            records = [
+                self._record_same_fingerprint_correction(
+                    corr,
+                    artifact_id="quality-a",
+                    session_id="s1",
+                    filler="short",
+                ),
+                self._record_same_fingerprint_correction(
+                    corr,
+                    artifact_id="quality-b",
+                    session_id="s2",
+                    filler="long" * 20,
+                ),
+            ]
+            fp = records[0]["delta_fingerprint"]
+            self.assertEqual(records[1]["delta_fingerprint"], fp)
+
+            result = pref.promote_from_corrections(fp, corr)
+
+            expected = round(sum(r["similarity_score"] for r in records) / len(records), 4)
+            self.assertEqual(result["avg_similarity_score"], expected)
+
+    def test_refresh_updates_avg_similarity_score(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, corr = self._make_stores(tmp)
+            records = [
+                self._record_same_fingerprint_correction(
+                    corr,
+                    artifact_id="quality-a",
+                    session_id="s1",
+                    filler="short",
+                ),
+                self._record_same_fingerprint_correction(
+                    corr,
+                    artifact_id="quality-b",
+                    session_id="s2",
+                    filler="long" * 20,
+                ),
+            ]
+            fp = records[0]["delta_fingerprint"]
+            created = pref.promote_from_corrections(fp, corr)
+
+            new_record = self._record_same_fingerprint_correction(
+                corr,
+                artifact_id="quality-c",
+                session_id="s3",
+                filler="medium" * 8,
+            )
+            self.assertEqual(new_record["delta_fingerprint"], fp)
+            refreshed = pref.promote_from_corrections(fp, corr)
+
+            records.append(new_record)
+            expected = round(sum(r["similarity_score"] for r in records) / len(records), 4)
+            self.assertNotEqual(created["avg_similarity_score"], expected)
+            self.assertEqual(refreshed["avg_similarity_score"], expected)
 
     def test_auto_activation_keeps_candidate_below_threshold(self) -> None:
         with TemporaryDirectory() as tmp:

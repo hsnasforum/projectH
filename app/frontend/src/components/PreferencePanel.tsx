@@ -117,6 +117,7 @@ export default function PreferencePanel() {
         <div className="max-h-[200px] overflow-y-auto space-y-1 mt-1 pr-0.5">
           {preferences.map((pref) => {
             const reliability = preferenceReliabilityCounts(pref);
+            const isHighQuality = pref.quality_info?.is_high_quality === true;
             return (
               <div
                 key={pref.preference_id}
@@ -138,6 +139,11 @@ export default function PreferencePanel() {
                 {/* Description */}
                 <p className="text-[11px] text-sidebar-text/80 leading-snug mb-1 line-clamp-2">
                   {pref.description}
+                  {isHighQuality && (
+                    <span className="ml-1 inline-flex items-center rounded-full bg-sky-500/15 px-1 py-0.5 text-[9px] font-semibold text-sky-300">
+                      고품질
+                    </span>
+                  )}
                 </p>
 
                 <p className="text-[9px] text-sidebar-muted/50 mb-1 line-clamp-1">

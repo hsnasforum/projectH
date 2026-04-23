@@ -23,6 +23,15 @@ if TYPE_CHECKING:
 AUTO_ACTIVATE_CROSS_SESSION_THRESHOLD = 3
 
 
+def _average_similarity_score(corrections: list[dict[str, Any]]) -> float | None:
+    scores = [
+        float(c["similarity_score"])
+        for c in corrections
+        if isinstance(c.get("similarity_score"), (int, float))
+    ]
+    return round(sum(scores) / len(scores), 4) if scores else None
+
+
 class PreferenceStore:
     def __init__(self, base_dir: str = "data/preferences") -> None:
         self.base_dir = Path(base_dir)
@@ -66,6 +75,7 @@ class PreferenceStore:
                 }
                 for c in corrections
             ]
+            avg_similarity_score = _average_similarity_score(corrections)
 
             now = utc_now_iso()
             preference_id = f"pref-{uuid4().hex[:12]}"
@@ -77,6 +87,7 @@ class PreferenceStore:
                 "source_corrections": source_corrections,
                 "evidence_count": len(corrections),
                 "cross_session_count": len(session_ids),
+                "avg_similarity_score": avg_similarity_score,
                 "delta_summary": delta_summary,
                 "status": PreferenceStatus.CANDIDATE,
                 "activated_at": None,
@@ -111,6 +122,7 @@ class PreferenceStore:
 
         preference["evidence_count"] = len(corrections)
         preference["cross_session_count"] = len(session_ids)
+        preference["avg_similarity_score"] = _average_similarity_score(corrections)
         now = utc_now_iso()
         preference["updated_at"] = now
         self._auto_activate_candidate_if_ready(preference, now)

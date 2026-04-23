@@ -32,6 +32,15 @@ def _average_similarity_score(corrections: list[dict[str, Any]]) -> float | None
     return round(sum(scores) / len(scores), 4) if scores else None
 
 
+def _first_correction_snippets(corrections: list[dict[str, Any]]) -> tuple[str | None, str | None]:
+    for correction in corrections:
+        original_text = correction.get("original_text") or ""
+        corrected_text = correction.get("corrected_text") or ""
+        if original_text and corrected_text:
+            return str(original_text)[:400], str(corrected_text)[:400]
+    return None, None
+
+
 class PreferenceStore:
     def __init__(self, base_dir: str = "data/preferences") -> None:
         self.base_dir = Path(base_dir)
@@ -76,6 +85,7 @@ class PreferenceStore:
                 for c in corrections
             ]
             avg_similarity_score = _average_similarity_score(corrections)
+            original_snippet, corrected_snippet = _first_correction_snippets(corrections)
 
             now = utc_now_iso()
             preference_id = f"pref-{uuid4().hex[:12]}"
@@ -88,6 +98,8 @@ class PreferenceStore:
                 "evidence_count": len(corrections),
                 "cross_session_count": len(session_ids),
                 "avg_similarity_score": avg_similarity_score,
+                "original_snippet": original_snippet,
+                "corrected_snippet": corrected_snippet,
                 "delta_summary": delta_summary,
                 "status": PreferenceStatus.CANDIDATE,
                 "activated_at": None,
@@ -123,6 +135,11 @@ class PreferenceStore:
         preference["evidence_count"] = len(corrections)
         preference["cross_session_count"] = len(session_ids)
         preference["avg_similarity_score"] = _average_similarity_score(corrections)
+        original_snippet, corrected_snippet = _first_correction_snippets(corrections)
+        if original_snippet is not None:
+            preference["original_snippet"] = original_snippet
+        if corrected_snippet is not None:
+            preference["corrected_snippet"] = corrected_snippet
         now = utc_now_iso()
         preference["updated_at"] = now
         self._auto_activate_candidate_if_ready(preference, now)
@@ -226,6 +243,8 @@ class PreferenceStore:
         description: str,
         source_refs: dict[str, Any],
         avg_similarity_score: float | None = None,
+        original_snippet: str | None = None,
+        corrected_snippet: str | None = None,
     ) -> dict[str, Any]:
         """Persist one local preference candidate from an accepted reviewed candidate.
 
@@ -247,6 +266,10 @@ class PreferenceStore:
                     existing["reviewed_candidate_source_refs"].append(source_refs)
                 if avg_similarity_score is not None:
                     existing["avg_similarity_score"] = avg_similarity_score
+                if original_snippet is not None:
+                    existing["original_snippet"] = original_snippet
+                if corrected_snippet is not None:
+                    existing["corrected_snippet"] = corrected_snippet
                 atomic_write(self._path(existing["preference_id"]), existing)
                 return existing
 
@@ -262,6 +285,8 @@ class PreferenceStore:
                 "evidence_count": 1,
                 "cross_session_count": 0,
                 "avg_similarity_score": avg_similarity_score,
+                "original_snippet": original_snippet,
+                "corrected_snippet": corrected_snippet,
                 "delta_summary": {},
                 "status": PreferenceStatus.CANDIDATE,
                 "activated_at": None,

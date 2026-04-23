@@ -222,6 +222,8 @@ export interface PreferenceRecord {
     removals?: string[];
     replacements?: Array<{ from: string; to: string }>;
   };
+  original_snippet?: string | null;
+  corrected_snippet?: string | null;
 }
 
 export interface ReviewQueueItem {

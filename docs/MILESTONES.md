@@ -586,6 +586,17 @@
 
 - **Milestone 18 closed** (Axes 1–3): SQLite correction store parity, SQL recurrence indexing + server wiring, global candidate review UI complete
 
+### Milestone 19: Durable Preference Depth and Interaction Integrity
+- stabilize and enrich the lifecycle of learned personalization rules
+- Axis 1, 2, 3 ordered: evidence persistence → discovery integrity → post-learning refinement
+
+#### Guardrails
+- no user-level memory widening beyond current preference lifecycle
+- snippets are read-only display; no fingerprint or lifecycle changes
+
+#### Shipped Infrastructure (Axis 1, 2026-04-23)
+- Axis 1 (seq 69): preference evidence persistence — `promote_from_corrections` and `record_reviewed_candidate_preference` store `original_snippet` / `corrected_snippet` (≤400 chars) from source corrections; `aggregate.py` passes snippets on accept; `PreferenceRecord` type updated; `PreferencePanel.tsx` adds `상세 보기` / `접기` toggle
+
 ## Next 3 Implementation Priorities
 
 1. Keep the shipped read-only `reviewed_memory_boundary_draft` draft-only and do not widen it into readiness tracking or cross-session scope. The rollback / disable / conflict / operator-audit contracts and the reviewed-memory apply path are now shipped; boundary draft stays separate from apply result.

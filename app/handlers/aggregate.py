@@ -16,6 +16,15 @@ from core.contracts import (
 )
 
 
+def _first_correction_snippets(corrections: list[dict[str, Any]]) -> tuple[str | None, str | None]:
+    for correction in corrections:
+        original_text = correction.get("original_text") or ""
+        corrected_text = correction.get("corrected_text") or ""
+        if original_text and corrected_text:
+            return str(original_text)[:400], str(corrected_text)[:400]
+    return None, None
+
+
 class AggregateHandlerMixin:
     """Candidate/aggregate transition methods extracted from WebAppService."""
 
@@ -125,6 +134,7 @@ class AggregateHandlerMixin:
                 raise WebApiError(400, "글로벌 후보 fingerprint를 확인할 수 없습니다.")
             if review_action == CandidateReviewAction.ACCEPT:
                 corrections = self.correction_store.find_by_fingerprint(fingerprint)
+                original_snippet, corrected_snippet = _first_correction_snippets(corrections)
                 first_correction = corrections[0] if corrections else {}
                 delta_summary = (
                     first_correction.get("delta_summary")
@@ -154,6 +164,8 @@ class AggregateHandlerMixin:
                         "review_action": review_action,
                         "session_id": session_id,
                     },
+                    original_snippet=original_snippet,
+                    corrected_snippet=corrected_snippet,
                 )
             self.task_logger.log(
                 session_id=session_id,
@@ -287,6 +299,7 @@ class AggregateHandlerMixin:
                         if isinstance(c.get("similarity_score"), (int, float))
                     ]
                     avg_similarity_score = round(sum(scores) / len(scores), 4) if scores else None
+                    original_snippet, corrected_snippet = _first_correction_snippets(corrections)
                     self.preference_store.record_reviewed_candidate_preference(
                         delta_fingerprint=fingerprint,
                         candidate_family=str(durable_candidate.get("candidate_family") or ""),
@@ -300,6 +313,8 @@ class AggregateHandlerMixin:
                             "session_id": session_id,
                         },
                         avg_similarity_score=avg_similarity_score,
+                        original_snippet=original_snippet,
+                        corrected_snippet=corrected_snippet,
                     )
                     self.task_logger.log(
                         session_id=session_id,

@@ -137,6 +137,23 @@ class TestSQLitePreferenceStoreAutoActivation(unittest.TestCase):
         self.assertIsNotNone(stored)
         self.assertEqual(stored["avg_similarity_score"], 0.25)
 
+    def test_sqlite_record_reviewed_candidate_stores_snippets(self) -> None:
+        record = self.store.record_reviewed_candidate_preference(
+            delta_fingerprint="fingerprint-snippets",
+            candidate_family="correction_rewrite",
+            description="Prefer concise answers",
+            source_refs={"candidate_id": "candidate-snippet"},
+            original_snippet="hello",
+            corrected_snippet="world",
+        )
+
+        self.assertEqual(record["original_snippet"], "hello")
+        self.assertEqual(record["corrected_snippet"], "world")
+        stored = self.store.get(record["preference_id"])
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["original_snippet"], "hello")
+        self.assertEqual(stored["corrected_snippet"], "world")
+
     def test_sqlite_record_reviewed_candidate_update_preserves_score_when_none_passed(self) -> None:
         created = self.store.record_reviewed_candidate_preference(
             delta_fingerprint="fingerprint-avg-similarity-preserve",

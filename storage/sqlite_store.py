@@ -496,6 +496,8 @@ class SQLitePreferenceStore:
         description: str,
         source_refs: dict[str, Any],
         avg_similarity_score: float | None = None,
+        original_snippet: str | None = None,
+        corrected_snippet: str | None = None,
     ) -> dict[str, Any]:
         """Persist one local preference candidate from an accepted reviewed candidate."""
         row = self._db.fetchone(
@@ -528,6 +530,10 @@ class SQLitePreferenceStore:
                 data["cross_session_count"] = cross_session_count + 1
             if avg_similarity_score is not None:
                 data["avg_similarity_score"] = avg_similarity_score
+            if original_snippet is not None:
+                data["original_snippet"] = original_snippet
+            if corrected_snippet is not None:
+                data["corrected_snippet"] = corrected_snippet
             data["updated_at"] = now
             self._auto_activate_candidate_if_ready(data, now)
             blob = json.dumps(data, ensure_ascii=False, default=str)
@@ -555,6 +561,8 @@ class SQLitePreferenceStore:
             "evidence_count": 1,
             "cross_session_count": 0,
             "avg_similarity_score": avg_similarity_score,
+            "original_snippet": original_snippet,
+            "corrected_snippet": corrected_snippet,
             "delta_summary": {},
             "status": "candidate",
             "activated_at": None,

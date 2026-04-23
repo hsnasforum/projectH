@@ -27,6 +27,7 @@ export default function PreferencePanel() {
   const [preferences, setPreferences] = useState<PreferenceRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(true);
+  const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [fadingOut, setFadingOut] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
@@ -118,6 +119,8 @@ export default function PreferencePanel() {
           {preferences.map((pref) => {
             const reliability = preferenceReliabilityCounts(pref);
             const isHighQuality = pref.quality_info?.is_high_quality === true;
+            const hasEvidenceDetail = Boolean(pref.original_snippet && pref.corrected_snippet);
+            const isDetailExpanded = expandedItems.has(pref.preference_id);
             return (
               <div
                 key={pref.preference_id}
@@ -162,6 +165,42 @@ export default function PreferencePanel() {
                           : `${pref.cross_session_count}개 세션에서 반복 감지`
                     }
                   </p>
+                )}
+
+                {hasEvidenceDetail && (
+                  <button
+                    data-testid="pref-detail-toggle"
+                    className="mb-1.5 text-[11px] font-medium text-sky-300 transition-colors hover:text-sky-200 hover:underline"
+                    onClick={() =>
+                      setExpandedItems((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(pref.preference_id)) {
+                          next.delete(pref.preference_id);
+                        } else {
+                          next.add(pref.preference_id);
+                        }
+                        return next;
+                      })
+                    }
+                  >
+                    {isDetailExpanded ? "접기" : "상세 보기"}
+                  </button>
+                )}
+                {hasEvidenceDetail && isDetailExpanded && (
+                  <div className="mb-2 space-y-1 text-[11px] leading-snug">
+                    <div>
+                      <p className="mb-0.5 font-medium text-sidebar-muted">원문</p>
+                      <p className="whitespace-pre-wrap break-words rounded bg-red-500/10 p-1.5 text-red-200">
+                        {pref.original_snippet}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="mb-0.5 font-medium text-sidebar-muted">교정</p>
+                      <p className="whitespace-pre-wrap break-words rounded bg-emerald-500/10 p-1.5 text-emerald-200">
+                        {pref.corrected_snippet}
+                      </p>
+                    </div>
+                  </div>
                 )}
 
                 {/* Compact actions */}

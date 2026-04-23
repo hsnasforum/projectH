@@ -94,6 +94,16 @@ class PreferenceStoreTest(unittest.TestCase):
             expected = round(sum(r["similarity_score"] for r in records) / len(records), 4)
             self.assertEqual(result["avg_similarity_score"], expected)
 
+    def test_promote_stores_original_corrected_snippets(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, corr = self._make_stores(tmp)
+            fp = self._seed_corrections(corr, sessions=["s1", "s2"])
+
+            result = pref.promote_from_corrections(fp, corr)
+
+            self.assertEqual(result["original_snippet"], "프로젝트H는 문서 비서입니다."[:400])
+            self.assertEqual(result["corrected_snippet"], "프로젝트H는 로컬 퍼스트 문서 비서입니다."[:400])
+
     def test_refresh_updates_avg_similarity_score(self) -> None:
         with TemporaryDirectory() as tmp:
             pref, corr = self._make_stores(tmp)
@@ -365,6 +375,25 @@ class PreferenceStoreTest(unittest.TestCase):
             self.assertEqual(record["avg_similarity_score"], 0.25)
             stored = pref.get(record["preference_id"])
             self.assertEqual(stored["avg_similarity_score"], 0.25)
+
+    def test_record_reviewed_candidate_stores_snippets(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, _ = self._make_stores(tmp)
+
+            record = pref.record_reviewed_candidate_preference(
+                delta_fingerprint="sha256:test_snippets",
+                candidate_family="correction_rewrite",
+                description="검토 수락된 교정 패턴",
+                source_refs={"candidate_id": "cand-snippet"},
+                original_snippet="hello",
+                corrected_snippet="world",
+            )
+
+            self.assertEqual(record["original_snippet"], "hello")
+            self.assertEqual(record["corrected_snippet"], "world")
+            stored = pref.get(record["preference_id"])
+            self.assertEqual(stored["original_snippet"], "hello")
+            self.assertEqual(stored["corrected_snippet"], "world")
 
     def test_record_reviewed_candidate_update_preserves_score_when_none_passed(self) -> None:
         with TemporaryDirectory() as tmp:

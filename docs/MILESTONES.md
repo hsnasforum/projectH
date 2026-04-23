@@ -536,6 +536,7 @@
 
 #### Shipped Infrastructure (Axis 1, 2026-04-23)
 - Axis 1 (seq 33): SQLite quality parity — `record_reviewed_candidate_preference` accepts `avg_similarity_score` in both JSON and SQLite backends; `aggregate.py` computes score from `correction_store` before accept; `quality_info` now populated for reviewed-candidate preferences
+- Axis 2 (seq 37): quality integration smoke tests — `web-smoke.spec.mjs` gains two targeted scenarios verifying `quality_info` shape in review queue items (API contract) and `quality-count` badge visibility (browser DOM, conditional on mock correction score range)
 
 ## Next 3 Implementation Priorities
 

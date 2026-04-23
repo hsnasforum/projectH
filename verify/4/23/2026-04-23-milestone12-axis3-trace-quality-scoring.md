@@ -1,12 +1,13 @@
 STATUS: verified
-CONTROL_SEQ: 85
+CONTROL_SEQ: 88
 BASED_ON_WORK:
   - work/4/23/2026-04-23-m20-axis2-conflict-detection.md
   - work/4/23/2026-04-23-m20-axis3-smoke-test-fix.md
-HANDOFF_SHA: dbe58af
+  - work/4/23/2026-04-23-m21-axis1-sqlite-correction-lifecycle.md
+HANDOFF_SHA: bce09ac
 VERIFIED_BY: Claude
 SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 79
-NEXT_CONTROL: .pipeline/operator_request.md CONTROL_SEQ 85
+NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 88
 ADVISORY_ADVICE_SEQ: 80 (advisory_advice.md seq 80 — M20 Axis 2 done; Axis 3 = smoke gate + release)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
@@ -809,6 +810,29 @@ PASS. 6개 formerly-failing test 전부 복구. 전수 142 passed. **M20 Axis 3 
 
 ---
 
+---
+
+## Round 27 Claim: M21 Axis 1 — SQLite Correction Lifecycle Parity
+
+**Work**: `work/4/23/2026-04-23-m21-axis1-sqlite-correction-lifecycle.md`
+**Commit**: bce09ac
+
+### Summary
+
+`SQLiteCorrectionStore`에 `_transition()` private helper 추가 — `with self._lock`, `status` 컬럼·`data` JSON blob·`updated_at` 동시 갱신, `commit()`. `confirm_correction`, `promote_correction`, `activate_correction`, `stop_correction` 4개 메서드를 JSON `CorrectionStore`와 동일한 contract로 추가. 5개 신규 단위 테스트: 4개 lifecycle 전이 (반환값, `get()` round-trip, raw SQLite row 확인) + 1개 missing-id → None 확인. `docs/MILESTONES.md`에 M21 Axis 1 기록.
+
+### Checks Run (verify lane rerun)
+
+- `python3 -m py_compile storage/sqlite_store.py` → **OK**
+- `python3 -m unittest tests.test_sqlite_store -v` → **25 tests OK** (기존 20 + 신규 5)
+- `git diff --check -- storage/sqlite_store.py tests/test_sqlite_store.py docs/MILESTONES.md` → **OK**
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족. 커밋 완료 (bce09ac).
+
+---
+
 ## Current Shipped Truth
 
 | Item | SHA |
@@ -818,11 +842,13 @@ PASS. 6개 formerly-failing test 전부 복구. 전수 142 passed. **M20 Axis 3 
 | M20 Axis 2 Preference Conflict Detection | 1b460d1 |
 | M20 Axis 3 smoke gate fix + full suite PASS | dbe58af |
 | **Milestone 20** | **All 3 axes complete — 142 passed (7.5m)** |
+| M21 Axis 1 SQLite correction lifecycle parity | bce09ac |
 | Branch vs origin | ahead (PR #31 merge pending) |
 
 ## Risks / Open Questions
 
-1. **PR #31 merge pending**: operator decision. PR #31은 M13 Axis 6–M17 Axis 3 bundle. M18–M20 변경은 PR #31 이후 스택 또는 별도 PR 필요.
-2. **Global candidate test isolation**: 새 smoke가 같은 `(fixture, correctedText)` 조합을 여러 session에서 재사용하면 동일한 fingerprint collision이 재발할 수 있음. convention comment와 session-local helper가 현재 failing 경우를 커버하나, 장기 격리 정책(temp DB per run 등)은 미구현.
-3. **SQLite default startup migration 지연**: 8,029+ JSON 파일 migration 일회 지연 미측정. 서버 시작 시 try/except 가드로 치명 아님.
-4. **M21 scope undefined**: Milestone 20 완료 후 다음 milestone advisory 필요.
+1. **PR #31 merge pending**: operator decision. M18–M20 + M21 Axis 1 변경도 동일 브랜치에 누적됨.
+2. **M21 Axis 2 scope needs advisory**: "Durable Global Reject Persistence" — 전역 거절된 candidate 재표시 방지 메커니즘. 저장 위치(preference store, correction store, 별도 store), API contract, 테스트 범위가 미정. advisory_request CONTROL_SEQ 88로 scope 정의 필요.
+3. **Correction lifecycle 순서 검증 없음**: `_transition()`은 상태 순서 강제 없음(JSON store와 동일). 잘못된 전이 방지는 M21 Axis 1 범위 밖.
+4. **Global candidate test isolation**: convention comment + session-local helper로 현재 케이스 커버. 장기 temp DB per run 격리는 미구현.
+5. **SQLite startup migration 지연**: 8,029+ JSON 파일 migration 미측정. try/except 가드로 서버 시작 치명 아님.

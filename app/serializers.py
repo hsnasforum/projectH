@@ -4444,6 +4444,12 @@ class SerializerMixin:
                     else None
                 ),
             }
+            delta_summary = None
+            for correction in corrections:
+                candidate_delta_summary = correction.get("delta_summary")
+                if isinstance(candidate_delta_summary, dict) and candidate_delta_summary:
+                    delta_summary = candidate_delta_summary
+                    break
 
             review_queue_items.append(
                 {
@@ -4473,6 +4479,7 @@ class SerializerMixin:
                     "created_at": durable_candidate["created_at"],
                     "updated_at": durable_candidate["updated_at"],
                     "quality_info": quality_info,
+                    "delta_summary": delta_summary,
                 }
             )
 

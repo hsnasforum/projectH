@@ -539,6 +539,21 @@
 - Axis 2 (seq 37): quality integration smoke tests — `web-smoke.spec.mjs` gains two targeted scenarios verifying `quality_info` shape in review queue items (API contract) and `quality-count` badge visibility (browser DOM, conditional on mock correction score range)
 - Axis 3 (seq 40): review queue list UI — `ReviewQueuePanel.tsx` renders individual items with statement, 고품질 badge, and accept/defer/reject actions; `Sidebar.tsx` includes panel above `PreferencePanel`; `ChatArea` review badge becomes clickable button (`data-testid="review-queue-badge"`); `postCandidateReview` extended with `candidate_id` + `candidate_updated_at`; smoke test confirms badge click → panel → accept flow
 
+### Milestone 16: Review Evidence Enrichment and Decision Clarity
+- make review candidates easier to judge before broader preference management work
+- keep enrichment read-only until the user explicitly accepts/defer/rejects a candidate
+- Axis 1, 2, 3 ordered: correction evidence → source/effect context → targeted regression guard
+
+#### Guardrails
+- no user-level memory widening
+- no automatic preference status changes from evidence display alone
+- review queue enrichment must stay compact and local to existing candidate evidence
+
+#### Planned Infrastructure (Axes 1–3)
+- Axis 1: review evidence enrichment — expose compact `delta_summary` on each `review_queue_items[]` entry and render a single-line correction pattern in `ReviewQueuePanel`
+- Axis 2: review source/effect context — show minimal source/effect hints from existing refs without adding new lifecycle states
+- Axis 3: regression guard — add targeted smoke coverage for enriched review candidates and existing accept/defer/reject flow
+
 ## Next 3 Implementation Priorities
 
 1. Keep the shipped read-only `reviewed_memory_boundary_draft` draft-only and do not widen it into readiness tracking or cross-session scope. The rollback / disable / conflict / operator-audit contracts and the reviewed-memory apply path are now shipped; boundary draft stays separate from apply result.

@@ -11661,6 +11661,25 @@ test("quality-info quality-count badge visible in ChatArea when review queue ite
   expect(reviewItems[0]).toHaveProperty("quality_info");
 });
 
+test("quality-info delta_summary present in review queue item after correction", async ({ page }) => {
+  await page.goto("/");
+  const sessionId = await prepareSession(page, "delta-summary-rq");
+
+  const { sessionPayload } = await createQualityReviewQueueItem(
+    page,
+    sessionId,
+    "정리된 결과입니다. 명확하게 요약했습니다."
+  );
+  const reviewItems = sessionPayload.session?.review_queue_items ?? [];
+  expect(reviewItems.length).toBeGreaterThanOrEqual(1);
+
+  const item = reviewItems[0];
+  expect(Object.prototype.hasOwnProperty.call(item, "delta_summary")).toBeTruthy();
+  if (item.delta_summary !== null) {
+    expect(typeof item.delta_summary).toBe("object");
+  }
+});
+
 test("review queue panel opens on badge click and accept action removes item", async ({ page }) => {
   const sessionId = buildSessionId("rq-panel");
   const { sessionPayload } = await createQualityReviewQueueItem(

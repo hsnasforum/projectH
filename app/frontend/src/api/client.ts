@@ -244,6 +244,11 @@ export interface ReviewQueueItem {
     avg_similarity_score: number | null;
     is_high_quality: boolean | null;
   } | null;
+  delta_summary?: {
+    additions?: string[];
+    removals?: string[];
+    replacements?: Array<{ from: string; to: string }>;
+  } | null;
 }
 
 export interface PreferencesPayload {

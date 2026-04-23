@@ -23,6 +23,7 @@ interface Props {
     candidateId: string,
     candidateUpdatedAt: string,
     action: "accept" | "defer" | "reject",
+    statement?: string,
   ) => void;
 }
 

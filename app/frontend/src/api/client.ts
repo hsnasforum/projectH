@@ -103,6 +103,7 @@ export async function postCandidateReview(
   candidateId: string,
   candidateUpdatedAt: string,
   action: "accept" | "reject" | "defer",
+  statement?: string,
 ): Promise<void> {
   await fetch(`${BASE}/api/candidate-review`, {
     method: "POST",
@@ -113,6 +114,7 @@ export async function postCandidateReview(
       candidate_id: candidateId,
       candidate_updated_at: candidateUpdatedAt,
       review_action: action,
+      ...(statement !== undefined ? { statement } : {}),
     }),
   });
 }

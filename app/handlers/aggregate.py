@@ -113,6 +113,7 @@ class AggregateHandlerMixin:
         review_action = self._normalize_optional_text(payload.get("review_action"))
         reason_note = self._normalize_optional_text(payload.get("reason_note"))
         suggested_scope = self._normalize_optional_text(payload.get("suggested_scope"))
+        statement_override = self._normalize_optional_text(payload.get("statement"))
 
         if not message_id:
             raise WebApiError(400, "검토 결과를 기록할 메시지 ID가 필요합니다.")
@@ -235,7 +236,7 @@ class AggregateHandlerMixin:
                     self.preference_store.record_reviewed_candidate_preference(
                         delta_fingerprint=fingerprint,
                         candidate_family=str(durable_candidate.get("candidate_family") or ""),
-                        description=str(durable_candidate.get("statement") or "검토 수락된 교정 패턴"),
+                        description=str(statement_override or durable_candidate.get("statement") or "검토 수락된 교정 패턴"),
                         source_refs={
                             "candidate_id": candidate_id,
                             "candidate_updated_at": candidate_updated_at,

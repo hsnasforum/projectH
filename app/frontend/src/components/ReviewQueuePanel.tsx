@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { ReviewQueueItem } from "../api/client";
 
 interface Props {
@@ -8,6 +9,7 @@ interface Props {
     candidateId: string,
     candidateUpdatedAt: string,
     action: "accept" | "defer" | "reject",
+    statement?: string,
   ) => void;
 }
 
@@ -39,6 +41,8 @@ function summarizeDelta(item: ReviewQueueItem): string | null {
 }
 
 export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) {
+  const [editDrafts, setEditDrafts] = useState<Record<string, string | null>>({});
+
   if (items.length === 0) return null;
 
   return (
@@ -49,15 +53,28 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
       <ul className="max-h-[220px] space-y-1 overflow-y-auto pr-0.5">
         {items.map((item) => {
           const deltaSummaryText = summarizeDelta(item);
+          const isEditing = editDrafts[item.candidate_id] !== undefined;
+          const statementDraft = editDrafts[item.candidate_id] ?? item.statement;
           return (
             <li
               key={`${item.source_message_id}:${item.candidate_id}`}
               className="rounded-lg bg-sidebar-hover/50 px-2.5 py-2 text-[12px]"
             >
               <div className="mb-2 flex items-start gap-2">
-                <p className="flex-1 text-sidebar-text/85 leading-snug line-clamp-3">
-                  {item.statement}
-                </p>
+                {isEditing ? (
+                  <textarea
+                    data-testid="review-edit-statement"
+                    className="min-h-[72px] flex-1 resize-none rounded border border-white/10 bg-sidebar px-2 py-1.5 text-[12px] leading-snug text-sidebar-text outline-none focus:border-sky-300/60"
+                    value={statementDraft}
+                    onChange={(event) =>
+                      setEditDrafts((prev) => ({ ...prev, [item.candidate_id]: event.target.value }))
+                    }
+                  />
+                ) : (
+                  <p className="flex-1 text-sidebar-text/85 leading-snug line-clamp-3">
+                    {item.statement}
+                  </p>
+                )}
                 {item.quality_info?.is_high_quality && (
                   <span className="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300">
                     고품질
@@ -73,12 +90,38 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
                 <button
                   data-testid="review-accept"
                   className="rounded bg-emerald-600/20 px-2 py-1 text-[11px] font-medium text-emerald-300 transition-colors hover:bg-emerald-600/30"
-                  onClick={() =>
-                    onReview(item.source_message_id, item.candidate_id, candidateUpdatedAt(item), "accept")
-                  }
+                  onClick={() => {
+                    const statement = isEditing ? editDrafts[item.candidate_id] ?? undefined : undefined;
+                    onReview(item.source_message_id, item.candidate_id, candidateUpdatedAt(item), "accept", statement);
+                  }}
                 >
                   수락
                 </button>
+                {!isEditing && (
+                  <button
+                    data-testid="review-edit"
+                    className="rounded border border-sky-500/20 bg-sky-500/15 px-2 py-1 text-[11px] font-medium text-sky-300 transition-colors hover:bg-sky-500/25"
+                    onClick={() =>
+                      setEditDrafts((prev) => ({ ...prev, [item.candidate_id]: item.statement }))
+                    }
+                  >
+                    편집
+                  </button>
+                )}
+                {isEditing && (
+                  <button
+                    className="rounded bg-white/5 px-2 py-1 text-[11px] font-medium text-sidebar-muted transition-colors hover:bg-white/10 hover:text-sidebar-text"
+                    onClick={() =>
+                      setEditDrafts((prev) => {
+                        const next = { ...prev };
+                        delete next[item.candidate_id];
+                        return next;
+                      })
+                    }
+                  >
+                    취소
+                  </button>
+                )}
                 <button
                   data-testid="review-defer"
                   className="rounded bg-white/5 px-2 py-1 text-[11px] font-medium text-sidebar-muted transition-colors hover:bg-white/10 hover:text-sidebar-text"

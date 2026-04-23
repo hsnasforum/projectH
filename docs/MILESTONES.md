@@ -554,6 +554,18 @@
 - Axis 2 (seq 44): UI resilience — `handleCandidateReview` in `App.tsx` surfaces review action errors via `addToast("error", ...)`, matching the existing handler pattern
 - Axis 3 (seq 47): integrity consolidation — `OllamaModelAdapter` caches `list_models()` result; `_routed_model` degrades gracefully through HEAVY→MEDIUM→LIGHT when target model unavailable; `vite.config.ts` outputs fixed-name assets (`index.js`/`index.css`); full smoke gate confirmed passing (139 tests)
 
+### Milestone 17: Personalization Refinement — Editing and Evidence Detail
+- transition from fixed observation to active user control of preference wording
+- Axis 1, 2, 3 ordered: statement editing → evidence detail view → release stabilization
+
+#### Guardrails
+- no new backend API routes (reuse `/api/candidate-review` with optional statement payload)
+- no user-level memory widening beyond current preference lifecycle
+- edit path only affects description/statement, not fingerprint or lifecycle
+
+#### Shipped Infrastructure (Axis 1, 2026-04-23)
+- Axis 1 (seq 50): inline statement editing in `ReviewQueuePanel`; `aggregate.py` uses `statement_override` when provided; `postCandidateReview` extended with optional statement param; smoke test confirms edited text appears in preference
+
 ## Next 3 Implementation Priorities
 
 1. Keep the shipped read-only `reviewed_memory_boundary_draft` draft-only and do not widen it into readiness tracking or cross-session scope. The rollback / disable / conflict / operator-audit contracts and the reviewed-memory apply path are now shipped; boundary draft stays separate from apply result.

@@ -11718,3 +11718,56 @@ test("review queue panel opens on badge click and accept action removes item", a
     })
     .toBe(0);
 });
+
+test("review queue edit statement and accept carries edited text to preference", async ({ page }) => {
+  const sessionId = buildSessionId("rq-edit");
+  const editedStatement = `사용자가 직접 수정한 선호 문구입니다. ${sessionId}`;
+  const { sessionPayload } = await createQualityReviewQueueItem(
+    page,
+    sessionId,
+    "분석 결과를 요약했습니다.",
+    `review queue edit ${sessionId}`
+  );
+  expect((sessionPayload.session?.review_queue_items ?? []).length).toBeGreaterThanOrEqual(1);
+  const sessionTitle = sessionPayload.session?.title ?? sessionId;
+
+  await page.goto("/app-preview");
+  const sessionButton = page.locator("button", { hasText: sessionTitle }).first();
+  await expect(sessionButton).toBeVisible({ timeout: 10_000 });
+  await sessionButton.click();
+
+  const reviewBadge = page.getByTestId("review-queue-badge");
+  await expect(reviewBadge).toBeVisible({ timeout: 10_000 });
+  await reviewBadge.click();
+
+  const editButton = page.getByTestId("review-edit").first();
+  await expect(editButton).toBeVisible({ timeout: 5_000 });
+  await editButton.click();
+
+  const textarea = page.getByTestId("review-edit-statement").first();
+  await expect(textarea).toBeVisible({ timeout: 3_000 });
+  await textarea.clear();
+  await textarea.fill(editedStatement);
+
+  const reviewResponsePromise = page.waitForResponse(
+    (response) => response.url().includes("/api/candidate-review")
+  );
+  await page.getByTestId("review-accept").first().click();
+  const reviewResponse = await reviewResponsePromise;
+  const reviewBody = await reviewResponse.text();
+  expect(reviewResponse.ok(), reviewBody).toBeTruthy();
+
+  await expect
+    .poll(async () => {
+      const payload = await fetchSessionPayload(page, sessionId);
+      return payload.session?.review_queue_items?.length ?? 0;
+    })
+    .toBe(0);
+
+  const prefsResponse = await page.request.get("/api/preferences");
+  const prefsBody = await prefsResponse.text();
+  expect(prefsResponse.ok(), prefsBody).toBeTruthy();
+  const prefs = JSON.parse(prefsBody).preferences ?? [];
+  const editedPref = prefs.find((pref) => (pref.description || "").includes(editedStatement));
+  expect(editedPref).toBeTruthy();
+});

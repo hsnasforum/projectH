@@ -120,6 +120,42 @@ class PreferenceHandlerTest(unittest.TestCase):
         )
         self.assertFalse(by_id["pref-candidate"]["conflict_info"]["has_conflict"])
 
+    def test_get_preference_audit_returns_counts(self) -> None:
+        service = _PreferenceService([
+            {
+                "preference_id": "pref-active-a",
+                "delta_fingerprint": "fingerprint-a",
+                "description": "교정 후 간결하게",
+                "status": "active",
+            },
+            {
+                "preference_id": "pref-active-b",
+                "delta_fingerprint": "fingerprint-b",
+                "description": "교정 후 간결하게 유지",
+                "status": "active",
+            },
+            {
+                "preference_id": "pref-candidate",
+                "delta_fingerprint": "fingerprint-c",
+                "description": "후보 설명",
+                "status": "candidate",
+            },
+            {
+                "preference_id": "pref-paused",
+                "delta_fingerprint": "fingerprint-d",
+                "description": "일시중지 설명",
+                "status": "paused",
+            },
+        ])
+
+        audit = service.get_preference_audit()
+
+        self.assertEqual(audit["total"], 4)
+        self.assertEqual(audit["by_status"]["active"], 2)
+        self.assertEqual(audit["by_status"]["candidate"], 1)
+        self.assertEqual(audit["by_status"]["paused"], 1)
+        self.assertEqual(audit["conflict_pair_count"], 1)
+
     def test_jaccard_word_similarity_thresholds(self) -> None:
         self.assertAlmostEqual(_jaccard_word_similarity("hello world", "hello world"), 1.0)
         self.assertAlmostEqual(_jaccard_word_similarity("hello world", "foo bar"), 0.0)

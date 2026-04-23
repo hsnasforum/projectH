@@ -274,6 +274,19 @@ export async function fetchPreferences(): Promise<PreferencesPayload> {
   return res.json();
 }
 
+export interface PreferenceAudit {
+  total: number;
+  by_status: Record<string, number>;
+  conflict_pair_count: number;
+}
+
+export async function fetchPreferenceAudit(): Promise<PreferenceAudit | null> {
+  const res = await fetch(`${BASE}/api/preferences/audit`);
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data.audit ?? null;
+}
+
 export async function activatePreference(preferenceId: string): Promise<{ ok: boolean; preference: PreferenceRecord }> {
   const res = await fetch(`${BASE}/api/preferences/activate`, {
     method: "POST",

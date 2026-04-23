@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
-import type { PreferenceRecord } from "../api/client";
+import type { PreferenceAudit, PreferenceRecord } from "../api/client";
 import {
+  fetchPreferenceAudit,
   fetchPreferences,
   activatePreference,
   pausePreference,
@@ -31,6 +32,7 @@ function preferenceReliabilityCounts(pref: PreferenceRecord) {
 
 export default function PreferencePanel() {
   const [preferences, setPreferences] = useState<PreferenceRecord[]>([]);
+  const [audit, setAudit] = useState<PreferenceAudit | null>(null);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
@@ -40,10 +42,14 @@ export default function PreferencePanel() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await fetchPreferences();
+      const [data, auditData] = await Promise.all([
+        fetchPreferences(),
+        fetchPreferenceAudit(),
+      ]);
       // Filter out rejected items entirely
       const visible = (data.preferences ?? []).filter((p) => p.status !== "rejected");
       setPreferences(visible);
+      setAudit(auditData);
     } catch {
       // silent
     } finally {
@@ -150,6 +156,13 @@ export default function PreferencePanel() {
       {/* Collapsible list with max height */}
       {expanded && (
         <div className="max-h-[200px] overflow-y-auto space-y-1 mt-1 pr-0.5">
+          {audit && (
+            <div className="px-1 text-[10px] text-sidebar-muted/70">
+              활성 {audit.by_status["active"] ?? 0}
+              {" · "}후보 {audit.by_status["candidate"] ?? 0}
+              {audit.conflict_pair_count > 0 && ` · 충돌 ${audit.conflict_pair_count}쌍`}
+            </div>
+          )}
           {preferences.map((pref) => {
             const reliability = preferenceReliabilityCounts(pref);
             const isHighQuality = pref.quality_info?.is_high_quality === true;

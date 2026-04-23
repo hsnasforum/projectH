@@ -88,6 +88,29 @@ class PreferenceHandlerMixin:
             "candidate_count": sum(1 for p in enriched if p.get("status") == "candidate"),
         }
 
+    def get_preference_audit(self) -> dict[str, Any]:
+        all_prefs = self.preference_store.list_all()
+        counts: dict[str, int] = {}
+        for pref in all_prefs:
+            status = str(pref.get("status") or "unknown")
+            counts[status] = counts.get(status, 0) + 1
+        active_prefs = [
+            p for p in all_prefs
+            if p.get("status") == "active" and str(p.get("description") or "").strip()
+        ]
+        conflict_pair_count = 0
+        for i, preference_a in enumerate(active_prefs):
+            for preference_b in active_prefs[i + 1:]:
+                description_a = str(preference_a.get("description") or "").strip()
+                description_b = str(preference_b.get("description") or "").strip()
+                if _jaccard_word_similarity(description_a, description_b) > 0.7:
+                    conflict_pair_count += 1
+        return {
+            "total": len(all_prefs),
+            "by_status": counts,
+            "conflict_pair_count": conflict_pair_count,
+        }
+
     def activate_preference(self, payload: dict[str, Any]) -> dict[str, Any]:
         preference_id = self._normalize_optional_text(payload.get("preference_id"))
         if not preference_id:

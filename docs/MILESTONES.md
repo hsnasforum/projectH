@@ -665,6 +665,19 @@
 
 - **Milestone 24 closed** (Axis 1): correction lifecycle observability complete; both stores expose `list_incomplete_corrections()`; audit script surfaces count
 
+### Milestone 25: Preference Lifecycle Audit
+
+#### Guardrails
+- audit endpoint is read-only; no preference state is mutated
+- conflict pair detection reuses the existing `_jaccard_word_similarity` threshold (> 0.7)
+- frontend audit summary is compact (one line); do not add a separate audit panel
+
+#### Shipped Infrastructure (Axes 1-2, 2026-04-24)
+- Axis 1 (seq 102): GET `/api/preferences/audit` — returns total preference count, counts by status, and `conflict_pair_count`; `PreferencePanel.tsx` shows compact audit summary line above the preference list
+- Axis 2 (seq 103, verify lane): release gate — full `make e2e-test` confirmed **143 passed (10.7m)** on 2026-04-24; no regressions from Axis 1 frontend change
+
+- **Milestone 25 closed** (Axes 1–2): preference lifecycle audit endpoint, compact summary UI, and release gate complete
+
 ## Next 3 Implementation Priorities
 
 1. **Global candidate E2E test isolation**: cross-session fingerprint collisions in smoke tests are currently prevented by fixture-level uniqueness conventions. A temp-DB-per-test-run isolation mechanism would eliminate this class of flakiness permanently.

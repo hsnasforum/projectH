@@ -1,11 +1,12 @@
 STATUS: verified
-CONTROL_SEQ: 83
+CONTROL_SEQ: 85
 BASED_ON_WORK:
   - work/4/23/2026-04-23-m20-axis2-conflict-detection.md
-HANDOFF_SHA: 1b460d1
+  - work/4/23/2026-04-23-m20-axis3-smoke-test-fix.md
+HANDOFF_SHA: dbe58af
 VERIFIED_BY: Claude
 SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 79
-NEXT_CONTROL: .pipeline/implement_handoff.md CONTROL_SEQ 84
+NEXT_CONTROL: .pipeline/operator_request.md CONTROL_SEQ 85
 ADVISORY_ADVICE_SEQ: 80 (advisory_advice.md seq 80 — M20 Axis 2 done; Axis 3 = smoke gate + release)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
@@ -780,6 +781,34 @@ FAIL. M20 Axis 3 release gate 미통과. implement_handoff CONTROL_SEQ 84로 smo
 
 ---
 
+---
+
+## Round 26 Claim: M20 Axis 3 — Smoke Gate Fix (implement_handoff seq 84)
+
+**Work**: `work/4/23/2026-04-23-m20-axis3-smoke-test-fix.md`
+**Commit**: dbe58af
+
+### Summary
+
+`e2e/tests/web-smoke.spec.mjs`만 변경. 3개 session-local helper 추가 (`sessionLocalReviewQueueItems`, `expectSessionLocalReviewQueueCount`, `sessionLocalReviewQueueItem`). `corrected-long-history` 테스트의 `correctedTextA`/B를 `corrected-save`와 다른 값("저장 이력 수정본 A/B")으로 변경 — cross-session fingerprint collision 제거. 6개 failing test에서 session-local assertion을 global candidate와 분리. `review queue panel/edit` 테스트의 `length === 0` assertion을 `is_global !== true` 필터 적용으로 변경. 제품 코드 무변경.
+
+### Checks Run (verify lane rerun)
+
+- `git diff --check -- e2e/tests/web-smoke.spec.mjs` → **OK**
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "candidate confirmation path" --reporter=line` → **1 passed (14.0s)**
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "review-queue reject/defer" --reporter=line` → **1 passed (14.2s)**
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "편집은 review_action" --reporter=line` → **1 passed (7.3s)**
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "same-session recurrence aggregate는 emitted" --reporter=line` → **1 passed (15.4s)**
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "review queue panel opens on badge click" --reporter=line` → **1 passed (6.2s)**
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "review queue edit statement sends edited text" --reporter=line` → **1 passed (6.4s)**
+- `make e2e-test` (full suite) → **142 passed (7.5m)** ← M20 Axis 3 release gate PASS
+
+### Verdict
+
+PASS. 6개 formerly-failing test 전부 복구. 전수 142 passed. **M20 Axis 3 release gate 통과.** Milestone 20 전체 (Axes 1–3) 완료.
+
+---
+
 ## Current Shipped Truth
 
 | Item | SHA |
@@ -787,12 +816,13 @@ FAIL. M20 Axis 3 release gate 미통과. implement_handoff CONTROL_SEQ 84로 smo
 | M19 Axes 1–3 | 5fecc47, 4f15c96, 21eb13e |
 | M20 Axis 1 SQLite default + startup migration | 346c4a1 |
 | M20 Axis 2 Preference Conflict Detection | 1b460d1 |
-| M20 Axis 3 smoke gate | **FAIL — 6/142 failing** |
+| M20 Axis 3 smoke gate fix + full suite PASS | dbe58af |
+| **Milestone 20** | **All 3 axes complete — 142 passed (7.5m)** |
+| Branch vs origin | ahead (PR #31 merge pending) |
 
 ## Risks / Open Questions
 
-1. **M20 Axis 3 smoke gate FAIL**: 6개 테스트 실패. 원인 특정됨 — implement_handoff CONTROL_SEQ 84로 fix 후 재실행.
-2. **PR #31 merge pending**: operator decision. Local work continues.
-3. **Global candidate accumulation is test-run-order-sensitive**: `_build_review_queue_items`의 전역 후보 표시 로직이 같은 run 내 이전 테스트의 correction 누적에 영향받음. fix #1(fingerprint 충돌 제거)이 적용되면 tests 650/860/957/1066 격리 달성. fix #2(assertion 필터)는 aggregate 테스트의 의도적 패턴 누적을 수용.
-4. **SQLite default (M20 Axis 1) 자체는 6개 실패의 원인이 아님**: JSON 모드도 동일한 `find_recurring_patterns()` 로직을 사용하므로 같은 문제가 발생했을 것. SQLite 전환과 무관한 M18 Axis 3 latent bug.
-5. **Startup migration one-time latency**: 8,029+ correction JSON files migration 지연 미측정 (서버 시작 가드되므로 치명적 영향 없음).
+1. **PR #31 merge pending**: operator decision. PR #31은 M13 Axis 6–M17 Axis 3 bundle. M18–M20 변경은 PR #31 이후 스택 또는 별도 PR 필요.
+2. **Global candidate test isolation**: 새 smoke가 같은 `(fixture, correctedText)` 조합을 여러 session에서 재사용하면 동일한 fingerprint collision이 재발할 수 있음. convention comment와 session-local helper가 현재 failing 경우를 커버하나, 장기 격리 정책(temp DB per run 등)은 미구현.
+3. **SQLite default startup migration 지연**: 8,029+ JSON 파일 migration 일회 지연 미측정. 서버 시작 시 try/except 가드로 치명 아님.
+4. **M21 scope undefined**: Milestone 20 완료 후 다음 milestone advisory 필요.

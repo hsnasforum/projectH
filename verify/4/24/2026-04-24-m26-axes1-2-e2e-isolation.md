@@ -1,11 +1,13 @@
 STATUS: verified
-CONTROL_SEQ: 105
+CONTROL_SEQ: 106
 BASED_ON_WORK: work/4/24/2026-04-24-m26-axis1-e2e-sqlite-isolation.md
-HANDOFF_SHA: b0a14f2
+HANDOFF_SHA: 1471caa
 VERIFIED_BY: Claude
 SUPERSEDES: verify/4/24/2026-04-24-m25-axes1-2-preference-audit.md CONTROL_SEQ 104
-NEXT_CONTROL: .pipeline/operator_request.md CONTROL_SEQ 105
-PUSH_RESULT: feat/watcher-turn-state a64f935..b0a14f2 pushed to origin (2026-04-24)
+NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 106
+PUSH_RESULT: feat/watcher-turn-state a64f935..1471caa pushed to origin (2026-04-24)
+PR_UPDATE: PR #32 title updated to include M26 (2026-04-24)
+RETRIAGE_NOTE: pr_merge_gate operator backlog; untracked Gemini reports committed (1471caa); advisory_request seq 106 open for M27
 
 ---
 

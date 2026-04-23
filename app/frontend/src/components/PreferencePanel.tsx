@@ -53,17 +53,27 @@ export default function PreferencePanel() {
 
   useEffect(() => { load(); }, [load]);
 
-  const handleAction = useCallback(async (id: string, action: "activate" | "pause" | "reject") => {
+  const handleAction = useCallback(async (
+    pref: PreferenceRecord,
+    action: "activate" | "pause" | "reject",
+  ) => {
     try {
-      if (action === "activate") await activatePreference(id);
-      else if (action === "pause") await pausePreference(id);
+      if (action === "activate") {
+        if (pref.conflict_info?.has_conflict) {
+          const confirmed = window.confirm(
+            "이 선호는 이미 활성화된 다른 선호와 중복될 수 있습니다. 활성화하시겠습니까?",
+          );
+          if (!confirmed) return;
+        }
+        await activatePreference(pref.preference_id);
+      } else if (action === "pause") await pausePreference(pref.preference_id);
       else {
-        await rejectPreference(id);
+        await rejectPreference(pref.preference_id);
         // Fade out then remove
-        setFadingOut((prev) => new Set(prev).add(id));
+        setFadingOut((prev) => new Set(prev).add(pref.preference_id));
         setTimeout(() => {
-          setPreferences((prev) => prev.filter((p) => p.preference_id !== id));
-          setFadingOut((prev) => { const next = new Set(prev); next.delete(id); return next; });
+          setPreferences((prev) => prev.filter((p) => p.preference_id !== pref.preference_id));
+          setFadingOut((prev) => { const next = new Set(prev); next.delete(pref.preference_id); return next; });
         }, 500);
         return;
       }
@@ -163,6 +173,20 @@ export default function PreferencePanel() {
                   <span className="text-[9px] text-sidebar-muted/60">
                     {pref.cross_session_count}세션 · {pref.evidence_count}건
                   </span>
+                  {isHighQuality && (
+                    <span className="inline-flex items-center rounded-full bg-sky-500/15 px-1 py-0.5 text-[9px] font-semibold text-sky-300">
+                      고품질
+                    </span>
+                  )}
+                  {pref.conflict_info?.has_conflict && (
+                    <span
+                      data-testid="pref-conflict-badge"
+                      className="shrink-0 rounded-full border border-orange-200 bg-orange-50 px-1.5 py-0.5 text-[10px] font-medium text-orange-700"
+                      title={`충돌: ${pref.conflict_info.conflicting_preference_ids.join(", ")}`}
+                    >
+                      ⚠ 충돌
+                    </span>
+                  )}
                 </div>
 
                 {/* Description */}
@@ -207,11 +231,6 @@ export default function PreferencePanel() {
                 ) : (
                   <p className="text-[11px] text-sidebar-text/80 leading-snug mb-1 line-clamp-2">
                     {pref.description}
-                    {isHighQuality && (
-                      <span className="ml-1 inline-flex items-center rounded-full bg-sky-500/15 px-1 py-0.5 text-[9px] font-semibold text-sky-300">
-                        고품질
-                      </span>
-                    )}
                   </p>
                 )}
 
@@ -290,13 +309,13 @@ export default function PreferencePanel() {
                   {pref.status === "candidate" && (
                     <>
                       <button
-                        onClick={() => handleAction(pref.preference_id, "activate")}
+                        onClick={() => handleAction(pref, "activate")}
                         className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 transition-colors"
                       >
                         활성화
                       </button>
                       <button
-                        onClick={() => handleAction(pref.preference_id, "reject")}
+                        onClick={() => handleAction(pref, "reject")}
                         className="text-[10px] px-1.5 py-0.5 rounded text-sidebar-muted/40 hover:text-red-400 transition-colors"
                       >
                         거부
@@ -305,7 +324,7 @@ export default function PreferencePanel() {
                   )}
                   {pref.status === "active" && (
                     <button
-                      onClick={() => handleAction(pref.preference_id, "pause")}
+                      onClick={() => handleAction(pref, "pause")}
                       className="text-[10px] px-1.5 py-0.5 rounded text-sidebar-muted/40 hover:text-sidebar-text transition-colors"
                     >
                       일시중지
@@ -314,13 +333,13 @@ export default function PreferencePanel() {
                   {pref.status === "paused" && (
                     <>
                       <button
-                        onClick={() => handleAction(pref.preference_id, "activate")}
+                        onClick={() => handleAction(pref, "activate")}
                         className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 transition-colors"
                       >
                         재활성
                       </button>
                       <button
-                        onClick={() => handleAction(pref.preference_id, "reject")}
+                        onClick={() => handleAction(pref, "reject")}
                         className="text-[10px] px-1.5 py-0.5 rounded text-sidebar-muted/40 hover:text-red-400 transition-colors"
                       >
                         거부

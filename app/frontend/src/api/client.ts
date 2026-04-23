@@ -224,6 +224,10 @@ export interface PreferenceRecord {
   };
   original_snippet?: string | null;
   corrected_snippet?: string | null;
+  conflict_info?: {
+    has_conflict: boolean;
+    conflicting_preference_ids: string[];
+  } | null;
 }
 
 export interface ReviewQueueItem {

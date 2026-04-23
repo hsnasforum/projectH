@@ -6,6 +6,19 @@ from app.errors import WebApiError
 from core.delta_analysis import is_high_quality
 
 
+def _jaccard_word_similarity(a: str, b: str) -> float:
+    """Return word-token Jaccard similarity between two strings (0.0-1.0)."""
+    a_tokens = set(a.lower().split())
+    b_tokens = set(b.lower().split())
+    if not a_tokens and not b_tokens:
+        return 1.0
+    if not a_tokens or not b_tokens:
+        return 0.0
+    intersection = len(a_tokens & b_tokens)
+    union = len(a_tokens | b_tokens)
+    return intersection / union
+
+
 class PreferenceHandlerMixin:
     """Preference management methods extracted from WebAppService."""
 
@@ -44,6 +57,29 @@ class PreferenceHandlerMixin:
                 quality_info = {"avg_similarity_score": None, "is_high_quality": None}
             pref_copy["quality_info"] = quality_info
             enriched.append(pref_copy)
+
+        active_preferences = [
+            p for p in enriched
+            if p.get("status") == "active" and str(p.get("description") or "").strip()
+        ]
+        conflict_map: dict[str, list[str]] = {}
+        for index, preference_a in enumerate(active_preferences):
+            for preference_b in active_preferences[index + 1:]:
+                description_a = str(preference_a.get("description") or "").strip()
+                description_b = str(preference_b.get("description") or "").strip()
+                if _jaccard_word_similarity(description_a, description_b) > 0.7:
+                    preference_a_id = str(preference_a["preference_id"])
+                    preference_b_id = str(preference_b["preference_id"])
+                    conflict_map.setdefault(preference_a_id, []).append(preference_b_id)
+                    conflict_map.setdefault(preference_b_id, []).append(preference_a_id)
+
+        for pref_copy in enriched:
+            pref_id = str(pref_copy.get("preference_id", ""))
+            conflicting = conflict_map.get(pref_id, [])
+            pref_copy["conflict_info"] = {
+                "has_conflict": len(conflicting) > 0,
+                "conflicting_preference_ids": conflicting,
+            }
 
         return {
             "ok": True,

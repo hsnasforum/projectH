@@ -97,9 +97,9 @@ export default function App() {
       await postCandidateReview(chat.sessionId, messageId, candidateId, candidateUpdatedAt, action);
       await chat.loadSession(chat.sessionId);
     } catch {
-      // Candidate review actions are non-critical in this slice.
+      addToast("error", "검토 액션 제출에 실패했습니다.");
     }
-  }, [chat.sessionId, chat.loadSession]);
+  }, [chat.sessionId, chat.loadSession, addToast]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-warm-50">

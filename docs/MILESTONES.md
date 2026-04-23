@@ -549,9 +549,11 @@
 - no automatic preference status changes from evidence display alone
 - review queue enrichment must stay compact and local to existing candidate evidence
 
-#### Planned Infrastructure (Axes 1–3)
-- Axis 1: review evidence enrichment — expose compact `delta_summary` on each `review_queue_items[]` entry and render a single-line correction pattern in `ReviewQueuePanel`
-- Axis 2: review source/effect context — show minimal source/effect hints from existing refs without adding new lifecycle states
+#### Shipped Infrastructure (Axes 1–2, 2026-04-23)
+- Axis 1 (seq 43): review evidence enrichment — expose compact `delta_summary` on each `review_queue_items[]` entry and render a single-line correction pattern in `ReviewQueuePanel`
+- Axis 2 (seq 44): UI resilience — `handleCandidateReview` in `App.tsx` surfaces review action errors via `addToast("error", ...)`, matching the existing handler pattern
+
+#### Planned Infrastructure (Axis 3)
 - Axis 3: regression guard — add targeted smoke coverage for enriched review candidates and existing accept/defer/reject flow
 
 ## Next 3 Implementation Priorities

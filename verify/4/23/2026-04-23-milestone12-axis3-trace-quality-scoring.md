@@ -1,16 +1,17 @@
 STATUS: verified
-CONTROL_SEQ: 91
+CONTROL_SEQ: 92
 BASED_ON_WORK:
   - work/4/23/2026-04-23-m20-axis2-conflict-detection.md
   - work/4/23/2026-04-23-m20-axis3-smoke-test-fix.md
   - work/4/23/2026-04-23-m21-axis1-sqlite-correction-lifecycle.md
   - work/4/23/2026-04-23-m21-axis2-durable-global-reject.md
-HANDOFF_SHA: 9538dd5
+  - work/4/23/2026-04-23-m21-push-pr-closeout.md
+HANDOFF_SHA: 6fc42e2
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 79
-NEXT_CONTROL: .pipeline/operator_request.md CONTROL_SEQ 91
-ADVISORY_ADVICE_SEQ: 80 (advisory_advice.md seq 80 — M20 Axis 2 done; Axis 3 = smoke gate + release)
-PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 91
+NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 92
+PR_MERGE_STATUS: PR #31 MERGED (2026-04-23); PR #32 OPEN https://github.com/hsnasforum/projectH/pull/32 (M20 Axis 2–M21 bundle, operator merge pending)
+PUSH_RESULT: feat/watcher-turn-state c7b658d..6fc42e2 pushed to origin (2026-04-23)
 
 ---
 

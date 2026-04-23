@@ -537,6 +537,7 @@
 #### Shipped Infrastructure (Axis 1, 2026-04-23)
 - Axis 1 (seq 33): SQLite quality parity — `record_reviewed_candidate_preference` accepts `avg_similarity_score` in both JSON and SQLite backends; `aggregate.py` computes score from `correction_store` before accept; `quality_info` now populated for reviewed-candidate preferences
 - Axis 2 (seq 37): quality integration smoke tests — `web-smoke.spec.mjs` gains two targeted scenarios verifying `quality_info` shape in review queue items (API contract) and `quality-count` badge visibility (browser DOM, conditional on mock correction score range)
+- Axis 3 (seq 40): review queue list UI — `ReviewQueuePanel.tsx` renders individual items with statement, 고품질 badge, and accept/defer/reject actions; `Sidebar.tsx` includes panel above `PreferencePanel`; `ChatArea` review badge becomes clickable button (`data-testid="review-queue-badge"`); `postCandidateReview` extended with `candidate_id` + `candidate_updated_at`; smoke test confirms badge click → panel → accept flow
 
 ## Next 3 Implementation Priorities
 

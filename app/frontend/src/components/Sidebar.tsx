@@ -1,6 +1,8 @@
 import { useState } from "react";
 import type { SessionSummary, AppSettings } from "../types";
+import type { ReviewQueueItem } from "../api/client";
 import PreferencePanel from "./PreferencePanel";
+import ReviewQueuePanel from "./ReviewQueuePanel";
 
 interface Props {
   open: boolean;
@@ -9,11 +11,19 @@ interface Props {
   backgroundStreaming: Set<string>;
   completedSessions: Set<string>;
   settings: AppSettings;
+  reviewQueueItems: ReviewQueueItem[];
+  reviewQueueCount: number;
   onSelectSession: (id: string) => void;
   onNewSession: () => void;
   onDeleteSession: (id?: string) => void;
   onDeleteAll: () => void;
   onSettingsChange: (settings: AppSettings) => void;
+  onCandidateReview: (
+    messageId: string,
+    candidateId: string,
+    candidateUpdatedAt: string,
+    action: "accept" | "defer" | "reject",
+  ) => void;
 }
 
 function timeAgo(iso: string): string {
@@ -34,11 +44,14 @@ export default function Sidebar({
   backgroundStreaming,
   completedSessions,
   settings,
+  reviewQueueItems,
+  reviewQueueCount,
   onSelectSession,
   onNewSession,
   onDeleteSession,
   onDeleteAll,
   onSettingsChange,
+  onCandidateReview,
 }: Props) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -168,6 +181,14 @@ export default function Sidebar({
           )}
         </div>
       </div>
+
+      {reviewQueueCount > 0 && (
+        <ReviewQueuePanel
+          items={reviewQueueItems}
+          sessionId={currentSessionId}
+          onReview={onCandidateReview}
+        />
+      )}
 
       {/* Preference Memory */}
       <div className="border-t border-white/[0.06] px-3 py-2">

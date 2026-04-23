@@ -100,12 +100,20 @@ export async function postCorrection(
 export async function postCandidateReview(
   sessionId: string,
   messageId: string,
+  candidateId: string,
+  candidateUpdatedAt: string,
   action: "accept" | "reject" | "defer",
 ): Promise<void> {
   await fetch(`${BASE}/api/candidate-review`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId, message_id: messageId, review_action: action }),
+    body: JSON.stringify({
+      session_id: sessionId,
+      message_id: messageId,
+      candidate_id: candidateId,
+      candidate_updated_at: candidateUpdatedAt,
+      review_action: action,
+    }),
   });
 }
 

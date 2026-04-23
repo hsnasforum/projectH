@@ -1,0 +1,84 @@
+import type { ReviewQueueItem } from "../api/client";
+
+interface Props {
+  items: ReviewQueueItem[];
+  sessionId: string;
+  onReview: (
+    messageId: string,
+    candidateId: string,
+    candidateUpdatedAt: string,
+    action: "accept" | "defer" | "reject",
+  ) => void;
+}
+
+function candidateUpdatedAt(item: ReviewQueueItem): string {
+  const matchingRef = item.supporting_confirmation_refs.find((ref) => (
+    typeof ref.candidate_id === "string" &&
+    ref.candidate_id === item.candidate_id &&
+    typeof ref.candidate_updated_at === "string"
+  ));
+  if (typeof matchingRef?.candidate_updated_at === "string") {
+    return matchingRef.candidate_updated_at;
+  }
+  return item.updated_at;
+}
+
+export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) {
+  if (items.length === 0) return null;
+
+  return (
+    <div className="border-t border-white/[0.06] px-3 py-2" aria-label={`${sessionId} review queue`}>
+      <p className="px-2 pb-2 text-[11px] uppercase tracking-widest text-sidebar-muted">
+        검토 대기 ({items.length})
+      </p>
+      <ul className="max-h-[220px] space-y-1 overflow-y-auto pr-0.5">
+        {items.map((item) => (
+          <li
+            key={`${item.source_message_id}:${item.candidate_id}`}
+            className="rounded-lg bg-sidebar-hover/50 px-2.5 py-2 text-[12px]"
+          >
+            <div className="mb-2 flex items-start gap-2">
+              <p className="flex-1 text-sidebar-text/85 leading-snug line-clamp-3">
+                {item.statement}
+              </p>
+              {item.quality_info?.is_high_quality && (
+                <span className="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300">
+                  고품질
+                </span>
+              )}
+            </div>
+            <div className="flex gap-1.5">
+              <button
+                data-testid="review-accept"
+                className="rounded bg-emerald-600/20 px-2 py-1 text-[11px] font-medium text-emerald-300 transition-colors hover:bg-emerald-600/30"
+                onClick={() =>
+                  onReview(item.source_message_id, item.candidate_id, candidateUpdatedAt(item), "accept")
+                }
+              >
+                수락
+              </button>
+              <button
+                data-testid="review-defer"
+                className="rounded bg-white/5 px-2 py-1 text-[11px] font-medium text-sidebar-muted transition-colors hover:bg-white/10 hover:text-sidebar-text"
+                onClick={() =>
+                  onReview(item.source_message_id, item.candidate_id, candidateUpdatedAt(item), "defer")
+                }
+              >
+                보류
+              </button>
+              <button
+                data-testid="review-reject"
+                className="rounded bg-red-500/10 px-2 py-1 text-[11px] font-medium text-red-300 transition-colors hover:bg-red-500/20"
+                onClick={() =>
+                  onReview(item.source_message_id, item.candidate_id, candidateUpdatedAt(item), "reject")
+                }
+              >
+                거절
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}

@@ -11552,11 +11552,12 @@ async function postStreamAndReadFinalPayload(page, payload) {
   return finalEvent.data;
 }
 
-async function createQualityReviewQueueItem(page, sessionId, correctedText) {
+async function createQualityReviewQueueItem(page, sessionId, correctedText, userText = null) {
   const chatPayload = await postStreamAndReadFinalPayload(page, {
     session_id: sessionId,
     source_path: shortFixturePath,
     provider: "mock",
+    ...(userText ? { user_text: userText } : {}),
   });
   const sourceMessageId = chatPayload.response?.source_message_id ?? chatPayload.source_message_id;
   expect(typeof sourceMessageId).toBe("string");
@@ -11658,4 +11659,43 @@ test("quality-info quality-count badge visible in ChatArea when review queue ite
 
   expect(reviewItems.length).toBeGreaterThanOrEqual(1);
   expect(reviewItems[0]).toHaveProperty("quality_info");
+});
+
+test("review queue panel opens on badge click and accept action removes item", async ({ page }) => {
+  const sessionId = buildSessionId("rq-panel");
+  const { sessionPayload } = await createQualityReviewQueueItem(
+    page,
+    sessionId,
+    "요약 수정본입니다. 핵심만 남겼습니다.",
+    `review queue panel ${sessionId}`
+  );
+  expect((sessionPayload.session?.review_queue_items ?? []).length).toBeGreaterThanOrEqual(1);
+  const sessionTitle = sessionPayload.session?.title ?? sessionId;
+
+  await page.goto("/app-preview");
+  const sessionButton = page.locator("button", { hasText: sessionTitle }).first();
+  await expect(sessionButton).toBeVisible({ timeout: 10_000 });
+  await sessionButton.click();
+
+  const reviewBadge = page.getByTestId("review-queue-badge");
+  await expect(reviewBadge).toBeVisible({ timeout: 10_000 });
+  await expect(reviewBadge).toContainText("리뷰");
+
+  await reviewBadge.click();
+  const acceptButton = page.getByTestId("review-accept").first();
+  await expect(acceptButton).toBeVisible({ timeout: 5_000 });
+  const reviewResponsePromise = page.waitForResponse(
+    (response) => response.url().includes("/api/candidate-review")
+  );
+  await acceptButton.click();
+  const reviewResponse = await reviewResponsePromise;
+  const reviewBody = await reviewResponse.text();
+  expect(reviewResponse.ok(), reviewBody).toBeTruthy();
+
+  await expect
+    .poll(async () => {
+      const payload = await fetchSessionPayload(page, sessionId);
+      return payload.session?.review_queue_items?.length ?? 0;
+    })
+    .toBe(0);
 });

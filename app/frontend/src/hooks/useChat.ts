@@ -17,6 +17,7 @@ interface SessionState {
   justCompleted: boolean;
   reviewQueueCount: number;
   highQualityReviewCount: number;
+  reviewQueueItems: ReviewQueueItem[];
 }
 
 function countHighQualityReviewItems(items: ReviewQueueItem[] | undefined): number {
@@ -37,6 +38,7 @@ function emptyState(title: string): SessionState {
     justCompleted: false,
     reviewQueueCount: 0,
     highQualityReviewCount: 0,
+    reviewQueueItems: [],
   };
 }
 
@@ -75,12 +77,14 @@ export function useChat(settings: AppSettings) {
   const loadSession = useCallback(async (sid: string) => {
     const session = await fetchSession(sid);
     const approvals = session.pending_approvals ?? [];
+    const reviewQueueItems = (session.review_queue_items ?? []) as ReviewQueueItem[];
     updateState(sid, {
       messages: session.messages,
       title: session.title,
       pendingApproval: approvals.length > 0 ? approvals[approvals.length - 1] : null,
-      reviewQueueCount: (session.review_queue_items ?? []).length,
-      highQualityReviewCount: countHighQualityReviewItems(session.review_queue_items),
+      reviewQueueCount: reviewQueueItems.length,
+      highQualityReviewCount: countHighQualityReviewItems(reviewQueueItems),
+      reviewQueueItems,
     });
   }, [updateState]);
 
@@ -202,12 +206,14 @@ export function useChat(settings: AppSettings) {
           const session = event.data.session;
           if (session) {
             const approvals = session.pending_approvals ?? [];
+            const reviewQueueItems = (session.review_queue_items ?? []) as ReviewQueueItem[];
             updateState(targetSid, {
               messages: session.messages,
               title: session.title,
               pendingApproval: approvals.length > 0 ? approvals[approvals.length - 1] : null,
-              reviewQueueCount: (session.review_queue_items ?? []).length,
-              highQualityReviewCount: countHighQualityReviewItems(session.review_queue_items),
+              reviewQueueCount: reviewQueueItems.length,
+              highQualityReviewCount: countHighQualityReviewItems(reviewQueueItems),
+              reviewQueueItems,
             });
           } else if (resp) {
             const assistantMsg: Message = {
@@ -321,6 +327,7 @@ export function useChat(settings: AppSettings) {
     thinkingStatus: current.thinkingStatus,
     reviewQueueCount: current.reviewQueueCount,
     highQualityReviewCount: current.highQualityReviewCount,
+    reviewQueueItems: current.reviewQueueItems,
     backgroundStreaming,
     completedSessions,
     notifications,

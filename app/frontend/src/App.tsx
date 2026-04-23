@@ -10,6 +10,7 @@ import {
   postContentVerdict,
   postCorrectedSave,
   postCorrection,
+  postCandidateReview,
   postFeedback,
 } from "./api/client";
 import { DEFAULT_SETTINGS } from "./types";
@@ -86,6 +87,20 @@ export default function App() {
     }
   }, [chat.sessionId, chat.loadSession, addToast]);
 
+  const handleCandidateReview = useCallback(async (
+    messageId: string,
+    candidateId: string,
+    candidateUpdatedAt: string,
+    action: "accept" | "defer" | "reject",
+  ) => {
+    try {
+      await postCandidateReview(chat.sessionId, messageId, candidateId, candidateUpdatedAt, action);
+      await chat.loadSession(chat.sessionId);
+    } catch {
+      // Candidate review actions are non-critical in this slice.
+    }
+  }, [chat.sessionId, chat.loadSession]);
+
   return (
     <div className="flex h-screen overflow-hidden bg-warm-50">
       {/* Overlay for mobile */}
@@ -103,11 +118,14 @@ export default function App() {
         backgroundStreaming={chat.backgroundStreaming}
         completedSessions={chat.completedSessions}
         settings={settings}
+        reviewQueueItems={chat.reviewQueueItems}
+        reviewQueueCount={chat.reviewQueueCount}
         onSelectSession={chat.switchSession}
         onNewSession={chat.newSession}
         onDeleteSession={chat.deleteSession}
         onDeleteAll={chat.deleteAll}
         onSettingsChange={setSettings}
+        onCandidateReview={handleCandidateReview}
       />
 
       {/* Completion toast notifications — top center */}

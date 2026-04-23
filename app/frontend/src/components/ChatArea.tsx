@@ -99,12 +99,16 @@ export default function ChatArea({
         )}
         <div className="flex-1" />
         {reviewQueueCount > 0 && (
-          <span className="shrink-0 text-[11px] font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
+          <button
+            data-testid="review-queue-badge"
+            onClick={onToggleSidebar}
+            className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700 transition-colors hover:bg-amber-100"
+          >
             리뷰 {reviewQueueCount}건
             {highQualityReviewCount > 0 && (
               <span className="quality-count"> · 고품질 {highQualityReviewCount}건</span>
             )}
-          </span>
+          </button>
         )}
       </header>
 

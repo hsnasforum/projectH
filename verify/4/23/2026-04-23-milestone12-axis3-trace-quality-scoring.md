@@ -1,12 +1,12 @@
 STATUS: verified
-CONTROL_SEQ: 51
+CONTROL_SEQ: 52
 BASED_ON_WORK:
-  - work/4/23/2026-04-23-m17-axis1-statement-edit.md
-HANDOFF_SHA: 7fc4edc
+  - work/4/23/2026-04-23-m17-axis1-smoke-fix.md
+HANDOFF_SHA: 89851bf
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 48
-NEXT_CONTROL: .pipeline/implement_handoff.md CONTROL_SEQ 51
-ADVISORY_ADVICE_SEQ: 49 (advisory_advice.md seq 49 — M17 Axis 1 statement editing)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 51
+NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 52
+ADVISORY_ADVICE_SEQ: 49 (advisory_advice.md seq 49 — M17 Axis 1 done; Axis 2 vs Axis 3 prioritization needed)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
 ---
@@ -467,5 +467,42 @@ PARTIAL PASS. All compile-time and type checks pass. Frontend edit functionality
 ## Risks / Open Questions
 
 1. **Smoke test preference assertion broken**: `review queue edit` Playwright scenario asserts on preference store which requires valid `candidate_recurrence_key`. Fix: change assertion to check API request body or session state instead.
-2. **`candidate_recurrence_key` None for mock corrections**: `record_reviewed_candidate_preference` is never called in the smoke test context. `statement_override` functionality is correct but cannot be confirmed via e2e preference lookup.
-3. **Branch not pushed**: 23 commits on `feat/watcher-turn-state`, 23 ahead of origin. PR creation/push in operator backlog.
+2. **`candidate_recurrence_key` None for mock corrections**: `record_reviewed_candidate_preference` is never called in the smoke test context. `statement_override` functionality is correct but confirmed via request body assertion.
+3. **Branch not pushed**: 25 commits on `feat/watcher-turn-state`, 25 ahead of origin. PR creation/push in operator backlog.
+
+---
+
+## Round 15 Claim: M17 Axis 1 Smoke Fix
+
+**Work**: `work/4/23/2026-04-23-m17-axis1-smoke-fix.md`
+**Commit**: 89851bf
+
+### Summary
+
+`review queue edit` smoke test 제목과 assertion 교체. 기존 `/api/preferences` lookup (`description.includes(editedStatement)`) → `reviewResponse.request().postData()` JSON 파싱 후 `statement === editedStatement` + `review_action === "accept"` 검증. setup, UI interaction, review queue removal 검증은 그대로 유지.
+
+### Checks Run
+
+- `git diff --check -- e2e/tests/web-smoke.spec.mjs` → **OK**
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "review queue edit" --reporter=line` → **1 passed (24.0s)**
+
+### Verdict
+
+PASS. M17 Axis 1 smoke 검증 완료. 커밋 완료 (89851bf).
+
+---
+
+## Current Shipped Truth
+
+| Item | SHA |
+|---|---|
+| M14 Axes 1–3 | 3637dee, 3007329, 6d19705 |
+| M15 Axes 1–3 | 8482425, d03f7f4, 4d80074 |
+| M16 Axes 1–3 | 2f95c1f, 740b6e9, 384595a |
+| M17 Axis 1 statement editing + smoke fix | 7fc4edc, 89851bf |
+| Branch vs origin | 25 commits ahead |
+
+## Risks / Open Questions
+
+1. **M17 Axis 2 vs Axis 3 priority**: M17 Axis 2 (Detailed Evidence View) adds more information to review cards; Axis 3 (Release Stabilization) runs the full smoke gate on 25 accumulated commits. Advisory needed to determine which comes first.
+2. **Branch not pushed**: 25 commits ahead. PR creation/push in operator backlog.

@@ -1,12 +1,12 @@
 STATUS: verified
-CONTROL_SEQ: 55
+CONTROL_SEQ: 61
 BASED_ON_WORK:
-  - work/4/23/2026-04-23-m17-axis2-evidence-view.md
-HANDOFF_SHA: 4d62440
+  - work/4/23/2026-04-23-m18-axis1-sqlite-correction-store.md
+HANDOFF_SHA: 05195d4
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 52
-NEXT_CONTROL: .pipeline/operator_request.md CONTROL_SEQ 55
-ADVISORY_ADVICE_SEQ: 53 (advisory_advice.md seq 53 — M17 Axis 2 done; Axis 3 = release gate)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 55
+NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 61
+ADVISORY_ADVICE_SEQ: 59 (advisory_advice.md seq 59 — M18 Axis 1 done; Axis 2 scope needed)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
 ---
@@ -533,7 +533,39 @@ PASS. M17 Axes 1–3 모두 완료. 릴리즈 게이트 통과. 커밋: 4d62440.
 
 ---
 
+---
+
+## Round 17 Claim: M18 Axis 1 — SQLiteCorrectionStore Parity
+
+**Work**: `work/4/23/2026-04-23-m18-axis1-sqlite-correction-store.md`
+**Commit**: 05195d4
+
+### Summary
+
+`SQLiteCorrectionStore` 추가: `record_correction`, `get`, `find_by_fingerprint`, `find_by_artifact`, `find_by_session`, `list_recent`. corrections table은 기존 `_SCHEMA_SQL`에 이미 정의. `migrate_json_to_sqlite`가 corrections JSON을 `INSERT OR IGNORE`로 SQLite에 복사. `find_recurring_patterns` / lifecycle 전환 메서드는 handoff boundary 외. active server wiring 없음. 7개 신규 단위 테스트.
+
+### Checks Run
+
+- `python3 -m py_compile storage/sqlite_store.py` → **OK**
+- `python3 -m unittest tests.test_sqlite_store -v` → **14 tests OK** (기존 7 + 신규 7)
+- `git diff --check` → **OK**
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족. 커밋 완료 (05195d4).
+
+---
+
+## Current Shipped Truth
+
+| Item | SHA |
+|---|---|
+| M17 Axes 1–3 + smoke fix | 7fc4edc, 89851bf, 4d62440 |
+| PR #31 (feat/watcher-turn-state → main) | OPEN draft — operator merge pending |
+| M18 Axis 1 SQLiteCorrectionStore | 05195d4 |
+
 ## Risks / Open Questions
 
-1. **PR merge pending**: 27 commits on `feat/watcher-turn-state`, 27 ahead of origin. PR creation/merge is an operator decision. Routed to operator_request.md CONTROL_SEQ 55.
-2. **Ollama model cache stale on restart**: known limitation from M16 Axis 3.
+1. **PR #31 merge pending**: operator decision. Local work continues.
+2. **M18 Axis 2 scope undefined**: advisory needed for SQL-based cross-session recurrence indexing exact scope.
+3. **SQLiteCorrectionStore not wired to server**: JSON CorrectionStore remains default until explicit wiring (M18 Axis 2+).

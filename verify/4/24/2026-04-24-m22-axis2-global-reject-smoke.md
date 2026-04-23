@@ -1,13 +1,14 @@
 STATUS: verified
-CONTROL_SEQ: 96
+CONTROL_SEQ: 97
 BASED_ON_WORK:
   - work/4/24/2026-04-24-m22-axis1-correction-lifecycle-guard.md
   - work/4/24/2026-04-24-m22-axis2-global-reject-smoke.md
 HANDOFF_SHA: acacb28
 VERIFIED_BY: Claude
 SUPERSEDES: verify/4/24/2026-04-24-m22-axis1-correction-lifecycle-guard.md CONTROL_SEQ 95
-NEXT_CONTROL: .pipeline/operator_request.md CONTROL_SEQ 96
-PUSH_RESULT: pending — operator_request CONTROL_SEQ 96 written for push+PR
+NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 97
+PUSH_RESULT: feat/watcher-turn-state fully synced at feac20a; PR #32 updated (M20 Axis 2–M22 Axes 1–3)
+PR_UPDATE: PR #32 https://github.com/hsnasforum/projectH/pull/32 title+body updated to include M22 (2026-04-24)
 
 ---
 

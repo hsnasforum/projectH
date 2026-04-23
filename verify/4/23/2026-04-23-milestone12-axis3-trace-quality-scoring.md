@@ -329,9 +329,72 @@ PASS. 모든 acceptance criteria 충족. 커밋 완료 (2f95c1f).
 | M16 Axis 1 review evidence enrichment | 2f95c1f |
 | Branch vs origin | 16 commits ahead |
 
+---
+
+## Round 11 Claim: M16 Axis 2 — UI Resilience (toast error for review actions)
+
+**Work**: `work/4/23/2026-04-23-m16-axis2-ui-resilience.md`
+**Commit**: 740b6e9
+
+### Summary
+
+`handleCandidateReview` catch 블록에 `addToast("error", "검토 액션 제출에 실패했습니다.")` 추가. `addToast`를 `useCallback` dependency array에 포함. `docs/MILESTONES.md` M16 Axis 2 기록. 2개 파일만 변경, production 코드 패턴은 기존 handler와 동일.
+
+### Checks Run
+
+- `cd app/frontend && npx tsc --noEmit` → **OK**
+- `git diff --check -- app/frontend/src/App.tsx docs/MILESTONES.md` → **OK**
+- `make e2e-test` (전체 browser suite, M15 Axis 3 browser contract 확장 이후 첫 회귀 확인) → **139 passed (19.8m)** — 신규 3개(quality-info ×2, delta_summary ×1) + review queue panel 1개 포함, 기존 시나리오 전원 통과
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족 + 전체 smoke gate 통과. 커밋 완료 (740b6e9).
+
+---
+
+## Round 12 Claim: Ollama routing activation
+
+**Work**: `work/4/23/2026-04-23-ollama-routing-activation.md`
+**Commit**: 55f86e6
+
+### Summary
+
+`core/agent_loop.py`의 short/chunk/reduce summary, active context 답변, 일반 응답 경로가 `with self._routed_model(...)` 안에서 실행되도록 수정. 이전에는 routed context를 열었다가 닫은 뒤 별도로 모델 호출을 실행해 routing이 실제 Ollama 호출에 적용되지 않는 구조였음. 신규 `tests/test_agent_loop_model_routing.py`: summarize/respond는 medium tier `qwen2.5:7b`, entity-card context는 heavy tier `qwen2.5:14b`로 전환 검증.
+
+### Checks Run
+
+- `python3 -m py_compile core/agent_loop.py tests/test_agent_loop_model_routing.py` → **OK**
+- `python3 -m unittest tests.test_agent_loop_model_routing tests.test_ollama_adapter -v` → **32 tests OK** (신규 3개 + 기존 29개)
+- `git diff --check -- core/agent_loop.py tests/test_agent_loop_model_routing.py` → **OK**
+
+### Checks Not Run
+
+- 실제 Ollama 서버 end-to-end 성능 비교 — `ollama` provider 전용 변경; `mock`은 deterministic baseline으로 영향 없음
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족. 커밋 완료 (55f86e6).
+
+### Known Risk
+
+heavy route(`qwen2.5:14b`)가 이제 실제로 호출됨. 14B 모델이 미설치된 환경에서 entity-card/latest-update 같은 heavy 경로가 실패할 수 있음. Tier availability 확인 또는 fallback policy 추가가 필요; advisory 요청.
+
+---
+
+## Current Shipped Truth
+
+| Item | SHA |
+|---|---|
+| M14 Axes 1–3 | 3637dee, 3007329, 6d19705 |
+| M15 Axes 1–3 | 8482425, d03f7f4, 4d80074 |
+| M16 Axis 1 review evidence enrichment | 2f95c1f |
+| M16 Axis 2 UI resilience (toast error) | 740b6e9 |
+| Ollama routing activation | 55f86e6 |
+| Full smoke gate (139 tests) | PASS (2026-04-23) |
+| Branch vs origin | 19 commits ahead |
+
 ## Risks / Open Questions
 
-1. **M16 Axis 2 (UI error handling)**: `handleCandidateReview` in `App.tsx` has a try/catch that silently discards errors. `addToast("error", ...)` pattern is fully in place (used by all other handlers). Next implement slice is bounded to this one function.
-2. **Full browser suite not run**: ReviewQueuePanel added M15 Axis 3; M16 Axis 1 adds text rendering. Full `make e2e-test` needed before release/PR merge claim.
-3. **dist asset tracking**: packaging policy deferred to M16 Axis 3.
-4. **Branch not pushed**: 16 commits on `feat/watcher-turn-state`, 16 ahead of origin. PR creation/push in operator backlog.
+1. **Ollama heavy tier fallback**: `qwen2.5:14b` 미설치 환경에서 heavy route 실패 가능. Tier availability check 또는 base model fallback 정책 필요.
+2. **M16 Axis 3 dist policy**: `app/static/dist` tracked 파일이 Vite hash rename과 불일치. 패키징 정책 결정 필요.
+3. **Branch not pushed**: 19 commits on `feat/watcher-turn-state`, 19 ahead of origin. PR creation/push in operator backlog.

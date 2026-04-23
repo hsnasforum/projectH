@@ -1,12 +1,12 @@
 STATUS: verified
-CONTROL_SEQ: 79
+CONTROL_SEQ: 83
 BASED_ON_WORK:
-  - work/4/23/2026-04-23-m20-axis1-sqlite-default.md
-HANDOFF_SHA: 346c4a1
+  - work/4/23/2026-04-23-m20-axis2-conflict-detection.md
+HANDOFF_SHA: 1b460d1
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 76
-NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 79
-ADVISORY_ADVICE_SEQ: 77 (advisory_advice.md seq 77 — M20 Axis 1 done; Axis 2 or smoke gate next)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 79
+NEXT_CONTROL: .pipeline/implement_handoff.md CONTROL_SEQ 84
+ADVISORY_ADVICE_SEQ: 80 (advisory_advice.md seq 80 — M20 Axis 2 done; Axis 3 = smoke gate + release)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
 ---
@@ -721,16 +721,78 @@ PASS. 모든 acceptance criteria 충족. 커밋 완료 (346c4a1).
 
 ---
 
+---
+
+## Round 24 Claim: M20 Axis 2 — Preference Conflict Detection
+
+**Work**: `work/4/23/2026-04-23-m20-axis2-conflict-detection.md`
+**Commit**: 1b460d1
+
+### Summary
+
+`app/handlers/preferences.py`에 `_jaccard_word_similarity()` helper 추가 (word-token Jaccard similarity 0.0–1.0). `list_preferences_payload()`가 ACTIVE preference 설명 간 Jaccard > 0.7이면 `conflict_info` (`has_conflict`, `conflicting_preference_ids`) 추가. `PreferenceRecord` TypeScript 타입에 optional `conflict_info` 추가. `PreferencePanel.tsx`가 `⚠ 충돌` badge 표시 + activate 전 `window.confirm()` 실행. 테스트 3개 추가. MILESTONES.md M20 Axis 2 기록.
+
+### Checks Run
+
+- `python3 -m py_compile app/handlers/preferences.py` → **OK**
+- `python3 -m unittest tests.test_preference_handler -v` → **5 tests OK** (기존 2 + 신규 3)
+- `cd app/frontend && npx tsc --noEmit` → **OK**
+- `git diff --check -- app/handlers/preferences.py app/frontend/src/api/client.ts app/frontend/src/components/PreferencePanel.tsx docs/MILESTONES.md` → **OK**
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족. 커밋 완료 (1b460d1).
+
+---
+
+## Round 25 Claim: M20 Axis 3 — Release Consolidation Smoke Gate (FAIL)
+
+**Work**: M20 Axis 3 smoke gate 실행 (M18–M20 누적 변경 후 첫 full suite)
+**Run**: `make e2e-test` → **6 failed, 136 passed (7.5m)**
+
+### Failing Tests
+
+| Line | Test Name | Failure |
+|---|---|---|
+| 650 | candidate confirmation path는 save support와 분리되어 기록되고 later correction으로 current state에서 사라집니다 | `reviewQueueBox.toBeHidden()` 실패 — 전역 후보가 이미 표시됨 |
+| 860 | review-queue reject/defer는 accept와 동일한 quick-meta, transcript-meta, stale-clear 경로를 따릅니다 | `reviewQueueBox.toBeHidden()` 실패 (로컬 거절 후 전역 후보 잔존) |
+| 957 | review-queue 편집은 review_action='edit' review_status='edited' reason_note를 기록합니다 | `reviewQueueBox.toBeHidden()` 실패 (로컬 편집 후 전역 후보 잔존) |
+| 1066 | same-session recurrence aggregate는 emitted-apply-confirm lifecycle으로 활성화됩니다 | `reviewQueueBox.toBeHidden()` 실패 — 세션 생성 직후 전역 후보 표시 |
+| 11738 | review queue panel opens on badge click and accept action removes item | `review_queue_items.length` 15초 내 0 미도달 — 전역 후보 잔존 |
+| 11777 | review queue edit statement sends edited text in accept request | `review_queue_items.length` 0 미도달 — 전역 후보 잔존 |
+
+### Root Cause Analysis
+
+M18 Axis 3에서 `_build_review_queue_items()`에 `find_recurring_patterns()` 호출이 추가됨. 이후 M20 Axis 3 full smoke gate를 처음 실행할 때까지 누적된 문제:
+
+- **테스트 내 cross-session fingerprint 충돌**: `corrected-save` 테스트(line 480)와 `corrected-long-history` 테스트(line 581)가 동일한 `correctedTextA = "수정본 A입니다.\n핵심만 남겼습니다."` + `longFixturePath` 사용 → 두 세션에서 동일 `delta_fingerprint` → `find_recurring_patterns()`가 전역 후보로 노출. `correctedTextB`(lines 481, 582)도 동일 충돌.
+- **테스트 650, 860, 957, 1066**: 전역 후보가 세션 생성 직후 또는 로컬 후보 제거 후에도 `review-queue-box`를 표시함.
+- **테스트 11738, 11777**: aggregate 테스트들(1068, 1295, 1351)이 `shortFixturePath` + `"수정 방향 A입니다."` 조합으로 여러 세션에서 반복 correction 생성 → 전역 후보 축적. accept 후에도 전역 후보 잔존하여 `review_queue_items.length > 0`.
+
+### Fix Required (→ implement_handoff CONTROL_SEQ 84)
+
+1. `e2e/tests/web-smoke.spec.mjs` lines 581–582: `corrected-long-history` 테스트의 `correctedTextA`/`correctedTextB`를 고유 값으로 변경하여 `corrected-save` 테스트와 fingerprint 충돌 제거.
+2. `e2e/tests/web-smoke.spec.mjs` lines 11769, 11816: `.toBe(0)` assertion을 `is_global !== true` 필터 적용으로 변경 — aggregate 테스트에서 의도적으로 생성되는 전역 후보를 허용하면서 세션-로컬 후보 제거만 검증.
+
+### Verdict
+
+FAIL. M20 Axis 3 release gate 미통과. implement_handoff CONTROL_SEQ 84로 smoke test 수정 후 재실행 필요.
+
+---
+
 ## Current Shipped Truth
 
 | Item | SHA |
 |---|---|
 | M19 Axes 1–3 | 5fecc47, 4f15c96, 21eb13e |
 | M20 Axis 1 SQLite default + startup migration | 346c4a1 |
+| M20 Axis 2 Preference Conflict Detection | 1b460d1 |
+| M20 Axis 3 smoke gate | **FAIL — 6/142 failing** |
 
 ## Risks / Open Questions
 
-1. **PR #31 merge pending**: operator decision. Local work continues.
-2. **Full smoke gate not run since M17 Axis 3**: M18–M20 Axis 1 added significant backend + frontend + SQLite default changes. Full `make e2e-test` needed before M20 Axis 3 release consolidation claim.
-3. **Startup migration one-time latency**: 8,029+ correction JSON files will be migrated on first SQLite default startup. Magnitude unknown without timing test.
-4. **M20 Axis 2 scope undefined**: "Preference Conflict Detection" needs advisory arbitration.
+1. **M20 Axis 3 smoke gate FAIL**: 6개 테스트 실패. 원인 특정됨 — implement_handoff CONTROL_SEQ 84로 fix 후 재실행.
+2. **PR #31 merge pending**: operator decision. Local work continues.
+3. **Global candidate accumulation is test-run-order-sensitive**: `_build_review_queue_items`의 전역 후보 표시 로직이 같은 run 내 이전 테스트의 correction 누적에 영향받음. fix #1(fingerprint 충돌 제거)이 적용되면 tests 650/860/957/1066 격리 달성. fix #2(assertion 필터)는 aggregate 테스트의 의도적 패턴 누적을 수용.
+4. **SQLite default (M20 Axis 1) 자체는 6개 실패의 원인이 아님**: JSON 모드도 동일한 `find_recurring_patterns()` 로직을 사용하므로 같은 문제가 발생했을 것. SQLite 전환과 무관한 M18 Axis 3 latent bug.
+5. **Startup migration one-time latency**: 8,029+ correction JSON files migration 지연 미측정 (서버 시작 가드되므로 치명적 영향 없음).

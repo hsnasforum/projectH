@@ -1,10 +1,11 @@
 STATUS: verified
-CONTROL_SEQ: 100
+CONTROL_SEQ: 101
 BASED_ON_WORK: work/4/24/2026-04-24-milestones-priorities-doc-sync.md
 HANDOFF_SHA: c5c9b07
 VERIFIED_BY: Claude
 SUPERSEDES: verify/4/24/2026-04-24-m23-axis1-json-correction-guard.md CONTROL_SEQ 99
-NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 100
+NEXT_CONTROL: .pipeline/implement_handoff.md CONTROL_SEQ 101
+ADVISORY_RECOVERY: advisory_request seq 100 timed out (901s); council convergence → Option C (list_incomplete_corrections)
 PUSH_RESULT: feat/watcher-turn-state daebfab..c5c9b07 pushed to origin (2026-04-24)
 
 ---

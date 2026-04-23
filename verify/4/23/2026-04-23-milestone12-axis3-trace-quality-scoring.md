@@ -1,12 +1,12 @@
 STATUS: verified
-CONTROL_SEQ: 44
+CONTROL_SEQ: 45
 BASED_ON_WORK:
-  - work/4/23/2026-04-23-m16-axis1-review-evidence.md
-HANDOFF_SHA: 2f95c1f
+  - work/4/23/2026-04-23-m16-axis2-ui-resilience.md
+HANDOFF_SHA: 740b6e9
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 41
-NEXT_CONTROL: .pipeline/implement_handoff.md CONTROL_SEQ 44
-ADVISORY_ADVICE_SEQ: 42 (advisory_advice.md seq 42 — M16 Axis 1 done; Axis 2 = UI resilience)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 44
+NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 45
+ADVISORY_ADVICE_SEQ: 42 (advisory_advice.md seq 42 — M16 Axis 2 done; full smoke gate run for M16 Axis 3)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
 ---

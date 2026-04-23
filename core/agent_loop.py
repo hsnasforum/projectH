@@ -1454,14 +1454,19 @@ class AgentLoop:
                 summary_source_type=reduce_source_type,
                 selected_result_count=selected_result_count,
             )
-            return (
-                self._collect_model_stream(
-                    self.model.stream_summarize(short_summary_prompt),
-                    stream_event_callback=stream_event_callback,
-                    cancel_requested=cancel_requested,
-                ),
-                [],
-            )
+            with self._routed_model(
+                task="summarize",
+                source_count=selected_result_count or 1,
+                has_web_sources=reduce_source_type == "search_results",
+            ):
+                return (
+                    self._collect_model_stream(
+                        self.model.stream_summarize(short_summary_prompt),
+                        stream_event_callback=stream_event_callback,
+                        cancel_requested=cancel_requested,
+                    ),
+                    [],
+                )
 
         summary_source_path = source_path or source_label
         chunks = self._chunk_text_for_summary(source_path=summary_source_path, text=text)
@@ -1472,14 +1477,19 @@ class AgentLoop:
                 summary_source_type=reduce_source_type,
                 selected_result_count=selected_result_count,
             )
-            return (
-                self._collect_model_stream(
-                    self.model.stream_summarize(short_summary_prompt),
-                    stream_event_callback=stream_event_callback,
-                    cancel_requested=cancel_requested,
-                ),
-                [],
-            )
+            with self._routed_model(
+                task="summarize",
+                source_count=selected_result_count or 1,
+                has_web_sources=reduce_source_type == "search_results",
+            ):
+                return (
+                    self._collect_model_stream(
+                        self.model.stream_summarize(short_summary_prompt),
+                        stream_event_callback=stream_event_callback,
+                        cancel_requested=cancel_requested,
+                    ),
+                    [],
+                )
 
         chunk_summaries: list[dict[str, Any]] = []
         total_chunks = len(chunks)
@@ -1498,10 +1508,15 @@ class AgentLoop:
                 summary_source_type=reduce_source_type,
                 selected_result_count=selected_result_count,
             )
-            chunk_summary = self._collect_model_stream(
-                self.model.stream_summarize(chunk_summary_prompt),
-                cancel_requested=cancel_requested,
-            )
+            with self._routed_model(
+                task="summarize",
+                source_count=selected_result_count or 1,
+                has_web_sources=reduce_source_type == "search_results",
+            ):
+                chunk_summary = self._collect_model_stream(
+                    self.model.stream_summarize(chunk_summary_prompt),
+                    cancel_requested=cancel_requested,
+                )
             chunk_text = str(chunk.get("text") or "")
             resolved_source_path = self._infer_summary_chunk_source_path(
                 chunk_text=chunk_text,
@@ -1537,11 +1552,16 @@ class AgentLoop:
         )
         final_summary = ""
         if reduce_prompt:
-            final_summary = self._collect_model_stream(
-                self.model.stream_summarize(reduce_prompt),
-                stream_event_callback=stream_event_callback,
-                cancel_requested=cancel_requested,
-            ).strip()
+            with self._routed_model(
+                task="summarize",
+                source_count=selected_result_count or len(chunk_summaries) or 1,
+                has_web_sources=reduce_source_type == "search_results",
+            ):
+                final_summary = self._collect_model_stream(
+                    self.model.stream_summarize(reduce_prompt),
+                    stream_event_callback=stream_event_callback,
+                    cancel_requested=cancel_requested,
+                ).strip()
         if not final_summary:
             final_summary = self._merge_chunk_summaries(
                 chunk_summaries=chunk_summaries,
@@ -7107,25 +7127,24 @@ class AgentLoop:
             has_web_sources=_is_web,
         )
         with self._routed_model(**_routing_kwargs):
-            pass  # sets model on adapter
-        answer = self._collect_model_stream(
-            self.model.stream_answer_with_context(
-                intent=intent,
-                user_request=model_user_request,
-                context_label=str(active_context.get("label") or "현재 문서"),
-                source_paths=[str(path) for path in active_context.get("source_paths", [])],
-                context_excerpt=grounded_excerpt,
-                summary_hint=(
-                    None
-                    if selected_evidence or retry_policy.get("suppress_summary_hint")
-                    else str(active_context.get("summary_hint") or "")
+            answer = self._collect_model_stream(
+                self.model.stream_answer_with_context(
+                    intent=intent,
+                    user_request=model_user_request,
+                    context_label=str(active_context.get("label") or "현재 문서"),
+                    source_paths=[str(path) for path in active_context.get("source_paths", [])],
+                    context_excerpt=grounded_excerpt,
+                    summary_hint=(
+                        None
+                        if selected_evidence or retry_policy.get("suppress_summary_hint")
+                        else str(active_context.get("summary_hint") or "")
+                    ),
+                    evidence_items=selected_evidence,
+                    active_preferences=(_ctx_prefs := self._routed_preferences(**_routing_kwargs)),
                 ),
-                evidence_items=selected_evidence,
-                active_preferences=(_ctx_prefs := self._routed_preferences(**_routing_kwargs)),
-            ),
-            stream_event_callback=stream_event_callback,
-            cancel_requested=cancel_requested,
-        )
+                stream_event_callback=stream_event_callback,
+                cancel_requested=cancel_requested,
+            )
         answer = self._apply_context_conversation_mode(
             answer=answer,
             user_request=request.user_text,
@@ -9010,16 +9029,17 @@ class AgentLoop:
             note="선택된 문맥이 없으면 일반 대화 응답으로 처리합니다.",
         )
         _prefs = self._routed_preferences(task="respond")
-        return AgentResponse(
-            text=self._collect_model_stream(
-                self.model.stream_respond(request.user_text, active_preferences=_prefs),
-                stream_event_callback=stream_event_callback,
-                cancel_requested=cancel_requested,
-            ),
-            status=ResponseStatus.ANSWER,
-            actions_taken=["respond"],
-            applied_preferences=_prefs,
-        )
+        with self._routed_model(task="respond"):
+            return AgentResponse(
+                text=self._collect_model_stream(
+                    self.model.stream_respond(request.user_text, active_preferences=_prefs),
+                    stream_event_callback=stream_event_callback,
+                    cancel_requested=cancel_requested,
+                ),
+                status=ResponseStatus.ANSWER,
+                actions_taken=["respond"],
+                applied_preferences=_prefs,
+            )
 
     def _dispatch_request(
         self,

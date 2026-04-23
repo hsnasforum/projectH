@@ -1,12 +1,12 @@
 STATUS: verified
-CONTROL_SEQ: 67
+CONTROL_SEQ: 70
 BASED_ON_WORK:
-  - work/4/23/2026-04-23-m18-axis3-global-candidate-ui.md
-HANDOFF_SHA: 01167e6
+  - work/4/23/2026-04-23-m19-axis1-preference-evidence.md
+HANDOFF_SHA: 5fecc47
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 64
-NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 67
-ADVISORY_ADVICE_SEQ: 65 (advisory_advice.md seq 65 — M18 Axis 3 done; M18 closed)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 67
+NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 70
+ADVISORY_ADVICE_SEQ: 68 (advisory_advice.md seq 68 — M19 Axis 1 done; Axis 2 scope needed)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
 ---
@@ -613,10 +613,35 @@ PASS. 모든 acceptance criteria 충족. M18 Axes 1–3 완료. 커밋 완료 (0
 | M18 Axis 2 SQL recurrence + server wiring | aa5133c |
 | **M18 Axis 3 global candidate UI** | **01167e6** |
 | **Milestone 18** | **All 3 axes complete** |
+| M19 Axis 1 preference evidence persistence | 5fecc47 |
+
+---
+
+## Round 20 Claim: M19 Axis 1 — Preference Evidence Persistence
+
+**Work**: `work/4/23/2026-04-23-m19-axis1-preference-evidence.md`
+**Commit**: 5fecc47
+
+### Summary
+
+JSON/SQLite `record_reviewed_candidate_preference`에 `original_snippet`/`corrected_snippet` 파라미터 추가. `promote_from_corrections`/`_refresh_evidence`가 `_first_correction_snippets()` helper로 snippet 추출. `aggregate.py` session-local/global ACCEPT 경로에서 correction snippet 추출 후 전달. `PreferenceRecord` 타입에 snippet 필드 추가. `PreferencePanel`에 `상세 보기`/`접기` 토글 + 원문/교정 비교 블록.
+
+### Checks Run
+
+- `python3 -m py_compile storage/preference_store.py storage/sqlite_store.py app/handlers/aggregate.py` → **OK**
+- `python3 -m unittest tests.test_preference_store tests.test_sqlite_store -v` → **43 tests OK** (신규 3개 포함)
+- `cd app/frontend && npx tsc --noEmit` → **OK**
+- `git diff --check` → **OK**
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족. 커밋 완료 (5fecc47).
+
+---
 
 ## Risks / Open Questions
 
 1. **PR #31 merge pending**: operator decision. Local work continues.
-2. **M19 undefined**: M18 closed. Next milestone scope needs advisory.
-3. **JSON→SQLite migration not run**: 8,029 correction files not yet migrated; sqlite backend accumulates new corrections only.
-4. **Global candidate accept has no stale guard**: global review items skip `record_candidate_review_for_message`; reject/defer only logs to task_logger without message-level audit.
+2. **M19 Axis 2 scope undefined**: advisory needed for "Discovery Integrity (Duplicate/Conflict guards for global candidates)."
+3. **PreferencePanel snippet toggle not Playwright-tested**: TypeScript compile verifies the toggle; browser interaction not smoke-tested this slice.
+4. **JSON→SQLite migration not run**: 8,029 correction files not yet migrated.

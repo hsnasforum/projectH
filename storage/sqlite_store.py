@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from core.contracts import CandidateFamily, CorrectionStatus
+from core.contracts import CandidateFamily, CorrectionStatus, PreferenceStatus
 
 try:
     from storage.preference_store import (
@@ -514,6 +514,7 @@ class SQLitePreferenceStore:
         avg_similarity_score: float | None = None,
         original_snippet: str | None = None,
         corrected_snippet: str | None = None,
+        status: str | None = None,
     ) -> dict[str, Any]:
         """Persist one local preference candidate from an accepted reviewed candidate."""
         row = self._db.fetchone(
@@ -550,6 +551,10 @@ class SQLitePreferenceStore:
                 data["original_snippet"] = original_snippet
             if corrected_snippet is not None:
                 data["corrected_snippet"] = corrected_snippet
+            if status is not None and data.get("status") != status:
+                data["status"] = status
+                if status == PreferenceStatus.REJECTED:
+                    data["rejected_at"] = now
             data["updated_at"] = now
             self._auto_activate_candidate_if_ready(data, now)
             blob = json.dumps(data, ensure_ascii=False, default=str)
@@ -580,10 +585,10 @@ class SQLitePreferenceStore:
             "original_snippet": original_snippet,
             "corrected_snippet": corrected_snippet,
             "delta_summary": {},
-            "status": "candidate",
+            "status": status if status is not None else "candidate",
             "activated_at": None,
             "paused_at": None,
-            "rejected_at": None,
+            "rejected_at": now if status == PreferenceStatus.REJECTED else None,
             "created_at": now,
             "updated_at": now,
         }

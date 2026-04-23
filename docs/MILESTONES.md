@@ -615,8 +615,9 @@
 
 ### Milestone 21: Personalization Maturity and Release Bundle
 
-#### Shipped Infrastructure (Axis 1, 2026-04-23)
+#### Shipped Infrastructure (Axes 1-2, 2026-04-23)
 - Axis 1 (seq 87): SQLite correction lifecycle parity — `SQLiteCorrectionStore` now implements `confirm_correction`, `promote_correction`, `activate_correction`, `stop_correction` matching JSON `CorrectionStore` contract; 5 new unit tests cover status column and `data` JSON blob updates plus missing-id behavior
+- Axis 2 (seq 90): durable global reject persistence — `record_reviewed_candidate_preference` accepts optional `status=` parameter; global reject path in `submit_candidate_review` records REJECTED preference, permanently silencing the fingerprint via existing `_build_review_queue_items` dedup
 
 ## Next 3 Implementation Priorities
 

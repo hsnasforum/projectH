@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from time import sleep
 
+from core.contracts import PreferenceStatus
 from storage.sqlite_store import (
     SQLiteCorrectionStore,
     SQLiteDatabase,
@@ -237,6 +238,24 @@ class TestSQLitePreferenceStoreAutoActivation(unittest.TestCase):
         stored = self.store.get(created["preference_id"])
         self.assertIsNotNone(stored)
         self.assertEqual(stored["avg_similarity_score"], 0.3)
+
+    def test_sqlite_record_reviewed_candidate_rejected_status(self) -> None:
+        result = self.store.record_reviewed_candidate_preference(
+            delta_fingerprint="sha256:test-sqlite-reject",
+            candidate_family="correction_rewrite",
+            description="SQLite 거절 테스트",
+            source_refs={
+                "candidate_id": "global:sha256:test-sqlite-reject",
+                "source_message_id": "global",
+            },
+            status=PreferenceStatus.REJECTED,
+        )
+
+        self.assertEqual(result["status"], PreferenceStatus.REJECTED)
+        self.assertIsNotNone(result["rejected_at"])
+        fetched = self.store.get(result["preference_id"])
+        self.assertIsNotNone(fetched)
+        self.assertEqual(fetched["status"], PreferenceStatus.REJECTED)
 
 
 class TestSQLiteCorrectionStore(unittest.TestCase):

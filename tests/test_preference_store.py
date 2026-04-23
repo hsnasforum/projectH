@@ -386,6 +386,26 @@ class PreferenceStoreTest(unittest.TestCase):
             all_prefs = pref.list_all()
             self.assertEqual(len(all_prefs), 1)
 
+    def test_record_reviewed_candidate_preference_with_rejected_status(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, _ = self._make_stores(tmp)
+            result = pref.record_reviewed_candidate_preference(
+                delta_fingerprint="sha256:test-reject-fp",
+                candidate_family="correction_rewrite",
+                description="거절 테스트 선호",
+                source_refs={
+                    "candidate_id": "global:sha256:test-reject-fp",
+                    "source_message_id": "global",
+                },
+                status=PreferenceStatus.REJECTED,
+            )
+
+            self.assertEqual(result["status"], PreferenceStatus.REJECTED)
+            self.assertIsNotNone(result["rejected_at"])
+            fetched = pref.find_by_fingerprint("sha256:test-reject-fp")
+            self.assertIsNotNone(fetched)
+            self.assertEqual(fetched["status"], PreferenceStatus.REJECTED)
+
     def test_record_reviewed_candidate_stores_avg_similarity_score(self) -> None:
         with TemporaryDirectory() as tmp:
             pref, _ = self._make_stores(tmp)

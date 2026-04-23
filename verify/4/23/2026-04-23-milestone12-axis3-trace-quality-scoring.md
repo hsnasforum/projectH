@@ -1,13 +1,12 @@
 STATUS: verified
-CONTROL_SEQ: 22
+CONTROL_SEQ: 25
 BASED_ON_WORK:
-  - work/4/23/2026-04-23-pr-merge-backlog-continuation.md
-  - work/4/23/2026-04-23-m13-axis6-auto-activation.md
-HANDOFF_SHA: bb62ae5 (dirty tree; pr-merge-backlog-continuation changes uncommitted)
+  - work/4/23/2026-04-23-m14-axis1-sqlite-parity.md
+HANDOFF_SHA: 3637dee
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 19
-NEXT_CONTROL: .pipeline/implement_handoff.md CONTROL_SEQ 24
-ADVISORY_ADVICE_SEQ: 23 (advisory_advice.md advice_ready — M14 Axis 1: SQLitePreferenceStore auto-activation parity)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 22
+NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 25
+ADVISORY_ADVICE_SEQ: 23 (advisory_advice.md seq 23 — M14 Axis 2 pre-empted by CONTROL_SEQ 16; advisory re-open for M14 Axis 2/3 definition)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
 ---
@@ -62,18 +61,50 @@ PASS. JSON-backend preference store auto-activation 구현 및 테스트 검증 
 
 ---
 
+---
+
+## Round 3 Claim: M14 Axis 1 — SQLitePreferenceStore auto-activation parity
+
+**Work**: `work/4/23/2026-04-23-m14-axis1-sqlite-parity.md`
+**Commit**: 3637dee
+
+### Summary
+
+`SQLitePreferenceStore.record_reviewed_candidate_preference()`가 새 `source_refs.candidate_id`가 추가될 때 `cross_session_count`를 1 증가시키고, `_auto_activate_candidate_if_ready()`를 통해 `cross_session_count >= 3`인 `CANDIDATE` preference를 `ACTIVE`로 자동 승격. `ACTIVE`, `REJECTED`, `PAUSED` 상태는 가드. `AUTO_ACTIVATE_CROSS_SESSION_THRESHOLD`를 `storage.preference_store`에서 import (실패 시 로컬 fallback 3). 4개 신규 테스트 추가. MILESTONES.md에 M14 정의 및 Axis 1 shipped 기록.
+
+### Checks Run
+
+- `python3 -m py_compile storage/sqlite_store.py` → **OK**
+- `python3 -m unittest tests.test_sqlite_store -v` → **5 tests OK** (기존 adoption list 1개 + 신규 auto-activation 4개)
+- `git diff --check -- storage/sqlite_store.py tests/test_sqlite_store.py docs/MILESTONES.md` → **OK**
+
+### Checks Not Run
+
+- 전체 test suite / Playwright — storage-layer only change, browser-visible contract 미변경
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족. 커밋 완료 (3637dee).
+
+### Doc-Sync Gap Detected
+
+Advisory seq 23 추천 M14 Axis 2 = "PreferencePanel reliability stats frontend" — 그러나 CONTROL_SEQ 16 (ebd82cb)에서 이미 구현 완료. MILESTONES.md M13 Axis 5 항목은 여전히 "frontend display deferred" 표기. M14 Axis 2 재정의 및 M13 Axis 5b doc-sync gap 해소가 필요; advisory 재요청으로 처리.
+
+---
+
 ## Current Shipped Truth
 
 | Item | Status |
 |---|---|
 | PR #30 (feat/watcher-turn-state → main) | MERGED (2026-04-23T07:37:03Z) |
-| M13 Axes 1–6 (JSON backend) | Shipped, all tests pass |
-| pr_merge_gate backlog triage | Shipped (uncommitted in dirty tree) |
-| SQLitePreferenceStore auto-activation | Gap — not in scope of seq 21 |
-| Dirty tree (pr-merge-backlog-continuation files) | Uncommitted; needs commit before next implement slice |
+| M13 Axes 1–6 (JSON backend + M13 Axis 5b frontend) | Shipped, all tests pass |
+| pr_merge_gate backlog triage | Committed (4e03ccd) |
+| M14 Axis 1 SQLitePreferenceStore auto-activation parity | Committed (3637dee) |
+| MILESTONES.md M13 Axis 5 doc-sync gap | Open — "frontend display deferred" 표기 but CONTROL_SEQ 16 (ebd82cb) shipped frontend |
+| M14 Axis 2 definition | Pending advisory re-arbitration |
 
 ## Risks / Open Questions
 
-1. **Dirty tree uncommitted**: `pipeline_runtime/operator_autonomy.py`, `automation_health.py`, `watcher_prompt_assembly.py`, related tests, doc files — verify lane 커밋 필요.
-2. **SQLitePreferenceStore gap**: auto-activation 규칙이 SQLite backend에 없음. M14 스코프 또는 유지보수 backlog 여부 미결.
-3. **M14 미정의**: MILESTONES.md에 M14 항목 없음. M13 완료 후 다음 milestone 스코프를 advisory에서 결정 필요.
+1. **MILESTONES.md M13 Axis 5b gap**: `ebd82cb` (CONTROL_SEQ 16) shipped PreferencePanel reliability stats frontend but MILESTONES.md M13 Axis 5 still shows "frontend display deferred". Advisory seq 23 recommended M14 Axis 2 = this frontend, but it's already done.
+2. **M14 Axis 2 re-definition**: Advisory seq 23 M14 Axis 2 pre-empted. Next M14 Axis 2 slice needs advisory arbitration — likely doc-sync bundle (M13 Axis 5b) + M14 Axis 3 (Trace Quality Scoring in review queue UI).
+3. **Branch not pushed**: 2 new commits (4e03ccd, 3637dee) on `feat/watcher-turn-state`, 2 ahead of origin. PR creation/push stays in operator backlog.

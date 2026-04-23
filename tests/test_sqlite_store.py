@@ -290,12 +290,16 @@ class TestSQLiteCorrectionStore(unittest.TestCase):
         method_name: str,
         expected_status: str,
         timestamp_field: str,
+        prerequisite_methods: tuple[str, ...] = (),
     ) -> None:
         record = self._record(
             artifact_id=f"artifact-{method_name}",
             session_id=f"session-{method_name}",
             source_message_id=f"message-{method_name}",
         )
+        for prerequisite in prerequisite_methods:
+            updated = getattr(self.store, prerequisite)(record["correction_id"])
+            self.assertIsNotNone(updated)
         sleep(0.001)
 
         updated = getattr(self.store, method_name)(record["correction_id"])
@@ -350,6 +354,7 @@ class TestSQLiteCorrectionStore(unittest.TestCase):
             "promote_correction",
             "promoted",
             "promoted_at",
+            ("confirm_correction",),
         )
 
     def test_sqlite_activate_correction_updates_status(self) -> None:
@@ -357,6 +362,7 @@ class TestSQLiteCorrectionStore(unittest.TestCase):
             "activate_correction",
             "active",
             "activated_at",
+            ("confirm_correction", "promote_correction"),
         )
 
     def test_sqlite_stop_correction_updates_status(self) -> None:
@@ -364,12 +370,70 @@ class TestSQLiteCorrectionStore(unittest.TestCase):
             "stop_correction",
             "stopped",
             "stopped_at",
+            ("confirm_correction", "promote_correction", "activate_correction"),
         )
 
     def test_sqlite_transition_returns_none_for_missing_id(self) -> None:
         self.assertIsNone(
             self.store._transition("correction-missing", "confirmed", "confirmed_at")
         )
+
+    def test_transition_guard_rejects_out_of_order(self) -> None:
+        correction = self._record(
+            artifact_id="artifact-guard-1",
+            session_id="session-guard-1",
+            source_message_id="message-guard-1",
+        )
+
+        result = self.store.activate_correction(correction["correction_id"])
+
+        self.assertIsNone(result)
+        row = self.store.get(correction["correction_id"])
+        self.assertIsNotNone(row)
+        self.assertEqual(row["status"], "recorded")
+
+    def test_transition_guard_rejects_from_stopped(self) -> None:
+        correction = self._record(
+            artifact_id="artifact-guard-2",
+            session_id="session-guard-2",
+            source_message_id="message-guard-2",
+        )
+        correction_id = correction["correction_id"]
+        self.assertIsNotNone(self.store.confirm_correction(correction_id))
+        self.assertIsNotNone(self.store.promote_correction(correction_id))
+        self.assertIsNotNone(self.store.activate_correction(correction_id))
+        self.assertIsNotNone(self.store.stop_correction(correction_id))
+
+        result = self.store.confirm_correction(correction_id)
+
+        self.assertIsNone(result)
+        row = self.store.get(correction_id)
+        self.assertIsNotNone(row)
+        self.assertEqual(row["status"], "stopped")
+
+    def test_transition_guard_allows_valid_chain(self) -> None:
+        correction = self._record(
+            artifact_id="artifact-guard-3",
+            session_id="session-guard-3",
+            source_message_id="message-guard-3",
+        )
+        correction_id = correction["correction_id"]
+
+        confirmed = self.store.confirm_correction(correction_id)
+        self.assertIsNotNone(confirmed)
+        self.assertEqual(confirmed["status"], "confirmed")
+
+        promoted = self.store.promote_correction(correction_id)
+        self.assertIsNotNone(promoted)
+        self.assertEqual(promoted["status"], "promoted")
+
+        active = self.store.activate_correction(correction_id)
+        self.assertIsNotNone(active)
+        self.assertEqual(active["status"], "active")
+
+        stopped = self.store.stop_correction(correction_id)
+        self.assertIsNotNone(stopped)
+        self.assertEqual(stopped["status"], "stopped")
 
     def test_record_idempotent_for_same_artifact_source_fingerprint(self) -> None:
         first = self._record(

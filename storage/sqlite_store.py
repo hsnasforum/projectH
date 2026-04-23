@@ -17,7 +17,12 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from core.contracts import CandidateFamily, CorrectionStatus, PreferenceStatus
+from core.contracts import (
+    CandidateFamily,
+    CORRECTION_STATUS_TRANSITIONS,
+    CorrectionStatus,
+    PreferenceStatus,
+)
 
 try:
     from storage.preference_store import (
@@ -845,6 +850,10 @@ class SQLiteCorrectionStore:
             if not row:
                 return None
             record = self._row_to_dict(row)
+            current_status = record.get("status")
+            allowed = CORRECTION_STATUS_TRANSITIONS.get(current_status, ())
+            if status not in allowed:
+                return None
             now = _now_iso()
             record["status"] = status
             record[timestamp_field] = now

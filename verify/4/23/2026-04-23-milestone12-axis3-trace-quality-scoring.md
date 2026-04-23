@@ -1,13 +1,14 @@
 STATUS: verified
-CONTROL_SEQ: 88
+CONTROL_SEQ: 91
 BASED_ON_WORK:
   - work/4/23/2026-04-23-m20-axis2-conflict-detection.md
   - work/4/23/2026-04-23-m20-axis3-smoke-test-fix.md
   - work/4/23/2026-04-23-m21-axis1-sqlite-correction-lifecycle.md
-HANDOFF_SHA: bce09ac
+  - work/4/23/2026-04-23-m21-axis2-durable-global-reject.md
+HANDOFF_SHA: 9538dd5
 VERIFIED_BY: Claude
 SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 79
-NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 88
+NEXT_CONTROL: .pipeline/operator_request.md CONTROL_SEQ 91
 ADVISORY_ADVICE_SEQ: 80 (advisory_advice.md seq 80 — M20 Axis 2 done; Axis 3 = smoke gate + release)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
@@ -833,6 +834,45 @@ PASS. 모든 acceptance criteria 충족. 커밋 완료 (bce09ac).
 
 ---
 
+---
+
+## Round 28 Claim: M21 Axis 2 — Durable Global Reject Persistence
+
+**Work**: `work/4/23/2026-04-23-m21-axis2-durable-global-reject.md`
+**Commit**: 9538dd5
+
+### Summary
+
+`record_reviewed_candidate_preference()`에 optional `status=` 파라미터 추가 (JSON + SQLite 양쪽). 신규 레코드 생성 시 `status`로 override, 기존 레코드 갱신 시에도 status + rejected_at 업데이트. `aggregate.py` global path에 `elif review_action == REJECT` 분기 추가 — fingerprint를 REJECTED preference로 기록하여 `_build_review_queue_items`의 기존 dedup이 해당 fingerprint를 영구 제외. 테스트 2개 추가 (JSON store + SQLite store 각 1개).
+
+### Checks Run (verify lane rerun)
+
+- `python3 -m py_compile storage/preference_store.py storage/sqlite_store.py app/handlers/aggregate.py` → **OK**
+- `python3 -m unittest tests.test_preference_store -v` → **29 tests OK** (기존 28 + 신규 1)
+- `python3 -m unittest tests.test_sqlite_store -v` → **26 tests OK** (기존 25 + 신규 1)
+- `git diff --check -- storage/preference_store.py storage/sqlite_store.py app/handlers/aggregate.py docs/MILESTONES.md` → **OK**
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족. 커밋 완료 (9538dd5).
+
+---
+
+## Round 29 Claim: M21 Axis 3 — Release Gate (verify lane smoke run)
+
+**Work**: M21 Axis 3 full smoke gate 실행 (M21 Axis 1+2가 순수 backend 변경이므로 verify 라운드에서 직접 실행)
+**Run**: `make e2e-test` → **142 passed (8.3m)**
+
+### Checks Run
+
+- `make e2e-test` (full suite) → **142 passed (8.3m)** ← M21 Axis 3 release gate PASS
+
+### Verdict
+
+PASS. Milestone 21 전체 (Axes 1–3) 완료. 전수 142 passed.
+
+---
+
 ## Current Shipped Truth
 
 | Item | SHA |
@@ -843,12 +883,14 @@ PASS. 모든 acceptance criteria 충족. 커밋 완료 (bce09ac).
 | M20 Axis 3 smoke gate fix + full suite PASS | dbe58af |
 | **Milestone 20** | **All 3 axes complete — 142 passed (7.5m)** |
 | M21 Axis 1 SQLite correction lifecycle parity | bce09ac |
-| Branch vs origin | ahead (PR #31 merge pending) |
+| M21 Axis 2 Durable global reject persistence | 9538dd5 |
+| M21 Axis 3 smoke gate PASS | 142 passed (8.3m) |
+| **Milestone 21** | **All 3 axes complete** |
+| Branch vs origin | ahead (PR #31 merge pending; push + new PR for M18–M21 bundle needed) |
 
 ## Risks / Open Questions
 
-1. **PR #31 merge pending**: operator decision. M18–M20 + M21 Axis 1 변경도 동일 브랜치에 누적됨.
-2. **M21 Axis 2 scope needs advisory**: "Durable Global Reject Persistence" — 전역 거절된 candidate 재표시 방지 메커니즘. 저장 위치(preference store, correction store, 별도 store), API contract, 테스트 범위가 미정. advisory_request CONTROL_SEQ 88로 scope 정의 필요.
-3. **Correction lifecycle 순서 검증 없음**: `_transition()`은 상태 순서 강제 없음(JSON store와 동일). 잘못된 전이 방지는 M21 Axis 1 범위 밖.
-4. **Global candidate test isolation**: convention comment + session-local helper로 현재 케이스 커버. 장기 temp DB per run 격리는 미구현.
-5. **SQLite startup migration 지연**: 8,029+ JSON 파일 migration 미측정. try/except 가드로 서버 시작 치명 아님.
+1. **PR #31 merge pending + M18–M21 push needed**: operator decision. PR #31 (M13 Axis 6–M17 Axis 3) 대기 중. M18–M21 커밋들을 push하고 새 PR 또는 PR #31 갱신 후 merge 필요. CLAUDE.md 정책: "older draft PR 안정 유지, new bundle을 stacked child branch/PR로 publish".
+2. **Global reject browser coverage 미완**: `record_reviewed_candidate_preference(status=REJECTED)` 경로의 Playwright 테스트 없음 (M21 Axis 2 boundary 기준 deferred). 필요 시 별도 slice.
+3. **Correction lifecycle 순서 검증 없음**: `_transition()`은 상태 순서 강제 없음. 잘못된 전이 방지는 현재 범위 밖.
+4. **Global candidate test isolation**: convention comment + session-local helper로 현재 케이스 커버. temp DB per run 격리는 미구현.

@@ -4511,6 +4511,19 @@ class SerializerMixin:
                 str(item.get("derived_from", {}).get("normalized_delta_fingerprint") or "")
                 for item in review_queue_items
             }
+            try:
+                pref_descriptions: set[str] = set()
+                for pref in self.preference_store.list_all(limit=200):
+                    desc = str(pref.get("description") or "").strip().lower()
+                    if desc:
+                        pref_descriptions.add(desc)
+            except Exception:
+                pref_descriptions = set()
+            session_local_statements = {
+                str(item.get("statement") or "").strip().lower()
+                for item in review_queue_items
+                if str(item.get("statement") or "").strip()
+            }
             find_preference_by_fingerprint = getattr(self.preference_store, "find_by_fingerprint", None)
             list_preferences = getattr(self.preference_store, "list_all", None)
             for pattern in recurring:
@@ -4544,6 +4557,27 @@ class SerializerMixin:
                 )
                 first_replacement = replacements[0] if replacements and isinstance(replacements[0], dict) else {}
                 statement = str(first_replacement.get("to") or "").strip() or fp[:60]
+                statement_key = str(statement or "").strip().lower()
+                if statement_key and (
+                    statement_key in pref_descriptions
+                    or statement_key in session_local_statements
+                ):
+                    continue
+                corr_scores = [
+                    float(correction["similarity_score"])
+                    for correction in corrections
+                    if isinstance(correction, dict)
+                    and isinstance(correction.get("similarity_score"), (int, float))
+                ]
+                avg_score = round(sum(corr_scores) / len(corr_scores), 4) if corr_scores else None
+                quality_info = {
+                    "avg_similarity_score": avg_score,
+                    "is_high_quality": (
+                        is_high_quality(avg_score)
+                        if avg_score is not None
+                        else None
+                    ),
+                }
                 review_queue_items.append({
                     "item_type": "global_candidate",
                     "candidate_id": f"global:{fp}",
@@ -4566,7 +4600,7 @@ class SerializerMixin:
                     "supporting_confirmation_refs": [],
                     "created_at": pattern.get("first_seen_at", ""),
                     "updated_at": pattern.get("last_seen_at", ""),
-                    "quality_info": None,
+                    "quality_info": quality_info,
                     "delta_summary": delta_summary,
                     "original_snippet": (
                         str(first_correction.get("original_text") or "")[:400] or None

@@ -151,7 +151,8 @@ class AggregateHandlerMixin:
                     if replacements and isinstance(replacements[0], dict)
                     else {}
                 )
-                description = str(first_replacement.get("to") or "").strip() or fingerprint[:60]
+                default_description = str(first_replacement.get("to") or "").strip() or fingerprint[:60]
+                description = str(statement_override or default_description)
                 self.preference_store.record_reviewed_candidate_preference(
                     delta_fingerprint=fingerprint,
                     candidate_family=str(first_correction.get("pattern_family") or CandidateFamily.CORRECTION_REWRITE),

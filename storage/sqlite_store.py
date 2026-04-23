@@ -767,7 +767,7 @@ class SQLiteCorrectionStore:
         else:
             fp_rows = self._db.fetchall(
                 "SELECT delta_fingerprint FROM corrections "
-                "GROUP BY delta_fingerprint HAVING COUNT(*) >= 2"
+                "GROUP BY delta_fingerprint HAVING COUNT(DISTINCT session_id) >= 2"
             )
 
         patterns: list[dict[str, Any]] = []

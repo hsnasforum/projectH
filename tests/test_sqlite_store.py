@@ -385,6 +385,28 @@ class TestSQLiteCorrectionStore(unittest.TestCase):
         self.assertEqual(s1_patterns[0]["recurrence_count"], 2)
         self.assertEqual(len(s2_patterns), 0)
 
+    def test_find_recurring_patterns_requires_distinct_sessions(self) -> None:
+        self._record(
+            artifact_id="art1",
+            session_id="same-session",
+            source_message_id="m1",
+            original_text="hello world",
+            corrected_text="hello there",
+        )
+        self._record(
+            artifact_id="art2",
+            session_id="same-session",
+            source_message_id="m2",
+            original_text="hello world",
+            corrected_text="hello there",
+        )
+
+        global_patterns = self.store.find_recurring_patterns()
+        session_patterns = self.store.find_recurring_patterns(session_id="same-session")
+
+        self.assertEqual(len(global_patterns), 0)
+        self.assertEqual(len(session_patterns), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

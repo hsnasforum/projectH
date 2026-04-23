@@ -678,11 +678,24 @@
 
 - **Milestone 25 closed** (Axes 1–2): preference lifecycle audit endpoint, compact summary UI, and release gate complete
 
+### Milestone 26: Global Candidate E2E Test Isolation
+
+#### Guardrails
+- production server startup path is unchanged; isolation is Playwright config only
+- `data/notes/` and `data/web-search/` stay at repo defaults (same as `playwright.sqlite.config.mjs` convention)
+- within a run, test-level fixture uniqueness conventions still apply (no per-test DB reset)
+
+#### Shipped Infrastructure (Axes 1-2, 2026-04-24)
+- Axis 1 (seq 104): `playwright.config.mjs` now uses `fs.mkdtempSync()` to create a fresh SQLite DB per run via `LOCAL_AI_SQLITE_DB_PATH`; mirrors the pattern already in `playwright.sqlite.config.mjs`
+- Axis 2 (seq 105, verify lane): release gate — full `make e2e-test` confirmed **143 passed (6.5m)** with fresh-DB isolation; faster than prior runs (10.7m) due to empty DB at start
+
+- **Milestone 26 closed** (Axes 1–2): global candidate E2E test isolation complete; both default and SQLite Playwright configs now use per-run fresh SQLite DB
+
 ## Next 3 Implementation Priorities
 
-1. **Global candidate E2E test isolation**: cross-session fingerprint collisions in smoke tests are currently prevented by fixture-level uniqueness conventions. A temp-DB-per-test-run isolation mechanism would eliminate this class of flakiness permanently.
-2. **PR #32 merge**: feat/watcher-turn-state (M20 Axis 2 – M22 Axes 1–3) is open and awaiting operator merge approval. No local implementation work is blocked by this, but shipped features become part of main only after merge.
-3. **Next milestone direction**: M20–M23 closed the correction lifecycle, preference lifecycle, and global-candidate review loop. The next milestone should be defined via advisory to choose between test infrastructure improvements, new user-facing features, or further storage consolidation.
+1. **PR #32 merge**: feat/watcher-turn-state (M20 Axis 2 – M26 Axes 1–2) is open and awaiting operator merge approval. All shipped milestones M20–M26 are included.
+2. **Next milestone direction**: M20–M26 closed correction lifecycle, preference lifecycle, global-candidate review, lifecycle observability, preference audit UI, and E2E isolation. The next milestone should be defined via advisory to choose between new user-facing features or further infrastructure work.
+3. **Advisory stability**: Gemini advisory has timed out 4+ times; consider operator-directed M27 scope if advisory remains unavailable.
 
 ## Do Not Pull Forward
 

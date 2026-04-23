@@ -1,12 +1,12 @@
 STATUS: verified
-CONTROL_SEQ: 64
+CONTROL_SEQ: 67
 BASED_ON_WORK:
-  - work/4/23/2026-04-23-m18-axis2-recurrence-wiring.md
-HANDOFF_SHA: aa5133c
+  - work/4/23/2026-04-23-m18-axis3-global-candidate-ui.md
+HANDOFF_SHA: 01167e6
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 61
-NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 64
-ADVISORY_ADVICE_SEQ: 62 (advisory_advice.md seq 62 — M18 Axis 2 done; Axis 3 scope needed)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 64
+NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 67
+ADVISORY_ADVICE_SEQ: 65 (advisory_advice.md seq 65 — M18 Axis 3 done; M18 closed)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
 ---
@@ -579,6 +579,30 @@ PASS. 모든 acceptance criteria 충족. 커밋 완료 (aa5133c).
 
 ---
 
+---
+
+## Round 19 Claim: M18 Axis 3 — Global Candidate Review UI
+
+**Work**: `work/4/23/2026-04-23-m18-axis3-global-candidate-ui.md`
+**Commit**: 01167e6
+
+### Summary
+
+`_build_review_queue_items`가 session-local 후보에 `is_global: False` 추가, `find_recurring_patterns()` 기반 global 후보를 `global_candidate` 아이템으로 추가 (try/except best-effort). `aggregate.py` `source_message_id=="global"` 조기 분기 → `record_reviewed_candidate_preference()` 직접 호출. `ReviewQueuePanel` `범용` 배지. TypeScript 타입 추가. 5개 quality-info smoke 통과.
+
+### Checks Run
+
+- `python3 -m py_compile app/serializers.py app/handlers/aggregate.py` → **OK**
+- `cd app/frontend && npx tsc --noEmit` → **OK**
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "quality-info" --reporter=line` → **5 passed (2.5m)**
+- `git diff --check` → **OK**
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족. M18 Axes 1–3 완료. 커밋 완료 (01167e6).
+
+---
+
 ## Current Shipped Truth
 
 | Item | SHA |
@@ -587,9 +611,12 @@ PASS. 모든 acceptance criteria 충족. 커밋 완료 (aa5133c).
 | PR #31 (feat/watcher-turn-state → main) | OPEN draft — operator merge pending |
 | M18 Axis 1 SQLiteCorrectionStore | 05195d4 |
 | M18 Axis 2 SQL recurrence + server wiring | aa5133c |
+| **M18 Axis 3 global candidate UI** | **01167e6** |
+| **Milestone 18** | **All 3 axes complete** |
 
 ## Risks / Open Questions
 
 1. **PR #31 merge pending**: operator decision. Local work continues.
-2. **M18 Axis 3 scope undefined**: advisory needed for "Review Queue Integration for Global Candidates."
-3. **Large JSON→SQLite migration not run**: 8,029 correction files not migrated yet; sqlite backend accumulates new corrections only.
+2. **M19 undefined**: M18 closed. Next milestone scope needs advisory.
+3. **JSON→SQLite migration not run**: 8,029 correction files not yet migrated; sqlite backend accumulates new corrections only.
+4. **Global candidate accept has no stale guard**: global review items skip `record_candidate_review_for_message`; reject/defer only logs to task_logger without message-level audit.

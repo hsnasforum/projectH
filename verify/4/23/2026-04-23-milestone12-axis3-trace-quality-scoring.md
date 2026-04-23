@@ -1,12 +1,12 @@
 STATUS: verified
-CONTROL_SEQ: 73
+CONTROL_SEQ: 76
 BASED_ON_WORK:
-  - work/4/23/2026-04-23-m19-axis2-discovery-integrity.md
-HANDOFF_SHA: 4f15c96
+  - work/4/23/2026-04-23-m19-axis3-preference-editing.md
+HANDOFF_SHA: 21eb13e
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 70
-NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 73
-ADVISORY_ADVICE_SEQ: 71 (advisory_advice.md seq 71 — M19 Axis 2 done; Axis 3 scope needed)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 73
+NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 76
+ADVISORY_ADVICE_SEQ: 74 (advisory_advice.md seq 74 — M19 Axis 3 done; M19 closed)
 PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
 
 ---
@@ -662,6 +662,30 @@ PASS. 모든 acceptance criteria 충족. 커밋 완료 (4f15c96).
 
 ---
 
+---
+
+## Round 22 Claim: M19 Axis 3 — Durable Preference Editing
+
+**Work**: `work/4/23/2026-04-23-m19-axis3-preference-editing.md`
+**Commit**: 21eb13e
+
+### Summary
+
+JSON/SQLite `update_description(preference_id, description)` 추가. `POST /api/preferences/update-description` 엔드포인트 wiring. `updatePreferenceDescription()` frontend API. `PreferencePanel.tsx` 인라인 편집 모드(편집/textarea/저장/취소). 47개 테스트 통과.
+
+### Checks Run
+
+- `python3 -m py_compile storage/preference_store.py storage/sqlite_store.py app/handlers/preferences.py app/web.py` → **OK**
+- `python3 -m unittest tests.test_preference_store tests.test_sqlite_store -v` → **47 tests OK** (신규 3개 포함)
+- `cd app/frontend && npx tsc --noEmit` → **OK**
+- `git diff --check` → **OK**
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족. M19 Axes 1–3 완료. 커밋 완료 (21eb13e).
+
+---
+
 ## Current Shipped Truth
 
 | Item | SHA |
@@ -669,10 +693,12 @@ PASS. 모든 acceptance criteria 충족. 커밋 완료 (4f15c96).
 | M18 Axes 1–3 | 05195d4, aa5133c, 01167e6 |
 | M19 Axis 1 preference evidence | 5fecc47 |
 | M19 Axis 2 discovery integrity | 4f15c96 |
+| **M19 Axis 3 preference editing** | **21eb13e** |
+| **Milestone 19** | **All 3 axes complete** |
 
 ## Risks / Open Questions
 
 1. **PR #31 merge pending**: operator decision. Local work continues.
-2. **M19 Axis 3 scope undefined**: advisory needed for "Post-Learning Refinement (Inline description editing in PreferencePanel)."
+2. **M20 undefined**: M19 closed. Next milestone scope advisory needed.
 3. **JSON→SQLite migration not run**: 8,029 correction files not yet migrated.
-4. **PreferencePanel snippet toggle not Playwright-tested**: TypeScript compile only.
+4. **Preference edit/snippet browser interaction not Playwright-tested**: TypeScript compile only for both M19 Axis 1 and 3 frontend changes.

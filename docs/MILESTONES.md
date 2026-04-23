@@ -601,6 +601,17 @@
 
 - **Milestone 19 closed** (Axes 1–3): evidence persistence, discovery integrity, and post-learning refinement complete
 
+### Milestone 20: Personalization Scaling and Conflict Integrity
+- transition the system into a production-ready, high-performance state
+- Axis 1, 2, 3 ordered: SQLite default + migration → conflict detection → release consolidation
+
+#### Guardrails
+- JSON backend preserved via `LOCAL_AI_STORAGE_BACKEND=json` env override
+- migration is idempotent (`INSERT OR IGNORE`); startup migration never blocks server
+
+#### Shipped Infrastructure (Axis 1, 2026-04-23)
+- Axis 1 (seq 78): SQLite default — `config/settings.py` default changed to `"sqlite"`; `app/web.py` sqlite branch conditionally runs `migrate_json_to_sqlite` for corrections on first startup; migration idempotency verified by test
+
 ## Next 3 Implementation Priorities
 
 1. Keep the shipped read-only `reviewed_memory_boundary_draft` draft-only and do not widen it into readiness tracking or cross-session scope. The rollback / disable / conflict / operator-audit contracts and the reviewed-memory apply path are now shipped; boundary draft stays separate from apply result.

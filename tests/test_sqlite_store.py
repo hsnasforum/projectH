@@ -1,3 +1,6 @@
+import json
+import os
+import tempfile
 import unittest
 from time import sleep
 
@@ -6,6 +9,7 @@ from storage.sqlite_store import (
     SQLiteDatabase,
     SQLitePreferenceStore,
     SQLiteSessionStore,
+    migrate_json_to_sqlite,
 )
 
 
@@ -48,6 +52,48 @@ class TestSQLiteSessionStoreAdoptionList(unittest.TestCase):
                     hasattr(SQLiteSessionStore, name),
                     f"SQLiteSessionStore is missing required method: {name}",
                 )
+
+
+class TestMigrationIntegrity(unittest.TestCase):
+    def test_migrate_corrections_insert_or_ignore_idempotent(self) -> None:
+        """migrate_json_to_sqlite can be run twice safely via INSERT OR IGNORE."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = os.path.join(tmp, "test.db")
+            corrections_dir = os.path.join(tmp, "corrections")
+            os.makedirs(corrections_dir)
+            correction = {
+                "correction_id": "correction-test001",
+                "artifact_id": "art1",
+                "session_id": "sess1",
+                "delta_fingerprint": "sha256:aaaa",
+                "status": "recorded",
+                "created_at": "2026-04-23T00:00:00+00:00",
+                "updated_at": "2026-04-23T00:00:00+00:00",
+            }
+            with open(
+                os.path.join(corrections_dir, "correction-test001.json"),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                json.dump(correction, f)
+
+            counts1 = migrate_json_to_sqlite(
+                corrections_dir=corrections_dir,
+                db_path=db_path,
+                sessions_dir=os.path.join(tmp, "sessions"),
+                artifacts_dir=os.path.join(tmp, "artifacts"),
+                preferences_dir=os.path.join(tmp, "preferences"),
+            )
+            self.assertEqual(counts1.get("corrections"), 1)
+
+            counts2 = migrate_json_to_sqlite(
+                corrections_dir=corrections_dir,
+                db_path=db_path,
+                sessions_dir=os.path.join(tmp, "sessions"),
+                artifacts_dir=os.path.join(tmp, "artifacts"),
+                preferences_dir=os.path.join(tmp, "preferences"),
+            )
+            self.assertEqual(counts2.get("corrections"), 0)
 
 
 class TestSQLitePreferenceStoreAutoActivation(unittest.TestCase):

@@ -839,16 +839,15 @@ class SQLiteCorrectionStore:
 
 def migrate_json_to_sqlite(
     *,
-    sessions_dir: str = "data/sessions",
-    artifacts_dir: str = "data/artifacts",
+    sessions_dir: str | None = "data/sessions",
+    artifacts_dir: str | None = "data/artifacts",
     corrections_dir: str = "data/corrections",
-    preferences_dir: str = "data/preferences",
+    preferences_dir: str | None = "data/preferences",
     db_path: str = "data/projecth.db",
 ) -> dict[str, int]:
     """Migrate JSON file stores to SQLite. Returns counts per table.
 
-    JSON CorrectionStore remains the active default until explicit wiring changes,
-    but existing correction JSON files are copied into the SQLite corrections table.
+    Pass None for an optional directory to skip that table family.
     """
     db = SQLiteDatabase(db_path)
     counts: dict[str, int] = {}
@@ -862,7 +861,7 @@ def migrate_json_to_sqlite(
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
                 now = data.get("created_at", _now_iso())
-                db.execute(
+                cursor = db.execute(
                     "INSERT OR IGNORE INTO corrections "
                     "(correction_id, artifact_id, session_id, delta_fingerprint, status, data, created_at, updated_at) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -877,7 +876,7 @@ def migrate_json_to_sqlite(
                         data.get("updated_at", now),
                     ),
                 )
-                count += 1
+                count += max(cursor.rowcount, 0)
             except Exception as exc:
                 errors.append(f"correction {f.name}: {exc}")
                 continue
@@ -885,9 +884,8 @@ def migrate_json_to_sqlite(
     counts["corrections"] = count
 
     # Sessions
-    sessions_path = Path(sessions_dir)
     count = 0
-    if sessions_path.is_dir():
+    if sessions_dir is not None and (sessions_path := Path(sessions_dir)).is_dir():
         for f in sessions_path.glob("*.json"):
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
@@ -901,9 +899,8 @@ def migrate_json_to_sqlite(
     counts["sessions"] = count
 
     # Artifacts
-    artifacts_path = Path(artifacts_dir)
     count = 0
-    if artifacts_path.is_dir():
+    if artifacts_dir is not None and (artifacts_path := Path(artifacts_dir)).is_dir():
         for f in artifacts_path.glob("*.json"):
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
@@ -920,9 +917,8 @@ def migrate_json_to_sqlite(
     counts["artifacts"] = count
 
     # Preferences
-    prefs_path = Path(preferences_dir)
     count = 0
-    if prefs_path.is_dir():
+    if preferences_dir is not None and (prefs_path := Path(preferences_dir)).is_dir():
         for f in prefs_path.glob("*.json"):
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))

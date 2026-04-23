@@ -57,6 +57,23 @@ class WebAppService(ChatHandlerMixin, AggregateHandlerMixin, FeedbackHandlerMixi
             self.artifact_store = SQLiteArtifactStore(db)  # type: ignore[assignment]
             self.preference_store = SQLitePreferenceStore(db)  # type: ignore[assignment]
             self.correction_store = SQLiteCorrectionStore(db)  # type: ignore[assignment]
+            try:
+                correction_count = db.fetchone(
+                    "SELECT COUNT(*) as cnt FROM corrections", ()
+                )
+                if (correction_count or {}).get("cnt", 0) == 0:
+                    corrections_path = Path(settings.corrections_dir)
+                    if corrections_path.is_dir() and any(corrections_path.glob("*.json")):
+                        from storage.sqlite_store import migrate_json_to_sqlite
+                        migrate_json_to_sqlite(
+                            corrections_dir=str(corrections_path),
+                            sessions_dir=None,
+                            artifacts_dir=None,
+                            preferences_dir=None,
+                            db_path=settings.sqlite_db_path,
+                        )
+            except Exception:
+                pass
         else:
             self.session_store = SessionStore(base_dir=settings.sessions_dir)
             self.task_logger = TaskLogger(path=settings.task_log_path)

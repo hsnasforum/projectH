@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from time import sleep
 
+from core.contracts import PreferenceStatus
 from storage.sqlite_store import (
     SQLiteCorrectionStore,
     SQLiteDatabase,
@@ -238,6 +239,24 @@ class TestSQLitePreferenceStoreAutoActivation(unittest.TestCase):
         self.assertIsNotNone(stored)
         self.assertEqual(stored["avg_similarity_score"], 0.3)
 
+    def test_sqlite_record_reviewed_candidate_rejected_status(self) -> None:
+        result = self.store.record_reviewed_candidate_preference(
+            delta_fingerprint="sha256:test-sqlite-reject",
+            candidate_family="correction_rewrite",
+            description="SQLite 거절 테스트",
+            source_refs={
+                "candidate_id": "global:sha256:test-sqlite-reject",
+                "source_message_id": "global",
+            },
+            status=PreferenceStatus.REJECTED,
+        )
+
+        self.assertEqual(result["status"], PreferenceStatus.REJECTED)
+        self.assertIsNotNone(result["rejected_at"])
+        fetched = self.store.get(result["preference_id"])
+        self.assertIsNotNone(fetched)
+        self.assertEqual(fetched["status"], PreferenceStatus.REJECTED)
+
 
 class TestSQLiteCorrectionStore(unittest.TestCase):
     def setUp(self) -> None:
@@ -266,6 +285,43 @@ class TestSQLiteCorrectionStore(unittest.TestCase):
         self.assertIsNotNone(record)
         return record
 
+    def _assert_lifecycle_transition(
+        self,
+        method_name: str,
+        expected_status: str,
+        timestamp_field: str,
+        prerequisite_methods: tuple[str, ...] = (),
+    ) -> None:
+        record = self._record(
+            artifact_id=f"artifact-{method_name}",
+            session_id=f"session-{method_name}",
+            source_message_id=f"message-{method_name}",
+        )
+        for prerequisite in prerequisite_methods:
+            updated = getattr(self.store, prerequisite)(record["correction_id"])
+            self.assertIsNotNone(updated)
+        sleep(0.001)
+
+        updated = getattr(self.store, method_name)(record["correction_id"])
+
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["status"], expected_status)
+        self.assertIsNotNone(updated[timestamp_field])
+        self.assertGreater(updated["updated_at"], record["updated_at"])
+        stored = self.store.get(record["correction_id"])
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["status"], expected_status)
+        self.assertEqual(stored[timestamp_field], updated[timestamp_field])
+        raw_row = self.db.fetchone(
+            "SELECT status, data FROM corrections WHERE correction_id = ?",
+            (record["correction_id"],),
+        )
+        self.assertIsNotNone(raw_row)
+        self.assertEqual(raw_row["status"], expected_status)
+        raw_data = json.loads(raw_row["data"])
+        self.assertEqual(raw_data["status"], expected_status)
+        self.assertEqual(raw_data[timestamp_field], updated[timestamp_field])
+
     def test_record_returns_none_for_identical_texts(self) -> None:
         record = self.store.record_correction(
             artifact_id="artifact-same",
@@ -285,6 +341,99 @@ class TestSQLiteCorrectionStore(unittest.TestCase):
         self.assertIsInstance(record["similarity_score"], float)
         self.assertEqual(record["original_text"], "alpha foo omega")
         self.assertEqual(record["corrected_text"], "alpha bar omega")
+
+    def test_sqlite_confirm_correction_updates_status(self) -> None:
+        self._assert_lifecycle_transition(
+            "confirm_correction",
+            "confirmed",
+            "confirmed_at",
+        )
+
+    def test_sqlite_promote_correction_updates_status(self) -> None:
+        self._assert_lifecycle_transition(
+            "promote_correction",
+            "promoted",
+            "promoted_at",
+            ("confirm_correction",),
+        )
+
+    def test_sqlite_activate_correction_updates_status(self) -> None:
+        self._assert_lifecycle_transition(
+            "activate_correction",
+            "active",
+            "activated_at",
+            ("confirm_correction", "promote_correction"),
+        )
+
+    def test_sqlite_stop_correction_updates_status(self) -> None:
+        self._assert_lifecycle_transition(
+            "stop_correction",
+            "stopped",
+            "stopped_at",
+            ("confirm_correction", "promote_correction", "activate_correction"),
+        )
+
+    def test_sqlite_transition_returns_none_for_missing_id(self) -> None:
+        self.assertIsNone(
+            self.store._transition("correction-missing", "confirmed", "confirmed_at")
+        )
+
+    def test_transition_guard_rejects_out_of_order(self) -> None:
+        correction = self._record(
+            artifact_id="artifact-guard-1",
+            session_id="session-guard-1",
+            source_message_id="message-guard-1",
+        )
+
+        result = self.store.activate_correction(correction["correction_id"])
+
+        self.assertIsNone(result)
+        row = self.store.get(correction["correction_id"])
+        self.assertIsNotNone(row)
+        self.assertEqual(row["status"], "recorded")
+
+    def test_transition_guard_rejects_from_stopped(self) -> None:
+        correction = self._record(
+            artifact_id="artifact-guard-2",
+            session_id="session-guard-2",
+            source_message_id="message-guard-2",
+        )
+        correction_id = correction["correction_id"]
+        self.assertIsNotNone(self.store.confirm_correction(correction_id))
+        self.assertIsNotNone(self.store.promote_correction(correction_id))
+        self.assertIsNotNone(self.store.activate_correction(correction_id))
+        self.assertIsNotNone(self.store.stop_correction(correction_id))
+
+        result = self.store.confirm_correction(correction_id)
+
+        self.assertIsNone(result)
+        row = self.store.get(correction_id)
+        self.assertIsNotNone(row)
+        self.assertEqual(row["status"], "stopped")
+
+    def test_transition_guard_allows_valid_chain(self) -> None:
+        correction = self._record(
+            artifact_id="artifact-guard-3",
+            session_id="session-guard-3",
+            source_message_id="message-guard-3",
+        )
+        correction_id = correction["correction_id"]
+
+        confirmed = self.store.confirm_correction(correction_id)
+        self.assertIsNotNone(confirmed)
+        self.assertEqual(confirmed["status"], "confirmed")
+
+        promoted = self.store.promote_correction(correction_id)
+        self.assertIsNotNone(promoted)
+        self.assertEqual(promoted["status"], "promoted")
+
+        active = self.store.activate_correction(correction_id)
+        self.assertIsNotNone(active)
+        self.assertEqual(active["status"], "active")
+
+        stopped = self.store.stop_correction(correction_id)
+        self.assertIsNotNone(stopped)
+        self.assertEqual(stopped["status"], "stopped")
 
     def test_record_idempotent_for_same_artifact_source_fingerprint(self) -> None:
         first = self._record(
@@ -385,6 +534,57 @@ class TestSQLiteCorrectionStore(unittest.TestCase):
         matches = self.store.list_recent(2)
 
         self.assertEqual(len(matches), 2)
+
+    def test_list_incomplete_corrections_returns_only_non_terminal_records(self) -> None:
+        recorded = self._record(
+            artifact_id="artifact-incomplete-recorded",
+            source_message_id="message-incomplete-recorded",
+        )
+
+        confirmed = self._record(
+            artifact_id="artifact-incomplete-confirmed",
+            source_message_id="message-incomplete-confirmed",
+        )
+        self.assertIsNotNone(self.store.confirm_correction(confirmed["correction_id"]))
+
+        promoted = self._record(
+            artifact_id="artifact-incomplete-promoted",
+            source_message_id="message-incomplete-promoted",
+        )
+        self.assertIsNotNone(self.store.confirm_correction(promoted["correction_id"]))
+        self.assertIsNotNone(self.store.promote_correction(promoted["correction_id"]))
+
+        active = self._record(
+            artifact_id="artifact-incomplete-active",
+            source_message_id="message-incomplete-active",
+        )
+        self.assertIsNotNone(self.store.confirm_correction(active["correction_id"]))
+        self.assertIsNotNone(self.store.promote_correction(active["correction_id"]))
+        self.assertIsNotNone(self.store.activate_correction(active["correction_id"]))
+
+        stopped = self._record(
+            artifact_id="artifact-incomplete-stopped",
+            source_message_id="message-incomplete-stopped",
+        )
+        self.assertIsNotNone(self.store.confirm_correction(stopped["correction_id"]))
+        self.assertIsNotNone(self.store.promote_correction(stopped["correction_id"]))
+        self.assertIsNotNone(self.store.activate_correction(stopped["correction_id"]))
+        self.assertIsNotNone(self.store.stop_correction(stopped["correction_id"]))
+
+        incomplete = self.store.list_incomplete_corrections()
+
+        self.assertEqual(
+            {record["correction_id"] for record in incomplete},
+            {
+                recorded["correction_id"],
+                confirmed["correction_id"],
+                promoted["correction_id"],
+            },
+        )
+        self.assertEqual(
+            {record["status"] for record in incomplete},
+            {"recorded", "confirmed", "promoted"},
+        )
 
     def test_find_recurring_patterns_detects_cross_occurrence(self) -> None:
         self._record(

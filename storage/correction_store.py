@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from core.contracts import CandidateFamily, CorrectionStatus
+from core.contracts import CandidateFamily, CORRECTION_STATUS_TRANSITIONS, CorrectionStatus
 from core.delta_analysis import compute_correction_delta
 
 from .json_store_base import utc_now_iso, json_path, atomic_write, read_json, scan_json_dir
@@ -107,6 +107,10 @@ class CorrectionStore:
             record = read_json(self._path(correction_id))
             if record is None:
                 return None
+            current_status = record.get("status")
+            allowed = CORRECTION_STATUS_TRANSITIONS.get(current_status, ())
+            if status not in allowed:
+                return None
             now = utc_now_iso()
             record["status"] = status
             record[timestamp_field] = now
@@ -173,3 +177,12 @@ class CorrectionStore:
             all_records = self._scan_all()
             all_records.sort(key=lambda d: d.get("updated_at", ""), reverse=True)
             return all_records[:limit]
+
+    def list_incomplete_corrections(self) -> list[dict[str, Any]]:
+        _INCOMPLETE = {
+            CorrectionStatus.RECORDED,
+            CorrectionStatus.CONFIRMED,
+            CorrectionStatus.PROMOTED,
+        }
+        with self._lock:
+            return [r for r in self._scan_all() if r.get("status") in _INCOMPLETE]

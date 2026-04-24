@@ -609,14 +609,93 @@
 - JSON backend preserved via `LOCAL_AI_STORAGE_BACKEND=json` env override
 - migration is idempotent (`INSERT OR IGNORE`); startup migration never blocks server
 
-#### Shipped Infrastructure (Axis 1, 2026-04-23)
+#### Shipped Infrastructure (Axes 1-3, 2026-04-23)
 - Axis 1 (seq 78): SQLite default — `config/settings.py` default changed to `"sqlite"`; `app/web.py` sqlite branch conditionally runs `migrate_json_to_sqlite` for corrections on first startup; migration idempotency verified by test
+- Axis 2 (seq 81): preference conflict detection — `list_preferences_payload` enriches each preference with `conflict_info` (`has_conflict` + `conflicting_preference_ids`) using Jaccard word-token similarity > 0.7 between ACTIVE preferences; `PreferencePanel.tsx` shows `⚠ 충돌` badge and activate confirmation when conflicts exist
+- Axis 3 (seq 84/85, verify lane): release consolidation smoke gate — fixed 6 failing E2E tests caused by cross-session fingerprint collision in test fixtures and stale global-candidate assertions; full `make e2e-test` confirmed **142 passed (7.5m)** on 2026-04-23
+
+- **Milestone 20 closed** (Axes 1–3): SQLite default + migration, preference conflict detection, and release consolidation smoke gate complete
+
+### Milestone 21: Personalization Maturity and Release Bundle
+
+#### Shipped Infrastructure (Axes 1-3, 2026-04-23)
+- Axis 1 (seq 87): SQLite correction lifecycle parity — `SQLiteCorrectionStore` now implements `confirm_correction`, `promote_correction`, `activate_correction`, `stop_correction` matching JSON `CorrectionStore` contract; 5 new unit tests cover status column and `data` JSON blob updates plus missing-id behavior
+- Axis 2 (seq 90): durable global reject persistence — `record_reviewed_candidate_preference` accepts optional `status=` parameter; global reject path in `submit_candidate_review` records REJECTED preference, permanently silencing the fingerprint via existing `_build_review_queue_items` dedup
+- Axis 3 (seq 91, verify lane): release gate — full `make e2e-test` confirmed **142 passed (8.3m)** on 2026-04-23; no regressions from Axes 1–2 backend changes
+
+- **Milestone 21 closed** (Axes 1–3): SQLite correction lifecycle parity, durable global reject persistence, and release gate complete
+
+### Milestone 22: Correction Lifecycle Integrity
+- close the M21 open risk: invalid state transitions silently succeeded in `SQLiteCorrectionStore`
+- Axis 1, 2, 3 ordered: state-order guard → global reject browser coverage → release gate
+
+#### Guardrails
+- guard returns `None` (not raise) to match the existing missing-record convention
+- JSON `CorrectionStore` is not guarded in this axis; SQLite remains the default backend
+- do not change the four public lifecycle methods; only `_transition()` needs the guard
+
+#### Shipped Infrastructure (Axes 1-3, 2026-04-24)
+- Axis 1 (seq 94): state-order guard — `CORRECTION_STATUS_TRANSITIONS` from `core/contracts.py` is now enforced in `SQLiteCorrectionStore._transition()`; invalid transitions return `None`; 3 new unit tests cover out-of-order, from-stopped, and valid-chain behavior
+- Axis 2 (seq 95): global reject permanence smoke — Playwright API-level test verifies that a rejected global candidate (`message_id="global"`, `review_action="reject"`) does not reappear in any subsequent session's `review_queue_items`; uses `createQualityReviewQueueItem` across 4 sessions with a unique recurring corrected text
+- Axis 3 (seq 96, verify lane): release gate — full `make e2e-test` confirmed **143 passed (10.1m)** on 2026-04-24; new global reject permanence scenario (test #141) passes; total count increased from 142 to 143
+
+- **Milestone 22 closed** (Axes 1–3): SQLite correction lifecycle state-order guard, global reject permanence browser coverage, and release gate complete
+
+### Milestone 23: Correction Lifecycle Integrity — JSON Parity
+
+#### Guardrails
+- guard returns `None` (not raise) — same convention as M22 Axis 1 SQLite guard
+- do not change the four public lifecycle methods; only `_transition()` needs the guard
+- existing `test_lifecycle_transitions` already covers the valid chain; add only invalid-transition tests
+
+#### Shipped Infrastructure (Axis 1, 2026-04-24)
+- Axis 1 (seq 98): JSON CorrectionStore state-order guard — `CORRECTION_STATUS_TRANSITIONS` from `core/contracts.py` enforced in `CorrectionStore._transition()`; invalid transitions return `None`; 2 new unit tests cover out-of-order and from-stopped cases
+
+- **Milestone 23 closed** (Axis 1): JSON CorrectionStore state-order guard complete; both JSON and SQLite correction lifecycle paths now enforce `CORRECTION_STATUS_TRANSITIONS`
+
+### Milestone 24: Correction Lifecycle Observability
+
+#### Guardrails
+- audit output is read-only; no lifecycle state is mutated
+- JSON and SQLite stores both get parity implementation
+- script change uses the JSON CorrectionStore default path (`data/corrections`)
+
+#### Shipped Infrastructure (Axis 1, 2026-04-24)
+- Axis 1 (seq 101): `list_incomplete_corrections()` — returns corrections with RECORDED/CONFIRMED/PROMOTED status; JSON store uses `_scan_all()` filter; SQLite store uses `WHERE status IN (…)` query; `scripts/audit_traces.py` prints incomplete count and first 5 entries
+
+- **Milestone 24 closed** (Axis 1): correction lifecycle observability complete; both stores expose `list_incomplete_corrections()`; audit script surfaces count
+
+### Milestone 25: Preference Lifecycle Audit
+
+#### Guardrails
+- audit endpoint is read-only; no preference state is mutated
+- conflict pair detection reuses the existing `_jaccard_word_similarity` threshold (> 0.7)
+- frontend audit summary is compact (one line); do not add a separate audit panel
+
+#### Shipped Infrastructure (Axes 1-2, 2026-04-24)
+- Axis 1 (seq 102): GET `/api/preferences/audit` — returns total preference count, counts by status, and `conflict_pair_count`; `PreferencePanel.tsx` shows compact audit summary line above the preference list
+- Axis 2 (seq 103, verify lane): release gate — full `make e2e-test` confirmed **143 passed (10.7m)** on 2026-04-24; no regressions from Axis 1 frontend change
+
+- **Milestone 25 closed** (Axes 1–2): preference lifecycle audit endpoint, compact summary UI, and release gate complete
+
+### Milestone 26: Global Candidate E2E Test Isolation
+
+#### Guardrails
+- production server startup path is unchanged; isolation is Playwright config only
+- `data/notes/` and `data/web-search/` stay at repo defaults (same as `playwright.sqlite.config.mjs` convention)
+- within a run, test-level fixture uniqueness conventions still apply (no per-test DB reset)
+
+#### Shipped Infrastructure (Axes 1-2, 2026-04-24)
+- Axis 1 (seq 104): `playwright.config.mjs` now uses `fs.mkdtempSync()` to create a fresh SQLite DB per run via `LOCAL_AI_SQLITE_DB_PATH`; mirrors the pattern already in `playwright.sqlite.config.mjs`
+- Axis 2 (seq 105, verify lane): release gate — full `make e2e-test` confirmed **143 passed (6.5m)** with fresh-DB isolation; faster than prior runs (10.7m) due to empty DB at start
+
+- **Milestone 26 closed** (Axes 1–2): global candidate E2E test isolation complete; both default and SQLite Playwright configs now use per-run fresh SQLite DB
 
 ## Next 3 Implementation Priorities
 
-1. Keep the shipped read-only `reviewed_memory_boundary_draft` draft-only and do not widen it into readiness tracking or cross-session scope. The rollback / disable / conflict / operator-audit contracts and the reviewed-memory apply path are now shipped; boundary draft stays separate from apply result.
-2. Keep merge-helper reopen, broader save-history replay, durable-candidate application, user-level memory, and broader operator work in later slices until the recurrence boundary and review boundary both stay small and non-confusing. (`reject`, `defer`, `edit`, and the basic `suggested_scope` field are now shipped.)
-3. The reviewed-memory apply result, stop-apply (`future_reviewed_memory_stop_apply`), reversal (`future_reviewed_memory_reversal`), and conflict visibility (`future_reviewed_memory_conflict_visibility`) are now all implemented: after the effect is reversed (`record_stage = reversed`), the aggregate card shows a `충돌 확인` button; clicking it creates a separate conflict-visibility transition record with `transition_action = future_reviewed_memory_conflict_visibility`, `record_stage = conflict_visibility_checked`, evaluated `conflict_entries` and `conflict_entry_count`, and `source_apply_transition_ref` linking back to the original apply record; the conflict visibility record is separate from the apply transition record and does not mutate it; aggregate identity, supporting refs, and contracts are retained. Keep repeated-signal promotion, broader durable promotion, and cross-session counting later than the now-shipped conflict visibility.
+1. **PR #32 merge**: feat/watcher-turn-state (M20 Axis 2 – M26 Axes 1–2) is open and awaiting operator merge approval. All shipped milestones M20–M26 are included.
+2. **Next milestone direction**: M20–M26 closed correction lifecycle, preference lifecycle, global-candidate review, lifecycle observability, preference audit UI, and E2E isolation. The next milestone should be defined via advisory to choose between new user-facing features or further infrastructure work.
+3. **Advisory stability**: Gemini advisory has timed out 4+ times; consider operator-directed M27 scope if advisory remains unavailable.
 
 ## Do Not Pull Forward
 

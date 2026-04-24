@@ -1,13 +1,17 @@
 STATUS: verified
-CONTROL_SEQ: 79
+CONTROL_SEQ: 94
 BASED_ON_WORK:
-  - work/4/23/2026-04-23-m20-axis1-sqlite-default.md
-HANDOFF_SHA: 346c4a1
+  - work/4/23/2026-04-23-m20-axis2-conflict-detection.md
+  - work/4/23/2026-04-23-m20-axis3-smoke-test-fix.md
+  - work/4/23/2026-04-23-m21-axis1-sqlite-correction-lifecycle.md
+  - work/4/23/2026-04-23-m21-axis2-durable-global-reject.md
+  - work/4/23/2026-04-23-m21-push-pr-closeout.md
+HANDOFF_SHA: 6fc42e2
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 76
-NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 79
-ADVISORY_ADVICE_SEQ: 77 (advisory_advice.md seq 77 — M20 Axis 1 done; Axis 2 or smoke gate next)
-PR_MERGE_STATUS: confirmed merged (PR #30 feat/watcher-turn-state → main, mergeCommit 62627ab, 2026-04-23T07:37:03Z)
+SUPERSEDES: verify/4/23/2026-04-23-milestone12-axis3-trace-quality-scoring.md CONTROL_SEQ 91
+NEXT_CONTROL: .pipeline/implement_handoff.md CONTROL_SEQ 94
+PR_MERGE_STATUS: PR #31 MERGED (2026-04-23); PR #32 OPEN https://github.com/hsnasforum/projectH/pull/32 (M20 Axis 2–M21 bundle, operator merge pending)
+PUSH_RESULT: feat/watcher-turn-state c7b658d..6fc42e2 pushed to origin (2026-04-23)
 
 ---
 
@@ -721,16 +725,173 @@ PASS. 모든 acceptance criteria 충족. 커밋 완료 (346c4a1).
 
 ---
 
+---
+
+## Round 24 Claim: M20 Axis 2 — Preference Conflict Detection
+
+**Work**: `work/4/23/2026-04-23-m20-axis2-conflict-detection.md`
+**Commit**: 1b460d1
+
+### Summary
+
+`app/handlers/preferences.py`에 `_jaccard_word_similarity()` helper 추가 (word-token Jaccard similarity 0.0–1.0). `list_preferences_payload()`가 ACTIVE preference 설명 간 Jaccard > 0.7이면 `conflict_info` (`has_conflict`, `conflicting_preference_ids`) 추가. `PreferenceRecord` TypeScript 타입에 optional `conflict_info` 추가. `PreferencePanel.tsx`가 `⚠ 충돌` badge 표시 + activate 전 `window.confirm()` 실행. 테스트 3개 추가. MILESTONES.md M20 Axis 2 기록.
+
+### Checks Run
+
+- `python3 -m py_compile app/handlers/preferences.py` → **OK**
+- `python3 -m unittest tests.test_preference_handler -v` → **5 tests OK** (기존 2 + 신규 3)
+- `cd app/frontend && npx tsc --noEmit` → **OK**
+- `git diff --check -- app/handlers/preferences.py app/frontend/src/api/client.ts app/frontend/src/components/PreferencePanel.tsx docs/MILESTONES.md` → **OK**
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족. 커밋 완료 (1b460d1).
+
+---
+
+## Round 25 Claim: M20 Axis 3 — Release Consolidation Smoke Gate (FAIL)
+
+**Work**: M20 Axis 3 smoke gate 실행 (M18–M20 누적 변경 후 첫 full suite)
+**Run**: `make e2e-test` → **6 failed, 136 passed (7.5m)**
+
+### Failing Tests
+
+| Line | Test Name | Failure |
+|---|---|---|
+| 650 | candidate confirmation path는 save support와 분리되어 기록되고 later correction으로 current state에서 사라집니다 | `reviewQueueBox.toBeHidden()` 실패 — 전역 후보가 이미 표시됨 |
+| 860 | review-queue reject/defer는 accept와 동일한 quick-meta, transcript-meta, stale-clear 경로를 따릅니다 | `reviewQueueBox.toBeHidden()` 실패 (로컬 거절 후 전역 후보 잔존) |
+| 957 | review-queue 편집은 review_action='edit' review_status='edited' reason_note를 기록합니다 | `reviewQueueBox.toBeHidden()` 실패 (로컬 편집 후 전역 후보 잔존) |
+| 1066 | same-session recurrence aggregate는 emitted-apply-confirm lifecycle으로 활성화됩니다 | `reviewQueueBox.toBeHidden()` 실패 — 세션 생성 직후 전역 후보 표시 |
+| 11738 | review queue panel opens on badge click and accept action removes item | `review_queue_items.length` 15초 내 0 미도달 — 전역 후보 잔존 |
+| 11777 | review queue edit statement sends edited text in accept request | `review_queue_items.length` 0 미도달 — 전역 후보 잔존 |
+
+### Root Cause Analysis
+
+M18 Axis 3에서 `_build_review_queue_items()`에 `find_recurring_patterns()` 호출이 추가됨. 이후 M20 Axis 3 full smoke gate를 처음 실행할 때까지 누적된 문제:
+
+- **테스트 내 cross-session fingerprint 충돌**: `corrected-save` 테스트(line 480)와 `corrected-long-history` 테스트(line 581)가 동일한 `correctedTextA = "수정본 A입니다.\n핵심만 남겼습니다."` + `longFixturePath` 사용 → 두 세션에서 동일 `delta_fingerprint` → `find_recurring_patterns()`가 전역 후보로 노출. `correctedTextB`(lines 481, 582)도 동일 충돌.
+- **테스트 650, 860, 957, 1066**: 전역 후보가 세션 생성 직후 또는 로컬 후보 제거 후에도 `review-queue-box`를 표시함.
+- **테스트 11738, 11777**: aggregate 테스트들(1068, 1295, 1351)이 `shortFixturePath` + `"수정 방향 A입니다."` 조합으로 여러 세션에서 반복 correction 생성 → 전역 후보 축적. accept 후에도 전역 후보 잔존하여 `review_queue_items.length > 0`.
+
+### Fix Required (→ implement_handoff CONTROL_SEQ 84)
+
+1. `e2e/tests/web-smoke.spec.mjs` lines 581–582: `corrected-long-history` 테스트의 `correctedTextA`/`correctedTextB`를 고유 값으로 변경하여 `corrected-save` 테스트와 fingerprint 충돌 제거.
+2. `e2e/tests/web-smoke.spec.mjs` lines 11769, 11816: `.toBe(0)` assertion을 `is_global !== true` 필터 적용으로 변경 — aggregate 테스트에서 의도적으로 생성되는 전역 후보를 허용하면서 세션-로컬 후보 제거만 검증.
+
+### Verdict
+
+FAIL. M20 Axis 3 release gate 미통과. implement_handoff CONTROL_SEQ 84로 smoke test 수정 후 재실행 필요.
+
+---
+
+---
+
+## Round 26 Claim: M20 Axis 3 — Smoke Gate Fix (implement_handoff seq 84)
+
+**Work**: `work/4/23/2026-04-23-m20-axis3-smoke-test-fix.md`
+**Commit**: dbe58af
+
+### Summary
+
+`e2e/tests/web-smoke.spec.mjs`만 변경. 3개 session-local helper 추가 (`sessionLocalReviewQueueItems`, `expectSessionLocalReviewQueueCount`, `sessionLocalReviewQueueItem`). `corrected-long-history` 테스트의 `correctedTextA`/B를 `corrected-save`와 다른 값("저장 이력 수정본 A/B")으로 변경 — cross-session fingerprint collision 제거. 6개 failing test에서 session-local assertion을 global candidate와 분리. `review queue panel/edit` 테스트의 `length === 0` assertion을 `is_global !== true` 필터 적용으로 변경. 제품 코드 무변경.
+
+### Checks Run (verify lane rerun)
+
+- `git diff --check -- e2e/tests/web-smoke.spec.mjs` → **OK**
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "candidate confirmation path" --reporter=line` → **1 passed (14.0s)**
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "review-queue reject/defer" --reporter=line` → **1 passed (14.2s)**
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "편집은 review_action" --reporter=line` → **1 passed (7.3s)**
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "same-session recurrence aggregate는 emitted" --reporter=line` → **1 passed (15.4s)**
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "review queue panel opens on badge click" --reporter=line` → **1 passed (6.2s)**
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "review queue edit statement sends edited text" --reporter=line` → **1 passed (6.4s)**
+- `make e2e-test` (full suite) → **142 passed (7.5m)** ← M20 Axis 3 release gate PASS
+
+### Verdict
+
+PASS. 6개 formerly-failing test 전부 복구. 전수 142 passed. **M20 Axis 3 release gate 통과.** Milestone 20 전체 (Axes 1–3) 완료.
+
+---
+
+---
+
+## Round 27 Claim: M21 Axis 1 — SQLite Correction Lifecycle Parity
+
+**Work**: `work/4/23/2026-04-23-m21-axis1-sqlite-correction-lifecycle.md`
+**Commit**: bce09ac
+
+### Summary
+
+`SQLiteCorrectionStore`에 `_transition()` private helper 추가 — `with self._lock`, `status` 컬럼·`data` JSON blob·`updated_at` 동시 갱신, `commit()`. `confirm_correction`, `promote_correction`, `activate_correction`, `stop_correction` 4개 메서드를 JSON `CorrectionStore`와 동일한 contract로 추가. 5개 신규 단위 테스트: 4개 lifecycle 전이 (반환값, `get()` round-trip, raw SQLite row 확인) + 1개 missing-id → None 확인. `docs/MILESTONES.md`에 M21 Axis 1 기록.
+
+### Checks Run (verify lane rerun)
+
+- `python3 -m py_compile storage/sqlite_store.py` → **OK**
+- `python3 -m unittest tests.test_sqlite_store -v` → **25 tests OK** (기존 20 + 신규 5)
+- `git diff --check -- storage/sqlite_store.py tests/test_sqlite_store.py docs/MILESTONES.md` → **OK**
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족. 커밋 완료 (bce09ac).
+
+---
+
+---
+
+## Round 28 Claim: M21 Axis 2 — Durable Global Reject Persistence
+
+**Work**: `work/4/23/2026-04-23-m21-axis2-durable-global-reject.md`
+**Commit**: 9538dd5
+
+### Summary
+
+`record_reviewed_candidate_preference()`에 optional `status=` 파라미터 추가 (JSON + SQLite 양쪽). 신규 레코드 생성 시 `status`로 override, 기존 레코드 갱신 시에도 status + rejected_at 업데이트. `aggregate.py` global path에 `elif review_action == REJECT` 분기 추가 — fingerprint를 REJECTED preference로 기록하여 `_build_review_queue_items`의 기존 dedup이 해당 fingerprint를 영구 제외. 테스트 2개 추가 (JSON store + SQLite store 각 1개).
+
+### Checks Run (verify lane rerun)
+
+- `python3 -m py_compile storage/preference_store.py storage/sqlite_store.py app/handlers/aggregate.py` → **OK**
+- `python3 -m unittest tests.test_preference_store -v` → **29 tests OK** (기존 28 + 신규 1)
+- `python3 -m unittest tests.test_sqlite_store -v` → **26 tests OK** (기존 25 + 신규 1)
+- `git diff --check -- storage/preference_store.py storage/sqlite_store.py app/handlers/aggregate.py docs/MILESTONES.md` → **OK**
+
+### Verdict
+
+PASS. 모든 acceptance criteria 충족. 커밋 완료 (9538dd5).
+
+---
+
+## Round 29 Claim: M21 Axis 3 — Release Gate (verify lane smoke run)
+
+**Work**: M21 Axis 3 full smoke gate 실행 (M21 Axis 1+2가 순수 backend 변경이므로 verify 라운드에서 직접 실행)
+**Run**: `make e2e-test` → **142 passed (8.3m)**
+
+### Checks Run
+
+- `make e2e-test` (full suite) → **142 passed (8.3m)** ← M21 Axis 3 release gate PASS
+
+### Verdict
+
+PASS. Milestone 21 전체 (Axes 1–3) 완료. 전수 142 passed.
+
+---
+
 ## Current Shipped Truth
 
 | Item | SHA |
 |---|---|
 | M19 Axes 1–3 | 5fecc47, 4f15c96, 21eb13e |
 | M20 Axis 1 SQLite default + startup migration | 346c4a1 |
+| M20 Axis 2 Preference Conflict Detection | 1b460d1 |
+| M20 Axis 3 smoke gate fix + full suite PASS | dbe58af |
+| **Milestone 20** | **All 3 axes complete — 142 passed (7.5m)** |
+| M21 Axis 1 SQLite correction lifecycle parity | bce09ac |
+| M21 Axis 2 Durable global reject persistence | 9538dd5 |
+| M21 Axis 3 smoke gate PASS | 142 passed (8.3m) |
+| **Milestone 21** | **All 3 axes complete** |
+| Branch vs origin | ahead (PR #31 merge pending; push + new PR for M18–M21 bundle needed) |
 
 ## Risks / Open Questions
 
-1. **PR #31 merge pending**: operator decision. Local work continues.
-2. **Full smoke gate not run since M17 Axis 3**: M18–M20 Axis 1 added significant backend + frontend + SQLite default changes. Full `make e2e-test` needed before M20 Axis 3 release consolidation claim.
-3. **Startup migration one-time latency**: 8,029+ correction JSON files will be migrated on first SQLite default startup. Magnitude unknown without timing test.
-4. **M20 Axis 2 scope undefined**: "Preference Conflict Detection" needs advisory arbitration.
+1. **PR #31 merge pending + M18–M21 push needed**: operator decision. PR #31 (M13 Axis 6–M17 Axis 3) 대기 중. M18–M21 커밋들을 push하고 새 PR 또는 PR #31 갱신 후 merge 필요. CLAUDE.md 정책: "older draft PR 안정 유지, new bundle을 stacked child branch/PR로 publish".
+2. **Global reject browser coverage 미완**: `record_reviewed_candidate_preference(status=REJECTED)` 경로의 Playwright 테스트 없음 (M21 Axis 2 boundary 기준 deferred). 필요 시 별도 slice.
+3. **Correction lifecycle 순서 검증 없음**: `_transition()`은 상태 순서 강제 없음. 잘못된 전이 방지는 현재 범위 밖.
+4. **Global candidate test isolation**: convention comment + session-local helper로 현재 케이스 커버. temp DB per run 격리는 미구현.

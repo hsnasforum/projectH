@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from storage.correction_store import CorrectionStore
 from storage.preference_store import PreferenceStore
 from storage.session_store import SessionStore
 
@@ -15,8 +16,10 @@ def main() -> None:
     store = SessionStore()
     summary = store.get_global_audit_summary()
     pref_store = PreferenceStore()
+    correction_store = CorrectionStore()
     candidates = pref_store.get_candidates()
     active_prefs = pref_store.get_active_preferences()
+    incomplete = correction_store.list_incomplete_corrections()
 
     print(json.dumps(summary, indent=2, ensure_ascii=False))
     total_feedback = summary["feedback_like_count"] + summary["feedback_dislike_count"]
@@ -42,6 +45,18 @@ def main() -> None:
         f"  Personalized corrections: {personalized_corrected}\n"
         f"  Personalization correction rate: {correction_rate}"
     )
+    print(
+        f"\nIncomplete corrections (RECORDED/CONFIRMED/PROMOTED): {len(incomplete)}"
+    )
+    if incomplete:
+        for rec in incomplete[:5]:
+            print(
+                f"  correction_id={rec.get('correction_id', '?')[:16]}…  "
+                f"status={rec.get('status')}  "
+                f"created={rec.get('created_at', '?')[:10]}"
+            )
+        if len(incomplete) > 5:
+            print(f"  … and {len(incomplete) - 5} more")
     per_pref = summary.get("per_preference_stats", {})
     if per_pref:
         sorted_prefs = sorted(

@@ -10,6 +10,7 @@ from core.contracts import (
     CandidateFamily,
     CandidateConfirmationScope,
     CandidateReviewAction,
+    PreferenceStatus,
     RecordStage,
     ResultStage,
     sanitize_supporting_review_refs,
@@ -167,6 +168,23 @@ class AggregateHandlerMixin:
                     },
                     original_snippet=original_snippet,
                     corrected_snippet=corrected_snippet,
+                )
+            elif review_action == CandidateReviewAction.REJECT:
+                corrections = self.correction_store.find_by_fingerprint(fingerprint)
+                first_correction = corrections[0] if corrections else {}
+                self.preference_store.record_reviewed_candidate_preference(
+                    delta_fingerprint=fingerprint,
+                    candidate_family=str(first_correction.get("pattern_family") or CandidateFamily.CORRECTION_REWRITE),
+                    description=fingerprint[:60],
+                    source_refs={
+                        "candidate_id": candidate_id or "",
+                        "candidate_updated_at": candidate_updated_at or "",
+                        "artifact_id": first_correction.get("artifact_id", "") if isinstance(first_correction, dict) else "",
+                        "source_message_id": "global",
+                        "review_action": review_action,
+                        "session_id": session_id,
+                    },
+                    status=PreferenceStatus.REJECTED,
                 )
             self.task_logger.log(
                 session_id=session_id,

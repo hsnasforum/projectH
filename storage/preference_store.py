@@ -256,6 +256,7 @@ class PreferenceStore:
         avg_similarity_score: float | None = None,
         original_snippet: str | None = None,
         corrected_snippet: str | None = None,
+        status: str | None = None,
     ) -> dict[str, Any]:
         """Persist one local preference candidate from an accepted reviewed candidate.
 
@@ -281,6 +282,10 @@ class PreferenceStore:
                     existing["original_snippet"] = original_snippet
                 if corrected_snippet is not None:
                     existing["corrected_snippet"] = corrected_snippet
+                if status is not None and existing.get("status") != status:
+                    existing["status"] = status
+                    if status == PreferenceStatus.REJECTED:
+                        existing["rejected_at"] = now
                 atomic_write(self._path(existing["preference_id"]), existing)
                 return existing
 
@@ -299,10 +304,10 @@ class PreferenceStore:
                 "original_snippet": original_snippet,
                 "corrected_snippet": corrected_snippet,
                 "delta_summary": {},
-                "status": PreferenceStatus.CANDIDATE,
+                "status": status if status is not None else PreferenceStatus.CANDIDATE,
                 "activated_at": None,
                 "paused_at": None,
-                "rejected_at": None,
+                "rejected_at": now if status == PreferenceStatus.REJECTED else None,
                 "created_at": now,
                 "updated_at": now,
             }

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import unittest
 from typing import Any
+import unittest
 
-from app.handlers.preferences import PreferenceHandlerMixin
+from app.handlers.preferences import PreferenceHandlerMixin, _jaccard_word_similarity
 
 
 class _PreferenceStore:
@@ -60,6 +60,110 @@ class PreferenceHandlerTest(unittest.TestCase):
 
         self.assertIsNone(pref["quality_info"]["avg_similarity_score"])
         self.assertIsNone(pref["quality_info"]["is_high_quality"])
+
+    def test_list_preferences_payload_no_conflict_for_dissimilar_descriptions(self) -> None:
+        service = _PreferenceService([
+            {
+                "preference_id": "pref-active-a",
+                "delta_fingerprint": "fingerprint-a",
+                "description": "교정 후 간결하게 유지",
+                "status": "active",
+            },
+            {
+                "preference_id": "pref-active-b",
+                "delta_fingerprint": "fingerprint-b",
+                "description": "출처와 날짜를 명확하게 표시",
+                "status": "active",
+            },
+        ])
+
+        payload = service.list_preferences_payload()
+
+        for pref in payload["preferences"]:
+            self.assertFalse(pref["conflict_info"]["has_conflict"])
+            self.assertEqual(pref["conflict_info"]["conflicting_preference_ids"], [])
+
+    def test_list_preferences_payload_conflict_for_similar_descriptions(self) -> None:
+        service = _PreferenceService([
+            {
+                "preference_id": "pref-active-a",
+                "delta_fingerprint": "fingerprint-a",
+                "description": "교정 후 간결하게",
+                "status": "active",
+            },
+            {
+                "preference_id": "pref-active-b",
+                "delta_fingerprint": "fingerprint-b",
+                "description": "교정 후 간결하게 유지",
+                "status": "active",
+            },
+            {
+                "preference_id": "pref-candidate",
+                "delta_fingerprint": "fingerprint-c",
+                "description": "교정 후 간결하게",
+                "status": "candidate",
+            },
+        ])
+
+        payload = service.list_preferences_payload()
+        by_id = {pref["preference_id"]: pref for pref in payload["preferences"]}
+
+        self.assertTrue(by_id["pref-active-a"]["conflict_info"]["has_conflict"])
+        self.assertEqual(
+            by_id["pref-active-a"]["conflict_info"]["conflicting_preference_ids"],
+            ["pref-active-b"],
+        )
+        self.assertTrue(by_id["pref-active-b"]["conflict_info"]["has_conflict"])
+        self.assertEqual(
+            by_id["pref-active-b"]["conflict_info"]["conflicting_preference_ids"],
+            ["pref-active-a"],
+        )
+        self.assertFalse(by_id["pref-candidate"]["conflict_info"]["has_conflict"])
+
+    def test_get_preference_audit_returns_counts(self) -> None:
+        service = _PreferenceService([
+            {
+                "preference_id": "pref-active-a",
+                "delta_fingerprint": "fingerprint-a",
+                "description": "교정 후 간결하게",
+                "status": "active",
+            },
+            {
+                "preference_id": "pref-active-b",
+                "delta_fingerprint": "fingerprint-b",
+                "description": "교정 후 간결하게 유지",
+                "status": "active",
+            },
+            {
+                "preference_id": "pref-candidate",
+                "delta_fingerprint": "fingerprint-c",
+                "description": "후보 설명",
+                "status": "candidate",
+            },
+            {
+                "preference_id": "pref-paused",
+                "delta_fingerprint": "fingerprint-d",
+                "description": "일시중지 설명",
+                "status": "paused",
+            },
+        ])
+
+        audit = service.get_preference_audit()
+
+        self.assertEqual(audit["total"], 4)
+        self.assertEqual(audit["by_status"]["active"], 2)
+        self.assertEqual(audit["by_status"]["candidate"], 1)
+        self.assertEqual(audit["by_status"]["paused"], 1)
+        self.assertEqual(audit["conflict_pair_count"], 1)
+
+    def test_jaccard_word_similarity_thresholds(self) -> None:
+        self.assertAlmostEqual(_jaccard_word_similarity("hello world", "hello world"), 1.0)
+        self.assertAlmostEqual(_jaccard_word_similarity("hello world", "foo bar"), 0.0)
+        self.assertAlmostEqual(_jaccard_word_similarity("a b", "a c"), 1 / 3)
+        self.assertGreater(
+            _jaccard_word_similarity("교정 후 간결하게", "교정 후 간결하게 유지"),
+            0.7,
+        )
 
 
 if __name__ == "__main__":

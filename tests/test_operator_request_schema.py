@@ -467,6 +467,10 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
             normalize_decision_class("branch_complete_pending_milestone_transition"),
             "operator_only",
         )
+        self.assertEqual(
+            normalize_reason_code("m21_complete_push_and_pr_bundle"),
+            COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+        )
 
         validated = validate_operator_request_headers(
             control_seq=617,
@@ -484,6 +488,35 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
         self.assertIn(validated["reason_code"], SUPPORTED_REASON_CODES)
         self.assertIn(validated["operator_policy"], SUPPORTED_OPERATOR_POLICIES)
         self.assertIn(validated["decision_class"], SUPPORTED_DECISION_CLASSES)
+
+    def test_m21_publish_bundle_alias_routes_to_internal_verify_followup(self) -> None:
+        decision = classify_operator_candidate(
+            "STATUS: needs_operator\n"
+            "REASON_CODE: m21_complete_push_and_pr_bundle\n"
+            "OPERATOR_POLICY: internal_only\n"
+            "DECISION_CLASS: release_gate\n"
+            "DECISION_REQUIRED: push branch and handle draft PR follow-up\n",
+            control_meta={
+                "status": "needs_operator",
+                "reason_code": "m21_complete_push_and_pr_bundle",
+                "operator_policy": "internal_only",
+                "decision_class": "release_gate",
+                "decision_required": "push branch and handle draft PR follow-up",
+            },
+            idle_stable=True,
+            now_ts=1_000.0,
+        )
+
+        self.assertEqual(decision["mode"], "triage")
+        self.assertEqual(decision["suppressed_mode"], "triage")
+        self.assertEqual(decision["routed_to"], "verify_followup")
+        self.assertEqual(
+            decision["reason_code"],
+            COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+        )
+        self.assertEqual(decision["operator_policy"], "internal_only")
+        self.assertEqual(decision["decision_class"], "release_gate")
+        self.assertFalse(decision["operator_eligible"])
 
     def test_operator_request_writer_rejects_random_decision_class(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported decision_class"):

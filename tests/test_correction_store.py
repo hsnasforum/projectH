@@ -111,6 +111,35 @@ class CorrectionStoreTest(unittest.TestCase):
             r = store.stop_correction(cid)
             self.assertEqual(r["status"], CorrectionStatus.STOPPED)
 
+    def test_transition_guard_rejects_out_of_order(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._make_store(tmp)
+            record = self._record_sample(store)
+            cid = record["correction_id"]
+
+            result = store.activate_correction(cid)
+
+            self.assertIsNone(result)
+            fetched = store.get(cid)
+            self.assertEqual(fetched["status"], CorrectionStatus.RECORDED)
+
+    def test_transition_guard_rejects_from_stopped(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._make_store(tmp)
+            record = self._record_sample(store)
+            cid = record["correction_id"]
+
+            store.confirm_correction(cid)
+            store.promote_correction(cid)
+            store.activate_correction(cid)
+            store.stop_correction(cid)
+
+            result = store.confirm_correction(cid)
+
+            self.assertIsNone(result)
+            fetched = store.get(cid)
+            self.assertEqual(fetched["status"], CorrectionStatus.STOPPED)
+
     def test_recurrence_count_incremented(self) -> None:
         with TemporaryDirectory() as tmp:
             store = self._make_store(tmp)
@@ -180,6 +209,49 @@ class CorrectionStoreTest(unittest.TestCase):
                                 original_text="다른 원본", corrected_text="다른 수정본")
             recent = store.list_recent(limit=1)
             self.assertEqual(len(recent), 1)
+
+    def test_list_incomplete_corrections_returns_only_non_terminal_records(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._make_store(tmp)
+
+            recorded = self._record_sample(store, artifact_id="a-recorded", source_message_id="m-recorded")
+
+            confirmed = self._record_sample(store, artifact_id="a-confirmed", source_message_id="m-confirmed")
+            store.confirm_correction(confirmed["correction_id"])
+
+            promoted = self._record_sample(store, artifact_id="a-promoted", source_message_id="m-promoted")
+            store.confirm_correction(promoted["correction_id"])
+            store.promote_correction(promoted["correction_id"])
+
+            active = self._record_sample(store, artifact_id="a-active", source_message_id="m-active")
+            store.confirm_correction(active["correction_id"])
+            store.promote_correction(active["correction_id"])
+            store.activate_correction(active["correction_id"])
+
+            stopped = self._record_sample(store, artifact_id="a-stopped", source_message_id="m-stopped")
+            store.confirm_correction(stopped["correction_id"])
+            store.promote_correction(stopped["correction_id"])
+            store.activate_correction(stopped["correction_id"])
+            store.stop_correction(stopped["correction_id"])
+
+            incomplete = store.list_incomplete_corrections()
+
+            self.assertEqual(
+                {record["correction_id"] for record in incomplete},
+                {
+                    recorded["correction_id"],
+                    confirmed["correction_id"],
+                    promoted["correction_id"],
+                },
+            )
+            self.assertEqual(
+                {record["status"] for record in incomplete},
+                {
+                    CorrectionStatus.RECORDED,
+                    CorrectionStatus.CONFIRMED,
+                    CorrectionStatus.PROMOTED,
+                },
+            )
 
     def test_corrupt_file_returns_none(self) -> None:
         with TemporaryDirectory() as tmp:

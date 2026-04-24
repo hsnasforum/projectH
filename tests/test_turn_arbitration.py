@@ -16,6 +16,7 @@ from pipeline_runtime.role_routes import (
     normalize_verify_triage_reason,
 )
 from pipeline_runtime.turn_arbitration import (
+    TURN_IDLE,
     TURN_IMPLEMENT,
     TURN_OPERATOR,
     TURN_VERIFY,
@@ -83,6 +84,21 @@ class WatcherTurnArbitrationTest(unittest.TestCase):
             )
         )
         self.assertEqual(turn, TURN_VERIFY_FOLLOWUP)
+
+    def test_operator_gate_hibernate_suppresses_stale_verify_need(self) -> None:
+        turn = resolve_watcher_turn(
+            WatcherTurnInputs(
+                operator_request_active=True,
+                advisory_request_active=False,
+                advisory_advice_active=False,
+                implement_handoff_active=True,
+                latest_work_needs_verify=True,
+                implement_handoff_verify_active=False,
+                idle_release_cooldown_active=False,
+                operator_gate_marker={"routed_to": "hibernate"},
+            )
+        )
+        self.assertEqual(turn, TURN_IDLE)
 
     def test_handoff_without_verify_need_returns_implement(self) -> None:
         turn = resolve_watcher_turn(

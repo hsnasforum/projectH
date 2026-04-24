@@ -41,7 +41,7 @@ from .operator_autonomy import (
     operator_gate_marker_from_decision,
 )
 from .pr_merge_state import PrMergeStatusCache
-from .role_routes import VERIFY_TRIAGE_ESCALATION
+from .role_routes import VERIFY_TRIAGE_ESCALATION, is_verify_followup_route
 from .receipts import (
     build_receipt,
     manifest_feedback_path,
@@ -565,12 +565,48 @@ class RuntimeSupervisor:
             is_legacy_alias=is_legacy_alias,
         )
 
-    def _surface_turn_state_for_stale_operator_control(
+    def _surface_turn_state_for_gated_operator_control(
         self,
         turn_state: dict[str, Any] | None,
         stale_operator_control: dict[str, Any] | None,
+        operator_gate: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         if stale_operator_control is None:
+            if operator_gate is None:
+                return turn_state if isinstance(turn_state, dict) else None
+            if str(operator_gate.get("routed_to") or "") == "hibernate":
+                return {
+                    "state": "IDLE",
+                    "legacy_state": "IDLE",
+                    "entered_at": float((turn_state or {}).get("entered_at") or time.time()),
+                    "reason": "operator_request_gated_hibernate",
+                    "active_control_file": "",
+                    "active_control_seq": -1,
+                    "active_role": "",
+                    "active_lane": "",
+                }
+            if is_verify_followup_route(operator_gate.get("routed_to")):
+                current = dict(turn_state or {})
+                current_state = canonical_turn_state_name(
+                    current.get("state"),
+                    legacy_state=current.get("legacy_state"),
+                )
+                if current_state == "VERIFY_FOLLOWUP":
+                    return current
+                if current_state != "IDLE":
+                    return turn_state if isinstance(turn_state, dict) else None
+                control_seq = control_seq_value(operator_gate.get("control_seq"), default=-1)
+                control_file = str(operator_gate.get("control_file") or "operator_request.md")
+                return {
+                    "state": "VERIFY_FOLLOWUP",
+                    "legacy_state": "CODEX_FOLLOWUP",
+                    "entered_at": float(current.get("entered_at") or time.time()),
+                    "reason": str(operator_gate.get("reason") or "operator_request_gated"),
+                    "active_control_file": control_file,
+                    "active_control_seq": control_seq,
+                    "active_role": "verify",
+                    "active_lane": self._prompt_owner("verify"),
+                }
             return turn_state if isinstance(turn_state, dict) else None
         current = dict(turn_state or {})
         current_state = canonical_turn_state_name(
@@ -1816,9 +1852,10 @@ class RuntimeSupervisor:
                 {},
                 control_age_cycles=control_age_cycles,
             )
-        status_turn_state = self._surface_turn_state_for_stale_operator_control(
+        status_turn_state = self._surface_turn_state_for_gated_operator_control(
             turn_state if isinstance(turn_state, dict) else None,
             stale_operator_control,
+            operator_gate,
         )
         active_lane = self._active_lane_for_runtime(
             status_turn_state,

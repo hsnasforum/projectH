@@ -32,6 +32,7 @@ from .lane_surface import READY_MARKERS as _READY_MARKERS
 from .lane_surface import busy_markers_for_lane
 from .lane_surface import lines_match_markers as _shared_lines_match_markers
 from .lane_surface import pane_text_has_codex_activity as _shared_pane_text_has_codex_activity
+from .lane_surface import tail_has_busy_indicator as _shared_tail_has_busy_indicator
 from .lane_surface import text_is_ready as _shared_text_is_ready
 from .lane_surface import text_matches_markers as _shared_text_matches_markers
 from .schema import atomic_write_json, iso_utc, read_json
@@ -989,7 +990,11 @@ class _WrapperEmitter:
         if not self.recent_lines:
             return
         now_value = float(now) if now is not None else time.monotonic()
-        text = "\n".join(self.recent_lines[-40:])
+        text_lines = list(self.recent_lines[-40:])
+        partial = self.partial.strip()
+        if partial:
+            text_lines.append(partial)
+        text = "\n".join(text_lines)
         if self._maybe_auto_dismiss_blocking_prompt(text):
             return
         lane_busy_markers = busy_markers_for_lane(self.lane_name)
@@ -1027,7 +1032,8 @@ class _WrapperEmitter:
         task_active = task_claimed_active and control_seq >= 0
         task_done_for_current_key = bool(task_key) and self.done_key == task_key
         prompt_visible = ready_detected or _text_is_ready(self.lane_name, text)
-        busy_visible = _text_matches_markers(text, lane_busy_markers)
+        busy_visible = _shared_tail_has_busy_indicator(text, self.lane_name)
+        task_activity_detected = activity_detected or (task_active and busy_visible)
 
         if task_active and not task_done_for_current_key and self.seen_key != task_key:
             self.seen_key = task_key
@@ -1039,7 +1045,7 @@ class _WrapperEmitter:
             }
             self.append("DISPATCH_SEEN", dict(self.seen_payload), derived_from="task_hint")
 
-        if activity_detected and task_active and not task_done_for_current_key:
+        if task_activity_detected and task_active and not task_done_for_current_key:
             if self.accepted_key != task_key:
                 self.accepted_key = task_key
                 self.accepted_payload = {
@@ -1068,7 +1074,7 @@ class _WrapperEmitter:
                 return
             if current_task_still_active:
                 self._task_inactive_since = 0.0
-                if activity_detected or busy_visible:
+                if task_activity_detected or busy_visible:
                     self._last_activity_at = now_value
                     self.busy_state = True
                 return

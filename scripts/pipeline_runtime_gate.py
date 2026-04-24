@@ -1278,7 +1278,7 @@ def _synthetic_lane_env() -> dict[str, str]:
     fake_lane_path = shlex.quote(str(fake_lane))
     common = f"{python_bin} {fake_lane_path} --project-root {{project_root_shlex}}"
     command_suffixes = {
-        "Claude": "--action-delay-sec 0.2",
+        "Claude": "--action-delay-sec 8.0",
         "Codex": "--gemini-every 5 --action-delay-sec 5.0",
         "Gemini": "--gemini-every 5 --action-delay-sec 5.0",
     }

@@ -340,6 +340,14 @@ def _raw_text(parts: Iterable[object]) -> str:
 
 def normalize_reason_code(value: object) -> str:
     text = _normalize_control_token(value)
+    compound_aliases = (
+        (COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON, COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON),
+        (PR_CREATION_GATE_REASON, PR_CREATION_GATE_REASON),
+        (PR_MERGE_GATE_REASON, PR_MERGE_GATE_REASON),
+    )
+    for marker, canonical in compound_aliases:
+        if text == marker or text.startswith(f"{marker}_") or text.endswith(f"_{marker}") or f"_{marker}_" in text:
+            return canonical
     aliases = {
         "branch_commit_and_milestone_transition": "approval_required",
         "branch_commit_milestone_transition": "approval_required",
@@ -372,6 +380,17 @@ def normalize_operator_policy(value: object) -> str:
 
 def normalize_decision_class(value: object) -> str:
     text = _normalize_control_token(value)
+    if (
+        text == "next_milestone_selection"
+        or text.startswith("next_milestone_selection_")
+        or text.endswith("_next_milestone_selection")
+        or "_next_milestone_selection_" in text
+        or text == "branch_strategy"
+        or text.startswith("branch_strategy_")
+        or text.endswith("_branch_strategy")
+        or "_branch_strategy_" in text
+    ):
+        return "next_slice_selection"
     aliases = {
         "branch_closure_and_milestone_transition": "operator_only",
         "branch_complete_pending_milestone_transition": "operator_only",

@@ -204,6 +204,127 @@ class WrapperEmitterTest(unittest.TestCase):
             self.assertIn('"event_type": "DISPATCH_SEEN"', log_text)
             self.assertNotIn('"event_type": "TASK_ACCEPTED"', log_text)
 
+    def test_visible_busy_tail_emits_task_accepted_when_task_hint_arrives_after_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            task_hint_dir.mkdir(parents=True, exist_ok=True)
+            hint_path = task_hint_dir / "claude.json"
+            hint_path.write_text(
+                json.dumps(
+                    {
+                        "lane": "Claude",
+                        "active": False,
+                        "job_id": "",
+                        "dispatch_id": "",
+                        "control_seq": -1,
+                        "attempt": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            emitter = _WrapperEmitter(
+                wrapper_dir=root,
+                lane_name="Claude",
+                task_hint_dir=task_hint_dir,
+                child_pid=795,
+                send_child_bytes=lambda _data: None,
+            )
+
+            emitter.feed("Working (synthetic claude verify)\n", now=0.0)
+            hint_path.write_text(
+                json.dumps(
+                    {
+                        "lane": "Claude",
+                        "active": True,
+                        "job_id": "job-visible-busy",
+                        "dispatch_id": "dispatch-visible-busy",
+                        "control_seq": 352,
+                        "attempt": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            emitter.tick(now=1.0)
+
+            wrapper_log = root / "claude.jsonl"
+            log_text = wrapper_log.read_text(encoding="utf-8")
+            self.assertIn('"event_type": "DISPATCH_SEEN"', log_text)
+            self.assertIn('"event_type": "TASK_ACCEPTED"', log_text)
+            self.assertIn('"dispatch_id": "dispatch-visible-busy"', log_text)
+
+    def test_ready_prompt_after_busy_tail_allows_task_done(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            task_hint_dir.mkdir(parents=True, exist_ok=True)
+            (task_hint_dir / "claude.json").write_text(
+                json.dumps(
+                    {
+                        "lane": "Claude",
+                        "active": True,
+                        "job_id": "job-busy-then-ready",
+                        "dispatch_id": "dispatch-busy-then-ready",
+                        "control_seq": 353,
+                        "attempt": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            emitter = _WrapperEmitter(
+                wrapper_dir=root,
+                lane_name="Claude",
+                task_hint_dir=task_hint_dir,
+                child_pid=796,
+                send_child_bytes=lambda _data: None,
+            )
+
+            emitter.feed("Working (synthetic claude verify)\n", now=0.0)
+            emitter.feed("Claude Code\n❯\n", now=3.0)
+            emitter.tick(now=5.0)
+
+            wrapper_log = root / "claude.jsonl"
+            log_text = wrapper_log.read_text(encoding="utf-8")
+            self.assertIn('"event_type": "TASK_ACCEPTED"', log_text)
+            self.assertIn('"event_type": "TASK_DONE"', log_text)
+            self.assertIn('"dispatch_id": "dispatch-busy-then-ready"', log_text)
+
+    def test_ready_prompt_without_trailing_newline_allows_task_done(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            task_hint_dir.mkdir(parents=True, exist_ok=True)
+            (task_hint_dir / "claude.json").write_text(
+                json.dumps(
+                    {
+                        "lane": "Claude",
+                        "active": True,
+                        "job_id": "job-partial-ready",
+                        "dispatch_id": "dispatch-partial-ready",
+                        "control_seq": 354,
+                        "attempt": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            emitter = _WrapperEmitter(
+                wrapper_dir=root,
+                lane_name="Claude",
+                task_hint_dir=task_hint_dir,
+                child_pid=797,
+                send_child_bytes=lambda _data: None,
+            )
+
+            emitter.feed("Working (synthetic claude verify)\n", now=0.0)
+            emitter.feed("Claude Code\n❯ ", now=3.0)
+            emitter.tick(now=5.0)
+
+            wrapper_log = root / "claude.jsonl"
+            log_text = wrapper_log.read_text(encoding="utf-8")
+            self.assertIn('"event_type": "TASK_ACCEPTED"', log_text)
+            self.assertIn('"event_type": "TASK_DONE"', log_text)
+            self.assertIn('"dispatch_id": "dispatch-partial-ready"', log_text)
+
     def test_codex_bullet_activity_emits_task_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -186,3 +186,12 @@ class CorrectionStore:
         }
         with self._lock:
             return [r for r in self._scan_all() if r.get("status") in _INCOMPLETE]
+
+    def find_adopted_corrections(self) -> list[dict[str, Any]]:
+        with self._lock:
+            adopted = [
+                r for r in self._scan_all()
+                if r.get("status") == CorrectionStatus.ACTIVE
+            ]
+            adopted.sort(key=lambda r: r.get("activated_at") or "")
+            return adopted

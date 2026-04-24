@@ -21,7 +21,8 @@
 ### Internal Operator Runtime Slice
 - outside the shipped browser release gate, internal pipeline tooling now uses a supervisor-owned run-scoped runtime surface (`status.json`, `events.jsonl`, `receipts/`)
 - `controller.server`, `pipeline_gui`, and `pipeline-launcher.py` now read runtime status as thin clients instead of using direct pane/log/file-scan status inference
-- duplicate/receipted `STATUS: implement` handoffs stay on the debug `compat.control_slots` surface only; canonical `control` drops back to `none` so launcher/controller do not show stale `implement` while every lane is already `READY`
+- duplicate/receipted `STATUS: implement` handoffs, plus handoffs whose referenced `/work` is already matched by a `STATUS: verified` `/verify`, stay on the debug `compat.control_slots` surface only; canonical `control` drops back to `none` so launcher/controller do not show stale `implement` while every lane is already `READY`, and watcher returns to verify follow-up for next-control cleanup instead of redispatching the completed handoff
+- CLI/GUI/TUI start paths now share the read-only doctor preflight for required launch checks, and forced stop cleanup returns success once supervisors are gone and status/orphan cleanup is complete
 - `tmux` remains available for attach/debug through `TmuxAdapter`, not as the upper-layer state authority
 - 오래 방치된 `operator_request.md`는 watcher가 Codex re-triage로 다시 넘기고, supervisor canonical `control` block은 그 재심사 동안 `needs_operator`를 숨겨 internal controller/launcher가 같은 stop에 고정되지 않게 합니다
 - `pr_merge_gate` 같은 실제 PR merge publication boundary는 PR merge 전에는 gate 후보로 숨기거나 verify follow-up에 반복 재전달하지 않고 active `needs_operator` / `pr_boundary`로 유지하며, 참조 PR이 이미 merged로 확인되면 `pr_merge_completed` recovery로 stale operator wait를 내립니다. control `HEAD`가 merged PR head와 다르면 `pr_merge_head_mismatch` recovery로 내려 새 PR/control 정정을 유도합니다
@@ -690,6 +691,15 @@
 - Axis 2 (seq 105, verify lane): release gate — full `make e2e-test` confirmed **143 passed (6.5m)** with fresh-DB isolation; faster than prior runs (10.7m) due to empty DB at start
 
 - **Milestone 26 closed** (Axes 1–2): global candidate E2E test isolation complete; both default and SQLite Playwright configs now use per-run fresh SQLite DB
+
+### Milestone 27: Correction Adoption Tracking
+
+#### Guardrails
+- no schema changes; `find_adopted_corrections()` reads existing `status` + `activated_at` fields only
+- `scripts/audit_traces.py` output change is additive (one new line); no existing output removed
+
+#### Shipped Infrastructure (Axis 1, 2026-04-24)
+- Axis 1 (seq 107): `find_adopted_corrections()` added to `CorrectionStore` (JSON) and `SQLiteCorrectionStore`; `scripts/audit_traces.py` now prints `Adopted corrections (ACTIVE): N`
 
 ## Next 3 Implementation Priorities
 

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from core.contracts import CorrectionStatus
 from storage.correction_store import CorrectionStore
+from storage.sqlite_store import SQLiteCorrectionStore, SQLiteDatabase
 
 
 class CorrectionStoreTest(unittest.TestCase):
@@ -25,6 +27,21 @@ class CorrectionStoreTest(unittest.TestCase):
         )
         defaults.update(overrides)
         return store.record_correction(**defaults)
+
+    def _activate_json_at(
+        self, store: CorrectionStore, record: dict, activated_at: str
+    ) -> dict:
+        correction_id = record["correction_id"]
+        store.confirm_correction(correction_id)
+        store.promote_correction(correction_id)
+        active = store.activate_correction(correction_id)
+        active["activated_at"] = activated_at
+        active["updated_at"] = activated_at
+        store._path(correction_id).write_text(
+            json.dumps(active, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return active
 
     def test_record_and_get(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -253,9 +270,93 @@ class CorrectionStoreTest(unittest.TestCase):
                 },
             )
 
+    def test_find_adopted_corrections_returns_only_active_records(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._make_store(tmp)
+            active = self._record_sample(store, artifact_id="a-active", source_message_id="m-active")
+            self._activate_json_at(store, active, "2026-04-24T00:00:01+00:00")
+            self._record_sample(store, artifact_id="a-recorded", source_message_id="m-recorded")
+
+            adopted = store.find_adopted_corrections()
+
+            self.assertEqual([record["correction_id"] for record in adopted], [active["correction_id"]])
+            self.assertEqual({record["status"] for record in adopted}, {CorrectionStatus.ACTIVE})
+
+    def test_find_adopted_corrections_sorts_by_activated_at(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._make_store(tmp)
+            later = self._record_sample(store, artifact_id="a-later", source_message_id="m-later")
+            earlier = self._record_sample(store, artifact_id="a-earlier", source_message_id="m-earlier")
+            self._activate_json_at(store, later, "2026-04-24T00:00:02+00:00")
+            self._activate_json_at(store, earlier, "2026-04-24T00:00:01+00:00")
+
+            adopted = store.find_adopted_corrections()
+
+            self.assertEqual(
+                [record["correction_id"] for record in adopted],
+                [earlier["correction_id"], later["correction_id"]],
+            )
+
     def test_corrupt_file_returns_none(self) -> None:
         with TemporaryDirectory() as tmp:
             store = self._make_store(tmp)
             path = store._path("correction-corrupt")
             path.write_text("not json", encoding="utf-8")
             self.assertIsNone(store.get("correction-corrupt"))
+
+
+class SQLiteCorrectionStoreAdoptionTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.db = SQLiteDatabase(":memory:")
+        self.store = SQLiteCorrectionStore(self.db)
+
+    def tearDown(self) -> None:
+        self.db.close()
+
+    def _record(self, *, artifact_id: str, source_message_id: str) -> dict:
+        record = self.store.record_correction(
+            artifact_id=artifact_id,
+            session_id="session-1",
+            source_message_id=source_message_id,
+            original_text="alpha foo omega",
+            corrected_text="alpha bar omega",
+        )
+        self.assertIsNotNone(record)
+        return record
+
+    def _activate_sqlite_at(self, record: dict, activated_at: str) -> dict:
+        correction_id = record["correction_id"]
+        self.store.confirm_correction(correction_id)
+        self.store.promote_correction(correction_id)
+        active = self.store.activate_correction(correction_id)
+        active["activated_at"] = activated_at
+        active["updated_at"] = activated_at
+        self.db.execute(
+            "UPDATE corrections SET data = ?, updated_at = ? WHERE correction_id = ?",
+            (json.dumps(active, ensure_ascii=False), activated_at, correction_id),
+        )
+        self.db.commit()
+        return active
+
+    def test_find_adopted_corrections_returns_only_active_records(self) -> None:
+        active = self._record(artifact_id="a-active", source_message_id="m-active")
+        self._activate_sqlite_at(active, "2026-04-24T00:00:01+00:00")
+        self._record(artifact_id="a-recorded", source_message_id="m-recorded")
+
+        adopted = self.store.find_adopted_corrections()
+
+        self.assertEqual([record["correction_id"] for record in adopted], [active["correction_id"]])
+        self.assertEqual({record["status"] for record in adopted}, {CorrectionStatus.ACTIVE})
+
+    def test_find_adopted_corrections_sorts_by_activated_at(self) -> None:
+        later = self._record(artifact_id="a-later", source_message_id="m-later")
+        earlier = self._record(artifact_id="a-earlier", source_message_id="m-earlier")
+        self._activate_sqlite_at(later, "2026-04-24T00:00:02+00:00")
+        self._activate_sqlite_at(earlier, "2026-04-24T00:00:01+00:00")
+
+        adopted = self.store.find_adopted_corrections()
+
+        self.assertEqual(
+            [record["correction_id"] for record in adopted],
+            [earlier["correction_id"], later["correction_id"]],
+        )

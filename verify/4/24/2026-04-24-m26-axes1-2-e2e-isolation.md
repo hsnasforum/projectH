@@ -1,48 +1,60 @@
 STATUS: verified
-CONTROL_SEQ: 109
-BASED_ON_WORK: work/4/24/2026-04-24-m27-axis1-correction-adoption.md
-HANDOFF_SHA: 422c6ec (M27 Axis 1 committed); 06687c4 (runtime-launcher committed)
+CONTROL_SEQ: 111
+BASED_ON_WORK: work/4/24/2026-04-24-m27-axis2-adoption-web-ui.md
+HANDOFF_SHA: e7a826f (last committed; M27 Axis 2 changes in dirty worktree — uncommitted)
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/24/2026-04-24-m26-axes1-2-e2e-isolation.md CONTROL_SEQ 108
-NEXT_CONTROL: .pipeline/operator_request.md CONTROL_SEQ 109 (M27 Axis 2 scope + pr_merge_gate)
-PUSH_RESULT: pending (see commit note below)
+SUPERSEDES: verify/4/24/2026-04-24-m26-axes1-2-e2e-isolation.md CONTROL_SEQ 109
+NEXT_CONTROL: .pipeline/implement_handoff.md CONTROL_SEQ 111 (pending_work_closeout — pre-existing dirty changes need /work file)
 
 ---
 
-## M27 Axis 1 Claim: find_adopted_corrections() + audit_traces adoption count
+## M27 Axis 2 Claim: adopted_corrections_count in /api/preferences/audit + PreferencePanel
 
-**Work**: `work/4/24/2026-04-24-m27-axis1-correction-adoption.md`
-**Commit**: 422c6ec
+**Work**: `work/4/24/2026-04-24-m27-axis2-adoption-web-ui.md`
 
 ### Summary
 
-`find_adopted_corrections()` added to both `CorrectionStore` (JSON, `storage/correction_store.py`) and `SQLiteCorrectionStore` (`storage/sqlite_store.py`). Both filter `status == CorrectionStatus.ACTIVE` and sort ascending by `activated_at` (Python-side, since `activated_at` is in the JSON data blob). `scripts/audit_traces.py` calls the method and prints `Adopted corrections (ACTIVE): N`. Two new test classes cover active-only filter and `activated_at` sort order for both stores.
-
-`docs/MILESTONES.md`: M27 definition, guardrails, and Axis 1 shipped entry added.
+`get_preference_audit()` now calls `self.correction_store.find_adopted_corrections()` and returns `adopted_corrections_count`. `PreferenceAudit` TypeScript interface extended with optional `adopted_corrections_count` field. `PreferencePanel` audit row displays `활성 교정 N개` when N > 0. Frontend rebuilt (`npx vite build`). `tests/test_preference_handler.py` extended with two new cases (zero and nonzero adopted count).
 
 ### Checks Run
 
-- `python3 -m py_compile storage/correction_store.py storage/sqlite_store.py scripts/audit_traces.py tests/test_correction_store.py` → **OK**
-- `python3 -m unittest -v tests/test_correction_store.py` → **Ran 25 tests, OK** (new tests confirmed: `test_find_adopted_corrections_returns_only_active_records`, `test_find_adopted_corrections_sorts_by_activated_at` for both JSON CorrectionStoreTest and SQLiteCorrectionStoreAdoptionTest)
-- `python3 scripts/audit_traces.py | grep Adopted` → **`Adopted corrections (ACTIVE): 0`** ✓
-- `git diff --check -- storage/correction_store.py storage/sqlite_store.py scripts/audit_traces.py docs/MILESTONES.md tests/test_correction_store.py` → **OK**
+- `python3 -m py_compile app/handlers/preferences.py tests/test_preference_handler.py` → **OK**
+- `python3 -m unittest -v tests/test_preference_handler.py -k preference_audit` → **Ran 3 tests, OK** (new tests confirmed: `test_get_preference_audit_includes_adopted_count_zero`, `test_get_preference_audit_includes_adopted_count_nonzero`)
+- `app/handlers/preferences.py:108` — `adopted_count = len(self.correction_store.find_adopted_corrections())` confirmed present
+- `app/handlers/preferences.py:113` — `"adopted_corrections_count": adopted_count` in return dict confirmed
+- `app/frontend/src/components/PreferencePanel.tsx:164-165` — `(audit.adopted_corrections_count ?? 0) > 0 && ...` display confirmed
+- `app/static/dist/assets/index.js` mtime: Apr 24 10:43 → positive evidence rebuild ran
+- `git diff --check -- [all claimed files]` → **OK**
 
 ### Checks Not Run
 
-- `python3 -m unittest discover -s tests -p 'test_*.py'` — targeted M27 Axis 1 tests sufficient; full suite deferred to next release gate
-- `make e2e-test` — no browser contract change; not in scope
+- `python3 -m unittest discover` — M27 Axis 2 tests sufficient; full suite deferred to next release gate
+- `make e2e-test` — preference panel audit row is a sidebar count; no E2E scenario currently tests it specifically
+- Live browser smoke — UI correctness via TypeScript build + unit test coverage; Playwright smoke deferred to release gate
 
 ### Verdict
 
-**PASS.** M27 Axis 1 verified. 25 correction store tests pass. `find_adopted_corrections()` contract (active-only, activated_at sorted) confirmed in both JSON and SQLite stores. Audit output confirmed.
+**PASS.** M27 Axis 2 verified. 3 preference_audit tests pass. `adopted_corrections_count` contract locked by nonzero-seed test case. Frontend rebuild confirmed.
 
 ---
 
-## Runtime-Launcher Completed-Handoff Preflight (Seq 108, re-confirmed)
+## Pre-existing Dirty Changes — Unaccounted (not from M27 Axis 2)
 
-**Commit**: 06687c4
+The following files were modified before M27 Axis 2 started and have **no /work closeout**:
 
-354 targeted tests passed at seq 108. Committed in this round. No regressions observed.
+| File | Net change |
+|---|---|
+| `config/settings.py` | +26 net — extract `DEFAULT_*` path constants |
+| `app/web.py` | +55 net — `_has_manual_file_store_override()` using those constants |
+| `scripts/pipeline_runtime_gate.py` | +38 net — `_control_surface_matches_active_slot()` |
+| `scripts/promote_assets.py` | +25 net — unknown scope |
+| `pipeline_gui/setup_controller.py` | +14 net |
+| `pipeline_gui/setup_executor.py` | +27 net |
+| `tests/test_pipeline_runtime_gate.py` | +66 net |
+| `tests/test_pipeline_gui_app.py` | +43 net |
+| `tests/test_web_app.py` | +17 net |
+
+`git diff --check` on these files: **OK** (no whitespace errors). Tests appear functional. No work file exists for this slice. **Cannot commit without a work file.** Next control is a pending_work_closeout implement_handoff to produce it.
 
 ---
 
@@ -50,19 +62,17 @@ PUSH_RESULT: pending (see commit note below)
 
 | Item | SHA |
 |---|---|
-| M22 Axes 1–3 | ed77ff2, acacb28 |
-| M23–M24 | 3a16884, 0e9f46e |
-| M25 Axes 1–2 | 0a49752 |
-| M26 Axes 1–2 E2E isolation + release gate | b0a14f2 |
-| **Milestone 26** | **Closed** |
-| **Runtime-launcher completed-handoff preflight** | **06687c4** |
-| **M27 Axis 1 correction adoption tracking** | **422c6ec** |
-| PR #32 (M20 Axis 2 – M26, now includes runtime-launcher + M27 Axis 1) | OPEN — operator merge pending |
+| M22–M26 | b0a14f2 (closed) |
+| Runtime-launcher completed-handoff preflight | 06687c4 |
+| M27 Axis 1 correction adoption tracking | 422c6ec |
+| **M27 Axis 2 adoption count web UI** | **Dirty worktree — PASS, uncommitted** |
+| **Milestone 27** | **Axes 1–2 complete** |
+| PR #32 | OPEN — operator merge pending |
 | Last release gate | M26 Axis 2: 143 passed (6.5m, 2026-04-24) |
 
 ## Risks / Open Questions
 
-1. **M27 Axis 2 direction**: no advisory (4+ timeouts); operator_request seq 109 open.
-2. **PR #32 scope growth**: runtime-launcher + M27 Axis 1 commits now on `feat/watcher-turn-state` grow PR #32 beyond original M20–M26 scope. Operator should decide merge or new branch strategy.
-3. **Push pending**: commits 06687c4 and 422c6ec are local; push to origin should happen in this round or operator can instruct.
-4. **Full discover suite not run**: targeted tests cover all changed modules. Broader suite check deferred to next release gate.
+1. **Pre-existing dirty changes without work file**: 9 files modified, no `/work` closeout. Cannot commit until a work file is produced. Next control (seq 111) handles this.
+2. **M27 UI smoke not run**: adoption count display in `PreferencePanel` covered by unit test + TypeScript build. No Playwright scenario tests this sidebar count specifically.
+3. **Advisory unavailable**: Gemini 4+ consecutive timeouts. M28 direction deferred until pre-existing dirty changes are closed out.
+4. **PR #32 merge**: operator backlog, unchanged.

@@ -96,6 +96,72 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
         self.assertEqual(summary["state_counts"], {"RUNNING": 1})
         ready_wait.assert_called_once_with(root, timeout_sec=45.0)
 
+    def test_run_soak_allows_operator_gate_hidden_from_dispatch_control(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ready_status = {
+                "runtime_state": "RUNNING",
+                "watcher": {"alive": True, "pid": 123},
+                "lanes": [{"name": "Codex", "state": "READY", "attachable": True, "pid": 456, "note": ""}],
+                "control": {
+                    "active_control_file": "",
+                    "active_control_seq": -1,
+                    "active_control_status": "none",
+                },
+                "autonomy": {
+                    "mode": "hibernate",
+                    "reason_code": "pr_merge_gate",
+                    "operator_policy": "internal_only",
+                    "decision_class": "merge_gate",
+                    "classification_source": "operator_policy",
+                },
+                "turn_state": {
+                    "state": "OPERATOR_WAIT",
+                    "active_control_file": "operator_request.md",
+                    "active_control_seq": 109,
+                },
+                "active_round": {"state": ""},
+            }
+            time_values = iter([0.0, 0.0, 1.0])
+
+            with mock.patch.object(pipeline_runtime_gate, "_start_runtime", return_value=(True, "started")), \
+                 mock.patch.object(pipeline_runtime_gate, "_stop_runtime", return_value=(True, "stopped")), \
+                 mock.patch.object(
+                     pipeline_runtime_gate,
+                     "_wait_for_runtime_readiness",
+                     return_value=(True, ready_status, 0.5),
+                 ), \
+                 mock.patch.object(pipeline_runtime_gate, "_read_status", return_value=ready_status), \
+                 mock.patch.object(
+                     pipeline_runtime_gate,
+                     "_analyze_run_artifacts",
+                     return_value={"dispatch_count": 0, "duplicate_dispatch_count": 0, "orphan_session": False},
+                 ), \
+                 mock.patch.object(
+                     pipeline_runtime_gate,
+                     "parse_control_slots",
+                     return_value={
+                         "active": {
+                             "file": "operator_request.md",
+                             "status": "needs_operator",
+                             "control_seq": 109,
+                         }
+                     },
+                 ), \
+                 mock.patch.object(pipeline_runtime_gate.time, "sleep", return_value=None), \
+                 mock.patch.object(pipeline_runtime_gate.time, "time", side_effect=lambda: next(time_values)):
+                ok, summary = pipeline_runtime_gate.run_soak(
+                    root,
+                    mode="experimental",
+                    session="aip-test",
+                    duration_sec=0.5,
+                    sample_interval_sec=0.5,
+                )
+
+        self.assertTrue(ok)
+        self.assertEqual(summary["control_mismatch_samples"], 0)
+        self.assertEqual(summary["control_mismatch_max_streak"], 0)
+
     def test_run_soak_fails_when_ready_barrier_times_out_with_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -319,6 +385,7 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
 
             profile_path = workspace / ".pipeline" / "config" / "agent_profile.json"
             self.assertTrue(profile_path.exists())
+            self.assertTrue((workspace / "AGENTS.md").exists())
             profile = json.loads(profile_path.read_text(encoding="utf-8"))
             self.assertEqual(
                 profile["role_bindings"],

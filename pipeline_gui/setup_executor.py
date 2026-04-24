@@ -107,6 +107,8 @@ class LocalSetupExecutorAdapter:
         self.preview_delay_sec = preview_delay_sec
         self.result_delay_sec = result_delay_sec
         self.staged_retention_sec = staged_retention_sec
+        self._active_threads: set[threading.Thread] = set()
+        self._active_threads_lock = threading.Lock()
 
     def _materialize_payload(self, *, phase: str, payload: SetupPayload) -> SetupPayload:
         del phase
@@ -157,7 +159,31 @@ class LocalSetupExecutorAdapter:
             if on_complete is not None:
                 on_complete()
 
-        threading.Thread(target=_worker, daemon=True).start()
+        def _worker_with_tracking() -> None:
+            try:
+                _worker()
+            finally:
+                with self._active_threads_lock:
+                    self._active_threads.discard(threading.current_thread())
+
+        thread = threading.Thread(target=_worker_with_tracking, daemon=True)
+        with self._active_threads_lock:
+            self._active_threads.add(thread)
+        thread.start()
+
+    def wait_for_idle(self, *, timeout_sec: float = 1.0) -> bool:
+        deadline = time.time() + max(0.0, timeout_sec)
+        while True:
+            with self._active_threads_lock:
+                threads = [thread for thread in self._active_threads if thread.is_alive()]
+                self._active_threads = set(threads)
+            if not threads:
+                return True
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                return False
+            for thread in threads:
+                thread.join(min(0.02, max(0.0, remaining)))
 
     def dispatch_preview(
         self,

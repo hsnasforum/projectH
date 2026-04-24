@@ -232,6 +232,13 @@ def _wait_until(predicate, *, timeout: float = 0.5) -> bool:
     return predicate()
 
 
+def _wait_for_setup_executor_idle(gui: PipelineGUI, *, timeout: float = 1.0) -> bool:
+    wait_for_idle = getattr(gui._setup_executor_adapter, "wait_for_idle", None)
+    if wait_for_idle is None:
+        return True
+    return bool(wait_for_idle(timeout_sec=timeout))
+
+
 def _setup_state(gui: PipelineGUI) -> SetupActionState:
     return PipelineGUI._export_setup_state(gui)
 
@@ -526,6 +533,7 @@ class PipelineGuiAppTest(unittest.TestCase):
             )
 
             self.assertEqual(_setup_state(gui).mode_state, "Applied")
+            self.assertTrue(_wait_for_setup_executor_idle(gui))
 
             for key in ("active", "request", "preview", "apply", "result", "last_applied"):
                 path = gui._setup_paths()[key]
@@ -540,6 +548,41 @@ class PipelineGuiAppTest(unittest.TestCase):
             self.assertEqual(gui._setup_current_preview_fingerprint_var.get(), "—")
             self.assertEqual(gui._setup_restart_notice_var.get(), "")
             self.assertNotIn("설정 적용 결과가 도착했습니다.", gui._setup_validation_var.get())
+            self.assertIsNone(_setup_state(gui).current_result_payload)
+
+    def test_setup_refresh_ignores_orphan_result_after_setup_truth_is_cleared(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            gui = _make_setup_gui(Path(td))
+
+            PipelineGUI._on_setup_save_draft(gui)
+            PipelineGUI._on_setup_generate_preview(gui)
+            self.assertTrue(_wait_until(lambda: read_json(gui._setup_paths()["preview"]) is not None))
+            self.assertTrue(
+                _wait_until(
+                    lambda: (gui._refresh_setup_mode_state() or True) and _setup_state(gui).mode_state == "PreviewReady",
+                    timeout=1.5,
+                )
+            )
+            PipelineGUI._on_setup_apply(gui)
+            self.assertTrue(_wait_until(lambda: read_json(gui._setup_paths()["result"]) is not None))
+            self.assertTrue(
+                _wait_until(
+                    lambda: (gui._refresh_setup_mode_state() or True) and _setup_state(gui).mode_state == "Applied",
+                    timeout=1.5,
+                )
+            )
+            self.assertTrue(_wait_for_setup_executor_idle(gui))
+
+            result_payload = dict(read_json(gui._setup_paths()["result"]) or {})
+            for key in ("active", "request", "preview", "apply", "result", "last_applied"):
+                path = gui._setup_paths()[key]
+                if path.exists():
+                    path.unlink()
+            gui._setup_write_json(gui._setup_paths()["result"], result_payload)
+
+            gui._refresh_setup_mode_state()
+
+            self.assertEqual(_setup_state(gui).mode_state, "DraftOnly")
             self.assertIsNone(_setup_state(gui).current_result_payload)
 
     def test_setup_refresh_uses_active_profile_as_applied_truth_without_runtime_artifacts(self) -> None:

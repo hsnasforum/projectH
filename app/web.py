@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -22,7 +23,17 @@ from core.contracts import (
     FeedbackReason,
     WebSearchPermission,
 )
-from config.settings import AppSettings
+from config.settings import (
+    DEFAULT_ARTIFACTS_DIR,
+    DEFAULT_CORRECTIONS_DIR,
+    DEFAULT_NOTES_DIR,
+    DEFAULT_PREFERENCES_DIR,
+    DEFAULT_SESSIONS_DIR,
+    DEFAULT_SQLITE_DB_PATH,
+    DEFAULT_TASK_LOG_PATH,
+    DEFAULT_WEB_SEARCH_HISTORY_DIR,
+    AppSettings,
+)
 from model_adapter.base import ModelAdapterError
 from storage.session_store import SessionStore
 from storage.task_log import TaskLogger
@@ -38,6 +49,51 @@ from app.handlers.chat import ChatHandlerMixin
 DEFAULT_SESSION_ID = "demo-session"
 
 
+def _has_manual_file_store_override(settings: AppSettings) -> bool:
+    return (
+        settings.sessions_dir != DEFAULT_SESSIONS_DIR
+        or settings.task_log_path != DEFAULT_TASK_LOG_PATH
+        or settings.notes_dir != DEFAULT_NOTES_DIR
+        or settings.web_search_history_dir != DEFAULT_WEB_SEARCH_HISTORY_DIR
+    )
+
+
+def _manual_file_store_base(settings: AppSettings) -> Path:
+    if settings.sessions_dir != DEFAULT_SESSIONS_DIR:
+        return Path(settings.sessions_dir).parent
+    if settings.notes_dir != DEFAULT_NOTES_DIR:
+        return Path(settings.notes_dir).parent
+    if settings.web_search_history_dir != DEFAULT_WEB_SEARCH_HISTORY_DIR:
+        return Path(settings.web_search_history_dir).parent
+    return Path(settings.task_log_path).parent
+
+
+def _with_isolated_json_companions(settings: AppSettings) -> AppSettings:
+    if not _has_manual_file_store_override(settings):
+        return settings
+    base = _manual_file_store_base(settings)
+    updates: dict[str, str] = {}
+    if settings.artifacts_dir == DEFAULT_ARTIFACTS_DIR:
+        updates["artifacts_dir"] = str(base / "artifacts")
+    if settings.corrections_dir == DEFAULT_CORRECTIONS_DIR:
+        updates["corrections_dir"] = str(base / "corrections")
+    if settings.preferences_dir == DEFAULT_PREFERENCES_DIR:
+        updates["preferences_dir"] = str(base / "preferences")
+    if settings.web_search_history_dir == DEFAULT_WEB_SEARCH_HISTORY_DIR:
+        updates["web_search_history_dir"] = str(base / "web-search")
+    return replace(settings, **updates) if updates else settings
+
+
+def _effective_service_settings(settings: AppSettings) -> AppSettings:
+    if settings.storage_backend == "sqlite":
+        if settings.sqlite_db_path == DEFAULT_SQLITE_DB_PATH and _has_manual_file_store_override(settings):
+            return _with_isolated_json_companions(replace(settings, storage_backend="json"))
+        return settings
+    if settings.storage_backend == "json":
+        return _with_isolated_json_companions(settings)
+    return settings
+
+
 class WebAppService(ChatHandlerMixin, AggregateHandlerMixin, FeedbackHandlerMixin, PreferenceHandlerMixin, SerializerMixin):
     def __init__(
         self,
@@ -45,6 +101,7 @@ class WebAppService(ChatHandlerMixin, AggregateHandlerMixin, FeedbackHandlerMixi
         *,
         template_path: str | None = None,
     ) -> None:
+        settings = _effective_service_settings(settings)
         self.settings = settings
         if settings.storage_backend == "sqlite":
             from storage.sqlite_store import (

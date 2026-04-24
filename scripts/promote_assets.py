@@ -12,6 +12,27 @@ from storage.correction_store import CorrectionStore
 HQ_PATH = Path("data/high_quality_traces.jsonl")
 
 
+def _ensure_promoted(store: CorrectionStore, correction_id: str) -> bool:
+    record = store.get(correction_id)
+    if not record:
+        return False
+
+    status = record.get("status")
+    if status == "recorded":
+        record = store.confirm_correction(correction_id)
+        if not record:
+            return False
+        status = record.get("status")
+
+    if status == "confirmed":
+        record = store.promote_correction(correction_id)
+        if not record:
+            return False
+        status = record.get("status")
+
+    return status in {"promoted", "active", "stopped"}
+
+
 def promote_from_jsonl(hq_path: Path, store: CorrectionStore) -> tuple[int, int]:
     """Return (promoted, skipped) counts."""
     promoted = 0
@@ -29,8 +50,10 @@ def promote_from_jsonl(hq_path: Path, store: CorrectionStore) -> tuple[int, int]
             if result is None:
                 skipped += 1
                 continue
-            store.promote_correction(result["correction_id"])
-            promoted += 1
+            if _ensure_promoted(store, result["correction_id"]):
+                promoted += 1
+            else:
+                skipped += 1
     return promoted, skipped
 
 

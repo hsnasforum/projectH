@@ -98,6 +98,35 @@ def _operator_classification_gate_detail(status: dict[str, Any] | None) -> str:
     return ""
 
 
+def _control_surface_matches_active_slot(
+    status: dict[str, Any],
+    *,
+    control_file: str,
+    control_seq: int,
+    control_status: str,
+    expected_file: str,
+    expected_seq: int,
+    expected_status: str,
+) -> bool:
+    if (control_file, control_seq, control_status) == (expected_file, expected_seq, expected_status):
+        return True
+    if control_file or control_seq >= 0 or control_status != "none":
+        return False
+    if expected_status != "needs_operator" or not expected_file.endswith("operator_request.md"):
+        return False
+
+    autonomy = dict(status.get("autonomy") or {})
+    turn_state = dict(status.get("turn_state") or {})
+    autonomy_mode = str(autonomy.get("mode") or "").strip()
+    turn_state_name = str(turn_state.get("state") or "").strip()
+    turn_active_control = str(turn_state.get("active_control_file") or "").strip()
+    return (
+        autonomy_mode in {"hibernate", "pending_operator", "needs_operator"}
+        or turn_state_name == "OPERATOR_WAIT"
+        or turn_active_control.endswith("operator_request.md")
+    )
+
+
 def run_operator_classification_gate(project_root: Path) -> tuple[bool, str]:
     status = _read_status(project_root)
     detail = _operator_classification_gate_detail(status)
@@ -1109,7 +1138,15 @@ def run_soak(
                 expected_file = f".pipeline/{active_slot.get('file')}" if active_slot.get("file") else ""
                 expected_seq = int(active_slot.get("control_seq") or -1) if active_slot else -1
                 expected_status = str(active_slot.get("status") or "none")
-                if (control_file, control_seq, control_status) != (expected_file, expected_seq, expected_status):
+                if not _control_surface_matches_active_slot(
+                    status,
+                    control_file=control_file,
+                    control_seq=control_seq,
+                    control_status=control_status,
+                    expected_file=expected_file,
+                    expected_seq=expected_seq,
+                    expected_status=expected_status,
+                ):
                     control_mismatch_samples += 1
                     control_mismatch_streak += 1
                     control_mismatch_max_streak = max(control_mismatch_max_streak, control_mismatch_streak)
@@ -1196,6 +1233,11 @@ def _seed_synthetic_workspace(
     role_bindings: dict[str, str] | None = None,
 ) -> Path:
     (project_root / ".pipeline").mkdir(parents=True, exist_ok=True)
+    source_agents = REPO_ROOT / "AGENTS.md"
+    if source_agents.exists():
+        shutil.copyfile(source_agents, project_root / "AGENTS.md")
+    else:
+        (project_root / "AGENTS.md").write_text("# Synthetic Agents\n", encoding="utf-8")
     _write_active_profile(project_root, role_bindings=role_bindings)
     (project_root / "work").mkdir(parents=True, exist_ok=True)
     (project_root / "verify").mkdir(parents=True, exist_ok=True)

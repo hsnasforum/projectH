@@ -5725,6 +5725,10 @@ class WebAppServiceTest(unittest.TestCase):
                         "created_at": payload["candidate_confirmation_record"]["recorded_at"],
                         "updated_at": payload["candidate_confirmation_record"]["recorded_at"],
                         "quality_info": payload["session"]["review_queue_items"][0]["quality_info"],
+                        "delta_summary": payload["session"]["review_queue_items"][0]["delta_summary"],
+                        "original_snippet": payload["session"]["review_queue_items"][0]["original_snippet"],
+                        "corrected_snippet": payload["session"]["review_queue_items"][0]["corrected_snippet"],
+                        "is_global": False,
                     }
                 ],
             )
@@ -8099,6 +8103,7 @@ class WebAppServiceTest(unittest.TestCase):
                 sessions_dir=str(tmp_path / "sessions"),
                 task_log_path=str(tmp_path / "task_log.jsonl"),
                 notes_dir=str(tmp_path / "notes"),
+                sqlite_db_path=str(tmp_path / "test.db"),
                 model_provider="mock",
                 web_search_permission="enabled",
             )
@@ -8135,7 +8140,9 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(payload["ok"])
             self.assertEqual(payload["response"]["actions_taken"], ["web_search"])
             self.assertEqual(payload["response"]["response_origin"]["provider"], "web")
-            self.assertIn("웹 검색 요약: 메이플스토리", payload["response"]["text"])
+            self.assertEqual(payload["response"]["response_origin"]["answer_mode"], "entity_card")
+            self.assertIn("메이플스토리", payload["response"]["text"])
+            self.assertGreaterEqual(len(payload["response"].get("claim_coverage") or []), 1)
 
     def test_handle_chat_external_fact_retry_prompt_uses_web_search_when_enabled(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -8195,6 +8202,7 @@ class WebAppServiceTest(unittest.TestCase):
                 sessions_dir=str(tmp_path / "sessions"),
                 task_log_path=str(tmp_path / "task_log.jsonl"),
                 notes_dir=str(tmp_path / "notes"),
+                sqlite_db_path=str(tmp_path / "test.db"),
                 model_provider="mock",
                 web_search_permission="enabled",
             )
@@ -8231,7 +8239,9 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(payload["ok"])
             self.assertEqual(payload["response"]["actions_taken"], ["web_search"])
             self.assertEqual(payload["response"]["response_origin"]["provider"], "web")
-            self.assertIn("웹 검색 요약: 김창섭", payload["response"]["text"])
+            self.assertEqual(payload["response"]["response_origin"]["answer_mode"], "entity_card")
+            self.assertIn("김창섭", payload["response"]["text"])
+            self.assertGreaterEqual(len(payload["response"].get("claim_coverage") or []), 1)
 
     def test_handle_chat_external_fact_who_question_with_spaced_question_mark_uses_web_search_when_enabled(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -8241,6 +8251,7 @@ class WebAppServiceTest(unittest.TestCase):
                 sessions_dir=str(tmp_path / "sessions"),
                 task_log_path=str(tmp_path / "task_log.jsonl"),
                 notes_dir=str(tmp_path / "notes"),
+                sqlite_db_path=str(tmp_path / "test.db"),
                 model_provider="mock",
                 web_search_permission="enabled",
             )
@@ -8277,7 +8288,9 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(payload["ok"])
             self.assertEqual(payload["response"]["actions_taken"], ["web_search"])
             self.assertEqual(payload["response"]["response_origin"]["provider"], "web")
-            self.assertIn("웹 검색 요약: 김창섭", payload["response"]["text"])
+            self.assertEqual(payload["response"]["response_origin"]["answer_mode"], "entity_card")
+            self.assertIn("김창섭", payload["response"]["text"])
+            self.assertGreaterEqual(len(payload["response"].get("claim_coverage") or []), 1)
 
     def test_handle_chat_external_fact_colloquial_info_questions_use_web_search_when_enabled(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -8287,6 +8300,7 @@ class WebAppServiceTest(unittest.TestCase):
                 sessions_dir=str(tmp_path / "sessions"),
                 task_log_path=str(tmp_path / "task_log.jsonl"),
                 notes_dir=str(tmp_path / "notes"),
+                sqlite_db_path=str(tmp_path / "test.db"),
                 model_provider="mock",
                 web_search_permission="enabled",
             )
@@ -8344,7 +8358,9 @@ class WebAppServiceTest(unittest.TestCase):
                         self.assertTrue(payload["ok"])
                         self.assertEqual(payload["response"]["actions_taken"], ["web_search"])
                         self.assertEqual(payload["response"]["response_origin"]["provider"], "web")
-                        self.assertIn("웹 검색 요약: 김창섭", payload["response"]["text"])
+                        self.assertEqual(payload["response"]["response_origin"]["answer_mode"], "entity_card")
+                        self.assertIn("김창섭", payload["response"]["text"])
+                        self.assertGreaterEqual(len(payload["response"].get("claim_coverage") or []), 1)
 
     def test_handle_chat_low_confidence_external_fact_question_returns_search_suggestion(self) -> None:
         with TemporaryDirectory() as tmp_dir:

@@ -1009,9 +1009,19 @@ class SetupController:
                 "last_applied_exists",
             )
         )
-        current_setup_id = state.current_setup_id if disk_setup_truth_exists else ""
-        cached_preview_payload = state.current_preview_payload if disk_setup_truth_exists else None
-        cached_result_payload = state.current_result_payload if disk_setup_truth_exists else None
+        disk_cached_state_context_exists = any(
+            getattr(disk_state, flag)
+            for flag in (
+                "active_exists",
+                "request_exists",
+                "preview_exists",
+                "apply_exists",
+                "last_applied_exists",
+            )
+        )
+        current_setup_id = state.current_setup_id if disk_cached_state_context_exists else ""
+        cached_preview_payload = state.current_preview_payload if disk_cached_state_context_exists else None
+        cached_result_payload = state.current_result_payload if disk_cached_state_context_exists else None
         draft_saved = bool(draft_payload and self.fingerprint(draft_payload) == current_draft_fingerprint)
 
         errors, warnings, infos = self.validate(form_payload)

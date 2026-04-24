@@ -1,45 +1,48 @@
 STATUS: verified
-CONTROL_SEQ: 106
-BASED_ON_WORK: work/4/24/2026-04-24-m26-axis1-e2e-sqlite-isolation.md
-HANDOFF_SHA: 1471caa
+CONTROL_SEQ: 109
+BASED_ON_WORK: work/4/24/2026-04-24-m27-axis1-correction-adoption.md
+HANDOFF_SHA: 422c6ec (M27 Axis 1 committed); 06687c4 (runtime-launcher committed)
 VERIFIED_BY: Claude
-SUPERSEDES: verify/4/24/2026-04-24-m25-axes1-2-preference-audit.md CONTROL_SEQ 104
-NEXT_CONTROL: .pipeline/advisory_request.md CONTROL_SEQ 106
-PUSH_RESULT: feat/watcher-turn-state a64f935..1471caa pushed to origin (2026-04-24)
-PR_UPDATE: PR #32 title updated to include M26 (2026-04-24)
-RETRIAGE_NOTE: pr_merge_gate operator backlog; untracked Gemini reports committed (1471caa); advisory_request seq 106 open for M27
+SUPERSEDES: verify/4/24/2026-04-24-m26-axes1-2-e2e-isolation.md CONTROL_SEQ 108
+NEXT_CONTROL: .pipeline/operator_request.md CONTROL_SEQ 109 (M27 Axis 2 scope + pr_merge_gate)
+PUSH_RESULT: pending (see commit note below)
 
 ---
 
-## M26 Axis 1 Claim: per-run SQLite isolation in playwright.config.mjs
+## M27 Axis 1 Claim: find_adopted_corrections() + audit_traces adoption count
 
-**Work**: `work/4/24/2026-04-24-m26-axis1-e2e-sqlite-isolation.md`
-**Commit**: b0a14f2
+**Work**: `work/4/24/2026-04-24-m27-axis1-correction-adoption.md`
+**Commit**: 422c6ec
 
 ### Summary
 
-`e2e/playwright.config.mjs` now imports `node:os` and `node:fs`, creates a temp directory with `fs.mkdtempSync(path.join(os.tmpdir(), "pw-default-"))`, and passes `LOCAL_AI_SQLITE_DB_PATH=${defaultSqliteDbPath}` to the webServer command. Each `make e2e-test` run gets a clean SQLite DB, eliminating cross-run correction accumulation that causes false global candidate hits. Pattern mirrors `playwright.sqlite.config.mjs` exactly.
+`find_adopted_corrections()` added to both `CorrectionStore` (JSON, `storage/correction_store.py`) and `SQLiteCorrectionStore` (`storage/sqlite_store.py`). Both filter `status == CorrectionStatus.ACTIVE` and sort ascending by `activated_at` (Python-side, since `activated_at` is in the JSON data blob). `scripts/audit_traces.py` calls the method and prints `Adopted corrections (ACTIVE): N`. Two new test classes cover active-only filter and `activated_at` sort order for both stores.
 
-`docs/MILESTONES.md`: M26 Axes 1-2 shipped entries + closed marker + "Next 3 Priorities" updated (M26 item removed, PR #32 description updated to M20-M26, advisory stability noted).
+`docs/MILESTONES.md`: M27 definition, guardrails, and Axis 1 shipped entry added.
 
 ### Checks Run
 
-- `cd e2e && npx playwright test --list` → **143 tests in 2 files** (no parse error)
-- `git diff --check -- e2e/playwright.config.mjs docs/MILESTONES.md` → **OK**
-- `make e2e-test` (full suite, M26 Axis 2 release gate) → **143 passed (6.5m)** ← PASS
-
-### Performance Note
-
-Suite ran 6.5m vs prior 10.7m — fresh empty DB means `find_recurring_patterns()` returns empty results immediately instead of scanning accumulated corrections. The isolation has a positive performance side effect.
+- `python3 -m py_compile storage/correction_store.py storage/sqlite_store.py scripts/audit_traces.py tests/test_correction_store.py` → **OK**
+- `python3 -m unittest -v tests/test_correction_store.py` → **Ran 25 tests, OK** (new tests confirmed: `test_find_adopted_corrections_returns_only_active_records`, `test_find_adopted_corrections_sorts_by_activated_at` for both JSON CorrectionStoreTest and SQLiteCorrectionStoreAdoptionTest)
+- `python3 scripts/audit_traces.py | grep Adopted` → **`Adopted corrections (ACTIVE): 0`** ✓
+- `git diff --check -- storage/correction_store.py storage/sqlite_store.py scripts/audit_traces.py docs/MILESTONES.md tests/test_correction_store.py` → **OK**
 
 ### Checks Not Run
 
-- `playwright.sqlite.config.mjs` — already had isolation; not changed
-- `playwright.controller.config.mjs` — different server mode; not in scope
+- `python3 -m unittest discover -s tests -p 'test_*.py'` — targeted M27 Axis 1 tests sufficient; full suite deferred to next release gate
+- `make e2e-test` — no browser contract change; not in scope
 
 ### Verdict
 
-**PASS.** **Milestone 26 closed** (Axes 1–2): global candidate E2E test isolation and release gate complete.
+**PASS.** M27 Axis 1 verified. 25 correction store tests pass. `find_adopted_corrections()` contract (active-only, activated_at sorted) confirmed in both JSON and SQLite stores. Audit output confirmed.
+
+---
+
+## Runtime-Launcher Completed-Handoff Preflight (Seq 108, re-confirmed)
+
+**Commit**: 06687c4
+
+354 targeted tests passed at seq 108. Committed in this round. No regressions observed.
 
 ---
 
@@ -47,16 +50,19 @@ Suite ran 6.5m vs prior 10.7m — fresh empty DB means `find_recurring_patterns(
 
 | Item | SHA |
 |---|---|
-| M22 Axes 1–3 | ed77ff2, acacb28, (143 passed) |
+| M22 Axes 1–3 | ed77ff2, acacb28 |
 | M23–M24 | 3a16884, 0e9f46e |
-| M25 Axes 1–2 | 0a49752, (143 passed) |
-| **M26 Axes 1–2 E2E isolation + release gate** | **b0a14f2** |
+| M25 Axes 1–2 | 0a49752 |
+| M26 Axes 1–2 E2E isolation + release gate | b0a14f2 |
 | **Milestone 26** | **Closed** |
-| PR #32 (M20 Axis 2 – M26) | OPEN — operator merge pending |
-| Release gate | M26 Axis 2: 143 passed (6.5m, 2026-04-24) |
+| **Runtime-launcher completed-handoff preflight** | **06687c4** |
+| **M27 Axis 1 correction adoption tracking** | **422c6ec** |
+| PR #32 (M20 Axis 2 – M26, now includes runtime-launcher + M27 Axis 1) | OPEN — operator merge pending |
+| Last release gate | M26 Axis 2: 143 passed (6.5m, 2026-04-24) |
 
 ## Risks / Open Questions
 
-1. **Advisory availability**: Gemini has timed out 4+ consecutive times. M23–M26 ran via council convergence. MILESTONES.md "Next 3 Priorities" now notes this explicitly.
-2. **PR #32 merge**: all milestones M20–M26 on branch; operator merge decision pending.
-3. **M27 direction**: no local slice identifiable without advisory or operator direction — awaiting resolution.
+1. **M27 Axis 2 direction**: no advisory (4+ timeouts); operator_request seq 109 open.
+2. **PR #32 scope growth**: runtime-launcher + M27 Axis 1 commits now on `feat/watcher-turn-state` grow PR #32 beyond original M20–M26 scope. Operator should decide merge or new branch strategy.
+3. **Push pending**: commits 06687c4 and 422c6ec are local; push to origin should happen in this round or operator can instruct.
+4. **Full discover suite not run**: targeted tests cover all changed modules. Broader suite check deferred to next release gate.

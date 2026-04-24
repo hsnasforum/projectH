@@ -94,6 +94,7 @@ from pipeline_runtime.schema import (
     active_control_snapshot_from_entry,
     active_control_snapshot_from_status,
     atomic_write_text,
+    completed_implement_handoff_truth,
     control_block_from_snapshot,
     control_filenames_equivalent,
     control_seq_value,
@@ -109,6 +110,7 @@ from pipeline_runtime.schema import (
     snapshot_control_seq,
 )
 from pipeline_runtime.turn_arbitration import (
+    TURN_VERIFY_FOLLOWUP,
     WatcherTurnInputs,
     legacy_turn_state_name,
     legacy_watcher_turn_name,
@@ -3527,13 +3529,38 @@ class WatcherCore:
         """Resolve which functional role should act next."""
         handoff_active = self._is_active_control(self.implement_handoff_path, "implement")
         handoff_mtime = self._get_path_mtime(self.implement_handoff_path) if handoff_active else 0.0
+        operator_request_active = self._is_active_control(self.operator_request_path, "needs_operator")
+        advisory_request_active = self._is_active_control(self.advisory_request_path, "request_open")
+        advisory_advice_active = self._is_active_control(self.advisory_advice_path, "advice_ready")
+        handoff_completed = bool(
+            handoff_active
+            and completed_implement_handoff_truth(
+                self.implement_handoff_path,
+                repo_root=self.repo_root,
+                work_root=self.watch_dir,
+                verify_root=self.verify_dir,
+                active_control_updated_at=handoff_mtime,
+            )
+            is not None
+        )
+        if (
+            handoff_completed
+            and not operator_request_active
+            and not advisory_request_active
+            and not advisory_advice_active
+        ):
+            return TURN_VERIFY_FOLLOWUP
         return resolve_watcher_turn(
             WatcherTurnInputs(
-                operator_request_active=self._is_active_control(self.operator_request_path, "needs_operator"),
-                advisory_request_active=self._is_active_control(self.advisory_request_path, "request_open"),
-                advisory_advice_active=self._is_active_control(self.advisory_advice_path, "advice_ready"),
-                implement_handoff_active=handoff_active,
-                latest_work_needs_verify=self._handoff_verify_blocker_exists(handoff_mtime),
+                operator_request_active=operator_request_active,
+                advisory_request_active=advisory_request_active,
+                advisory_advice_active=advisory_advice_active,
+                implement_handoff_active=handoff_active and not handoff_completed,
+                latest_work_needs_verify=(
+                    self._handoff_verify_blocker_exists(handoff_mtime)
+                    if not handoff_completed
+                    else False
+                ),
                 implement_handoff_verify_active=self._implement_handoff_verify_active(),
                 idle_release_cooldown_active=self._is_idle_release_cooldown_active(),
                 operator_recovery_marker=self._operator_control_recovery_marker(),
@@ -3843,7 +3870,10 @@ class WatcherCore:
             self._pending_idle_release_handoff = None
             return False
         handoff_mtime = handoff_control.mtime
-        dispatch_state = self._implement_handoff_dispatch_state(handoff_mtime)
+        dispatch_state = self._implement_handoff_dispatch_state(
+            handoff_mtime,
+            handoff_control.path if handoff_control is not None else self.implement_handoff_path,
+        )
         if not dispatch_state["dispatchable"]:
             self._pending_idle_release_handoff = None
             return False
@@ -4041,15 +4071,35 @@ class WatcherCore:
         return self.lease.is_active("slot_verify")
 
     # ------------------------------------------------------------------
-    def _implement_handoff_dispatch_state(self, handoff_mtime: float) -> dict[str, bool]:
+    def _implement_handoff_dispatch_state(
+        self,
+        handoff_mtime: float,
+        handoff_path: Optional[Path] = None,
+    ) -> dict[str, bool]:
         operator_blocked = self._operator_blocks_handoff(handoff_mtime)
         pending_verify = self._handoff_verify_blocker_exists(handoff_mtime)
         verify_active = self._implement_handoff_verify_active()
+        completed_handoff = (
+            completed_implement_handoff_truth(
+                handoff_path or self.implement_handoff_path,
+                repo_root=self.repo_root,
+                work_root=self.watch_dir,
+                verify_root=self.verify_dir,
+                active_control_updated_at=handoff_mtime,
+            )
+            is not None
+        )
         return {
             "operator_blocked": operator_blocked,
             "pending_verify": pending_verify,
             "verify_active": verify_active,
-            "dispatchable": not operator_blocked and not pending_verify and not verify_active,
+            "completed_handoff": completed_handoff,
+            "dispatchable": (
+                not operator_blocked
+                and not pending_verify
+                and not verify_active
+                and not completed_handoff
+            ),
         }
 
     # ------------------------------------------------------------------
@@ -4263,7 +4313,7 @@ class WatcherCore:
             self._last_implement_handoff_sig = handoff_sig
             status = self._read_status_from_path(handoff_path) or "missing"
             handoff_mtime = self._get_path_mtime(handoff_path)
-            dispatch_state = self._implement_handoff_dispatch_state(handoff_mtime)
+            dispatch_state = self._implement_handoff_dispatch_state(handoff_mtime, handoff_path)
             handoff_seq = handoff_control.control_seq if handoff_control is not None else -1
             if (
                 handoff_control is not None
@@ -4294,6 +4344,7 @@ class WatcherCore:
                             "current_turn_state": self._current_turn_state.value,
                             "current_turn_control_seq": self._turn_active_control_seq,
                             "dispatchable": dispatch_state["dispatchable"],
+                            "completed_handoff": dispatch_state["completed_handoff"],
                             "release_ready": release_ready,
                             "release_reason": release_reason,
                         },
@@ -4331,6 +4382,7 @@ class WatcherCore:
                         "operator_blocked": dispatch_state["operator_blocked"],
                         "pending_verify": dispatch_state["pending_verify"],
                         "verify_active": dispatch_state["verify_active"],
+                        "completed_handoff": dispatch_state["completed_handoff"],
                         "active_control": active_control.kind if active_control else "none",
                     },
                 )

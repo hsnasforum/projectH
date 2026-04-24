@@ -4692,6 +4692,50 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(marker["control_seq"], 155)
             self.assertEqual(marker["reason"], "handoff_already_completed")
 
+    def test_duplicate_control_marker_accepts_verified_handoff_truth_without_raw_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            handoff_path = pipeline_dir / "implement_handoff.md"
+            work_path = root / "work" / "4" / "24" / "2026-04-24-slice.md"
+            verify_path = root / "verify" / "4" / "24" / "2026-04-24-slice-verify.md"
+            handoff_path.parent.mkdir(parents=True, exist_ok=True)
+            work_path.parent.mkdir(parents=True, exist_ok=True)
+            verify_path.parent.mkdir(parents=True, exist_ok=True)
+            handoff_path.write_text(
+                "STATUS: implement\nCONTROL_SEQ: 156\n\n- work/4/24/2026-04-24-slice.md\n",
+                encoding="utf-8",
+            )
+            handoff_sha = hashlib.sha256(handoff_path.read_bytes()).hexdigest()
+            work_path.write_text("# work\n", encoding="utf-8")
+            verify_path.write_text(
+                "STATUS: verified\nCONTROL_SEQ: 157\nBASED_ON_WORK: work/4/24/2026-04-24-slice.md\n",
+                encoding="utf-8",
+            )
+            now = time.time()
+            os.utime(handoff_path, (now - 20.0, now - 20.0))
+            os.utime(work_path, (now - 10.0, now - 10.0))
+            os.utime(verify_path, (now, now))
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            marker = supervisor._duplicate_control_marker(
+                {
+                    "active_control_status": "implement",
+                    "active_control_file": ".pipeline/implement_handoff.md",
+                    "active_control_seq": 156,
+                    "active_control_updated_at": "1970-01-01T00:00:00Z",
+                }
+            )
+
+            self.assertIsNotNone(marker)
+            self.assertEqual(marker["control_seq"], 156)
+            self.assertEqual(marker["handoff_sha"], handoff_sha)
+            self.assertEqual(marker["reason"], "handoff_already_completed")
+            self.assertEqual(marker["source_event"], "artifact_truth_completed")
+            self.assertEqual(marker["work_path"], "work/4/24/2026-04-24-slice.md")
+            self.assertEqual(marker["verify_path"], "verify/4/24/2026-04-24-slice-verify.md")
+
     def test_write_status_surfaces_duplicate_handoff_from_canonical_blocked_triage_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -3779,6 +3779,50 @@ class TurnResolutionTest(unittest.TestCase):
             self.assertFalse(dispatch_state["pending_verify"])
             self.assertTrue(dispatch_state["dispatchable"])
 
+    def test_verified_referenced_work_suppresses_completed_handoff_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            verify_dir = root / "verify"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            verify_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            handoff = base_dir / "implement_handoff.md"
+            work_note = watch_dir / "4" / "24" / "2026-04-24-slice.md"
+            verify_note = verify_dir / "4" / "24" / "2026-04-24-slice-verify.md"
+            work_note.parent.mkdir(parents=True, exist_ok=True)
+            verify_note.parent.mkdir(parents=True, exist_ok=True)
+            handoff.write_text(
+                "STATUS: implement\nCONTROL_SEQ: 17\n\n- work/4/24/2026-04-24-slice.md\n",
+                encoding="utf-8",
+            )
+            work_note.write_text("# work\n", encoding="utf-8")
+            verify_note.write_text(
+                "STATUS: verified\nCONTROL_SEQ: 18\nBASED_ON_WORK: work/4/24/2026-04-24-slice.md\n",
+                encoding="utf-8",
+            )
+            now = time.time()
+            os.utime(handoff, (now - 20.0, now - 20.0))
+            os.utime(work_note, (now - 10.0, now - 10.0))
+            os.utime(verify_note, (now, now))
+
+            core = watcher_core.WatcherCore({
+                "watch_dir": str(watch_dir),
+                "base_dir": str(base_dir),
+                "repo_root": str(root),
+                "dry_run": True,
+            })
+
+            turn = core._resolve_turn()
+            dispatch_state = core._implement_handoff_dispatch_state(handoff.stat().st_mtime, handoff)
+
+            self.assertEqual(turn, watcher_core.VERIFY_FOLLOWUP_ROUTE)
+            self.assertTrue(dispatch_state["completed_handoff"])
+            self.assertFalse(dispatch_state["dispatchable"])
+
     def test_idle_fallback_when_nothing_pending(self) -> None:
         """When no control signals and no work, state is IDLE."""
         with tempfile.TemporaryDirectory() as tmp:

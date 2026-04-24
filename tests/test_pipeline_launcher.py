@@ -67,6 +67,10 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                 return_value={"controls": {"launch_allowed": True}},
             ), mock.patch.object(
                 pipeline_launcher,
+                "start_preflight_failure_message",
+                return_value="",
+            ), mock.patch.object(
+                pipeline_launcher,
                 "_spawn_runtime_cli",
             ) as spawn_cli:
                 message = pipeline_launcher.pipeline_start(project)
@@ -77,6 +81,32 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                 ["start", str(project), "--mode", "experimental", "--session", expected_session, "--no-attach"],
                 action="start",
             )
+
+    def test_pipeline_start_blocks_when_preflight_fails(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-start-preflight-") as tmp:
+            project = Path(tmp).resolve()
+
+            with mock.patch.object(
+                pipeline_launcher,
+                "resolve_project_active_profile",
+                return_value={"controls": {"launch_allowed": True}},
+            ), mock.patch.object(
+                pipeline_launcher,
+                "read_runtime_status",
+                return_value={"runtime_state": "STOPPED", "watcher": {"alive": False}},
+            ), mock.patch.object(
+                pipeline_launcher,
+                "start_preflight_failure_message",
+                return_value="pipeline doctor required preflight failed: AGENTS.md",
+            ), mock.patch.object(
+                pipeline_launcher,
+                "_spawn_runtime_cli",
+            ) as spawn_cli:
+                message = pipeline_launcher.pipeline_start(project)
+
+            self.assertIn("실행 차단:", message)
+            self.assertIn("AGENTS.md", message)
+            spawn_cli.assert_not_called()
 
     def test_wait_for_pipeline_ready_uses_shared_start_timeout(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-start-ready-") as tmp:
@@ -111,6 +141,10 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                 pipeline_launcher,
                 "read_runtime_status",
                 return_value={"runtime_state": "RUNNING", "watcher": {"alive": True, "pid": 1234}},
+            ), mock.patch.object(
+                pipeline_launcher,
+                "start_preflight_failure_message",
+                return_value="pipeline doctor required preflight failed: AGENTS.md",
             ), mock.patch.object(
                 pipeline_launcher,
                 "_spawn_runtime_cli",

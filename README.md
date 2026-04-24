@@ -158,7 +158,7 @@ python3 -m pipeline_runtime.cli status . --json
 python3 -m pipeline_runtime.cli doctor . --json
 ```
 
-`active_profile`이 빠져 있으면 GUI의 `설정` 화면에서 profile preview를 생성하고 적용한 뒤 다시 확인합니다. 이전 컴퓨터에서 복사한 `.pipeline/current_run.json`이나 `.pipeline/runs/`가 stale이면 `doctor`가 `runtime_status` warning으로 알려 줍니다. 이 경우 한 번 stop을 실행하거나 stale runtime 파일을 백업 위치로 옮긴 뒤 다시 start하면 됩니다.
+`active_profile`이 빠져 있으면 GUI의 `설정` 화면에서 profile preview를 생성하고 적용한 뒤 다시 확인합니다. 이전 컴퓨터에서 복사한 `.pipeline/current_run.json`이나 `.pipeline/runs/`가 stale이면 `doctor`가 `runtime_status` warning으로 알려 줍니다. 이 경우 한 번 stop을 실행하거나 stale runtime 파일을 백업 위치로 옮긴 뒤 다시 start하면 됩니다. CLI/GUI/TUI start 경로는 같은 doctor payload를 preflight로 사용하며, required check가 실패하면 supervisor spawn 전에 차단됩니다.
 
 ## Run
 
@@ -184,9 +184,9 @@ python3 -m pipeline_runtime.cli doctor . --json
   - Office View의 desk label과 agent home zone은 `/api/runtime/status`의 `role_owners`를 따릅니다. `claude_desk` / `codex_desk` / `gemini_desk` 키는 각각 implement / verify / advisory role anchor 이름일 뿐, Claude / Codex / Gemini의 고정 소유권을 뜻하지 않습니다.
   - sidebar는 `Party Roster`와 별도로 `Role Binding` 섹션을 렌더링해 현재 `implement` / `verify` / `advisory` owner를 명시적으로 보여 줍니다.
   - Quest Log는 `/api/runtime/status` fetch 실패를 같은 오류 메시지 기준으로 1회만 기록하고, polling이 다시 성공하면 `상태 조회 복구: ...`를 1회 남겨 네트워크/서버 단절 동안 같은 에러가 매 poll마다 누적되지 않게 합니다.
-  - stop은 graceful flush 우선입니다. CLI/controller는 먼저 final `STOPPED` status flush를 기다리고, timeout 뒤에만 강제 종료 fallback을 사용합니다. supervisor가 이미 사라진 orphan watcher/session만 남아 있으면 stop이 이를 정리하고 `status.json`을 `control=none`, `active_round=null`, watcher dead, lane `OFF`로 보정합니다.
+  - stop은 graceful flush 우선입니다. CLI/controller는 먼저 final `STOPPED` status flush를 기다리고, timeout 뒤에만 강제 종료 fallback을 사용합니다. 강제 종료 뒤 supervisor process가 실제로 사라지고 orphan cleanup/status 보정까지 끝나면 stop은 성공으로 반환합니다. supervisor가 이미 사라진 orphan watcher/session만 남아 있으면 stop이 이를 정리하고 `status.json`을 `control=none`, `active_round=null`, watcher dead, lane `OFF`로 보정합니다.
   - lane command override는 synthetic/runtime gate 같은 명시적 테스트 경로에서만 `PIPELINE_RUNTIME_ALLOW_LANE_COMMAND_OVERRIDE=1`과 함께 사용합니다. opt-in 없이 override env가 보이면 supervisor는 이를 무시하고 `lane_command_override_ignored` audit event만 남깁니다.
-  - 이미 receipt로 닫힌 duplicate `STATUS: implement` handoff는 debug용 `compat.control_slots`에는 남아도, canonical `control` block에서는 `none`으로 내려 controller가 `implement + all READY` 같은 stale 표기를 하지 않게 합니다.
+  - 이미 receipt로 닫혔거나, handoff가 참조한 `/work`가 최신 `/verify`에서 `STATUS: verified`로 확인된 duplicate `STATUS: implement` handoff는 debug용 `compat.control_slots`에는 남아도, canonical `control` block에서는 `none`으로 내려 controller가 `implement + all READY` 같은 stale 표기를 하지 않게 합니다. watcher도 이 경우 implement 재전달 대신 verify follow-up으로 되돌려 다음 control 정리를 이어갑니다.
   - recent runtime snapshot이 supervisor/pid 없이 불완전하게 남아 있거나, 같은 ambiguous snapshot에 `updated_at`까지 비어 있으면 controller는 이를 즉시 `STOPPED/BROKEN`으로 단정하지 않고 uncertain `DEGRADED`(`supervisor_missing_recent_ambiguous` / `supervisor_missing_snapshot_undated`)로 표기합니다.
   - `.pipeline/operator_request.md`는 `CONTROL_SEQ`, `REASON_CODE`, `OPERATOR_POLICY`, `DECISION_CLASS`, `DECISION_REQUIRED`, `BASED_ON_WORK`, `BASED_ON_VERIFY`를 top header로 함께 두는 편이 canonical입니다. supervisor/watcher는 `pipeline_runtime.operator_autonomy`의 공유 evaluator로 `OPERATOR_POLICY` 우선, `REASON_CODE` 다음 순서의 publish/gate를 판정하고, 구조화 metadata가 없거나 알 수 없으면 fail-safe로 즉시 publish합니다.
   - 구조화 metadata가 있는 `needs_operator`도 실제 operator-only 경계이면 24시간 gate 대상이 아닙니다. `safety_stop`, `approval_required`, `truth_sync_required`, `external_publication_boundary` / `publication_boundary` / `pr_boundary` / `pr_merge_gate`는 즉시 publish하고, 그 밖의 gated candidate는 `autonomy.recovery|triage|hibernate|pending_operator`로 먼저 surface합니다. 단, `pr_merge_gate`가 참조한 GitHub PR이 이미 merged임을 `gh pr view`로 확인할 수 있으면 완료된 publication boundary로 보고 `pr_merge_completed` recovery로 내려 stale operator wait 재표시를 막습니다. control `HEAD`와 merged PR `headRefOid`가 다르면 `pr_merge_head_mismatch` recovery로 내려 닫힌 PR 번호 재사용을 operator stop으로 고정하지 않습니다.

@@ -15,6 +15,7 @@ from pipeline_runtime.schema import (
     STATE_DIR_SHARED_FILES,
     active_control_snapshot_from_entry,
     active_control_snapshot_from_status,
+    completed_implement_handoff_truth,
     control_block_from_snapshot,
     control_seq_value,
     iter_job_state_paths,
@@ -27,6 +28,7 @@ from pipeline_runtime.schema import (
     pipeline_control_snapshot_from_slots,
     process_starttime_fingerprint,
     read_control_meta,
+    referenced_work_paths_from_text,
     read_pipeline_control_snapshot,
     snapshot_control_seq,
 )
@@ -103,6 +105,99 @@ class RuntimeSchemaTest(unittest.TestCase):
             self.assertEqual(meta["decision_required"], "approve runtime auth refresh")
             self.assertEqual(meta["based_on_work"], "work/4/16/example.md")
             self.assertEqual(meta["based_on_verify"], "verify/4/16/example.md")
+
+    def test_referenced_work_paths_from_text_normalizes_absolute_and_relative_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            absolute = root / "work" / "4" / "24" / "2026-04-24-slice.md"
+            text = (
+                f"- `{absolute}`\n"
+                "- work/4/25/2026-04-25-other.md\n"
+            )
+
+            refs = referenced_work_paths_from_text(text, repo_root=root)
+
+            self.assertEqual(
+                refs,
+                {
+                    "work/4/24/2026-04-24-slice.md",
+                    "work/4/25/2026-04-25-other.md",
+                },
+            )
+
+    def test_completed_implement_handoff_truth_returns_matching_verified_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pipeline = root / ".pipeline"
+            work_root = root / "work"
+            verify_root = root / "verify"
+            handoff = pipeline / "implement_handoff.md"
+            work_path = work_root / "4" / "24" / "2026-04-24-slice.md"
+            verify_path = verify_root / "4" / "24" / "2026-04-24-slice-verify.md"
+            handoff.parent.mkdir(parents=True, exist_ok=True)
+            work_path.parent.mkdir(parents=True, exist_ok=True)
+            verify_path.parent.mkdir(parents=True, exist_ok=True)
+            handoff.write_text(
+                "STATUS: implement\nCONTROL_SEQ: 9\n\n- work/4/24/2026-04-24-slice.md\n",
+                encoding="utf-8",
+            )
+            work_path.write_text("# work\n", encoding="utf-8")
+            verify_path.write_text(
+                "STATUS: verified\nCONTROL_SEQ: 10\nBASED_ON_WORK: work/4/24/2026-04-24-slice.md\n",
+                encoding="utf-8",
+            )
+            now = time.time()
+            os.utime(handoff, (now - 20, now - 20))
+            os.utime(work_path, (now - 10, now - 10))
+            os.utime(verify_path, (now, now))
+
+            marker = completed_implement_handoff_truth(
+                handoff,
+                repo_root=root,
+                work_root=work_root,
+                verify_root=verify_root,
+                active_control_updated_at=handoff.stat().st_mtime,
+            )
+
+            self.assertIsNotNone(marker)
+            self.assertEqual(marker["work_path"], "work/4/24/2026-04-24-slice.md")
+            self.assertEqual(marker["verify_path"], "verify/4/24/2026-04-24-slice-verify.md")
+
+    def test_completed_implement_handoff_truth_ignores_older_referenced_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pipeline = root / ".pipeline"
+            work_root = root / "work"
+            verify_root = root / "verify"
+            handoff = pipeline / "implement_handoff.md"
+            work_path = work_root / "4" / "24" / "2026-04-24-old.md"
+            verify_path = verify_root / "4" / "24" / "2026-04-24-old-verify.md"
+            handoff.parent.mkdir(parents=True, exist_ok=True)
+            work_path.parent.mkdir(parents=True, exist_ok=True)
+            verify_path.parent.mkdir(parents=True, exist_ok=True)
+            handoff.write_text(
+                "STATUS: implement\nCONTROL_SEQ: 9\n\n- work/4/24/2026-04-24-old.md\n",
+                encoding="utf-8",
+            )
+            work_path.write_text("# old work\n", encoding="utf-8")
+            verify_path.write_text(
+                "STATUS: verified\nBASED_ON_WORK: work/4/24/2026-04-24-old.md\n",
+                encoding="utf-8",
+            )
+            now = time.time()
+            os.utime(work_path, (now - 30, now - 30))
+            os.utime(verify_path, (now - 20, now - 20))
+            os.utime(handoff, (now - 10, now - 10))
+
+            marker = completed_implement_handoff_truth(
+                handoff,
+                repo_root=root,
+                work_root=work_root,
+                verify_root=verify_root,
+                active_control_updated_at=handoff.stat().st_mtime,
+            )
+
+            self.assertIsNone(marker)
 
     def test_parse_control_slots_ignores_extended_headers_for_active_selection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

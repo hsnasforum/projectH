@@ -22,6 +22,7 @@ from pipeline_runtime.schema import (
 from pipeline_runtime.tmux_adapter import TmuxAdapter
 from pipeline_runtime.turn_arbitration import canonical_turn_state_name, turn_state_role
 from pipeline_runtime.automation_health import derive_automation_health
+from pipeline_runtime.cli import start_preflight_failure_message
 
 from . import legacy_backend_debug
 from .platform import (
@@ -422,6 +423,9 @@ def pipeline_start(project: Path, session: str = "") -> str:
     if not bool(controls.get("launch_allowed")):
         detail = join_display_resolver_messages(resolved) or "Active profile launch is blocked."
         return f"실행 차단: {detail}"
+    preflight_failure = start_preflight_failure_message(project, sess)
+    if preflight_failure:
+        return f"실행 차단: {preflight_failure}"
     try:
         script = resolve_project_runtime_file(project, "start-pipeline.sh")
     except FileNotFoundError:

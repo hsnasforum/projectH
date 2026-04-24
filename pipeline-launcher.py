@@ -48,6 +48,7 @@ from pipeline_gui.setup_profile import (
 from pipeline_runtime.lane_catalog import default_role_bindings
 from pipeline_runtime.control_writers import validate_operator_candidate_status
 from pipeline_runtime.automation_health import derive_automation_health
+from pipeline_runtime.cli import start_preflight_failure_message
 from pipeline_runtime.status_labels import (
     automation_snapshot_flag_label,
     operator_facing_reason_label,
@@ -297,6 +298,9 @@ def pipeline_start(project: Path, session: str = "") -> str:
         return f"실행 차단: {detail}"
     if _runtime_already_active(project):
         return "이미 실행 중입니다. Restart를 사용하세요."
+    preflight_failure = start_preflight_failure_message(project, resolved_session)
+    if preflight_failure:
+        return f"실행 차단: {preflight_failure}"
     _spawn_runtime_cli(
         project,
         ["start", str(project), "--mode", "experimental", "--session", resolved_session, "--no-attach"],

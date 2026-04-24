@@ -658,6 +658,7 @@ class SupervisorCliTest(unittest.TestCase):
                 patch.object(runtime_cli, "_reconcile_supervisors", return_value=1234),
                 patch.object(runtime_cli, "_stop_supervisor", return_value=0) as stop_supervisor,
                 patch.object(runtime_cli.time, "sleep", return_value=None),
+                patch.object(runtime_cli, "start_preflight_failure_message", return_value=""),
                 patch.object(runtime_cli, "RuntimeSupervisor", return_value=Mock(run_id="run-fresh")),
                 patch.object(runtime_cli.subprocess, "Popen", return_value=process) as popen,
                 patch.object(runtime_cli, "_current_run_matches", return_value=True),
@@ -667,6 +668,27 @@ class SupervisorCliTest(unittest.TestCase):
             self.assertEqual(code, 0)
             stop_supervisor.assert_called_once_with(args)
             popen.assert_called_once()
+
+    def test_spawn_supervisor_blocks_when_start_preflight_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            args = Namespace(
+                project_root=str(project_root),
+                legacy_mode="",
+                mode="experimental",
+                session="aip-projectH",
+            )
+
+            with (
+                patch.object(runtime_cli, "_runtime_source_newer_than_supervisor_pidfile", return_value=False),
+                patch.object(runtime_cli, "_reconcile_supervisors", return_value=None),
+                patch.object(runtime_cli, "start_preflight_failure_message", return_value="pipeline doctor required preflight failed: AGENTS.md"),
+                patch.object(runtime_cli.subprocess, "Popen") as popen,
+            ):
+                code = runtime_cli._spawn_supervisor(args)
+
+            self.assertEqual(code, 1)
+            popen.assert_not_called()
 
     def test_spawn_supervisor_keeps_live_daemon_when_runtime_source_is_not_newer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -733,7 +755,7 @@ class SupervisorCliTest(unittest.TestCase):
             wait_stop.assert_called_once_with(project_root, "aip-projectH")
             self.assertFalse(pid_path.exists())
 
-    def test_stop_supervisor_returns_failure_when_graceful_flush_never_arrives(self) -> None:
+    def test_stop_supervisor_returns_success_after_force_cleanup_when_supervisors_exit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project_root = Path(tmp)
             pid_path = project_root / ".pipeline" / "supervisor.pid"
@@ -750,13 +772,38 @@ class SupervisorCliTest(unittest.TestCase):
                 patch.object(runtime_cli, "_wait_for_stop_completion", return_value=False),
                 patch.object(runtime_cli, "_kill_pid", side_effect=killed.append),
                 patch.object(runtime_cli, "_wait_for_supervisors_exit", return_value=True),
+                patch.object(runtime_cli, "_orphan_runtime_needs_cleanup", return_value=False),
+                patch.object(runtime_cli, "_coerce_status_to_stopped") as coerce,
+            ):
+                code = runtime_cli._stop_supervisor(args)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(signaled, [(111, signal.SIGTERM)])
+            self.assertEqual(killed, [111])
+            coerce.assert_called_once_with(project_root)
+            self.assertFalse(pid_path.exists())
+
+    def test_stop_supervisor_returns_failure_when_force_kill_cannot_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            pid_path = project_root / ".pipeline" / "supervisor.pid"
+            pid_path.parent.mkdir(parents=True, exist_ok=True)
+            pid_path.write_text("111", encoding="utf-8")
+            args = Namespace(project_root=str(project_root), legacy_mode="", session="aip-projectH")
+
+            with (
+                patch.object(runtime_cli, "_list_supervisor_pids", side_effect=[[111], [111]]),
+                patch.object(runtime_cli, "_supervisor_running", return_value=111),
+                patch.object(runtime_cli, "_signal_pid"),
+                patch.object(runtime_cli, "_wait_for_stop_completion", return_value=False),
+                patch.object(runtime_cli, "_kill_pid"),
+                patch.object(runtime_cli, "_wait_for_supervisors_exit", return_value=False),
+                patch.object(runtime_cli, "_coerce_status_to_stopped") as coerce,
             ):
                 code = runtime_cli._stop_supervisor(args)
 
             self.assertEqual(code, 1)
-            self.assertEqual(signaled, [(111, signal.SIGTERM)])
-            self.assertEqual(killed, [111])
-            self.assertFalse(pid_path.exists())
+            coerce.assert_not_called()
 
     def test_stop_supervisor_cleans_orphan_runtime_when_supervisor_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -55,6 +55,7 @@ from .schema import (
     active_control_snapshot_from_status,
     atomic_write_json,
     append_jsonl,
+    completed_implement_handoff_truth,
     control_block_from_snapshot,
     control_seq_value,
     control_slot_spec_for_filename,
@@ -603,6 +604,27 @@ class RuntimeSupervisor:
         handoff_sha = self._control_handoff_sha(control)
         if not handoff_sha:
             return None
+        control_seq = snapshot_control_seq(snapshot)
+        active_control_updated_at = parse_iso_utc(str(snapshot.get("control_updated_at") or ""))
+        completed_truth = completed_implement_handoff_truth(
+            control_path,
+            repo_root=self.project_root,
+            work_root=self.project_root / "work",
+            verify_root=self.project_root / "verify",
+            active_control_updated_at=active_control_updated_at,
+        )
+        if completed_truth is not None:
+            return {
+                "control_file": str(snapshot.get("control_file") or ""),
+                "control_seq": control_seq,
+                "handoff_sha": handoff_sha,
+                "reason": "handoff_already_completed",
+                "blocked_fingerprint": str(completed_truth.get("work_path") or ""),
+                "routed_to": VERIFY_TRIAGE_ESCALATION,
+                "source_event": "artifact_truth_completed",
+                "work_path": str(completed_truth.get("work_path") or ""),
+                "verify_path": str(completed_truth.get("verify_path") or ""),
+            }
         raw_log = self.base_dir / "logs" / "experimental" / "raw.jsonl"
         if not raw_log.exists():
             return None
@@ -610,8 +632,6 @@ class RuntimeSupervisor:
             raw_lines = raw_log.read_text(encoding="utf-8").splitlines()
         except OSError:
             return None
-        control_seq = snapshot_control_seq(snapshot)
-        active_control_updated_at = parse_iso_utc(str(snapshot.get("control_updated_at") or ""))
         fallback: dict[str, Any] | None = None
         for raw in reversed(raw_lines[-400:]):
             raw = raw.strip()
@@ -2124,6 +2144,8 @@ class RuntimeSupervisor:
                         "handoff_sha": str(duplicate_control.get("handoff_sha") or ""),
                         "reason": str(duplicate_control.get("reason") or ""),
                         "routed_to": str(duplicate_control.get("routed_to") or ""),
+                        "work_path": str(duplicate_control.get("work_path") or ""),
+                        "verify_path": str(duplicate_control.get("verify_path") or ""),
                     },
                 )
 

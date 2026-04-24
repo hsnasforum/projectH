@@ -538,6 +538,35 @@ def _doctor(args: argparse.Namespace) -> int:
     return 0 if bool(payload.get("ok")) else 1
 
 
+def _doctor_required_failure_lines(payload: dict[str, object]) -> list[str]:
+    lines: list[str] = []
+    for item in list(payload.get("checks") or []):
+        if not isinstance(item, dict):
+            continue
+        if item.get("status") != "fail" or item.get("severity") != "required":
+            continue
+        name = str(item.get("name") or "").strip()
+        detail = str(item.get("detail") or "").strip()
+        hint = str(item.get("hint") or "").strip()
+        line = name or "required_check"
+        if detail:
+            line += f": {detail}"
+        if hint:
+            line += f" ({hint})"
+        lines.append(line)
+    return lines
+
+
+def start_preflight_failure_message(project_root: Path, session_name: str) -> str:
+    payload = _doctor_payload(project_root, session_name)
+    if bool(payload.get("ok")):
+        return ""
+    failures = _doctor_required_failure_lines(payload)
+    if not failures:
+        return "pipeline doctor required preflight failed"
+    return "pipeline doctor required preflight failed: " + "; ".join(failures[:4])
+
+
 def _wait_for_stop_completion(
     project_root: Path,
     session_name: str,
@@ -715,6 +744,10 @@ def _spawn_supervisor(args: argparse.Namespace) -> int:
         if stop_code != 0:
             return stop_code
         time.sleep(1.0)
+    preflight_failure = start_preflight_failure_message(project_root, session_name)
+    if preflight_failure:
+        print(preflight_failure, file=sys.stderr)
+        return 1
     run_id = RuntimeSupervisor(project_root, session_name=args.session, mode=mode, start_runtime=False).run_id
     log_dir = project_root / ".pipeline" / "runs" / run_id / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -788,7 +821,8 @@ def _stop_supervisor(args: argparse.Namespace) -> int:
         _supervisor_pid_path(project_root).unlink()
     except FileNotFoundError:
         pass
-    return 1
+    _coerce_status_to_stopped(project_root)
+    return 0
 
 
 def _restart_supervisor(args: argparse.Namespace) -> int:

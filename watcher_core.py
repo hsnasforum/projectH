@@ -55,6 +55,7 @@ from pipeline_runtime.automation_health import (
     derive_automation_health,
 )
 from pipeline_runtime.lane_surface import (
+    busy_markers_for_lane as _shared_busy_markers_for_lane,
     capture_pane_text as _shared_capture_pane_text,
     pane_text_has_busy_indicator as _shared_pane_text_has_busy_indicator,
     pane_text_has_codex_activity as _shared_pane_text_has_codex_activity,
@@ -62,6 +63,7 @@ from pipeline_runtime.lane_surface import (
     pane_text_has_input_cursor as _shared_pane_text_has_input_cursor,
     pane_text_has_working_indicator as _shared_pane_text_has_working_indicator,
     pane_text_is_idle as _shared_pane_text_is_idle,
+    text_matches_markers as _shared_text_matches_markers,
     wait_for_pane_settle as _shared_wait_for_pane_settle,
 )
 from pipeline_runtime.lane_catalog import (
@@ -1366,13 +1368,22 @@ def _dispatch_claude(pane_target: str, command: str) -> bool:
     _clear_prompt_input_line(pane_target)
     subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
     subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
+    pasted_snapshot = _capture_pane_text(pane_target)
     time.sleep(1.0)
     for attempt in range(3):
         subprocess.run(["tmux", "send-keys", "-t", pane_target, "Enter"], check=True, capture_output=True)
         time.sleep(1.5)
-        if not _pane_has_input_cursor(pane_target):
+        snapshot = _capture_pane_text(pane_target)
+        if not _pane_text_has_input_cursor(snapshot):
             log.info("claude prompt consumed: attempt %d", attempt + 1)
             return True
+        if snapshot != pasted_snapshot:
+            if _shared_text_matches_markers(snapshot, _shared_busy_markers_for_lane("Claude")):
+                log.info("claude busy output detected after dispatch: attempt %d", attempt + 1)
+                return True
+            if _pane_text_is_idle(snapshot):
+                log.info("claude ready output detected after dispatch: attempt %d", attempt + 1)
+                return True
     log.info("claude prompt still visible or unconfirmed after retries")
     return False
 

@@ -8164,6 +8164,46 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
 
         self.assertTrue(result)
 
+    def test_dispatch_claude_returns_true_when_busy_output_appears_after_prompt_echo(self) -> None:
+        snapshots = iter([
+            "❯ ROLE: verify",
+            "❯ ROLE: verify\nWorking (synthetic claude verify)\nClaude Code\n❯",
+        ])
+
+        with mock.patch("watcher_core.subprocess.run") as run_mock, \
+             mock.patch("watcher_core._capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_core.time.sleep", return_value=None):
+            result = watcher_core._dispatch_claude("%1", "ROLE: verify")
+
+        self.assertTrue(result)
+        self.assertGreaterEqual(run_mock.call_count, 4)
+
+    def test_dispatch_claude_returns_true_when_ready_output_appears_after_fast_completion(self) -> None:
+        snapshots = iter([
+            "❯ ROLE: verify",
+            "❯ ROLE: verify\nClaude Code\n❯",
+        ])
+
+        with mock.patch("watcher_core.subprocess.run"), \
+             mock.patch("watcher_core._capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_core.time.sleep", return_value=None):
+            result = watcher_core._dispatch_claude("%1", "ROLE: verify")
+
+        self.assertTrue(result)
+
+    def test_dispatch_claude_returns_false_when_prompt_stays_visible_without_activity(self) -> None:
+        snapshots = itertools.chain(
+            ["❯ ROLE: verify"],
+            itertools.repeat("❯ ROLE: verify"),
+        )
+
+        with mock.patch("watcher_core.subprocess.run"), \
+             mock.patch("watcher_core._capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_core.time.sleep", return_value=None):
+            result = watcher_core._dispatch_claude("%1", "ROLE: verify")
+
+        self.assertFalse(result)
+
     def test_tmux_send_keys_skips_when_same_pane_dispatch_lock_is_busy(self) -> None:
         class _BusyLock:
             def acquire(self, timeout=None):

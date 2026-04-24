@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import verify_fsm
+from pipeline_runtime.wrapper_events import append_wrapper_event
 from verify_fsm import JobState, JobStatus, StateMachine
 
 
@@ -141,6 +142,22 @@ class VerifyFsmSnapshotCloseTest(unittest.TestCase):
             self.assertEqual(log_entry["job_id"], "job-1")
             self.assertEqual(log_entry["reason"], "unit_test")
 
+    def test_release_verify_lease_for_archive_uses_archive_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            machine = _make_machine(root, pipeline_dir=None)
+            job = _running_job(root, dispatch_control_seq=-1)
+
+            with patch.object(machine.lease, "release") as release:
+                machine.release_verify_lease_for_archive(job)
+
+            release.assert_called_once_with("slot_verify")
+            log_entry = json.loads(machine.error_log.read_text(encoding="utf-8").splitlines()[0])
+            self.assertEqual(log_entry["event"], "lease_released")
+            self.assertEqual(log_entry["slot"], "slot_verify")
+            self.assertEqual(log_entry["job_id"], "job-1")
+            self.assertEqual(log_entry["reason"], "archive_matching_verified_pending")
+
     def test_verify_close_chain_detects_control_seq_change(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -161,6 +178,110 @@ class VerifyFsmSnapshotCloseTest(unittest.TestCase):
             read_snapshot.assert_called_with(root / ".pipeline")
             self.assertEqual(result.status, JobStatus.VERIFY_DONE)
             self.assertEqual(result.verify_result, "passed_by_feedback")
+
+    def test_verify_close_chain_replays_task_accepted_task_done_then_receipt_close(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wrapper_dir = root / ".pipeline" / "runs" / "run-1" / "wrapper-events"
+            wrapper_dir.mkdir(parents=True, exist_ok=True)
+            (root / ".pipeline" / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "run-1",
+                        "events_path": ".pipeline/runs/run-1/events.jsonl",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            machine = _make_machine(
+                root,
+                pipeline_dir=root / ".pipeline",
+                feedback_sig_builder=lambda job: ("ignored-control", "new-verify"),
+                verify_receipt_builder=_receipt_builder(root),
+            )
+            job = _running_job(root, dispatch_control_seq=9)
+            job.accepted_dispatch_id = ""
+            job.accepted_at = 0.0
+            job.done_dispatch_id = ""
+            job.done_at = 0.0
+            job.done_deadline_at = 0.0
+
+            append_wrapper_event(
+                wrapper_dir,
+                "Codex",
+                "TASK_ACCEPTED",
+                {
+                    "job_id": job.job_id,
+                    "dispatch_id": job.dispatch_id,
+                    "control_seq": 9,
+                    "attempt": 1,
+                },
+                source="wrapper",
+                derived_from="vendor_output",
+            )
+            with patch(
+                "verify_fsm.read_pipeline_control_snapshot",
+                return_value={"active": {"control_seq": 10}},
+            ):
+                result = machine.step_verify_close_chain(job)
+
+            self.assertEqual(result.status, JobStatus.VERIFY_RUNNING)
+            self.assertEqual(result.accepted_dispatch_id, job.dispatch_id)
+            self.assertEqual(result.done_dispatch_id, "")
+            self.assertEqual(result.verify_result, "")
+
+            append_wrapper_event(
+                wrapper_dir,
+                "Codex",
+                "TASK_DONE",
+                {
+                    "job_id": job.job_id,
+                    "dispatch_id": job.dispatch_id,
+                    "control_seq": 9,
+                    "attempt": 1,
+                },
+                source="wrapper",
+                derived_from="vendor_output",
+            )
+            with patch(
+                "verify_fsm.read_pipeline_control_snapshot",
+                return_value={"active": {"control_seq": 10}},
+            ):
+                result = machine.step_verify_close_chain(job)
+
+            self.assertEqual(result.status, JobStatus.VERIFY_DONE)
+            self.assertEqual(result.done_dispatch_id, job.dispatch_id)
+            self.assertEqual(result.verify_result, "passed_by_feedback")
+            self.assertTrue(result.verify_manifest_path)
+
+    def test_verify_close_outputs_do_not_close_before_task_accept_and_done(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            machine = _make_machine(
+                root,
+                pipeline_dir=root / ".pipeline",
+                feedback_sig_builder=lambda job: ("ignored-control", "new-verify"),
+                verify_receipt_builder=_receipt_builder(root),
+            )
+            job = _running_job(root, dispatch_control_seq=9)
+            job.accepted_dispatch_id = ""
+            job.accepted_at = 0.0
+            job.done_dispatch_id = ""
+            job.done_at = 0.0
+            job.done_deadline_at = 0.0
+            job.accept_deadline_at = time.time() + 30.0
+
+            with patch(
+                "verify_fsm.read_pipeline_control_snapshot",
+                return_value={"active": {"control_seq": 10}},
+            ):
+                result = machine.step_verify_close_chain(job)
+
+            self.assertEqual(result.status, JobStatus.VERIFY_RUNNING)
+            self.assertEqual(result.accepted_dispatch_id, "")
+            self.assertEqual(result.done_dispatch_id, "")
+            self.assertEqual(result.verify_result, "")
+            self.assertEqual(result.verify_manifest_path, "")
 
     def test_verify_close_chain_no_change_same_seq(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

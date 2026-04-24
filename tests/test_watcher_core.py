@@ -1505,6 +1505,43 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
             self.assertIn("keep the PR merge as a pending operator backlog", prompt)
             self.assertIn("do not merge it yourself", prompt)
 
+    def test_compound_milestone_pr_merge_gate_routes_to_verify_followup_backlog(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            operator_path = base_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 114\n"
+                "REASON_CODE: m28_direction + pr_merge_gate\n"
+                "OPERATOR_POLICY: internal_only\n"
+                "DECISION_CLASS: next_milestone_selection + branch_strategy\n"
+                "DECISION_REQUIRED: M28 scope OR PR merge first\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+
+            marker = core._operator_gate_marker()
+            self.assertIsNotNone(marker)
+            self.assertEqual(marker["reason"], PR_MERGE_GATE_REASON)
+            self.assertEqual(marker["decision_class"], "next_slice_selection")
+            self.assertEqual(marker["mode"], "triage")
+            self.assertEqual(marker["routed_to"], "verify_followup")
+            self.assertEqual(core._resolve_turn(), "verify_followup")
+
     def test_blocked_triage_prompt_rejects_commit_push_reissue_to_implement(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -7955,7 +7992,70 @@ class VerifyCompletionContractTest(unittest.TestCase):
             )
             self.assertTrue(archived.exists())
 
-    def test_poll_steps_current_run_verify_running_before_pending_advisory_advice(self) -> None:
+    def test_archive_matching_verified_pending_releases_verify_lease_through_fsm(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            verify_dir = root / "verify"
+            base_dir = root / ".pipeline"
+            work_day = watch_dir / "4" / "10"
+            verify_day = verify_dir / "4" / "10"
+            work_day.mkdir(parents=True, exist_ok=True)
+            verify_day.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            work_note = work_day / "2026-04-10-stale.md"
+            verify_note = verify_day / "2026-04-10-stale-verification.md"
+            _write_work_note(work_note, ["watcher_core.py"])
+            _write_verify_note_for_work(verify_note, "work/4/10/2026-04-10-stale.md")
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                }
+            )
+
+            job_id = watcher_core.make_job_id(watch_dir, work_note)
+            job = watcher_core.JobState.from_artifact(
+                job_id,
+                str(work_note),
+                run_id=core.run_id,
+            )
+            job.status = watcher_core.JobStatus.VERIFY_PENDING
+            job.artifact_hash = "artifact-hash"
+            job.save(core.state_dir)
+
+            with (
+                mock.patch.object(
+                    core.lease,
+                    "release",
+                    side_effect=AssertionError("archive path must release verify lease through StateMachine"),
+                ) as direct_release_mock,
+                mock.patch.object(core.sm, "release_verify_lease_for_archive") as fsm_release_mock,
+            ):
+                active_jobs = core._archive_matching_verified_pending_jobs([job])
+
+            self.assertEqual(active_jobs, [])
+            fsm_release_mock.assert_called_once()
+            released_job = fsm_release_mock.call_args.args[0]
+            self.assertEqual(released_job.job_id, job_id)
+            direct_release_mock.assert_not_called()
+            self.assertIsNone(watcher_core.JobState.load(core.state_dir, job_id))
+            archived = (
+                base_dir
+                / "runs"
+                / core.run_id
+                / "state-archive"
+                / f"{job_id}.json"
+            )
+            self.assertTrue(archived.exists())
+
+    def test_poll_delegates_current_run_verify_running_close_chain_before_pending_advisory_advice(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -7997,11 +8097,17 @@ class VerifyCompletionContractTest(unittest.TestCase):
             with (
                 mock.patch.object(core, "_check_pipeline_signal_updates"),
                 mock.patch.object(core, "_retry_advisory_if_idle") as retry_mock,
-                mock.patch.object(core.sm, "step", side_effect=lambda job: job) as step_mock,
+                mock.patch.object(
+                    core.sm,
+                    "step",
+                    side_effect=AssertionError("VERIFY_RUNNING close chain must use step_verify_close_chain"),
+                ) as generic_step_mock,
+                mock.patch.object(core.sm, "step_verify_close_chain", side_effect=lambda job: job) as step_mock,
             ):
                 core._poll()
 
             step_mock.assert_called_once()
+            generic_step_mock.assert_not_called()
             stepped_job = step_mock.call_args.args[0]
             self.assertEqual(stepped_job.job_id, running_job_id)
             self.assertEqual(stepped_job.status, watcher_core.JobStatus.VERIFY_RUNNING)

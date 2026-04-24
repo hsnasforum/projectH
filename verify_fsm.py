@@ -288,6 +288,9 @@ class StateMachine:
                 },
             )
 
+    def release_verify_lease_for_archive(self, job: JobState) -> None:
+        self._release_verify_lease("slot_verify", job, reason="archive_matching_verified_pending")
+
     def _dispatch_stall_fingerprint(self, job: JobState, stage: str = "") -> str:
         source = "|".join(
             [
@@ -691,6 +694,37 @@ class StateMachine:
             return self._handle_verify_running(job)
         return job
 
+    def step_verify_close_chain(self, job: JobState) -> JobState:
+        """Advance the verify close chain owned by this FSM.
+
+        Watcher polling owns discovery/routing only. The ordered
+        TASK_ACCEPTED -> TASK_DONE -> receipt/control close transition stays
+        here so consumers do not reinterpret a running verify round.
+        """
+        if job.status != JobStatus.VERIFY_RUNNING:
+            return job
+        return self._handle_verify_running(job)
+
+    def reset_job_for_new_round(self, job: JobState, job_id: str, reason: str) -> JobState:
+        job.round += 1
+        job.artifact_hash = ""
+        job.artifact_size = 0
+        job.artifact_mtime = 0.0
+        job.last_dispatch_at = 0.0
+        job.last_dispatch_slot = ""
+        job.feedback_baseline_sig = ""
+        job.verify_result = ""
+        job.verify_manifest_path = ""
+        job.verify_completed_at = 0.0
+        job.validation_score = -1.0
+        job.blocker_count = -1
+        self._clear_dispatch_stall_state(job)
+        if self.stabilizer is not None:
+            self.stabilizer.clear(job_id)
+        job.transition(JobStatus.STABILIZING, f"{reason}, round={job.round}")
+        job.save(self.state_dir)
+        return job
+
     def _handle_new_artifact(self, job: JobState) -> JobState:
         job.transition(JobStatus.STABILIZING, "new artifact detected")
         job.save(self.state_dir)
@@ -892,6 +926,11 @@ class StateMachine:
                 last_activity = job.last_activity_at or now_value
             if task_done:
                 last_activity = job.last_activity_at or now_value
+            close_chain_done = (
+                bool(job.dispatch_id)
+                and job.accepted_dispatch_id == job.dispatch_id
+                and job.done_dispatch_id == job.dispatch_id
+            )
             waiting_for_accept = bool(job.dispatch_id) and job.accepted_dispatch_id != job.dispatch_id
             waiting_for_done = (
                 bool(job.dispatch_id)
@@ -899,8 +938,7 @@ class StateMachine:
                 and job.done_dispatch_id != job.dispatch_id
             )
             waiting_for_receipt_close = (
-                bool(job.dispatch_id)
-                and job.done_dispatch_id == job.dispatch_id
+                close_chain_done
                 and not outputs_complete
             )
             if (
@@ -934,7 +972,7 @@ class StateMachine:
                 job.save(self.state_dir)
                 return job
 
-            if waiting_for_accept and not outputs_complete:
+            if waiting_for_accept:
                 if job.accept_deadline_at > 0.0 and now_value >= job.accept_deadline_at:
                     log.warning(
                         "verify accept deadline exceeded: job=%s total=%.0fs deadline=%.0fs",
@@ -957,6 +995,11 @@ class StateMachine:
                         reason=stall_reason,
                         stage=stall_stage,
                         lane_note=stall_note,
+                    )
+                if outputs_complete:
+                    log.info(
+                        "verify close outputs changed before TASK_ACCEPTED; keeping verify open: job=%s",
+                        job.job_id,
                     )
                 return job
 
@@ -991,6 +1034,7 @@ class StateMachine:
                         )
                         waiting_for_done = False
                         waiting_for_receipt_close = False
+                        close_chain_done = True
                     else:
                         log.warning(
                             "verify done deadline exceeded: job=%s total=%.0fs deadline=%.0fs",
@@ -1020,6 +1064,13 @@ class StateMachine:
                             elapsed_since_dispatch,
                         )
                     return job
+
+            if outputs_complete and not close_chain_done:
+                log.info(
+                    "verify close outputs changed before TASK_DONE; keeping verify open: job=%s",
+                    job.job_id,
+                )
+                return job
 
             if outputs_complete:
                 log.info(

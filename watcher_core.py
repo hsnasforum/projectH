@@ -3511,8 +3511,7 @@ class WatcherCore:
                 active_jobs.append(job)
                 continue
             self.stabilizer.clear(job.job_id)
-            log.info("lease released: slot=slot_verify reason=archive_matching_verified_pending")
-            self.lease.release("slot_verify")
+            self.sm.release_verify_lease_for_archive(job)
             if job.artifact_hash:
                 self.dedupe.forget(job.job_id, job.round, job.artifact_hash, "slot_verify")
             archived = self._archive_current_run_job(
@@ -4677,22 +4676,7 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _reset_job_for_new_round(self, job: JobState, job_id: str, reason: str) -> None:
         """현재 파일 내용이 바뀌었을 때 새 라운드로 재진입."""
-        job.round += 1
-        job.artifact_hash = ""
-        job.artifact_size = 0
-        job.artifact_mtime = 0.0
-        job.last_dispatch_at = 0.0
-        job.last_dispatch_slot = ""
-        job.feedback_baseline_sig = ""
-        job.verify_result = ""
-        job.verify_manifest_path = ""
-        job.verify_completed_at = 0.0
-        job.validation_score = -1.0
-        job.blocker_count = -1
-        self.sm._clear_dispatch_stall_state(job)
-        self.stabilizer.clear(job_id)
-        job.transition(JobStatus.STABILIZING, f"{reason}, round={job.round}")
-        job.save(self.state_dir)
+        self.sm.reset_job_for_new_round(job, job_id, reason)
         log.info("re-entered: job=%s round=%d (%s)", job_id, job.round, reason)
 
     # ------------------------------------------------------------------
@@ -4852,7 +4836,7 @@ class WatcherCore:
         active_verify_jobs = self._get_current_run_jobs(statuses={JobStatus.VERIFY_RUNNING})
         if active_verify_jobs:
             for job in active_verify_jobs:
-                self.sm.step(job)
+                self.sm.step_verify_close_chain(job)
             self._flush_pending_implement_handoff()
             return
 

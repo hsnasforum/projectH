@@ -21,10 +21,23 @@ class _SessionStore:
         return {"per_preference_stats": {}}
 
 
+class _CorrectionStore:
+    def __init__(self, adopted: list[dict[str, Any]]) -> None:
+        self._adopted = adopted
+
+    def find_adopted_corrections(self) -> list[dict[str, Any]]:
+        return self._adopted
+
+
 class _PreferenceService(PreferenceHandlerMixin):
-    def __init__(self, preferences: list[dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        preferences: list[dict[str, Any]],
+        adopted_corrections: list[dict[str, Any]] | None = None,
+    ) -> None:
         self.preference_store = _PreferenceStore(preferences)
         self.session_store = _SessionStore()
+        self.correction_store = _CorrectionStore(adopted_corrections or [])
 
 
 class PreferenceHandlerTest(unittest.TestCase):
@@ -155,6 +168,21 @@ class PreferenceHandlerTest(unittest.TestCase):
         self.assertEqual(audit["by_status"]["candidate"], 1)
         self.assertEqual(audit["by_status"]["paused"], 1)
         self.assertEqual(audit["conflict_pair_count"], 1)
+
+    def test_get_preference_audit_includes_adopted_count_zero(self) -> None:
+        service = _PreferenceService([])
+
+        audit = service.get_preference_audit()
+
+        self.assertIn("adopted_corrections_count", audit)
+        self.assertEqual(audit["adopted_corrections_count"], 0)
+
+    def test_get_preference_audit_includes_adopted_count_nonzero(self) -> None:
+        service = _PreferenceService([], adopted_corrections=[{"status": "active"}])
+
+        audit = service.get_preference_audit()
+
+        self.assertEqual(audit["adopted_corrections_count"], 1)
 
     def test_jaccard_word_similarity_thresholds(self) -> None:
         self.assertAlmostEqual(_jaccard_word_similarity("hello world", "hello world"), 1.0)

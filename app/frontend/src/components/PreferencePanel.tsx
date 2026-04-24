@@ -161,6 +161,8 @@ export default function PreferencePanel() {
               활성 {audit.by_status["active"] ?? 0}
               {" · "}후보 {audit.by_status["candidate"] ?? 0}
               {audit.conflict_pair_count > 0 && ` · 충돌 ${audit.conflict_pair_count}쌍`}
+              {(audit.adopted_corrections_count ?? 0) > 0 &&
+                ` · 활성 교정 ${audit.adopted_corrections_count}개`}
             </div>
           )}
           {preferences.map((pref) => {

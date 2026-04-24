@@ -701,6 +701,9 @@
 #### Shipped Infrastructure (Axis 1, 2026-04-24)
 - Axis 1 (seq 107): `find_adopted_corrections()` added to `CorrectionStore` (JSON) and `SQLiteCorrectionStore`; `scripts/audit_traces.py` now prints `Adopted corrections (ACTIVE): N`
 
+#### Shipped Infrastructure (Axis 2, 2026-04-24)
+- Axis 2 (seq 110): `/api/preferences/audit` now includes `adopted_corrections_count`; `PreferencePanel` audit row shows `활성 교정 N개` when N > 0
+
 ## Next 3 Implementation Priorities
 
 1. **PR #32 merge**: feat/watcher-turn-state (M20 Axis 2 – M26 Axes 1–2) is open and awaiting operator merge approval. All shipped milestones M20–M26 are included.

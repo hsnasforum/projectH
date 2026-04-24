@@ -105,10 +105,12 @@ class PreferenceHandlerMixin:
                 description_b = str(preference_b.get("description") or "").strip()
                 if _jaccard_word_similarity(description_a, description_b) > 0.7:
                     conflict_pair_count += 1
+        adopted_count = len(self.correction_store.find_adopted_corrections())
         return {
             "total": len(all_prefs),
             "by_status": counts,
             "conflict_pair_count": conflict_pair_count,
+            "adopted_corrections_count": adopted_count,
         }
 
     def activate_preference(self, payload: dict[str, Any]) -> dict[str, Any]:

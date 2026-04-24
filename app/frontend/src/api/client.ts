@@ -278,6 +278,7 @@ export interface PreferenceAudit {
   total: number;
   by_status: Record<string, number>;
   conflict_pair_count: number;
+  adopted_corrections_count?: number;
 }
 
 export async function fetchPreferenceAudit(): Promise<PreferenceAudit | null> {

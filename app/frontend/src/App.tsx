@@ -93,9 +93,10 @@ export default function App() {
     candidateUpdatedAt: string,
     action: "accept" | "defer" | "reject",
     statement?: string,
+    reasonNote?: string,
   ) => {
     try {
-      await postCandidateReview(chat.sessionId, messageId, candidateId, candidateUpdatedAt, action, statement);
+      await postCandidateReview(chat.sessionId, messageId, candidateId, candidateUpdatedAt, action, statement, reasonNote);
       await chat.loadSession(chat.sessionId);
     } catch {
       addToast("error", "검토 액션 제출에 실패했습니다.");

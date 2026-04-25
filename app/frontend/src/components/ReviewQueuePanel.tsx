@@ -10,6 +10,7 @@ interface Props {
     candidateUpdatedAt: string,
     action: "accept" | "defer" | "reject",
     statement?: string,
+    reasonNote?: string,
   ) => void;
 }
 
@@ -58,6 +59,7 @@ function pluralCount(label: string, count: number): string {
 
 export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) {
   const [editDrafts, setEditDrafts] = useState<Record<string, string | null>>({});
+  const [reasonDrafts, setReasonDrafts] = useState<Record<string, string>>({});
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
   if (items.length === 0) return null;
@@ -82,6 +84,8 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
           ));
           const evidenceSummary = item.evidence_summary;
           const sourceSessionTitle = item.source_session_title?.trim();
+          const reasonDraft = reasonDrafts[item.candidate_id] ?? "";
+          const reasonNote = reasonDraft.trim() || undefined;
           return (
             <li
               key={`${item.source_message_id}:${item.candidate_id}`}
@@ -203,13 +207,32 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
                   </div>
                 </div>
               )}
+              <label className="mb-2 block text-[11px] font-medium text-sidebar-muted">
+                사유 (선택)
+                <textarea
+                  data-testid="review-reason-note"
+                  className="mt-1 min-h-[52px] w-full resize-none rounded border border-white/10 bg-sidebar px-2 py-1.5 text-[12px] leading-snug text-sidebar-text outline-none placeholder:text-sidebar-muted/45 focus:border-sky-300/60"
+                  value={reasonDraft}
+                  placeholder="왜 이 후보를 수락/거절하시나요?"
+                  onChange={(event) =>
+                    setReasonDrafts((prev) => ({ ...prev, [item.candidate_id]: event.target.value }))
+                  }
+                />
+              </label>
               <div className="flex gap-1.5">
                 <button
                   data-testid="review-accept"
                   className="rounded bg-emerald-600/20 px-2 py-1 text-[11px] font-medium text-emerald-300 transition-colors hover:bg-emerald-600/30"
                   onClick={() => {
                     const statement = isEditing ? editDrafts[item.candidate_id] ?? undefined : undefined;
-                    onReview(item.source_message_id, item.candidate_id, candidateUpdatedAt(item), "accept", statement);
+                    onReview(
+                      item.source_message_id,
+                      item.candidate_id,
+                      candidateUpdatedAt(item),
+                      "accept",
+                      statement,
+                      reasonNote,
+                    );
                   }}
                 >
                   수락
@@ -252,7 +275,14 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
                   data-testid="review-reject"
                   className="rounded bg-red-500/10 px-2 py-1 text-[11px] font-medium text-red-300 transition-colors hover:bg-red-500/20"
                   onClick={() =>
-                    onReview(item.source_message_id, item.candidate_id, candidateUpdatedAt(item), "reject")
+                    onReview(
+                      item.source_message_id,
+                      item.candidate_id,
+                      candidateUpdatedAt(item),
+                      "reject",
+                      undefined,
+                      reasonNote,
+                    )
                   }
                 >
                   거절

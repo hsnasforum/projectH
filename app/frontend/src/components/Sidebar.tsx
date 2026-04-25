@@ -24,6 +24,7 @@ interface Props {
     candidateUpdatedAt: string,
     action: "accept" | "defer" | "reject",
     statement?: string,
+    reasonNote?: string,
   ) => void;
 }
 

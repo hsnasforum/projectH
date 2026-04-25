@@ -165,6 +165,7 @@ class AggregateHandlerMixin:
                         "source_message_id": "global",
                         "review_action": review_action,
                         "session_id": session_id,
+                        **({"reason_note": reason_note} if reason_note else {}),
                     },
                     original_snippet=original_snippet,
                     corrected_snippet=corrected_snippet,
@@ -183,6 +184,7 @@ class AggregateHandlerMixin:
                         "source_message_id": "global",
                         "review_action": review_action,
                         "session_id": session_id,
+                        **({"reason_note": reason_note} if reason_note else {}),
                     },
                     status=PreferenceStatus.REJECTED,
                 )

@@ -854,9 +854,33 @@ SQLite migration rollout을 종결하고, preference resume/reject lifecycle 및
 
 - **Milestone 37 closed** (Axes 1–2): SQLite 전체 마이그레이션 완성 + preference lifecycle (pause/resume/reject) E2E closure 완료
 
+### Milestone 38: Test Infrastructure Robustness
+
+#### Goal
+`make e2e-test`가 서버 기동 상태와 무관하게 안정적으로 동작하도록 E2E 실행 환경 isolation을 구현하고 wrapper를 강화한다.
+
+#### Guardrails
+- 기존 Playwright 시나리오 수정 없이 서버 관리 레이어만 변경
+- existing-server 재사용 경로 로직 검증; full E2E는 sandbox 제약으로 non-sandbox 확인 필요
+
+#### Shipped Infrastructure (Axes 1–2, 2026-04-26)
+- **Milestone 38 closed** (Axes 1–2): `e2e/start-server.sh` healthcheck wrapper 구현 (Axis 1, commit `da6d27e`, 150 passed); `set -e` 하드닝 + doc closure (Axis 2, commit `082f33e`).
+
+### Milestone 39: Review Evidence Enrichment
+
+#### Goal
+운영자가 review queue 후보를 판단할 때 필요한 정성적 대화 맥락과 정량적 증거 강도를 함께 제공한다.
+
+#### Guardrails
+- 기존 `ReviewQueueItem` 필드 제거/수정 없이 additive 확장만 허용
+- browser E2E는 sandbox 제약으로 unit test + TypeScript 타입 체크로 대체
+
+#### Shipped Infrastructure (Axes 1–2, 2026-04-26)
+- **Milestone 39 closed** (Axes 1–2): `context_turns` 직렬화 — 직전 3턴 대화 맥락 (Axis 1, commit `774dbe1`); `evidence_summary` 직렬화 — artifact/signal/confirmation/recurring session 카운트 (Axis 2, commit `c33af44`).
+
 ## Next 3 Implementation Priorities
 
-1. **M38 Axis 1 완료 / Axis 2 진행**: `e2e/start-server.sh` healthcheck wrapper 구현 (commit `da6d27e`); auto-start 경로 **150 passed** 확인; existing-server 재사용 경로 로직 검증 완료, sandbox 환경 제약으로 full E2E 미실행(non-sandbox 환경 확인 필요). Axis 2는 `start-server.sh` 하드닝(`set -e`) + doc closure 범위.
+1. **M38 완료 / M39 완료**: M38 Test Infrastructure Robustness (Axes 1–2) 및 M39 Review Evidence Enrichment (Axes 1–2) 완료. M40 방향: Review Auditability (source session association, decision rationale capture) — 다음 advisory에서 확정.
 2. **watcher_core re-export note**: `watcher_core.*` re-exports (WatcherTurnState, tmux_send_keys 등)는 test 계약 유지용. 향후 import 정리 시 관련 test mock 대상도 함께 정규화 필요.
 3. **E2E 환경 개선 note**: `make e2e-test`는 `e2e/start-server.sh` healthcheck wrapper를 통해 healthy smoke 서버를 재사용하거나, 서버가 없으면 isolated mock `app.web` 서버를 자동 시작/정리한다. 다음 검증 lane에서 no-server/existing-server 두 경로를 release gate truth로 확인 필요.
 

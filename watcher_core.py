@@ -35,7 +35,6 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -150,6 +149,11 @@ from watcher_state import (
     PaneLease,
     WatcherTurnState,
 )
+from watcher_stabilizer import (
+    ArtifactStabilizer,
+    StabilizeSnapshot,
+    compute_file_sha256,
+)
 from watcher_prompt_assembly import (
     DEFAULT_ADVISORY_PROMPT,
     DEFAULT_ADVISORY_RECOVERY_PROMPT,
@@ -234,65 +238,6 @@ ROUND_NOTE_SECTION_RE = re.compile(r"^##\s+(.+?)\s*$")
 ROUND_NOTE_PATH_RE = re.compile(r"(?<!@)(?:\./)?([A-Za-z0-9_.\-/]+?\.[A-Za-z0-9]+)")
 ROUND_NOTE_METADATA_ONLY_PREFIXES = ("work/", "verify/", "report/", ".pipeline/", "pipeline/")
 _MATCHING_VERIFY_PENDING_ARCHIVE_REASON = "matching_verify_already_exists"
-
-
-def compute_file_sha256(path: Path) -> str:
-    """파일 내용 기준 sha256 hex. 읽을 수 없으면 빈 문자열."""
-    try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-    except OSError:
-        return ""
-
-
-# ---------------------------------------------------------------------------
-# ArtifactStabilizer
-# ---------------------------------------------------------------------------
-@dataclass
-class StabilizeSnapshot:
-    hash:  str
-    size:  int
-    mtime: float
-
-
-class ArtifactStabilizer:
-    """hash + mtime + size 3중 비교로 연속 N회 동일할 때만 안정화 완료 판정."""
-
-    def __init__(self, settle_sec: float = 3.0, required_stable: int = 2) -> None:
-        self.settle_sec      = settle_sec
-        self.required_stable = required_stable
-        self._snapshots: dict[str, list[StabilizeSnapshot]] = {}
-
-    def _snapshot(self, path: Path) -> Optional[StabilizeSnapshot]:
-        try:
-            stat = path.stat()
-            h    = hashlib.sha256(path.read_bytes()).hexdigest()
-            return StabilizeSnapshot(hash=h, size=stat.st_size, mtime=stat.st_mtime)
-        except OSError:
-            return None
-
-    def check(self, job_id: str, artifact_path: str) -> bool:
-        path = Path(artifact_path)
-        snap = self._snapshot(path)
-        if snap is None:
-            self._snapshots.pop(job_id, None)
-            return False
-
-        if time.time() - snap.mtime < self.settle_sec:
-            self._snapshots.pop(job_id, None)
-            return False
-
-        history = self._snapshots.setdefault(job_id, [])
-
-        # hash + size + mtime 3중 비교 — touch처럼 내용 동일 mtime 변경도 리셋
-        if history and history[-1] != snap:
-            self._snapshots[job_id] = []
-            history = self._snapshots[job_id]
-
-        history.append(snap)
-        return len(history) >= self.required_stable
-
-    def clear(self, job_id: str) -> None:
-        self._snapshots.pop(job_id, None)
 
 
 def _line_looks_like_input_prompt(line: str) -> bool:

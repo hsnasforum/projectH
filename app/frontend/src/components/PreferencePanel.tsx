@@ -6,6 +6,7 @@ import {
   activatePreference,
   pausePreference,
   rejectPreference,
+  postSyncAdoptedToPreferenceCandidates,
   updatePreferenceDescription,
 } from "../api/client";
 
@@ -38,6 +39,8 @@ export default function PreferencePanel() {
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [editDescriptions, setEditDescriptions] = useState<Record<string, string | null>>({});
   const [fadingOut, setFadingOut] = useState<Set<string>>(new Set());
+  const [syncingAdopted, setSyncingAdopted] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -106,9 +109,27 @@ export default function PreferencePanel() {
     }
   }, [editDescriptions, load]);
 
+  const handleSyncAdopted = useCallback(async () => {
+    setSyncingAdopted(true);
+    setSyncStatus(null);
+    try {
+      const result = await postSyncAdoptedToPreferenceCandidates();
+      const syncedCount = Number.isFinite(result.synced_count) ? result.synced_count : 0;
+      setSyncStatus(syncedCount > 0 ? `${syncedCount}개 동기화됨` : "이미 동기화됨");
+      await load();
+    } catch {
+      setSyncStatus("동기화 실패");
+    } finally {
+      setSyncingAdopted(false);
+    }
+  }, [load]);
+
   // Visible count for header
   const activeCount = preferences.filter((p) => p.status === "active").length;
   const candidateCount = preferences.filter((p) => p.status === "candidate").length;
+  const adoptedCorrectionsCount = audit?.adopted_corrections_count ?? 0;
+  const availableToSyncCount = audit?.available_to_sync_count ?? 0;
+  const canSyncAdoptedCorrections = availableToSyncCount > 0;
 
   if (loading && preferences.length === 0) {
     return (
@@ -118,7 +139,7 @@ export default function PreferencePanel() {
     );
   }
 
-  if (preferences.length === 0) {
+  if (preferences.length === 0 && !canSyncAdoptedCorrections) {
     return (
       <div className="text-[11px] text-sidebar-muted/60 px-2 py-2 text-center">
         아직 학습된 선호가 없습니다
@@ -141,7 +162,11 @@ export default function PreferencePanel() {
             {activeCount > 0 ? `${activeCount}개 활성` : ""}
             {activeCount > 0 && candidateCount > 0 ? " · " : ""}
             {candidateCount > 0 ? `${candidateCount}개 후보` : ""}
-            {activeCount === 0 && candidateCount === 0 ? `${preferences.length}개 일시중지` : ""}
+            {activeCount === 0 && candidateCount === 0
+              ? canSyncAdoptedCorrections
+                ? `활성 교정 ${adoptedCorrectionsCount}개`
+                : `${preferences.length}개 일시중지`
+              : ""}
           </span>
         </span>
         <svg
@@ -157,12 +182,30 @@ export default function PreferencePanel() {
       {expanded && (
         <div className="max-h-[200px] overflow-y-auto space-y-1 mt-1 pr-0.5">
           {audit && (
-            <div className="px-1 text-[10px] text-sidebar-muted/70">
-              활성 {audit.by_status["active"] ?? 0}
-              {" · "}후보 {audit.by_status["candidate"] ?? 0}
-              {audit.conflict_pair_count > 0 && ` · 충돌 ${audit.conflict_pair_count}쌍`}
-              {(audit.adopted_corrections_count ?? 0) > 0 &&
-                ` · 활성 교정 ${audit.adopted_corrections_count}개`}
+            <div className="space-y-1 px-1 text-[10px] text-sidebar-muted/70">
+              <div className="flex items-center gap-1.5">
+                <span className="min-w-0 flex-1">
+                  활성 {audit.by_status["active"] ?? 0}
+                  {" · "}후보 {audit.by_status["candidate"] ?? 0}
+                  {audit.conflict_pair_count > 0 && ` · 충돌 ${audit.conflict_pair_count}쌍`}
+                  {canSyncAdoptedCorrections && ` · 활성 교정 ${adoptedCorrectionsCount}개`}
+                </span>
+                {canSyncAdoptedCorrections && (
+                  <button
+                    data-testid="sync-adopted-btn"
+                    className="shrink-0 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-medium text-sky-300 transition-colors hover:bg-sky-500/25 disabled:cursor-not-allowed disabled:opacity-40"
+                    disabled={syncingAdopted || loading}
+                    onClick={handleSyncAdopted}
+                  >
+                    {syncingAdopted ? "동기화 중" : "후보 동기화"}
+                  </button>
+                )}
+              </div>
+              {syncStatus && (
+                <p data-testid="sync-adopted-status" className="text-[10px] text-sky-300">
+                  {syncStatus}
+                </p>
+              )}
             </div>
           )}
           {preferences.map((pref) => {

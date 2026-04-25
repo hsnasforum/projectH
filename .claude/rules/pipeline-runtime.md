@@ -12,8 +12,9 @@ paths:
 # Pipeline Runtime Rules
 
 - Persistent truth lives in `work/` and `verify/`; `.pipeline/` files are rolling control slots.
-- Claude executes only `.pipeline/claude_handoff.md` when it is the newest valid control with `STATUS: implement`.
-- Do not answer `.pipeline/operator_request.md`, `.pipeline/gemini_request.md`, or `.pipeline/gemini_advice.md` as if they were Claude execution slots.
+- Claude executes `.pipeline/implement_handoff.md` only when Claude is the active implement owner and the newest valid control has `STATUS: implement`.
+- Treat `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, and `.pipeline/gemini_advice.md` as read-only compatibility aliases for role-based controls, not separate execution slots.
+- Do not answer `.pipeline/operator_request.md`, `.pipeline/advisory_request.md`, or `.pipeline/advisory_advice.md` as if they were implement execution slots.
 - If the assigned handoff is blocked, stale, already implemented, or contradicted by the latest `work/` + `verify/`, emit the exact `implement_blocked` sentinel and stop rather than improvising a new slice.
 - If a `needs_operator` slot only presents labeled choices, such as lettered, numbered, inline parenthesized, or Korean `n안` options, that current docs, milestones, and latest `work/` + `verify/` can resolve, send it through advisory-first triage before waiting on the operator. Keep safety, destructive, auth/credential, approval-record, and truth-sync blockers in the decision header as real stops.
 - If watcher prompts you for operator retriage, write one newer control slot. An idle return with no next control is treated as `operator_retriage_no_next_control` and watcher may escalate the same gated request to Gemini.

@@ -63,6 +63,9 @@ class AgentTotals:
     total_cost_usd: float
     actual_cost_usd_sum: float
     estimated_only_cost_usd_sum: float
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    thinking_tokens: int = 0
 
 
 @dataclass(slots=True)

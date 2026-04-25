@@ -704,11 +704,55 @@
 #### Shipped Infrastructure (Axis 2, 2026-04-24)
 - Axis 2 (seq 110): `/api/preferences/audit` now includes `adopted_corrections_count`; `PreferencePanel` audit row shows `활성 교정 N개` when N > 0
 
+### Milestone 28: Structural Owner Bundle
+
+#### Guardrails
+- write/transition paths only; read-only display surfaces (e.g. _build_active_round) are out of scope
+- no changes to supervisor.py active_round selection (advisory confirmed read-surface cohesion)
+- `.pipeline/state/jobs/` subdirectory isolation: already shipped in schema.py + verify_fsm.py + watcher_core.py; no Axis needed
+
+#### Shipped Infrastructure (Axes 1–2, 2026-04-24)
+- Axis 1 (seq 117): `verify_fsm.StateMachine.step_verify_close_chain()` — VERIFY_RUNNING close chain single-owner in FSM; `WatcherCore._poll()` delegates to dedicated method; generic `step()` blocked by replay test
+- Axis 2 (seq 118): `verify_fsm.StateMachine.release_verify_lease_for_archive()` — lease release for archive-matching VERIFY_PENDING path moved from direct `watcher_core.lease.release()` to FSM delegation; direct call blocked by replay test
+
+- **Milestone 28 closed** (Axes 1–2): FSM single-owner for VERIFY_RUNNING close chain and lease release; advisory seq 120 confirmed Axis 3 not needed
+
+### Milestone 29: Reviewed-Memory Loop Refinement
+
+#### Guardrails
+- bridge는 handler layer에서만; storage layer (`correction_store.py`, `preference_store.py`) 변경 없음
+- preference 활성화·승인 흐름 변경 없음 (candidate 생성까지만)
+- UI 버튼은 `available_to_sync_count > 0`일 때만 노출 (이미 동기화된 경우 숨김)
+
+#### Shipped Infrastructure (Axes 1–3, 2026-04-24)
+- Axis 1 (seq 127): `PreferenceHandlerMixin.sync_adopted_corrections_to_candidates()` + `POST /api/corrections/sync-adopted-to-candidates` — adopted correction → preference candidate backend bridge
+- Axis 2 (seq 128): `PreferencePanel` `data-testid="sync-adopted-btn"` — 버튼 노출, 클릭 후 inline 피드백, audit reload
+- Axis 3 (seq 129): `get_preference_audit()` `available_to_sync_count` — 실제 동기화 가능 수 반환; 버튼 조건 교체
+
+- **Milestone 29 closed** (Axes 1–3): reviewed-memory loop 중 correction adoption → preference candidate 연결 완료
+
+### Milestone 30: Watcher Core Structural Decomposition
+
+#### Goal
+`watcher_core.py`의 legacy 부채 제거 및 순수 파싱 로직을 별도 모듈로 분리.
+
+#### Guardrails
+- `pipeline_runtime/` 수정 없음
+- `tests/test_watcher_core.py` 기존 테스트 계약 유지 (mock.patch target 포함)
+- 보존 함수 4개 (`_line_looks_like_input_prompt`, `_pane_text_has_gemini_ready_prompt`, `_pane_has_input_cursor`, `_pane_has_working_indicator`) 수정 없음
+
+#### Shipped Infrastructure (Axes 1–3, 2026-04-25)
+- Axis 1 (seq 136-137): pane-surface stub 7개 (`_capture_pane_text`, `wait_for_pane_settle`, 등) 제거; 내부 호출 `_shared_*`로 교체; 202 unit tests PASS
+- Axis 2 (seq 141-142): `_LegacyPatchableSharedCall` 프록시 및 `_install_legacy_patch_target` 7회 호출 제거; `tests/test_watcher_core.py` legacy patch target 112곳 → canonical `_shared_*` 마이그레이션; 202 unit tests PASS
+- Axis 3 (seq 144-145): 신호 추출 순수 함수 11개 + regex 상수 12개 → `watcher_signals.py` 신규 모듈 분리; `watcher_core.py` import 교체로 기존 `watcher_core.*` 이름 바인딩 유지; `tests/test_watcher_signals.py` 신규 10개 테스트; 202 + 10 tests PASS; `watcher_core.py` 5001 → 4608 lines
+
+- **Milestone 30 closed** (Axes 1–3): watcher_core legacy debt 제거 및 신호 추출 모듈 분리 완료
+
 ## Next 3 Implementation Priorities
 
-1. **PR #32 merge**: feat/watcher-turn-state (M20 Axis 2 – M26 Axes 1–2) is open and awaiting operator merge approval. All shipped milestones M20–M26 are included.
-2. **Next milestone direction**: M20–M26 closed correction lifecycle, preference lifecycle, global-candidate review, lifecycle observability, preference audit UI, and E2E isolation. The next milestone should be defined via advisory to choose between new user-facing features or further infrastructure work.
-3. **Advisory stability**: Gemini advisory has timed out 4+ times; consider operator-directed M27 scope if advisory remains unavailable.
+1. **PR #33 merge**: feat/watcher-turn-state (M28 structural bundle + M29 loop refinement + M30 structural decomposition, seqs 115–145) is open as draft PR awaiting operator merge approval.
+2. **M31 direction**: M30 complete; next milestone direction — via advisory (operator_request SEQ 133 gate 해소 필요).
+3. **watcher_signals duplication note**: `watcher_signals.py` 내 prompt-line 판별 helper가 `watcher_core.py` 보존 함수와 소량 중복; 추후 공용 parsing helper로 통합 가능.
 
 ## Do Not Pull Forward
 

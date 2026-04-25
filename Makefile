@@ -10,7 +10,16 @@ e2e-install:
 	cd e2e && npm install && npx playwright install
 
 e2e-test:
-	cd e2e && npm test
+	@E2E_DB=$$(mktemp -d)/test.db; \
+	LOCAL_AI_MODEL_PROVIDER=mock LOCAL_AI_OLLAMA_MODEL= LOCAL_AI_MOCK_STREAM_DELAY_MS=10 \
+	LOCAL_AI_SQLITE_DB_PATH=$$E2E_DB \
+	python3 -m app.web --host 127.0.0.1 --port 8879 & \
+	SERVER_PID=$$!; \
+	sleep 3; \
+	cd e2e && npm test; \
+	EXIT_CODE=$$?; \
+	kill $$SERVER_PID 2>/dev/null; \
+	exit $$EXIT_CODE
 
 controller-test:
 	cd e2e && npx playwright test -c playwright.controller.config.mjs --reporter=line

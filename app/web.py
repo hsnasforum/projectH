@@ -393,6 +393,7 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             "/api/preferences/pause",
             "/api/preferences/reject",
             "/api/preferences/update-description",
+            "/api/corrections/sync-adopted-to-candidates",
             "/api/sessions/delete",
             "/api/sessions/delete-all",
         }:
@@ -401,6 +402,10 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
 
         try:
             self._validate_same_origin()
+            if parsed.path == "/api/corrections/sync-adopted-to-candidates":
+                response = self.server.service.sync_adopted_corrections_to_candidates()
+                self._send_json(HTTPStatus.OK, response)
+                return
             payload = self._read_json_body()
             if parsed.path == "/api/feedback":
                 response = self.server.service.submit_feedback(payload)

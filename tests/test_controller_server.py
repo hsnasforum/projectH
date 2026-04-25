@@ -9,6 +9,7 @@ from unittest import mock
 import config.runtime_hosts as runtime_hosts
 import controller.server as controller_server
 from pipeline_gui.backend import PIPELINE_START_READY_TIMEOUT_SECONDS
+from pipeline_gui.token_queries import AgentTotals, CollectorStatus, TodayTotals, TokenDashboard
 
 
 class ControllerServerHostTests(unittest.TestCase):
@@ -121,6 +122,108 @@ class ControllerServerLaunchGateTests(unittest.TestCase):
         self.assertEqual(data["project_root"], str(controller_server.PROJECT_ROOT))
         self.assertEqual(data["role_owners"]["verify"], "Claude")
 
+    def test_runtime_monitor_snapshot_fans_in_token_hud(self) -> None:
+        dashboard = TokenDashboard(
+            display_day="2026-04-05",
+            collector_status=CollectorStatus(available=True, phase="idle"),
+            today_totals=TodayTotals(
+                input_tokens=100,
+                output_tokens=50,
+                cache_read_tokens=25,
+                cache_write_tokens=5,
+                thinking_tokens=10,
+                actual_cost_usd_sum=1.25,
+                estimated_only_cost_usd_sum=0.25,
+            ),
+            agent_totals=[
+                AgentTotals(
+                    source="codex",
+                    events=4,
+                    linked_events=3,
+                    input_tokens=80,
+                    output_tokens=20,
+                    cache_read_tokens=40,
+                    cache_write_tokens=0,
+                    thinking_tokens=10,
+                    total_cost_usd=0.75,
+                    actual_cost_usd_sum=0.5,
+                    estimated_only_cost_usd_sum=0.25,
+                )
+            ],
+            top_jobs=[],
+        )
+        runtime = {
+            "runtime_state": "RUNNING",
+            "lanes": [{"name": "Codex", "state": "working"}],
+        }
+        with (
+            mock.patch.object(
+                controller_server,
+                "get_runtime_status",
+                return_value=(runtime, controller_server.HTTPStatus.OK),
+            ),
+            mock.patch.object(controller_server, "load_token_dashboard", return_value=dashboard),
+        ):
+            snapshot = controller_server.runtime_monitor_snapshot()
+
+        self.assertTrue(snapshot["ok"])
+        self.assertTrue(snapshot["source"]["read_only"])
+        self.assertEqual(snapshot["runtime"]["runtime_state"], "RUNNING")
+        self.assertEqual(snapshot["hud"]["totals"]["total_tokens"], 190)
+        self.assertEqual(snapshot["hud"]["totals"]["total_cost_usd"], 1.5)
+        self.assertEqual(snapshot["hud"]["totals"]["cache_hit_rate"], 0.1923)
+        codex = snapshot["hud"]["agents"][0]
+        self.assertEqual(codex["name"], "Codex")
+        self.assertEqual(codex["state"], "working")
+        self.assertTrue(codex["active"])
+        self.assertEqual(codex["total_tokens"], 150)
+        self.assertEqual(codex["cache_hit_rate"], 0.3333)
+        self.assertIn("input_ports", snapshot["state_manager"])
+        self.assertIn("teams", snapshot)
+        self.assertIn("communications", snapshot)
+        self.assertIn("coordination_state", snapshot)
+
+    def test_runtime_agent_inspector_reads_lane_tail(self) -> None:
+        dashboard = TokenDashboard(
+            display_day="2026-04-05",
+            collector_status=CollectorStatus(available=True, phase="idle"),
+            today_totals=TodayTotals(input_tokens=1, output_tokens=2),
+            agent_totals=[],
+            top_jobs=[],
+        )
+        runtime = {
+            "runtime_state": "RUNNING",
+            "role_owners": {"verify": "Codex"},
+            "lanes": [{"name": "Codex", "state": "working", "note": "checking monitor", "pid": 123}],
+        }
+        with (
+            mock.patch.object(
+                controller_server,
+                "get_runtime_status",
+                return_value=(runtime, controller_server.HTTPStatus.OK),
+            ),
+            mock.patch.object(controller_server, "load_token_dashboard", return_value=dashboard),
+            mock.patch.object(
+                controller_server,
+                "backend_runtime_capture_tail",
+                return_value="Prompt: inspect agent drawer\nAssistant: working",
+            ) as capture_tail,
+        ):
+            data, status = controller_server.runtime_agent_inspector(agent="Codex", lines=77)
+
+        self.assertEqual(int(status), 200)
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["agent"]["id"], "Codex")
+        self.assertEqual(data["agent"]["role"], "verify")
+        self.assertIn("Prompt: inspect agent drawer", data["current_prompt"])
+        self.assertIn("Assistant: working", data["conversation"])
+        capture_tail.assert_called_once_with(
+            controller_server.PROJECT_ROOT,
+            controller_server.SESSION_NAME,
+            "Codex",
+            lines=77,
+        )
+
     def test_pipeline_start_propagates_launch_gate_error_from_backend(self) -> None:
         with mock.patch.object(controller_server, "backend_pipeline_start", return_value="실행 차단: active profile이 없습니다 (.pipeline/config/agent_profile.json)."):
             result = controller_server.pipeline_start()
@@ -171,6 +274,12 @@ class ControllerServerLaunchGateTests(unittest.TestCase):
         self.assertIn("/api/runtime/restart", cozy_js)
         self.assertIn("/api/runtime/capture-tail", cozy_js)
         self.assertIn("/api/runtime/send-input", cozy_js)
+        self.assertIn("/api/runtime/monitor-snapshot", cozy_js)
+        self.assertIn("/api/runtime/agent-inspector", cozy_js)
+        self.assertIn("/api/runtime/agent-inspector", server_source)
+        self.assertIn("/ws/runtime/monitor", cozy_js)
+        self.assertIn("/ws/runtime/monitor", server_source)
+        self.assertIn("__officeRuntimeMonitorDisabled", cozy_js)
         self.assertIn("role_owners", cozy_js)
         self.assertIn("currentRoleOwners", cozy_js)
         self.assertIn("ownerForZone", cozy_js)
@@ -184,6 +293,27 @@ class ControllerServerLaunchGateTests(unittest.TestCase):
         self.assertIn("marquee-text", html)
         self.assertIn("marquee-scroll", css)
         self.assertIn("Party Roster", cozy_js)
+        self.assertIn("Token HUD", cozy_js)
+        self.assertIn("renderTokenHud", cozy_js)
+        self.assertIn("Agent Inspector", html)
+        self.assertIn("renderAgentInspector", cozy_js)
+        self.assertIn("operator-attention-board", html)
+        self.assertIn("operator-attention-board", css)
+        self.assertIn("buildOperatorAttention", cozy_js)
+        self.assertIn("renderOperatorAttentionBoard", cozy_js)
+        self.assertIn("getOperatorAttentionDebug", cozy_js)
+        self.assertIn("findPath", cozy_js)
+        self.assertIn("PATH_OBSTACLES", cozy_js)
+        self.assertIn("drawTeamHulls", cozy_js)
+        self.assertIn("queueCommunicationTransfer", cozy_js)
+        self.assertIn("approvalWaitingForAgent", cozy_js)
+        self.assertIn("isWorldRectVisible", cozy_js)
+        self.assertIn("CHARACTER_SKINS", cozy_js)
+        self.assertIn("프리렌풍 엘프 마법사", cozy_js)
+        self.assertIn("아카네풍 배우", cozy_js)
+        self.assertIn("귀여운 오리지널 여캐", cozy_js)
+        self.assertIn("token-agent-row", css)
+        self.assertIn("agent-inspector", css)
         self.assertIn("Role Binding", cozy_js)
         self.assertIn("roleOwnerRows", cozy_js)
         self.assertIn("Implement owner", cozy_js)

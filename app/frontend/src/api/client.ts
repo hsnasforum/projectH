@@ -279,6 +279,13 @@ export interface PreferenceAudit {
   by_status: Record<string, number>;
   conflict_pair_count: number;
   adopted_corrections_count?: number;
+  available_to_sync_count?: number;
+}
+
+export interface SyncAdoptedPreferenceCandidatesResponse {
+  ok: boolean;
+  synced_count: number;
+  skipped_count: number;
 }
 
 export async function fetchPreferenceAudit(): Promise<PreferenceAudit | null> {
@@ -286,6 +293,13 @@ export async function fetchPreferenceAudit(): Promise<PreferenceAudit | null> {
   if (!res.ok) return null;
   const data = await res.json();
   return data.audit ?? null;
+}
+
+export async function postSyncAdoptedToPreferenceCandidates(): Promise<SyncAdoptedPreferenceCandidatesResponse> {
+  const res = await fetch(`${BASE}/api/corrections/sync-adopted-to-candidates`, {
+    method: "POST",
+  });
+  return res.json();
 }
 
 export async function activatePreference(preferenceId: string): Promise<{ ok: boolean; preference: PreferenceRecord }> {

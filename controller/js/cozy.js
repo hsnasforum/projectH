@@ -64,12 +64,103 @@ const LANE_META = {
   Codex: { role: 'verify', zone: 'codex_desk', color: '#6aa7c9' },
   Gemini: { role: 'advisory', zone: 'gemini_desk', color: '#e0a93b' },
 };
+const ATTENTION_REASON_LABELS = Object.freeze({
+  approval_required: '승인 필요',
+  auth_login_required: '인증 로그인 필요',
+  credential_required: '인증 정보 입력 필요',
+  destructive_risk: '위험 작업 확인 필요',
+  external_publication_boundary: '외부 공개 경계 확인',
+  pr_boundary: 'PR 경계 확인',
+  pr_creation_gate: 'PR 생성 승인 필요',
+  pr_merge_gate: 'PR merge 승인 필요',
+  publication_boundary: '공개 작업 승인 필요',
+  safety_stop: '안전 중지 확인 필요',
+  security_incident: '보안 사고 확인 필요',
+  slice_ambiguity: '다음 작업 선택 필요',
+  stale_control_advisory: '제어 슬롯 고착',
+  truth_sync_required: 'truth-sync 확인 필요',
+});
+const AUTH_ATTENTION_MARKERS = [
+  'auth',
+  'credential',
+  'login',
+  'oauth',
+  'api_key',
+  'api key',
+  'token',
+  '인증',
+  '로그인'
+];
+const CHARACTER_SKINS = Object.freeze({
+  Codex: {
+    label: '프리렌풍 엘프 마법사',
+    shortLabel: 'Frieren',
+    hair: '#e8ede3',
+    hairShadow: '#b9c3b8',
+    eye: '#66a96b',
+    outfit: '#f1f2e6',
+    outfitShadow: '#8a927d',
+    accent: '#d7b86a',
+    accessory: '#2f6c4f',
+    silhouette: 'elf_mage',
+  },
+  Claude: {
+    label: '아카네풍 배우',
+    shortLabel: 'Akane',
+    hair: '#273b8f',
+    hairShadow: '#172357',
+    eye: '#78b8ff',
+    outfit: '#56305f',
+    outfitShadow: '#2d1935',
+    accent: '#d85c82',
+    accessory: '#f2d7e3',
+    silhouette: 'blue_actor',
+  },
+  Gemini: {
+    label: '귀여운 오리지널 여캐',
+    shortLabel: 'Mimi',
+    hair: '#f1a7c8',
+    hairShadow: '#c96b96',
+    eye: '#7a5ad0',
+    outfit: '#fff0f5',
+    outfitShadow: '#bf6b8d',
+    accent: '#7ec9b0',
+    accessory: '#f6d65f',
+    silhouette: 'cute_girl',
+  },
+});
+const PATH_TILE = 20;
+const PATH_OBSTACLES = Object.freeze([
+  { x: 56, y: 152, w: 208, h: 46, label: 'claude_desk' },
+  { x: 396, y: 152, w: 208, h: 46, label: 'codex_desk' },
+  { x: 736, y: 152, w: 208, h: 46, label: 'gemini_desk' },
+  { x: 54, y: 370, w: 232, h: 76, label: 'receipt_board' },
+  { x: 392, y: 360, w: 236, h: 98, label: 'archive_shelf' },
+  { x: 734, y: 370, w: 212, h: 74, label: 'incident_zone' },
+]);
+const TEAM_CLUSTER_OFFSETS = Object.freeze([
+  { x: -34, y: -8 }, { x: 34, y: -8 }, { x: 0, y: 30 }, { x: -58, y: 28 }, { x: 58, y: 28 },
+]);
 const runtimeStateStore = {
   data: null,
   events: [],
   statusFetchFailureActive: false,
   statusFetchFailureMessage: '',
-  previous: { runtimeState: null, controlStatus: null, watcherStatus: null, uncertainRuntime: null, laneStates: {}, roundState: null },
+  previous: { runtimeState: null, controlStatus: null, watcherStatus: null, uncertainRuntime: null, laneStates: {}, roundState: null, approvalWait: null },
+  monitor: {
+    snapshot: null,
+    connected: false,
+    previousAgentTokens: {},
+    seenCommunications: new Set(),
+    previousApprovalWait: {},
+    reconnectTimer: null,
+  },
+  inspector: {
+    selectedAgent: '',
+    details: null,
+    loading: false,
+    requestSeq: 0,
+  },
   delivery: {
     initialized: false,
     controlSeq: null,
@@ -80,14 +171,190 @@ const runtimeStateStore = {
     lastReceiptId: '',
   },
 };
+const camera = { x: 0, y: 0 };
 let lastMarqueeText = '';
 let lowMotion = false;
 let muted = false;
 let pollInFlight = false;
+let monitorFallbackInFlight = false;
+let monitorSocket = null;
+
+function cameraView(pad = 0) {
+  const width = scale > 0 ? Math.min(VIRTUAL_W, cw / scale) : VIRTUAL_W;
+  const height = scale > 0 ? Math.min(VIRTUAL_H, ch / scale) : VIRTUAL_H;
+  return {
+    x: camera.x - pad,
+    y: camera.y - pad,
+    w: width + pad * 2,
+    h: height + pad * 2,
+  };
+}
+
+function isWorldRectVisible(x, y, w, h, pad = 0) {
+  const view = cameraView(pad);
+  return x + w >= view.x && x <= view.x + view.w && y + h >= view.y && y <= view.y + view.h;
+}
+
+function characterSkinForAgent(name) {
+  return CHARACTER_SKINS[name] || {
+    label: name,
+    shortLabel: name,
+    hair: '#8a6a4a',
+    hairShadow: '#5a3d28',
+    eye: '#2a1810',
+    outfit: '#fbf3dd',
+    outfitShadow: '#8a6a4a',
+    accent: '#e0a93b',
+    accessory: '#6aa7c9',
+    silhouette: 'default',
+  };
+}
 
 function isIdleLikeState(state) {
   const value = String(state || '').toLowerCase();
   return value === 'ready' || value === 'idle' || value === 'off';
+}
+
+function animationStateForAgent(agent) {
+  if (!agent) return 'idle';
+  if (agent.path && agent.path.length) return 'walk';
+  if (isIdleLikeState(agent.state) && agent.atLounge) return 'rest';
+  if (agent.state === 'working') return 'work';
+  if (agent.state === 'broken' || agent.state === 'dead') return 'alert';
+  return 'idle';
+}
+
+function coordinationForAgent(agentName) {
+  const snapshot = runtimeStateStore.monitor.snapshot || {};
+  const coordination = snapshot.coordination_state || {};
+  const logState = snapshot.log_state || {};
+  return coordination[agentName] || logState[agentName] || {};
+}
+
+function approvalWaitingForAgent(agent) {
+  if (!agent || agent.state === 'off' || agent.state === 'dead') return false;
+  const coordination = coordinationForAgent(agent.name);
+  if (coordination.approval_wait === true) return true;
+  if (coordination.approval_wait && typeof coordination.approval_wait === 'object') {
+    return Boolean(coordination.approval_wait.waiting || coordination.approval_wait.required);
+  }
+  const presentation = getPresentation();
+  if (presentation.controlStatus !== 'needs_operator') return false;
+  const activeLane = activeWorkLaneName();
+  return !activeLane || activeLane === agent.name || agent.state === 'working' || /approval|operator|승인/i.test(agent.note || '');
+}
+
+function pointBlocked(x, y) {
+  if (x < 8 || y < 8 || x > VIRTUAL_W - 8 || y > VIRTUAL_H - 8) return true;
+  return PATH_OBSTACLES.some((rect) =>
+    x >= rect.x - 8 && x <= rect.x + rect.w + 8 && y >= rect.y - 8 && y <= rect.y + rect.h + 8
+  );
+}
+
+function pointToTile(point) {
+  return {
+    x: Math.max(0, Math.min(Math.floor(VIRTUAL_W / PATH_TILE) - 1, Math.floor(point.x / PATH_TILE))),
+    y: Math.max(0, Math.min(Math.floor(VIRTUAL_H / PATH_TILE) - 1, Math.floor(point.y / PATH_TILE))),
+  };
+}
+
+function tileCenter(tile) {
+  return {
+    x: tile.x * PATH_TILE + PATH_TILE / 2,
+    y: tile.y * PATH_TILE + PATH_TILE / 2,
+  };
+}
+
+function tileKey(tile) {
+  return `${tile.x},${tile.y}`;
+}
+
+function tileWalkable(tile) {
+  const cols = Math.floor(VIRTUAL_W / PATH_TILE);
+  const rows = Math.floor(VIRTUAL_H / PATH_TILE);
+  if (tile.x < 0 || tile.y < 0 || tile.x >= cols || tile.y >= rows) return false;
+  const center = tileCenter(tile);
+  return !pointBlocked(center.x, center.y);
+}
+
+function nearestWalkableTile(tile) {
+  if (tileWalkable(tile)) return tile;
+  for (let radius = 1; radius < 8; radius++) {
+    for (let y = tile.y - radius; y <= tile.y + radius; y++) {
+      for (let x = tile.x - radius; x <= tile.x + radius; x++) {
+        const candidate = { x, y };
+        if (tileWalkable(candidate)) return candidate;
+      }
+    }
+  }
+  return tile;
+}
+
+function heuristic(a, b) {
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
+
+function reconstructPath(cameFrom, currentKey) {
+  const path = [];
+  let key = currentKey;
+  while (cameFrom.has(key)) {
+    const [x, y] = key.split(',').map(Number);
+    path.unshift(tileCenter({ x, y }));
+    key = cameFrom.get(key);
+  }
+  return path;
+}
+
+function findPath(startPoint, targetPoint) {
+  const start = nearestWalkableTile(pointToTile(startPoint));
+  const goal = nearestWalkableTile(pointToTile(targetPoint));
+  const startKey = tileKey(start);
+  const goalKey = tileKey(goal);
+  if (startKey === goalKey) return [tileCenter(goal)];
+  const open = [{ tile: start, key: startKey, f: heuristic(start, goal) }];
+  const cameFrom = new Map();
+  const gScore = new Map([[startKey, 0]]);
+  const closed = new Set();
+  const directions = [
+    { x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 },
+    { x: 1, y: 1 }, { x: 1, y: -1 }, { x: -1, y: 1 }, { x: -1, y: -1 },
+  ];
+
+  while (open.length) {
+    open.sort((a, b) => a.f - b.f);
+    const current = open.shift();
+    if (!current) break;
+    if (current.key === goalKey) return reconstructPath(cameFrom, current.key);
+    if (closed.has(current.key)) continue;
+    closed.add(current.key);
+
+    for (const dir of directions) {
+      const next = { x: current.tile.x + dir.x, y: current.tile.y + dir.y };
+      if (!tileWalkable(next)) continue;
+      const nextKey = tileKey(next);
+      if (closed.has(nextKey)) continue;
+      const diagonal = dir.x !== 0 && dir.y !== 0;
+      const tentative = (gScore.get(current.key) ?? Infinity) + (diagonal ? 1.4 : 1);
+      if (tentative >= (gScore.get(nextKey) ?? Infinity)) continue;
+      cameFrom.set(nextKey, current.key);
+      gScore.set(nextKey, tentative);
+      open.push({ tile: next, key: nextKey, f: tentative + heuristic(next, goal) });
+    }
+  }
+  return [targetPoint];
+}
+
+function setAgentDestination(agent, target, { snap = false } = {}) {
+  if (!agent || !target) return;
+  const endTile = nearestWalkableTile(pointToTile(target));
+  const endPoint = tileCenter(endTile);
+  agent.tx = endPoint.x;
+  agent.ty = endPoint.y;
+  agent.path = snap ? [] : findPath({ x: agent.x, y: agent.y }, endPoint);
+  if (snap) {
+    agent.x = endPoint.x;
+    agent.y = endPoint.y;
+  }
 }
 
 function loungeSeatZone(agentName) {
@@ -207,10 +474,44 @@ function agentMetaForName(name, data = runtimeStateStore.data) {
   return { role, zoneKey, color: zone.color };
 }
 
+function monitorTeams() {
+  const snapshot = runtimeStateStore.monitor.snapshot || {};
+  return Array.isArray(snapshot.teams) ? snapshot.teams.filter((team) => team && Array.isArray(team.agents)) : [];
+}
+
+function teamForAgent(agentName) {
+  return monitorTeams().find((team) => team.agents.includes(agentName)) || null;
+}
+
+function agentTeamIndex(team, agentName) {
+  const members = Array.isArray(team?.agents) ? team.agents : [];
+  return Math.max(0, members.indexOf(agentName));
+}
+
+function teamClusterTarget(agent, baseTarget) {
+  const team = teamForAgent(agent.name);
+  if (!team || !Array.isArray(team.agents) || team.agents.length < 2) return baseTarget;
+  const memberTargets = team.agents
+    .map((name) => {
+      const meta = agentMetaForName(name);
+      const zone = ZONE_MAP[meta.zoneKey];
+      if (!zone) return null;
+      return { x: zone.x + zone.w / 2, y: zone.y + zone.h * 0.7 };
+    })
+    .filter(Boolean);
+  if (!memberTargets.length) return baseTarget;
+  const anchor = memberTargets.reduce((acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }), { x: 0, y: 0 });
+  anchor.x /= memberTargets.length;
+  anchor.y /= memberTargets.length;
+  const offset = TEAM_CLUSTER_OFFSETS[agentTeamIndex(team, agent.name) % TEAM_CLUSTER_OFFSETS.length];
+  return {
+    x: anchor.x + offset.x,
+    y: anchor.y + offset.y,
+  };
+}
+
 function applyAgentRoleBinding(agent, data = runtimeStateStore.data, { snap = false } = {}) {
   const meta = agentMetaForName(agent.name, data);
-  const previousZone = agent._homeZone;
-  const wasAtLounge = !!agent.atLounge;
   agent.role = meta.role;
   agent.color = meta.color || agent.color;
   agent._homeZone = meta.zoneKey;
@@ -218,25 +519,15 @@ function applyAgentRoleBinding(agent, data = runtimeStateStore.data, { snap = fa
     const seat = loungeSeatTarget(agent.name);
     agent.atLounge = true;
     agent.loungeTimer = 0;
-    agent.tx = seat.x;
-    agent.ty = seat.y;
-    if (snap || previousZone !== meta.zoneKey || !wasAtLounge) {
-      agent.x = seat.x;
-      agent.y = seat.y;
-    }
+    setAgentDestination(agent, seat, { snap });
     return;
   }
   agent.atLounge = false;
   const home = ZONE_MAP[meta.zoneKey];
   if (!home) return;
   const homeX = home.x + home.w / 2;
-  const homeY = home.y + home.h * 0.58;
-  agent.tx = homeX;
-  agent.ty = homeY;
-  if (snap || previousZone !== meta.zoneKey || wasAtLounge) {
-    agent.x = homeX;
-    agent.y = homeY;
-  }
+  const homeY = home.y + home.h * 0.72;
+  setAgentDestination(agent, teamClusterTarget(agent, { x: homeX, y: homeY }), { snap });
 }
 
 const canvas = document.getElementById('office');
@@ -277,9 +568,14 @@ class Agent {
     this.facingRight = true;
     this.bubble = { text: note || '', fullText: note || '', timer: 999, typeIdx: (note || '').length, typeTimer: 0 };
     this.workLoad = state === 'working' ? 6 : 0;
+    this.tokenTotal = 0;
+    this.tokenCost = 0;
+    this.tokenPulse = 0;
     this.wanderTimer = 2 + Math.random() * 2;
     this.atLounge = resting;
     this.loungeTimer = 0;
+    this.path = [];
+    this.hasRuntimeSync = false;
     const start = resting
       ? loungeSeatTarget(name)
       : {
@@ -308,21 +604,31 @@ class Agent {
       this.wanderTimer = 2 + Math.random() * 3;
       if (this.atLounge) {
         const seat = loungeSeatZone(this.name);
-        this.tx = seat.x + 18 + Math.random() * Math.max(20, seat.w - 36);
-        this.ty = seat.y + 12 + Math.random() * Math.max(20, seat.h - 24);
+        setAgentDestination(this, {
+          x: seat.x + 18 + Math.random() * Math.max(20, seat.w - 36),
+          y: seat.y + 12 + Math.random() * Math.max(20, seat.h - 24),
+        });
       } else {
         const z = ZONE_MAP[this._homeZone];
-        this.tx = z.x + 30 + Math.random() * (z.w - 60);
-        this.ty = z.y + z.h * 0.4 + Math.random() * (z.h * 0.3);
-        this.facingRight = this.tx > this.x;
+        const target = {
+          x: z.x + 30 + Math.random() * (z.w - 60),
+          y: z.y + z.h * 0.54 + Math.random() * (z.h * 0.28),
+        };
+        const clusteredTarget = teamClusterTarget(this, target);
+        this.facingRight = clusteredTarget.x > this.x;
+        setAgentDestination(this, clusteredTarget);
       }
     }
-    const dx = this.tx - this.x, dy = this.ty - this.y;
+    const waypoint = this.path.length ? this.path[0] : { x: this.tx, y: this.ty };
+    const dx = waypoint.x - this.x, dy = waypoint.y - this.y;
     const dist = Math.sqrt(dx*dx + dy*dy);
     if (dist > 1) {
-      const step = (this.atLounge ? 38 : 28) * dt;
+      const step = (this.atLounge ? 38 : this.state === 'working' ? 46 : 32) * dt;
       this.x += (dx / dist) * Math.min(step, dist);
       this.y += (dy / dist) * Math.min(step, dist);
+      this.facingRight = dx >= 0;
+    } else if (this.path.length) {
+      this.path.shift();
     }
     // Typewriter bubble
     if (this.bubble.timer > 0) this.bubble.timer -= dt;
@@ -339,6 +645,7 @@ class Agent {
     } else {
       this.workLoad = Math.max(0, this.workLoad - dt * 2);
     }
+    this.tokenPulse = Math.max(0, this.tokenPulse - dt);
   }
 }
 
@@ -391,6 +698,7 @@ function drawFloor() {
 function drawZones() {
   for (const key of Object.keys(ZONE_MAP)) {
     const zone = zoneView(key) || ZONE_MAP[key];
+    if (!isWorldRectVisible(zone.x, zone.y, zone.w, zone.h, 80)) continue;
     const sx = zone.x * scale, sy = zone.y * scale;
     const sw = zone.w * scale, sh = zone.h * scale;
 
@@ -419,6 +727,68 @@ function drawZones() {
     else if (key === 'receipt_board') drawCorkBoard(zone);
     else if (key === 'incident_zone') drawAlarmBell(zone);
     else if (key === 'lounge') drawLounge(zone);
+  }
+}
+
+function cross(o, a, b) {
+  return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+}
+
+function convexHull(points) {
+  const sorted = [...points]
+    .sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x))
+    .filter((point, index, arr) => index === 0 || point.x !== arr[index - 1].x || point.y !== arr[index - 1].y);
+  if (sorted.length <= 2) return sorted;
+  const lower = [];
+  for (const point of sorted) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) lower.pop();
+    lower.push(point);
+  }
+  const upper = [];
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    const point = sorted[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) upper.pop();
+    upper.push(point);
+  }
+  upper.pop();
+  lower.pop();
+  return lower.concat(upper);
+}
+
+function drawTeamHulls() {
+  for (const team of monitorTeams()) {
+    const members = team.agents.map((name) => getAgent(name)).filter(Boolean);
+    if (members.length < 2) continue;
+    const points = [];
+    for (const agent of members) {
+      if (!isWorldRectVisible(agent.x - 70, agent.y - 84, 140, 140, 80)) continue;
+      points.push(
+        { x: agent.x - 38, y: agent.y - 46 },
+        { x: agent.x + 38, y: agent.y - 46 },
+        { x: agent.x + 44, y: agent.y + 38 },
+        { x: agent.x - 44, y: agent.y + 38 },
+      );
+    }
+    const hull = convexHull(points);
+    if (hull.length < 3) continue;
+    ctx.save();
+    ctx.beginPath();
+    hull.forEach((point, index) => {
+      const x = point.x * scale;
+      const y = point.y * scale;
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.closePath();
+    ctx.globalAlpha = 0.12;
+    ctx.fillStyle = team.color || '#6aa7c9';
+    ctx.fill();
+    ctx.globalAlpha = 0.72;
+    ctx.strokeStyle = team.color || '#6aa7c9';
+    ctx.lineWidth = Math.max(1, 2 * scale);
+    ctx.setLineDash([8 * scale, 5 * scale]);
+    ctx.stroke();
+    ctx.restore();
   }
 }
 
@@ -2183,12 +2553,114 @@ function drawCat(c) {
 }
 
 /* ═══ Agent sprite (chibi circle + hat) ═══ */
+function drawSkinBackLayer(skin, sx, bodyY, headY, r) {
+  ctx.fillStyle = skin.hairShadow;
+  if (skin.silhouette === 'elf_mage') {
+    ctx.fillRect(sx - 13 * scale, headY + 3 * scale, 26 * scale, 34 * scale);
+    ctx.fillRect(sx - 16 * scale, headY + 14 * scale, 5 * scale, 25 * scale);
+    ctx.fillRect(sx + 11 * scale, headY + 14 * scale, 5 * scale, 25 * scale);
+    ctx.fillRect(sx - 20 * scale, bodyY - 5 * scale, 6 * scale, 3 * scale);
+    ctx.fillRect(sx + 14 * scale, bodyY - 5 * scale, 6 * scale, 3 * scale);
+    ctx.fillStyle = '#f1d8ba';
+    ctx.fillRect(sx - 22 * scale, bodyY - 4 * scale, 5 * scale, 3 * scale);
+    ctx.fillRect(sx + 17 * scale, bodyY - 4 * scale, 5 * scale, 3 * scale);
+  } else if (skin.silhouette === 'blue_actor') {
+    ctx.fillRect(sx - 16 * scale, headY + 2 * scale, 32 * scale, 30 * scale);
+    ctx.fillRect(sx - 18 * scale, headY + 12 * scale, 6 * scale, 22 * scale);
+    ctx.fillRect(sx + 12 * scale, headY + 10 * scale, 6 * scale, 24 * scale);
+  } else if (skin.silhouette === 'cute_girl') {
+    ctx.fillRect(sx - 24 * scale, headY + 2 * scale, 11 * scale, 11 * scale);
+    ctx.fillRect(sx + 13 * scale, headY + 2 * scale, 11 * scale, 11 * scale);
+    ctx.fillRect(sx - 14 * scale, headY + 5 * scale, 28 * scale, 28 * scale);
+  } else {
+    ctx.fillRect(sx - r, headY + 2 * scale, r * 2, 26 * scale);
+  }
+}
+
+function drawSkinBangs(skin, sx, bodyY, headY) {
+  ctx.fillStyle = skin.hair;
+  if (skin.silhouette === 'elf_mage') {
+    ctx.fillRect(sx - 13 * scale, headY + 1 * scale, 26 * scale, 8 * scale);
+    ctx.fillRect(sx - 10 * scale, headY + 8 * scale, 5 * scale, 10 * scale);
+    ctx.fillRect(sx - 3 * scale, headY + 7 * scale, 6 * scale, 9 * scale);
+    ctx.fillRect(sx + 5 * scale, headY + 8 * scale, 5 * scale, 10 * scale);
+    ctx.fillStyle = skin.hairShadow;
+    ctx.fillRect(sx - 15 * scale, bodyY + 5 * scale, 4 * scale, 22 * scale);
+    ctx.fillRect(sx + 11 * scale, bodyY + 5 * scale, 4 * scale, 22 * scale);
+  } else if (skin.silhouette === 'blue_actor') {
+    ctx.fillRect(sx - 15 * scale, headY + 2 * scale, 30 * scale, 9 * scale);
+    ctx.fillRect(sx - 12 * scale, headY + 9 * scale, 7 * scale, 12 * scale);
+    ctx.fillRect(sx - 4 * scale, headY + 8 * scale, 7 * scale, 9 * scale);
+    ctx.fillRect(sx + 4 * scale, headY + 9 * scale, 8 * scale, 12 * scale);
+    ctx.fillStyle = skin.accent;
+    ctx.fillRect(sx + 10 * scale, headY + 5 * scale, 7 * scale, 2 * scale);
+  } else if (skin.silhouette === 'cute_girl') {
+    ctx.fillRect(sx - 11 * scale, headY + 2 * scale, 22 * scale, 8 * scale);
+    ctx.fillRect(sx - 9 * scale, headY + 9 * scale, 6 * scale, 9 * scale);
+    ctx.fillRect(sx + 3 * scale, headY + 9 * scale, 6 * scale, 9 * scale);
+    ctx.fillStyle = skin.accessory;
+    ctx.fillRect(sx - 4 * scale, headY - 3 * scale, 8 * scale, 4 * scale);
+    ctx.fillRect(sx - 7 * scale, headY - 1 * scale, 3 * scale, 3 * scale);
+    ctx.fillRect(sx + 4 * scale, headY - 1 * scale, 3 * scale, 3 * scale);
+  }
+}
+
+function drawSkinAccessory(skin, sx, bodyY, headY) {
+  if (skin.silhouette === 'elf_mage') {
+    ctx.fillStyle = skin.accent;
+    ctx.fillRect(sx - 8 * scale, headY + 1 * scale, 16 * scale, 2 * scale);
+    ctx.fillStyle = skin.accessory;
+    ctx.fillRect(sx + 18 * scale, bodyY - 20 * scale, 2 * scale, 42 * scale);
+    ctx.fillStyle = skin.accent;
+    ctx.fillRect(sx + 16 * scale, bodyY - 23 * scale, 6 * scale, 6 * scale);
+    ctx.fillStyle = '#fbf3dd';
+    ctx.fillRect(sx + 18 * scale, bodyY - 21 * scale, 2 * scale, 2 * scale);
+  } else if (skin.silhouette === 'blue_actor') {
+    ctx.fillStyle = skin.accessory;
+    ctx.fillRect(sx - 10 * scale, headY + 3 * scale, 5 * scale, 2 * scale);
+    ctx.fillStyle = skin.accent;
+    ctx.fillRect(sx - 12 * scale, headY + 1 * scale, 3 * scale, 6 * scale);
+    ctx.fillRect(sx + 2 * scale, bodyY + 6 * scale, 7 * scale, 2 * scale);
+  } else if (skin.silhouette === 'cute_girl') {
+    ctx.fillStyle = skin.accent;
+    ctx.fillRect(sx - 8 * scale, bodyY + 2 * scale, 16 * scale, 3 * scale);
+    ctx.fillRect(sx - 5 * scale, bodyY + 6 * scale, 10 * scale, 3 * scale);
+    ctx.fillStyle = skin.accessory;
+    ctx.fillRect(sx - 18 * scale, headY + 6 * scale, 6 * scale, 3 * scale);
+    ctx.fillRect(sx + 12 * scale, headY + 6 * scale, 6 * scale, 3 * scale);
+  }
+}
+
+function drawApprovalMarker(a, sx, headY) {
+  if (!approvalWaitingForAgent(a)) return;
+  const blink = Math.floor(performance.now() / 320) % 2 === 0;
+  const markerX = sx + 18 * scale;
+  const markerY = headY - 25 * scale + (blink ? -2 * scale : 0);
+  ctx.save();
+  ctx.fillStyle = blink ? '#d2553a' : '#e0a93b';
+  ctx.fillRect(markerX - 7 * scale, markerY - 9 * scale, 14 * scale, 16 * scale);
+  ctx.fillStyle = '#2a1810';
+  ctx.fillRect(markerX - 8 * scale, markerY - 10 * scale, 16 * scale, 1);
+  ctx.fillRect(markerX - 8 * scale, markerY + 7 * scale, 16 * scale, 1);
+  ctx.fillRect(markerX - 8 * scale, markerY - 10 * scale, 1, 18 * scale);
+  ctx.fillRect(markerX + 7 * scale, markerY - 10 * scale, 1, 18 * scale);
+  ctx.font = `${13 * scale}px 'DungGeunMo','Galmuri11','NeoDunggeunmo',monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#fbf3dd';
+  ctx.fillText('!', markerX, markerY);
+  ctx.restore();
+}
+
 function drawAgent(a) {
+  const skin = characterSkinForAgent(a.name);
   const sx = a.x * scale, sy = a.y * scale;
   const bob = Math.sin(a.bobPhase) * (a.state === 'working' ? 1.5 : 2.5) * scale;
   const r = 12 * scale;
   const bodyY = sy + bob;
   const headY = bodyY - r;
+
+  drawSkinBackLayer(skin, sx, bodyY, headY, r);
 
   // Shadow (soft ellipse)
   ctx.fillStyle = 'rgba(58, 42, 26, 0.35)';
@@ -2197,7 +2669,7 @@ function drawAgent(a) {
   ctx.fill();
 
   // Body (chunky pixel blob)
-  ctx.fillStyle = a.color;
+  ctx.fillStyle = skin.outfit;
   // square-ish body for pixel vibe
   const bw = r * 1.9, bh = r * 1.9;
   ctx.fillRect(sx - bw/2, bodyY - bh/2, bw, bh);
@@ -2214,6 +2686,10 @@ function drawAgent(a) {
   // Shadow side
   ctx.fillStyle = 'rgba(0,0,0,0.2)';
   ctx.fillRect(sx - bw/2 + 2, bodyY + bh/2 - 3, bw - 4, 1);
+  ctx.fillStyle = skin.outfitShadow;
+  ctx.fillRect(sx - 8 * scale, bodyY + 7 * scale, 16 * scale, 3 * scale);
+  ctx.fillStyle = skin.accent;
+  ctx.fillRect(sx - 3 * scale, bodyY - 8 * scale, 6 * scale, 3 * scale);
 
   // Eyes (pixel dots)
   const eyeOx = 4 * scale, eyeY = bodyY - 1 * scale;
@@ -2224,9 +2700,13 @@ function drawAgent(a) {
     ctx.fillRect(sx + eyeOx - 1 * scale, eyeY - 1 * scale, 3 * scale, 3 * scale);
     // pupil
     const lookX = a.facingRight ? 0 : -1;
-    ctx.fillStyle = '#2a1810';
+    ctx.fillStyle = skin.eye;
     ctx.fillRect(sx - eyeOx + lookX * scale, eyeY, 1 * scale, 2 * scale);
     ctx.fillRect(sx + eyeOx + lookX * scale, eyeY, 1 * scale, 2 * scale);
+    if (skin.silhouette === 'blue_actor') {
+      ctx.fillStyle = '#fbf3dd';
+      ctx.fillRect(sx + eyeOx + lookX * scale, eyeY - 1 * scale, 1 * scale, 1 * scale);
+    }
   } else {
     ctx.fillStyle = '#2a1810';
     ctx.fillRect(sx - eyeOx - 2 * scale, eyeY + 1 * scale, 3 * scale, 1);
@@ -2251,25 +2731,18 @@ function drawAgent(a) {
     ctx.fillRect(sx + 2 * scale, bodyY + 4 * scale, 1, 1);
   }
 
-  // Little hat (role-indicating)
-  const hatColors = { Claude: '#5c9a4a', Codex: '#6aa7c9', Gemini: '#e0a93b' };
-  const hatC = hatColors[a.name] || '#a88cc5';
-  ctx.fillStyle = hatC;
-  ctx.fillRect(sx - 8 * scale, headY + 2 * scale, 16 * scale, 3 * scale);
-  ctx.fillRect(sx - 6 * scale, headY, 12 * scale, 3 * scale);
-  ctx.fillRect(sx - 3 * scale, headY - 3 * scale, 6 * scale, 4 * scale);
-  // Hat dark outline
-  ctx.fillStyle = '#2a1810';
-  ctx.fillRect(sx - 9 * scale, headY + 2 * scale, 1, 3 * scale);
-  ctx.fillRect(sx + 8 * scale, headY + 2 * scale, 1, 3 * scale);
-  ctx.fillRect(sx - 7 * scale, headY, 1, 2 * scale);
-  ctx.fillRect(sx + 6 * scale, headY, 1, 2 * scale);
-  ctx.fillRect(sx - 4 * scale, headY - 3 * scale, 1, 3 * scale);
-  ctx.fillRect(sx + 3 * scale, headY - 3 * scale, 1, 3 * scale);
-  ctx.fillRect(sx - 3 * scale, headY - 4 * scale, 6 * scale, 1);
-  // Hat pompom
-  ctx.fillStyle = '#fbf3dd';
-  ctx.fillRect(sx - 1 * scale, headY - 5 * scale, 2 * scale, 2 * scale);
+  drawSkinBangs(skin, sx, bodyY, headY);
+
+  if (animationStateForAgent(a) === 'rest') {
+    ctx.font = `${9 * scale}px 'DungGeunMo','Galmuri11','NeoDunggeunmo',monospace`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#5a3d28';
+    ctx.fillText('Z', sx + 12 * scale, headY - 2 * scale);
+    ctx.fillText('z', sx + 18 * scale, headY - 8 * scale);
+  }
+
+  drawSkinAccessory(skin, sx, bodyY, headY);
 
   // Name plate
   const nameY = headY - 10 * scale;
@@ -2287,9 +2760,10 @@ function drawAgent(a) {
   ctx.fillRect(sx + nameW/2, nameY - 15 * scale, 1, 15 * scale);
   ctx.fillStyle = '#3a2a1a';
   ctx.fillText(a.name, sx, nameY - 2 * scale);
+  drawApprovalMarker(a, sx, headY);
 
   // State pill — pastel, pixel-bordered
-  const stateText = a.state.toUpperCase();
+  const stateText = animationStateForAgent(a).toUpperCase();
   ctx.font = `${9 * scale}px 'DungGeunMo','Galmuri11','NeoDunggeunmo',monospace`;
   const pw = ctx.measureText(stateText).width + 14 * scale;
   const ph = 16 * scale;
@@ -2314,6 +2788,23 @@ function drawAgent(a) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(stateText, sx, py + ph/2 + 1);
+
+  // Token pulse from the live monitor stream.
+  if (a.tokenPulse > 0) {
+    const pulse = Math.min(1, a.tokenPulse);
+    const ring = (22 + (1 - pulse) * 14) * scale;
+    ctx.strokeStyle = `rgba(224, 169, 59, ${0.28 + pulse * 0.42})`;
+    ctx.lineWidth = Math.max(1, 2 * scale);
+    ctx.beginPath();
+    ctx.arc(sx, bodyY, ring, 0, Math.PI * 2);
+    ctx.stroke();
+    const tokenText = formatCompactNumber(a.tokenTotal || 0);
+    ctx.font = `${8 * scale}px 'DungGeunMo','Galmuri11','NeoDunggeunmo',monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = `rgba(42, 24, 16, ${0.65 + pulse * 0.3})`;
+    ctx.fillText(tokenText, sx, py + ph + 12 * scale);
+  }
 
   // JRPG speech bubble (if timer > 0 & text present)
   if (a.bubble.text && a.bubble.timer > 0) {
@@ -2462,6 +2953,7 @@ const TUBE = {
 
 const packets = [];
 const owls = [];
+const communicationTransfers = [];
 
 function queueScenePacket(fromZone, toZone, color = '#fbf3dd') {
   if (lowMotion) return;
@@ -2471,6 +2963,72 @@ function queueScenePacket(fromZone, toZone, color = '#fbf3dd') {
 function queueSceneOwl(toZone, pickup = true) {
   if (lowMotion) return;
   sendOwl(toZone, pickup);
+}
+
+function communicationLabel(event) {
+  return String(event?.message || event?.event_type || 'handoff').slice(0, 80);
+}
+
+function queueCommunicationTransfer(fromName, toName, label = 'handoff', color = '#6aa7c9') {
+  const from = getAgent(fromName);
+  const to = getAgent(toName);
+  if (!from || !to) return;
+  pushEvent('info', `${fromName} → ${toName}: ${label}`);
+  if (lowMotion) return;
+  communicationTransfers.push({
+    fromName,
+    toName,
+    label,
+    color,
+    t: 0,
+    duration: 4.0,
+  });
+  if (communicationTransfers.length > 24) communicationTransfers.shift();
+}
+
+function updateCommunicationTransfers(dt) {
+  for (let i = communicationTransfers.length - 1; i >= 0; i--) {
+    const transfer = communicationTransfers[i];
+    transfer.t += dt;
+    if (transfer.t >= transfer.duration) communicationTransfers.splice(i, 1);
+  }
+}
+
+function drawCommunicationTransfers() {
+  for (const transfer of communicationTransfers) {
+    const from = getAgent(transfer.fromName);
+    const to = getAgent(transfer.toName);
+    if (!from || !to) continue;
+    const minX = Math.min(from.x, to.x);
+    const minY = Math.min(from.y, to.y) - 38;
+    const maxX = Math.max(from.x, to.x);
+    const maxY = Math.max(from.y, to.y);
+    if (!isWorldRectVisible(minX, minY, maxX - minX, maxY - minY + 40, 60)) continue;
+    const progress = Math.min(1, transfer.t / transfer.duration);
+    const sx = from.x * scale;
+    const sy = (from.y - 26) * scale;
+    const ex = to.x * scale;
+    const ey = (to.y - 26) * scale;
+    const dotX = sx + (ex - sx) * progress;
+    const dotY = sy + (ey - sy) * progress - Math.sin(progress * Math.PI) * 16 * scale;
+    ctx.save();
+    ctx.strokeStyle = transfer.color || '#6aa7c9';
+    ctx.lineWidth = Math.max(1, 2 * scale);
+    ctx.globalAlpha = 0.76;
+    ctx.setLineDash([7 * scale, 6 * scale]);
+    ctx.lineDashOffset = -transfer.t * 34 * scale;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(ex, ey);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#fbf3dd';
+    ctx.fillRect(dotX - 4 * scale, dotY - 4 * scale, 8 * scale, 8 * scale);
+    ctx.fillStyle = transfer.color || '#6aa7c9';
+    ctx.fillRect(dotX - 2 * scale, dotY - 2 * scale, 4 * scale, 4 * scale);
+    ctx.restore();
+  }
 }
 
 function drawPneumaticTube() {
@@ -2601,6 +3159,7 @@ function drawPackets() {
       y = packet.oy + (packet.dy - packet.oy) * ease - Math.sin(u * Math.PI) * 18;
       tilt = Math.sin(u * Math.PI * 1.5) * -0.3;
     }
+    if (!isWorldRectVisible(x - 18, y - 18, 36, 36, 40)) continue;
     drawEnvelope(x * scale, y * scale, packet.color, tilt, squish, packet.phase === 'in_tube');
   }
 }
@@ -2713,6 +3272,7 @@ function updateOwls(dt) {
 function drawOwls() {
   const time = performance.now() / 1000;
   for (const owl of owls) {
+    if (!isWorldRectVisible(owl.x - 36, owl.y - 48, 72, 80, 80)) continue;
     const cx = owl.x * scale;
     const cy = owl.y * scale;
     const wingUp = Math.sin(time * 14) * 0.5 + 0.5 > 0.5;
@@ -2798,6 +3358,7 @@ function loop(now) {
   if (!lowMotion) {
     updatePackets(dt);
     updateOwls(dt);
+    updateCommunicationTransfers(dt);
   }
   heartTimer -= dt;
   if (!lowMotion && heartTimer <= 0) {
@@ -2813,10 +3374,19 @@ function loop(now) {
   ctx.clearRect(0, 0, cw, ch);
   drawFloor();
   drawZones();
-  drawPneumaticTube();
+  drawTeamHulls();
+  if (isWorldRectVisible(TUBE.x - TUBE.radius - 10, TUBE.yTop - 16, TUBE.radius * 2 + 20, TUBE.yBot - TUBE.yTop + 32, 80)) {
+    drawPneumaticTube();
+  }
+  if (!lowMotion) drawCommunicationTransfers();
 
   // Sort agents by Y, cat mixed in for correct overlap
-  const drawables = [...agents.map(a => ({kind:'agent', o:a, y:a.y})), {kind:'cat', o:cat, y:cat.y}];
+  const drawables = [
+    ...agents
+      .filter(a => isWorldRectVisible(a.x - 50, a.y - 70, 100, 120, 80))
+      .map(a => ({kind:'agent', o:a, y:a.y})),
+    ...(isWorldRectVisible(cat.x - 42, cat.y - 42, 84, 84, 80) ? [{kind:'cat', o:cat, y:cat.y}] : []),
+  ];
   drawables.sort((a, b) => a.y - b.y);
   for (const d of drawables) d.kind === 'agent' ? drawAgent(d.o) : drawCat(d.o);
   if (!lowMotion) {
@@ -2843,7 +3413,7 @@ canvas.addEventListener('click', (e) => {
   for (const a of agents) {
     const dx = mx - a.x, dy = my - a.y;
     if (Math.sqrt(dx*dx + dy*dy) < 22) {
-      openLogModal(a);
+      openAgentInspector(a);
       return;
     }
   }
@@ -2851,7 +3421,7 @@ canvas.addEventListener('click', (e) => {
     const renderedZone = zoneView(key) || zone;
     if (renderedZone.agent && mx >= renderedZone.x && mx <= renderedZone.x + renderedZone.w && my >= renderedZone.y && my <= renderedZone.y + renderedZone.h) {
       const agent = agents.find(a => a.name === renderedZone.agent);
-      if (agent) openLogModal(agent);
+      if (agent) openAgentInspector(agent);
       return;
     }
   }
@@ -2896,6 +3466,380 @@ function truncate(s, n) {
 
 function basename(path) {
   return String(path || '').split('/').filter(Boolean).pop() || '—';
+}
+
+function formatCompactNumber(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return '0';
+  const abs = Math.abs(number);
+  if (abs >= 1000000) return `${(number / 1000000).toFixed(abs >= 10000000 ? 0 : 1)}m`;
+  if (abs >= 1000) return `${(number / 1000).toFixed(abs >= 10000 ? 0 : 1)}k`;
+  return String(Math.round(number));
+}
+
+function formatUsd(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number) || number <= 0) return '$0.00';
+  if (number < 0.01) return `$${number.toFixed(4)}`;
+  return `$${number.toFixed(2)}`;
+}
+
+function formatPercent(value) {
+  if (value === null || value === undefined || value === '') return '—';
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '—';
+  return `${Math.round(number * 100)}%`;
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const text = String(value || '').trim();
+    if (text) return text;
+  }
+  return '';
+}
+
+function normalizeReasonToken(value) {
+  return String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+function isAuthAttentionReason(reason) {
+  const text = normalizeReasonToken(reason);
+  return AUTH_ATTENTION_MARKERS.some((marker) => text.includes(marker.replace(/\s+/g, '_')));
+}
+
+function labelForAttentionReason(reason, missingReason) {
+  if (missingReason) return '개입 필요 사유 누락';
+  const normalized = normalizeReasonToken(reason);
+  if (ATTENTION_REASON_LABELS[normalized]) return ATTENTION_REASON_LABELS[normalized];
+  if (normalized.endsWith('_auth_login_required')) return ATTENTION_REASON_LABELS.auth_login_required;
+  if (normalized.endsWith('_credential_required') || isAuthAttentionReason(normalized)) {
+    return ATTENTION_REASON_LABELS.credential_required;
+  }
+  if (normalized.includes('approval')) return ATTENTION_REASON_LABELS.approval_required;
+  if (normalized.includes('truth_sync')) return ATTENTION_REASON_LABELS.truth_sync_required;
+  if (normalized.includes('publication') || normalized.includes('pr_')) return ATTENTION_REASON_LABELS.publication_boundary;
+  return reason ? '운영자 개입 필요' : '개입 필요';
+}
+
+function attentionTone(reason, missingReason) {
+  if (missingReason) return 'missing';
+  if (isAuthAttentionReason(reason)) return 'auth';
+  return 'operator';
+}
+
+function attentionControlLabel(control) {
+  const file = basename(control.active_control_file || '');
+  const seq = Number(control.active_control_seq);
+  if (file === '—' && (!Number.isFinite(seq) || seq < 0)) return '—';
+  return `${file}${Number.isFinite(seq) && seq >= 0 ? ` · #${seq}` : ''}`;
+}
+
+function attentionLaneName(data, reason) {
+  const autonomy = data.autonomy || {};
+  const direct = firstNonEmpty(
+    autonomy.blocking_lane,
+    autonomy.active_lane,
+    autonomy.lane,
+    data.blocking_lane,
+    data.active_lane,
+    (currentTurnState(data) || {}).active_lane,
+  );
+  if (AGENT_NAMES.includes(direct)) return direct;
+  const active = activeWorkLaneName(data);
+  if (AGENT_NAMES.includes(active)) return active;
+  const reasonText = normalizeReasonToken(reason);
+  const lanes = Array.isArray(data.lanes) ? data.lanes : [];
+  const broken = lanes.find((lane) => {
+    const state = String(lane.state || '').toLowerCase();
+    const note = normalizeReasonToken(lane.note || lane.status_note || '');
+    return (state === 'broken' || state === 'dead') && (!reasonText || note.includes(reasonText) || isAuthAttentionReason(note));
+  });
+  if (broken && AGENT_NAMES.includes(broken.name)) return broken.name;
+  const noted = lanes.find((lane) => /approval|operator|auth|credential|login|oauth|승인|인증|로그인/i.test(String(lane.note || lane.status_note || '')));
+  return noted && AGENT_NAMES.includes(noted.name) ? noted.name : '';
+}
+
+function attentionDecisionText(data, reason, missingReason, laneName) {
+  const autonomy = data.autonomy || {};
+  const explicit = firstNonEmpty(
+    autonomy.decision_required,
+    autonomy.safe_user_action,
+    data.decision_required,
+    data.safe_user_action,
+  );
+  if (explicit) return explicit;
+  if (missingReason) {
+    return '이 stop을 만든 경로에서 reason_code와 decision_required를 함께 기록하도록 보강해 주세요.';
+  }
+  if (isAuthAttentionReason(reason)) {
+    return laneName
+      ? `${laneName} lane을 열어 로그인 또는 인증 입력을 완료해 주세요.`
+      : '해당 lane을 열어 로그인 또는 인증 입력을 완료해 주세요.';
+  }
+  if (normalizeReasonToken(reason).includes('approval')) {
+    return '요청 내용을 확인한 뒤 승인 또는 거절을 명시해 주세요.';
+  }
+  return 'operator_request와 최근 lane 로그를 확인해 다음 행동을 결정해 주세요.';
+}
+
+function attentionEvidenceText(data, reason, missingReason, laneName) {
+  const autonomy = data.autonomy || {};
+  const lane = laneName ? (data.lanes || []).find((item) => item.name === laneName) : null;
+  const explicit = firstNonEmpty(
+    autonomy.evidence_summary,
+    data.evidence_summary,
+    data.automation_health_detail,
+    lane && (lane.note || lane.status_note),
+  );
+  if (explicit) return explicit;
+  if (missingReason) {
+    return 'runtime status가 needs_operator를 노출했지만 reason metadata를 찾지 못했습니다.';
+  }
+  if (reason) return `runtime status reason_code=${reason}`;
+  return 'runtime status에서 operator 대기 상태를 감지했습니다.';
+}
+
+function buildOperatorAttention(data = runtimeStateStore.data) {
+  const payload = data || {};
+  const presentation = getPresentation(payload);
+  const control = payload.control || {};
+  const autonomy = payload.autonomy || {};
+  const controlNeedsOperator = presentation.controlStatus === 'needs_operator';
+  const healthNeedsOperator = presentation.automationHealth === 'needs_operator';
+  if (!controlNeedsOperator && !healthNeedsOperator) return { visible: false };
+  const reason = firstNonEmpty(
+    autonomy.reason_code,
+    autonomy.block_reason,
+    payload.automation_reason_code,
+    autonomy.degraded_reason,
+    presentation.degradedReason,
+  );
+  const missingReason = !reason;
+  const laneName = attentionLaneName(payload, reason);
+  const roleName = laneName ? roleForAgent(laneName, payload) : '';
+  return {
+    visible: true,
+    tone: attentionTone(reason, missingReason),
+    title: labelForAttentionReason(reason, missingReason),
+    reason: reason || 'reason_code_missing',
+    laneName,
+    roleName,
+    controlLabel: attentionControlLabel(control),
+    policy: firstNonEmpty(autonomy.operator_policy, autonomy.classification_source),
+    decision: attentionDecisionText(payload, reason, missingReason, laneName),
+    evidence: attentionEvidenceText(payload, reason, missingReason, laneName),
+    nextAction: firstNonEmpty(payload.automation_next_action, healthNeedsOperator ? 'operator_required' : ''),
+    operatorEligible: autonomy.operator_eligible,
+  };
+}
+
+function renderOperatorAttentionBoard() {
+  const board = document.getElementById('operator-attention-board');
+  if (!board) return;
+  const attention = buildOperatorAttention();
+  if (!attention.visible) {
+    board.className = 'operator-attention-board hidden';
+    board.removeAttribute('data-lane');
+    board.innerHTML = '';
+    return;
+  }
+  board.className = `operator-attention-board ${attention.tone || 'operator'}`;
+  board.dataset.lane = attention.laneName || '';
+  const target = attention.laneName
+    ? `${attention.laneName}${attention.roleName ? ` / ${attention.roleName.toUpperCase()}` : ''}`
+    : '—';
+  const actionLabel = attention.laneName ? `${attention.laneName} Terminal` : 'Terminal';
+  board.innerHTML = `
+    <div class="operator-attention-header">
+      <div class="operator-attention-kicker">개입 필요</div>
+      <div class="operator-attention-title">${esc(attention.title)}</div>
+      <div class="operator-attention-reason">${esc(attention.reason)}</div>
+    </div>
+    <div class="operator-attention-body">
+      <div class="operator-attention-row"><span>대상</span><span>${esc(target)}</span></div>
+      <div class="operator-attention-row"><span>조치</span><span>${esc(attention.decision)}</span></div>
+      <div class="operator-attention-row"><span>Control</span><span>${esc(attention.controlLabel)}</span></div>
+      ${attention.nextAction ? `<div class="operator-attention-row"><span>Next</span><span>${esc(attention.nextAction)}</span></div>` : ''}
+      ${attention.policy ? `<div class="operator-attention-row"><span>Policy</span><span>${esc(attention.policy)}</span></div>` : ''}
+      ${attention.operatorEligible !== undefined ? `<div class="operator-attention-row"><span>Eligible</span><span>${esc(String(attention.operatorEligible))}</span></div>` : ''}
+      <div class="operator-attention-evidence">${esc(attention.evidence)}</div>
+    </div>
+    <div class="operator-attention-actions">
+      <button class="operator-attention-action" id="operator-attention-open-log" ${attention.laneName ? '' : 'disabled'}>${esc(actionLabel)}</button>
+      <button class="operator-attention-action secondary" id="operator-attention-refresh">Refresh</button>
+    </div>
+  `;
+}
+
+function tokenHudSnapshot() {
+  const snapshot = runtimeStateStore.monitor.snapshot || {};
+  return snapshot.hud && typeof snapshot.hud === 'object' ? snapshot.hud : null;
+}
+
+function tokenMetricForAgent(agentName, hud = tokenHudSnapshot()) {
+  if (!hud || !Array.isArray(hud.agents)) return null;
+  return hud.agents.find((item) => item && item.name === agentName) || null;
+}
+
+function renderAgentTokenMeta(agent) {
+  const metric = tokenMetricForAgent(agent.name);
+  if (!metric) return '';
+  const tokens = formatCompactNumber(metric.total_tokens || 0);
+  const cost = formatUsd(metric.total_cost_usd || 0);
+  const cache = formatPercent(metric.cache_hit_rate);
+  return `<div class="agent-token-meta"><span>${esc(tokens)} tok</span><span>${esc(cost)}</span><span>${esc(cache)} cache</span></div>`;
+}
+
+function renderTokenHud() {
+  const hud = tokenHudSnapshot();
+  if (!hud) {
+    return `
+      <div class="sidebar-section token-hud">
+        <div class="sidebar-section-title">Token HUD</div>
+        <div class="info-row"><span class="info-label">Stream</span><span class="info-value dim">connecting</span></div>
+      </div>
+    `;
+  }
+  const totals = hud.totals || {};
+  const collector = hud.collector || {};
+  const agentsForHud = Array.isArray(hud.agents) ? hud.agents : [];
+  const collectorClass = collector.phase === 'idle' || collector.phase === 'scanning' ? 'ok'
+    : collector.phase === 'stale' || collector.is_stale ? 'warn'
+    : collector.phase === 'error' ? 'err' : 'dim';
+  const streamClass = runtimeStateStore.monitor.connected ? 'ok' : 'warn';
+  const agentRows = agentsForHud.length ? agentsForHud.map((agent) => {
+    const state = String(agent.state || 'off').toUpperCase();
+    const activeClass = agent.active ? 'ok' : 'dim';
+    return `
+      <div class="token-agent-row" data-agent="${esc(agent.name)}">
+        <span class="token-agent-name">${esc(agent.name)}</span>
+        <span class="token-agent-state ${activeClass}">${esc(state)}</span>
+        <span class="token-agent-number">${esc(formatCompactNumber(agent.total_tokens || 0))}</span>
+        <span class="token-agent-cost">${esc(formatUsd(agent.total_cost_usd || 0))}</span>
+        <span class="token-agent-cache">${esc(formatPercent(agent.cache_hit_rate))}</span>
+      </div>
+    `;
+  }).join('') : '<div class="token-agent-empty">usage stream 대기 중</div>';
+  return `
+    <div class="sidebar-section token-hud">
+      <div class="sidebar-section-title">Token HUD</div>
+      <div class="info-row"><span class="info-label">Stream</span><span class="info-value ${streamClass}">${runtimeStateStore.monitor.connected ? 'live' : 'fallback'}</span></div>
+      <div class="info-row"><span class="info-label">Collector</span><span class="info-value ${collectorClass}">${esc(collector.phase || 'missing')}</span></div>
+      <div class="token-total-strip">
+        <span><b>${esc(formatCompactNumber(totals.total_tokens || 0))}</b><em>tokens</em></span>
+        <span><b>${esc(formatUsd(totals.total_cost_usd || 0))}</b><em>cost</em></span>
+        <span><b>${esc(formatPercent(totals.cache_hit_rate))}</b><em>cache</em></span>
+      </div>
+      <div class="token-agent-list">${agentRows}</div>
+    </div>
+  `;
+}
+
+function agentInspectorDetails() {
+  return runtimeStateStore.inspector.details || null;
+}
+
+function renderAgentInspector() {
+  const drawer = document.getElementById('agent-inspector');
+  const title = document.getElementById('ai-title');
+  const kicker = document.getElementById('ai-kicker');
+  const body = document.getElementById('ai-body');
+  const logButton = document.getElementById('ai-open-log');
+  if (!drawer || !title || !kicker || !body || !logButton) return;
+  const selectedName = runtimeStateStore.inspector.selectedAgent;
+  drawer.classList.toggle('open', Boolean(selectedName));
+  logButton.disabled = !selectedName;
+  if (!selectedName) {
+    title.textContent = '—';
+    kicker.textContent = 'Agent Inspector';
+    body.innerHTML = '<div class="ai-empty">에이전트를 선택하면 세부 상태가 표시됩니다.</div>';
+    return;
+  }
+  const agent = getAgent(selectedName);
+  const details = agentInspectorDetails();
+  const metric = tokenMetricForAgent(selectedName) || (details && details.metrics) || {};
+  title.textContent = selectedName;
+  kicker.textContent = `${(agent?.role || details?.agent?.role || 'agent').toUpperCase()} · ${(agent?.state || details?.agent?.state || 'off').toUpperCase()}`;
+  if (runtimeStateStore.inspector.loading && !details) {
+    body.innerHTML = '<div class="ai-loading">$ inspector --loading</div>';
+    return;
+  }
+  const currentPrompt = details?.current_prompt || agent?.note || metric.prompt || '—';
+  const conversation = Array.isArray(details?.conversation) ? details.conversation : [];
+  const agentDetail = details?.agent || {};
+  body.innerHTML = `
+    <div class="ai-section">
+      <div class="ai-section-title">Assignment</div>
+      <div class="ai-row"><span>Role</span><span>${esc(agent?.role || agentDetail.role || '—')}</span></div>
+      <div class="ai-row"><span>State</span><span>${esc(agent?.state || agentDetail.state || '—')}</span></div>
+      <div class="ai-row"><span>PID</span><span>${esc(agentDetail.pid || agent?.pid || '—')}</span></div>
+      <div class="ai-row"><span>Last event</span><span>${esc(agentDetail.last_event_at || agent?.lastEventAt || '—')}</span></div>
+    </div>
+    <div class="ai-section">
+      <div class="ai-section-title">Usage</div>
+      <div class="ai-row"><span>Tokens</span><span>${esc(formatCompactNumber(metric.total_tokens || agent?.tokenTotal || 0))}</span></div>
+      <div class="ai-row"><span>Cost</span><span>${esc(formatUsd(metric.total_cost_usd || agent?.tokenCost || 0))}</span></div>
+      <div class="ai-row"><span>Cache hit</span><span>${esc(formatPercent(metric.cache_hit_rate))}</span></div>
+    </div>
+    <div class="ai-section">
+      <div class="ai-section-title">Current Prompt</div>
+      <div class="ai-text">${esc(currentPrompt)}</div>
+    </div>
+    <div class="ai-section">
+      <div class="ai-section-title">Recent Conversation</div>
+      <div class="ai-conversation">${
+        conversation.length
+          ? conversation.map((line) => `<div class="ai-conversation-line">${esc(truncate(line, 220))}</div>`).join('')
+          : '<div class="ai-conversation-line">tail 대기 중</div>'
+      }</div>
+    </div>
+  `;
+}
+
+async function fetchAgentInspector(agentName) {
+  const requestSeq = ++runtimeStateStore.inspector.requestSeq;
+  runtimeStateStore.inspector.loading = true;
+  renderAgentInspector();
+  try {
+    const response = await fetch(`/api/runtime/agent-inspector?agent=${encodeURIComponent(agentName)}&lines=180`);
+    const data = await response.json();
+    if (!response.ok || data.ok === false) throw new Error(data.error || `HTTP ${response.status}`);
+    if (requestSeq !== runtimeStateStore.inspector.requestSeq) return;
+    runtimeStateStore.inspector.details = data;
+  } catch (error) {
+    if (requestSeq === runtimeStateStore.inspector.requestSeq) {
+      runtimeStateStore.inspector.details = {
+        ok: false,
+        agent: { id: agentName },
+        current_prompt: `인스펙터 조회 실패: ${getErrorMessage(error)}`,
+        conversation: [],
+        metrics: tokenMetricForAgent(agentName) || {},
+      };
+    }
+  } finally {
+    if (requestSeq === runtimeStateStore.inspector.requestSeq) {
+      runtimeStateStore.inspector.loading = false;
+      renderAgentInspector();
+    }
+  }
+}
+
+function openAgentInspector(agent) {
+  if (!agent) return;
+  runtimeStateStore.inspector.selectedAgent = agent.name;
+  runtimeStateStore.inspector.details = null;
+  renderSidebar();
+  renderAgentInspector();
+  fetchAgentInspector(agent.name);
+}
+
+function closeAgentInspector() {
+  runtimeStateStore.inspector.selectedAgent = '';
+  runtimeStateStore.inspector.details = null;
+  runtimeStateStore.inspector.loading = false;
+  renderSidebar();
+  renderAgentInspector();
 }
 
 function getAgent(name) {
@@ -3117,6 +4061,7 @@ function setLowMotion(nextLowMotion, persist = true) {
     particles.length = 0;
     packets.length = 0;
     owls.length = 0;
+    communicationTransfers.length = 0;
   }
   if (persist) PrefStore.set('office_low_motion', lowMotion ? '1' : '0');
 }
@@ -3218,6 +4163,11 @@ function detectChanges(data) {
     pushEvent(tone, `Control: ${previous.controlStatus} → ${controlStatus}`);
   }
   previous.controlStatus = controlStatus;
+  const approvalWait = controlStatus === 'needs_operator';
+  if (previous.approvalWait !== null && previous.approvalWait !== approvalWait && approvalWait) {
+    pushEvent('warn', '승인 대기: operator control gate');
+  }
+  previous.approvalWait = approvalWait;
 
   if (!uncertaintyChanged && previous.watcherStatus !== null && previous.watcherStatus !== watcherStatus) {
     const tone = watcherStatus === 'Alive' ? 'ok' : watcherStatus === 'Unknown' ? 'warn' : 'err';
@@ -3319,7 +4269,8 @@ function syncAgentsFromRuntime(data) {
         agent.fatigueState = '';
       }
     }
-    applyAgentRoleBinding(agent, data);
+    applyAgentRoleBinding(agent, data, { snap: !agent.hasRuntimeSync });
+    agent.hasRuntimeSync = true;
     if (agent.note && previousNote !== agent.note) agent.setBubble(agent.note);
     if (previousState !== agent.state && previousState !== 'off' && !agent.note) {
       agent.setBubble(`${agent.state.toUpperCase()} 상태`);
@@ -3347,16 +4298,19 @@ function renderSidebar() {
   const autonomy = data.autonomy || {};
   const degradedReasons = (data.degraded_reasons || []).filter(Boolean);
   const laneCards = agents.map((agent) => {
+    const skin = characterSkinForAgent(agent.name);
     const note = agent.note || '';
     const fatigue = agent.fatigueState || '';
     const fatigueLabel = fatigue === 'coffee' ? '☕ 커피 충전 중' : fatigue === 'fatigued' ? '💦 피로 누적' : '';
-    return `<div class="agent-card" data-agent="${esc(agent.name)}" data-fatigue="${esc(fatigue)}">
+    const selectedClass = runtimeStateStore.inspector.selectedAgent === agent.name ? ' selected' : '';
+    return `<div class="agent-card${selectedClass}" data-agent="${esc(agent.name)}" data-fatigue="${esc(fatigue)}">
       <div class="agent-avatar" style="background:${agent.color}">${esc(agent.name[0])}</div>
       <div class="agent-info">
         <div class="agent-name">${esc(agent.name)}</div>
-        <div class="agent-role">${esc(agent.role)}</div>
+        <div class="agent-role">${esc(agent.role)} · ${esc(skin.label)}</div>
         ${note ? `<div class="agent-detail">${esc(truncate(note, 46))}</div>` : ''}
         ${fatigueLabel ? `<div class="agent-fatigue" data-fatigue="${esc(fatigue)}">${fatigueLabel}</div>` : ''}
+        ${renderAgentTokenMeta(agent)}
       </div>
       <div class="agent-state-dot" style="background:${agent.color}"></div>
     </div>`;
@@ -3367,6 +4321,7 @@ function renderSidebar() {
       <div class="sidebar-section-title">Party Roster</div>
       ${laneCards}
     </div>
+    ${renderTokenHud()}
     <div class="sidebar-section">
       <div class="sidebar-section-title">Role Binding</div>
       ${roleOwnerRows(data)}
@@ -3401,21 +4356,165 @@ function renderSidebar() {
   `;
 }
 
+function applyRuntimeStatusData(data) {
+  clearStatusFetchFailure();
+  runtimeStateStore.data = data;
+  detectChanges(data);
+  checkDeliveryTriggers(data);
+  syncAgentsFromRuntime(data);
+  renderSidebar();
+  renderOperatorAttentionBoard();
+  renderStatus(data);
+  updateMarqueeFromState(data);
+}
+
+function communicationEventKey(event) {
+  if (event.sequence != null) return `seq:${event.sequence}`;
+  return `${event.from || ''}:${event.to || ''}:${event.event_type || ''}:${event.time_ms || ''}:${event.message || ''}`;
+}
+
+function consumeMonitorCommunications(snapshot) {
+  const events = Array.isArray(snapshot.communications) ? snapshot.communications : [];
+  const seen = runtimeStateStore.monitor.seenCommunications;
+  for (const event of events) {
+    if (!event || !event.from || !event.to) continue;
+    const key = communicationEventKey(event);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    queueCommunicationTransfer(event.from, event.to, communicationLabel(event), event.color || '#6aa7c9');
+  }
+  if (seen.size > 240) {
+    runtimeStateStore.monitor.seenCommunications = new Set(Array.from(seen).slice(-120));
+  }
+}
+
+function consumeMonitorApprovalWait(snapshot) {
+  const previous = runtimeStateStore.monitor.previousApprovalWait;
+  const coordination = snapshot.coordination_state || snapshot.log_state || {};
+  for (const agent of agents) {
+    const value = coordination[agent.name] || {};
+    const waiting = value.approval_wait === true || Boolean(value.approval_wait?.waiting || value.approval_wait?.required);
+    if (waiting && previous[agent.name] !== true) {
+      pushEvent('warn', `${agent.name}: 승인 대기`);
+    }
+    previous[agent.name] = waiting;
+  }
+}
+
+function applyMonitorSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return;
+  runtimeStateStore.monitor.snapshot = snapshot;
+  consumeMonitorCommunications(snapshot);
+  consumeMonitorApprovalWait(snapshot);
+  const hud = snapshot.hud || {};
+  const previous = runtimeStateStore.monitor.previousAgentTokens;
+  for (const metric of Array.isArray(hud.agents) ? hud.agents : []) {
+    const agent = getAgent(metric.name);
+    if (!agent) continue;
+    const total = Number(metric.total_tokens || 0);
+    const previousTotal = previous[agent.name];
+    agent.tokenTotal = total;
+    agent.tokenCost = Number(metric.total_cost_usd || 0);
+    if (previousTotal !== undefined && total > previousTotal) {
+      const delta = total - previousTotal;
+      if (!lowMotion) agent.tokenPulse = 1.2;
+      if (delta >= 100) agent.setBubble(`+${formatCompactNumber(delta)} tok`);
+    }
+    previous[agent.name] = total;
+  }
+  if (snapshot.runtime && typeof snapshot.runtime === 'object') {
+    applyRuntimeStatusData(snapshot.runtime);
+  } else {
+    renderSidebar();
+    renderOperatorAttentionBoard();
+  }
+  if (runtimeStateStore.inspector.selectedAgent) renderAgentInspector();
+}
+
+function monitorStreamUrl() {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}/ws/runtime/monitor`;
+}
+
+function runtimeMonitorDisabled() {
+  return Boolean(window.__officeRuntimeMonitorDisabled);
+}
+
+function monitorSocketDisabled() {
+  return runtimeMonitorDisabled() || Boolean(window.__officeMonitorSocketDisabled);
+}
+
+function scheduleMonitorReconnect() {
+  if (runtimeMonitorDisabled()) return;
+  if (runtimeStateStore.monitor.reconnectTimer) return;
+  runtimeStateStore.monitor.reconnectTimer = window.setTimeout(() => {
+    runtimeStateStore.monitor.reconnectTimer = null;
+    connectMonitorStream();
+  }, 2500);
+}
+
+function connectMonitorStream() {
+  if (monitorSocketDisabled()) return;
+  if (!('WebSocket' in window) || monitorSocket) return;
+  try {
+    monitorSocket = new WebSocket(monitorStreamUrl());
+  } catch (error) {
+    pushEvent('warn', `실시간 모니터 연결 실패: ${getErrorMessage(error)}`);
+    scheduleMonitorReconnect();
+    return;
+  }
+  monitorSocket.addEventListener('open', () => {
+    runtimeStateStore.monitor.connected = true;
+    pushEvent('ok', '실시간 모니터 연결됨');
+    renderSidebar();
+  });
+  monitorSocket.addEventListener('message', (event) => {
+    try {
+      applyMonitorSnapshot(JSON.parse(event.data));
+    } catch (error) {
+      pushEvent('warn', `실시간 모니터 payload 무시: ${getErrorMessage(error)}`);
+    }
+  });
+  monitorSocket.addEventListener('close', () => {
+    const wasConnected = runtimeStateStore.monitor.connected;
+    runtimeStateStore.monitor.connected = false;
+    monitorSocket = null;
+    if (wasConnected) pushEvent('warn', '실시간 모니터 연결 끊김 — polling fallback');
+    renderSidebar();
+    scheduleMonitorReconnect();
+  });
+  monitorSocket.addEventListener('error', () => {
+    if (monitorSocket) monitorSocket.close();
+  });
+}
+
+async function pollMonitorSnapshot() {
+  if (runtimeMonitorDisabled()) return;
+  if (runtimeStateStore.monitor.connected || monitorFallbackInFlight) return;
+  monitorFallbackInFlight = true;
+  try {
+    const response = await fetch('/api/runtime/monitor-snapshot');
+    const data = await response.json();
+    if (!response.ok || data.ok === false) throw new Error(data.error || `HTTP ${response.status}`);
+    applyMonitorSnapshot(data);
+  } catch (error) {
+    if (!runtimeStateStore.monitor.snapshot) {
+      pushEvent('warn', `토큰 HUD 조회 실패: ${getErrorMessage(error)}`);
+    }
+  } finally {
+    monitorFallbackInFlight = false;
+  }
+}
+
 async function pollRuntime() {
+  if (runtimeStateStore.monitor.connected) return;
   if (pollInFlight) return;
   pollInFlight = true;
   try {
     const response = await fetch('/api/runtime/status');
     const data = await response.json();
     if (!response.ok || data.ok === false) throw new Error(data.error || `HTTP ${response.status}`);
-    clearStatusFetchFailure();
-    runtimeStateStore.data = data;
-    detectChanges(data);
-    checkDeliveryTriggers(data);
-    syncAgentsFromRuntime(data);
-    renderSidebar();
-    renderStatus(data);
-    updateMarqueeFromState(data);
+    applyRuntimeStatusData(data);
   } catch (error) {
     recordStatusFetchFailure(error);
   } finally {
@@ -3582,7 +4681,11 @@ document.getElementById('motion-btn').onclick = () => setLowMotion(!lowMotion);
 
 document.getElementById('log-modal').addEventListener('click', (event) => closeLogModal(event));
 document.getElementById('lm-close').addEventListener('click', () => closeLogModal());
-document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeLogModal(); });
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  closeLogModal();
+  closeAgentInspector();
+});
 document.getElementById('lm-input').addEventListener('input', syncModalInputState);
 document.getElementById('lm-input').addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
@@ -3591,12 +4694,30 @@ document.getElementById('lm-input').addEventListener('keydown', (event) => {
   }
 });
 document.getElementById('lm-send').addEventListener('click', sendModalInput);
+document.getElementById('ai-close').addEventListener('click', closeAgentInspector);
+document.getElementById('ai-open-log').addEventListener('click', () => {
+  const agent = getAgent(runtimeStateStore.inspector.selectedAgent);
+  if (agent) openLogModal(agent);
+});
+document.getElementById('operator-attention-board').addEventListener('click', (event) => {
+  const openLog = event.target.closest('#operator-attention-open-log');
+  const refresh = event.target.closest('#operator-attention-refresh');
+  if (openLog) {
+    const agent = getAgent(event.currentTarget.dataset.lane || '');
+    if (agent) openLogModal(agent);
+    return;
+  }
+  if (refresh) {
+    pollRuntime();
+    pollMonitorSnapshot();
+  }
+});
 
 document.getElementById('tab-content').addEventListener('click', (event) => {
   const card = event.target.closest('.agent-card');
   if (!card) return;
   const agent = getAgent(card.getAttribute('data-agent'));
-  if (agent) openLogModal(agent);
+  if (agent) openAgentInspector(agent);
 });
 
 window.setAgentFatigue = function(name, value) {
@@ -3612,6 +4733,7 @@ window.getRoamBounds = function() {
   return {
     zones: ZONE_MAP,
     restZones: Object.fromEntries(AGENT_NAMES.map((name) => [name, loungeSeatZone(name)])),
+    pathObstacles: PATH_OBSTACLES,
   };
 };
 
@@ -3635,11 +4757,24 @@ window.getSceneDebug = function() {
     hasPneumaticTube: typeof drawPneumaticTube === 'function',
     hasPacketCourier: typeof sendPacket === 'function',
     hasOwlCourier: typeof sendOwl === 'function',
+    hasTeamHullRenderer: typeof drawTeamHulls === 'function',
+    hasCommunicationTransfer: typeof queueCommunicationTransfer === 'function',
+    hasApprovalMarker: typeof drawApprovalMarker === 'function',
+    hasViewCulling: typeof isWorldRectVisible === 'function',
     hasAudio8: typeof window.Audio8?.meow === 'function',
     catState: cat.state,
     roleOwners: currentRoleOwners(),
+    characterSkins: Object.fromEntries(AGENT_NAMES.map((name) => [name, characterSkinForAgent(name).label])),
+    teamCount: monitorTeams().length,
+    communicationTransferCount: communicationTransfers.length,
+    approvalWaitingAgents: agents.filter((agent) => approvalWaitingForAgent(agent)).map((agent) => agent.name),
+    camera: cameraView(),
     tube: { ...TUBE },
   };
+};
+
+window.getOperatorAttentionDebug = function() {
+  return buildOperatorAttention();
 };
 
 window.getAgentPositions = function() {
@@ -3653,9 +4788,22 @@ window.getAgentPositions = function() {
         ty: agent.ty,
         state: agent.state,
         atLounge: !!agent.atLounge,
+        pathLength: agent.path.length,
+        animationState: animationStateForAgent(agent),
+        teamId: teamForAgent(agent.name)?.id || '',
+        approvalWaiting: approvalWaitingForAgent(agent),
       },
     ]),
   );
+};
+
+window.getTeamDebug = function() {
+  return {
+    teams: monitorTeams(),
+    communicationTransferCount: communicationTransfers.length,
+    approvalWaitingAgents: agents.filter((agent) => approvalWaitingForAgent(agent)).map((agent) => agent.name),
+    camera: cameraView(),
+  };
 };
 
 window.testPetCat = function() {
@@ -3737,6 +4885,7 @@ function buildTweaksPanel() {
 }
 
 renderSidebar();
+renderAgentInspector();
 renderEvents();
 applyTweaks();
 buildTweaksPanel();
@@ -3760,5 +4909,8 @@ window.addEventListener('message', (event) => {
 window.parent.postMessage({ type: '__edit_mode_available' }, '*');
 resize();
 requestAnimationFrame(loop);
+connectMonitorStream();
+pollMonitorSnapshot();
 pollRuntime();
 setInterval(() => pollRuntime(), POLL_MS);
+setInterval(() => pollMonitorSnapshot(), POLL_MS);

@@ -65,6 +65,7 @@ _VOLATILE_CONTROL_LINE_RE = re.compile(
     r"(?:status|control_seq|source|supersedes|updated_at|written_at|created_at|timestamp)"
     r"\b\s*:?.*$"
 )
+_MILESTONE_DIRECTION_REASON_RE = re.compile(r"^m[0-9]+_direction(?:_[a-z0-9_]+)?$")
 _WORK_PATH_RE = re.compile(r"(work/\d+/\d+/[^\s`]+\.md)")
 _PR_NUMBER_RE = re.compile(
     r"(?i)(?:\bPR\s*#\s*|/pull/)([1-9][0-9]*)\b"
@@ -348,6 +349,8 @@ def normalize_reason_code(value: object) -> str:
     for marker, canonical in compound_aliases:
         if text == marker or text.startswith(f"{marker}_") or text.endswith(f"_{marker}") or f"_{marker}_" in text:
             return canonical
+    if _MILESTONE_DIRECTION_REASON_RE.match(text):
+        return "slice_ambiguity"
     aliases = {
         "branch_commit_and_milestone_transition": "approval_required",
         "branch_commit_milestone_transition": "approval_required",
@@ -371,6 +374,9 @@ def normalize_operator_policy(value: object) -> str:
         "stop_until_truth_sync": "gate_24h",
         "stop_until_exact_slice_selected": "gate_24h",
         "stop_until_exact_slice_selection": "gate_24h",
+        "advisory_before_operator": "gate_24h",
+        "advisory_first": "gate_24h",
+        "advisory_first_before_operator": "gate_24h",
         "internal": "internal_only",
         "suppress": "internal_only",
         "suppress_internal": "internal_only",

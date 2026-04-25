@@ -34,6 +34,9 @@ SELECT
   COUNT(DISTINCT l.usage_id) AS linked_events,
   COALESCE(SUM(input_tokens), 0) AS input_tokens,
   COALESCE(SUM(output_tokens), 0) AS output_tokens,
+  COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+  COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
+  COALESCE(SUM(thinking_tokens), 0) AS thinking_tokens,
   COALESCE(SUM(COALESCE(actual_cost_usd, estimated_cost_usd, 0.0)), 0.0) AS total_cost_usd,
   COALESCE(SUM(actual_cost_usd), 0.0) AS actual_cost_usd_sum,
   COALESCE(SUM(CASE WHEN actual_cost_usd IS NULL THEN estimated_cost_usd ELSE 0 END), 0.0)

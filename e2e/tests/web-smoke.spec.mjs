@@ -11896,3 +11896,72 @@ test("review queue edit statement sends edited text in accept request", async ({
   expect(reviewBodyParsed.statement).toBe(editedStatement);
   expect(reviewBodyParsed.review_action).toBe("accept");
 });
+
+test("활성 교정이 있으면 동기화 버튼이 보이고 클릭 시 후보가 생성됩니다", async ({ page }) => {
+  let auditRequests = 0;
+  let syncRequests = 0;
+
+  await page.route(/\/api\/preferences$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        preferences: [
+          {
+            preference_id: "pref-existing-candidate",
+            delta_fingerprint: "sha256:existing-candidate",
+            description: "기존 후보 설명",
+            status: "candidate",
+            evidence_count: 1,
+            cross_session_count: 1,
+            reliability_stats: { applied_count: 0, corrected_count: 0 },
+            quality_info: { avg_similarity_score: null, is_high_quality: null },
+            activated_at: null,
+            created_at: "2026-04-24T00:00:00Z",
+            updated_at: "2026-04-24T00:00:00Z",
+          },
+        ],
+        active_count: 0,
+        candidate_count: 1,
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    auditRequests += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        audit: {
+          total: 1,
+          by_status: { active: 0, candidate: 1 },
+          conflict_pair_count: 0,
+          adopted_corrections_count: 1,
+          available_to_sync_count: syncRequests === 0 ? 1 : 0,
+        },
+      }),
+    });
+  });
+  await page.route(/\/api\/corrections\/sync-adopted-to-candidates$/, async (route) => {
+    syncRequests += 1;
+    expect(route.request().method()).toBe("POST");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, synced_count: 1, skipped_count: 0 }),
+    });
+  });
+
+  await page.goto("/app-preview");
+  const syncButton = page.getByTestId("sync-adopted-btn");
+  await expect(syncButton).toBeVisible({ timeout: 10_000 });
+
+  await syncButton.click();
+
+  await expect(page.getByTestId("sync-adopted-status")).toHaveText("1개 동기화됨");
+  await expect(syncButton).toBeHidden();
+  expect(syncRequests).toBe(1);
+  await expect.poll(() => auditRequests).toBeGreaterThanOrEqual(2);
+});

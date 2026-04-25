@@ -878,9 +878,22 @@ SQLite migration rollout을 종결하고, preference resume/reject lifecycle 및
 #### Shipped Infrastructure (Axes 1–2, 2026-04-26)
 - **Milestone 39 closed** (Axes 1–2): `context_turns` 직렬화 — 직전 3턴 대화 맥락 (Axis 1, commit `774dbe1`); `evidence_summary` 직렬화 — artifact/signal/confirmation/recurring session 카운트 (Axis 2, commit `c33af44`).
 
+### Milestone 40: Review Auditability
+
+#### Goal
+운영자가 review queue 후보를 판단할 때 출처 세션과 결정 사유를 함께 확인해 감사 추적이 가능하게 한다.
+
+#### Guardrails
+- 기존 `ReviewQueueItem` 필드 제거/수정 없이 additive 확장만 허용
+- durable candidate path의 `candidate_review_record`는 이미 `reason_note`를 처리하므로 수정 불필요
+- browser E2E는 sandbox 제약으로 unit test + TypeScript 타입 체크로 대체
+
+#### Shipped Infrastructure (Axes 1–2, 2026-04-26)
+- **Milestone 40 closed** (Axes 1–2): `source_session_id`/`source_session_title` 직렬화 — review queue 항목에 출처 세션 연결 (Axis 1, commit `c660ae6`); `reason_note` UI 입력 + global `source_refs` 저장 — 결정 사유 감사 추적 (Axis 2, commit `1526d64`).
+
 ## Next 3 Implementation Priorities
 
-1. **M38 완료 / M39 완료**: M38 Test Infrastructure Robustness (Axes 1–2) 및 M39 Review Evidence Enrichment (Axes 1–2) 완료. M40 방향: Review Auditability (source session association, decision rationale capture) — 다음 advisory에서 확정.
+1. **M40 완료**: M40 Review Auditability (Axes 1–2) 완료. M41 방향: Preference Auditability & Visibility — `PreferencePanel.tsx`에 결정 사유(`reason_note`)와 출처 세션 제목(`source_session_title`) 노출 — 다음 advisory에서 확정.
 2. **watcher_core re-export note**: `watcher_core.*` re-exports (WatcherTurnState, tmux_send_keys 등)는 test 계약 유지용. 향후 import 정리 시 관련 test mock 대상도 함께 정규화 필요.
 3. **E2E 환경 개선 note**: `make e2e-test`는 `e2e/start-server.sh` healthcheck wrapper를 통해 healthy smoke 서버를 재사용하거나, 서버가 없으면 isolated mock `app.web` 서버를 자동 시작/정리한다. 다음 검증 lane에서 no-server/existing-server 두 경로를 release gate truth로 확인 필요.
 

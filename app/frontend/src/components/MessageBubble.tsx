@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo, type ReactNode } from "react";
 import { marked } from "marked";
+import { fetchPreferences, pausePreference } from "../api/client";
 import type { Message } from "../types";
 import LinkChip from "./LinkChip";
 
@@ -72,6 +73,8 @@ export default function MessageBubble({
   const [showRejectNote, setShowRejectNote] = useState(false);
   const [rejectNote, setRejectNote] = useState("");
   const [rejected, setRejected] = useState(false);
+  const [prefPopoverOpen, setPrefPopoverOpen] = useState(false);
+  const prefBadgeRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -81,6 +84,17 @@ export default function MessageBubble({
       textareaRef.current.style.height = textareaRef.current.scrollHeight + "px";
     }
   }, [editing]);
+
+  useEffect(() => {
+    if (!prefPopoverOpen) return;
+    const handler = (event: MouseEvent) => {
+      if (prefBadgeRef.current && !prefBadgeRef.current.contains(event.target as Node)) {
+        setPrefPopoverOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [prefPopoverOpen]);
 
   const isSearchOnly = !isUser
     && (message.search_results?.length ?? 0) > 0
@@ -101,6 +115,18 @@ export default function MessageBubble({
 
   const cancelEdit = () => {
     setEditing(false);
+  };
+
+  const pauseAppliedPreference = async (fingerprint: string) => {
+    try {
+      const preferencesPayload = await fetchPreferences();
+      const preferenceId = preferencesPayload.preferences.find(
+        (pref) => pref.delta_fingerprint === fingerprint,
+      )?.preference_id ?? fingerprint;
+      await pausePreference(preferenceId);
+    } finally {
+      setPrefPopoverOpen(false);
+    }
   };
 
   return (
@@ -399,13 +425,48 @@ export default function MessageBubble({
               </span>
             )}
             {message.applied_preferences && message.applied_preferences.length > 0 && (
-              <span
-                data-testid="applied-preferences-badge"
-                className="text-[10px] font-medium text-violet-600/70 bg-violet-50 px-2 py-0.5 rounded-full cursor-help"
-                title={message.applied_preferences.map(p => p.description).join('\n')}
-              >
-                선호 {message.applied_preferences.length}건 반영
-              </span>
+              <div ref={prefBadgeRef} className="relative inline-flex">
+                <button
+                  type="button"
+                  data-testid="applied-preferences-badge"
+                  aria-haspopup="dialog"
+                  aria-expanded={prefPopoverOpen}
+                  onClick={() => setPrefPopoverOpen((open) => !open)}
+                  className="text-[10px] font-medium text-violet-600/70 bg-violet-50 px-2 py-0.5 rounded-full cursor-pointer hover:bg-violet-100 transition-colors"
+                  title={message.applied_preferences.map((pref) => pref.description).join("\n")}
+                >
+                  선호 {message.applied_preferences.length}건 반영
+                </button>
+                {prefPopoverOpen && (
+                  <div
+                    data-testid="applied-preferences-popover"
+                    className="absolute left-0 top-full mt-1 z-20 w-64 rounded-lg border border-stone-200 bg-white p-2 text-left shadow-lg"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    {message.applied_preferences.map((pref) => (
+                      <div
+                        key={pref.fingerprint || pref.description}
+                        className="flex items-center justify-between gap-2 px-1 py-1 text-[11px]"
+                      >
+                        <span className="min-w-0 flex-1 truncate text-stone-700" title={pref.description}>
+                          {pref.description}
+                        </span>
+                        <button
+                          type="button"
+                          data-testid="preference-pause-btn"
+                          onClick={async (event) => {
+                            event.stopPropagation();
+                            await pauseAppliedPreference(pref.fingerprint);
+                          }}
+                          className="whitespace-nowrap rounded border border-stone-200 px-1.5 py-0.5 text-[10px] text-stone-500 hover:border-stone-300 hover:text-stone-700"
+                        >
+                          일시중지
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         )}

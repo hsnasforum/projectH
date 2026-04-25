@@ -339,7 +339,7 @@ Current smoke scenarios:
 125. history-card latest-update `다시 불러오기` click reload 후 브라우저 composer(`#user-text` + `submit-request`)를 거친 plain follow-up(`이 결과 한 문장으로 요약해줘`) 요청이 `/api/chat/stream` POST payload에 `load_web_search_record_id`를 전혀 포함하지 않은 채 전송되고, follow-up 이후에도 `#claim-coverage-box`가 hidden이며 history-card `.meta` 카운트가 `0`으로 유지되는지 확인
 126. review-queue `reject`/`defer` review action이 `accept`와 동일한 quick-meta(`검토 거절됨`/`검토 보류됨`), transcript-meta, follow-up retention, stale-clear 경로를 따르고, payload에 `review_action: reject`/`review_status: rejected` 및 `review_action: defer`/`review_status: deferred`가 기록되는지 확인
 
-`make e2e-test` launches a dedicated Playwright web server for smoke with inherited `LOCAL_AI_MODEL_PROVIDER` / `LOCAL_AI_OLLAMA_MODEL` overrides cleared, `LOCAL_AI_MODEL_PROVIDER=mock` reapplied, and existing servers on the smoke port not reused. Shell overrides such as `LOCAL_AI_MODEL_PROVIDER=ollama` therefore do not change the automated baseline. Other runtimes remain optional and are validated separately.
+`make e2e-test` runs through `e2e/start-server.sh`: it checks `http://127.0.0.1:8879/healthz`, reuses an already healthy local smoke server, or starts an isolated mock `app.web` server and cleans it up after Playwright exits. When the wrapper starts the server, inherited `LOCAL_AI_MODEL_PROVIDER` / `LOCAL_AI_OLLAMA_MODEL` overrides are cleared, `LOCAL_AI_MODEL_PROVIDER=mock` is reapplied, and an isolated temp SQLite DB is used. Shell overrides such as `LOCAL_AI_MODEL_PROVIDER=ollama` therefore do not change the automated baseline for the auto-start path. Other runtimes remain optional and are validated separately.
 
 ### SQLite Browser Smoke (opt-in backend parity gate)
 

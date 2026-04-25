@@ -47,5 +47,5 @@ make e2e-test
 
 - WSL 환경에서 실제 실행 확인을 마쳤습니다.
 - 자동화는 `mock` 프로바이더 기준으로 고정되어 있습니다.
-- Playwright webServer는 inherited `LOCAL_AI_MODEL_PROVIDER` / `LOCAL_AI_OLLAMA_MODEL` 값을 먼저 비우고 `LOCAL_AI_MODEL_PROVIDER=mock`를 다시 강제하며, smoke 포트의 기존 서버도 재사용하지 않습니다. 따라서 셸에 `LOCAL_AI_MODEL_PROVIDER=ollama`가 남아 있어도 smoke baseline은 바뀌지 않습니다.
+- `make e2e-test`는 `e2e/start-server.sh`에서 `http://127.0.0.1:8879/healthz`를 확인하고, 이미 healthy한 smoke 서버가 있으면 재사용합니다. 서버가 없으면 inherited `LOCAL_AI_MODEL_PROVIDER` / `LOCAL_AI_OLLAMA_MODEL` 값을 먼저 비우고 `LOCAL_AI_MODEL_PROVIDER=mock`를 다시 강제한 임시 `app.web` 서버를 시작한 뒤 Playwright 종료 시 정리합니다.
 - `ollama` 경로는 품질과 속도 편차가 있어 수동 확인 체크리스트로 유지합니다.

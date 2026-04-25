@@ -823,11 +823,26 @@ applied-preferences badge를 클릭 가능한 interactive button으로 전환; p
 
 - **Milestone 35 closed** (Axes 1–2): applied preference badge interactive 관리 완료
 
+### Milestone 36: Preference Pause Lifecycle Verification
+
+#### Goal
+pause 동작이 UI 상태 변경에서 끝나지 않고 실제 applied preference 카운트를 줄이며, 브라우저 새로고침 후에도 영속됨을 E2E로 검증.
+
+#### Guardrails
+- backend/frontend 로직 변경 없음 — E2E assertion 확장만
+- accumulated DB 환경에서도 동작하는 count 기반 assertion (N-1) 사용
+
+#### Shipped Infrastructure (Axes 1–2, 2026-04-25)
+- Axis 1 (seq 192–193): pause 후 두 번째 chat → badge count N-1 확인 (148 E2E passed, 8.7m)
+- Axis 2 (seq 195–196): page.reload() 후 세 번째 chat → count N-1 유지 확인 (148 E2E passed, 12.2m); PR #34 merge됨
+
+- **Milestone 36 closed** (Axes 1–2): preference pause의 기능적 억제 효과 및 세션 재로드 영속성 검증 완료
+
 ## Next 3 Implementation Priorities
 
-1. **New PR (feat/watcher-turn-state)**: M34–M35 기능 작업(seqs 172–186)을 포함한 새 PR 생성 후 operator merge 결정 대기. PR #33은 2026-04-25 main에 merge됨.
-2. **M36 direction**: M35 완료; 다음 기능 milestone 방향 — via advisory.
-3. **watcher_core re-export note**: `watcher_core.*` re-exports (WatcherTurnState, tmux_send_keys 등)는 test 계약 유지용. 향후 import 정리 시 관련 test mock 대상도 함께 정규화 필요.
+1. **M37 direction**: M36 완료; 다음 milestone 방향 — via advisory. (resume/reject lifecycle, 새 기능, 또는 기술 부채 중 선택)
+2. **watcher_core re-export note**: `watcher_core.*` re-exports (WatcherTurnState, tmux_send_keys 등)는 test 계약 유지용. 향후 import 정리 시 관련 test mock 대상도 함께 정규화 필요.
+3. **E2E 환경 개선 note**: `make e2e-test`는 기존 서버 존재 시에만 안정적. 향후 start-server.sh healthcheck wrapper로 개선 가능.
 
 ## Do Not Pull Forward
 

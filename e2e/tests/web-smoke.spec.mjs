@@ -12065,4 +12065,5 @@ test("reviewed-memory loop: sync 후 활성화하면 이후 채팅 응답에 선
     page.locator("main").getByText("[모의 응답, 선호 1건 반영]", { exact: false }).first()
   ).toBeVisible({ timeout: 10_000 });
   await expect(page.locator("main").getByText("선호 1건 반영").first()).toBeVisible();
+  await expect(page.getByTestId("applied-preferences-badge").first()).toBeVisible();
 });

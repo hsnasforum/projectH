@@ -124,9 +124,9 @@ class WebAppService(ChatHandlerMixin, AggregateHandlerMixin, FeedbackHandlerMixi
                         from storage.sqlite_store import migrate_json_to_sqlite
                         migrate_json_to_sqlite(
                             corrections_dir=str(corrections_path),
-                            sessions_dir=None,
-                            artifacts_dir=None,
-                            preferences_dir=None,
+                            sessions_dir=str(Path(settings.sessions_dir)),
+                            artifacts_dir=str(Path(settings.artifacts_dir)),
+                            preferences_dir=str(Path(settings.preferences_dir)),
                             db_path=settings.sqlite_db_path,
                         )
             except Exception:

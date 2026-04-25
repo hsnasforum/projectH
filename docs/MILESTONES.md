@@ -748,11 +748,56 @@
 
 - **Milestone 30 closed** (Axes 1–3): watcher_core legacy debt 제거 및 신호 추출 모듈 분리 완료
 
+### Milestone 31: E2E Infrastructure + Reviewed-Memory Loop Smoke
+
+#### Goal
+M28–M30 bundle release gate 통과 및 reviewed-memory loop end-to-end 검증.
+
+#### Guardrails
+- E2E webServer spawn fix는 Makefile + playwright.config.mjs에 한정
+- smoke test는 `e2e/tests/web-smoke.spec.mjs`에 1개 시나리오 추가
+
+#### Shipped Infrastructure (Axes 1–2, 2026-04-25)
+- Axis 1 (seq 148–151): E2E webServer spawn PermissionError 수정 — `e2e/playwright.config.mjs` `reuseExistingServer: true`, `Makefile` e2e-test pre-start server; M28–M30 bundle gate **146 E2E passed (6.0m)**, 216 unit tests OK
+- Axis 2 (seq 154–155): reviewed-memory loop E2E smoke — correction → candidate accept → sync UI → real preference activation → `[모의 응답, 선호 1건 반영]` prefix; **147 E2E passed (6.6m)**
+
+- **Milestone 31 closed** (Axes 1–2): release gate 통과 및 reviewed-memory loop end-to-end smoke 완료
+
+### Milestone 32: Watcher Core Structural Decomposition (Dispatch)
+
+#### Goal
+`watcher_core.py` dispatch/tmux 헬퍼를 기존 `watcher_dispatch.py`로 분리.
+
+#### Guardrails
+- `pipeline_runtime/`, `tests/test_watcher_core.py` 수정 없음 (mock.patch 계약 유지)
+- `watcher_dispatch.py` 기존 `DispatchIntent`, `WatcherDispatchQueue` 유지
+
+#### Shipped Infrastructure (Axes 1–2, 2026-04-25)
+- Axis 1 (seq 157–158): dispatch/tmux 헬퍼 13개 + 상수 3개 → `watcher_dispatch.py`; `watcher_core.py` re-export로 `mock.patch("watcher_core.tmux_send_keys")` 계약 유지; 216 unit tests OK
+- Axis 2 (seq 160–161): `_watcher_core_compat` shim + 9개 thin wrapper 제거; `CodexDispatchConfirmationTest` patch 대상 `watcher_dispatch.*`로 정규화; 216 unit tests OK; `watcher_core.py` 5001 → ~4360 lines (M30 시작 대비)
+
+- **Milestone 32 closed** (Axes 1–2): dispatch/tmux 구조 분리 및 compat shim 제거 완료
+
+### Milestone 33: Watcher Core Structural Decomposition (State + Stabilizer)
+
+#### Goal
+`watcher_core.py`에서 coordination state 클래스와 artifact 안정화 로직을 별도 모듈로 분리.
+
+#### Guardrails
+- `tests/test_watcher_core.py` 수정 없음 (`watcher_core.*` re-export 계약 유지)
+- `compute_file_sha256`, `StabilizeSnapshot`, `ArtifactStabilizer`는 Axis 2에서 처리
+
+#### Shipped Infrastructure (Axes 1–2, 2026-04-25)
+- Axis 1 (seq 163–164): `WatcherTurnState`, `LeaseData`, `ControlSignal`, `PaneLease`, `DedupeGuard`, `ManifestCollector` → `watcher_state.py` 신규 모듈; optional jsonschema import 포함; 216 unit tests OK
+- Axis 2 (seq 166–167): `compute_file_sha256`, `StabilizeSnapshot`, `ArtifactStabilizer` → `watcher_stabilizer.py` 신규 모듈; 216 unit tests OK; watcher 모듈 패밀리 5개 완성: `watcher_core`(3977 lines) / `watcher_state`(364) / `watcher_dispatch`(640) / `watcher_signals`(450) / `watcher_stabilizer`(63)
+
+- **Milestone 33 closed** (Axes 1–2): coordination state + artifact stabilizer 구조 분리 완료; watcher_core.py 5001 → 3977 lines (M30 시작 대비 -1024 lines)
+
 ## Next 3 Implementation Priorities
 
-1. **PR #33 merge**: feat/watcher-turn-state (M28 structural bundle + M29 loop refinement + M30 structural decomposition, seqs 115–145) is open as draft PR awaiting operator merge approval.
-2. **M31 direction**: M30 complete; next milestone direction — via advisory (operator_request SEQ 133 gate 해소 필요).
-3. **watcher_signals duplication note**: `watcher_signals.py` 내 prompt-line 판별 helper가 `watcher_core.py` 보존 함수와 소량 중복; 추후 공용 parsing helper로 통합 가능.
+1. **PR #33 merge**: feat/watcher-turn-state (M28–M33, seqs 115–167) is open as draft PR awaiting operator merge approval.
+2. **M34 direction**: M33 structural phase complete; next functional milestone direction — via advisory.
+3. **watcher_core re-export note**: `watcher_core.*` re-exports (WatcherTurnState, tmux_send_keys 등)는 test 계약 유지용. 향후 import 정리 시 관련 test mock 대상도 함께 정규화 필요.
 
 ## Do Not Pull Forward
 
